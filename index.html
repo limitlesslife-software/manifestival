@@ -155,6 +155,8 @@
     <symbol id="i-chevron-left" viewBox="0 0 24 24"><path d="M15 5L8 12L15 19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-chevron-right" viewBox="0 0 24 24"><path d="M9 5L16 12L9 19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-trash" viewBox="0 0 24 24"><path d="M5 7H19" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M9 7V4.5C9 4 9.4 3.5 10 3.5H14C14.6 3.5 15 4 15 4.5V7" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M7 7L7.6 19C7.6 19.8 8.3 20.5 9.1 20.5H14.9C15.7 20.5 16.4 19.8 16.4 19L17 7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></symbol>
+    <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8.3" r="3.6" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M4.5 20C5.3 15.8 8.3 13.5 12 13.5C15.7 13.5 18.7 15.8 19.5 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M19.8 14.3A8.4 8.4 0 1 1 9.7 4.2A6.9 6.9 0 0 0 19.8 14.3Z" fill="currentColor"/></symbol>
   </defs>
 </svg>
 
@@ -176,6 +178,7 @@
         <div class="load-chip" id="todayCompletionChip" style="display:none;"></div>
       </div>
       <div id="todayTimelineContainer"></div>
+      <div id="bedtimeBox" class="load-chip" style="display:none; margin-top:14px; width:100%; box-sizing:border-box; gap:8px;"></div>
     </div>
 
     <div class="screen" id="screen-week">
@@ -204,12 +207,40 @@
         <select id="afCategory">
           <option value="tyo">Työ</option><option value="perhe">Perhe</option><option value="hyvinvointi">Hyvinvointi</option><option value="harrastus">Harrastus</option><option value="koti">Koti</option><option value="kehitys">Kehitys</option><option value="talous">Talous</option><option value="muu">Muu</option>
         </select>
+        <label style="display:flex; align-items:center; gap:8px; font-size:12.5px; color:var(--text-2); font-weight:600; padding:2px 2px;">
+          <input type="checkbox" id="afIsWake" style="width:16px; height:16px;"> Tämä on päivän herätys (unilaskennan pohjaksi)
+        </label>
         <div class="form-actions">
+          <button class="form-btn secondary" id="afDelete" style="display:none; background:var(--clay-soft); color:var(--clay);">Poista</button>
           <button class="form-btn secondary" id="afCancel">Peruuta</button>
           <button class="form-btn primary" id="afSave">Tallenna</button>
         </div>
       </div>
       <div id="tasksListContainer"></div>
+    </div>
+
+    <div class="screen" id="screen-profile">
+      <div class="eyebrow">PROFIILI</div>
+      <h1 class="title" style="margin-bottom:16px;">Henkilökohtaiset tiedot</h1>
+      <div class="hint" style="margin-bottom:16px;">Kaikki kentät ovat vapaaehtoisia — sovellus toimii ilman niitäkin. Näitä käytetään mm. unitavoitteen laskentaan.</div>
+      <div class="add-form" style="display:flex;">
+        <label style="font-size:12px; font-weight:700; color:var(--text-2);">Ikä
+          <input type="number" id="pfAge" placeholder="esim. 34" style="margin-top:4px;">
+        </label>
+        <label style="font-size:12px; font-weight:700; color:var(--text-2);">Paino (kg)
+          <input type="number" id="pfWeight" placeholder="esim. 82" style="margin-top:4px;">
+        </label>
+        <label style="font-size:12px; font-weight:700; color:var(--text-2);">Pituus (cm)
+          <input type="number" id="pfHeight" placeholder="esim. 180" style="margin-top:4px;">
+        </label>
+        <label style="font-size:12px; font-weight:700; color:var(--text-2);">Unitavoite (tuntia/yö)
+          <input type="number" step="0.5" id="pfSleepTarget" placeholder="8" style="margin-top:4px;">
+        </label>
+        <div class="form-actions">
+          <button class="form-btn primary" id="pfSave" style="flex:none; padding:10px 24px;">Tallenna</button>
+        </div>
+        <div id="pfSavedMsg" style="display:none; font-size:12px; color:var(--sage); font-weight:700;">✓ Tallennettu</div>
+      </div>
     </div>
 
   </div>
@@ -223,6 +254,7 @@
     <button class="tab-btn active" data-screen="screen-today"><svg class="icon"><use href="#i-sun"/></svg>Tänään</button>
     <button class="tab-btn" data-screen="screen-week"><svg class="icon"><use href="#i-cal"/></svg>Viikko</button>
     <button class="tab-btn" data-screen="screen-tasks"><svg class="icon"><use href="#i-list"/></svg>Tehtävät</button>
+    <button class="tab-btn" data-screen="screen-profile"><svg class="icon"><use href="#i-user"/></svg>Profiili</button>
   </div>
 
   <div class="voice-overlay" id="voiceOverlay">
@@ -300,17 +332,17 @@
   const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR3cHl1YmN5bWRuYnZlbHNqaWRnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODUyNTg1MTEsImV4cCI6MjEwMDgzNDUxMX0.ych4lT7elajj3H12smhi2wjP-CP1dYrqtKhoK1RoSYQ';
   const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-  function toRow(t){ return { id:t.id, date:t.date, time:t.time, end_time:t.endTime, title:t.title, category:t.category, note:t.note, completed:t.completed }; }
-  function fromRow(r){ return { id:r.id, date:r.date, time:r.time, endTime:r.end_time, title:r.title, category:r.category, note:r.note, completed:r.completed }; }
+  function toRow(t){ return { id:t.id, date:t.date, time:t.time, end_time:t.endTime, title:t.title, category:t.category, note:t.note, completed:t.completed, is_wake: !!t.isWake }; }
+  function fromRow(r){ return { id:r.id, date:r.date, time:r.time, endTime:r.end_time, title:r.title, category:r.category, note:r.note, completed:r.completed, isWake: !!r.is_wake }; }
 
-  let state = { tasks: [], viewDate: todayMidnight(), weekStart: startOfWeek(todayMidnight()) };
+  let state = { tasks: [], viewDate: todayMidnight(), weekStart: startOfWeek(todayMidnight()), profile: { age:null, weightKg:null, heightCm:null, sleepTargetHours:8 }, editingId: null };
 
   function seedTasks(){
     const t = fmtISO(todayMidnight());
     let n=1;
-    const mk=(time,endTime,title,category,note)=>({id:'seed'+(n++), date:t, time:time||null, endTime:endTime||null, title, category, note:note||null, completed:false});
+    const mk=(time,endTime,title,category,note,isWake)=>({id:'seed'+(n++), date:t, time:time||null, endTime:endTime||null, title, category, note:note||null, completed:false, isWake:!!isWake});
     return [
-      mk('05:30',null,'Herätys','hyvinvointi'),
+      mk('05:30',null,'Herätys','hyvinvointi',null,true),
       mk('05:35','05:55','Hengitys ja aamuliike','hyvinvointi'),
       mk('05:55','06:25','Valmistautuminen','koti'),
       mk('06:30',null,'Lähtö töihin','tyo','18 min · karting-varusteet mukaan'),
@@ -337,6 +369,25 @@
     catch(e){ console.error('Esitäyttö epäonnistui', e); }
     return seed;
   }
+  async function loadProfile(){
+    try {
+      const { data, error } = await sb.from('profile').select('*').eq('id','me').maybeSingle();
+      if (error) throw error;
+      if (!data) return null;
+      return { age:data.age, weightKg:data.weight_kg, heightCm:data.height_cm, sleepTargetHours: data.sleep_target_hours || 8 };
+    } catch(e){ console.error('Profiilin lataus epäonnistui', e); return null; }
+  }
+  function saveProfile(p){
+    state.profile = p;
+    sb.from('profile').update({ age:p.age, weight_kg:p.weightKg, height_cm:p.heightCm, sleep_target_hours:p.sleepTargetHours }).eq('id','me')
+      .then(({error})=>{ if(error) console.error('Profiilin tallennus epäonnistui', error); });
+  }
+
+  // Only one wake-anchor per day: clear is_wake on any other task for that date.
+  function clearOtherWakeFlags(date, exceptId){
+    state.tasks.forEach(t=>{ if(t.date===date && t.id!==exceptId && t.isWake) t.isWake=false; });
+    sb.from('tasks').update({ is_wake:false }).eq('date', date).neq('id', exceptId||'').then(()=>{});
+  }
 
   function toggleComplete(id){
     const it = state.tasks.find(t=>t.id===id);
@@ -353,13 +404,42 @@
       .then(({error})=>{ if(error) console.error('Poisto epäonnistui', error); });
   }
   function addTask(task){
-    const newTask = Object.assign({id:'m'+Date.now()+Math.random().toString(36).slice(2,6), endTime:null, note:null, completed:false}, task);
+    const newTask = Object.assign({id:'m'+Date.now()+Math.random().toString(36).slice(2,6), endTime:null, note:null, completed:false, isWake:false}, task);
     state.tasks.push(newTask);
+    if (newTask.isWake) clearOtherWakeFlags(newTask.date, newTask.id);
     renderAll();
     sb.from('tasks').insert(toRow(newTask))
       .then(({error})=>{ if(error) console.error('Lisäys epäonnistui', error); });
   }
+  function updateTask(id, changes){
+    const it = state.tasks.find(t=>t.id===id);
+    if (!it) return;
+    Object.assign(it, changes);
+    if (it.isWake) clearOtherWakeFlags(it.date, it.id);
+    renderAll();
+    sb.from('tasks').update(toRow(it)).eq('id', id)
+      .then(({error})=>{ if(error) console.error('Päivitys epäonnistui', error); });
+  }
   function renderAll(){ renderToday(); renderWeek(); renderTasks(); }
+
+  function computeBedtime(wakeTimeStr, sleepHours){
+    const p = wakeTimeStr.split(':').map(Number);
+    let totalMin = p[0]*60+p[1] - sleepHours*60;
+    totalMin = ((totalMin % 1440) + 1440) % 1440;
+    const bh = Math.floor(totalMin/60), bm = Math.round(totalMin%60);
+    return String(bh).padStart(2,'0')+':'+String(bm).padStart(2,'0');
+  }
+  function renderBedtimeSuggestion(){
+    const box = document.getElementById('bedtimeBox');
+    if (!box) return;
+    const tomorrow = fmtISO(addDays(todayMidnight(),1));
+    const wakeTask = state.tasks.find(t=>t.date===tomorrow && t.isWake && t.time);
+    if (!wakeTask){ box.style.display='none'; return; }
+    const target = state.profile.sleepTargetHours || 8;
+    const bedtime = computeBedtime(wakeTask.time, target);
+    box.style.display='flex';
+    box.innerHTML = `<svg class="icon" style="color:var(--forest)"><use href="#i-moon"/></svg>Tänä iltana: mene nukkumaan noin klo <b>${bedtime}</b> — huomenna herätys klo ${wakeTask.time}, tavoite ${target} h unta`;
+  }
 
   function renderToday(){
     const d = state.viewDate;
@@ -383,6 +463,7 @@
     else { compChip.style.display='none'; }
 
     renderTimeline(items, isToday);
+    renderBedtimeSuggestion();
   }
 
   function renderTimeline(items, isToday){
@@ -488,8 +569,8 @@
       const timeLabel = it.time ? (it.endTime?`${it.time}–${it.endTime}`:it.time) : null;
       html += `<div class="task-row ${it.completed?'done':''}">
         <button class="chk ${it.completed?'done':''}" data-toggle="${it.id}" aria-label="Merkitse tehdyksi"><svg><use href="#i-check"/></svg></button>
-        <div class="t-body">
-          <div class="t-title">${escapeHtml(it.title)}</div>
+        <div class="t-body" data-edit="${it.id}" style="cursor:pointer;">
+          <div class="t-title">${it.isWake?'☀ ':''}${escapeHtml(it.title)}</div>
           <div class="t-meta">${timeLabel?`<span>${timeLabel}</span>`:''}<span class="task-cat-tag">${catLabel(it.category)}</span></div>
         </div>
         ${withDelete?`<button class="task-del" data-del="${it.id}" aria-label="Poista"><svg class="icon" style="width:16px;height:16px;"><use href="#i-trash"/></svg></button>`:''}
@@ -500,6 +581,24 @@
   function attachListHandlers(container){
     container.querySelectorAll('[data-toggle]').forEach(el=>el.addEventListener('click', ()=>toggleComplete(el.dataset.toggle)));
     container.querySelectorAll('[data-del]').forEach(el=>el.addEventListener('click', (e)=>{ e.stopPropagation(); deleteTask(el.dataset.del); }));
+    container.querySelectorAll('[data-edit]').forEach(el=>el.addEventListener('click', ()=>openEditForm(el.dataset.edit)));
+  }
+
+  function openEditForm(id){
+    const it = state.tasks.find(t=>t.id===id);
+    if (!it) return;
+    state.editingId = id;
+    document.getElementById('afTitle').value = it.title;
+    document.getElementById('afDate').value = it.date;
+    document.getElementById('afTime').value = it.time || '';
+    document.getElementById('afCategory').value = it.category;
+    document.getElementById('afIsWake').checked = !!it.isWake;
+    document.getElementById('afDelete').style.display='block';
+    document.getElementById('afSave').textContent = 'Tallenna muutokset';
+    document.getElementById('addForm').style.display='flex';
+    document.getElementById('addRowBtn').style.display='none';
+    switchTab('screen-tasks');
+    document.getElementById('addForm').scrollIntoView({behavior:'smooth', block:'center'});
   }
 
   function switchTab(id){
@@ -515,7 +614,11 @@
   document.getElementById('weekNext').addEventListener('click', ()=>{ state.weekStart=addDays(state.weekStart,7); renderWeek(); });
 
   document.getElementById('addRowBtn').addEventListener('click', ()=>{
+    state.editingId = null;
     document.getElementById('afDate').value = fmtISO(todayMidnight());
+    document.getElementById('afIsWake').checked = false;
+    document.getElementById('afDelete').style.display='none';
+    document.getElementById('afSave').textContent = 'Tallenna';
     document.getElementById('addForm').style.display='flex';
     document.getElementById('addRowBtn').style.display='none';
   });
@@ -524,16 +627,48 @@
     document.getElementById('addRowBtn').style.display='flex';
     document.getElementById('afTitle').value='';
     document.getElementById('afTime').value='';
+    document.getElementById('afIsWake').checked = false;
+    state.editingId = null;
   }
   document.getElementById('afCancel').addEventListener('click', closeAddForm);
+  document.getElementById('afDelete').addEventListener('click', ()=>{
+    if (state.editingId) deleteTask(state.editingId);
+    closeAddForm();
+  });
   document.getElementById('afSave').addEventListener('click', ()=>{
     const title = document.getElementById('afTitle').value.trim();
     if (!title) return;
     const date = document.getElementById('afDate').value || fmtISO(todayMidnight());
     const time = document.getElementById('afTime').value || null;
     const category = document.getElementById('afCategory').value;
-    addTask({title,date,time,category});
+    const isWake = document.getElementById('afIsWake').checked;
+    if (state.editingId){
+      updateTask(state.editingId, {title,date,time,category,isWake});
+    } else {
+      addTask({title,date,time,category,isWake});
+    }
     closeAddForm();
+  });
+
+  function fillProfileForm(){
+    document.getElementById('pfAge').value = state.profile.age ?? '';
+    document.getElementById('pfWeight').value = state.profile.weightKg ?? '';
+    document.getElementById('pfHeight').value = state.profile.heightCm ?? '';
+    document.getElementById('pfSleepTarget').value = state.profile.sleepTargetHours ?? 8;
+  }
+  document.getElementById('pfSave').addEventListener('click', ()=>{
+    const num = v => v===''||v===null||v===undefined ? null : Number(v);
+    const p = {
+      age: num(document.getElementById('pfAge').value),
+      weightKg: num(document.getElementById('pfWeight').value),
+      heightCm: num(document.getElementById('pfHeight').value),
+      sleepTargetHours: num(document.getElementById('pfSleepTarget').value) || 8
+    };
+    saveProfile(p);
+    renderBedtimeSuggestion();
+    const msg = document.getElementById('pfSavedMsg');
+    msg.style.display='block';
+    setTimeout(()=>{ msg.style.display='none'; }, 2500);
   });
 
   const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -661,6 +796,9 @@
     } else {
       state.tasks = seedTasks(); // Supabase unreachable — local fallback so the app still works
     }
+    const profile = await loadProfile();
+    if (profile) state.profile = profile;
+    fillProfileForm();
     renderAll();
   }
   init();
