@@ -15,6 +15,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,300;0,500;0,600;1,500&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
   :root {
     --forest:#213D37; --cream:#FDFBF6; --cream-card:#FFFFFF;
@@ -295,6 +296,13 @@
   function sortByTime(a,b){ if(!a.time&&!b.time) return 0; if(!a.time) return 1; if(!b.time) return -1; return a.time.localeCompare(b.time); }
   function loadClass(n){ if(n===0) return null; if(n<=3) return 'sage'; if(n<=7) return 'gold'; return 'clay'; }
 
+  const SUPABASE_URL = 'https://twpyubcymdnbvelsjidg.supabase.co';
+  const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR3cHl1YmN5bWRuYnZlbHNqaWRnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODUyNTg1MTEsImV4cCI6MjEwMDgzNDUxMX0.ych4lT7elajj3H12smhi2wjP-CP1dYrqtKhoK1RoSYQ';
+  const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+  function toRow(t){ return { id:t.id, date:t.date, time:t.time, end_time:t.endTime, title:t.title, category:t.category, note:t.note, completed:t.completed }; }
+  function fromRow(r){ return { id:r.id, date:r.date, time:r.time, endTime:r.end_time, title:r.title, category:r.category, note:r.note, completed:r.completed }; }
+
   let state = { tasks: [], viewDate: todayMidnight(), weekStart: startOfWeek(todayMidnight()) };
 
   function seedTasks(){
@@ -315,24 +323,41 @@
     ];
   }
 
-  // Persistence: real browser localStorage — this file runs on your own domain,
-  // not inside claude.ai, so it uses the standard web storage API instead.
+  // Persistence: real shared Supabase database — same data on every device.
   async function loadTasks(){
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      return raw ? JSON.parse(raw) : null;
-    } catch(e){ return null; }
+      const { data, error } = await sb.from('tasks').select('*');
+      if (error) throw error;
+      return (data||[]).map(fromRow);
+    } catch(e){ console.error('Lataus epäonnistui', e); return null; }
   }
-  async function saveTasks(){
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state.tasks)); }
-    catch(e){ console.error('Tallennus epäonnistui', e); }
+  async function seedIntoSupabase(){
+    const seed = seedTasks();
+    try { await sb.from('tasks').insert(seed.map(toRow)); }
+    catch(e){ console.error('Esitäyttö epäonnistui', e); }
+    return seed;
   }
 
-  function toggleComplete(id){ const it=state.tasks.find(t=>t.id===id); if(!it) return; it.completed=!it.completed; saveTasks(); renderAll(); }
-  function deleteTask(id){ state.tasks = state.tasks.filter(t=>t.id!==id); saveTasks(); renderAll(); }
+  function toggleComplete(id){
+    const it = state.tasks.find(t=>t.id===id);
+    if (!it) return;
+    it.completed = !it.completed;
+    renderAll();
+    sb.from('tasks').update({ completed: it.completed }).eq('id', id)
+      .then(({error})=>{ if(error) console.error('Tallennus epäonnistui', error); });
+  }
+  function deleteTask(id){
+    state.tasks = state.tasks.filter(t=>t.id!==id);
+    renderAll();
+    sb.from('tasks').delete().eq('id', id)
+      .then(({error})=>{ if(error) console.error('Poisto epäonnistui', error); });
+  }
   function addTask(task){
-    state.tasks.push(Object.assign({id:'m'+Date.now()+Math.random().toString(36).slice(2,6), endTime:null, note:null, completed:false}, task));
-    saveTasks(); renderAll();
+    const newTask = Object.assign({id:'m'+Date.now()+Math.random().toString(36).slice(2,6), endTime:null, note:null, completed:false}, task);
+    state.tasks.push(newTask);
+    renderAll();
+    sb.from('tasks').insert(toRow(newTask))
+      .then(({error})=>{ if(error) console.error('Lisäys epäonnistui', error); });
   }
   function renderAll(){ renderToday(); renderWeek(); renderTasks(); }
 
@@ -629,8 +654,13 @@
 
   async function init(){
     const loaded = await loadTasks();
-    if (loaded !== null){ state.tasks = loaded; }
-    else { state.tasks = seedTasks(); saveTasks(); }
+    if (loaded !== null && loaded.length > 0){
+      state.tasks = loaded;
+    } else if (loaded !== null){
+      state.tasks = await seedIntoSupabase();
+    } else {
+      state.tasks = seedTasks(); // Supabase unreachable — local fallback so the app still works
+    }
     renderAll();
   }
   init();
