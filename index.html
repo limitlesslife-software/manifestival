@@ -202,7 +202,8 @@
         <input type="text" id="afTitle" placeholder="Mitä pitää tehdä?">
         <div class="form-row">
           <input type="date" id="afDate">
-          <input type="time" id="afTime">
+          <input type="time" id="afTime" title="Alkuaika">
+          <input type="time" id="afEndTime" title="Loppuaika (valinnainen)">
         </div>
         <select id="afCategory">
           <option value="tyo">Työ</option><option value="perhe">Perhe</option><option value="hyvinvointi">Hyvinvointi</option><option value="harrastus">Harrastus</option><option value="koti">Koti</option><option value="kehitys">Kehitys</option><option value="talous">Talous</option><option value="muu">Muu</option>
@@ -278,6 +279,7 @@
         <div class="voice-row2">
           <input class="voice-field" type="date" id="vfDate">
           <input class="voice-field" type="time" id="vfTime">
+          <input class="voice-field" type="time" id="vfEndTime" title="Loppuaika (valinnainen)">
         </div>
         <select class="voice-field" id="vfCategory">
           <option value="tyo">Työ</option><option value="perhe">Perhe</option><option value="hyvinvointi">Hyvinvointi</option><option value="harrastus">Harrastus</option><option value="koti">Koti</option><option value="kehitys">Kehitys</option><option value="talous">Talous</option><option value="muu">Muu</option>
@@ -592,6 +594,7 @@
     document.getElementById('afTitle').value = it.title;
     document.getElementById('afDate').value = it.date;
     document.getElementById('afTime').value = it.time || '';
+    document.getElementById('afEndTime').value = it.endTime || '';
     document.getElementById('afCategory').value = it.category;
     document.getElementById('afIsWake').checked = !!it.isWake;
     document.getElementById('afDelete').style.display='block';
@@ -628,6 +631,7 @@
     document.getElementById('addRowBtn').style.display='flex';
     document.getElementById('afTitle').value='';
     document.getElementById('afTime').value='';
+    document.getElementById('afEndTime').value='';
     document.getElementById('afIsWake').checked = false;
     state.editingId = null;
   }
@@ -641,12 +645,13 @@
     if (!title) return;
     const date = document.getElementById('afDate').value || fmtISO(todayMidnight());
     const time = document.getElementById('afTime').value || null;
+    const endTime = document.getElementById('afEndTime').value || null;
     const category = document.getElementById('afCategory').value;
     const isWake = document.getElementById('afIsWake').checked;
     if (state.editingId){
-      updateTask(state.editingId, {title,date,time,category,isWake});
+      updateTask(state.editingId, {title,date,time,endTime,category,isWake});
     } else {
-      addTask({title,date,time,category,isWake});
+      addTask({title,date,time,endTime,category,isWake});
     }
     closeAddForm();
   });
@@ -748,6 +753,7 @@
     document.getElementById('vfTitle').value = parsed.title||'';
     document.getElementById('vfDate').value = parsed.date || fmtISO(todayMidnight());
     document.getElementById('vfTime').value = parsed.time || '';
+    document.getElementById('vfEndTime').value = parsed.endTime || '';
     document.getElementById('vfCategory').value = parsed.category || 'muu';
   }
 
@@ -756,8 +762,9 @@
     if (!title) return;
     const date = document.getElementById('vfDate').value || fmtISO(todayMidnight());
     const time = document.getElementById('vfTime').value || null;
+    const endTime = document.getElementById('vfEndTime').value || null;
     const category = document.getElementById('vfCategory').value;
-    addTask({title,date,time,category});
+    addTask({title,date,time,endTime,category});
     closeVoiceOverlay();
   });
   document.getElementById('voiceCancelBtn').addEventListener('click', closeVoiceOverlay);
