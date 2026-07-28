@@ -178,7 +178,6 @@
         <div class="load-chip" id="todayCompletionChip" style="display:none;"></div>
       </div>
       <div id="todayTimelineContainer"></div>
-      <div id="bedtimeBox" class="load-chip" style="display:none; margin-top:14px; width:100%; box-sizing:border-box; gap:8px;"></div>
     </div>
 
     <div class="screen" id="screen-week">
@@ -223,7 +222,7 @@
     <div class="screen" id="screen-profile">
       <div class="eyebrow">PROFIILI</div>
       <h1 class="title" style="margin-bottom:16px;">Henkilökohtaiset tiedot</h1>
-      <div class="hint" style="margin-bottom:16px;">Kaikki kentät ovat vapaaehtoisia — sovellus toimii ilman niitäkin. Näitä käytetään mm. unitavoitteen laskentaan.</div>
+      <div class="hint" style="margin-bottom:16px;">Kaikki kentät ovat vapaaehtoisia — sovellus toimii ilman niitäkin. Näitä käytetään mm. unitavoitteen ja heräämisajan automaattiseen laskentaan.</div>
       <div class="add-form" style="display:flex;">
         <label style="font-size:12px; font-weight:700; color:var(--text-2);">Ikä
           <input type="number" id="pfAge" placeholder="esim. 34" style="margin-top:4px;">
@@ -236,6 +235,16 @@
         </label>
         <label style="font-size:12px; font-weight:700; color:var(--text-2);">Unitavoite (tuntia/yö)
           <input type="number" step="0.5" id="pfSleepTarget" placeholder="8" style="margin-top:4px;">
+        </label>
+        <div class="sg-block-title" style="margin:14px 0 4px;">Automaattinen heräämisaika</div>
+        <label style="font-size:12px; font-weight:700; color:var(--text-2);">Oletusheräämisaika (kun huomiselle ei ole töitä)
+          <input type="time" id="pfDefaultWake" style="margin-top:4px;">
+        </label>
+        <label style="font-size:12px; font-weight:700; color:var(--text-2);">Työmatkan kesto (min)
+          <input type="number" id="pfCommute" placeholder="esim. 30" style="margin-top:4px;">
+        </label>
+        <label style="font-size:12px; font-weight:700; color:var(--text-2);">Aamutoimien kesto ennen lähtöä (min)
+          <input type="number" id="pfRoutine" placeholder="esim. 60" style="margin-top:4px;">
         </label>
         <div class="form-actions">
           <button class="form-btn primary" id="pfSave" style="flex:none; padding:10px 24px;">Tallenna</button>
@@ -337,7 +346,7 @@
   function toRow(t){ return { id:t.id, date:t.date, time:t.time, end_time:t.endTime, title:t.title, category:t.category, note:t.note, completed:t.completed, is_wake: !!t.isWake }; }
   function fromRow(r){ return { id:r.id, date:r.date, time:r.time, endTime:r.end_time, title:r.title, category:r.category, note:r.note, completed:r.completed, isWake: !!r.is_wake }; }
 
-  let state = { tasks: [], viewDate: todayMidnight(), weekStart: startOfWeek(todayMidnight()), profile: { age:null, weightKg:null, heightCm:null, sleepTargetHours:8 }, editingId: null };
+  let state = { tasks: [], viewDate: todayMidnight(), weekStart: startOfWeek(todayMidnight()), profile: { age:null, weightKg:null, heightCm:null, sleepTargetHours:8, defaultWakeTime:'07:00', commuteMinutes:30, routineMinutes:60 }, editingId: null };
 
   function seedTasks(){
     const t = fmtISO(todayMidnight());
@@ -376,13 +385,63 @@
       const { data, error } = await sb.from('profile').select('*').eq('id','me').maybeSingle();
       if (error) throw error;
       if (!data) return null;
-      return { age:data.age, weightKg:data.weight_kg, heightCm:data.height_cm, sleepTargetHours: data.sleep_target_hours || 8 };
+      return {
+        age:data.age, weightKg:data.weight_kg, heightCm:data.height_cm,
+        sleepTargetHours: data.sleep_target_hours || 8,
+        defaultWakeTime: data.default_wake_time || '07:00',
+        commuteMinutes: data.commute_minutes ?? 30,
+        routineMinutes: data.routine_minutes ?? 60
+      };
     } catch(e){ console.error('Profiilin lataus epäonnistui', e); return null; }
   }
   function saveProfile(p){
     state.profile = p;
-    sb.from('profile').update({ age:p.age, weight_kg:p.weightKg, height_cm:p.heightCm, sleep_target_hours:p.sleepTargetHours }).eq('id','me')
+    sb.from('profile').update({
+      age:p.age, weight_kg:p.weightKg, height_cm:p.heightCm, sleep_target_hours:p.sleepTargetHours,
+      default_wake_time:p.defaultWakeTime, commute_minutes:p.commuteMinutes, routine_minutes:p.routineMinutes
+    }).eq('id','me')
       .then(({error})=>{ if(error) console.error('Profiilin tallennus epäonnistui', error); });
+  }
+
+  // ---- Automatic wake / bedtime calculation (always live, never stored) ----
+  function subtractMinutes(timeStr, minutes){
+    const p = timeStr.split(':').map(Number);
+    let total = p[0]*60+p[1] - minutes;
+    total = ((total % 1440) + 1440) % 1440;
+    const h = Math.floor(total/60), m = Math.round(total%60);
+    return String(h).padStart(2,'0')+':'+String(m).padStart(2,'0');
+  }
+  function findWorkAnchor(dateIso){
+    return state.tasks.filter(t=>t.date===dateIso && t.category==='tyo' && t.time).sort(sortByTime)[0] || null;
+  }
+  function computeAutoWakeTime(dateIso){
+    const manual = state.tasks.find(t=>t.date===dateIso && t.isWake && t.time);
+    if (manual) return { time: manual.time, auto:false };
+    const work = findWorkAnchor(dateIso);
+    if (work){
+      const commute = state.profile.commuteMinutes ?? 30;
+      const routine = state.profile.routineMinutes ?? 60;
+      return { time: subtractMinutes(work.time, commute+routine), auto:true, basedOn:work };
+    }
+    return { time: state.profile.defaultWakeTime || '07:00', auto:true };
+  }
+  function computeAutoBedtimeTonight(dateIso){
+    const tomorrow = fmtISO(addDays(parseISO(dateIso),1));
+    const wake = computeAutoWakeTime(tomorrow);
+    const target = state.profile.sleepTargetHours || 8;
+    return { bedtime: subtractMinutes(wake.time, target*60), wakeTime: wake.time, wakeAuto: wake.auto };
+  }
+  function getDisplayItemsForDate(dateIso){
+    const real = state.tasks.filter(t=>t.date===dateIso).sort(sortByTime);
+    const merged = [...real];
+    const wake = computeAutoWakeTime(dateIso);
+    if (wake.auto){
+      merged.push({ id:'virtual-wake', date:dateIso, time:wake.time, endTime:null, title:'Herätys', category:'hyvinvointi', completed:false, isWake:true, virtual:true,
+        note: wake.basedOn ? `automaattinen ehdotus · ${state.profile.commuteMinutes||30} min matka + ${state.profile.routineMinutes||60} min aamutoimet` : 'automaattinen ehdotus (oletusaika)' });
+    }
+    const bt = computeAutoBedtimeTonight(dateIso);
+    merged.push({ id:'virtual-sleep', date:dateIso, time:bt.bedtime, endTime:bt.wakeTime, title:'Uni', category:'hyvinvointi', completed:false, isWake:false, virtual:true, note:'automaattinen ehdotus' });
+    return merged.sort(sortByTime);
   }
 
   // Only one wake-anchor per day: clear is_wake on any other task for that date.
@@ -424,33 +483,15 @@
   }
   function renderAll(){ renderToday(); renderWeek(); renderTasks(); }
 
-  function computeBedtime(wakeTimeStr, sleepHours){
-    const p = wakeTimeStr.split(':').map(Number);
-    let totalMin = p[0]*60+p[1] - sleepHours*60;
-    totalMin = ((totalMin % 1440) + 1440) % 1440;
-    const bh = Math.floor(totalMin/60), bm = Math.round(totalMin%60);
-    return String(bh).padStart(2,'0')+':'+String(bm).padStart(2,'0');
-  }
-  function renderBedtimeSuggestion(){
-    const box = document.getElementById('bedtimeBox');
-    if (!box) return;
-    const tomorrow = fmtISO(addDays(todayMidnight(),1));
-    const wakeTask = state.tasks.find(t=>t.date===tomorrow && t.isWake && t.time);
-    if (!wakeTask){ box.style.display='none'; return; }
-    const target = state.profile.sleepTargetHours || 8;
-    const bedtime = computeBedtime(wakeTask.time, target);
-    box.style.display='flex';
-    box.innerHTML = `<svg class="icon" style="color:var(--forest)"><use href="#i-moon"/></svg>Tänä iltana: mene nukkumaan noin klo <b>${bedtime}</b> — huomenna herätys klo ${wakeTask.time}, tavoite ${target} h unta`;
-  }
-
   function renderToday(){
     const d = state.viewDate;
+    const dateIso = fmtISO(d);
     const isToday = sameDay(d, todayMidnight());
     document.getElementById('todayEyebrow').textContent = isToday ? 'TÄNÄÄN' : WD_FULL[d.getDay()].toUpperCase();
     document.getElementById('todayTitle').textContent = `${d.getDate()}. ${MONTHS[d.getMonth()]}`;
     document.getElementById('todayJumpBtn').style.display = isToday ? 'none' : 'block';
 
-    const items = state.tasks.filter(t=>t.date===fmtISO(d)).sort(sortByTime);
+    const items = state.tasks.filter(t=>t.date===dateIso).sort(sortByTime); // real items only — used for load & completion count
     const lc = loadClass(items.length);
     const chip = document.getElementById('todayLoadChip');
     if (items.length===0){ chip.innerHTML='Ei suunniteltua'; chip.style.background='var(--sage-soft)'; }
@@ -464,8 +505,8 @@
     if (items.length){ compChip.style.display='inline-flex'; compChip.textContent = `${doneCount}/${items.length} tehty`; }
     else { compChip.style.display='none'; }
 
-    renderTimeline(items, isToday);
-    renderBedtimeSuggestion();
+    const displayItems = getDisplayItemsForDate(dateIso); // real + auto-computed wake/sleep, for the timeline visual
+    renderTimeline(displayItems, isToday);
   }
 
   function renderTimeline(items, isToday){
@@ -501,6 +542,16 @@
     const rows = items.map((it,i)=>{
       const isNow=i===nowIdx;
       const timeLabel = it.time ? (it.endTime?`${it.time}–${it.endTime}`:it.time) : 'Joskus tänään';
+      if (it.virtual){
+        return `<div class="t-item" style="height:${rowH}px; opacity:.62; border-bottom:1px dashed var(--border);">
+          <span class="chk" style="border-style:dashed; background:none;"></span>
+          <div class="t-body">
+            <span class="t-time">${timeLabel} <span style="font-size:9px; font-weight:800; letter-spacing:.4px; color:var(--sage); border:1px solid var(--sage); border-radius:8px; padding:1px 5px; margin-left:4px;">AUTO</span></span>
+            <span class="t-title" style="font-style:italic;">${it.title}</span>
+            ${it.note?`<span class="t-sub">${escapeHtml(it.note)}</span>`:''}
+          </div>
+        </div>`;
+      }
       return `<div class="t-item ${isNow?'now':''} ${it.completed?'done':''}" style="height:${rowH}px">
         <button class="chk ${it.completed?'done':''}" data-toggle="${it.id}" aria-label="Merkitse tehdyksi"><svg><use href="#i-check"/></svg></button>
         <div class="t-body" data-edit="${it.id}" style="cursor:pointer;">
@@ -661,6 +712,9 @@
     document.getElementById('pfWeight').value = state.profile.weightKg ?? '';
     document.getElementById('pfHeight').value = state.profile.heightCm ?? '';
     document.getElementById('pfSleepTarget').value = state.profile.sleepTargetHours ?? 8;
+    document.getElementById('pfDefaultWake').value = state.profile.defaultWakeTime ?? '07:00';
+    document.getElementById('pfCommute').value = state.profile.commuteMinutes ?? 30;
+    document.getElementById('pfRoutine').value = state.profile.routineMinutes ?? 60;
   }
   document.getElementById('pfSave').addEventListener('click', ()=>{
     const num = v => v===''||v===null||v===undefined ? null : Number(v);
@@ -668,10 +722,13 @@
       age: num(document.getElementById('pfAge').value),
       weightKg: num(document.getElementById('pfWeight').value),
       heightCm: num(document.getElementById('pfHeight').value),
-      sleepTargetHours: num(document.getElementById('pfSleepTarget').value) || 8
+      sleepTargetHours: num(document.getElementById('pfSleepTarget').value) || 8,
+      defaultWakeTime: document.getElementById('pfDefaultWake').value || '07:00',
+      commuteMinutes: num(document.getElementById('pfCommute').value) ?? 30,
+      routineMinutes: num(document.getElementById('pfRoutine').value) ?? 60
     };
     saveProfile(p);
-    renderBedtimeSuggestion();
+    renderToday();
     const msg = document.getElementById('pfSavedMsg');
     msg.style.display='block';
     setTimeout(()=>{ msg.style.display='none'; }, 2500);
