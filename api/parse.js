@@ -16,8 +16,8 @@ module.exports = async (req, res) => {
 
 Käyttäjä sanoi ääneen tämän suomenkielisen komennon elämänhallintasovellukseen: ${JSON.stringify(transcript)}
 
-Tulkitse tämä tehtäväksi tai kalenterimerkinnäksi. Vastaa VAIN JSON-objektilla, ei muuta tekstiä eikä koodilohkomerkintöjä:
-{"title":"lyhyt selkeä nimi, max n. 6 sanaa","date":"YYYY-MM-DD paras arvaus, tämä päivä jos ei mainintaa","time":"HH:MM 24h muodossa tai null","category":"yksi: tyo, perhe, hyvinvointi, harrastus, koti, kehitys, talous, muu","note":"lyhyt lisähuomio tai null"}`;
+Tulkitse tämä tehtäväksi tai kalenterimerkinnäksi. Jos käyttäjä mainitsee sekä alku- että loppuajan (esim. "kello 7.30–15.30" tai "seitsemästä puoli neljään"), täytä molemmat. Vastaa VAIN JSON-objektilla, ei muuta tekstiä eikä koodilohkomerkintöjä:
+{"title":"lyhyt selkeä nimi, max n. 6 sanaa","date":"YYYY-MM-DD paras arvaus, tämä päivä jos ei mainintaa","time":"HH:MM 24h muodossa tai null","endTime":"HH:MM 24h muodossa jos loppuaika mainittu, muuten null","category":"yksi: tyo, perhe, hyvinvointi, harrastus, koti, kehitys, talous, muu","note":"lyhyt lisähuomio tai null"}`;
 
   try {
     const response = await fetch('https://api.anthropic.com/v1/messages', {
