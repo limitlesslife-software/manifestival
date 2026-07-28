@@ -411,6 +411,7 @@
     const h = Math.floor(total/60), m = Math.round(total%60);
     return String(h).padStart(2,'0')+':'+String(m).padStart(2,'0');
   }
+  function addMinutes(timeStr, minutes){ return subtractMinutes(timeStr, -minutes); }
   function findWorkAnchor(dateIso){
     return state.tasks.filter(t=>t.date===dateIso && t.category==='tyo' && t.time).sort(sortByTime)[0] || null;
   }
@@ -431,6 +432,11 @@
     const target = state.profile.sleepTargetHours || 8;
     return { bedtime: subtractMinutes(wake.time, target*60), wakeTime: wake.time, wakeAuto: wake.auto };
   }
+  // True if the user already has their own real (non-virtual) entry starting inside [start,end) —
+  // used so automatic blocks never duplicate something you've already scheduled yourself.
+  function hasManualCoverage(dateIso, start, end){
+    return state.tasks.some(t=> t.date===dateIso && t.time && t.time>=start && t.time<end);
+  }
   function getDisplayItemsForDate(dateIso){
     const real = state.tasks.filter(t=>t.date===dateIso).sort(sortByTime);
     const merged = [...real];
@@ -438,6 +444,11 @@
     if (wake.auto){
       merged.push({ id:'virtual-wake', date:dateIso, time:wake.time, endTime:null, title:'Herätys', category:'hyvinvointi', completed:false, isWake:true, virtual:true,
         note: wake.basedOn ? `automaattinen ehdotus · ${state.profile.commuteMinutes||30} min matka + ${state.profile.routineMinutes||60} min aamutoimet` : 'automaattinen ehdotus (oletusaika)' });
+    }
+    const routineMin = state.profile.routineMinutes ?? 60;
+    const routineEnd = addMinutes(wake.time, routineMin);
+    if (!hasManualCoverage(dateIso, wake.time, routineEnd)){
+      merged.push({ id:'virtual-routine', date:dateIso, time:wake.time, endTime:routineEnd, title:'Aamutoimet', category:'hyvinvointi', completed:false, isWake:false, virtual:true, note:'automaattinen ehdotus' });
     }
     const bt = computeAutoBedtimeTonight(dateIso);
     merged.push({ id:'virtual-sleep', date:dateIso, time:bt.bedtime, endTime:bt.wakeTime, title:'Uni', category:'hyvinvointi', completed:false, isWake:false, virtual:true, note:'automaattinen ehdotus' });
