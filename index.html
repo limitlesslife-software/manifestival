@@ -64,6 +64,10 @@
   .t-item.now .t-time { color:var(--forest); }
   .t-item.done .t-title { text-decoration:line-through; color:var(--text-3); }
   .now-badge { flex-shrink:0; background:var(--forest); color:var(--cream); font-size:10px; font-weight:800; letter-spacing:.4px; padding:5px 10px; border-radius:20px; }
+  .now-badge.late { background:var(--clay); }
+  .now-badge.early { background:var(--sage); }
+  .t-item.now.late { background:var(--clay-soft); }
+  .t-item.now.early { background:var(--sage-soft); }
   .now-pulse-ring { transform-box:fill-box; transform-origin:center; animation:pulse 2.6s ease-out infinite; }
   @keyframes pulse { 0%{transform:scale(1);opacity:.6;} 70%,100%{transform:scale(2.6);opacity:0;} }
 
@@ -527,13 +531,46 @@
       return;
     }
     const rowH=66, totalH=items.length*rowH;
-    let nowIdx=-1;
+    // NYT-tila: käynnissä / myöhässä / etuajassa — perustuu koko aikaväliin (alku+loppu), ei vain alkuaikaan.
+    const tMin = (t)=>{ const p=t.split(':').map(Number); return p[0]*60+p[1]; };
+    const endMinOf = (it,i)=>{
+      if (it.endTime) return tMin(it.endTime);
+      for (let j=i+1;j<items.length;j++){ if (items[j].time) return tMin(items[j].time); } // ei omaa loppuaikaa: kestää seuraavaan merkintään asti
+      return tMin(it.time);
+    };
+    let nowIdx=-1, nowStatus='running';
     if (isToday){
       const nowMin = new Date().getHours()*60+new Date().getMinutes();
+
+      // 1) Varhaisin vielä tekemätön tehtävä joka on jo alkanut -> käynnissä tai myöhässä.
+      //    Pysyy tässä kunnes merkitään tehdyksi, vaikka myöhemmätkin tehtävät olisivat jo alkaneet —
+      //    muuten "myöhässä" katoaisi heti kun seuraavan tehtävän aika koittaa.
       for (let i=0;i<items.length;i++){
-        if (items[i].time){ const p=items[i].time.split(':').map(Number); if (p[0]*60+p[1] >= nowMin){ nowIdx=i; break; } }
+        const it=items[i];
+        if (!it.time || it.completed) continue;
+        const s=tMin(it.time);
+        if (s>nowMin) break; // aikajärjestyksessä — loput ovat vasta tulossa
+        nowIdx=i; nowStatus = nowMin<endMinOf(it,i) ? 'running' : 'late';
+        break;
+      }
+
+      // 2) Jos kaikki alkaneet tehtävät on jo tehty: ollaanko etuajassa viimeisimmän kanssa?
+      if (nowIdx===-1){
+        let lastStartedIdx=-1;
+        for (let i=0;i<items.length;i++){
+          if (!items[i].time) continue;
+          if (tMin(items[i].time)<=nowMin) lastStartedIdx=i; else break;
+        }
+        if (lastStartedIdx!==-1){
+          const it=items[lastStartedIdx];
+          if (it.completed && nowMin<endMinOf(it,lastStartedIdx)){ nowIdx=lastStartedIdx; nowStatus='early'; }
+        }
       }
     }
+    const badgeText = nowStatus==='late' ? 'MYÖHÄSSÄ' : nowStatus==='early' ? 'ETUAJASSA' : 'NYT';
+    const statusClass = nowStatus==='late' ? 'late' : nowStatus==='early' ? 'early' : '';
+    const accent = nowStatus==='late' ? 'var(--clay)' : nowStatus==='early' ? 'var(--sage)' : 'var(--gold)';
+
     const xs=[28,18,38];
     const pts = items.map((_,i)=>({x:xs[i%3], y:rowH/2+i*rowH}));
     let dAttr = `M${pts[0].x},${pts[0].y}`;
@@ -544,11 +581,11 @@
     let circles='';
     pts.forEach((p,i)=>{
       const isNow=i===nowIdx, isStart=i===0, isEnd=i===pts.length-1;
-      const color = (isNow||isStart) ? 'var(--gold)' : isEnd ? 'var(--forest)' : 'var(--path)';
+      const color = isNow ? accent : isStart ? 'var(--gold)' : isEnd ? 'var(--forest)' : 'var(--path)';
       const r = isNow?6.5:(isStart||isEnd)?5.5:4;
       const op = (isNow||isStart||isEnd)?1:.8;
       circles += `<circle cx="${p.x}" cy="${p.y}" r="${r}" style="fill:${color}" opacity="${op}"/>`;
-      if (isNow) circles += `<circle class="now-pulse-ring" cx="${p.x}" cy="${p.y}" r="6" fill="none" style="stroke:var(--gold)" stroke-width="1.5"/>`;
+      if (isNow) circles += `<circle class="now-pulse-ring" cx="${p.x}" cy="${p.y}" r="6" fill="none" style="stroke:${accent}" stroke-width="1.5"/>`;
     });
     const rows = items.map((it,i)=>{
       const isNow=i===nowIdx;
@@ -563,14 +600,14 @@
           </div>
         </div>`;
       }
-      return `<div class="t-item ${isNow?'now':''} ${it.completed?'done':''}" style="height:${rowH}px">
+      return `<div class="t-item ${isNow?('now '+statusClass):''} ${it.completed?'done':''}" style="height:${rowH}px">
         <button class="chk ${it.completed?'done':''}" data-toggle="${it.id}" aria-label="Merkitse tehdyksi"><svg><use href="#i-check"/></svg></button>
         <div class="t-body" data-edit="${it.id}" style="cursor:pointer;">
           <span class="t-time">${timeLabel}</span>
           <span class="t-title">${it.isWake?'☀ ':''}${escapeHtml(it.title)}</span>
           ${it.note?`<span class="t-sub">${escapeHtml(it.note)}</span>`:''}
         </div>
-        ${isNow?`<span class="now-badge">NYT</span>`:''}
+        ${isNow?`<span class="now-badge ${statusClass}">${badgeText}</span>`:''}
       </div>`;
     }).join('');
     container.innerHTML = `<div class="timeline" style="height:${totalH}px">
@@ -896,6 +933,9 @@
     if (profile) state.profile = profile;
     fillProfileForm();
     renderAll();
+    // Pitää NYT/MYÖHÄSSÄ/ETUAJASSA-tilan ajan tasalla ilman sivun päivitystä.
+    setInterval(renderToday, 30000);
+    document.addEventListener('visibilitychange', ()=>{ if (!document.hidden) renderToday(); });
   }
   init();
 
