@@ -532,6 +532,9 @@
     }
     const rowH=66, totalH=items.length*rowH;
     // NYT-tila: käynnissä / myöhässä / etuajassa — perustuu koko aikaväliin (alku+loppu), ei vain alkuaikaan.
+    // HUOM: automaattiset ehdotukset (Herätys/Aamutoimet/Uni) eivät koskaan tule "valmiiksi" (ei
+    // ruksia), joten ne on jätettävä pois myöhässä-tarkistuksesta — muuten ensimmäinen niistä jäisi
+    // jumiin "myöhässä"-tilaan koko loppupäiväksi eikä NYT siirtyisi enää oikeisiin tehtäviin.
     const tMin = (t)=>{ const p=t.split(':').map(Number); return p[0]*60+p[1]; };
     const endMinOf = (it,i)=>{
       if (it.endTime) return tMin(it.endTime);
@@ -542,28 +545,25 @@
     if (isToday){
       const nowMin = new Date().getHours()*60+new Date().getMinutes();
 
-      // 1) Varhaisin vielä tekemätön tehtävä joka on jo alkanut -> käynnissä tai myöhässä.
-      //    Pysyy tässä kunnes merkitään tehdyksi, vaikka myöhemmätkin tehtävät olisivat jo alkaneet —
-      //    muuten "myöhässä" katoaisi heti kun seuraavan tehtävän aika koittaa.
+      // 1) Onko jokin kohde JUURI NYT käynnissä oman aikaikkunansa perusteella? Koskee sekä oikeita
+      //    että automaattisia kohteita — se jonka alku–loppu-väli sisältää nykyhetken voittaa.
       for (let i=0;i<items.length;i++){
         const it=items[i];
-        if (!it.time || it.completed) continue;
-        const s=tMin(it.time);
-        if (s>nowMin) break; // aikajärjestyksessä — loput ovat vasta tulossa
-        nowIdx=i; nowStatus = nowMin<endMinOf(it,i) ? 'running' : 'late';
-        break;
+        if (!it.time) continue;
+        const s=tMin(it.time), e=endMinOf(it,i);
+        if (nowMin>=s && nowMin<e){
+          nowIdx=i;
+          nowStatus = (!it.virtual && it.completed) ? 'early' : 'running';
+          break;
+        }
       }
 
-      // 2) Jos kaikki alkaneet tehtävät on jo tehty: ollaanko etuajassa viimeisimmän kanssa?
+      // 2) Ei mitään käynnissä juuri nyt (aukko) -> onko viimeisin OIKEA tehtävä jäänyt myöhässä?
       if (nowIdx===-1){
-        let lastStartedIdx=-1;
-        for (let i=0;i<items.length;i++){
-          if (!items[i].time) continue;
-          if (tMin(items[i].time)<=nowMin) lastStartedIdx=i; else break;
-        }
-        if (lastStartedIdx!==-1){
-          const it=items[lastStartedIdx];
-          if (it.completed && nowMin<endMinOf(it,lastStartedIdx)){ nowIdx=lastStartedIdx; nowStatus='early'; }
+        for (let i=items.length-1;i>=0;i--){
+          const it=items[i];
+          if (it.virtual || !it.time || it.completed) continue;
+          if (nowMin>=endMinOf(it,i)){ nowIdx=i; nowStatus='late'; break; }
         }
       }
     }
