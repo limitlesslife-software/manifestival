@@ -675,6 +675,26 @@
 
   document.getElementById('todayPrev').addEventListener('click', ()=>{ state.viewDate=addDays(state.viewDate,-1); renderToday(); });
   document.getElementById('todayNext').addEventListener('click', ()=>{ state.viewDate=addDays(state.viewDate,1); renderToday(); });
+
+  // Swipe left/right on Today to move to next/previous day (touchscreens).
+  (function(){
+    const el = document.getElementById('screen-today');
+    let startX = 0, startY = 0, tracking = false;
+    el.addEventListener('touchstart', (e)=>{
+      if (e.touches.length !== 1) return;
+      startX = e.touches[0].clientX; startY = e.touches[0].clientY; tracking = true;
+    }, {passive:true});
+    el.addEventListener('touchend', (e)=>{
+      if (!tracking) return;
+      tracking = false;
+      const dx = e.changedTouches[0].clientX - startX;
+      const dy = e.changedTouches[0].clientY - startY;
+      if (Math.abs(dx) > 55 && Math.abs(dx) > Math.abs(dy)*1.6){
+        state.viewDate = addDays(state.viewDate, dx < 0 ? 1 : -1);
+        renderToday();
+      }
+    }, {passive:true});
+  })();
   document.getElementById('todayJumpBtn').addEventListener('click', ()=>{ state.viewDate=todayMidnight(); renderToday(); });
   document.getElementById('weekPrev').addEventListener('click', ()=>{ state.weekStart=addDays(state.weekStart,-7); renderWeek(); });
   document.getElementById('weekNext').addEventListener('click', ()=>{ state.weekStart=addDays(state.weekStart,7); renderWeek(); });
