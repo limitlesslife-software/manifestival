@@ -133,13 +133,54 @@ Selain                Vercel serverless            Anthropic
   promptiin näiden kenttien kautta.
 - Ylävirran kutsulla on 15 sekunnin aikakatkaisu.
 
-### Tunnetut puutteet
+### Päätepisteen suojaus (WP2)
+
+`/api/parse` oli täysin avoin: kuka tahansa internetin käyttäjä pystyi
+kuluttamaan maksullista Anthropic-kiintiötä. Korjattu.
+
+**Todennus** (`api/_auth.js`): pyyntö vaatii kirjautuneen käyttäjän.
+Supabasen access token annetaan Supabasen omalle `/auth/v1/user`
+-päätepisteelle, joka kertoo onko se voimassa.
+
+Miksi näin: JWT:n allekirjoituksen tarkistus vaatisi projektin JWT-salaisuuden
+palvelimelle. **Uutta salaisuutta ei haluttu lisätä vain tätä varten.**
+Tarkistus tehdään siellä missä tieto jo on. Hinta on yksi verkkokutsu.
+
+Turvallinen oletus: todennus on päällä, ellei `PARSE_REQUIRE_AUTH=false`
+nimenomaisesti aseteta. **Todennuspalvelun virhe EI avaa päätepistettä** —
+se palauttaa 503, ei päästä läpi.
+
+**Pyyntörajoitin** (`api/_ratelimit.js`): käyttäjäkohtainen liukuva ikkuna,
+20 pyyntöä minuutissa.
+
+Rajoitteet kerrottuna suoraan: rajoitin elää serverless-instanssin muistissa.
+Vercel käynnistää rinnakkaisia instansseja, joten laskuri ei ole jaettu eikä
+pysyvä. Se on **paras yritys**, ei tae. Se riittää estämään vahingossa
+tapahtuvan tulvan ja nostamaan rimaa satunnaiselle väärinkäytölle; se ei kestä
+hajautettua tahallista hyökkäystä.
+
+Oikea hajautettu rajoitin vaatisi ulkoisen tilan (Redis / Vercel KV). Se on
+maksullinen palvelu, jota ei lisätä ilman erillistä päätöstä. Rajapinta on
+sellainen, että toteutuksen voi vaihtaa koskematta kutsupaikkaan.
+
+**AI-vastauksen validointi** (`src/ai/proposalSchema.js`): mallin tuotokseen ei
+luoteta. Tuntemattomat kentät hylätään, kategoria ja prioriteetti validoidaan
+domainin enumeja vasten, pituudet rajataan. Ylimmän tason taulukko hylätään
+eksplisiittisesti sen sijaan että poimittaisiin vaieten ensimmäinen alkio.
+**AI ei koskaan kirjoita tietokantaan** — jokainen ehdotus käy käyttäjän
+vahvistuksen kautta.
+
+**Prompt-injektio:** `today` ja `weekday` menevät suoraan promptiin, joten ne
+validoidaan tiukasti (ISO-muoto, sallittujen viikonpäivien lista). Käyttäjän
+teksti upotetaan `JSON.stringify`-koodattuna, joten se ei voi katkaista promptin
+rakennetta. Molemmat on testattu.
+
+### Jäljelle jäävät puutteet
 
 | Puute | Vaikutus | Korjaus |
 |---|---|---|
-| `/api/parse` ei vaadi autentikaatiota | Kuka tahansa voi kuluttaa Anthropic-kiintiötä | WP2: Supabase-JWT:n tarkistus |
-| Ei pyyntökohtaista rate limitiä | Väärinkäytön kustannus | WP2 |
-| Ei kustannusseurantaa | Kulutus ei näy | WP2 |
+| Rajoitin ei ole jaettu instanssien kesken | Hajautettu väärinkäyttö mahdollinen | Ulkoinen tila, erillinen päätös |
+| Ei kustannusseurantaa | Kulutus ei näy | Myöhempi työpaketti |
 
 ---
 
@@ -155,6 +196,23 @@ Selain                Vercel serverless            Anthropic
 | 6 | Ei service workeria, ei offline-tukea | Avoin — WP6 |
 
 ---
+
+## Korjattu WP2:ssa
+
+- ✅ `/api/parse` vaatii kirjautumisen, todennus Supabasen kautta ilman uusia salaisuuksia
+- ✅ Käyttäjäkohtainen pyyntörajoitin (paras yritys, rajoitteet dokumentoitu)
+- ✅ AI-vastaus validoidaan tiukasti domainin enumeja vasten
+- ✅ Prompt-injektio estetty `today`- ja `weekday`-kenttien kautta
+- ✅ Poisto vaatii vahvistuksen (natiivi dialog, fokus peruutuksessa)
+- ✅ Epäonnistunut kirjoitus **palauttaa tilan** ja näyttää virheen — UI ei
+  enää valehtele onnistumisesta
+- ✅ Käyttäjäviesti ja diagnostiikka erotettu rakenteellisesti (`AppError`)
+- ✅ `escapeHtml` suojaa myös lainausmerkit; XSS-invariantti testattu
+- ✅ Tuplaklikkaussuoja (`singleFlight`) kaikilla async-poluilla
+- ✅ Uloskirjautuminen tyhjentää tilan, ilmoitukset ja laiteasetukset
+- ✅ Service worker ei välimuistita henkilökohtaista dataa eikä API-kutsuja
+- ✅ Tehtävätunnisteiden törmäysriski poistettu (`crypto.randomUUID`)
+- ✅ Kaikki tietokantakutsut yhdessä moduulissa — rajauksen valvonta mahdollista
 
 ## Korjattu WP1:ssä
 

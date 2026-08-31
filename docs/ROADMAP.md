@@ -1,7 +1,7 @@
 # Kehityspolku
 
 Perustuu 31.8.2026 tehtyyn tilannekartoitukseen ja konseptidokumenttiin
-"MANIFESTIVAL – KOKONAISKUVAUS" (v1.0, 23.7.2026).
+"MANIFESTIVAL – KOKONAISKUVAUS" (v1.0, 23.7.2026). Päivitetty 1.9.2026 (WP2).
 
 Tämä tiedosto ei määrittele uusia tuotevaatimuksia. Se järjestää
 konseptidokumentissa jo määritellyt ominaisuudet toteutusjärjestykseen.
@@ -12,22 +12,26 @@ konseptidokumentissa jo määritellyt ominaisuudet toteutusjärjestykseen.
 
 Konseptidokumentin luvun 29 MVP-katalogi, 11 ominaisuutta:
 
-| Ominaisuus | Tila |
-|---|---|
-| Päivän aikajana | Toimii |
-| Puheella lisääminen | Toimii |
-| Viikkosuunnittelu | Osittain — ei kuormitusanalyysiä tavoitteisiin |
-| Käyttäjäprofiili | Osittain — 7 kenttää, ei elämäntilannetta eikä työaikoja |
-| Tehtävärekisteri | Osittain — ei kestoa, määräaikaa, prioriteettia eikä projektia |
-| Unirytmi | Osittain — laskenta on, toteutuman kirjaus puuttuu |
-| Toistuvat rutiinit | Ei toteutettu — vain yksi kovakoodattu aamurutiini |
-| Ilmoitukset | Ei toteutettu |
-| Tavoitteet | Ei toteutettu |
-| Ravintorutiinit | Ei toteutettu |
-| Perustalous | Ei toteutettu — vain kategoria `talous` |
+| Ominaisuus | Ennen WP1 | Nyt | Mitä puuttuu |
+|---|---|---|---|
+| Päivän aikajana | Toimii | **Toimii** | — |
+| Puheella lisääminen | Toimii | **Toimii** | automaattitallennus ilman vahvistusta |
+| Viikkosuunnittelu | Osittain | **Osittain** | kuormitusanalyysi tavoitteisiin |
+| Tehtävärekisteri | Osittain | **Osittain** | määräaika, projekti; kentät eivät vielä tallennu |
+| Käyttäjäprofiili | Osittain | **Osittain** | elämäntilanne, työajat, rajoitteet |
+| Unirytmi | Osittain | **Osittain** | toteutuman kirjaus, iltarutiini |
+| Ilmoitukset | Ei | **Ei** | koko järjestelmä (sovitin valmiina) |
+| Toistuvat rutiinit | Ei | **Ei** | toistomoottori |
+| Tavoitteet | Ei | **Ei** | koko moduuli |
+| Ravintorutiinit | Ei | **Ei** | koko moduuli |
+| Perustalous | Ei (kategoria) | **Ei (kategoria)** | tulot, menot, budjetti |
 
-MVP:n valmiusaste on noin **38 %**. Koko konseptin ominaisuuskatalogista
-(26 kohtaa: 11 MVP + 9 V2 + 6 Tuleva) on toteutettu noin **17 %**.
+**MVP:n valmiusaste ~45 %** (oli 38 %). Koko konseptin ominaisuuskatalogista
+(26 kohtaa: 11 MVP + 9 V2 + 6 Tuleva) noin **23 %** (oli 17 %).
+
+Nousu tulee tehtävädomainin laajennuksesta, aikatauluehdotuksista, AI-polun
+kovennuksesta ja puheohjauksen parannuksista — ei uusista moduuleista.
+Neljä MVP-ominaisuutta on yhä nollalla.
 
 Konseptidokumentissa ei ole journalointia, social-ominaisuuksia, julkaisuja,
 kommentteja eikä reaktioita. Niitä ei ole myöskään koodissa.
@@ -38,41 +42,53 @@ kommentteja eikä reaktioita. Niitä ei ole myöskään koodissa.
 
 ### WP1 — Kehitysperusta, autentikaatio ja tietoturva ✅ toteutettu
 
-Paikallinen Git-klooni, haaramalli, repo-hygienia, dokumentaatio, testipohja,
-Supabase Auth, käyttäjäkohtainen omistajuusmalli, RLS-migraation luonnos,
-`/api/parse`-kovennus, automaattisen seed-kirjoituksen poisto.
-
-Avoinna: migraation ajo ja RLS:n todennus vaativat Supabase-dashboardin.
+Paikallinen Git-klooni, haaramalli, repo-hygienia, dokumentaatio, testipohja
+(64 testiä), Supabase Auth, käyttäjäkohtainen omistajuusmalli, RLS-migraation
+luonnos, `/api/parse`-kovennus, automaattisen seed-kirjoituksen poisto.
 
 ---
 
-### WP2 — Auth-viimeistely ja päätepisteen suojaus
+### WP2 — Modularisointi, tehtävädomain ja päätepisteen suojaus ✅ toteutettu
 
-Migraatio 0001 ajetaan ja todennetaan. `/api/parse` alkaa vaatia Supabase-JWT:n.
-Rate limit ja kustannusseuranta. Onboarding-virta uudelle käyttäjälle, johon
-`src/lib/seed.js` kytketään vapaaehtoiseksi "täytä esimerkkipäivällä"
--toiminnoksi. Salasanan palautus. Tilin poisto ja datan vienti
-(konseptin luku 24 vaatii).
+- `index.html` 1 154 → 250 riviä. Kaikki logiikka moduuleiksi, kerrosrajat
+  testattu (`docs/MODULARIZATION.md`)
+- Puhdas aikataulumoottori: herätys, uni, vapaat välit, deterministiset
+  ehdotukset
+- Tehtävädomain: prioriteetti, kesto, kuvaus, aikataulutuksen tila
+- Optimistinen päivitys **peruutuksella** — UI ei enää valehtele
+  onnistumisesta
+- Poiston vahvistus, lomakevalidointi, tuplaklikkaussuoja, saavutettavuus
+- `/api/parse`: kirjautuminen vaaditaan, pyyntörajoitin, AI-vastauksen
+  tiukka validointi
+- Service worker: sovelluskuori offline
+- Alustasovittimet ja Capacitor-pohja, ensimmäinen APK
+- Testit 64 → 282
+- Migraatio 0002 valmisteltu (ei ajettu)
 
-Riippuvuus: WP1. Vaatii Supabase-dashboardin.
+**Avoinna:** migraatiot 0001 ja 0002 vaativat Supabase-dashboardin.
 
 ---
 
-### WP3 — Modularisointi, virheenkäsittely ja testikattavuus
+### WP3 — Migraatioiden ajo ja tuotantoon vienti
 
-`index.html` jaetaan moduuleiksi suunnitelman mukaan (`docs/ARCHITECTURE.md`).
-Keskitetty virheilmoitus: jokainen epäonnistunut kantakutsu näkyy käyttäjälle.
-Poiston vahvistus. Testit aikataululogiikalle ennen sen siirtoa.
+Ensimmäinen paketti, joka **koskee tuotantoa**. Ei uusia ominaisuuksia.
 
-Riippuvuus: WP1. Ei tietokantamuutoksia.
+- Aja `supabase/inventory.sql`, todenna skeema ja RLS-tila
+- Aja migraatio 0001 (omistajuus + RLS), todenna
+- Aja migraatio 0002 (domain-kentät), aseta `TASK_EXTENDED_FIELDS = true`
+- Kierrätä Anthropic-avain, poista työpöydän selkokielinen tiedosto
+- Julkaise `develop` → `main` oikeassa järjestyksessä
+- Todenna tuotannossa: kirjautuminen, oma data, puheohjaus, offline
+
+Riippuvuus: WP2. **Vaatii Supabase- ja Vercel-dashboardin.**
 
 ---
 
-### WP4 — Tehtävämallin laajennus
+### WP4 — Tehtävämallin viimeistely
 
-`duration_minutes`, `deadline`, `priority`, `project_id`, `status`.
-Prioriteettijärjestys listoissa. Profiilin laajennus: työajat, elämäntilanne,
-rajoitteet. Vastaa konseptin lukua 9.
+`deadline`, `project_id`, `status`. Määräaikojen näyttö ja järjestys.
+Profiilin laajennus: työajat, elämäntilanne, rajoitteet. Vastaa konseptin
+lukua 9. Prioriteetti, kesto ja kuvaus ovat jo WP2:ssa.
 
 Riippuvuus: WP3. Tietokantamuutos (additiivinen).
 
@@ -82,22 +98,22 @@ Riippuvuus: WP3. Tietokantamuutos (additiivinen).
 
 `routines`-taulu, toistosäännöt, laajennus näkymään ajon aikana (ei tuhansia
 rivejä kantaan), yksittäisen esiintymän ohitus. Korvaa nykyisen kovakoodatun
-`virtual-routine`-erikoistapauksen. Vastaa konseptin lukua 9 ja MVP-katalogin
-kohtaa "Toistuvat rutiinit".
+`virtual-routine`-erikoistapauksen yleisellä moottorilla.
 
 Riippuvuus: WP4. Uusi taulu + RLS.
 
 ---
 
-### WP6 — Service worker, offline ja ilmoitukset
+### WP6 — Ilmoitukset ja muistutukset
 
-Service worker ja välimuististrategia — nykyinen `index.html` sisältää vain
-no-op-paikanpitäjän. Offline-kirjoitusjono. Ilmoituslupa ja aikaperusteiset
-muistutukset. Konseptin luvun 23 nelitasoinen ilmoituslogiikka: tieto,
-muistutus, toiminta nyt, kriittinen hoputus. Ilmoitusasetukset.
+Ilmoituslupa, aikaperusteiset muistutukset, konseptin luvun 23 nelitasoinen
+logiikka (tieto / muistutus / toiminta nyt / kriittinen hoputus),
+ilmoitusasetukset. Sovitinrajapinta on jo olemassa (`src/platform/`).
 
-Riippuvuus: WP3, WP5. Rajoite: web push on epäluotettava iOS:llä ja rajoitettu
-Androidin taustatilassa — täysi toteutus vaatii WP12:n.
+Rajoite: web push on epäluotettava. **Luotettava toteutus vaatii WP12:n.**
+Web-toteutus tehdään ensin, koska se kattaa etualalla olevan käytön.
+
+Riippuvuus: WP3, WP5.
 
 ---
 
@@ -114,9 +130,8 @@ Riippuvuus: WP4, WP5.
 ### WP8 — Hyvinvointimoduuli
 
 Oma näkymä. Unen toteutuman kirjaus ja iltarutiini. Ateriat, evässuunnittelu ja
-vedenjuonti. Kuormitusnäkymä (vihreä/keltainen/punainen) konseptin luvun 16
-mukaan. Mieliala. Vastaa konseptin lukuja 13, 14 ja 16. Hyvinvointi oli
-27.7.2026 mockupissa mutta poistettiin.
+vedenjuonti. Kuormitusnäkymä konseptin luvun 16 mukaan. Mieliala.
+Vastaa konseptin lukuja 13, 14 ja 16.
 
 Riippuvuus: WP4, WP5.
 
@@ -132,11 +147,11 @@ Riippuvuus: WP4.
 
 ---
 
-### WP10 — Älykäs aikataulutus
+### WP10 — Älykäs uudelleenjärjestely
 
-Vapaan ajan etsintä, tehtävien automaattinen sijoittelu, uudelleenjärjestely
-viiveiden jälkeen, perustellut ehdotukset. Vastaa konseptin lukuja 9 ja 22 sekä
-V2-katalogin kohtia "Älykäs aikaehdotus" ja "Automaattinen uudelleenjärjestely".
+Suunnitelman päivitys viiveiden jälkeen, tehtävien siirto päivien välillä,
+perustellut ehdotukset laajemmin. Vapaan ajan etsintä ja perussijoittelu ovat
+jo WP2:ssa.
 
 Riippuvuus: WP4, WP5, WP7.
 
@@ -152,17 +167,26 @@ Riippuvuus: WP6. Osa vaatii WP12:n.
 
 ---
 
-### WP12 — Natiivi mobiilikerros (Capacitor)
+### WP12 — Natiivikerroksen toteutus
 
-Capacitor-käärintä nykyisen web-koodin ympärille. Taustatoiminta, natiivi
-puheentunnistus, luotettavat ilmoitukset, taustasijainti. Mahdollistaa
-konseptin V2-lupaukset, joita selain ei pysty toteuttamaan.
+`src/platform/capacitor.js`: natiivi puheentunnistus, ajastetut ilmoitukset,
+taustasijainti. Android-projekti ja APK-koonti ovat jo WP2:ssa.
 
-Ratkaisu on Capacitor eikä React Native: Capacitor kääriin olemassa olevan
-web-koodin sellaisenaan, kun taas React Native vaatisi täyden
-uudelleenkirjoituksen.
+Ratkaisu on Capacitor eikä React Native — perustelut `docs/ANDROID-STRATEGY.md`.
 
-Riippuvuus: WP3, WP6. **Ainoa työpaketti, joka vaatii fyysisen laitetestin.**
+Riippuvuus: WP6. **Ainoa työpaketti, joka vaatii fyysisen laitetestin.**
+
+---
+
+### WP13 — Offline-synkronointi
+
+Muutosloki, palvelinpuolen aikaleimat, konfliktisääntö per kenttä, näkyvä
+synkronointitila. Vaatimukset on kuvattu `docs/ARCHITECTURE.md`:ssä.
+
+Tätä **ei tehdä sivutuotteena**. Offline-kirjoitus ilman konfliktimallia on
+vaarallisempi kuin sen puuttuminen.
+
+Riippuvuus: WP4, WP12.
 
 ---
 

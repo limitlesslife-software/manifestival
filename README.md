@@ -3,87 +3,93 @@
 > Suunnittele elämä, jota haluat elää.
 
 Manifestival on henkilökohtainen elämänhallintasovellus, joka yhdistää päivä- ja
-viikkosuunnittelun, tehtävät, rutiinit, unirytmin ja puheohjauksen yhdeksi
-järjestelmäksi. Se ei ole kalenteri eikä tehtävälista, vaan pyrkii muuttamaan
-tavoitteet käytännön tekemiseksi päivä kerrallaan.
+viikkosuunnittelun, tehtävät, unirytmin ja puheohjauksen yhdeksi järjestelmäksi.
+Se ei ole kalenteri eikä tehtävälista: se laskee milloin päiväsi alkaa ja
+päättyy, ja auttaa mahduttamaan tärkeät asiat siihen väliin.
 
-Tuotevisio on kuvattu konseptidokumentissa "MANIFESTIVAL – KOKONAISKUVAUS"
-(v1.0, 23.7.2026, 31 s.). Se ei ole tässä repossa. Toteutuksen suhde siihen on
+Tuotevisio on konseptidokumentissa "MANIFESTIVAL – KOKONAISKUVAUS"
+(v1.0, 23.7.2026). Se ei ole tässä repossa; toteutuksen suhde siihen on
 kuvattu tiedostossa `docs/ROADMAP.md`.
 
 ---
 
-## Nykyinen arkkitehtuuri lyhyesti
+## Arkkitehtuuri lyhyesti
 
-Sovellus on **PWA ilman käännösvaihetta**. Selain lataa tiedostot sellaisenaan.
+**PWA ilman käännösvaihetta.** Selain lataa moduulit sellaisenaan ja Vercel
+tarjoilee ne staattisesti. Ei bundleria, ei transpilointia, ei build-vaihetta
+web-tuotannossa.
 
 ```
-Selain (PWA)
-  index.html ................ käyttöliittymä, tila ja renderöinti
-  src/lib/*.js .............. puhtaat, testattavat apumoduulit
-        |
-        |-- Supabase JS -----> Supabase (PostgreSQL + Auth)
-        |                      taulut: tasks, profile
-        |                      turva: RLS, auth.uid() = omistaja
-        |
-        `-- POST /api/parse -> Vercel serverless -> Anthropic API
-                               (API-avain vain palvelimella)
+Selain (PWA)  ·  Android (Capacitor-kuori, sama koodi)
+  index.html ................ runko, ikonit, entrypoint
+  src/app/ ................. näkymät, tila, elinkaari
+  src/ui/ .................. DOM-apuvälineet, ilmoitukset, dialogit
+  src/domain/ .............. puhdas liiketoimintalogiikka
+  src/data/ ................ Supabase, istunto, skeemaportti
+  src/ai/ .................. AI-ehdotuksen validointi
+  src/platform/ ............ alustaerot (web / natiivi)
+  sw.js .................... offline-sovelluskuori
+        │                            │
+        │ supabase-js                │ POST /api/parse
+        v                            v
+  Supabase                    Vercel serverless
+   Auth + PostgreSQL           api/parse.js
+   RLS: auth.uid()             ANTHROPIC_API_KEY (vain palvelimella)
+                                      │
+                                      v
+                               Anthropic Messages API
 ```
 
-Tarkempi kuvaus: `docs/ARCHITECTURE.md`.
+Riippuvuudet osoittavat aina alaspäin: `app → ui/ai/data/domain/lib`,
+`domain → lib`, `lib → ei mitään`. Tämä on **testattu invariantti**, ei
+pelkkä sopimus. Ks. `docs/MODULARIZATION.md` ja `docs/ARCHITECTURE.md`.
 
 | | |
 |---|---|
-| Frontend | Vanilla JS + CSS, ei frameworkia, ei bundleria |
-| Moduulit | Natiivit ES-moduulit (`<script type="module">`) |
+| Frontend | Vanilla JS + CSS, natiivit ES-moduulit |
 | Backend | Supabase (PostgreSQL, Auth) |
 | AI | Anthropic Messages API palvelinpuolen proxyn kautta |
 | Hosting | Vercel |
-| Node | 24.x (vain testien ajoon, ei ajonaikainen riippuvuus) |
+| Android | Capacitor 8 (sama koodi, ei toista koodikantaa) |
+| Node | 24.x (vain testeihin ja koontiin, ei ajonaikainen riippuvuus) |
 
 ---
 
 ## Paikallinen ajo
 
 Sovellus käyttää ES-moduuleita, joten **se pitää tarjoilla HTTP:n yli**.
-Suoraan `file://`-osoitteesta avaaminen ei toimi (selain estää moduulien
-lataamisen).
+`file://`-osoitteesta avaaminen ei toimi.
 
 ```bash
 npm run serve      # http://localhost:3000
 ```
 
-Palvelin on `scripts/serve.mjs` — pelkkää Node.js:ää, ei riippuvuuksia eikä
-asennusta. Projektissa ei ole `node_modules`-hakemistoa eikä sitä tarvita.
+Palvelin on `scripts/serve.mjs` — pelkkää Node.js:ää, ei riippuvuuksia.
 
 Huomioita:
 
-- `/api/parse` **ei toimi** pelkällä staattisella palvelimella. Puheohjauksen
-  jäsennys vaatii Vercelin ajoympäristön (`vercel dev`) tai deployn.
-  Ilman sitä puhekomento tallentuu raakatekstinä — sovellus on suunniteltu
-  kestämään tämä.
-- Sovellus vaatii kirjautumisen. Kirjautumaton käyttäjä ei näe mitään dataa.
+- Sovellus vaatii kirjautumisen. Kirjautumaton ei näe mitään dataa.
+- `/api/parse` **ei toimi** staattisella palvelimella; se on Vercelin
+  serverless-funktio. Puheohjaus tallentaa komennon raakatekstinä ilman
+  jäsennystä — sovellus on suunniteltu kestämään tämä.
+- Tietokantayhteys menee **tuotanto-Supabaseen**. Älä luo testidataa siellä.
 
 ---
 
-## Testit
+## Komennot
 
-```bash
-npm test        # Node.js -testiajuri: yksikkö- ja staattiset turvatestit
-npm run check   # palvelinpuolen tiedostojen syntaksitarkistus
-```
+| Komento | Mitä tekee |
+|---|---|
+| `npm test` | 282 testiä (yksikkö-, arkkitehtuuri- ja turvallisuustestit) |
+| `npm run check` | Palvelinpuolen syntaksitarkistus |
+| `npm run smoke` | Koko moduuligraafi HTTP:n yli, 56 tarkistusta |
+| `npm run serve` | Kehityspalvelin |
+| `npm run build:web` | Kokoaa `dist/` — **vain Androidia varten** |
+| `npm run sync:android` | `dist/` → Android-projektin assetit |
+| `npm run build:android` | Koko ketju + Gradle → APK |
 
-Testit kattavat:
-
-- puhtaat päivämäärä- ja aikafunktiot (`src/lib/datetime.js`)
-- käyttäjäscopingin apufunktiot (`src/lib/rows.js`)
-- staattisen eheyden: kaksoiskappale-id:t, rikkinäiset `getElementById`- ja
-  SVG-viittaukset
-- turvallisuusinvariantit: ei salaisuuksia lähdekoodissa, ei rajaamattomia
-  tietokantakutsuja, ei automaattista seed-kirjoitusta
-- `/api/parse`-päätepisteen syötevalidoinnin
-
-Testit eivät ota yhteyttä Supabaseen eivätkä Anthropicin API:in.
+Testit eivät ota verkkoyhteyttä eivätkä koske tietokantaan.
+Ks. `docs/TESTING.md`.
 
 ---
 
@@ -94,37 +100,77 @@ Vain **nimet** — arvot eivät kuulu versionhallintaan. Ks. `.env.example`.
 | Muuttuja | Missä | Selitys |
 |---|---|---|
 | `ANTHROPIC_API_KEY` | **Vain palvelin** (Vercel) | Puheohjauksen jäsennys. Ei koskaan selaimeen. |
-| `SUPABASE_URL` | Julkinen | Supabase-projektin osoite. Nykyisin kovakoodattu `index.html`:ään. |
-| `SUPABASE_ANON_KEY` | Julkinen | Supabasen anon-avain. Julkinen arvo; turva perustuu RLS:ään. |
+| `PARSE_REQUIRE_AUTH` | Palvelin, valinnainen | `false` poistaa `/api/parse`-todennuksen. Hätävara. |
+| `SUPABASE_URL` | Julkinen | Kovakoodattu `src/data/config.js`:ään |
+| `SUPABASE_ANON_KEY` | Julkinen | Julkinen arvo; turva perustuu RLS:ään |
 
 ---
 
-## Repo- ja deploy-malli
+## Repo- ja julkaisumalli
 
 - `main` on **tuotanto**. Sitä ei käytetä kehitykseen eikä siihen pushata suoraan.
 - Kehitys tapahtuu feature-haaroissa ja etenee `develop`-haaran kautta.
-- Vercel deployaa `main`-haarasta.
+- Vercel julkaisee `main`-haarasta.
 
-Katso `CONTRIBUTING.md` ja `docs/DEPLOYMENT.md`.
+Ks. `CONTRIBUTING.md` ja `docs/DEPLOYMENT.md`.
 
 ---
 
 ## Hakemistorakenne
 
 ```
-index.html                     Sovellus (käyttöliittymä + logiikka)
+index.html                     Runko: merkintä, ikonit, entrypoint
+sw.js                          Service worker (offline-sovelluskuori)
 manifest.json                  PWA-manifesti
-icon-*.png                     Sovelluskuvakkeet
+capacitor.config.json          Android-kuoren konfiguraatio
+
+src/
+  styles.css                   Kaikki tyylit
+  app/                         Näkymät, tila, elinkaari
+    main.js                      bootstrap
+    state.js  actions.js         tila ja sen muutokset
+    auth.js  navigation.js       kirjautuminen ja navigointi
+    voice.js  onboarding.js      puheohjaus ja ensikäyttö
+    views/                       today, week, tasks, profile
+  ui/                          dom, toast, confirm
+  domain/                      task, scheduler, week, categories, priority
+  data/                        client, session, tasksRepo, profileRepo,
+                               schema (migraatioportti), preferences
+  ai/                          proposalSchema, parseClient
+  platform/                    alustasovittimet (web / natiivi)
+  lib/                         datetime, format, rows, result, seed
+
 api/
   parse.js                     Vercel serverless: Anthropic-proxy
-  _validate.js                 Syötevalidointi (alaviiva = ei julkinen reitti)
-src/lib/
-  datetime.js                  Puhtaat päivämäärä-/aikafunktiot
-  rows.js                      Kanta-/sovellusrivien muunnos + scoping-suojat
-  seed.js                      Esimerkkidata — EI kytketty sovellukseen
-supabase/
-  inventory.sql                Read-only skeeman inventointi
-  migrations/                  Versionhallitut migraatiot
-tests/                         Node.js -testit
-docs/                          Arkkitehtuuri, skeema, turvallisuus, deploy, roadmap
+  _auth.js                     Kutsujan todennus
+  _ratelimit.js                Pyyntörajoitin
+  _validate.js                 Syötevalidointi
+
+android/                       Capacitorin kuori. Ei sovelluslogiikkaa.
+supabase/                      inventory.sql + versionhallitut migraatiot
+scripts/                       serve, smoke, build-web
+tests/                         282 testiä
+docs/                          Arkkitehtuuri, skeema, turvallisuus, deploy,
+                               roadmap, modularisointi, Android, testaus,
+                               domain-malli
 ```
+
+---
+
+## Tila
+
+| Alue | Tila |
+|---|---|
+| Päivä- ja viikkosuunnittelu | Toimii |
+| Tehtävät (luonti, muokkaus, poisto, valmistuminen) | Toimii |
+| Prioriteetti, kesto, kuvaus | Toimii — **ei vielä tallennu**, ks. migraatio 0002 |
+| Automaattinen herätys- ja unilaskenta | Toimii |
+| Aikatauluehdotukset | Toimii |
+| Puheohjaus ja AI-jäsennys | Toimii |
+| Kirjautuminen ja käyttäjäkohtainen data | Toteutettu — **vaatii migraation 0001** |
+| Offline-sovelluskuori | Toimii |
+| Android-APK | Rakennettu paikallisesti, ei testattu laitteella |
+| Ilmoitukset, sijainti, taustatoiminta | Ei toteutettu — ks. `docs/ROADMAP.md` |
+
+**Kaksi migraatiota odottaa ajoa tuotantoon.** Ne ovat luonnoksia eikä niitä
+ole ajettu mihinkään ympäristöön. Ks. `supabase/README.md`.

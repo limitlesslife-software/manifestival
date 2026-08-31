@@ -105,6 +105,50 @@ käsitettä "oma data", joten anon-roolille ei voi määritellä turvallista raj
 
 ---
 
+---
+
+## Migraatio 0002 — tehtävän domain-kentät
+
+`supabase/migrations/0002_task_domain_fields.sql` — **luonnos, ei ajettu.**
+
+Esiehto: migraatio 0001 on ajettu ja RLS on päällä. Migraatio tarkistaa tämän
+itse ja keskeytyy virheeseen, jos ehto ei täyty.
+
+| Sarake | Tyyppi | Selitys |
+|---|---|---|
+| `description` | text | Pidempi konteksti; otsikko pysyy lyhyenä |
+| `duration_minutes` | integer, 1–1440 | Kesto, kun kellonaikaa ei ole |
+| `priority` | text, not null, oletus `normaali` | `korkea` / `normaali` / `matala` |
+| `scheduling_state` | text, oletus `manual` | `manual` / `auto` / `unscheduled` |
+| `created_at` | timestamptz, oletus `now()` | |
+| `updated_at` | timestamptz, oletus `now()` | Trigger päivittää |
+
+Lisäksi indeksi `(user_id, date, priority)`.
+
+**Miksi turvallinen:** puhtaasti additiivinen. Ei muuta eikä poista mitään.
+Olemassa oleva data säilyy ja vanha koodi toimii sen jälkeenkin, koska kaikki
+uudet sarakkeet ovat nullable tai niillä on oletusarvo.
+
+**Peruttavissa** ilman tietohäviötä (uusiin sarakkeisiin tallennettu tieto
+katoaa, vanha data säilyy). Rollback-SQL on migraation lopussa.
+
+### Olemassa olevien rivien aikataulutuksen tila
+
+Migraatio merkitsee vanhat rivit `manual`-tilaan, jos niillä on kellonaika.
+Ne on luotu käyttäjän omilla toimilla, joten automaatti ei saa siirtää niitä.
+Tämä on tietoinen valinta konseptin luvun 7 mukaisesti.
+
+### Koodin käyttöönotto
+
+Migraation jälkeen: `src/data/schema.js` → `TASK_EXTENDED_FIELDS = true`.
+Yhden rivin muutos; kaikki muu koodi on jo valmiina.
+
+**Ennen tätä** kuvaus, kesto, prioriteetti ja aikataulutuksen tila elävät vain
+selaimen muistissa. Käyttöliittymä kertoo sen käyttäjälle — se ei teeskentele
+tallentavansa niitä.
+
+---
+
 ## Ajojärjestys
 
 Migraatio ja siitä riippuva koodi ovat toisistaan riippuvaisia. Väärä

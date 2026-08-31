@@ -1,0 +1,27 @@
+# Rivinvaihtojen normalisointi.
+#
+# Kehityskone on Windows (core.autocrlf=true), mutta osa tiedostoista rikkoutuu,
+# jos ne saavat CRLF-rivinvaihdot: shell-skriptit eivat kaynnisty Unixilla ja
+# Gradlen wrapper on juuri sellainen.
+
+* text=auto
+
+# Skriptit, joiden PITAA sailyttaa LF
+gradlew      text eol=lf
+*.sh         text eol=lf
+*.mjs        text eol=lf
+*.cjs        text eol=lf
+
+# Windows-skriptit tarvitsevat CRLF
+*.bat        text eol=crlf
+gradlew.bat  text eol=crlf
+
+# Binaaritiedostot: ei muunnoksia
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.pdf binary
+*.zip binary
+*.apk binary
+*.aab binary
+*.jar binary

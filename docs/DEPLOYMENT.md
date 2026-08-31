@@ -44,11 +44,47 @@ sisällä salaisuuksia.
 | Muuttuja | Ympäristö | Pakollinen |
 |---|---|---|
 | `ANTHROPIC_API_KEY` | Production (+ Preview jos puheohjausta testataan) | Kyllä, muuten `/api/parse` palauttaa 500 |
+| `PARSE_REQUIRE_AUTH` | Valinnainen | Ei. Vain hätävara — ks. alla |
 
 Asetetaan: Vercel -> projekti -> **Settings** -> **Environment Variables**.
 
-Ilman avainta sovellus toimii muuten normaalisti; puheohjaus tallentaa
-komennon raakatekstinä eikä jäsennä sitä.
+Ilman Anthropic-avainta sovellus toimii muuten normaalisti; puheohjaus
+tallentaa komennon raakatekstinä eikä jäsennä sitä.
+
+### PARSE_REQUIRE_AUTH — tärkeä julkaisujärjestys
+
+`/api/parse` vaatii oletuksena kirjautuneen käyttäjän. **Uusi selainkoodi
+lähettää tokenin, vanha ei.**
+
+Tämä tarkoittaa, että `api/` ja selainkoodi pitää julkaista **yhdessä**. Jos
+vain `api/` päivittyisi, tuotannossa oleva vanha selain lakkaisi jäsentämästä
+puhetta. Koska molemmat ovat samassa repossa ja samassa deployssa, tämä
+tapahtuu automaattisesti — mutta jos jokin menee pieleen, hätävara on asettaa
+`PARSE_REQUIRE_AUTH=false` ja korjata tilanne rauhassa.
+
+Mikä tahansa muu arvo kuin `false` pitää todennuksen päällä. Tämä on
+tarkoituksellinen: kirjoitusvirhe ei saa avata päätepistettä.
+
+---
+
+## Service workerin versiointi
+
+`sw.js` sisältää vakion:
+
+```js
+const CACHE_VERSION = 'v1';
+```
+
+**Nosta versiota aina kun sovelluskuori muuttuu** (uusi moduuli, muuttunut
+`index.html`, uusi tyylitiedosto). Vanhat välimuistit siivotaan
+aktivointivaiheessa, joten nosto on turvallinen tapa pakottaa päivitys.
+
+Service worker ei käytä `skipWaiting`-kutsua: uusi versio otetaan käyttöön
+vasta kun kaikki välilehdet on suljettu. Näin JS-moduulit eivät vaihdu kesken
+istunnon.
+
+Testi `sovelluskuoren välimuistilista vastaa oikeasti ladattavia moduuleja`
+kaatuu, jos uusi moduuli unohtuu listalta.
 
 ---
 
@@ -150,6 +186,35 @@ Käy nämä läpi kerran:
   `https://manifestival-ten.vercel.app`
 - **Database -> Backups**: onko varmuuskopiointi päällä
 - **Database -> Tables**: RLS-status tauluille `tasks` ja `profile`
+
+---
+
+## Android-julkaisu
+
+Android on erillinen julkaisukanava eikä se vaikuta web-tuotantoon.
+
+```bash
+npm run build:android    # dist/ -> android -> APK
+```
+
+APK: `android/app/build/outputs/apk/debug/app-debug.apk`
+
+**Java-versio:** Capacitor 8 vaatii Java 21+. Koneen oletus-JDK on 17, joten
+koonti epäonnistuu virheeseen `invalid source release: 21`. Android Studion
+mukana tuleva JDK 25 kelpaa:
+
+```bash
+JAVA_HOME="/c/Program Files/Android/Android Studio/jbr" ./gradlew assembleDebug
+```
+
+**Huomio versioinnista:** web ja Android julkaistaan eri tahdissa. Käyttäjällä
+voi olla vanha APK, kun web on jo päivittynyt. Siksi **Supabase-skeeman pitää
+pysyä taaksepäin yhteensopivana** — additiiviset migraatiot, ei sarakkeiden
+poistoja tai uudelleennimeämisiä.
+
+Release-AAB ja Play Store vaativat allekirjoitusavaimen. Sitä ei ole vielä
+luotu. Avain **ei koskaan** mene versionhallintaan (`.gitignore`: `*.keystore`,
+`*.jks`).
 
 ---
 

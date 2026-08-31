@@ -1,174 +1,244 @@
 # Arkkitehtuuri
 
-Tila: WP1:n jälkeen. Päivitetty 31.8.2026.
+Tila: WP2:n jälkeen. Päivitetty 1.9.2026.
 
 ---
 
 ## Yleiskuva
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│ Selain (PWA, max 480 px leveä sovellusnäkymä)           │
-│                                                          │
-│  index.html                                              │
-│    ├─ CSS-muuttujat ja komponenttityylit                │
-│    ├─ HTML: 4 näkymää + kirjautumisportti + puhepaneeli  │
-│    └─ <script type="module">                             │
-│         ├─ tila (state, authUser)                        │
-│         ├─ datakerros (Supabase-kutsut)                  │
-│         ├─ aikataululogiikka (auto herätys/uni)          │
-│         ├─ renderöinti (innerHTML-koosteet)              │
-│         └─ autentikointivirta                            │
-│                                                          │
-│  src/lib/datetime.js   puhtaat aika-/päivämääräfunktiot  │
-│  src/lib/rows.js       rivimuunnos + scoping-suojat      │
-│  src/lib/seed.js       esimerkkidata (EI kytketty)       │
-└───────────┬───────────────────────────┬─────────────────┘
-            │                           │
-   supabase-js v2 (CDN)          fetch POST /api/parse
-            │                           │
-            v                           v
-┌───────────────────────┐   ┌───────────────────────────────┐
-│ Supabase              │   │ Vercel serverless             │
-│  Auth (sähköposti)    │   │  api/parse.js                 │
-│  PostgreSQL           │   │   + api/_validate.js          │
-│   tasks, profile      │   │                               │
-│  RLS: auth.uid()      │   │  ANTHROPIC_API_KEY (env)      │
-└───────────────────────┘   └──────────────┬────────────────┘
-                                           │
-                                           v
-                              ┌────────────────────────────┐
-                              │ Anthropic Messages API     │
-                              │ claude-haiku-4-5-20251001  │
-                              └────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│ index.html — RUNKO (250 riviä)                               │
+│   merkintä · SVG-ikonit · <link styles.css> · <script main.js>│
+│   EI sovelluslogiikkaa. Tämä on testattu invariantti.        │
+└───────────────────────────┬──────────────────────────────────┘
+                            │
+┌───────────────────────────▼──────────────────────────────────┐
+│ src/app/     selain, DOM, tapahtumat, elinkaari              │
+│   main.js      bootstrap: kytkennät kerran, tilaus, istunto  │
+│   state.js     tila + tilaajat                               │
+│   actions.js   optimistinen päivitys + peruutus              │
+│   auth.js  navigation.js  voice.js  onboarding.js            │
+│   views/  today · week · tasks · profile                     │
+├──────────────────────────────────────────────────────────────┤
+│ src/ui/      dom · toast · confirm     (ei tunne domainia)   │
+├──────────────────────────────────────────────────────────────┤
+│ src/ai/      proposalSchema · parseClient                    │
+│ src/data/    client · session · tasksRepo · profileRepo      │
+│              schema (migraatioportti) · preferences          │
+│ src/platform/ alustaerot: web nyt, natiivi myöhemmin         │
+├──────────────────────────────────────────────────────────────┤
+│ src/domain/  task · scheduler · week · categories · priority │
+│              PUHDAS: ei DOM:ia, ei verkkoa, ei kelloa        │
+├──────────────────────────────────────────────────────────────┤
+│ src/lib/     datetime · format · rows · result · seed        │
+│              PUHDAS: ei riippuvuuksia                        │
+└──────────────────────────────────────────────────────────────┘
 ```
+
+**Riippuvuudet osoittavat aina alaspäin.** Sääntö on koodattu
+`tests/architecture.test.mjs`-testeihin, jotka kaatuvat heti jos domain alkaa
+koskea DOM:iin tai jos moduulien väliin syntyy sykli.
 
 ---
 
 ## Miksi ei frameworkia
 
 Sovellus on tarkoituksella ilman frameworkia, bundleria ja käännösvaihetta:
-selain lataa tiedostot sellaisenaan ja Vercel tarjoilee ne staattisesti.
-Tämä pitää deployn yksinkertaisena ja poistaa kokonaisen luokan ongelmia
-(build-konfiguraatio, riippuvuuspäivitykset, lähdekarttat).
+selain lataa moduulit sellaisenaan ja Vercel tarjoilee ne staattisesti.
 
-Vaihtoehto arvioitiin WP1:n yhteydessä. Framework-migraatio ei ratkaisisi
-yhtäkään todetuista ongelmista (autentikaatio, RLS, ilmoitukset, testit),
-joten se lykättiin. Päätös arvioidaan uudelleen, jos näkymien määrä kasvaa
-selvästi tai komponenttien uudelleenkäytölle syntyy todellinen tarve.
+Vaihtoehto arvioitiin WP2:ssa. Framework-migraatio ei olisi ratkaissut
+yhtäkään todetuista ongelmista (autentikaatio, RLS, virheenkäsittely, testit),
+joten se lykättiin. **Modularisointi ratkaisi ne ilman uutta riippuvuutta.**
 
----
-
-## Moduulirakenne
-
-`index.html` on yhä monoliitti (noin 1 150 riviä), mutta puhtaat apufunktiot on
-irrotettu ES-moduuleiksi, jotta ne voidaan testata ilman selainta.
-
-| Moduuli | Sisältö | Miksi irrotettu |
-|---|---|---|
-| `src/lib/datetime.js` | `fmtISO`, `parseISO`, `addDays`, `startOfWeek`, `sameDay`, `todayMidnight`, `sortByTime`, `loadClass`, `subtractMinutes`, `addMinutes` | Ohjaavat automaattista herätys- ja unilaskentaa. Sisältävät keskiyön ylityksen, jota ei voinut testata monoliitissa. |
-| `src/lib/rows.js` | `toRow`, `fromRow`, `assertClientSafe`, `newTaskId` | Turvallisuuskriittinen: estää `user_id`:n lähettämisen clientilta. |
-| `src/lib/seed.js` | `seedTasks` | Siirretty pois tuotantopolusta. Ei importoida mistään. |
-
-`src/lib/package.json` sisältää `{"type":"module"}`, jotta Node kohtelee näitä
-ES-moduuleina. Se ei vaikuta `api/`-hakemistoon, joka pysyy CommonJS-muodossa
-Vercelin serverless-funktioita varten.
-
-**Huom:** ES-moduulien takia sovellusta ei voi enää avata suoraan
-`file://`-osoitteesta. Käytä `npm run serve`.
+Päätös arvioidaan uudelleen, jos näkymien määrä kasvaa selvästi tai
+komponenttien uudelleenkäytölle syntyy todellinen tarve.
 
 ---
 
-## Sovelluksen tila
+## Tilanhallinta
 
-Yksi globaali olio ja erillinen kirjautumistila:
+Yksi store, yksi paikka muutoksille.
 
 ```js
 state = {
-  tasks: [],          // kirjautuneen käyttäjän tehtävät
-  viewDate: Date,     // Tänään-näkymän päivä
-  weekStart: Date,    // Viikko-näkymän maanantai
-  profile: {...},     // ikä, paino, pituus, unitavoite, matka-ajat
-  editingId: null     // muokattavan tehtävän id
+  tasks, viewDate, weekStart, profile, profileExists,
+  editingId, screen, loading
 }
-
-authUser = null | { id, email, ... }   // Supabase-käyttäjä
 ```
 
-`requireUserId()` heittää poikkeuksen, jos kutsu tapahtuu ilman kirjautumista.
-Jokainen tietokantakutsu käyttää sitä, jolloin rajaamaton kysely ei ole
-mahdollinen vahingossa.
+`src/app/state.js` julkaisee muutokset tilaajille. Näkymät tilaavat
+`subscribe()`-funktiolla, joten yksikään toiminto ei joudu muistamaan kutsua
+`renderAll()`. Ennen tätä datakerros kutsui renderöintiä itse.
+
+Kirjautuneen käyttäjän identiteetti on erikseen `src/data/session.js`:ssä.
+`requireUserId()` **heittää poikkeuksen** ilman kirjautumista, joten rajaamaton
+kysely kaatuu ennen kuin se lähtee verkkoon.
+
+---
+
+## Optimistinen päivitys ja peruutus
+
+Tämä on `src/app/actions.js`:n keskeisin vastuu.
+
+```
+1. talleta nykytila
+2. päivitä käyttöliittymä heti          (nopea tuntuma säilyy)
+3. kirjoita kantaan
+4. jos kirjoitus epäonnistuu:
+     PALAUTA aiempi tila
+     näytä käyttäjälle ymmärrettävä virhe
+```
+
+Aiemmin vaihe 4 puuttui kokonaan: virhe meni `console.error`iin ja näyttö jäi
+valehtelemaan onnistumisesta. Nyt jokainen kirjoituspolku peruuttaa itsensä ja
+tämä on testattu.
+
+---
+
+## Virheiden käsittely
+
+`src/lib/result.js` pakottaa erottelun:
+
+| | |
+|---|---|
+| `AppError.userMessage` | Lyhyt suomenkielinen viesti käyttäjälle |
+| `AppError.toDiagnostic()` | Koodi + syy + Supabasen yksityiskohdat konsoliin |
+
+Repositoriot palauttavat `{ ok, value }` tai `{ ok, error }` — ne eivät
+koskaan heitä Supabasen viestiä eteenpäin. `src/ui/toast.js` näyttää
+käyttäjäviestin ja lokittaa diagnostiikan.
 
 ---
 
 ## Näkymät ja navigaatio
 
-| Näkymä | Elementti | Sisältö |
-|---|---|---|
-| Kirjautuminen | `#authGate` | Kirjaudu / Luo tili, virhe- ja latausTilat |
-| Tänään | `#screen-today` | Aikajana SVG-polulla, NYT/MYÖHÄSSÄ/ETUAJASSA, kuormitus- ja valmiuschipit |
-| Viikko | `#screen-week` | Viikkonauha kuormituspisteillä + ryhmitelty lista |
-| Tehtävät | `#screen-tasks` | Kaikki tehtävät, lisäys- ja muokkauslomake |
-| Profiili | `#screen-profile` | Henkilötiedot, aikatauluparametrit, uloskirjautuminen |
+| Näkymä | Sisältö |
+|---|---|
+| Kirjautuminen `#authGate` | Kirjaudu / luo tili, virhe- ja lataustilat |
+| Tänään | Aikajana, aikatauluttamattomat, vapaat välit, tehdyt |
+| Viikko | Viikkonauha kuormituksella + päivittäin ryhmitelty lista |
+| Tehtävät | Koko lista, lisäys- ja muokkauslomake |
+| Profiili | Henkilötiedot, aikatauluparametrit, esikatselu, uloskirjautuminen |
 
-Navigointi on alapalkin välilehdillä (`switchTab`). Näkymät ovat päällekkäisiä
-absoluuttisesti sijoitettuja elementtejä, joista aktiivisella on `.active`.
+Navigointi on alapalkin välilehdillä. Piilotettu näkymä saa `inert`- ja
+`aria-hidden`-määreet, joten se on poissa sekä sarkainjärjestyksestä että
+ruudunlukijalta.
+
+**Tapahtumakytkennät tehdään tasan kerran** käynnistyksessä (`init*`-funktiot).
+Renderöinti korvaa vain listojen sisällön, joten kuuntelijat eivät kasaannu.
+Tämä on testattu invariantti.
 
 ---
 
 ## Automaattinen aikataululogiikka
 
 Merkittävä osa arvosta syntyy laskennasta, jota **ei tallenneta kantaan**.
-`getDisplayItemsForDate()` yhdistää oikeat tehtävät ja lasketut ehdotukset:
+`domain/scheduler.js` on puhdas funktio ja siksi kattavasti testattavissa.
 
-- **Herätys** — jos päivälle ei ole merkitty herätystä (`is_wake`), se lasketaan
-  aikaisimmasta `tyo`-kategorian tehtävästä vähentämällä työmatka ja aamutoimet.
-- **Aamutoimet** — herätyksestä eteenpäin profiilin `routineMinutes`, ellei
-  käyttäjällä ole omaa merkintää samalla aikavälillä.
-- **Uni** — huomisen herätysajasta vähennetään unitavoite.
-
-Nämä renderöidään AUTO-merkintöinä katkoviivalla. Ne eivät ole kuitattavissa
-eivätkä ne vaikuta kuormituslaskentaan. Ne on myös suljettu pois
-"myöhässä"-päättelystä — muuten ensimmäinen niistä jäisi pysyvästi
-myöhässä-tilaan koko päiväksi.
+Yksityiskohdat: `docs/DOMAIN-MODEL.md`.
 
 ---
 
-## Autentikointi
+## Offline-malli
 
-Supabasen oma sähköposti-/salasanakirjautuminen. Sovellus ei käsittele
-salasanoja itse eikä tallenna niitä.
+`sw.js` toteuttaa **vain sovelluskuoren** offline-toiminnan: sivu avautuu,
+käyttöliittymä latautuu ja käyttäjälle kerrotaan näkyvästi, ettei verkkoa ole.
 
-```
-sivun lataus
-  └─ authSplash näkyy
-  └─ sb.auth.getSession()
-       ├─ istunto löytyi  -> enterApp(user)  -> loadUserData()
-       └─ ei istuntoa     -> showAuthGate()
+**Tämä ei ole offline-synkronointi.** Tehtäviä ei jonouteta eikä lähetetä
+myöhemmin.
 
-sb.auth.onAuthStateChange
-  ├─ kirjautuminen  -> enterApp(user)
-  └─ uloskirjautuminen -> leaveApp()  (tyhjentää tilan muistista)
-```
+### Miksi ei
+
+Offline-kirjoitus ilman konfliktimallia on vaarallisempi kuin sen puuttuminen:
+käyttäjä luulisi tallentaneensa jotain, mitä ei tallennettu. Sama tehtävä voisi
+muuttua kahdella laitteella, eikä järjestelmällä olisi sääntöä siitä kumpi
+voittaa.
+
+### Mitä myöhempi offline-synkronointi vaatisi
+
+1. **Muutosloki, ei tilan kopiointi.** Jono operaatioista (`lisää`, `muuta`,
+   `poista`) aikaleimoineen — ei "viimeisin kirjoitus voittaa" koko riville.
+2. **Palvelinpuolen aikaleimat.** Migraatio 0002 lisää `updated_at`-sarakkeen
+   ja triggerin; laitteen kelloon ei voi luottaa.
+3. **Konfliktisääntö per kenttä.** Kuittaus ja ajan muutos ovat eri asioita:
+   toinen voi sulautua, toinen vaatii käyttäjän valinnan.
+4. **Näkyvä synkronointitila.** Käyttäjän pitää nähdä mikä on tallennettu ja
+   mikä odottaa.
+5. **Poiston käsittely.** Poistettu rivi ei saa palata toiselta laitteelta.
+
+Tämä on oma työpakettinsa, ei sivutuote.
+
+### Service workerin valinnat
+
+| Valinta | Miksi |
+|---|---|
+| Network-first | Ei sisältötiivisteitä tiedostonimissä; cache-first jättäisi vanhan `index.html`:n uusien moduulien kanssa |
+| Ei `skipWaiting` | Moduulit eivät saa vaihtua kesken istunnon |
+| Vain oma origin | Supabase-vastauksissa on henkilökohtaista dataa — ei laitteelle |
+| Ei `/api/*` | Palvelinkutsuja ei koskaan tarjoilla välimuistista |
+| Vain GET | Kirjoituksia ei toisteta |
+| Versioitu välimuisti | Vanhat siivotaan aktivoinnissa |
 
 ---
 
-## Suunniteltu modularisointi (WP3)
+## Alustasovittimet
 
-WP1 irrotti vain testattavuuden ja turvallisuuden kannalta välttämättömän.
-Varsinainen jako on oma työpakettinsa:
+`src/platform/` on **ainoa kohta, jossa web ja natiivi eroavat**.
 
+| Sovitin | Web | Natiivi (PLANNED) |
+|---|---|---|
+| `speech` | Selaimen puheentunnistus (toimii) | Natiivi, myös taustalla |
+| `notifications` | Lupa-API (osittain) | Ajastetut natiivi-ilmoitukset |
+| `location` | Ei toteutusta | Taustasijainti |
+| `background` | Ei mahdollinen | Taustatehtävät |
+| `apiUrl()` | Suhteellinen polku | Tuotannon absoluuttinen osoite |
+
+Toteuttamattomat sovittimet **kertovat sen rehellisesti** (`supported: false` ja
+syy) sen sijaan että epäonnistuisivat hiljaa. Käyttöliittymä voi näin piilottaa
+ominaisuuden.
+
+`apiUrl()` on esimerkki todellisesta alustaerosta: natiivikuoressa sivu
+ladataan laitteelta, joten suhteellinen `/api/parse` osuisi paikalliseen
+kuoreen eikä koskaan palvelimeen.
+
+---
+
+## Skeemaportti
+
+`src/data/schema.js` ratkaisee ongelman, jossa domain on migraatiota edellä.
+
+Domain ja käyttöliittymä tukevat kuvausta, kestoa, prioriteettia ja
+aikataulutuksen tilaa. Tuotannon tietokannassa niitä ei vielä ole. Ilman
+porttia jokainen tallennus epäonnistuisi olemattomaan sarakkeeseen.
+
+```js
+export const TASK_EXTENDED_FIELDS = false;   // PRODUCTION GATE
 ```
-src/
-  state.js          sovelluksen tila ja sen muutokset
-  db.js             kaikki Supabase-kutsut yhdessä paikassa
-  auth.js           kirjautumisvirta
-  schedule.js       automaattinen herätys-/uni-/rutiinilaskenta
-  render/
-    today.js  week.js  tasks.js  profile.js
-  voice.js          puheohjaus ja jäsennys
-  ui/toast.js       keskitetty virheilmoitus
-```
 
-Ehto: modularisointi tehdään vasta kun testipohja kattaa siirrettävän
-logiikan, jotta regressio havaitaan.
+Migraation 0002 jälkeen tämä vaihdetaan arvoon `true`. Se on tarkoituksella
+**yhden rivin muutos**: kaikki muu koodi on jo valmiina.
+
+Käyttöliittymä kertoo käyttäjälle rehellisesti, että nämä kentät näkyvät vain
+istunnon ajan — se ei teeskentele tallentavansa niitä.
+
+---
+
+## Android
+
+Capacitor-kuori, joka ajaa **saman koodin**. Ei toista koodikantaa.
+Ks. `docs/ANDROID-STRATEGY.md`.
+
+`dist/` on olemassa vain Androidia varten: Capacitor kopioi `webDir`-hakemiston
+APK:hon. Web-tuotanto ei käytä sitä lainkaan.
+
+---
+
+## Seuraavat rakenteelliset askeleet
+
+| Askel | Työpaketti |
+|---|---|
+| Toistuvien rutiinien moottori (`domain/routine.js`) | WP5 |
+| Ilmoitusten ajastus alustasovittimen kautta | WP6 |
+| Tavoitteet ja niiden kytkentä tehtäviin | WP7 |
+| Natiivitoteutus `platform/capacitor.js` | WP12 |
