@@ -1,53 +1,96 @@
-// Muunnos sovelluksen tehtavaolion ja Supabase-rivin valilla.
+// Muunnos sovelluksen tehtäväolion ja Supabase-rivin välillä.
 //
 // TURVALLISUUSPERIAATE (WP1):
-// toRow() ei koskaan kirjoita user_id-kenttaa. Omistajuuden asettaa
+// toRow() ei koskaan kirjoita user_id-kenttää. Omistajuuden asettaa
 // tietokanta itse (sarakkeen oletusarvo auth.uid()) ja RLS-politiikka
-// varmistaa sen. Nain selain EI voi valita toisen kayttajan user_id:ta
+// varmistaa sen. Näin selain EI voi valita toisen käyttäjän user_id:tä
 // edes silloin, kun sovelluskoodissa olisi virhe.
 //
-// Ks. supabase/migrations/0001_auth_user_scoping.sql ja docs/SECURITY.md.
+// SKEEMAPORTTI (WP2):
+// Osa domainin kentistä (description, durationMinutes, priority,
+// schedulingState) vaatii migraation 0002. Siihen asti niitä ei kirjoiteta
+// kantaan lainkaan. toRow ottaa sarakelistan parametrina ja
+// src/data/schema.js päättää kumpaa käytetään. Näin migraation ajaminen on
+// yhden vakion muutos, ei uusi refaktorointi.
+//
+// Ks. supabase/migrations/ ja docs/SCHEMA.md.
 
-/** Kentat, joita client ei saa koskaan lahettaa kantaan. */
+/** Kentät, joita client ei saa koskaan lähettää kantaan. */
 export const SERVER_OWNED_FIELDS = Object.freeze(['user_id', 'created_at', 'updated_at']);
 
+/** Sarakkeet, jotka tuotantoskeemassa on tällä hetkellä olemassa. */
+export const TASK_COLUMNS_CORE = Object.freeze([
+  'id', 'date', 'time', 'end_time', 'title', 'category', 'note', 'completed', 'is_wake'
+]);
+
+/** Sarakkeet migraation 0002 jälkeen. */
+export const TASK_COLUMNS_EXTENDED = Object.freeze([
+  ...TASK_COLUMNS_CORE,
+  'description', 'duration_minutes', 'priority', 'scheduling_state'
+]);
+
+/** Domain-kenttä -> kannan sarake. Yksi lähde molemmille sarakejoukoille. */
+function columnValues(task) {
+  return {
+    id: task.id,
+    date: task.date,
+    time: task.time,
+    end_time: task.endTime,
+    title: task.title,
+    category: task.category,
+    note: task.note,
+    completed: task.completed,
+    is_wake: !!task.isWake,
+    description: task.description ?? null,
+    duration_minutes: task.durationMinutes ?? null,
+    priority: task.priority ?? null,
+    scheduling_state: task.schedulingState ?? null
+  };
+}
+
 /**
- * Sovelluksen tehtavaolio -> Supabase-rivi.
- * Palauttaa TASMALLEEN sallitut sarakkeet, ei mitaan muuta.
+ * Sovelluksen tehtäväolio -> Supabase-rivi.
+ * Palauttaa TÄSMÄLLEEN annetut sarakkeet, ei mitään muuta.
+ *
+ * @param {object} task
+ * @param {ReadonlyArray<string>} [columns] Sallitut sarakkeet.
  */
-export function toRow(t) {
-  return {
-    id: t.id,
-    date: t.date,
-    time: t.time,
-    end_time: t.endTime,
-    title: t.title,
-    category: t.category,
-    note: t.note,
-    completed: t.completed,
-    is_wake: !!t.isWake
-  };
+export function toRow(task, columns = TASK_COLUMNS_CORE) {
+  const all = columnValues(task || {});
+  const row = {};
+  for (const column of columns) {
+    if (Object.prototype.hasOwnProperty.call(all, column)) row[column] = all[column];
+  }
+  return row;
 }
 
-/** Supabase-rivi -> sovelluksen tehtavaolio. */
-export function fromRow(r) {
+/**
+ * Supabase-rivi -> sovelluksen tehtäväolio.
+ * Lukee laajennetut sarakkeet, jos ne ovat olemassa. Sama funktio toimii
+ * siis sekä ennen migraatiota 0002 että sen jälkeen.
+ */
+export function fromRow(row) {
   return {
-    id: r.id,
-    date: r.date,
-    time: r.time,
-    endTime: r.end_time,
-    title: r.title,
-    category: r.category,
-    note: r.note,
-    completed: r.completed,
-    isWake: !!r.is_wake
+    id: row.id,
+    date: row.date,
+    time: row.time,
+    endTime: row.end_time,
+    title: row.title,
+    category: row.category,
+    note: row.note,
+    completed: row.completed,
+    isWake: !!row.is_wake,
+    description: row.description ?? null,
+    durationMinutes: row.duration_minutes ?? null,
+    priority: row.priority ?? undefined,
+    schedulingState: row.scheduling_state ?? undefined
   };
 }
 
 /**
- * Varmistaa, ettei lahtevassa payloadissa ole palvelimen omistamia kenttia.
- * Kaytetaan puolustuksena syvyydessa ennen kirjoituskutsuja.
- * Heittaa poikkeuksen, jos kielletty kentta loytyy.
+ * Varmistaa, ettei lähtevässä payloadissa ole palvelimen omistamia kenttiä.
+ * Käytetään puolustuksena syvyydessä ennen kirjoituskutsuja.
+ * Heittää poikkeuksen, jos kielletty kenttä löytyy.
  */
 export function assertClientSafe(row) {
   for (const field of SERVER_OWNED_FIELDS) {
@@ -58,7 +101,7 @@ export function assertClientSafe(row) {
   return row;
 }
 
-/** Uusi asiakaspuolen tehtava-ID. Tormaysriski on kaytannossa olematon. */
+/** Uusi asiakaspuolen tehtävä-ID. Törmäysriski on käytännössä olematon. */
 export function newTaskId() {
   return 'm' + Date.now() + Math.random().toString(36).slice(2, 6);
 }

@@ -8,7 +8,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { toRow, fromRow, assertClientSafe, newTaskId, SERVER_OWNED_FIELDS } from '../src/lib/rows.js';
+import {
+  toRow, fromRow, assertClientSafe, newTaskId,
+  SERVER_OWNED_FIELDS, TASK_COLUMNS_EXTENDED
+} from '../src/lib/rows.js';
 
 const EXPECTED_COLUMNS = [
   'id', 'date', 'time', 'end_time', 'title', 'category', 'note', 'completed', 'is_wake'
@@ -54,13 +57,43 @@ test('toRow pakottaa is_wake-kentän boolean-tyyppiseksi', () => {
   assert.equal(toRow({ isWake: 1 }).is_wake, true);
 });
 
-test('fromRow on toRow:n käänteisfunktio sovelluksen kenttien osalta', () => {
+test('fromRow on toRow:n käänteisfunktio perussarakkeiden osalta', () => {
   const task = {
     id: 'm1', date: '2026-08-31', time: '13:00', endTime: '14:00',
     title: 'Laskutus', category: 'talous', note: null,
     completed: false, isWake: false
   };
-  assert.deepEqual(fromRow(toRow(task)), task);
+  const roundTripped = fromRow(toRow(task));
+  for (const [key, value] of Object.entries(task)) {
+    assert.deepEqual(roundTripped[key], value, 'kenttä ' + key + ' ei säilynyt');
+  }
+});
+
+test('laajennetut kentät säilyvät kierroksen yli, kun skeema tukee niitä', () => {
+  const task = {
+    id: 'm1', date: '2026-08-31', time: '13:00', endTime: '14:00',
+    title: 'Laskutus', category: 'talous', note: null,
+    completed: false, isWake: false,
+    description: 'Elokuun laskut', durationMinutes: 60,
+    priority: 'korkea', schedulingState: 'manual'
+  };
+  const roundTripped = fromRow(toRow(task, TASK_COLUMNS_EXTENDED));
+  assert.equal(roundTripped.description, 'Elokuun laskut');
+  assert.equal(roundTripped.durationMinutes, 60);
+  assert.equal(roundTripped.priority, 'korkea');
+  assert.equal(roundTripped.schedulingState, 'manual');
+});
+
+test('SKEEMAPORTTI: perussarakkeilla laajennetut kentät eivät päädy kantaan', () => {
+  // Migraatiota 0002 ei ole ajettu tuotantoon. Jos nämä kentät lähtisivät
+  // mukaan, jokainen kirjoitus epäonnistuisi olemattomaan sarakkeeseen.
+  const row = toRow({
+    id: 'm1', title: 'X', date: '2026-08-31',
+    description: 'kuvaus', durationMinutes: 30, priority: 'korkea', schedulingState: 'auto'
+  });
+  for (const column of ['description', 'duration_minutes', 'priority', 'scheduling_state']) {
+    assert.equal(column in row, false, 'sarake ' + column + ' ei saa olla mukana ennen migraatiota');
+  }
 });
 
 test('fromRow ei tuo user_id:tä sovelluksen tilaan', () => {
