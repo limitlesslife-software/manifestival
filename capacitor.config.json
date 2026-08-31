@@ -1,0 +1,11 @@
+{
+  "appId": "fi.limitlesslife.manifestival",
+  "appName": "Manifestival",
+  "webDir": "dist",
+  "android": {
+    "allowMixedContent": false
+  },
+  "server": {
+    "androidScheme": "https"
+  }
+}

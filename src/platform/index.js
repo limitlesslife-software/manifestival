@@ -45,6 +45,25 @@ export function platformName() {
   return 'web';
 }
 
+/**
+ * Tuotannon osoite. Tarvitaan VAIN natiivikuoressa.
+ *
+ * Webissä sovellus tarjoillaan samasta originista kuin /api/parse, joten
+ * suhteellinen polku riittää. Natiivikuoressa sivu ladataan laitteen omasta
+ * tiedostojärjestelmästä (capacitor://localhost), jolloin suhteellinen polku
+ * osuisi paikalliseen kuoreen eikä koskaan palvelimeen — puheohjaus
+ * lakkaisi toimimasta hiljaa.
+ */
+export const PRODUCTION_ORIGIN = 'https://manifestival-ten.vercel.app';
+
+/**
+ * Palvelinpäätepisteen osoite tällä alustalla.
+ * @param {string} path esim. '/api/parse'
+ */
+export function apiUrl(path) {
+  return isNativeShell() ? PRODUCTION_ORIGIN + path : path;
+}
+
 // --------------------------------------------------------- ilmoitukset
 
 export const notifications = Object.freeze({

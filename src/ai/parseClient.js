@@ -8,6 +8,7 @@
 // Manifestivalin Anthropic-kiintiötä.
 
 import { API } from '../data/config.js';
+import { apiUrl } from '../platform/index.js';
 import { WD_FULL } from '../lib/format.js';
 import { extractJson, validateProposal, fallbackProposal } from './proposalSchema.js';
 import { ok, fail } from '../lib/result.js';
@@ -49,7 +50,7 @@ export async function requestProposal({ transcript, today, weekday, accessToken,
     const headers = { 'Content-Type': 'application/json' };
     if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
 
-    const response = await doFetch(API.parse, {
+    const response = await doFetch(apiUrl(API.parse), {
       method: 'POST',
       headers,
       body: JSON.stringify({ transcript: text, today, weekday }),

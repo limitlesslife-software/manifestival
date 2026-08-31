@@ -25,7 +25,7 @@ const ALLOWED_DEPENDENCIES = {
   lib: ['lib'],
   domain: ['lib', 'domain'],
   data: ['lib', 'domain', 'data'],
-  ai: ['lib', 'domain', 'data', 'ai'],
+  ai: ['lib', 'domain', 'data', 'platform', 'ai'],
   ui: ['lib', 'ui'],
   platform: ['lib', 'platform'],
   app: ['lib', 'domain', 'data', 'ai', 'ui', 'platform', 'app']
