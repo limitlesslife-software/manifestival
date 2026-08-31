@@ -1,5 +1,11 @@
 {
   "name": "manifestival",
   "version": "1.0.0",
-  "private": true
+  "private": true,
+  "description": "Manifestival - suunnittele elama, jota haluat elaa.",
+  "scripts": {
+    "test": "node --test",
+    "check": "node --check api/parse.js && node --check api/_validate.js",
+    "serve": "node scripts/serve.mjs"
+  }
 }

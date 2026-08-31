@@ -1,0 +1,31 @@
+# Riippuvuudet
+node_modules/
+
+# Ymparistomuuttujat ja salaisuudet — EI KOSKAAN versionhallintaan
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+secrets/
+
+# Vercel
+.vercel/
+
+# Kayttojarjestelma
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editorit
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+*~
+
+# Lokit ja valiaikaiset
+*.log
+npm-debug.log*
+.cache/
+tmp/
