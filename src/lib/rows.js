@@ -101,7 +101,23 @@ export function assertClientSafe(row) {
   return row;
 }
 
-/** Uusi asiakaspuolen tehtävä-ID. Törmäysriski on käytännössä olematon. */
+/**
+ * Uusi asiakaspuolen tehtävä-ID.
+ *
+ * Aiempi toteutus oli aikaleima + NELJÄ satunnaista base36-merkkiä. Neljä
+ * merkkiä on vain ~1,7 miljoonaa vaihtoehtoa, joten saman millisekunnin
+ * sisällä luoduilla tunnisteilla oli todellinen törmäysriski — testi paljasti
+ * sen 500 tunnisteen otoksella. Törmäys olisi tarkoittanut, että tehtävä
+ * ylikirjoittaa toisen.
+ */
 export function newTaskId() {
-  return 'm' + Date.now() + Math.random().toString(36).slice(2, 6);
+  const cryptoObj = globalThis.crypto;
+  if (cryptoObj && typeof cryptoObj.randomUUID === 'function') {
+    return 'm' + cryptoObj.randomUUID().replace(/-/g, '');
+  }
+
+  // Varasuunnitelma vanhemmille ympäristöille: aikaleima + pitkä satunnaisosa.
+  let suffix = '';
+  while (suffix.length < 16) suffix += Math.random().toString(36).slice(2);
+  return 'm' + Date.now().toString(36) + suffix.slice(0, 16);
 }

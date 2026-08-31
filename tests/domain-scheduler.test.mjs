@@ -161,20 +161,20 @@ test('occupiedRanges käyttää oletuskestoa, jos loppuaikaa ei ole', () => {
 // -------------------------------------------------------- vapaat välit
 
 test('tyhjä päivä on kokonaan vapaa', () => {
-  const window = { start: 420, end: 1380 };
-  const slots = findFreeSlots({ items: [], window });
+  const range = { start: 420, end: 1380 };
+  const slots = findFreeSlots({ items: [], range });
   assert.equal(slots.length, 1);
   assert.equal(slots[0].startTime, '07:00');
   assert.equal(slots[0].endTime, '23:00');
 });
 
 test('vapaat välit lasketaan varausten väliin', () => {
-  const window = { start: 480, end: 1080 }; // 08:00–18:00
+  const range = { start: 480, end: 1080 }; // 08:00–18:00
   const items = [
     { time: '09:00', endTime: '10:00' },
     { time: '13:00', endTime: '14:00' }
   ];
-  const slots = findFreeSlots({ items, window });
+  const slots = findFreeSlots({ items, range });
   assert.deepEqual(slots.map(s => [s.startTime, s.endTime]), [
     ['08:00', '09:00'],
     ['10:00', '13:00'],
@@ -183,25 +183,25 @@ test('vapaat välit lasketaan varausten väliin', () => {
 });
 
 test('liian lyhyttä väliä ei tarjota', () => {
-  const window = { start: 480, end: 600 };
+  const range = { start: 480, end: 600 };
   const items = [
     { time: '08:00', endTime: '09:50' } // jää 10 min
   ];
-  assert.deepEqual(findFreeSlots({ items, window, minMinutes: 15 }), []);
+  assert.deepEqual(findFreeSlots({ items, range, minMinutes: 15 }), []);
 });
 
 test('ikkunan ulkopuoliset varaukset eivät vaikuta', () => {
-  const window = { start: 600, end: 720 }; // 10:00–12:00
+  const range = { start: 600, end: 720 }; // 10:00–12:00
   const items = [{ time: '06:00', endTime: '07:00' }, { time: '20:00', endTime: '21:00' }];
-  const slots = findFreeSlots({ items, window });
+  const slots = findFreeSlots({ items, range });
   assert.equal(slots.length, 1);
   assert.equal(slots[0].minutes, 120);
 });
 
 test('täyteen varattu ikkuna ei tuota vapaita välejä', () => {
-  const window = { start: 480, end: 600 };
+  const range = { start: 480, end: 600 };
   const items = [{ time: '08:00', endTime: '10:00' }];
-  assert.deepEqual(findFreeSlots({ items, window }), []);
+  assert.deepEqual(findFreeSlots({ items, range }), []);
 });
 
 // ------------------------------------------------------- päivän suunnitelma

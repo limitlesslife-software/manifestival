@@ -130,13 +130,16 @@ test('assertClientSafe hyväksyy toRow:n tuotoksen aina', () => {
 });
 
 test('newTaskId tuottaa yksilöllisiä tunnisteita', () => {
+  // 20 000 tunnistetta samassa silmukassa: aiempi neljän merkin satunnaisosa
+  // olisi törmännyt käytännössä varmasti.
   const ids = new Set();
-  for (let i = 0; i < 500; i++) ids.add(newTaskId());
-  assert.equal(ids.size, 500, 'tunnisteiden pitää olla yksilöllisiä');
+  for (let i = 0; i < 20000; i++) ids.add(newTaskId());
+  assert.equal(ids.size, 20000, 'tunnisteiden pitää olla yksilöllisiä');
 });
 
 test('newTaskId ei törmää vanhojen seed-tunnisteiden kanssa', () => {
   const id = newTaskId();
-  assert.match(id, /^m\d+[a-z0-9]+$/);
+  assert.match(id, /^m[0-9a-z]+$/, 'tunnisteen pitää olla turvallinen merkkijono');
   assert.equal(id.startsWith('seed'), false);
+  assert.ok(id.length >= 17, 'liian lyhyt tunniste törmäisi: ' + id);
 });

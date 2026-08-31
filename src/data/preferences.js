@@ -85,14 +85,6 @@ export function setDevicePreference(key, value) {
   }
 }
 
-/** Kaikki laitekohtaiset asetukset yhtenä oliona. */
-export function readDevicePreferences() {
-  const result = {};
-  for (const key of Object.keys(DEVICE_DEFAULTS)) {
-    result[key] = getDevicePreference(key);
-  }
-  return result;
-}
 
 /**
  * Tyhjennä laitekohtaiset asetukset.

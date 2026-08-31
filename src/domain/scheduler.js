@@ -204,23 +204,23 @@ export function occupiedRanges(items) {
  * Vapaat aikavälit valveillaoloikkunassa.
  * @returns {Array<{start:number,end:number,minutes:number,startTime:string,endTime:string}>}
  */
-export function findFreeSlots({ items, window, minMinutes = MIN_USEFUL_SLOT_MINUTES }) {
+export function findFreeSlots({ items, range, minMinutes = MIN_USEFUL_SLOT_MINUTES }) {
   const occupied = occupiedRanges(items);
   const slots = [];
-  let cursor = window.start;
+  let cursor = range.start;
 
-  for (const range of occupied) {
-    if (range.end <= window.start) continue;
-    if (range.start >= window.end) break;
-    const gap = Math.min(range.start, window.end) - cursor;
-    if (gap >= minMinutes) {
-      slots.push({ start: cursor, end: cursor + gap });
-    }
-    cursor = Math.max(cursor, Math.min(range.end, window.end));
+  for (const busy of occupied) {
+    if (busy.end <= range.start) continue;   // kokonaan ikkunan alapuolella
+    if (busy.start >= range.end) break;      // loput ovat ikkunan yläpuolella
+
+    const gap = Math.min(busy.start, range.end) - cursor;
+    if (gap >= minMinutes) slots.push({ start: cursor, end: cursor + gap });
+
+    cursor = Math.max(cursor, Math.min(busy.end, range.end));
   }
 
-  if (window.end - cursor >= minMinutes) {
-    slots.push({ start: cursor, end: window.end });
+  if (range.end - cursor >= minMinutes) {
+    slots.push({ start: cursor, end: range.end });
   }
 
   return slots.map(s => ({
@@ -252,10 +252,10 @@ export function buildDayPlan({ tasks, profile, dateIso, nowMinutes = null }) {
   const virtualItems = buildVirtualItems({ tasks, profile: p, dateIso });
   const timeline = [...scheduled, ...completed.filter(t => t.time), ...virtualItems].sort(sortByTime);
 
-  const window = awakeWindow({ tasks, profile: p, dateIso });
+  const range = awakeWindow({ tasks, profile: p, dateIso });
   const freeSlots = findFreeSlots({
     items: timeline.filter(it => it.id !== 'virtual-sleep'),
-    window
+    range
   });
 
   return {
@@ -265,7 +265,7 @@ export function buildDayPlan({ tasks, profile, dateIso, nowMinutes = null }) {
     unscheduled,
     completed,
     freeSlots,
-    window,
+    range,
     load: {
       count: dayTasks.length,
       level: loadClass(dayTasks.length),

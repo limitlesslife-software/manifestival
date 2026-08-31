@@ -1,0 +1,199 @@
+// Kirjautumisvirta.
+//
+// Käytetään Supabasen omaa salasanapohjaista kirjautumista. Sovellus ei
+// käsittele, tiivistä eikä tallenna salasanoja itse.
+//
+// Virheviestit on käännetty suomeksi eivätkä ne paljasta, oliko sähköposti
+// olemassa: väärä salasana ja tuntematon tili antavat saman viestin.
+
+import { getClient } from '../data/client.js';
+import { setUser, clearUser, getUser } from '../data/session.js';
+import { el, setBusy, singleFlight } from '../ui/dom.js';
+
+export const MIN_PASSWORD_LENGTH = 8;
+
+let mode = 'signin'; // 'signin' | 'signup'
+
+function clearMessages() {
+  const error = el('authError');
+  const note = el('authNote');
+  error.style.display = 'none';
+  error.textContent = '';
+  note.style.display = 'none';
+  note.textContent = '';
+}
+
+function showError(message) {
+  const error = el('authError');
+  el('authNote').style.display = 'none';
+  error.textContent = message;
+  error.style.display = 'block';
+}
+
+function showNote(message) {
+  const note = el('authNote');
+  el('authError').style.display = 'none';
+  note.textContent = message;
+  note.style.display = 'block';
+}
+
+function setMode(next) {
+  mode = next;
+  const isSignin = next === 'signin';
+
+  const signinTab = el('authTabSignin');
+  const signupTab = el('authTabSignup');
+  signinTab.classList.toggle('active', isSignin);
+  signupTab.classList.toggle('active', !isSignin);
+  signinTab.setAttribute('aria-selected', String(isSignin));
+  signupTab.setAttribute('aria-selected', String(!isSignin));
+
+  el('authPassword').setAttribute('autocomplete', isSignin ? 'current-password' : 'new-password');
+  el('authSubmit').textContent = isSignin ? 'Kirjaudu' : 'Luo tili';
+  clearMessages();
+}
+
+/**
+ * Käännä Supabasen virhe suomeksi.
+ * Tuntematon virhe palautuu yleisviestinä — palvelimen sisäistä tilaa ei
+ * paljasteta käyttäjälle.
+ */
+export function authErrorMessage(error) {
+  const raw = String((error && error.message) || '').toLowerCase();
+  if (raw.includes('invalid login credentials')) return 'Sähköposti tai salasana ei täsmää.';
+  if (raw.includes('email not confirmed')) return 'Vahvista ensin sähköpostiosoitteesi. Tarkista postilaatikkosi.';
+  if (raw.includes('user already registered') || raw.includes('already been registered')) {
+    return 'Tällä sähköpostilla on jo tili. Kirjaudu sisään.';
+  }
+  if (raw.includes('password')) return `Salasana ei kelpaa. Vähintään ${MIN_PASSWORD_LENGTH} merkkiä.`;
+  if (raw.includes('rate limit') || raw.includes('too many')) {
+    return 'Liian monta yritystä. Odota hetki ja yritä uudelleen.';
+  }
+  if (raw.includes('failed to fetch') || raw.includes('network')) {
+    return 'Verkkoyhteys ei toimi. Tarkista yhteys ja yritä uudelleen.';
+  }
+  return 'Kirjautuminen ei onnistunut. Yritä uudelleen.';
+}
+
+/** Perustarkistus ennen verkkokutsua. */
+export function validateCredentials(email, password) {
+  if (!email || !email.includes('@')) return 'Anna kelvollinen sähköpostiosoite.';
+  if (password.length < MIN_PASSWORD_LENGTH) {
+    return `Salasanan pitää olla vähintään ${MIN_PASSWORD_LENGTH} merkkiä.`;
+  }
+  return null;
+}
+
+const submit = singleFlight(async () => {
+  clearMessages();
+  const email = el('authEmail').value.trim();
+  const password = el('authPassword').value;
+
+  const problem = validateCredentials(email, password);
+  if (problem) { showError(problem); return; }
+
+  const button = el('authSubmit');
+  setBusy(button, true, 'Hetki…');
+  try {
+    if (mode === 'signin') {
+      const { error } = await getClient().auth.signInWithPassword({ email, password });
+      if (error) throw error;
+      // Eteneminen tapahtuu onAuthStateChange-kuuntelijassa.
+    } else {
+      const { data, error } = await getClient().auth.signUp({ email, password });
+      if (error) throw error;
+      if (data && data.user && !data.session) {
+        showNote('Tili luotu. Vahvista sähköpostiosoitteesi ennen kirjautumista.');
+        setMode('signin');
+      }
+    }
+  } catch (error) {
+    showError(authErrorMessage(error));
+  } finally {
+    setBusy(button, false);
+    el('authSubmit').textContent = mode === 'signin' ? 'Kirjaudu' : 'Luo tili';
+  }
+});
+
+const signOut = singleFlight(async () => {
+  const button = el('signoutBtn');
+  setBusy(button, true, 'Kirjaudutaan ulos…');
+  try {
+    await getClient().auth.signOut();
+  } catch (error) {
+    console.error('Manifestival: uloskirjautuminen epäonnistui', error);
+  } finally {
+    setBusy(button, false);
+  }
+});
+
+/** Näytä kirjautumisportti ja piilota sovellus. */
+export function showAuthGate() {
+  el('app').classList.add('app-hidden');
+  el('authGate').classList.add('open');
+  el('authPassword').value = '';
+  setMode('signin');
+}
+
+/** Piilota kirjautumisportti ja näytä sovellus. */
+export function hideAuthGate() {
+  el('authGate').classList.remove('open');
+  el('app').classList.remove('app-hidden');
+  el('authEmail').value = '';
+  el('authPassword').value = '';
+}
+
+/**
+ * Kytke kirjautumisvirta.
+ *
+ * @param {object} handlers
+ * @param {Function} handlers.onSignedIn  Kutsutaan kun käyttäjä kirjautuu.
+ * @param {Function} handlers.onSignedOut Kutsutaan kun käyttäjä kirjautuu ulos.
+ * @returns {Promise<object|null>} palautunut istunto tai null
+ */
+export async function initAuth({ onSignedIn, onSignedOut }) {
+  el('authTabSignin').addEventListener('click', () => setMode('signin'));
+  el('authTabSignup').addEventListener('click', () => setMode('signup'));
+  el('authForm').addEventListener('submit', event => { event.preventDefault(); submit(); });
+  el('signoutBtn').addEventListener('click', signOut);
+
+  const client = getClient();
+
+  // Reagoi kirjautumiseen, uloskirjautumiseen ja tokenin uusiutumiseen.
+  //
+  // Tokenin uusiutuminen tapahtuu taustalla tunnin välein. Se EI saa
+  // laukaista datan uudelleenlatausta — muuten näkymä välkkyisi ja
+  // keskeneräinen lomake nollautuisi kesken päivän.
+  client.auth.onAuthStateChange((_event, session) => {
+    if (session && session.user) {
+      const current = getUser();
+      const sameUserAlreadySignedIn = current && current.id === session.user.id;
+      setUser(session.user);
+      if (!sameUserAlreadySignedIn) onSignedIn(session.user);
+    } else if (getUser()) {
+      clearUser();
+      onSignedOut();
+    } else {
+      clearUser();
+    }
+  });
+
+  try {
+    const { data, error } = await client.auth.getSession();
+    if (error) throw error;
+    return data ? data.session : null;
+  } catch (error) {
+    console.error('Manifestival: istunnon palautus epäonnistui', error);
+    return null;
+  }
+}
+
+/** Nykyisen istunnon access token, jos sellainen on. */
+export async function currentAccessToken() {
+  try {
+    const { data } = await getClient().auth.getSession();
+    return (data && data.session && data.session.access_token) || null;
+  } catch {
+    return null;
+  }
+}

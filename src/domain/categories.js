@@ -49,10 +49,6 @@ export function categoryLabel(key) {
   return getCategory(key).label;
 }
 
-/** Väritoken avaimelle. */
-export function categoryTone(key) {
-  return getCategory(key).tone;
-}
 
 /**
  * Palauttaa kelvollisen kategoria-avaimen. Tuntematon, tyhjä tai

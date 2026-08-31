@@ -81,10 +81,6 @@ export function effectiveEndTime(task) {
   return null;
 }
 
-/** Onko tehtävällä kellonaika. */
-export function isScheduled(task) {
-  return Boolean(task.time);
-}
 
 /** Aikataulutuksen tila johdettuna. Ei koskaan luota pelkkään tallennettuun arvoon. */
 export function schedulingStateOf(task) {

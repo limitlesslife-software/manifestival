@@ -57,11 +57,3 @@ export function normalizePriority(key) {
   return isPriority(key) ? key : DEFAULT_PRIORITY;
 }
 
-/**
- * Vertailufunktio prioriteetin mukaan: tärkein ensin.
- * Deterministinen — samanarvoiset säilyttävät keskinäisen järjestyksensä,
- * koska funktio palauttaa 0 ja Array.prototype.sort on vakaa.
- */
-export function compareByPriority(a, b) {
-  return priorityWeight(a.priority) - priorityWeight(b.priority);
-}

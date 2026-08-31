@@ -25,15 +25,7 @@ export function weekRangeLabel(weekStart) {
   return `${formatShortDate(days[0])} – ${formatShortDate(days[6])}`;
 }
 
-/** Kuuluuko päivämäärä tähän viikkoon. */
-export function isInWeek(weekStart, dateIso) {
-  return weekDayIsoList(weekStart).includes(dateIso);
-}
 
-/** Tämän viikon maanantai. */
-export function currentWeekStart() {
-  return startOfWeek(todayMidnight());
-}
 
 /**
  * Ryhmittelee tehtävät päivittäin.

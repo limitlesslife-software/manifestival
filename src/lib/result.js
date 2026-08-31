@@ -49,14 +49,6 @@ export function fail(userMessage, options = {}) {
   return { ok: false, error: new AppError(userMessage, options) };
 }
 
-/**
- * Kääri Supabase-vastaus ({ data, error }) tulokseksi.
- * Supabasen virheviesti EI päädy käyttäjälle — vain annettu userMessage.
- */
-export function fromSupabase({ data, error }, userMessage, code) {
-  if (error) return fail(userMessage, { cause: error, code });
-  return ok(data);
-}
 
 /**
  * Kirjaa virheen konsoliin diagnostisessa muodossa.
