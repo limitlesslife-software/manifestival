@@ -48,6 +48,24 @@ test('TURVA: selain ei kutsu Anthropicia suoraan', () => {
     'päätepisteen osoite kuuluu konfiguraatioon');
 });
 
+test('REGRESSIO: Supabase-projekti on sama selaimessa ja palvelimella', async () => {
+  // Osoite esiintyy kahdessa paikassa: selaimen konfiguraatiossa ja
+  // palvelimen todennuksessa. Ne eivät voi jakaa moduulia, koska toinen on
+  // ESM selaimelle ja toinen CommonJS Vercelille. Jos ne ajautuvat erilleen,
+  // /api/parse todentaisi tokenit väärää projektia vasten ja hylkäisi
+  // jokaisen kirjautuneen käyttäjän.
+  const { SUPABASE_URL, SUPABASE_ANON_KEY } = await import('../src/data/config.js');
+
+  const authSource = read('api/_auth.js');
+  const urlMatch = /const SUPABASE_URL =\s*'([^']+)'/.exec(authSource);
+  const keyMatch = /const SUPABASE_ANON_KEY =\s*\n?\s*'([^']+)'/.exec(authSource);
+
+  assert.ok(urlMatch, 'api/_auth.js: SUPABASE_URL puuttuu');
+  assert.ok(keyMatch, 'api/_auth.js: SUPABASE_ANON_KEY puuttuu');
+  assert.equal(urlMatch[1], SUPABASE_URL, 'Supabase-osoitteet ovat ajautuneet erilleen');
+  assert.equal(keyMatch[1], SUPABASE_ANON_KEY, 'anon-avaimet ovat ajautuneet erilleen');
+});
+
 test('palvelinpuoli lukee avaimen vain ympäristömuuttujasta', () => {
   const source = read('api/parse.js');
   assert.ok(source.includes('process.env.ANTHROPIC_API_KEY'));
