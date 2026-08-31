@@ -30,6 +30,24 @@ const NOW_REFRESH_MS = 30000;
 
 let signedIn = false;
 
+/**
+ * Rekisteröi service worker.
+ *
+ * Ei koskaan kaada sovellusta: jos rekisteröinti epäonnistuu (ei HTTPS:ää,
+ * selain ei tue, käyttäjä estänyt), sovellus toimii normaalisti ilman
+ * offline-tukea.
+ */
+function registerServiceWorker() {
+  if (!('serviceWorker' in navigator)) return;
+  // Rekisteröinti odottaa load-tapahtumaa, jottei se kilpaile sovelluksen
+  // omien latausten kanssa.
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(error => {
+      console.warn('Manifestival: service workerin rekisteröinti ei onnistunut', error);
+    });
+  });
+}
+
 /** Renderöi kaikki näkymät. Kutsutaan tilamuutoksesta. */
 function renderAll() {
   if (!signedIn) return;
@@ -95,7 +113,13 @@ async function start() {
     if (!document.hidden && signedIn) renderToday();
   });
 
-  // 5. Verkon tilan ilmaisu. Palvelinta vaativat toiminnot eivät saa
+  // 5. Service worker: sovelluskuori toimii offline.
+  //    Rekisteröinti tehdään vasta käynnistyksen jälkeen, jottei se hidasta
+  //    ensimmäistä maalausta. Epäonnistuminen ei ole virhe — sovellus toimii
+  //    ilman sitäkin, vain ilman offline-tukea.
+  registerServiceWorker();
+
+  // 6. Verkon tilan ilmaisu. Palvelinta vaativat toiminnot eivät saa
   //    valehdella onnistuneensa, joten offline-tila kerrotaan näkyvästi.
   const updateOnlineState = () => {
     const offline = typeof navigator !== 'undefined' && navigator.onLine === false;

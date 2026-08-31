@@ -27,7 +27,8 @@ const ALLOWED_DEPENDENCIES = {
   data: ['lib', 'domain', 'data'],
   ai: ['lib', 'domain', 'data', 'ai'],
   ui: ['lib', 'ui'],
-  app: ['lib', 'domain', 'data', 'ai', 'ui', 'app']
+  platform: ['lib', 'platform'],
+  app: ['lib', 'domain', 'data', 'ai', 'ui', 'platform', 'app']
 };
 
 test('kerrosjärjestys pitää: riippuvuudet osoittavat vain alaspäin', () => {

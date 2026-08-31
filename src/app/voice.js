@@ -23,6 +23,7 @@ import { el, maybe, setBusy, singleFlight } from '../ui/dom.js';
 import { createTask } from './actions.js';
 import { currentAccessToken } from './auth.js';
 import { showError } from '../ui/toast.js';
+import { speech } from '../platform/index.js';
 
 const STATES = ['listening', 'processing', 'confirm', 'error', 'typefallback'];
 
@@ -254,7 +255,13 @@ export function initVoice() {
   });
 }
 
-/** Onko puheentunnistus käytettävissä tässä selaimessa. */
+/**
+ * Onko puheentunnistus käytettävissä.
+ *
+ * Kysytään alustasovittimelta, jotta tuen tarkistus on yhdessä paikassa.
+ * Natiivikuoressa vastaus tulee myöhemmin natiivilta liitännäiseltä ilman
+ * että tätä kutsupaikkaa tarvitsee muuttaa.
+ */
 export function speechSupported() {
-  return Boolean(SpeechRecognitionCtor);
+  return speech.capability().supported;
 }

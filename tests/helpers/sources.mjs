@@ -58,11 +58,20 @@ export function readIndexHtml() {
  * rikota vahingossa.
  */
 export function readCode(relativePath) {
+  // JÄRJESTYS ON OLENNAINEN: rivikommentit poistetaan ENSIN.
+  //
+  // Jos lohkokommentit poistettaisiin ensin, rivikommentissa oleva merkkijono
+  // kuten "/api/*" avaisi näennäisen lohkokommentin, joka nielisi koodia
+  // seuraavaan */-merkkiin asti. Tämä ei ole teoreettinen — juuri se piilotti
+  // service workerin CACHE_VERSION-vakion testiltä.
+  // HUOM: `*`-alkuisia rivejä EI saa suodattaa erikseen. Se poistaisi
+  // JSDoc-lohkon sisuksen ja sulkevan */-merkinnän, jolloin avoimeksi jäänyt
+  // /** nielisi kaiken seuraavaan */-merkkiin asti — eli koodia.
   return read(relativePath)
-    .replace(/\/\*[\s\S]*?\*\//g, '')
     .split('\n')
-    .filter(line => !line.trim().startsWith('//') && !line.trim().startsWith('*'))
-    .join('\n');
+    .filter(line => !line.trim().startsWith('//'))
+    .join('\n')
+    .replace(/\/\*[\s\S]*?\*\//g, '');
 }
 
 /**

@@ -1,0 +1,158 @@
+// Manifestival — service worker.
+//
+// TARKOITUS
+// Sovelluskuori toimii offline: sivu avautuu, käyttöliittymä latautuu ja
+// käyttäjälle kerrotaan selvästi, ettei verkkoa ole. Tämä on tietoisesti
+// KAPEA tavoite.
+//
+// MITÄ TÄMÄ EI TEE
+// Tämä ei ole offline-synkronointi. Tehtäviä ei tallenneta jonoon eikä
+// lähetetä myöhemmin. Sellainen vaatisi konfliktimallin, jota ei ole vielä
+// suunniteltu, ja ilman sitä käyttäjä luulisi tallentaneensa jotain mitä ei
+// tallennettu. Ks. docs/ARCHITECTURE.md, kohta "Offline-malli".
+//
+// STRATEGIA: NETWORK-FIRST
+// Sovelluksessa ei ole käännösvaihetta eikä tiedostonimissä sisältötiivistettä.
+// Siksi aggressiivinen välimuisti olisi vaarallinen: käyttäjälle voisi jäädä
+// vanha index.html uuden moduulin kanssa tai päinvastoin. Network-first pitää
+// sisällön aina tuoreena verkon ollessa käytettävissä ja putoaa välimuistiin
+// vain offline-tilassa.
+//
+// MITÄ EI KOSKAAN VÄLIMUISTITETA
+//   - /api/*            palvelinpuolen kutsut
+//   - supabase.co       henkilökohtainen data ja autentikaatio
+//   - muut originit     kolmannen osapuolen resurssit
+// Henkilökohtaisen datan välimuistitus laitteelle olisi tietosuojariski,
+// eikä vanhentunut vastaus saa koskaan näyttää tuoreelta.
+
+// Versio pitää nostaa aina kun sovelluskuori muuttuu. Vanhat välimuistit
+// siivotaan activate-vaiheessa, joten nosto on turvallinen tapa pakottaa
+// päivitys. Ks. docs/DEPLOYMENT.md.
+const CACHE_VERSION = 'v1';
+const CACHE_NAME = `manifestival-shell-${CACHE_VERSION}`;
+
+/**
+ * Sovelluskuori: kaikki mitä tarvitaan käyttöliittymän piirtämiseen ilman
+ * verkkoa. Ei sisällä yhtään käyttäjän omaa dataa.
+ */
+const SHELL = [
+  '/',
+  '/index.html',
+  '/manifest.json',
+  '/icon-192.png',
+  '/icon-512.png',
+  '/apple-touch-icon.png',
+  '/src/styles.css',
+  '/src/app/main.js',
+  '/src/app/actions.js',
+  '/src/app/auth.js',
+  '/src/app/navigation.js',
+  '/src/app/onboarding.js',
+  '/src/app/state.js',
+  '/src/app/voice.js',
+  '/src/app/views/today.js',
+  '/src/app/views/week.js',
+  '/src/app/views/tasks.js',
+  '/src/app/views/profile.js',
+  '/src/ai/parseClient.js',
+  '/src/ai/proposalSchema.js',
+  '/src/data/client.js',
+  '/src/data/config.js',
+  '/src/data/preferences.js',
+  '/src/data/profileRepo.js',
+  '/src/data/schema.js',
+  '/src/data/session.js',
+  '/src/data/tasksRepo.js',
+  '/src/domain/categories.js',
+  '/src/domain/priority.js',
+  '/src/domain/scheduler.js',
+  '/src/domain/task.js',
+  '/src/domain/week.js',
+  '/src/lib/datetime.js',
+  '/src/lib/format.js',
+  '/src/lib/result.js',
+  '/src/lib/rows.js',
+  '/src/ui/confirm.js',
+  '/src/ui/dom.js',
+  '/src/ui/toast.js',
+  '/src/platform/index.js'
+];
+
+/** Polut, joita ei koskaan välimuistiteta. */
+function isNeverCached(url) {
+  return url.pathname.startsWith('/api/');
+}
+
+self.addEventListener('install', event => {
+  event.waitUntil((async () => {
+    const cache = await caches.open(CACHE_NAME);
+    // addAll on kaikki-tai-ei-mitään. Yksikin puuttuva tiedosto estäisi
+    // asennuksen kokonaan, joten haetaan tiedostot yksitellen ja siedetään
+    // yksittäinen puute.
+    await Promise.all(SHELL.map(async path => {
+      try {
+        const response = await fetch(path, { cache: 'reload' });
+        if (response.ok) await cache.put(path, response);
+      } catch {
+        // Yksittäisen tiedoston puuttuminen ei saa estää asennusta.
+      }
+    }));
+  })());
+  // EI skipWaiting(): uusi versio otetaan käyttöön vasta kun kaikki välilehdet
+  // on suljettu. Näin JS-moduulit eivät vaihdu kesken käynnissä olevan
+  // istunnon, mikä johtaisi versioristiriitaan sovelluksen sisällä.
+});
+
+self.addEventListener('activate', event => {
+  event.waitUntil((async () => {
+    const names = await caches.keys();
+    await Promise.all(
+      names
+        .filter(name => name.startsWith('manifestival-shell-') && name !== CACHE_NAME)
+        .map(name => caches.delete(name))
+    );
+    await self.clients.claim();
+  })());
+});
+
+self.addEventListener('fetch', event => {
+  const { request } = event;
+
+  // Vain GET-pyynnöt. Kirjoituksia ei koskaan välimuistiteta eikä toisteta.
+  if (request.method !== 'GET') return;
+
+  const url = new URL(request.url);
+
+  // Vain oma origin. Supabase, Anthropic-proxy, fontit ja CDN menevät suoraan
+  // verkkoon — henkilökohtaista dataa ei talleteta laitteelle.
+  if (url.origin !== self.location.origin) return;
+  if (isNeverCached(url)) return;
+
+  event.respondWith((async () => {
+    try {
+      const response = await fetch(request);
+      // Talleta vain onnistuneet perusvastaukset.
+      if (response && response.ok && response.type === 'basic') {
+        const cache = await caches.open(CACHE_NAME);
+        cache.put(request, response.clone());
+      }
+      return response;
+    } catch {
+      // Offline: tarjoillaan välimuistista.
+      const cached = await caches.match(request);
+      if (cached) return cached;
+
+      // Navigointipyyntö ilman osumaa -> sovelluskuori.
+      if (request.mode === 'navigate') {
+        const shell = await caches.match('/index.html');
+        if (shell) return shell;
+      }
+
+      return new Response('Offline', {
+        status: 503,
+        statusText: 'Offline',
+        headers: { 'Content-Type': 'text/plain; charset=utf-8' }
+      });
+    }
+  })());
+});
