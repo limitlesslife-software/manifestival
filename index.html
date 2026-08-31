@@ -142,6 +142,30 @@
   .voice-mic-btn { display:flex; align-items:center; justify-content:center; gap:8px; width:100%; padding:14px; border-radius:14px; border:none; background:var(--gold); color:var(--forest); font-weight:700; font-size:14px; cursor:pointer; margin-bottom:10px; font-family:'Manrope',sans-serif; }
   .hint { font-size:12px; color:var(--text-2); line-height:1.6; }
 
+  /* ---- WP1: kirjautuminen ---- */
+  .app-hidden { display:none !important; }
+  .auth-splash { position:fixed; inset:0; background:var(--cream); display:flex; align-items:center; justify-content:center; z-index:110; }
+  .auth-splash.done { display:none; }
+  .auth-gate { position:fixed; inset:0; background:var(--cream); display:none; align-items:center; justify-content:center; padding:24px; z-index:100; overflow-y:auto; }
+  .auth-gate.open { display:flex; }
+  .auth-card { width:100%; max-width:380px; }
+  .auth-brand { text-align:center; margin-bottom:26px; }
+  .auth-brand .title { font-size:22px; margin-top:4px; }
+  .auth-tabs { display:flex; gap:5px; background:var(--sage-soft); padding:4px; border-radius:13px; margin-bottom:16px; }
+  .auth-tab { flex:1; appearance:none; -webkit-appearance:none; border:none; background:none; padding:9px; border-radius:9px; font-family:'Manrope',sans-serif; font-size:13px; font-weight:700; color:var(--text-2); cursor:pointer; }
+  .auth-tab.active { background:var(--cream-card); color:var(--forest); }
+  .auth-tab:focus-visible { outline:2px solid var(--gold); outline-offset:2px; }
+  .auth-form { display:flex; flex-direction:column; gap:9px; }
+  .auth-msg { font-size:12.5px; font-weight:600; padding:10px 12px; border-radius:10px; line-height:1.5; }
+  .auth-msg.error { background:var(--clay-soft); color:var(--clay); }
+  .auth-msg.note { background:var(--sage-soft); color:var(--forest); }
+  .auth-hint { text-align:center; font-size:11.5px; color:var(--text-3); margin-top:14px; line-height:1.6; }
+  .is-busy { opacity:.55; pointer-events:none; }
+  .signout-block { margin-top:24px; padding-top:18px; border-top:1px solid var(--border); }
+  .signout-email { font-size:12px; color:var(--text-3); margin-bottom:10px; word-break:break-all; }
+  .signout-btn { appearance:none; -webkit-appearance:none; width:100%; padding:12px; border-radius:12px; border:1px solid var(--border); background:var(--cream-card); color:var(--clay); font-family:'Manrope',sans-serif; font-weight:700; font-size:13.5px; cursor:pointer; }
+  .signout-btn:focus-visible { outline:2px solid var(--gold); outline-offset:2px; }
+
   @media (prefers-reduced-motion:reduce){ .fab-ring,.now-pulse-ring,.voice-orb::before{ animation:none; } .screen{ transition:none; } }
 </style>
 </head>
@@ -164,7 +188,32 @@
   </defs>
 </svg>
 
-<div id="app">
+<div class="auth-splash" id="authSplash">
+  <div class="voice-spinner"></div>
+</div>
+
+<div class="auth-gate" id="authGate">
+  <div class="auth-card">
+    <div class="auth-brand">
+      <div class="eyebrow">MANIFESTIVAL</div>
+      <h1 class="title">Suunnittele elämä, jota haluat elää.</h1>
+    </div>
+    <div class="auth-tabs" role="tablist">
+      <button class="auth-tab active" id="authTabSignin" type="button" role="tab" aria-selected="true">Kirjaudu</button>
+      <button class="auth-tab" id="authTabSignup" type="button" role="tab" aria-selected="false">Luo tili</button>
+    </div>
+    <form class="auth-form" id="authForm" novalidate>
+      <input class="voice-field" type="email" id="authEmail" placeholder="Sähköposti" autocomplete="email" style="margin-bottom:0;">
+      <input class="voice-field" type="password" id="authPassword" placeholder="Salasana" autocomplete="current-password" style="margin-bottom:0;">
+      <div class="auth-msg error" id="authError" style="display:none;" role="alert"></div>
+      <div class="auth-msg note" id="authNote" style="display:none;" role="status"></div>
+      <button class="voice-btn save" type="submit" id="authSubmit">Kirjaudu</button>
+    </form>
+    <div class="auth-hint">Henkilökohtaiset tietosi näkyvät vain sinulle.<br>Salasanan vähimmäispituus on 8 merkkiä.</div>
+  </div>
+</div>
+
+<div id="app" class="app-hidden">
   <div class="screens">
 
     <div class="screen active" id="screen-today">
@@ -254,6 +303,12 @@
           <button class="form-btn primary" id="pfSave" style="flex:none; padding:10px 24px;">Tallenna</button>
         </div>
         <div id="pfSavedMsg" style="display:none; font-size:12px; color:var(--sage); font-weight:700;">✓ Tallennettu</div>
+        <div id="pfErrorMsg" style="display:none; font-size:12px; color:var(--clay); font-weight:700;">Tallennus epäonnistui. Yritä uudelleen.</div>
+      </div>
+
+      <div class="signout-block">
+        <div class="signout-email" id="signoutEmail"></div>
+        <button class="signout-btn" id="signoutBtn" type="button">Kirjaudu ulos</button>
       </div>
     </div>
 
@@ -320,8 +375,15 @@
   </div>
 </div>
 
-<script>
-  const STORAGE_KEY = 'manifestival:tasks:v1';
+<script type="module">
+  // WP1: puhtaat apufunktiot on siirretty src/lib/-moduuleihin, jotta ne voidaan
+  // testata ilman selainta (ks. tests/). Logiikka on siirretty sellaisenaan.
+  import {
+    fmtISO, parseISO, addDays, startOfWeek, sameDay, todayMidnight,
+    sortByTime, loadClass, subtractMinutes, addMinutes
+  } from './src/lib/datetime.js';
+  import { toRow, fromRow, assertClientSafe, newTaskId } from './src/lib/rows.js';
+
   const WD_SHORT = ['SU','MA','TI','KE','TO','PE','LA'];
   const WD_FULL = ['sunnuntai','maanantai','tiistai','keskiviikko','torstai','perjantai','lauantai'];
   const MONTHS = ['tammikuuta','helmikuuta','maaliskuuta','huhtikuuta','toukokuuta','kesäkuuta','heinäkuuta','elokuuta','syyskuuta','lokakuuta','marraskuuta','joulukuuta'];
@@ -334,59 +396,44 @@
   function capitalize(s){ return s.charAt(0).toUpperCase()+s.slice(1); }
   function escapeHtml(s){ const d=document.createElement('div'); d.textContent = s==null?'':String(s); return d.innerHTML; }
 
-  function fmtISO(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
-  function parseISO(s){ const p=s.split('-').map(Number); return new Date(p[0],p[1]-1,p[2]); }
-  function addDays(d,n){ const r=new Date(d); r.setDate(r.getDate()+n); return r; }
-  function startOfWeek(d){ const r=new Date(d); const day=r.getDay(); const diff=(day===0?-6:1)-day; r.setDate(r.getDate()+diff); r.setHours(0,0,0,0); return r; }
-  function sameDay(a,b){ return fmtISO(a)===fmtISO(b); }
-  function todayMidnight(){ const n=new Date(); n.setHours(0,0,0,0); return n; }
-  function sortByTime(a,b){ if(!a.time&&!b.time) return 0; if(!a.time) return 1; if(!b.time) return -1; return a.time.localeCompare(b.time); }
-  function loadClass(n){ if(n===0) return null; if(n<=3) return 'sage'; if(n<=7) return 'gold'; return 'clay'; }
-
   const SUPABASE_URL = 'https://twpyubcymdnbvelsjidg.supabase.co';
   const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR3cHl1YmN5bWRuYnZlbHNqaWRnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODUyNTg1MTEsImV4cCI6MjEwMDgzNDUxMX0.ych4lT7elajj3H12smhi2wjP-CP1dYrqtKhoK1RoSYQ';
   const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-  function toRow(t){ return { id:t.id, date:t.date, time:t.time, end_time:t.endTime, title:t.title, category:t.category, note:t.note, completed:t.completed, is_wake: !!t.isWake }; }
-  function fromRow(r){ return { id:r.id, date:r.date, time:r.time, endTime:r.end_time, title:r.title, category:r.category, note:r.note, completed:r.completed, isWake: !!r.is_wake }; }
+  const EMPTY_PROFILE = { age:null, weightKg:null, heightCm:null, sleepTargetHours:8, defaultWakeTime:'07:00', commuteMinutes:30, routineMinutes:60 };
+  let state = { tasks: [], viewDate: todayMidnight(), weekStart: startOfWeek(todayMidnight()), profile: { ...EMPTY_PROFILE }, editingId: null };
 
-  let state = { tasks: [], viewDate: todayMidnight(), weekStart: startOfWeek(todayMidnight()), profile: { age:null, weightKg:null, heightCm:null, sleepTargetHours:8, defaultWakeTime:'07:00', commuteMinutes:30, routineMinutes:60 }, editingId: null };
+  // WP1: kirjautuneen kayttajan identiteetti. Null = ei kirjautunut.
+  let authUser = null;
 
-  function seedTasks(){
-    const t = fmtISO(todayMidnight());
-    let n=1;
-    const mk=(time,endTime,title,category,note,isWake)=>({id:'seed'+(n++), date:t, time:time||null, endTime:endTime||null, title, category, note:note||null, completed:false, isWake:!!isWake});
-    return [
-      mk('05:30',null,'Herätys','hyvinvointi',null,true),
-      mk('05:35','05:55','Hengitys ja aamuliike','hyvinvointi'),
-      mk('05:55','06:25','Valmistautuminen','koti'),
-      mk('06:30',null,'Lähtö töihin','tyo','18 min · karting-varusteet mukaan'),
-      mk('07:00','12:00','Työ','tyo'),
-      mk('12:00',null,'Ruokailu','hyvinvointi'),
-      mk('13:00','14:00','Laskutus','talous'),
-      mk('16:00','17:00','Karting-harjoitus','harrastus'),
-      mk('18:00',null,'Perheaika','perhe'),
-      mk('21:30','22:00','Iltarutiini ja uni','hyvinvointi')
-    ];
+  // Palauttaa kirjautuneen kayttajan id:n tai heittaa poikkeuksen. Kaikki
+  // tietokantakutsut kayttavat tata, jotta yksikaan kysely ei voi lahtea
+  // liikkeelle ilman kayttajarajausta.
+  function requireUserId(){
+    if (!authUser || !authUser.id) throw new Error('Ei kirjautunutta käyttäjää');
+    return authUser.id;
   }
 
-  // Persistence: real shared Supabase database — same data on every device.
+  // Persistenssi: Supabase, kayttajakohtaisesti eristettyna.
+  //
+  // WP1 TURVALLISUUS: jokainen kysely rajataan eksplisiittisesti kirjautuneen
+  // kayttajan riveihin. Tama on puolustusta syvyydessa — varsinainen tae on
+  // tietokannan RLS-politiikka (supabase/migrations/0001_auth_user_scoping.sql),
+  // joka estaa vieraan datan lukemisen ja muuttamisen myos silloin, jos tassa
+  // client-koodissa olisi virhe.
+  //
+  // user_id-saraketta EI koskaan laheteta clientilta: sen asettaa tietokanta
+  // itse (DEFAULT auth.uid()). Ks. src/lib/rows.js.
   async function loadTasks(){
     try {
-      const { data, error } = await sb.from('tasks').select('*');
+      const { data, error } = await sb.from('tasks').select('*').eq('user_id', requireUserId());
       if (error) throw error;
       return (data||[]).map(fromRow);
     } catch(e){ console.error('Lataus epäonnistui', e); return null; }
   }
-  async function seedIntoSupabase(){
-    const seed = seedTasks();
-    try { await sb.from('tasks').insert(seed.map(toRow)); }
-    catch(e){ console.error('Esitäyttö epäonnistui', e); }
-    return seed;
-  }
   async function loadProfile(){
     try {
-      const { data, error } = await sb.from('profile').select('*').eq('id','me').maybeSingle();
+      const { data, error } = await sb.from('profile').select('*').eq('id', requireUserId()).maybeSingle();
       if (error) throw error;
       if (!data) return null;
       return {
@@ -398,24 +445,21 @@
       };
     } catch(e){ console.error('Profiilin lataus epäonnistui', e); return null; }
   }
-  function saveProfile(p){
+  // upsert eika update: uudella kayttajalla ei viela ole profiiliriviä.
+  // Aiempi update().eq('id','me') epäonnistui hiljaisesti, jos riviä ei ollut.
+  async function saveProfile(p){
     state.profile = p;
-    sb.from('profile').update({
+    const { error } = await sb.from('profile').upsert({
+      id: requireUserId(),
       age:p.age, weight_kg:p.weightKg, height_cm:p.heightCm, sleep_target_hours:p.sleepTargetHours,
       default_wake_time:p.defaultWakeTime, commute_minutes:p.commuteMinutes, routine_minutes:p.routineMinutes
-    }).eq('id','me')
-      .then(({error})=>{ if(error) console.error('Profiilin tallennus epäonnistui', error); });
+    });
+    if (error){ console.error('Profiilin tallennus epäonnistui', error); return false; }
+    return true;
   }
 
   // ---- Automatic wake / bedtime calculation (always live, never stored) ----
-  function subtractMinutes(timeStr, minutes){
-    const p = timeStr.split(':').map(Number);
-    let total = p[0]*60+p[1] - minutes;
-    total = ((total % 1440) + 1440) % 1440;
-    const h = Math.floor(total/60), m = Math.round(total%60);
-    return String(h).padStart(2,'0')+':'+String(m).padStart(2,'0');
-  }
-  function addMinutes(timeStr, minutes){ return subtractMinutes(timeStr, -minutes); }
+  // subtractMinutes ja addMinutes on siirretty src/lib/datetime.js:aan (WP1).
   function findWorkAnchor(dateIso){
     return state.tasks.filter(t=>t.date===dateIso && t.category==='tyo' && t.time).sort(sortByTime)[0] || null;
   }
@@ -460,9 +504,12 @@
   }
 
   // Only one wake-anchor per day: clear is_wake on any other task for that date.
+  // WP1: rajattu kirjautuneen kayttajan riveihin.
   function clearOtherWakeFlags(date, exceptId){
     state.tasks.forEach(t=>{ if(t.date===date && t.id!==exceptId && t.isWake) t.isWake=false; });
-    sb.from('tasks').update({ is_wake:false }).eq('date', date).neq('id', exceptId||'').then(()=>{});
+    sb.from('tasks').update({ is_wake:false })
+      .eq('user_id', requireUserId()).eq('date', date).neq('id', exceptId||'')
+      .then(()=>{});
   }
 
   function toggleComplete(id){
@@ -470,21 +517,23 @@
     if (!it) return;
     it.completed = !it.completed;
     renderAll();
-    sb.from('tasks').update({ completed: it.completed }).eq('id', id)
+    sb.from('tasks').update({ completed: it.completed }).eq('user_id', requireUserId()).eq('id', id)
       .then(({error})=>{ if(error) console.error('Tallennus epäonnistui', error); });
   }
   function deleteTask(id){
     state.tasks = state.tasks.filter(t=>t.id!==id);
     renderAll();
-    sb.from('tasks').delete().eq('id', id)
+    sb.from('tasks').delete().eq('user_id', requireUserId()).eq('id', id)
       .then(({error})=>{ if(error) console.error('Poisto epäonnistui', error); });
   }
   function addTask(task){
-    const newTask = Object.assign({id:'m'+Date.now()+Math.random().toString(36).slice(2,6), endTime:null, note:null, completed:false, isWake:false}, task);
+    const newTask = Object.assign({id:newTaskId(), endTime:null, note:null, completed:false, isWake:false}, task);
     state.tasks.push(newTask);
     if (newTask.isWake) clearOtherWakeFlags(newTask.date, newTask.id);
     renderAll();
-    sb.from('tasks').insert(toRow(newTask))
+    // assertClientSafe: varmistaa, ettei payload sisalla user_id:ta. Omistajuuden
+    // asettaa tietokanta (DEFAULT auth.uid()), ei selain.
+    sb.from('tasks').insert(assertClientSafe(toRow(newTask)))
       .then(({error})=>{ if(error) console.error('Lisäys epäonnistui', error); });
   }
   function updateTask(id, changes){
@@ -493,7 +542,7 @@
     Object.assign(it, changes);
     if (it.isWake) clearOtherWakeFlags(it.date, it.id);
     renderAll();
-    sb.from('tasks').update(toRow(it)).eq('id', id)
+    sb.from('tasks').update(assertClientSafe(toRow(it))).eq('user_id', requireUserId()).eq('id', id)
       .then(({error})=>{ if(error) console.error('Päivitys epäonnistui', error); });
   }
   function renderAll(){ renderToday(); renderWeek(); renderTasks(); }
@@ -784,7 +833,7 @@
     document.getElementById('pfCommute').value = state.profile.commuteMinutes ?? 30;
     document.getElementById('pfRoutine').value = state.profile.routineMinutes ?? 60;
   }
-  document.getElementById('pfSave').addEventListener('click', ()=>{
+  document.getElementById('pfSave').addEventListener('click', async ()=>{
     const num = v => v===''||v===null||v===undefined ? null : Number(v);
     const p = {
       age: num(document.getElementById('pfAge').value),
@@ -795,9 +844,12 @@
       commuteMinutes: num(document.getElementById('pfCommute').value) ?? 30,
       routineMinutes: num(document.getElementById('pfRoutine').value) ?? 60
     };
-    saveProfile(p);
+    const okMsg = document.getElementById('pfSavedMsg');
+    const errMsg = document.getElementById('pfErrorMsg');
+    okMsg.style.display='none'; errMsg.style.display='none';
+    const ok = await saveProfile(p);
     renderToday();
-    const msg = document.getElementById('pfSavedMsg');
+    const msg = ok ? okMsg : errMsg;
     msg.style.display='block';
     setTimeout(()=>{ msg.style.display='none'; }, 2500);
   });
@@ -920,22 +972,177 @@
   }
   function showVoiceError(msg){ document.getElementById('voiceErrorMsg').textContent = msg; showVoiceState('error'); }
 
-  async function init(){
-    const loaded = await loadTasks();
-    if (loaded !== null && loaded.length > 0){
-      state.tasks = loaded;
-    } else if (loaded !== null){
-      state.tasks = await seedIntoSupabase();
-    } else {
-      state.tasks = seedTasks(); // Supabase unreachable — local fallback so the app still works
+  // ================= WP1: autentikointi =================
+  // Kaytetaan Supabasen omaa salasanapohjaista kirjautumista. Sovellus ei
+  // kasittele salasanoja itse eika tallenna niita mihinkaan.
+
+  const MIN_PASSWORD_LENGTH = 8;
+  let authMode = 'signin'; // 'signin' | 'signup'
+
+  const authGateEl   = document.getElementById('authGate');
+  const authFormEl   = document.getElementById('authForm');
+  const authEmailEl  = document.getElementById('authEmail');
+  const authPassEl   = document.getElementById('authPassword');
+  const authErrorEl  = document.getElementById('authError');
+  const authNoteEl   = document.getElementById('authNote');
+  const authSubmitEl = document.getElementById('authSubmit');
+
+  function clearAuthMessages(){
+    authErrorEl.style.display='none'; authErrorEl.textContent='';
+    authNoteEl.style.display='none'; authNoteEl.textContent='';
+  }
+  function showAuthError(msg){
+    authNoteEl.style.display='none';
+    authErrorEl.textContent = msg;
+    authErrorEl.style.display='block';
+  }
+  function showAuthNote(msg){
+    authErrorEl.style.display='none';
+    authNoteEl.textContent = msg;
+    authNoteEl.style.display='block';
+  }
+  function setAuthBusy(busy){
+    authFormEl.classList.toggle('is-busy', busy);
+    authSubmitEl.textContent = busy
+      ? 'Hetki…'
+      : (authMode === 'signin' ? 'Kirjaudu' : 'Luo tili');
+  }
+  function setAuthMode(mode){
+    authMode = mode;
+    const isSignin = mode === 'signin';
+    document.getElementById('authTabSignin').classList.toggle('active', isSignin);
+    document.getElementById('authTabSignup').classList.toggle('active', !isSignin);
+    document.getElementById('authTabSignin').setAttribute('aria-selected', String(isSignin));
+    document.getElementById('authTabSignup').setAttribute('aria-selected', String(!isSignin));
+    authPassEl.setAttribute('autocomplete', isSignin ? 'current-password' : 'new-password');
+    clearAuthMessages();
+    setAuthBusy(false);
+  }
+  document.getElementById('authTabSignin').addEventListener('click', ()=>setAuthMode('signin'));
+  document.getElementById('authTabSignup').addEventListener('click', ()=>setAuthMode('signup'));
+
+  // Kaannetaan Supabasen englanninkieliset virheet suomeksi. Tuntematon virhe
+  // naytetaan yleisviestina — ei paljasteta palvelimen sisaisia yksityiskohtia.
+  function authErrorMessage(error){
+    const raw = String((error && error.message) || '').toLowerCase();
+    if (raw.includes('invalid login credentials')) return 'Sähköposti tai salasana ei täsmää.';
+    if (raw.includes('email not confirmed')) return 'Vahvista ensin sähköpostiosoitteesi. Tarkista postilaatikkosi.';
+    if (raw.includes('user already registered') || raw.includes('already been registered')) return 'Tällä sähköpostilla on jo tili. Kirjaudu sisään.';
+    if (raw.includes('password')) return 'Salasana ei kelpaa. Vähintään ' + MIN_PASSWORD_LENGTH + ' merkkiä.';
+    if (raw.includes('rate limit') || raw.includes('too many')) return 'Liian monta yritystä. Odota hetki ja yritä uudelleen.';
+    if (raw.includes('failed to fetch') || raw.includes('network')) return 'Verkkoyhteys ei toimi. Tarkista yhteys ja yritä uudelleen.';
+    return 'Kirjautuminen ei onnistunut. Yritä uudelleen.';
+  }
+
+  authFormEl.addEventListener('submit', async (e)=>{
+    e.preventDefault();
+    clearAuthMessages();
+
+    const email = authEmailEl.value.trim();
+    const password = authPassEl.value;
+
+    if (!email || !email.includes('@')){ showAuthError('Anna kelvollinen sähköpostiosoite.'); return; }
+    if (password.length < MIN_PASSWORD_LENGTH){
+      showAuthError('Salasanan pitää olla vähintään ' + MIN_PASSWORD_LENGTH + ' merkkiä.');
+      return;
     }
+
+    setAuthBusy(true);
+    try {
+      if (authMode === 'signin'){
+        const { error } = await sb.auth.signInWithPassword({ email, password });
+        if (error) throw error;
+        // onAuthStateChange vie eteenpain.
+      } else {
+        const { data, error } = await sb.auth.signUp({ email, password });
+        if (error) throw error;
+        if (data && data.user && !data.session){
+          // Sahkopostivahvistus on paalla projektissa.
+          showAuthNote('Tili luotu. Vahvista sähköpostiosoitteesi ennen kirjautumista.');
+          setAuthMode('signin');
+          return;
+        }
+      }
+    } catch(err){
+      showAuthError(authErrorMessage(err));
+    } finally {
+      setAuthBusy(false);
+    }
+  });
+
+  document.getElementById('signoutBtn').addEventListener('click', async ()=>{
+    try { await sb.auth.signOut(); }
+    catch(e){ console.error('Uloskirjautuminen epäonnistui', e); }
+  });
+
+  function showAuthGate(){
+    document.getElementById('app').classList.add('app-hidden');
+    authGateEl.classList.add('open');
+    setAuthMode('signin');
+    authPassEl.value = '';
+  }
+
+  async function enterApp(user){
+    authUser = user;
+    authGateEl.classList.remove('open');
+    document.getElementById('app').classList.remove('app-hidden');
+    document.getElementById('signoutEmail').textContent = user.email || '';
+    authEmailEl.value = '';
+    authPassEl.value = '';
+    await loadUserData();
+  }
+
+  // Lataa kirjautuneen kayttajan oman datan. Jos lataus epaonnistuu, naytetaan
+  // TYHJA tila — ei enaa esimerkkidataa, jota aiempi versio kirjoitti kantaan.
+  async function loadUserData(){
+    const loaded = await loadTasks();
+    state.tasks = loaded === null ? [] : loaded;
     const profile = await loadProfile();
-    if (profile) state.profile = profile;
+    state.profile = profile ? profile : { ...EMPTY_PROFILE };
+    state.viewDate = todayMidnight();
+    state.weekStart = startOfWeek(todayMidnight());
     fillProfileForm();
     renderAll();
+  }
+
+  // Tyhjentaa kaiken henkilokohtaisen tilan muistista uloskirjautuessa.
+  function leaveApp(){
+    authUser = null;
+    state.tasks = [];
+    state.profile = { ...EMPTY_PROFILE };
+    state.editingId = null;
+    renderAll();
+    showAuthGate();
+  }
+
+  async function init(){
+    let session = null;
+    try {
+      const { data, error } = await sb.auth.getSession();
+      if (error) throw error;
+      session = data ? data.session : null;
+    } catch(e){
+      console.error('Istunnon palautus epäonnistui', e);
+    }
+
+    // Reagoi kirjautumiseen, uloskirjautumiseen ja tokenin uusiutumiseen.
+    sb.auth.onAuthStateChange((event, s)=>{
+      if (s && s.user){
+        if (!authUser || authUser.id !== s.user.id) enterApp(s.user);
+        else authUser = s.user;
+      } else if (authUser){
+        leaveApp();
+      }
+    });
+
+    if (session && session.user) await enterApp(session.user);
+    else showAuthGate();
+
+    document.getElementById('authSplash').classList.add('done');
+
     // Pitää NYT/MYÖHÄSSÄ/ETUAJASSA-tilan ajan tasalla ilman sivun päivitystä.
-    setInterval(renderToday, 30000);
-    document.addEventListener('visibilitychange', ()=>{ if (!document.hidden) renderToday(); });
+    setInterval(()=>{ if (authUser) renderToday(); }, 30000);
+    document.addEventListener('visibilitychange', ()=>{ if (!document.hidden && authUser) renderToday(); });
   }
   init();
 
