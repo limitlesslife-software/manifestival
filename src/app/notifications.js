@@ -118,6 +118,16 @@ export async function syncNotifications() {
     // asiasta, jota ei enää ole.
     await platformNotifications.cancel();
 
+    // Tila on voinut vaihtua yllä olevan odotuksen aikana — tyypillisimmin
+    // uloskirjautumiseen, joka palauttaa asetukset oletukseen. Ilman tätä
+    // tarkistusta edellisen käyttäjän tehtävien otsikot päätyisivät laitteen
+    // ilmoitusalueelle vasta uloskirjautumisen JÄLKEEN.
+    if (!normalizePreferences(getState().notificationPreferences).enabled) {
+      lastSync = { at: Date.now(), scheduled: 0, planned: 0,
+        reason: 'Muistutukset kytkettiin pois kesken synkronoinnin' };
+      return { ok: true, ...lastSync };
+    }
+
     const result = await platformNotifications.schedule(intents);
     lastSync = {
       at: Date.now(),

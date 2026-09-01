@@ -340,3 +340,31 @@ test('horisontti on rajallinen eikä kasva rajatta', () => {
   assert.ok(orchestration.SYNC_HORIZON_DAYS <= 14,
     'liian pitkä horisontti vanhenisi ja täyttäisi laitteen ajastimet');
 });
+
+test('REGRESSIO: kesken synkronoinnin tapahtuva uloskirjautuminen estää ajastuksen', async () => {
+  // Peruutus on asynkroninen. Jos käyttäjä kirjautuu ulos juuri sen aikana,
+  // edellisen käyttäjän tehtävien otsikot päätyisivät laitteen
+  // ilmoitusalueelle vasta uloskirjautumisen JÄLKEEN.
+  const plugin = fakePlugin({ display: 'granted' });
+  installNativeShell(plugin);
+  await orchestration.refreshNotificationPermission();
+
+  setNotificationPreferences({ enabled: true, maxPerDay: 50 });
+  setTasks([normalizeTask({
+    id: 't1', title: 'Salainen tapaaminen', date: '2099-06-01',
+    time: '10:00', completed: false
+  })]);
+
+  // Uloskirjautuminen simuloidaan nollaamalla tila juuri peruutuksen aikana.
+  const originalGetPending = plugin.getPending;
+  plugin.getPending = async (...args) => {
+    resetState();
+    return originalGetPending(...args);
+  };
+
+  const result = await orchestration.syncNotifications();
+
+  assert.equal(result.scheduled, 0);
+  assert.equal(plugin.calls.schedule.length, 0,
+    'edellisen käyttäjän muistutukset ajastettiin uloskirjautumisen jälkeen');
+});

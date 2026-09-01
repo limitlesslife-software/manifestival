@@ -69,6 +69,17 @@ export function renderNotificationSettings() {
   const container = maybe('notificationSettings');
   if (!container) return;
 
+  // Tämä näkymä piirretään uudelleen JOKAISESTA tilamuutoksesta, myös
+  // sellaisesta joka ei koske asetuksia lainkaan — esimerkiksi tehtävän
+  // kuittauksesta toisessa näkymässä. Jos käyttäjä on juuri kirjoittamassa
+  // lukuun tai kellonaikaan, innerHTML:n korvaaminen hävittäisi kesken
+  // olevan syötteen ja fokuksen. Odotetaan kunnes kenttä on jätetty.
+  if (typeof document !== 'undefined'
+      && document.activeElement
+      && container.contains(document.activeElement)) {
+    return;
+  }
+
   const preferences = getState().notificationPreferences;
   const state = platformNotifications.capability();
 
