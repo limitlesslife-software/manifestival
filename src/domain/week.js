@@ -19,10 +19,23 @@ export function weekDayIsoList(weekStart) {
   return weekDays(weekStart).map(fmtISO);
 }
 
-/** Otsikko viikolle: '31.8. – 6.9.' */
+/**
+ * Otsikko viikolle: '31.8. – 6.9.'
+ *
+ * Vuosiluku jätetään pois, koska se on lähes aina turha kohina. Poikkeus on
+ * vuoden vaihtava viikko: '28.12. – 3.1.' ei kerro kumpaan vuoteen kumpikin
+ * pää kuuluu, ja juuri siinä kohdassa lukija sitä tarvitsee.
+ */
 export function weekRangeLabel(weekStart) {
   const days = weekDays(weekStart);
-  return `${formatShortDate(days[0])} – ${formatShortDate(days[6])}`;
+  const first = days[0];
+  const last = days[6];
+
+  if (first.getFullYear() !== last.getFullYear()) {
+    return `${formatShortDate(first)}${first.getFullYear()} – `
+      + `${formatShortDate(last)}${last.getFullYear()}`;
+  }
+  return `${formatShortDate(first)} – ${formatShortDate(last)}`;
 }
 
 

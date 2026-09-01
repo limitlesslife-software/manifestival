@@ -78,7 +78,15 @@ test('kaikki viikon päivät ovat peräkkäisiä', () => {
 
 test('viikon otsikko näyttää alku- ja loppupäivän', () => {
   assert.equal(weekRangeLabel(parseISO('2026-08-31')), '31.8. – 6.9.');
-  assert.equal(weekRangeLabel(parseISO('2026-12-31')), '28.12. – 3.1.');
+});
+
+test('vuoden vaihtava viikko näyttää myös vuosiluvut', () => {
+  // Aiemmin tämä tuotti '28.12. – 3.1.', joka ei kerro kumpaan vuoteen
+  // kumpikin pää kuuluu. Vuosiluku lisätään VAIN silloin kun viikko ylittää
+  // vuodenvaihteen — muuten se olisi pelkkää kohinaa joka viikossa.
+  // weekRangeLabel normalisoi annetun päivän maanantaiksi, joten torstai
+  // 31.12.2026 kuuluu viikkoon 28.12.2026 – 3.1.2027.
+  assert.equal(weekRangeLabel(parseISO('2026-12-31')), '28.12.2026 – 3.1.2027');
 });
 
 // ------------------------------------------------------------ ryhmittely
