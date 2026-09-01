@@ -447,6 +447,8 @@ export async function saveWellbeingEntry(input) {
   const { valid, errors } = validateWellbeingEntry(entry);
   if (!valid) return { ok: false, errors };
 
+  const previous = getState().wellbeing;
+
   upsertWellbeingEntry(entry);
   warnAboutVolatileCollections();
 
@@ -455,6 +457,7 @@ export async function saveWellbeingEntry(input) {
     : await wellbeingRepo.insert(entry);
 
   if (!result.ok) {
+    setWellbeing(previous); // peruutus
     showError(result.error);
     return { ok: false };
   }
