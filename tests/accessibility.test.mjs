@@ -259,3 +259,96 @@ test('lomakerivit rivittyvät kapealla näytöllä', () => {
   const formRow = css.slice(css.indexOf('.form-row {'), css.indexOf('.form-row {') + 120);
   assert.ok(formRow.includes('flex-wrap:wrap'), 'lomakerivit puristuisivat kapealla näytöllä');
 });
+
+// ------------------------------------------ WP7–WP12: uudet komponentit
+
+test('rutiini- ja tavoitelomakkeen voi sulkea Escillä ja tallentaa Enterillä', () => {
+  // Sama näppäinsopimus kuin tehtävälomakkeessa. Jos uusi lomake poikkeaisi,
+  // käyttäjän olisi opeteltava kaksi eri tapaa samaan asiaan.
+  for (const file of ['src/app/views/routines.js', 'src/app/views/goals.js']) {
+    const source = read(file);
+    assert.ok(source.includes("event.key === 'Escape'"), file + ': Esc puuttuu');
+    assert.ok(source.includes("event.key === 'Enter'"), file + ': Enter puuttuu');
+  }
+});
+
+test('rutiinin käytössäolokytkin on switch, ei pelkkä painike', () => {
+  // Kytkin, joka ei kerro tilaansa, on ruudunlukijalle pelkkä nimetön nappi.
+  const source = read('src/app/views/routines.js');
+  assert.ok(source.includes('role="switch"'), 'switch-rooli puuttuu');
+  assert.ok(source.includes('aria-checked='), 'aria-checked puuttuu');
+  assert.ok(/aria-label="\$\{routine\.active \?/.test(source),
+    'kytkimen nimen pitää kertoa mitä painallus tekee');
+});
+
+test('hyvinvointiasteikko on radiogroup ja kertoo valinnan', () => {
+  const source = read('src/app/views/today.js');
+  assert.ok(source.includes('role="radiogroup"'), 'ryhmän rooli puuttuu');
+  assert.ok(source.includes('role="radio"'), 'vaihtoehdon rooli puuttuu');
+  assert.ok(source.includes('aria-checked='), 'valinta ei välity ruudunlukijalle');
+});
+
+test('tehtävien ja rutiinien osiovalitsin on merkitty tab-listaksi', () => {
+  const segment = html.slice(html.indexOf('class="segment"'),
+    html.indexOf('class="segment"') + 400);
+  assert.ok(segment.includes('role="tablist"'), 'tablist-rooli puuttuu');
+  assert.equal((segment.match(/role="tab"/g) || []).length, 2);
+  assert.equal((segment.match(/aria-selected=/g) || []).length, 2);
+
+  // Ja valinnan pitää oikeasti päivittyä, ei vain olla merkinnässä.
+  assert.ok(read('src/app/views/tasks.js').includes("setAttribute('aria-selected'"),
+    'aria-selected ei päivity vaihdettaessa');
+});
+
+test('viikonpäivävalinta on oikeita valintaruutuja', () => {
+  // Klikattava div näyttäisi samalta mutta olisi näppäimistölle tavoittamaton.
+  const source = read('src/app/views/routines.js');
+  assert.ok(source.includes('<input type="checkbox"'), 'ei aitoja valintaruutuja');
+  assert.ok(source.includes('<label class="weekday-chip">'),
+    'valintaruudulta puuttuu label, jolloin kosketusalue jää pieneksi');
+});
+
+test('viikonpäiväruudun fokus näkyy', () => {
+  // Ruutu on piilotettu opacity:0:lla ja tyylitelty labelilla, joten
+  // fokusrengas on tuotava esiin erikseen — muuten näppäimistökäyttäjä
+  // ei näe missä on.
+  assert.ok(css.includes('.weekday-chip:has(input:focus-visible)'),
+    'viikonpäivävalinnan fokus ei näy');
+});
+
+test('muistutusasetusten kentillä on nimet', () => {
+  const source = read('src/app/views/notificationSettings.js');
+  const labels = (source.match(/<label[^>]*for="/g) || []).length;
+  assert.ok(labels >= 6, `nimettyjä kenttiä vain ${labels}`);
+  assert.ok(source.includes('for="nfEnabled"'), 'pääkytkimeltä puuttuu nimi');
+});
+
+test('uudet näkymät eivät käytä klikattavia divejä', () => {
+  const clickableDivs = [];
+  for (const file of ['src/app/views/routines.js', 'src/app/views/goals.js',
+    'src/app/views/notificationSettings.js']) {
+    const source = read(file);
+    for (const match of source.matchAll(/<div[^>]*data-(edit|toggle|complete|del)[^>]*>/g)) {
+      clickableDivs.push(`${file}: ${match[0].slice(0, 60)}`);
+    }
+  }
+  assert.deepEqual(clickableDivs, [], 'klikattavia divejä:\n' + clickableDivs.join('\n'));
+});
+
+test('uudet osiot ovat leveydeltään joustavia', () => {
+  // Tavoitekortti ja viikon tunnusluvut ovat leveimmät uudet komponentit.
+  // Jos ne eivät jousta, 360 px leveä näyttö vuotaisi sivusuunnassa.
+  assert.ok(css.includes('.week-stats { display:flex'), 'viikon tunnusluvut eivät jousta');
+  assert.ok(/\.week-stat \{ flex:1/.test(css), 'tunnusluvut eivät jaa tilaa tasan');
+  assert.ok(css.includes('.weekday-row { display:flex; gap:5px; flex-wrap:wrap;'),
+    'viikonpäivät eivät rivity kapealla näytöllä');
+});
+
+test('kapean näytön säännöt kattavat viisi välilehteä ja uudet komponentit', () => {
+  const narrow = css.slice(css.indexOf('@media (max-width:380px)'),
+    css.indexOf('@media (min-width:900px)'));
+  assert.ok(narrow.includes('.tab-btn'), 'välilehdet eivät kapene');
+  assert.ok(narrow.includes('.week-stat'), 'viikon tunnusluvut eivät kapene');
+  assert.ok(narrow.includes('.wb-dot'), 'hyvinvointiasteikko ei kapene');
+  assert.ok(narrow.includes('.weekday-chip'), 'viikonpäivävalinta ei kapene');
+});
