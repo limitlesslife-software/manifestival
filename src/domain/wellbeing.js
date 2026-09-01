@@ -49,10 +49,16 @@ function clampScale(value) {
  * Kaikki kentät ovat vapaaehtoisia — osittainenkin merkintä on arvokas.
  */
 export function normalizeWellbeingEntry(input = {}) {
+  // Pyöristys ENNEN nollatarkistusta.
+  //
+  // Toisin päin 0,04 tuntia pyöristyisi arvoon 0, joka tallentuisi kantaan
+  // ja rikkoisi rajoitteen sleep_hours > 0. Lataus muuttaisi sen takaisin
+  // nulliksi, joten sama merkintä olisi eri arvo joka kierroksella.
   const sleepRaw = Number(input.sleepHours);
-  const sleepHours = Number.isFinite(sleepRaw) && sleepRaw > 0
+  const sleepRounded = Number.isFinite(sleepRaw)
     ? Math.min(Math.round(sleepRaw * 10) / 10, 24)
     : null;
+  const sleepHours = sleepRounded != null && sleepRounded > 0 ? sleepRounded : null;
 
   return {
     id: input.id != null ? String(input.id) : null,
