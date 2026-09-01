@@ -13,18 +13,19 @@
 // kun käyttäjä on nimenomaisesti kytkenyt ilmoitukset päälle.
 
 import { CAPABILITY, capability, isNativeShell, PERMISSION } from './capabilities.js';
+import * as native from './nativeNotifications.js';
 
 /**
- * Natiivitoteutuksen tila.
+ * Kaksi toteutusta saman rajapinnan takana.
  *
- * PLANNED (WP12): @capacitor/local-notifications integroidaan tähän.
- * Liitännäistä ei ole vielä asennettu, koska sen testaaminen vaatii
- * fyysisen laitteen — eikä laitetta käytetä tässä vaiheessa.
+ *   natiivikuori + liitännäinen  -> Capacitor Local Notifications, ajastus toimii
+ *   selain                       -> Notification API, vain etualalla
  *
- * Rajapinta on kuitenkin lukittu nyt, jotta natiivitoteutus on myöhemmin
- * pelkkä tämän tiedoston laajennus eikä sovelluksen uudelleenkirjoitus.
+ * Kutsuja ei valitse kumpaa käytetään. Se on koko tämän kerroksen tarkoitus:
+ * domain suunnittelee muistutukset kerran, ja sama suunnitelma toteutuu
+ * kummallakin alustalla niin hyvin kuin alusta pystyy.
  */
-const NATIVE_PENDING = 'Natiivi-ilmoitukset otetaan käyttöön WP12:ssa';
+const NATIVE_PENDING = 'Ilmoitusliitännäistä ei ole rekisteröity tähän kuoreen';
 
 /** Onko ilmoitukset ylipäätään mahdollisia tällä alustalla. */
 export function support() {
@@ -51,7 +52,10 @@ export async function requestPermission() {
   }
 
   if (isNativeShell()) {
-    return { ok: false, permission: PERMISSION.PROMPT, reason: NATIVE_PENDING };
+    if (!native.isAvailable()) {
+      return { ok: false, permission: PERMISSION.UNSUPPORTED, reason: NATIVE_PENDING };
+    }
+    return native.requestPermission();
   }
 
   if (typeof Notification === 'undefined') {
@@ -88,6 +92,8 @@ export async function showNow(intent) {
     return { ok: false, reason: state.reason || 'Ilmoitukset eivät ole käytettävissä' };
   }
 
+  if (isNativeShell()) return native.showNow(intent);
+
   try {
     // eslint-disable-next-line no-new
     new Notification(intent.title, {
@@ -115,20 +121,37 @@ export async function showNow(intent) {
  * @returns {Promise<{ok:false, reason:string, planned:true}>}
  */
 export async function schedule(intents = []) {
+  const list = Array.isArray(intents) ? intents : [];
+
+  if (isNativeShell() && native.isAvailable()) return native.schedule(list);
+
   return {
     ok: false,
     planned: true,
     scheduled: 0,
-    requested: Array.isArray(intents) ? intents.length : 0,
+    requested: list.length,
     reason: isNativeShell()
       ? NATIVE_PENDING
-      : 'Ajastetut muistutukset vaativat natiivisovelluksen — selain ei pysty tähän luotettavasti'
+      : 'Ajastetut muistutukset vaativat Android-sovelluksen — selain ei pysty tähän luotettavasti'
   };
 }
 
-/** Peru ajastetut ilmoitukset. PLANNED yhdessä schedule():n kanssa. */
+/** Peru ajastetut ilmoitukset. */
 export async function cancelAll() {
-  return { ok: false, planned: true, reason: NATIVE_PENDING };
+  if (isNativeShell() && native.isAvailable()) return native.cancelAll();
+  return { ok: false, planned: true, cancelled: 0, reason: NATIVE_PENDING };
+}
+
+/**
+ * Lue lupatila laitteelta ja päivitä välimuisti.
+ *
+ * Natiivikuoressa lupatila on luettavissa vain asynkronisesti. Sovelluksen
+ * on kutsuttava tätä kerran käynnistyksessä, jotta asetusnäkymä näyttää
+ * oikean tilan. Tämä EI pyydä lupaa — se vain kysyy nykyisen tilan.
+ */
+export async function refreshPermission() {
+  if (isNativeShell() && native.isAvailable()) return native.refreshPermission();
+  return permission();
 }
 
 /**
@@ -147,6 +170,13 @@ export function describeSupport() {
   if (state.permission !== PERMISSION.GRANTED) {
     return { level: 'prompt', text: 'Ilmoitukset vaativat luvan' };
   }
+  if (isNativeShell() && native.isAvailable()) {
+    return {
+      level: 'scheduled',
+      text: 'Muistutukset toimivat myös sovelluksen ollessa suljettuna.'
+    };
+  }
+
   return {
     level: 'foreground',
     text: 'Ilmoitukset toimivat sovelluksen ollessa auki. Muistutukset suljetusta sovelluksesta vaativat Android-sovelluksen.'

@@ -60,9 +60,55 @@ export const NATIVE_REQUIRED = 'Vaatii natiivisovelluksen (ks. docs/ANDROID-STRA
 
 // --------------------------------------------------------- tarkistimet
 
+/**
+ * Natiiviliitännäisen tila luetaan globaalista Capacitor-rekisteristä.
+ *
+ * Tätä ei importoida nativeNotifications.js:stä, koska se importoi tämän —
+ * vastakkainen suunta olisi sykli, jonka arkkitehtuuritesti hylkäisi.
+ * Tarkistus on niin pieni, että sen toistaminen on halvempaa.
+ */
+function nativeNotificationsPlugin() {
+  const capacitor = globalThis.Capacitor;
+  if (!capacitor || typeof capacitor.isNativePlatform !== 'function') return null;
+  if (!capacitor.isNativePlatform()) return null;
+  const plugins = capacitor.Plugins;
+  return (plugins && plugins.LocalNotifications) || null;
+}
+
+/**
+ * Natiivin lupatilan välimuisti.
+ *
+ * Selaimessa lupatila on luettavissa synkronisesti (`Notification.permission`),
+ * natiivikuoressa vain asynkronisesti. Koska capability() on synkroninen,
+ * natiivitila pidetään täällä ja natiivisovitin työntää sen tänne
+ * nimenomaisesta kutsusta.
+ *
+ * Alkuarvo on PROMPT eikä koskaan GRANTED: väärä "lupa on" saisi sovelluksen
+ * luulemaan lähettävänsä ilmoituksia, joita kukaan ei näe.
+ */
+let nativePermissionState = PERMISSION.PROMPT;
+
+/** Päivitä natiivin lupatilan välimuisti. Kutsuu vain natiivisovitin. */
+export function setNativePermission(state) {
+  const allowed = [PERMISSION.PROMPT, PERMISSION.GRANTED, PERMISSION.DENIED];
+  nativePermissionState = allowed.includes(state) ? state : PERMISSION.PROMPT;
+}
+
+/** Nollaa natiivin lupavälimuisti. Uloskirjautuminen ja testit. */
+export function resetNativePermission() {
+  nativePermissionState = PERMISSION.PROMPT;
+}
+
 function notificationsSupport() {
   if (isNativeShell()) {
-    return { supported: true, reason: '', implemented: false };
+    // Android tukee ilmoituksia aina. Toteutus riippuu siitä, onko Local
+    // Notifications -liitännäinen rekisteröity tähän kuoreen.
+    const available = nativeNotificationsPlugin() !== null;
+    return {
+      supported: true,
+      reason: available ? '' : 'Ilmoitusliitännäistä ei ole rekisteröity tähän kuoreen',
+      implemented: available
+    };
   }
   if (typeof Notification === 'undefined') {
     return { supported: false, reason: 'Selain ei tue ilmoituksia', implemented: false };
@@ -71,6 +117,10 @@ function notificationsSupport() {
 }
 
 function notificationsPermission() {
+  if (isNativeShell()) {
+    if (!nativeNotificationsPlugin()) return PERMISSION.UNSUPPORTED;
+    return nativePermissionState;
+  }
   if (typeof Notification === 'undefined') return PERMISSION.UNSUPPORTED;
   const value = Notification.permission;
   if (value === 'granted') return PERMISSION.GRANTED;
@@ -128,7 +178,7 @@ const REGISTRY = Object.freeze({
     label: 'Ilmoitukset',
     support: notificationsSupport,
     permission: notificationsPermission,
-    plannedNote: 'Ajastetut muistutukset vaativat natiivikerroksen (WP12)'
+    plannedNote: 'Ajastetut muistutukset toimivat vain Android-sovelluksessa'
   },
   [CAPABILITY.SPEECH]: {
     label: 'Puheentunnistus',

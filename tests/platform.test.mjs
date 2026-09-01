@@ -20,20 +20,21 @@ import assert from 'node:assert/strict';
 import { read, readCode, browserModules, layerOf, importsOf } from './helpers/sources.mjs';
 
 /**
- * Lataa alustamoduulit puhtaana.
+ * Alustamoduulit ladataan kerran.
  *
- * Kyvykkyydet luetaan globaaleista KUTSUHETKELLÄ, ei latausaikana, joten
- * sama moduuli riittää — mutta välimuistin ohitus tekee testeistä
- * riippumattomia järjestyksestä.
+ * Kyvykkyydet luetaan globaaleista KUTSUHETKELLÄ eikä latausaikana, joten
+ * sama instanssi riittää. Välimuistin ohitus kyselymerkkijonolla olisi
+ * suorastaan haitallista: se toimisi vain päällimmäiselle moduulille, ja
+ * sisemmät importit osoittaisivat silti alkuperäiseen instanssiin.
  */
+const platformModules = {
+  capabilities: await import('../src/platform/capabilities.js'),
+  notifications: await import('../src/platform/notifications.js'),
+  index: await import('../src/platform/index.js')
+};
+
 async function loadPlatform() {
-  const bust = '?t=' + Math.random();
-  const base = new URL('../src/platform/', import.meta.url);
-  return {
-    capabilities: await import(new URL('capabilities.js' + bust, base)),
-    notifications: await import(new URL('notifications.js' + bust, base)),
-    index: await import(new URL('index.js' + bust, base))
-  };
+  return platformModules;
 }
 
 const originalCapacitor = globalThis.Capacitor;
@@ -60,6 +61,7 @@ function fakeNotificationApi(permission, { onRequest = null } = {}) {
 beforeEach(() => {
   delete globalThis.Capacitor;
   delete globalThis.Notification;
+  platformModules.capabilities.resetNativePermission();
 });
 
 afterEach(() => {
