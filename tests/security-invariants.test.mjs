@@ -78,13 +78,84 @@ test('palvelinpuoli lukee avaimen vain ympäristömuuttujasta', () => {
 
 // ------------------------------------------------------ käyttäjäscoping
 
-test('TURVA: kaikki tietokantakutsut ovat yhdessä moduulissa', () => {
+test('TURVA: kaikki tietokantakutsut ovat data-kerroksessa', () => {
   // Jos kyselyt hajaantuvat, rajauksen valvonta muuttuu mahdottomaksi.
-  const allowed = new Set(['src/data/tasksRepo.js', 'src/data/profileRepo.js', 'src/data/client.js']);
+  //
+  // Kuvio oli aiemmin /\.from\(\s*'/ eli se tunnisti VAIN merkkijonona
+  // kirjoitetun taulun nimen. Repositorio, joka kirjoittaa `.from(table)`
+  // muuttujalla, livahti tarkistuksesta kokonaan läpi — eli juuri se
+  // yleistetty repositorio, jonka valvonta on tärkeintä.
+  const allowed = new Set([
+    'src/data/tasksRepo.js',
+    'src/data/profileRepo.js',
+    'src/data/collectionsRepo.js',
+    'src/data/notificationPrefsRepo.js',
+    'src/data/client.js'
+  ]);
   for (const file of browserModules()) {
-    const source = read(file);
-    if (!/\.from\(\s*'/.test(source)) continue;
+    // Array.from ei ole tietokantakutsu.
+    const source = readCode(file).replace(/\bArray\.from\(/g, 'ARRAY_FROM(');
+    if (!/\.from\(/.test(source)) continue;
     assert.ok(allowed.has(file), 'tietokantakutsu väärässä paikassa: ' + file);
+  }
+});
+
+test('TURVA: uusien kokoelmien kutsut on rajattu käyttäjään', () => {
+  // collectionsRepo palvelee rutiineja, tavoitteita, projekteja ja
+  // hyvinvointia yhdellä toteutuksella. Yksi rajaamaton kysely vuotaisi
+  // siis neljä tietotyyppiä kerralla.
+  const source = readCode('src/data/collectionsRepo.js');
+  const calls = [...source.matchAll(/\.from\(table\)/g)];
+  assert.ok(calls.length >= 4, 'odotettiin useita kutsuja, löytyi ' + calls.length);
+
+  let scopedCalls = 0;
+  for (const match of calls) {
+    const chain = source.slice(match.index, match.index + 400);
+
+    // INSERT on tarkoituksella rajaamaton: uudella rivillä ei vielä ole
+    // omistajaa, jonka mukaan suodattaa. Omistajuuden asettaa tietokanta
+    // (DEFAULT auth.uid()) ja RLS:n WITH CHECK valvoo sen. Suodatin tässä
+    // olisi merkityksetön, ja sen vaatiminen opettaisi lisäämään
+    // näennäistarkistuksia oikean suojan sijaan.
+    if (/\.insert\(/.test(chain)) {
+      assert.ok(chain.includes('assertClientSafe'),
+        'insert ilman palvelinkenttien tarkistusta:\n' + chain.split('\n').slice(0, 5).join('\n'));
+      continue;
+    }
+
+    assert.ok(chain.includes('requireUserId()'),
+      'rajaamaton kokoelmakutsu:\n' + chain.split('\n').slice(0, 5).join('\n'));
+    scopedCalls++;
+  }
+
+  assert.ok(scopedCalls >= 3,
+    'odotettiin rajattuja luku-, muutos- ja poistokutsuja, löytyi ' + scopedCalls);
+});
+
+test('TURVA: muistutusasetusten kutsut on rajattu käyttäjään', () => {
+  const source = readCode('src/data/notificationPrefsRepo.js');
+  const calls = [...source.matchAll(/\.from\(TABLE\)/g)];
+  assert.ok(calls.length >= 2, 'odotettiin useita kutsuja, löytyi ' + calls.length);
+
+  for (const match of calls) {
+    const chain = source.slice(match.index, match.index + 400);
+    assert.ok(chain.includes('requireUserId()'),
+      'rajaamaton asetuskutsu:\n' + chain.split('\n').slice(0, 5).join('\n'));
+  }
+});
+
+test('TURVA: client ei koskaan kirjoita omistajuussaraketta', () => {
+  // Omistajuuden asettaa tietokanta (DEFAULT auth.uid()). Jos selain saisi
+  // valita user_id:n, RLS ei suojaisi mitään.
+  const source = readCode('src/data/collectionsRepo.js');
+  assert.ok(source.includes('SERVER_OWNED'),
+    'kirjoituksia ei tarkisteta palvelimen omistamien kenttien varalta');
+  assert.ok(source.includes('assertClientSafe'),
+    'toRow-tulosta ei tarkisteta ennen kirjoitusta');
+
+  for (const file of ['src/data/collectionsRepo.js', 'src/data/notificationPrefsRepo.js']) {
+    assert.equal(/user_id:\s*[^,\n}]/.test(readCode(file)), false,
+      file + ' kirjoittaa user_id-sarakkeen — sen pitää tulla kannasta');
   }
 });
 
@@ -185,6 +256,20 @@ test('uloskirjautuminen tyhjentää sovelluksen tilan', () => {
   assert.ok(main.includes('resetState()'), 'tila pitää nollata uloskirjautuessa');
   assert.ok(main.includes('clearDevicePreferences()'), 'laiteasetukset pitää tyhjentää');
   assert.ok(main.includes('clearToasts()'), 'ilmoitukset pitää poistaa');
+
+  // Muistivarastossa elävät kokoelmat EIVÄT tyhjenny resetState():llä, koska
+  // ne asuvat repositorion sisällä. Ilman nimenomaista tyhjennystä seuraava
+  // käyttäjä näkisi edellisen käyttäjän rutiinit ja tavoitteet samalla
+  // laitteella — ristiinvuoto, jota RLS ei voi estää koska mitään ei haeta.
+  assert.ok(main.includes('clearLocalUserData()'),
+    'paikallinen käyttäjädata pitää tyhjentää uloskirjautuessa');
+
+  // Ja tyhjennyksen on oikeasti katettava molemmat muistivarastot.
+  const actions = read('src/app/actions.js');
+  const clearFn = actions.slice(actions.indexOf('export function clearLocalUserData'));
+  const body = clearFn.slice(0, clearFn.indexOf('\n}'));
+  assert.ok(body.includes('clearAllCollections()'), 'kokoelmat jäävät muistiin');
+  assert.ok(body.includes('clearNotificationPreferences()'), 'asetukset jäävät muistiin');
 });
 
 // ------------------------------------------------------------- XSS-suojaus
@@ -194,7 +279,9 @@ test('TURVA: käyttäjän syöttämä teksti suojataan HTML-koosteissa', () => {
   // avaavan tagin). Näin pelkkä tekstimuotoilu — esim. window.confirm-varasuunnitelman
   // `${title}\n\n${message}` — ei aiheuta väärää hälytystä.
   const risky = [];
-  const USER_DATA = /\b(title|note|description|reason|email|label)\b/;
+  // `name` kattaa projektit ja `body` ilmoitusten leipätekstin. Molemmat
+  // ovat käyttäjän syöttämää tekstiä, eikä kumpikaan ollut aiemmin listalla.
+  const USER_DATA = /\b(title|note|description|reason|email|label|name|body)\b/;
 
   for (const file of browserModules()) {
     const lines = readCode(file).split('\n');
@@ -261,6 +348,8 @@ test('poisto vaatii vahvistuksen', () => {
 
 test('async-toiminnot on suojattu tuplaklikkaukselta', () => {
   const guarded = ['src/app/views/tasks.js', 'src/app/views/profile.js',
+                   'src/app/views/routines.js', 'src/app/views/goals.js',
+                   'src/app/views/notificationSettings.js',
                    'src/app/voice.js', 'src/app/auth.js'];
   for (const file of guarded) {
     assert.ok(read(file).includes('singleFlight'),

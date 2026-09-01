@@ -13,7 +13,7 @@
 import { todayMidnight, startOfWeek } from '../lib/datetime.js';
 import { getDevicePreference, clearDevicePreferences } from '../data/preferences.js';
 import { subscribe, resetState, setViewDate, setWeekStart } from './state.js';
-import { loadUserData } from './actions.js';
+import { loadUserData, clearLocalUserData } from './actions.js';
 import { initAuth, showAuthGate, hideAuthGate } from './auth.js';
 import { initNavigation, restoreLastScreen } from './navigation.js';
 import { initVoice } from './voice.js';
@@ -26,7 +26,6 @@ import { renderGoals, initGoalForm, closeGoalForm } from './views/goals.js';
 import { renderProfile, initProfileForm, fillProfileForm } from './views/profile.js';
 import { renderNotificationSettings } from './views/notificationSettings.js';
 import { refreshNotificationPermission, syncNotifications } from './notifications.js';
-import { clearPreferences as clearNotificationPreferences } from '../data/notificationPrefsRepo.js';
 import { clearToasts } from '../ui/toast.js';
 import { maybe } from '../ui/dom.js';
 
@@ -100,7 +99,10 @@ function onSignedOut() {
   closeRoutineForm();
   closeGoalForm();
   clearToasts();
-  clearNotificationPreferences();
+
+  // Tyhjentää myös repositorioiden muistivarastot. Ilman tätä seuraava
+  // käyttäjä näkisi edellisen rutiinit ja tavoitteet samalla selaimella.
+  clearLocalUserData();
   clearDevicePreferences();
   resetState();
   showAuthGate();

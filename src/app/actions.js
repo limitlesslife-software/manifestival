@@ -19,7 +19,7 @@ import * as tasksRepo from '../data/tasksRepo.js';
 import * as profileRepo from '../data/profileRepo.js';
 import {
   routinesRepo, routineExceptionsRepo, goalsRepo, projectsRepo, wellbeingRepo,
-  volatileCollections
+  volatileCollections, clearAllCollections
 } from '../data/collectionsRepo.js';
 import { newTaskId } from '../lib/rows.js';
 import { normalizeTask, validateTask, SCHEDULING } from '../domain/task.js';
@@ -487,4 +487,30 @@ export async function saveProfile(profile) {
     return false;
   }
   return true;
+}
+
+// -------------------------------------------------- uloskirjautuminen
+
+/**
+ * Tyhjennä kaikki paikallinen käyttäjädata.
+ *
+ * TÄMÄ ON TIETOTURVATOIMENPIDE, EI SIIVOUSTA.
+ *
+ * Kun migraatioita ei ole vielä ajettu, rutiinit, tavoitteet, projektit ja
+ * hyvinvointimerkinnät elävät repositorioiden MUISTIVARASTOSSA. Se on
+ * moduulitasoinen eikä katoa uloskirjautuessa: resetState() nollaa
+ * sovelluksen tilan, muttei repositorion sisuksia.
+ *
+ * Ilman tätä kutsua jaetulla selaimella tapahtuisi näin:
+ *   1. Käyttäjä A kirjautuu ja luo rutiineja ja tavoitteita
+ *   2. A kirjautuu ulos
+ *   3. Käyttäjä B kirjautuu samassa välilehdessä
+ *   4. loadUserData() kutsuu routinesRepo.list() -> muistivarasto
+ *   5. B näkee A:n rutiinit ja tavoitteet
+ *
+ * RLS ei voi estää tätä, koska palvelimelta ei haeta mitään.
+ */
+export function clearLocalUserData() {
+  clearAllCollections();
+  clearNotificationPreferences();
 }
