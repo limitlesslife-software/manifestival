@@ -36,12 +36,15 @@ export const SYNC_HORIZON_DAYS = 3;
 /** Estä päällekkäinen synkronointi. Kaksi rinnakkaista ajoa kahdentaisi työn. */
 let syncing = false;
 
-/** Viimeisimmän synkronoinnin tulos. Käyttöliittymä näyttää tämän. */
+/**
+ * Viimeisimmän synkronoinnin tulos.
+ *
+ * Palautetaan kutsujalle, mutta EI viedä erillisenä kyselyfunktiona: mikään
+ * näkymä ei sitä lue, ja viemätön rajapinta olisi lupaus jota kukaan ei
+ * lunasta. Jos synkronoinnin tila joskus halutaan näkyviin, se lisätään
+ * silloin — ei varmuuden vuoksi etukäteen.
+ */
 let lastSync = { at: null, scheduled: 0, planned: 0, reason: '' };
-
-export function lastSyncResult() {
-  return { ...lastSync };
-}
 
 /**
  * Suunnittele muistutukset nykytilasta.

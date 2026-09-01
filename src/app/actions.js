@@ -433,10 +433,6 @@ export async function deleteGoal(id) {
   return true;
 }
 
-/** Liitä tehtävä tavoitteeseen tai irrota se. */
-export async function linkTaskToGoal(taskId, goalId) {
-  return editTask(taskId, { goalId: goalId || null });
-}
 
 // -------------------------------------------------------------- hyvinvointi
 

@@ -9,7 +9,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  NOTIFICATION_TYPE, LEVEL, CHANNEL, DEFAULT_PREFERENCES,
+  NOTIFICATION_TYPE, NOTIFICATION_TYPES, PLANNED_TYPES,
+  LEVEL, CHANNEL, DEFAULT_PREFERENCES,
   levelLabel, channelForLevel, normalizePreferences, isQuietTime,
   escalationForTask, escalationForDeadline, intentId,
   planNotifications, applyLimits, summarizeIntents, planRange
@@ -365,4 +366,40 @@ test('planRange kestää kelvottoman alkupäivän', () => {
 
 test('kelvoton päivä ei tuota ilmoituksia', () => {
   assert.deepEqual(planNotifications({ tasks: [], dateIso: 'roska', preferences: on }), []);
+});
+
+// ------------------------------------------- vakiot dokumentaationa
+
+test('NOTIFICATION_TYPES kattaa jokaisen ilmoitustyypin', () => {
+  // Vakio on olemassa, jotta tyypit voi luetella yhdestä paikasta. Ilman
+  // testiä se erkanisi NOTIFICATION_TYPE-oliosta heti kun uusi tyyppi
+  // lisätään — ja erkaantunut "kaikkien lista" on pahempi kuin ei listaa.
+  assert.deepEqual([...NOTIFICATION_TYPES].sort(),
+    Object.values(NOTIFICATION_TYPE).sort());
+  assert.equal(Object.isFrozen(NOTIFICATION_TYPES), true);
+});
+
+test('PLANNED_TYPES luettelee tyypit joita ei ole toteutettu', () => {
+  // Tämä lista on lupaus siitä mitä sovellus EI vielä tee. Jokaisen siinä
+  // olevan tyypin on oltava tunnettu tyyppi — muuten lista viittaa
+  // olemattomaan ominaisuuteen.
+  for (const type of PLANNED_TYPES) {
+    assert.ok(NOTIFICATION_TYPES.includes(type),
+      `${type} ei ole tunnettu ilmoitustyyppi`);
+  }
+
+  // Suunniteltu tyyppi ei saa syntyä suunnitelmaan. Jos se syntyisi,
+  // sovellus lupaisi muistutuksen jota se ei osaa lähettää.
+  const intents = planNotifications({
+    tasks: [{ id: 't1', title: 'T', date: '2026-03-15', time: '09:00', completed: false }],
+    routineOccurrences: [],
+    dateIso: '2026-03-15',
+    todayIso: '2026-03-15',
+    preferences: normalizePreferences({ enabled: true, maxPerDay: 50 })
+  });
+
+  for (const intent of intents) {
+    assert.equal(PLANNED_TYPES.includes(intent.type), false,
+      `toteuttamaton tyyppi ${intent.type} päätyi suunnitelmaan`);
+  }
 });
