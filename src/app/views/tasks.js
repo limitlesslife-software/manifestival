@@ -6,10 +6,12 @@ import { CATEGORIES, categoryLabel } from '../../domain/categories.js';
 import { PRIORITIES, priorityLabel, priorityTone } from '../../domain/priority.js';
 import { durationOf, validateTask, normalizeTask } from '../../domain/task.js';
 import { groupByDate, dayGroupLabel } from '../../domain/week.js';
+import { goalStatusLabel } from '../../domain/goal.js';
 import { el, maybe, setText, toggle, setBusy, singleFlight, focus } from '../../ui/dom.js';
-import { getState, findTask, setEditingId } from '../state.js';
+import { getState, findTask, findGoal, setEditingId, setTasksSegment } from '../state.js';
 import { createTask, editTask, toggleComplete, deleteTask } from '../actions.js';
 import { switchTab } from '../navigation.js';
+import { renderRoutines } from './routines.js';
 
 /** Täytä valikot domainista, jottei listoja tarvitse ylläpitää kahdessa paikassa. */
 export function populateSelects() {
@@ -92,9 +94,35 @@ function renderList(container, tasks) {
     }));
 }
 
-/** Renderöi tehtävälista nykytilan perusteella. */
+/**
+ * Renderöi tehtävänäkymä.
+ *
+ * Näkymässä on kaksi osiota: kertaluonteiset tehtävät ja toistuvat rutiinit.
+ * Molemmat ovat "asioita jotka pitää tehdä", joten ne kuuluvat samaan
+ * näkymään — mutta ne ovat eri käsitteitä, joten ne eivät sekoitu listassa.
+ */
 export function renderTasks() {
-  renderList(el('tasksListContainer'), getState().tasks);
+  const state = getState();
+  const showRoutines = state.tasksSegment === 'routines';
+
+  // Osiovalitsimen tila
+  const taskTab = maybe('segmentTasks');
+  const routineTab = maybe('segmentRoutines');
+  if (taskTab && routineTab) {
+    taskTab.classList.toggle('active', !showRoutines);
+    routineTab.classList.toggle('active', showRoutines);
+    taskTab.setAttribute('aria-selected', String(!showRoutines));
+    routineTab.setAttribute('aria-selected', String(showRoutines));
+  }
+
+  toggle('tasksSection', !showRoutines);
+  toggle('routinesSection', showRoutines);
+
+  if (showRoutines) {
+    renderRoutines();
+  } else {
+    renderList(el('tasksListContainer'), state.tasks);
+  }
 }
 
 // ----------------------------------------------------------------- lomake
@@ -116,7 +144,8 @@ const FIELD_TO_INPUT = {
   time: 'afTime',
   endTime: 'afEndTime',
   durationMinutes: 'afDuration',
-  description: 'afDescription'
+  description: 'afDescription',
+  deadline: 'afDeadline'
 };
 
 function showFieldErrors(errors) {
@@ -142,15 +171,20 @@ function showFieldErrors(errors) {
 
 function readForm() {
   const durationRaw = el('afDuration').value;
+  const goalPicker = maybe('afGoal');
   return {
     title: el('afTitle').value.trim(),
     description: el('afDescription').value.trim() || null,
     date: el('afDate').value || fmtISO(todayMidnight()),
     time: el('afTime').value || null,
     endTime: el('afEndTime').value || null,
+    // Määräaika on eri asia kuin aikataulutus: se kertoo milloin asian on
+    // oltava valmis, ei milloin sitä tehdään.
+    deadline: el('afDeadline').value || null,
     durationMinutes: durationRaw ? Number(durationRaw) : null,
     category: el('afCategory').value,
     priority: el('afPriority').value,
+    goalId: goalPicker && goalPicker.value ? goalPicker.value : null,
     isWake: el('afIsWake').checked
   };
 }
@@ -161,10 +195,36 @@ function fillForm(task) {
   el('afDate').value = task ? task.date : fmtISO(todayMidnight());
   el('afTime').value = task && task.time ? task.time : '';
   el('afEndTime').value = task && task.endTime ? task.endTime : '';
+  el('afDeadline').value = task && task.deadline ? task.deadline : '';
   el('afDuration').value = task && task.durationMinutes ? String(task.durationMinutes) : '';
   el('afCategory').value = task ? task.category : 'muu';
   el('afPriority').value = task ? task.priority : 'normaali';
   el('afIsWake').checked = Boolean(task && task.isWake);
+
+  selectGoal(task && task.goalId ? task.goalId : null);
+}
+
+/**
+ * Aseta tavoitevalikon arvo.
+ *
+ * Valikossa on vain avoimia tavoitteita. Jos tehtävä on liitetty
+ * saavutettuun tai arkistoituun tavoitteeseen, vaihtoehto lisätään takaisin
+ * — muuten tallennus katkaisisi linkin huomaamatta.
+ */
+function selectGoal(goalId) {
+  const picker = maybe('afGoal');
+  if (!picker) return;
+
+  picker.value = goalId || '';
+  if (!goalId || picker.value === goalId) return;
+
+  const goal = findGoal(goalId);
+  if (!goal) return;
+
+  picker.insertAdjacentHTML('beforeend',
+    `<option value="${escapeHtml(goal.id)}">${escapeHtml(goal.title)}`
+    + ` (${escapeHtml(goalStatusLabel(goal.status))})</option>`);
+  picker.value = goalId;
 }
 
 /** Avaa lomake uuden tehtävän lisäämiseen. */
@@ -249,6 +309,11 @@ const removeCurrent = singleFlight(async () => {
 /** Kytke lomakkeen tapahtumat. Kutsutaan kerran käynnistyksessä. */
 export function initTaskForm() {
   populateSelects();
+
+  const taskTab = maybe('segmentTasks');
+  const routineTab = maybe('segmentRoutines');
+  if (taskTab) taskTab.addEventListener('click', () => setTasksSegment('tasks'));
+  if (routineTab) routineTab.addEventListener('click', () => setTasksSegment('routines'));
 
   el('addRowBtn').addEventListener('click', openAddForm);
   el('afCancel').addEventListener('click', closeForm);

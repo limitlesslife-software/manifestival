@@ -9,16 +9,34 @@
 import { todayMidnight, startOfWeek, fmtISO } from '../lib/datetime.js';
 import { DEFAULT_PROFILE } from '../domain/scheduler.js';
 import { normalizeTask } from '../domain/task.js';
+import { normalizeRoutine, normalizeException } from '../domain/routine.js';
+import { normalizeGoal } from '../domain/goal.js';
+import { normalizeWellbeingEntry } from '../domain/wellbeing.js';
 
 function initialState() {
   const today = todayMidnight();
   return {
     tasks: [],
+    /** Toistuvat rutiinit (WP7). */
+    routines: [],
+    /** Rutiinien kertaluonteiset poikkeukset. */
+    routineExceptions: [],
+    /** Tavoitteet (WP8). */
+    goals: [],
+    /** Projektit (WP9). */
+    projects: [],
+    /** Hyvinvointimerkinnät (WP12). */
+    wellbeing: [],
     viewDate: today,
     weekStart: startOfWeek(today),
     profile: { ...DEFAULT_PROFILE },
     profileExists: false,
     editingId: null,
+    /** Muokattavan rutiinin tai tavoitteen tunniste. */
+    editingRoutineId: null,
+    editingGoalId: null,
+    /** Tehtävänäkymän osio: 'tasks' tai 'routines'. */
+    tasksSegment: 'tasks',
     /** Näkymä, joka on auki. */
     screen: 'screen-today',
     /** Onko ensimmäinen lataus vielä kesken. */
@@ -102,6 +120,102 @@ export function clearOtherWakeFlagsInState(dateIso, exceptId) {
     tasks: state.tasks.map(t =>
       t.date === dateIso && t.id !== exceptId && t.isWake ? { ...t, isWake: false } : t)
   });
+}
+
+// ------------------------------------------------- rutiinit ja tavoitteet
+
+export function setRoutines(routines) {
+  commit({ routines: (routines || []).map(normalizeRoutine) });
+}
+
+export function addRoutineToState(routine) {
+  commit({ routines: [...state.routines, normalizeRoutine(routine)] });
+}
+
+export function replaceRoutineInState(id, routine) {
+  commit({ routines: state.routines.map(r => (r.id === id ? normalizeRoutine(routine) : r)) });
+}
+
+export function removeRoutineFromState(id) {
+  commit({
+    routines: state.routines.filter(r => r.id !== id),
+    // Poikkeukset ovat merkityksettömiä ilman rutiinia — ne poistuvat mukana.
+    routineExceptions: state.routineExceptions.filter(e => e.routineId !== id)
+  });
+}
+
+export function findRoutine(id) {
+  return state.routines.find(r => r.id === id) || null;
+}
+
+export function setRoutineExceptions(exceptions) {
+  commit({ routineExceptions: (exceptions || []).map(normalizeException) });
+}
+
+export function addRoutineExceptionToState(exception) {
+  const normalized = normalizeException(exception);
+  // Päivälle voi olla vain yksi poikkeus rutiinia kohti.
+  const others = state.routineExceptions.filter(
+    e => !(e.routineId === normalized.routineId && e.date === normalized.date));
+  commit({ routineExceptions: [...others, normalized] });
+}
+
+export function removeRoutineExceptionFromState(routineId, dateIso) {
+  commit({
+    routineExceptions: state.routineExceptions.filter(
+      e => !(e.routineId === routineId && e.date === dateIso))
+  });
+}
+
+export function setGoals(goals) {
+  commit({ goals: (goals || []).map(normalizeGoal) });
+}
+
+export function addGoalToState(goal) {
+  commit({ goals: [...state.goals, normalizeGoal(goal)] });
+}
+
+export function replaceGoalInState(id, goal) {
+  commit({ goals: state.goals.map(g => (g.id === id ? normalizeGoal(goal) : g)) });
+}
+
+export function removeGoalFromState(id) {
+  commit({
+    goals: state.goals.filter(g => g.id !== id),
+    // Tehtävät säilyvät, mutta niiden tavoiteyhteys katkeaa — tehtävää ei
+    // koskaan poisteta tavoitteen mukana.
+    tasks: state.tasks.map(t => (t.goalId === id ? { ...t, goalId: null } : t))
+  });
+}
+
+export function findGoal(id) {
+  return state.goals.find(g => g.id === id) || null;
+}
+
+export function setProjects(projects) {
+  commit({ projects: projects || [] });
+}
+
+export function setWellbeing(entries) {
+  commit({ wellbeing: (entries || []).map(normalizeWellbeingEntry) });
+}
+
+export function upsertWellbeingEntry(entry) {
+  const normalized = normalizeWellbeingEntry(entry);
+  const others = state.wellbeing.filter(e => e.date !== normalized.date);
+  commit({ wellbeing: [...others, normalized] });
+}
+
+export function setEditingRoutineId(id) {
+  commit({ editingRoutineId: id });
+}
+
+export function setEditingGoalId(id) {
+  commit({ editingGoalId: id });
+}
+
+export function setTasksSegment(segment) {
+  commit({ tasksSegment: segment === 'routines' ? 'routines' : 'tasks' });
 }
 
 // ------------------------------------------------------------------ näkymä

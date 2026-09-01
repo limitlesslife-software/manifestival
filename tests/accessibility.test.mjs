@@ -16,6 +16,14 @@ import { browserModules, read, readIndexHtml } from './helpers/sources.mjs';
 const html = readIndexHtml();
 const css = read('src/styles.css');
 
+/** Näkymät sellaisina kuin navigaatio ne tuntee — yksi totuuden lähde. */
+function declaredScreens() {
+  const source = read('src/app/navigation.js');
+  const block = /export const SCREENS = Object\.freeze\(\[([\s\S]*?)\]\)/.exec(source);
+  assert.ok(block, 'SCREENS-listaa ei löytynyt navigation.js:stä');
+  return [...block[1].matchAll(/'([^']+)'/g)].map(match => match[1]);
+}
+
 /** Kaikki merkintä: index.html + moduulien tuottamat HTML-koosteet. */
 function allMarkup() {
   return [html, ...browserModules().map(read)].join('\n');
@@ -40,7 +48,11 @@ test('viewport sallii zoomauksen', () => {
 
 test('näkymillä on rooli ja saavutettava nimi', () => {
   const screens = [...html.matchAll(/<section class="screen[^"]*" id="(screen-[^"]+)"([^>]*)>/g)];
-  assert.equal(screens.length, 4, 'odotettiin neljää näkymää');
+  // Lukumäärä luetaan navigation.js:stä, jottei testi jää jälkeen kun
+  // sovellukseen lisätään näkymä.
+  assert.equal(screens.length, declaredScreens().length,
+    'näkymien määrä ei vastaa navigation.js:n SCREENS-listaa');
+  assert.deepEqual(screens.map(match => match[1]), declaredScreens());
   for (const [, id, attributes] of screens) {
     assert.ok(attributes.includes('role="tabpanel"'), id + ': rooli puuttuu');
     assert.ok(attributes.includes('aria-label='), id + ': nimi puuttuu');
@@ -50,7 +62,8 @@ test('näkymillä on rooli ja saavutettava nimi', () => {
 test('navigaatio on merkitty tab-listaksi', () => {
   assert.match(html, /<nav class="tab-bar" role="tablist" aria-label="[^"]+"/);
   const tabs = [...html.matchAll(/<button class="tab-btn[^"]*"([^>]*)>/g)];
-  assert.equal(tabs.length, 4);
+  assert.equal(tabs.length, declaredScreens().length,
+    'jokaisella näkymällä on oltava välilehti');
   for (const [, attributes] of tabs) {
     assert.ok(attributes.includes('role="tab"'), 'tab-rooli puuttuu');
     assert.ok(attributes.includes('aria-selected='), 'aria-selected puuttuu');

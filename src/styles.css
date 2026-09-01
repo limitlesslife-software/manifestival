@@ -263,6 +263,140 @@ h1.title { font-family:'Fraunces',serif; font-weight:500; font-size:24px; line-h
 .offline-banner { display:none; background:var(--clay); color:#fff; font-size:12px; font-weight:700; text-align:center; padding:7px 12px; }
 body.is-offline .offline-banner { display:block; }
 
+/* ---- Segmentoitu valinta (tehtävät / rutiinit) ---- */
+.segment { display:flex; gap:5px; background:var(--sage-soft); padding:4px; border-radius:13px; margin-bottom:16px; }
+.segment-btn { flex:1; appearance:none; -webkit-appearance:none; border:none; background:none; padding:9px; border-radius:9px; font-family:'Manrope',sans-serif; font-size:13px; font-weight:700; color:var(--text-2); cursor:pointer; }
+.segment-btn.active { background:var(--cream-card); color:var(--forest); }
+.segment-btn:focus-visible { outline:2px solid var(--gold); outline-offset:2px; }
+
+/* ---- Jaettu osiorunko ----
+ * Näkymät koostuvat otsikosta ja rungosta. Runko antaa osioille yhteisen
+ * ryhmittelyn, jottei jokainen lohko määrittele omia marginaalejaan.
+ */
+.section-body { display:flex; flex-direction:column; }
+.section-title.tone-late { color:var(--clay); }
+.count-badge.late { background:var(--clay-soft); color:var(--clay); }
+.ghost-btn.small { width:auto; margin:0; padding:6px 12px; font-size:11.5px; border-radius:10px; }
+
+/* ---- Tärkeintä nyt ----
+ * Fokuslohko on päivän ensimmäinen asia. Se erottuu korttina, koska sen
+ * tehtävä on vastata kysymykseen "mitä teen seuraavaksi" ilman lukemista.
+ */
+.focus-block { margin-top:16px; }
+.focus-summary { margin-bottom:8px; }
+.focus-row { display:flex; align-items:center; gap:12px; background:var(--cream-card); border:1px solid var(--border); border-radius:14px; padding:11px 13px; margin-bottom:8px; }
+.focus-body { flex:1; min-width:0; }
+.focus-title { font-size:14.5px; font-weight:700; color:var(--text-1); }
+.focus-reason { font-size:11px; color:var(--text-3); margin-top:3px; }
+
+/* ---- Myöhässä ---- */
+.overdue-block { margin-top:6px; }
+.task-row.overdue { border-left:2px solid var(--clay); padding-left:10px; margin-left:-12px; }
+.overdue-since { color:var(--clay); font-weight:700; }
+
+/* ---- Rutiinit aikajanalla ja listoissa ----
+ * Rutiini on sääntö, ei tehtävä: siksi sillä ei ole valintaruutua vaan
+ * pelkkä merkki. Näin käyttäjä ei voi vahingossa "poistaa" toistuvuutta.
+ */
+.routine-dot { width:22px; height:22px; border-radius:50%; border:1.6px dashed var(--path); flex-shrink:0; display:inline-block; }
+.routine-tag { font-size:9px; font-weight:800; letter-spacing:.4px; color:var(--path); border:1px solid var(--path); border-radius:8px; padding:1px 5px; margin-left:5px; }
+.t-item.t-routine { border-bottom:1px dashed var(--border); }
+.task-row.routine-pending { opacity:.92; }
+.skip-btn { appearance:none; -webkit-appearance:none; flex-shrink:0; background:none; border:1px solid var(--border); border-radius:10px; padding:5px 10px; font-family:'Manrope',sans-serif; font-size:11px; font-weight:700; color:var(--text-3); cursor:pointer; }
+.skip-btn:focus-visible { outline:2px solid var(--gold); outline-offset:2px; }
+
+/* ---- Rutiinilista ---- */
+.routine-row { display:flex; align-items:center; gap:12px; padding:11px 0; border-bottom:1px solid var(--border); }
+.routine-row.inactive { opacity:.55; }
+.routine-toggle { appearance:none; -webkit-appearance:none; flex-shrink:0; width:38px; height:22px; border-radius:20px; border:none; background:var(--border); cursor:pointer; padding:0; position:relative; transition:background .18s ease; }
+.routine-toggle.on { background:var(--sage); }
+.routine-toggle-knob { position:absolute; top:3px; left:3px; width:16px; height:16px; border-radius:50%; background:var(--cream-card); transition:transform .18s ease; }
+.routine-toggle.on .routine-toggle-knob { transform:translateX(16px); }
+.routine-toggle:focus-visible { outline:2px solid var(--gold); outline-offset:2px; }
+.weekday-row { display:flex; gap:5px; flex-wrap:wrap; }
+.weekday-chip { position:relative; display:inline-flex; align-items:center; justify-content:center; min-width:38px; padding:7px 4px; border:1px solid var(--border); border-radius:10px; background:var(--cream); font-size:11.5px; font-weight:700; color:var(--text-2); cursor:pointer; }
+.weekday-chip input { position:absolute; opacity:0; width:100%; height:100%; margin:0; cursor:pointer; }
+.weekday-chip:has(input:checked) { background:var(--sage-soft); border-color:var(--sage); color:var(--forest); }
+.weekday-chip:has(input:focus-visible) { outline:2px solid var(--gold); outline-offset:2px; }
+
+/* ---- Edistymispalkki ---- */
+.progress { height:6px; border-radius:20px; background:var(--border); overflow:hidden; margin:8px 0 6px; }
+.progress-fill { height:100%; border-radius:20px; background:var(--path); transition:width .25s ease; }
+.progress-fill.start { background:var(--gold); }
+.progress-fill.good { background:var(--path); }
+.progress-fill.done { background:var(--sage); }
+
+/* ---- Tavoitteet ---- */
+.goal-card { background:var(--cream-card); border:1px solid var(--border); border-radius:18px; padding:14px; margin-bottom:12px; }
+.goal-card.late { border-color:var(--clay); }
+.goal-card.status-completed, .goal-card.status-archived { opacity:.7; }
+.goal-header { display:block; width:100%; }
+.goal-title { font-family:'Fraunces',serif; font-size:16.5px; font-weight:500; color:var(--forest); line-height:1.3; }
+.goal-meta { font-size:11px; color:var(--text-3); margin-top:5px; display:flex; gap:7px; align-items:center; flex-wrap:wrap; }
+.goal-late { color:var(--clay); font-weight:700; }
+.goal-status { font-weight:700; }
+.goal-progress-text { display:flex; gap:8px; align-items:baseline; flex-wrap:wrap; font-size:11.5px; color:var(--text-3); }
+.goal-progress-text strong { font-family:'Fraunces',serif; font-size:15px; color:var(--forest); font-weight:500; }
+.goal-next { margin-left:auto; color:var(--text-2); font-weight:600; }
+.goal-tasks { margin-top:10px; border-top:1px solid var(--border); padding-top:8px; display:flex; flex-direction:column; gap:7px; }
+.goal-task { display:flex; align-items:center; gap:10px; }
+.goal-task-title { flex:1; min-width:0; font-size:13px; font-weight:600; color:var(--text-1); }
+.ghost-btn.goal-complete { margin-top:10px; width:100%; padding:9px; }
+
+/* ---- Viikkonäkymän yhteenveto ---- */
+.week-stats { display:flex; gap:8px; margin-top:18px; }
+.week-stat { flex:1; background:var(--cream-card); border:1px solid var(--border); border-radius:14px; padding:10px 8px; text-align:center; }
+.week-stat strong { display:block; font-family:'Fraunces',serif; font-size:19px; font-weight:500; color:var(--forest); }
+.week-stat span { font-size:10px; font-weight:700; letter-spacing:.3px; text-transform:uppercase; color:var(--text-3); }
+.week-stat.late strong { color:var(--clay); }
+.week-summary-text { margin-top:8px; }
+
+/* ---- Määräajat ---- */
+.deadline-row { display:flex; align-items:center; gap:10px; padding:10px 0; border-bottom:1px solid var(--border); }
+.deadline-body { flex:1; min-width:0; display:flex; align-items:center; gap:7px; flex-wrap:wrap; }
+.deadline-title { font-size:13.5px; font-weight:600; color:var(--text-1); }
+.deadline-date { flex-shrink:0; font-size:11px; font-weight:700; color:var(--text-3); }
+
+/* ---- Tavoitteet viikkonäkymässä ---- */
+.week-goal { padding:8px 0; border-bottom:1px solid var(--border); }
+.week-goal-head { display:flex; align-items:baseline; justify-content:space-between; gap:8px; }
+.week-goal-title { font-size:13px; font-weight:600; color:var(--text-1); }
+.week-goal-percent { font-size:11.5px; font-weight:700; color:var(--text-3); }
+.week-goal.late .week-goal-percent { color:var(--clay); }
+
+/* ---- Hyvinvointi ----
+ * Asteikko on tarkoituksella karkea (1–5). Tavoite on nopea merkintä,
+ * ei mittaus — siksi ei liukusäätimiä eikä desimaaleja.
+ */
+.wellbeing-block { margin-top:18px; }
+.wellbeing-block summary { cursor:pointer; list-style:none; }
+.wellbeing-block summary::-webkit-details-marker { display:none; }
+.wellbeing-block summary:focus-visible { outline:2px solid var(--gold); outline-offset:2px; border-radius:8px; }
+.wb-metric { display:flex; align-items:center; gap:10px; padding:5px 0; }
+.wb-label { flex:0 0 78px; font-size:12px; font-weight:700; color:var(--text-2); }
+.wb-scale { display:flex; gap:6px; }
+.wb-dot { appearance:none; -webkit-appearance:none; width:32px; height:32px; border-radius:50%; border:1px solid var(--border); background:var(--cream-card); color:var(--text-3); font-family:'Manrope',sans-serif; font-size:12px; font-weight:700; cursor:pointer; }
+.wb-dot.selected { background:var(--sage); border-color:var(--sage); color:#fff; }
+.wb-dot:focus-visible { outline:2px solid var(--gold); outline-offset:2px; }
+.wb-suggestion { margin-top:8px; font-size:12px; line-height:1.55; color:var(--text-2); background:var(--sage-soft); border-radius:12px; padding:10px 12px; }
+.wb-suggestion.actionable { background:var(--gold-soft); color:var(--forest); font-weight:600; }
+
+/* ---- Katsaukset ---- */
+.review-block { margin-top:18px; }
+.review-block summary { cursor:pointer; list-style:none; }
+.review-block summary::-webkit-details-marker { display:none; }
+.review-block summary:focus-visible { outline:2px solid var(--gold); outline-offset:2px; border-radius:8px; }
+.review-summary { font-size:13px; color:var(--text-2); line-height:1.6; margin-bottom:10px; }
+.review-group { margin-bottom:12px; }
+.review-label { font-size:10.5px; font-weight:800; letter-spacing:.7px; text-transform:uppercase; color:var(--text-3); margin-bottom:5px; }
+.review-label.tone-late { color:var(--clay); }
+.review-row { display:flex; align-items:center; gap:8px; font-size:13px; color:var(--text-1); padding:6px 0; border-bottom:1px solid var(--border); }
+.review-row > span:first-child { flex:1; min-width:0; }
+.review-row .muted { font-size:11px; color:var(--text-3); font-style:normal; }
+
+/* ---- Ehdotukset ---- */
+.proposal-note { flex:0 0 auto; font-size:11px; font-weight:700; color:var(--text-3); }
+
 /* ---- Responsiivisuus ----
  * Sovellus on mobiiliensimmäinen 480 px kehys, joka keskitetään myös
  * työpöydällä. Tässä varmistetaan, ettei mikään vuoda yli kapeallakaan
@@ -270,10 +404,17 @@ body.is-offline .offline-banner { display:block; }
  */
 @media (max-width:380px) {
   .screen { padding-left:16px; padding-right:16px; }
-  .tab-btn { padding:6px 8px; font-size:10px; }
+  /* Viisi välilehteä ei mahdu kapealle näytölle oletusväleillä. */
+  .tab-btn { padding:6px 4px; font-size:9.5px; }
+  .tab-btn .icon { width:20px; height:20px; }
   .timeline-items { margin-left:52px; }
   h1.title { font-size:21px; }
   .day-num { width:28px; height:28px; font-size:12px; }
+  .week-stat { padding:9px 4px; }
+  .week-stat strong { font-size:17px; }
+  .wb-label { flex-basis:64px; }
+  .wb-dot { width:29px; height:29px; }
+  .weekday-chip { min-width:33px; }
 }
 
 @media (min-width:900px) {

@@ -1,11 +1,14 @@
 // Päivänäkymä.
 //
-// Käyttäjän pitää nähdä yhdellä silmäyksellä:
-//   - mikä päivä on kyseessä ja miten kuormitettu se on
-//   - mitä on aikataulutettu (aikajana, jossa NYT-hetki näkyy)
-//   - mitä odottaa aikatauluttamista
-//   - mitä on jo tehty
-//   - mihin vielä mahtuisi jotain
+// Käyttäjän pitää ymmärtää päivä nopeasti. Näkymä vastaa järjestyksessä:
+//
+//   1. Mihin keskityn?          fokus, enintään kolme asiaa
+//   2. Mikä on myöhässä?        rästit näkyviin, ei piiloon
+//   3. Mitä tänään tapahtuu?    aikajana, jossa NYT-hetki näkyy
+//   4. Mikä odottaa aikaa?      aikatauluttamattomat + ehdotukset
+//   5. Mihin mahtuisi vielä?    vapaat välit
+//   6. Mikä on tehty?           valmiit, koottuna pois tieltä
+//   7. Miten menee?             hyvinvointi ja illan katsaus
 //
 // Aikajanan polku on tuotteen tunnusmerkki: logon joki-muoto, jossa jokainen
 // tapahtuma on solmu ja nykyhetki hehkuu.
@@ -14,11 +17,18 @@ import { fmtISO, sameDay, todayMidnight, addDays } from '../../lib/datetime.js';
 import { escapeHtml, WD_FULL, formatLongDate, formatTimeRange, formatDuration } from '../../lib/format.js';
 import { categoryLabel } from '../../domain/categories.js';
 import { priorityLabel, priorityTone } from '../../domain/priority.js';
-import { toMinutes, durationOf } from '../../domain/task.js';
+import { toMinutes, durationOf, deadlineUrgency, urgencyLabel, URGENCY } from '../../domain/task.js';
 import { buildDayPlan, proposeSchedule, DEFAULT_TASK_MINUTES } from '../../domain/scheduler.js';
+import { todayFocus, describeFocus } from '../../domain/focus.js';
+import { buildEveningReview, summarizeReview } from '../../domain/review.js';
+import { entryForDate, planningLoadSuggestion, loadStateLabel, assessLoadState } from '../../domain/wellbeing.js';
+import { dayGroupLabel } from '../../domain/week.js';
 import { el, maybe, setText, toggle } from '../../ui/dom.js';
 import { getState, setViewDate } from '../state.js';
-import { toggleComplete, deleteTask, acceptProposal } from '../actions.js';
+import {
+  toggleComplete, deleteTask, editTask, acceptProposal,
+  skipRoutineOccurrence, restoreRoutineOccurrence, saveWellbeingEntry
+} from '../actions.js';
 import { openEditForm } from './tasks.js';
 
 const ROW_HEIGHT = 66;
@@ -36,6 +46,9 @@ function nowMinutes() {
  * valmiiksi, joten ne on jätettävä pois myöhässä-tarkistuksesta. Muuten
  * ensimmäinen niistä jäisi jumiin myöhässä-tilaan koko loppupäiväksi eikä
  * NYT siirtyisi enää oikeisiin tehtäviin.
+ *
+ * Sama koskee rutiiniesiintymiä: niitä ei kuitata vaan ohitetaan, joten ne
+ * eivät voi olla myöhässä.
  */
 export function resolveNowState(items, currentMinutes) {
   if (currentMinutes == null) return { index: -1, status: 'running' };
@@ -43,14 +56,12 @@ export function resolveNowState(items, currentMinutes) {
   const endMinuteOf = (item, index) => {
     const explicit = durationOf(item);
     if (explicit) return toMinutes(item.time) + explicit;
-    // Ei omaa kestoa: merkintä jatkuu seuraavaan aikataulutettuun kohtaan.
     for (let j = index + 1; j < items.length; j++) {
       if (items[j].time) return toMinutes(items[j].time);
     }
     return toMinutes(item.time);
   };
 
-  // 1) Onko jokin kohde juuri nyt käynnissä oman aikaikkunansa perusteella?
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
     if (!item.time) continue;
@@ -59,15 +70,14 @@ export function resolveNowState(items, currentMinutes) {
     if (currentMinutes >= start && currentMinutes < end) {
       return {
         index: i,
-        status: (!item.virtual && item.completed) ? 'early' : 'running'
+        status: (!item.virtual && !item.isRoutine && item.completed) ? 'early' : 'running'
       };
     }
   }
 
-  // 2) Aukko: onko viimeisin OIKEA tehtävä jäänyt myöhässä?
   for (let i = items.length - 1; i >= 0; i--) {
     const item = items[i];
-    if (item.virtual || !item.time || item.completed) continue;
+    if (item.virtual || item.isRoutine || !item.time || item.completed) continue;
     if (currentMinutes >= endMinuteOf(item, i)) return { index: i, status: 'late' };
   }
 
@@ -88,7 +98,22 @@ function timelinePath(count) {
   return { d, points };
 }
 
-function renderTimeline(container, items, nowState) {
+function priorityTag(item) {
+  if (!item.priority || item.priority === 'normaali') return '';
+  return `<span class="prio-tag prio-${priorityTone(item.priority)}">${escapeHtml(priorityLabel(item.priority))}</span>`;
+}
+
+function deadlineTag(task, todayIso) {
+  const urgency = deadlineUrgency(task, todayIso);
+  const label = urgencyLabel(urgency);
+  if (!label) return '';
+  const tone = (urgency === URGENCY.OVERDUE || urgency === URGENCY.TODAY) ? 'clay' : 'sage';
+  return `<span class="prio-tag prio-${tone}">${escapeHtml(label)}</span>`;
+}
+
+// ------------------------------------------------------------- aikajana
+
+function renderTimeline(container, items, nowState, todayIso) {
   if (items.length === 0) {
     container.innerHTML = `
       <div class="empty-state">
@@ -125,6 +150,7 @@ function renderTimeline(container, items, nowState) {
     const isNow = i === nowState.index;
     const timeLabel = formatTimeRange(item.time, item.endTime) || 'Joskus tänään';
 
+    // Automaattiset ehdotukset: herätys, aamutoimet, uni.
     if (item.virtual) {
       return `<div class="t-item t-virtual" style="height:${ROW_HEIGHT}px">
         <span class="chk chk-virtual" aria-hidden="true"></span>
@@ -136,9 +162,22 @@ function renderTimeline(container, items, nowState) {
       </div>`;
     }
 
-    const priorityTag = item.priority && item.priority !== 'normaali'
-      ? `<span class="prio-tag prio-${priorityTone(item.priority)}">${escapeHtml(priorityLabel(item.priority))}</span>`
-      : '';
+    // Rutiiniesiintymä: erottuu tehtävästä, koska sitä ei kuitata vaan
+    // ohitetaan. Kuittausruudun tilalla on ohituspainike.
+    if (item.isRoutine) {
+      return `<div class="t-item t-routine ${isNow ? 'now ' + statusClass : ''}" style="height:${ROW_HEIGHT}px">
+        <span class="routine-dot" aria-hidden="true"></span>
+        <div class="t-body">
+          <span class="t-time">${escapeHtml(timeLabel)} <span class="routine-tag">RUTIINI</span></span>
+          <span class="t-title">${escapeHtml(item.title)}${priorityTag(item)}</span>
+          ${item.note ? `<span class="t-sub">${escapeHtml(item.note)}</span>` : ''}
+        </div>
+        <button class="skip-btn" data-skip-routine="${escapeHtml(item.routineId)}"
+                data-skip-date="${escapeHtml(item.date)}"
+                aria-label="Ohita tänään: ${escapeHtml(item.title)}">Ohita</button>
+        ${isNow ? `<span class="now-badge ${statusClass}">${badgeText}</span>` : ''}
+      </div>`;
+    }
 
     return `<div class="t-item ${isNow ? 'now ' + statusClass : ''} ${item.completed ? 'done' : ''}" style="height:${ROW_HEIGHT}px">
       <button class="chk ${item.completed ? 'done' : ''}" data-toggle="${escapeHtml(item.id)}"
@@ -148,7 +187,7 @@ function renderTimeline(container, items, nowState) {
       </button>
       <button class="t-body t-open" data-edit="${escapeHtml(item.id)}" aria-label="Muokkaa: ${escapeHtml(item.title)}">
         <span class="t-time">${escapeHtml(timeLabel)}</span>
-        <span class="t-title">${item.isWake ? '☀ ' : ''}${escapeHtml(item.title)}${priorityTag}</span>
+        <span class="t-title">${item.isWake ? '☀ ' : ''}${escapeHtml(item.title)}${priorityTag(item)}${deadlineTag(item, todayIso)}</span>
         ${item.note ? `<span class="t-sub">${escapeHtml(item.note)}</span>` : ''}
       </button>
       ${isNow ? `<span class="now-badge ${statusClass}">${badgeText}</span>` : ''}
@@ -165,23 +204,88 @@ function renderTimeline(container, items, nowState) {
   </div>`;
 }
 
-function renderUnscheduled(container, plan) {
-  if (plan.unscheduled.length === 0) {
+// ---------------------------------------------------------------- fokus
+
+function renderFocus(container, state, dateIso, todayIso) {
+  const entries = todayFocus({ tasks: state.tasks, dateIso, todayIso, limit: 3 });
+
+  if (entries.length === 0) {
     container.innerHTML = '';
     return;
   }
 
-  const rows = plan.unscheduled.map(task => {
-    const duration = formatDuration(durationOf(task));
-    const priorityTag = task.priority && task.priority !== 'normaali'
-      ? `<span class="prio-tag prio-${priorityTone(task.priority)}">${escapeHtml(priorityLabel(task.priority))}</span>`
-      : '';
-    return `<div class="task-row">
-      <button class="chk" data-toggle="${escapeHtml(task.id)}" aria-label="Merkitse tehdyksi: ${escapeHtml(task.title)}">
+  const summary = describeFocus(entries);
+  const rows = entries.map(entry => `
+    <div class="focus-row">
+      <button class="chk" data-toggle="${escapeHtml(entry.task.id)}"
+              aria-label="Merkitse tehdyksi: ${escapeHtml(entry.task.title)}">
         <svg aria-hidden="true"><use href="#i-check"/></svg>
       </button>
-      <button class="t-body t-open" data-edit="${escapeHtml(task.id)}" aria-label="Muokkaa: ${escapeHtml(task.title)}">
-        <div class="t-title">${escapeHtml(task.title)}${priorityTag}</div>
+      <button class="t-open focus-body" data-edit="${escapeHtml(entry.task.id)}"
+              aria-label="Muokkaa: ${escapeHtml(entry.task.title)}">
+        <div class="focus-title">${escapeHtml(entry.task.title)}</div>
+        <div class="focus-reason">${escapeHtml(entry.reasons.join(' · '))}</div>
+      </button>
+    </div>`).join('');
+
+  container.innerHTML = `
+    <section class="focus-block" aria-label="Päivän tärkeimmät">
+      <h2 class="section-title">Tärkeintä nyt <span class="count-badge">${entries.length}</span></h2>
+      <div class="hint focus-summary">${escapeHtml(summary.text)}</div>
+      ${rows}
+    </section>`;
+}
+
+// ------------------------------------------------------------- myöhässä
+
+function renderOverdue(container, plan) {
+  if (plan.overdue.length === 0) {
+    container.innerHTML = '';
+    return;
+  }
+
+  const rows = plan.overdue.slice(0, 6).map(task => `
+    <div class="task-row overdue">
+      <button class="chk" data-toggle="${escapeHtml(task.id)}"
+              aria-label="Merkitse tehdyksi: ${escapeHtml(task.title)}">
+        <svg aria-hidden="true"><use href="#i-check"/></svg>
+      </button>
+      <button class="t-body t-open" data-edit="${escapeHtml(task.id)}"
+              aria-label="Muokkaa: ${escapeHtml(task.title)}">
+        <div class="t-title">${escapeHtml(task.title)}</div>
+        <div class="t-meta">
+          <span class="overdue-since">${escapeHtml(dayGroupLabel(task.deadline || task.date))}</span>
+          <span class="task-cat-tag">${escapeHtml(categoryLabel(task.category))}</span>
+        </div>
+      </button>
+    </div>`).join('');
+
+  container.innerHTML = `
+    <section class="overdue-block" aria-label="Myöhässä">
+      <h2 class="section-title tone-late">Myöhässä <span class="count-badge late">${plan.overdue.length}</span></h2>
+      ${rows}
+      ${plan.overdue.length > 6 ? `<div class="hint">+ ${plan.overdue.length - 6} muuta</div>` : ''}
+    </section>`;
+}
+
+// --------------------------------------------- aikatauluttamattomat
+
+function renderUnscheduled(container, plan) {
+  if (plan.unscheduled.length === 0 && plan.flexibleRoutines.length === 0) {
+    container.innerHTML = '';
+    return;
+  }
+
+  const taskRows = plan.unscheduled.map(task => {
+    const duration = formatDuration(durationOf(task));
+    return `<div class="task-row">
+      <button class="chk" data-toggle="${escapeHtml(task.id)}"
+              aria-label="Merkitse tehdyksi: ${escapeHtml(task.title)}">
+        <svg aria-hidden="true"><use href="#i-check"/></svg>
+      </button>
+      <button class="t-body t-open" data-edit="${escapeHtml(task.id)}"
+              aria-label="Muokkaa: ${escapeHtml(task.title)}">
+        <div class="t-title">${escapeHtml(task.title)}${priorityTag(task)}</div>
         <div class="t-meta">
           <span class="task-cat-tag">${escapeHtml(categoryLabel(task.category))}</span>
           ${duration ? `<span>${escapeHtml(duration)}</span>` : ''}
@@ -190,9 +294,26 @@ function renderUnscheduled(container, plan) {
     </div>`;
   }).join('');
 
+  const routineRows = plan.flexibleRoutines.map(occurrence => `
+    <div class="task-row routine-pending">
+      <span class="routine-dot" aria-hidden="true"></span>
+      <div class="t-body">
+        <div class="t-title">${escapeHtml(occurrence.title)}<span class="routine-tag">RUTIINI</span></div>
+        <div class="t-meta">
+          <span>${escapeHtml(formatDuration(occurrence.durationMinutes) || '')}</span>
+          <span class="task-cat-tag">${escapeHtml(categoryLabel(occurrence.category))}</span>
+        </div>
+      </div>
+      <button class="skip-btn" data-skip-routine="${escapeHtml(occurrence.routineId)}"
+              data-skip-date="${escapeHtml(occurrence.date)}"
+              aria-label="Ohita tänään: ${escapeHtml(occurrence.title)}">Ohita</button>
+    </div>`).join('');
+
+  const total = plan.unscheduled.length + plan.flexibleRoutines.length;
+
   container.innerHTML = `
-    <h2 class="section-title">Odottaa aikaa <span class="count-badge">${plan.unscheduled.length}</span></h2>
-    <div class="section-body">${rows}</div>
+    <h2 class="section-title">Odottaa aikaa <span class="count-badge">${total}</span></h2>
+    <div class="section-body">${routineRows}${taskRows}</div>
     <button class="ghost-btn" id="proposeBtn">Ehdota ajat automaattisesti</button>
     <div id="proposalContainer"></div>`;
 }
@@ -212,14 +333,16 @@ function renderProposals(container, result) {
   const rows = result.proposals.map(p => `
     <div class="proposal-row">
       <div class="proposal-info">
-        <div class="proposal-title">${escapeHtml(p.title)}</div>
+        <div class="proposal-title">${escapeHtml(p.title)}${p.kind === 'routine' ? '<span class="routine-tag">RUTIINI</span>' : ''}</div>
         <div class="proposal-time">${escapeHtml(p.time)}–${escapeHtml(p.endTime)} · ${escapeHtml(p.reason)}</div>
       </div>
-      <button class="form-btn primary proposal-accept" data-accept="${escapeHtml(p.taskId)}">Hyväksy</button>
+      ${p.kind === 'task'
+        ? `<button class="form-btn primary proposal-accept" data-accept="${escapeHtml(p.taskId)}">Hyväksy</button>`
+        : '<span class="hint proposal-note">Rutiini</span>'}
     </div>`).join('');
 
   const unplaced = result.unplaced.length
-    ? `<div class="hint proposal-empty">${result.unplaced.length} tehtävälle ei löytynyt tilaa tänään.</div>`
+    ? `<div class="hint proposal-empty">${result.unplaced.length} asialle ei löytynyt tilaa tänään.</div>`
     : '';
 
   container.innerHTML = `<div class="proposal-list">${rows}</div>${unplaced}`;
@@ -227,7 +350,7 @@ function renderProposals(container, result) {
 
 function renderFreeSlots(container, plan) {
   const usable = plan.freeSlots.filter(slot => slot.minutes >= DEFAULT_TASK_MINUTES);
-  if (usable.length === 0 || plan.load.count === 0) {
+  if (usable.length === 0 || (plan.load.count === 0 && plan.load.routines === 0)) {
     container.innerHTML = '';
     return;
   }
@@ -263,7 +386,92 @@ function renderCompleted(container, plan) {
     </details>`;
 }
 
-function attachHandlers(root) {
+// ---------------------------------------------------------- hyvinvointi
+
+function renderWellbeing(container, state, dateIso, plan) {
+  const entry = entryForDate(state.wellbeing, dateIso);
+  const suggestion = planningLoadSuggestion({ entry, plan });
+  const stateLabel = loadStateLabel(assessLoadState(entry));
+
+  const scale = (name, label, current) => `
+    <div class="wb-metric">
+      <span class="wb-label">${escapeHtml(label)}</span>
+      <div class="wb-scale" role="radiogroup" aria-label="${escapeHtml(label)}">
+        ${[1, 2, 3, 4, 5].map(value => `
+          <button class="wb-dot ${current === value ? 'selected' : ''}"
+                  data-wb-metric="${name}" data-wb-value="${value}"
+                  role="radio" aria-checked="${current === value ? 'true' : 'false'}"
+                  aria-label="${escapeHtml(label)} ${value}">${value}</button>`).join('')}
+      </div>
+    </div>`;
+
+  container.innerHTML = `
+    <details class="wellbeing-block">
+      <summary class="section-title">Miten menee?
+        ${entry ? `<span class="count-badge">${escapeHtml(stateLabel)}</span>` : ''}
+      </summary>
+      <div class="section-body">
+        ${scale('energy', 'Energia', entry ? entry.energy : null)}
+        ${scale('mood', 'Mieliala', entry ? entry.mood : null)}
+        ${scale('stress', 'Kuormitus', entry ? entry.stress : null)}
+        ${suggestion.suggestion
+          ? `<div class="wb-suggestion ${suggestion.actionable ? 'actionable' : ''}">${escapeHtml(suggestion.suggestion)}</div>`
+          : ''}
+        <div class="hint">Merkintä on vain sinulle. Se ei muuta suunnitelmaasi itsestään.</div>
+      </div>
+    </details>`;
+}
+
+// -------------------------------------------------------- illan katsaus
+
+function renderEveningReview(container, state, dateIso, todayIso) {
+  const review = buildEveningReview({ tasks: state.tasks, dateIso, todayIso });
+
+  if (review.stats.planned === 0 && review.tomorrowTop.length === 0) {
+    container.innerHTML = '';
+    return;
+  }
+
+  const moves = review.moveCandidates.length
+    ? `<div class="review-group">
+         <div class="review-label">Voisi siirtyä huomiselle</div>
+         ${review.moveCandidates.map(task => `
+           <div class="review-row">
+             <span>${escapeHtml(task.title)}</span>
+             <button class="ghost-btn small" data-move-task="${escapeHtml(task.id)}">Siirrä</button>
+           </div>`).join('')}
+       </div>`
+    : '';
+
+  const stuck = review.stuck.length
+    ? `<div class="review-group">
+         <div class="review-label tone-late">Määräaika painaa</div>
+         ${review.stuck.map(task => `<div class="review-row"><span>${escapeHtml(task.title)}</span></div>`).join('')}
+       </div>`
+    : '';
+
+  const tomorrow = review.tomorrowTop.length
+    ? `<div class="review-group">
+         <div class="review-label">Huomenna tärkeintä</div>
+         ${review.tomorrowTop.map(entry => `
+           <div class="review-row"><span>${escapeHtml(entry.task.title)}</span>
+           <span class="muted">${escapeHtml(entry.reasons[0] || '')}</span></div>`).join('')}
+       </div>`
+    : '';
+
+  container.innerHTML = `
+    <details class="review-block">
+      <summary class="section-title">Päivän katsaus</summary>
+      <div class="section-body">
+        <div class="review-summary">${escapeHtml(summarizeReview(review.stats))}</div>
+        ${moves}${stuck}${tomorrow}
+      </div>
+    </details>`;
+}
+
+// ------------------------------------------------------------ kytkennät
+
+function attachHandlers(root, dateIso) {
   root.querySelectorAll('[data-toggle]').forEach(node =>
     node.addEventListener('click', () => toggleComplete(node.dataset.toggle)));
   root.querySelectorAll('[data-edit]').forEach(node =>
@@ -273,13 +481,42 @@ function attachHandlers(root) {
       event.stopPropagation();
       deleteTask(node.dataset.del);
     }));
+
+  // Rutiinin ohitus koskee VAIN tätä päivää — rutiini itse ei muutu.
+  root.querySelectorAll('[data-skip-routine]').forEach(node =>
+    node.addEventListener('click', () =>
+      skipRoutineOccurrence(node.dataset.skipRoutine, node.dataset.skipDate)));
+
+  root.querySelectorAll('[data-restore-routine]').forEach(node =>
+    node.addEventListener('click', () =>
+      restoreRoutineOccurrence(node.dataset.restoreRoutine, node.dataset.restoreDate)));
+
+  root.querySelectorAll('[data-wb-metric]').forEach(node =>
+    node.addEventListener('click', () => {
+      const current = getState();
+      const existing = entryForDate(current.wellbeing, dateIso) || { date: dateIso };
+      saveWellbeingEntry({
+        ...existing,
+        date: dateIso,
+        [node.dataset.wbMetric]: Number(node.dataset.wbValue)
+      });
+    }));
+
+  root.querySelectorAll('[data-move-task]').forEach(node =>
+    node.addEventListener('click', () => {
+      const tomorrow = fmtISO(addDays(getState().viewDate, 1));
+      editTask(node.dataset.moveTask, { date: tomorrow });
+    }));
 }
+
+// ---------------------------------------------------------- renderöinti
 
 /** Renderöi koko päivänäkymä nykytilan perusteella. */
 export function renderToday() {
   const state = getState();
   const date = state.viewDate;
   const dateIso = fmtISO(date);
+  const todayIso = fmtISO(todayMidnight());
   const isToday = sameDay(date, todayMidnight());
 
   setText('todayEyebrow', isToday ? 'TÄNÄÄN' : WD_FULL[date.getDay()].toUpperCase());
@@ -290,19 +527,22 @@ export function renderToday() {
     tasks: state.tasks,
     profile: state.profile,
     dateIso,
-    nowMinutes: isToday ? nowMinutes() : null
+    nowMinutes: isToday ? nowMinutes() : null,
+    routines: state.routines,
+    exceptions: state.routineExceptions,
+    todayIso
   });
 
   // Kuormituschip
   const chip = el('todayLoadChip');
-  if (plan.load.count === 0) {
+  if (plan.load.count === 0 && plan.load.routines === 0) {
     chip.textContent = 'Ei suunniteltua';
     chip.className = 'load-chip tone-sage';
   } else {
     const label = plan.load.level === 'clay' ? 'Raskas'
       : plan.load.level === 'gold' ? 'Kohtalainen' : 'Kevyt';
-    chip.innerHTML = `<span class="dot ${plan.load.level}"></span>${escapeHtml(label)} kuormitus`;
-    chip.className = 'load-chip tone-' + plan.load.level;
+    chip.innerHTML = `<span class="dot ${plan.load.level || 'sage'}"></span>${escapeHtml(label)} kuormitus`;
+    chip.className = 'load-chip tone-' + (plan.load.level || 'sage');
   }
 
   // Valmiuschip
@@ -315,21 +555,29 @@ export function renderToday() {
   }
 
   const nowState = resolveNowState(plan.timeline, plan.nowMinutes);
-  renderTimeline(el('todayTimelineContainer'), plan.timeline, nowState);
+
+  renderFocus(el('todayFocus'), state, dateIso, todayIso);
+  renderOverdue(el('todayOverdue'), plan);
+  renderTimeline(el('todayTimelineContainer'), plan.timeline, nowState, todayIso);
   renderUnscheduled(el('todayUnscheduled'), plan);
   renderFreeSlots(el('todayFreeSlots'), plan);
   renderCompleted(el('todayCompleted'), plan);
+  renderWellbeing(el('todayWellbeing'), state, dateIso, plan);
+  renderEveningReview(el('todayReview'), state, dateIso, todayIso);
 
-  attachHandlers(el('screen-today'));
+  attachHandlers(el('screen-today'), dateIso);
 
-  // Ehdotuspainike
   const proposeBtn = maybe('proposeBtn');
   if (proposeBtn) {
     proposeBtn.addEventListener('click', () => {
+      const current = getState();
       const result = proposeSchedule({
-        tasks: getState().tasks,
-        profile: getState().profile,
-        dateIso
+        tasks: current.tasks,
+        profile: current.profile,
+        dateIso,
+        routines: current.routines,
+        exceptions: current.routineExceptions,
+        todayIso
       });
       const container = maybe('proposalContainer');
       renderProposals(container, result);

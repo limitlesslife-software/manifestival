@@ -32,6 +32,8 @@
     <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.3" fill="none" stroke="currentColor" stroke-width="1.8"/><g stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><line x1="12" y1="2.3" x2="12" y2="4.6"/><line x1="12" y1="19.4" x2="12" y2="21.7"/><line x1="2.3" y1="12" x2="4.6" y2="12"/><line x1="19.4" y1="12" x2="21.7" y2="12"/><line x1="4.9" y1="4.9" x2="6.5" y2="6.5"/><line x1="17.5" y1="17.5" x2="19.1" y2="19.1"/><line x1="19.1" y1="4.9" x2="17.5" y2="6.5"/><line x1="6.5" y1="17.5" x2="4.9" y2="19.1"/></g></symbol>
     <symbol id="i-cal" viewBox="0 0 24 24"><rect x="3.3" y="5" width="17.4" height="15.7" rx="3.2" fill="none" stroke="currentColor" stroke-width="1.8"/><line x1="3.3" y1="9.6" x2="20.7" y2="9.6" stroke="currentColor" stroke-width="1.8"/><line x1="8" y1="2.3" x2="8" y2="6.6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><line x1="16" y1="2.3" x2="16" y2="6.6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
     <symbol id="i-list" viewBox="0 0 24 24"><line x1="8" y1="6" x2="20" y2="6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><line x1="8" y1="12" x2="20" y2="12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><line x1="8" y1="18" x2="20" y2="18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="4" cy="6" r="1.3" fill="currentColor"/><circle cx="4" cy="12" r="1.3" fill="currentColor"/><circle cx="4" cy="18" r="1.3" fill="currentColor"/></symbol>
+    <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="12" r="4.5" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/></symbol>
+    <symbol id="i-repeat" viewBox="0 0 24 24"><path d="M4 12A8 8 0 0 1 18.5 7.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M20 12A8 8 0 0 1 5.5 16.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M15.5 4L19 7.5L15.5 11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M8.5 20L5 16.5L8.5 13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M6 11.3A6 6 0 0 0 18 11.3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><line x1="12" y1="17.3" x2="12" y2="21" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><line x1="8.4" y1="21" x2="15.6" y2="21" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
     <symbol id="i-check" viewBox="0 0 24 24"><path d="M4.5 12.5L9.5 17.5L19.5 6.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-plus" viewBox="0 0 24 24"><line x1="12" y1="4" x2="12" y2="20" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="4" y1="12" x2="20" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
@@ -106,10 +108,15 @@
         <div class="load-chip" id="todayLoadChip"></div>
         <div class="load-chip" id="todayCompletionChip" style="display:none;"></div>
       </div>
+
+      <div id="todayFocus"></div>
+      <div id="todayOverdue"></div>
       <div id="todayTimelineContainer"></div>
       <div id="todayUnscheduled"></div>
       <div id="todayFreeSlots"></div>
       <div id="todayCompleted"></div>
+      <div id="todayWellbeing"></div>
+      <div id="todayReview"></div>
     </section>
 
     <!-- ============ VIIKKO ============ -->
@@ -122,79 +129,252 @@
         </div>
         <button class="nav-arrow" id="weekNext" type="button" aria-label="Seuraava viikko"><svg class="icon" aria-hidden="true"><use href="#i-chevron-right"/></svg></button>
       </div>
+
       <div id="weekStripContainer" class="week-strip" style="margin-top:18px;"></div>
-      <div id="weekListContainer" style="margin-top:24px;"></div>
+      <div id="weekSummary"></div>
+      <div id="weekDeadlines"></div>
+      <div id="weekGoals"></div>
+      <div id="weekListContainer" style="margin-top:12px;"></div>
+      <div id="weekReview"></div>
     </section>
 
-    <!-- ============ TEHTÄVÄT ============ -->
+    <!-- ============ TEHTÄVÄT JA RUTIINIT ============ -->
     <section class="screen" id="screen-tasks" role="tabpanel" aria-label="Tehtävät" aria-hidden="true" inert>
-      <div class="eyebrow">TEHTÄVÄT</div>
-      <h1 class="title" style="margin-bottom:16px;">Kaikki yhdessä listassa</h1>
+      <div class="eyebrow">TEKEMINEN</div>
+      <h1 class="title" style="margin-bottom:14px;">Kertaluonteiset ja toistuvat</h1>
 
-      <button class="add-row" id="addRowBtn" type="button"><svg aria-hidden="true"><use href="#i-plus"/></svg>Lisää tehtävä</button>
+      <div class="segment" role="tablist" aria-label="Tehtävät tai rutiinit">
+        <button class="segment-btn active" id="segmentTasks" type="button" role="tab" aria-selected="true">Tehtävät</button>
+        <button class="segment-btn" id="segmentRoutines" type="button" role="tab" aria-selected="false">Rutiinit</button>
+      </div>
 
-      <div class="add-form" id="addForm" style="display:none;" role="group" aria-labelledby="addFormTitle">
-        <div class="add-form-title" id="addFormTitle">Uusi tehtävä</div>
+      <!-- ---- Tehtävät ---- -->
+      <div id="tasksSection">
+        <button class="add-row" id="addRowBtn" type="button"><svg aria-hidden="true"><use href="#i-plus"/></svg>Lisää tehtävä</button>
+
+        <div class="add-form" id="addForm" style="display:none;" role="group" aria-labelledby="addFormTitle">
+          <div class="add-form-title" id="addFormTitle">Uusi tehtävä</div>
+
+          <div>
+            <label class="field-label" for="afTitle">Mitä pitää tehdä?</label>
+            <input type="text" id="afTitle" placeholder="esim. Soita vanhemmille" autocomplete="off">
+            <div class="field-error" id="afTitleError"></div>
+          </div>
+
+          <div>
+            <label class="field-label" for="afDescription">Kuvaus (valinnainen)</label>
+            <textarea id="afDescription" rows="2" placeholder="Tarkennus, muistilista tai konteksti"></textarea>
+            <div class="field-error" id="afDescriptionError"></div>
+          </div>
+
+          <div class="form-row">
+            <div>
+              <label class="field-label" for="afDate">Aikataulutettu</label>
+              <input type="date" id="afDate">
+              <div class="field-error" id="afDateError"></div>
+            </div>
+            <div>
+              <label class="field-label" for="afDeadline">Määräaika</label>
+              <input type="date" id="afDeadline">
+              <div class="field-error" id="afDeadlineError"></div>
+            </div>
+            <div>
+              <label class="field-label" for="afPriority">Prioriteetti</label>
+              <select id="afPriority"></select>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div>
+              <label class="field-label" for="afTime">Alkaa</label>
+              <input type="time" id="afTime">
+              <div class="field-error" id="afTimeError"></div>
+            </div>
+            <div>
+              <label class="field-label" for="afEndTime">Päättyy</label>
+              <input type="time" id="afEndTime">
+              <div class="field-error" id="afEndTimeError"></div>
+            </div>
+            <div>
+              <label class="field-label" for="afDuration">Kesto (min)</label>
+              <input type="number" id="afDuration" min="1" max="1440" step="5" placeholder="30">
+              <div class="field-error" id="afDurationError"></div>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div>
+              <label class="field-label" for="afCategory">Elämänalue</label>
+              <select id="afCategory"></select>
+            </div>
+            <div>
+              <label class="field-label" for="afGoal">Tavoite</label>
+              <select id="afGoal"><option value="">Ei tavoitetta</option></select>
+            </div>
+          </div>
+
+          <label class="checkbox-row" for="afIsWake">
+            <input type="checkbox" id="afIsWake"> Tämä on päivän herätys (unilaskennan pohjaksi)
+          </label>
+
+          <div class="form-actions">
+            <button class="form-btn danger" id="afDelete" type="button" style="display:none;">Poista</button>
+            <button class="form-btn secondary" id="afCancel" type="button">Peruuta</button>
+            <button class="form-btn primary" id="afSave" type="button">Tallenna</button>
+          </div>
+        </div>
+
+        <div id="tasksListContainer"></div>
+      </div>
+
+      <!-- ---- Rutiinit ---- -->
+      <div id="routinesSection" style="display:none;">
+        <button class="add-row" id="addRoutineBtn" type="button"><svg aria-hidden="true"><use href="#i-repeat"/></svg>Lisää rutiini</button>
+
+        <div class="add-form" id="routineForm" style="display:none;" role="group" aria-labelledby="routineFormTitle">
+          <div class="add-form-title" id="routineFormTitle">Uusi rutiini</div>
+
+          <div>
+            <label class="field-label" for="rfTitle">Mikä toistuu?</label>
+            <input type="text" id="rfTitle" placeholder="esim. Aamulääkkeet" autocomplete="off">
+            <div class="field-error" id="rfTitleError"></div>
+          </div>
+
+          <div>
+            <label class="field-label" for="rfDescription">Kuvaus (valinnainen)</label>
+            <textarea id="rfDescription" rows="2" placeholder="Tarkennus"></textarea>
+          </div>
+
+          <div>
+            <label class="field-label" for="rfRecurrence">Toisto</label>
+            <select id="rfRecurrence"></select>
+            <div class="field-error" id="rfRecurrenceError"></div>
+          </div>
+
+          <div id="rfWeekdayGroup" style="display:none;">
+            <label class="field-label">Viikonpäivät</label>
+            <div class="weekday-row" id="rfWeekdays"></div>
+            <div class="hint" id="rfWeekdayHint"></div>
+            <div class="field-error" id="rfWeekdaysError"></div>
+          </div>
+
+          <div class="form-row">
+            <div>
+              <label class="field-label" for="rfTime">Kellonaika</label>
+              <input type="time" id="rfTime">
+              <div class="field-error" id="rfTimeError"></div>
+            </div>
+            <div>
+              <label class="field-label" for="rfDuration">Kesto (min)</label>
+              <input type="number" id="rfDuration" min="1" max="1440" step="5" placeholder="30">
+              <div class="field-error" id="rfDurationError"></div>
+            </div>
+          </div>
+
+          <label class="checkbox-row" for="rfFlexible">
+            <input type="checkbox" id="rfFlexible"> Joustava — sovellus saa etsiä sopivan ajan
+          </label>
+
+          <div class="form-row">
+            <div>
+              <label class="field-label" for="rfCategory">Elämänalue</label>
+              <select id="rfCategory"></select>
+            </div>
+            <div>
+              <label class="field-label" for="rfPriority">Prioriteetti</label>
+              <select id="rfPriority"></select>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div>
+              <label class="field-label" for="rfStartDate">Alkaa (valinnainen)</label>
+              <input type="date" id="rfStartDate">
+              <div class="field-error" id="rfStartDateError"></div>
+            </div>
+            <div>
+              <label class="field-label" for="rfEndDate">Päättyy (valinnainen)</label>
+              <input type="date" id="rfEndDate">
+              <div class="field-error" id="rfEndDateError"></div>
+            </div>
+          </div>
+
+          <div class="form-actions">
+            <button class="form-btn danger" id="rfDelete" type="button" style="display:none;">Poista</button>
+            <button class="form-btn secondary" id="rfCancel" type="button">Peruuta</button>
+            <button class="form-btn primary" id="rfSave" type="button">Tallenna</button>
+          </div>
+        </div>
+
+        <div id="routinesListContainer"></div>
+      </div>
+    </section>
+
+    <!-- ============ TAVOITTEET ============ -->
+    <section class="screen" id="screen-goals" role="tabpanel" aria-label="Tavoitteet" aria-hidden="true" inert>
+      <div class="eyebrow">TAVOITTEET</div>
+      <h1 class="title" style="margin-bottom:14px;">Miksi teet sitä mitä teet</h1>
+
+      <button class="add-row" id="addGoalBtn" type="button"><svg aria-hidden="true"><use href="#i-plus"/></svg>Lisää tavoite</button>
+
+      <div class="add-form" id="goalForm" style="display:none;" role="group" aria-labelledby="goalFormTitle">
+        <div class="add-form-title" id="goalFormTitle">Uusi tavoite</div>
 
         <div>
-          <label class="field-label" for="afTitle">Mitä pitää tehdä?</label>
-          <input type="text" id="afTitle" placeholder="esim. Soita vanhemmille" autocomplete="off">
-          <div class="field-error" id="afTitleError"></div>
+          <label class="field-label" for="gfTitle">Mitä haluat saavuttaa?</label>
+          <input type="text" id="gfTitle" placeholder="esim. Julkaise Manifestival" autocomplete="off">
+          <div class="field-error" id="gfTitleError"></div>
         </div>
 
         <div>
-          <label class="field-label" for="afDescription">Kuvaus (valinnainen)</label>
-          <textarea id="afDescription" rows="2" placeholder="Tarkennus, muistilista tai konteksti"></textarea>
-          <div class="field-error" id="afDescriptionError"></div>
+          <label class="field-label" for="gfDescription">Miksi tämä on tärkeää? (valinnainen)</label>
+          <textarea id="gfDescription" rows="2" placeholder="Perustelu auttaa jatkamaan silloin kun ei huvita"></textarea>
         </div>
 
         <div class="form-row">
           <div>
-            <label class="field-label" for="afDate">Päivä</label>
-            <input type="date" id="afDate">
-            <div class="field-error" id="afDateError"></div>
+            <label class="field-label" for="gfTargetDate">Tavoitepäivä</label>
+            <input type="date" id="gfTargetDate">
+            <div class="field-error" id="gfTargetDateError"></div>
           </div>
           <div>
-            <label class="field-label" for="afPriority">Prioriteetti</label>
-            <select id="afPriority"></select>
+            <label class="field-label" for="gfStatus">Tila</label>
+            <select id="gfStatus"></select>
+            <div class="field-error" id="gfStatusError"></div>
           </div>
         </div>
 
         <div class="form-row">
           <div>
-            <label class="field-label" for="afTime">Alkaa</label>
-            <input type="time" id="afTime">
-            <div class="field-error" id="afTimeError"></div>
+            <label class="field-label" for="gfCategory">Elämänalue</label>
+            <select id="gfCategory"></select>
           </div>
           <div>
-            <label class="field-label" for="afEndTime">Päättyy</label>
-            <input type="time" id="afEndTime">
-            <div class="field-error" id="afEndTimeError"></div>
-          </div>
-          <div>
-            <label class="field-label" for="afDuration">Kesto (min)</label>
-            <input type="number" id="afDuration" min="1" max="1440" step="5" placeholder="30">
-            <div class="field-error" id="afDurationError"></div>
+            <label class="field-label" for="gfPriority">Prioriteetti</label>
+            <select id="gfPriority"></select>
           </div>
         </div>
 
         <div>
-          <label class="field-label" for="afCategory">Elämänalue</label>
-          <select id="afCategory"></select>
+          <label class="field-label" for="gfProgressMode">Edistyminen</label>
+          <select id="gfProgressMode"></select>
+          <div class="field-error" id="gfProgressModeError"></div>
         </div>
 
-        <label class="checkbox-row" for="afIsWake">
-          <input type="checkbox" id="afIsWake"> Tämä on päivän herätys (unilaskennan pohjaksi)
-        </label>
+        <div id="gfManualGroup" style="display:none;">
+          <label class="field-label" for="gfManualProgress">Edistyminen (%)</label>
+          <input type="number" id="gfManualProgress" min="0" max="100" step="5" placeholder="0">
+          <div class="field-error" id="gfManualProgressError"></div>
+        </div>
 
         <div class="form-actions">
-          <button class="form-btn danger" id="afDelete" type="button" style="display:none;">Poista</button>
-          <button class="form-btn secondary" id="afCancel" type="button">Peruuta</button>
-          <button class="form-btn primary" id="afSave" type="button">Tallenna</button>
+          <button class="form-btn danger" id="gfDelete" type="button" style="display:none;">Poista</button>
+          <button class="form-btn secondary" id="gfCancel" type="button">Peruuta</button>
+          <button class="form-btn primary" id="gfSave" type="button">Tallenna</button>
         </div>
       </div>
 
-      <div id="tasksListContainer"></div>
+      <div id="goalsListContainer"></div>
     </section>
 
     <!-- ============ PROFIILI ============ -->
@@ -203,6 +383,7 @@
       <h1 class="title" style="margin-bottom:16px;">Henkilökohtaiset tiedot</h1>
 
       <div id="pfSchemaNotice"></div>
+      <div id="pfCapabilities"></div>
 
       <div class="hint" style="margin-bottom:14px;">
         Kaikki kentät ovat vapaaehtoisia. Näitä käytetään herätys- ja
@@ -273,7 +454,8 @@
   <nav class="tab-bar" role="tablist" aria-label="Päänavigaatio">
     <button class="tab-btn active" type="button" role="tab" aria-selected="true" data-screen="screen-today"><svg class="icon" aria-hidden="true"><use href="#i-sun"/></svg>Tänään</button>
     <button class="tab-btn" type="button" role="tab" aria-selected="false" tabindex="-1" data-screen="screen-week"><svg class="icon" aria-hidden="true"><use href="#i-cal"/></svg>Viikko</button>
-    <button class="tab-btn" type="button" role="tab" aria-selected="false" tabindex="-1" data-screen="screen-tasks"><svg class="icon" aria-hidden="true"><use href="#i-list"/></svg>Tehtävät</button>
+    <button class="tab-btn" type="button" role="tab" aria-selected="false" tabindex="-1" data-screen="screen-tasks"><svg class="icon" aria-hidden="true"><use href="#i-list"/></svg>Tekeminen</button>
+    <button class="tab-btn" type="button" role="tab" aria-selected="false" tabindex="-1" data-screen="screen-goals"><svg class="icon" aria-hidden="true"><use href="#i-target"/></svg>Tavoitteet</button>
     <button class="tab-btn" type="button" role="tab" aria-selected="false" tabindex="-1" data-screen="screen-profile"><svg class="icon" aria-hidden="true"><use href="#i-user"/></svg>Profiili</button>
   </nav>
 

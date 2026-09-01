@@ -28,7 +28,7 @@
 // Versio pitää nostaa aina kun sovelluskuori muuttuu. Vanhat välimuistit
 // siivotaan activate-vaiheessa, joten nosto on turvallinen tapa pakottaa
 // päivitys. Ks. docs/DEPLOYMENT.md.
-const CACHE_VERSION = 'v3';
+const CACHE_VERSION = 'v5';
 const CACHE_NAME = `manifestival-shell-${CACHE_VERSION}`;
 
 /**
@@ -43,42 +43,51 @@ const SHELL = [
   '/icon-512.png',
   '/apple-touch-icon.png',
   '/src/styles.css',
-  '/src/app/main.js',
+  '/src/ai/parseClient.js',
+  '/src/ai/proposalSchema.js',
   '/src/app/actions.js',
   '/src/app/auth.js',
+  '/src/app/main.js',
   '/src/app/navigation.js',
   '/src/app/onboarding.js',
   '/src/app/state.js',
-  '/src/app/voice.js',
+  '/src/app/views/goals.js',
+  '/src/app/views/profile.js',
+  '/src/app/views/routines.js',
+  '/src/app/views/tasks.js',
   '/src/app/views/today.js',
   '/src/app/views/week.js',
-  '/src/app/views/tasks.js',
-  '/src/app/views/profile.js',
-  '/src/ai/parseClient.js',
-  '/src/ai/proposalSchema.js',
+  '/src/app/voice.js',
   '/src/data/client.js',
+  '/src/data/collectionsRepo.js',
   '/src/data/config.js',
+  '/src/data/memoryStore.js',
   '/src/data/preferences.js',
   '/src/data/profileRepo.js',
   '/src/data/schema.js',
   '/src/data/session.js',
   '/src/data/tasksRepo.js',
   '/src/domain/categories.js',
+  '/src/domain/focus.js',
+  '/src/domain/goal.js',
   '/src/domain/priority.js',
+  '/src/domain/project.js',
+  '/src/domain/review.js',
   '/src/domain/routine.js',
   '/src/domain/scheduler.js',
   '/src/domain/task.js',
   '/src/domain/week.js',
+  '/src/domain/wellbeing.js',
   '/src/lib/datetime.js',
   '/src/lib/format.js',
   '/src/lib/result.js',
   '/src/lib/rows.js',
+  '/src/platform/capabilities.js',
+  '/src/platform/index.js',
+  '/src/platform/notifications.js',
   '/src/ui/confirm.js',
   '/src/ui/dom.js',
-  '/src/ui/toast.js',
-  '/src/platform/index.js',
-  '/src/platform/capabilities.js',
-  '/src/platform/notifications.js'
+  '/src/ui/toast.js'
 ];
 
 /** Polut, joita ei koskaan välimuistiteta. */

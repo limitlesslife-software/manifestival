@@ -21,6 +21,8 @@ import { initOnboarding, maybeShowOnboarding } from './onboarding.js';
 import { renderToday, initTodayNavigation } from './views/today.js';
 import { renderWeek, initWeekNavigation } from './views/week.js';
 import { renderTasks, initTaskForm, closeForm } from './views/tasks.js';
+import { initRoutineForm, closeRoutineForm } from './views/routines.js';
+import { renderGoals, initGoalForm, closeGoalForm } from './views/goals.js';
 import { renderProfile, initProfileForm, fillProfileForm } from './views/profile.js';
 import { clearToasts } from '../ui/toast.js';
 import { maybe } from '../ui/dom.js';
@@ -54,6 +56,7 @@ function renderAll() {
   renderToday();
   renderWeek();
   renderTasks();
+  renderGoals();
   renderProfile();
 }
 
@@ -78,6 +81,8 @@ async function onSignedIn() {
 function onSignedOut() {
   signedIn = false;
   closeForm();
+  closeRoutineForm();
+  closeGoalForm();
   clearToasts();
   clearDevicePreferences();
   resetState();
@@ -91,6 +96,8 @@ async function start() {
   initTodayNavigation();
   initWeekNavigation();
   initTaskForm();
+  initRoutineForm();
+  initGoalForm();
   initProfileForm();
   initVoice();
   initOnboarding();

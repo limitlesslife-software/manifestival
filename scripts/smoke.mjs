@@ -118,7 +118,8 @@ try {
 
   // 6. Käyttöliittymän rakenne
   for (const id of ['authGate', 'authSplash', 'app', 'onboarding', 'screen-today',
-                    'screen-week', 'screen-tasks', 'screen-profile', 'voiceOverlay']) {
+                    'screen-week', 'screen-tasks', 'screen-goals', 'screen-profile',
+                    'voiceOverlay']) {
     check(html.includes('id="' + id + '"'), 'merkinnässä on elementti #' + id);
   }
   check(html.includes('<div id="app" class="app-hidden">'),

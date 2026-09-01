@@ -37,6 +37,48 @@ export function taskColumns() {
 }
 
 /**
+ * Taulut, joita tietokannassa ei vielä ole.
+ *
+ * PRODUCTION GATE. Jokainen `false` tarkoittaa, että kyseinen tieto elää
+ * VAIN istunnon muistissa (`src/data/memoryStore.js`) ja katoaa sivun
+ * latauksessa. Käyttöliittymä kertoo tämän käyttäjälle — se ei teeskentele
+ * tallentavansa.
+ *
+ * Käyttöönotto: aja migraatio ja vaihda vastaava lippu arvoon true.
+ * Ks. docs/PRODUCTION-ACTIVATION.md.
+ */
+export const TABLES = Object.freeze({
+  /** Migraatio 0003 */
+  routines: false,
+  routineExceptions: false,
+  /** Migraatio 0004 */
+  goals: false,
+  projects: false,
+  /** Migraatio 0005 */
+  notificationPreferences: false,
+  /** Migraatio 0006 */
+  wellbeing: false
+});
+
+/** Onko taulu käytettävissä tietokannassa? */
+export function hasTable(name) {
+  return TABLES[name] === true;
+}
+
+/** Taulut, jotka odottavat migraatiota. */
+export function pendingTables() {
+  return Object.entries(TABLES).filter(([, ready]) => !ready).map(([name]) => name);
+}
+
+/**
+ * Säilyykö tämä tietotyyppi tallennuksen yli?
+ * Käyttöliittymä käyttää tätä rehelliseen viestintään.
+ */
+export function isPersistent(tableName) {
+  return hasTable(tableName);
+}
+
+/**
  * Kentät, jotka eivät vielä säily tallennuksen yli.
  * Käyttöliittymä voi kertoa tämän käyttäjälle rehellisesti sen sijaan,
  * että se teeskentelisi tallentavansa ne.

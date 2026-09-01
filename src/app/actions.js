@@ -17,16 +17,27 @@
 
 import * as tasksRepo from '../data/tasksRepo.js';
 import * as profileRepo from '../data/profileRepo.js';
+import {
+  routinesRepo, routineExceptionsRepo, goalsRepo, projectsRepo, wellbeingRepo,
+  volatileCollections
+} from '../data/collectionsRepo.js';
 import { newTaskId } from '../lib/rows.js';
 import { normalizeTask, validateTask, SCHEDULING } from '../domain/task.js';
+import { normalizeRoutine, validateRoutine, normalizeException, EXCEPTION } from '../domain/routine.js';
+import { normalizeGoal, validateGoal } from '../domain/goal.js';
+import { normalizeWellbeingEntry, validateWellbeingEntry } from '../domain/wellbeing.js';
 import { volatileFields } from '../data/schema.js';
 import {
   getState, findTask, addTaskToState, removeTaskFromState,
   replaceTaskInState, patchTaskInState, setTasks, setProfile,
-  clearOtherWakeFlagsInState
+  clearOtherWakeFlagsInState,
+  setRoutines, addRoutineToState, replaceRoutineInState, removeRoutineFromState, findRoutine,
+  setRoutineExceptions, addRoutineExceptionToState, removeRoutineExceptionFromState,
+  setGoals, addGoalToState, replaceGoalInState, removeGoalFromState, findGoal,
+  setProjects, setWellbeing, upsertWellbeingEntry
 } from './state.js';
 import { showError, success, notify } from '../ui/toast.js';
-import { confirmDelete } from '../ui/confirm.js';
+import { confirmDelete, confirmAction } from '../ui/confirm.js';
 
 /** Kertaalleen näytettävä huomautus kentistä, jotka eivät vielä tallennu. */
 let volatileWarningShown = false;
@@ -50,11 +61,27 @@ function warnAboutVolatileFields(task) {
 
 // ------------------------------------------------------------------ lataus
 
-/** Lataa kirjautuneen käyttäjän tehtävät ja profiili. */
+/** Kertaalleen näytettävä huomautus tiedoista, jotka eivät vielä säily. */
+let volatileCollectionWarningShown = false;
+
+function warnAboutVolatileCollections() {
+  if (volatileCollectionWarningShown) return;
+  if (volatileCollections().length === 0) return;
+  volatileCollectionWarningShown = true;
+  notify('Rutiinit, tavoitteet ja hyvinvointimerkinnät säilyvät toistaiseksi vain tämän istunnon ajan.', 7000);
+}
+
+/** Lataa kirjautuneen käyttäjän kaikki tiedot. */
 export async function loadUserData() {
-  const [tasksResult, profileResult] = await Promise.all([
+  const [tasksResult, profileResult, routinesResult, exceptionsResult,
+    goalsResult, projectsResult, wellbeingResult] = await Promise.all([
     tasksRepo.listTasks(),
-    profileRepo.loadProfile()
+    profileRepo.loadProfile(),
+    routinesRepo.list(),
+    routineExceptionsRepo.list(),
+    goalsRepo.list(),
+    projectsRepo.list(),
+    wellbeingRepo.list()
   ]);
 
   if (tasksResult.ok) setTasks(tasksResult.value);
@@ -62,6 +89,14 @@ export async function loadUserData() {
 
   if (profileResult.ok) setProfile(profileResult.value.profile, profileResult.value.exists);
   else showError(profileResult.error);
+
+  // Kokoelmien lataus ei saa estää sovelluksen käyttöä: virhe näytetään,
+  // mutta tila jää tyhjäksi eikä sovellus kaadu.
+  setRoutines(routinesResult.ok ? routinesResult.value : []);
+  setRoutineExceptions(exceptionsResult.ok ? exceptionsResult.value : []);
+  setGoals(goalsResult.ok ? goalsResult.value : []);
+  setProjects(projectsResult.ok ? projectsResult.value : []);
+  setWellbeing(wellbeingResult.ok ? wellbeingResult.value : []);
 
   return { tasksOk: tasksResult.ok, profileOk: profileResult.ok };
 }
@@ -186,6 +221,244 @@ export async function acceptProposal(proposal) {
     durationMinutes: proposal.durationMinutes,
     schedulingState: SCHEDULING.AUTO
   });
+}
+
+// ----------------------------------------------------------------- rutiinit
+
+/**
+ * Luo rutiini.
+ * @returns {Promise<{ok:boolean, errors?:object, routine?:object}>}
+ */
+export async function createRoutine(input) {
+  const routine = normalizeRoutine({ ...input, id: newTaskId() });
+
+  const { valid, errors } = validateRoutine(routine);
+  if (!valid) return { ok: false, errors };
+
+  addRoutineToState(routine);
+  warnAboutVolatileCollections();
+
+  const result = await routinesRepo.insert(routine);
+  if (!result.ok) {
+    removeRoutineFromState(routine.id); // peruutus
+    showError(result.error);
+    return { ok: false };
+  }
+  return { ok: true, routine };
+}
+
+/** Muokkaa rutiinia. */
+export async function editRoutine(id, changes) {
+  const previous = findRoutine(id);
+  if (!previous) return { ok: false };
+
+  const updated = normalizeRoutine({ ...previous, ...changes, id });
+  const { valid, errors } = validateRoutine(updated);
+  if (!valid) return { ok: false, errors };
+
+  replaceRoutineInState(id, updated);
+
+  const result = await routinesRepo.update(updated);
+  if (!result.ok) {
+    replaceRoutineInState(id, previous); // peruutus
+    showError(result.error);
+    return { ok: false };
+  }
+  return { ok: true };
+}
+
+/** Aktivoi tai deaktivoi rutiini. Ei poista mitään. */
+export async function toggleRoutineActive(id) {
+  const routine = findRoutine(id);
+  if (!routine) return false;
+  const result = await editRoutine(id, { active: !routine.active });
+  return result.ok;
+}
+
+/** Poista rutiini. Kysyy aina vahvistuksen. */
+export async function deleteRoutine(id) {
+  const routine = findRoutine(id);
+  if (!routine) return false;
+
+  const confirmed = await confirmAction({
+    title: 'Poistetaanko rutiini?',
+    message: `"${routine.title}" ja kaikki sen tulevat esiintymät poistetaan. `
+      + 'Jo tehdyt merkinnät säilyvät. Tätä ei voi perua.',
+    confirmLabel: 'Poista',
+    cancelLabel: 'Peruuta',
+    destructive: true
+  });
+  if (!confirmed) return false;
+
+  const exceptions = getState().routineExceptions.filter(e => e.routineId === id);
+  removeRoutineFromState(id);
+
+  const result = await routinesRepo.remove(id);
+  if (!result.ok) {
+    addRoutineToState(routine); // peruutus
+    for (const exception of exceptions) addRoutineExceptionToState(exception);
+    showError(result.error);
+    return false;
+  }
+
+  success('Rutiini poistettu.');
+  return true;
+}
+
+/**
+ * Ohita rutiinin yksittäinen esiintymä.
+ * Rutiini itse ei muutu — vain tämä päivä.
+ */
+export async function skipRoutineOccurrence(routineId, dateIso) {
+  const exception = normalizeException({
+    id: newTaskId(), routineId, date: dateIso, type: EXCEPTION.SKIP
+  });
+
+  addRoutineExceptionToState(exception);
+
+  const result = await routineExceptionsRepo.insert(exception);
+  if (!result.ok) {
+    removeRoutineExceptionFromState(routineId, dateIso); // peruutus
+    showError(result.error);
+    return false;
+  }
+  return true;
+}
+
+/** Palauta ohitettu esiintymä. */
+export async function restoreRoutineOccurrence(routineId, dateIso) {
+  const existing = getState().routineExceptions.find(
+    e => e.routineId === routineId && e.date === dateIso);
+
+  removeRoutineExceptionFromState(routineId, dateIso);
+
+  if (existing && existing.id) {
+    const result = await routineExceptionsRepo.remove(existing.id);
+    if (!result.ok) {
+      addRoutineExceptionToState(existing); // peruutus
+      showError(result.error);
+      return false;
+    }
+  }
+  return true;
+}
+
+// --------------------------------------------------------------- tavoitteet
+
+/** Luo tavoite. */
+export async function createGoal(input) {
+  const goal = normalizeGoal({ ...input, id: newTaskId() });
+
+  const { valid, errors } = validateGoal(goal);
+  if (!valid) return { ok: false, errors };
+
+  addGoalToState(goal);
+  warnAboutVolatileCollections();
+
+  const result = await goalsRepo.insert(goal);
+  if (!result.ok) {
+    removeGoalFromState(goal.id); // peruutus
+    showError(result.error);
+    return { ok: false };
+  }
+  return { ok: true, goal };
+}
+
+/** Muokkaa tavoitetta. */
+export async function editGoal(id, changes) {
+  const previous = findGoal(id);
+  if (!previous) return { ok: false };
+
+  const updated = normalizeGoal({ ...previous, ...changes, id });
+  const { valid, errors } = validateGoal(updated);
+  if (!valid) return { ok: false, errors };
+
+  replaceGoalInState(id, updated);
+
+  const result = await goalsRepo.update(updated);
+  if (!result.ok) {
+    replaceGoalInState(id, previous); // peruutus
+    showError(result.error);
+    return { ok: false };
+  }
+  return { ok: true };
+}
+
+/** Vaihda tavoitteen tila. */
+export async function setGoalStatus(id, status) {
+  return editGoal(id, { status });
+}
+
+/**
+ * Poista tavoite.
+ *
+ * Tehtäviä EI koskaan poisteta tavoitteen mukana — niiden yhteys vain
+ * katkeaa. Työ, joka on jo tehty, ei katoa siksi että tavoite poistuu.
+ */
+export async function deleteGoal(id) {
+  const goal = findGoal(id);
+  if (!goal) return false;
+
+  const linked = getState().tasks.filter(task => task.goalId === id);
+  const confirmed = await confirmAction({
+    title: 'Poistetaanko tavoite?',
+    message: linked.length
+      ? `"${goal.title}" poistetaan. ${linked.length} tehtävää säilyy, mutta niiden yhteys tavoitteeseen katkeaa.`
+      : `"${goal.title}" poistetaan pysyvästi.`,
+    confirmLabel: 'Poista',
+    cancelLabel: 'Peruuta',
+    destructive: true
+  });
+  if (!confirmed) return false;
+
+  removeGoalFromState(id);
+
+  const result = await goalsRepo.remove(id);
+  if (!result.ok) {
+    addGoalToState(goal); // peruutus
+    showError(result.error);
+    return false;
+  }
+
+  success('Tavoite poistettu.');
+  return true;
+}
+
+/** Liitä tehtävä tavoitteeseen tai irrota se. */
+export async function linkTaskToGoal(taskId, goalId) {
+  return editTask(taskId, { goalId: goalId || null });
+}
+
+// -------------------------------------------------------------- hyvinvointi
+
+/**
+ * Tallenna päivän hyvinvointimerkintä.
+ *
+ * ⚠️ Tämä EI muuta suunnitelmaa. Merkintä on signaali, jonka perusteella
+ * käyttöliittymä voi näyttää ehdotuksen — päätös on aina käyttäjän.
+ */
+export async function saveWellbeingEntry(input) {
+  const existing = getState().wellbeing.find(e => e.date === input.date);
+  const entry = normalizeWellbeingEntry({
+    ...input,
+    id: existing?.id || newTaskId()
+  });
+
+  const { valid, errors } = validateWellbeingEntry(entry);
+  if (!valid) return { ok: false, errors };
+
+  upsertWellbeingEntry(entry);
+  warnAboutVolatileCollections();
+
+  const result = existing
+    ? await wellbeingRepo.update(entry)
+    : await wellbeingRepo.insert(entry);
+
+  if (!result.ok) {
+    showError(result.error);
+    return { ok: false };
+  }
+  return { ok: true, entry };
 }
 
 // ----------------------------------------------------------------- profiili
