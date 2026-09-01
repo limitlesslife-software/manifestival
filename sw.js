@@ -28,7 +28,7 @@
 // Versio pitää nostaa aina kun sovelluskuori muuttuu. Vanhat välimuistit
 // siivotaan activate-vaiheessa, joten nosto on turvallinen tapa pakottaa
 // päivitys. Ks. docs/DEPLOYMENT.md.
-const CACHE_VERSION = 'v1';
+const CACHE_VERSION = 'v2';
 const CACHE_NAME = `manifestival-shell-${CACHE_VERSION}`;
 
 /**
@@ -65,6 +65,7 @@ const SHELL = [
   '/src/data/tasksRepo.js',
   '/src/domain/categories.js',
   '/src/domain/priority.js',
+  '/src/domain/routine.js',
   '/src/domain/scheduler.js',
   '/src/domain/task.js',
   '/src/domain/week.js',

@@ -122,6 +122,19 @@ export function normalizeTask(input = {}) {
       ? String(input.description).trim().slice(0, MAX_DESCRIPTION_LENGTH)
       : null,
     date: isIsoDate(input.date) ? input.date : null,
+    /**
+     * Määräaika — MILLOIN TEHTÄVÄN ON OLTAVA VALMIS.
+     *
+     * Tämä on eri asia kuin `date`, joka kertoo milloin tehtävä on
+     * AIKATAULUTETTU. Lasku voi erääntyä perjantaina, vaikka aikoisit maksaa
+     * sen keskiviikkona. Määräaika EI siis aikatauluta tehtävää — se on
+     * kiireellisyyssignaali aikataulumoottorille.
+     */
+    deadline: isIsoDate(input.deadline) ? input.deadline : null,
+    /** Vapaaehtoinen yhteys tavoitteeseen. Enintään yksi. */
+    goalId: input.goalId != null ? String(input.goalId) : null,
+    /** Vapaaehtoinen yhteys projektiin. */
+    projectId: input.projectId != null ? String(input.projectId) : null,
     time,
     endTime,
     durationMinutes,
@@ -169,7 +182,138 @@ export function validateTask(task) {
     else if (d > 1440) errors.durationMinutes = 'Kesto ei voi ylittää vuorokautta.';
   }
 
+  if (task.deadline != null && !isIsoDate(task.deadline)) {
+    errors.deadline = 'Määräaika ei kelpaa.';
+  }
+
   return { valid: Object.keys(errors).length === 0, errors };
+}
+
+// ---------------------------------------------------------- määräajat
+
+/**
+ * Onko tehtävä myöhässä?
+ *
+ * JOHDETTU TILA — tätä ei koskaan tallenneta eikä tehtävää muuteta vain
+ * siksi, että päivämäärä vaihtui. Myöhässä oleminen on funktio ajasta, ei
+ * tehtävän ominaisuus.
+ *
+ * Valmis tehtävä ei ole koskaan myöhässä, vaikka se olisi tehty myöhään.
+ *
+ * @param {object} task
+ * @param {string} todayIso  Nykyinen päivä. Annetaan parametrina, jotta
+ *                           funktio pysyy puhtaana ja testattavana.
+ */
+export function isOverdue(task, todayIso) {
+  if (!task || task.completed) return false;
+  if (!isIsoDate(todayIso)) return false;
+
+  // Määräaika on ensisijainen: se on lupaus ulkopuolelle.
+  if (task.deadline) return task.deadline < todayIso;
+
+  // Ilman määräaikaa aikataulutettu menneisyys on myöhässä.
+  if (task.date) return task.date < todayIso;
+
+  // Aikatauluttamaton tehtävä ilman määräaikaa ei voi olla myöhässä.
+  return false;
+}
+
+/**
+ * Päiviä määräaikaan. Negatiivinen = myöhässä, 0 = tänään.
+ * Null jos määräaikaa ei ole.
+ */
+export function daysUntilDeadline(task, todayIso) {
+  if (!task || !task.deadline || !isIsoDate(todayIso)) return null;
+  const due = Date.parse(task.deadline + 'T00:00:00Z');
+  const today = Date.parse(todayIso + 'T00:00:00Z');
+  return Math.round((due - today) / 86400000);
+}
+
+/** Kiireellisyystasot. Käytetään sekä järjestykseen että käyttöliittymään. */
+export const URGENCY = Object.freeze({
+  OVERDUE: 'overdue',
+  TODAY: 'today',
+  TOMORROW: 'tomorrow',
+  SOON: 'soon',
+  LATER: 'later',
+  NONE: 'none'
+});
+
+/** Kuinka monta päivää eteenpäin lasketaan "pian erääntyväksi". */
+export const SOON_DAYS = 3;
+
+/**
+ * Tehtävän kiireellisyys määräajan perusteella.
+ * Valmis tehtävä ei ole koskaan kiireellinen.
+ */
+export function deadlineUrgency(task, todayIso) {
+  if (!task || task.completed) return URGENCY.NONE;
+  const days = daysUntilDeadline(task, todayIso);
+  if (days === null) return URGENCY.NONE;
+  if (days < 0) return URGENCY.OVERDUE;
+  if (days === 0) return URGENCY.TODAY;
+  if (days === 1) return URGENCY.TOMORROW;
+  if (days <= SOON_DAYS) return URGENCY.SOON;
+  return URGENCY.LATER;
+}
+
+/** Kiireellisyyden paino järjestykseen. Pienempi = kiireellisempi. */
+const URGENCY_WEIGHT = Object.freeze({
+  [URGENCY.OVERDUE]: 0,
+  [URGENCY.TODAY]: 1,
+  [URGENCY.TOMORROW]: 2,
+  [URGENCY.SOON]: 3,
+  [URGENCY.LATER]: 4,
+  [URGENCY.NONE]: 5
+});
+
+export function urgencyWeight(urgency) {
+  return URGENCY_WEIGHT[urgency] ?? URGENCY_WEIGHT[URGENCY.NONE];
+}
+
+/** Vaatiiko tämä kiireellisyystaso huomiota lähipäivinä? */
+export function isUrgent(urgency) {
+  return urgency === URGENCY.OVERDUE
+    || urgency === URGENCY.TODAY
+    || urgency === URGENCY.TOMORROW
+    || urgency === URGENCY.SOON;
+}
+
+/** Paino, jota käytetään kun kiireellisyys ei ole todellinen. */
+const NOT_URGENT_WEIGHT = 9;
+
+/**
+ * Kiireellisyyden paino AIKATAULUTUKSESSA.
+ *
+ * Eroaa urgencyWeight-funktiosta tarkoituksella. Listojen järjestyksessä on
+ * mielekästä, että kaukainenkin määräaika sijoittuu ennen määräajatonta.
+ * Aikataulutuksessa se olisi väärin: neljän kuukauden päässä oleva määräaika
+ * ei saa ohittaa tärkeää tehtävää tämän päivän vapaassa välissä.
+ *
+ * Siksi kaikki ei-kiireelliset tasot ovat tässä keskenään samanarvoisia —
+ * jolloin ratkaisu siirtyy prioriteetille. Vertailu pysyy transitiivisena,
+ * koska paino on funktio pelkästä kiireellisyystasosta.
+ */
+export function schedulingUrgencyWeight(urgency) {
+  return isUrgent(urgency) ? urgencyWeight(urgency) : NOT_URGENT_WEIGHT;
+}
+
+const URGENCY_LABELS = Object.freeze({
+  [URGENCY.OVERDUE]: 'Myöhässä',
+  [URGENCY.TODAY]: 'Tänään',
+  [URGENCY.TOMORROW]: 'Huomenna',
+  [URGENCY.SOON]: 'Pian',
+  [URGENCY.LATER]: '',
+  [URGENCY.NONE]: ''
+});
+
+export function urgencyLabel(urgency) {
+  return URGENCY_LABELS[urgency] ?? '';
+}
+
+/** Kaikki myöhässä olevat tehtävät. */
+export function overdueTasks(tasks, todayIso) {
+  return (tasks || []).filter(task => isOverdue(task, todayIso));
 }
 
 /**
