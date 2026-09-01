@@ -75,6 +75,8 @@ export const notifications = Object.freeze({
     return result.ok;
   },
   requestPermissionDetailed: notificationPlatform.requestPermission,
+  /** Lue lupatila laitteelta. EI pyydä lupaa. */
+  refreshPermission: notificationPlatform.refreshPermission,
   showNow: notificationPlatform.showNow,
   schedule: notificationPlatform.schedule,
   cancel: notificationPlatform.cancelAll,

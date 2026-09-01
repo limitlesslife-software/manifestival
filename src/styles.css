@@ -181,6 +181,9 @@ h1.title { font-family:'Fraunces',serif; font-weight:500; font-size:24px; line-h
 .preview-row strong { font-family:'Fraunces',serif; font-size:16px; color:var(--forest); font-weight:500; }
 .preview-row .muted { font-size:11px; color:var(--text-3); margin-left:auto; }
 .notice { background:var(--gold-soft); color:var(--forest); font-size:12px; line-height:1.55; padding:11px 13px; border-radius:12px; margin-bottom:14px; }
+.notice.tone-sage { background:var(--sage-soft); }
+.notice.tone-clay { background:var(--clay-soft); color:var(--clay); }
+.notice.tone-gold { background:var(--gold-soft); }
 
 .voice-overlay { position:absolute; inset:0; background:rgba(33,61,55,.44); z-index:50; display:none; align-items:flex-end; }
 .voice-overlay.open { display:flex; }

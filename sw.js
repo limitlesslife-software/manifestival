@@ -28,7 +28,7 @@
 // Versio pitää nostaa aina kun sovelluskuori muuttuu. Vanhat välimuistit
 // siivotaan activate-vaiheessa, joten nosto on turvallinen tapa pakottaa
 // päivitys. Ks. docs/DEPLOYMENT.md.
-const CACHE_VERSION = 'v6';
+const CACHE_VERSION = 'v7';
 const CACHE_NAME = `manifestival-shell-${CACHE_VERSION}`;
 
 /**
@@ -49,9 +49,11 @@ const SHELL = [
   '/src/app/auth.js',
   '/src/app/main.js',
   '/src/app/navigation.js',
+  '/src/app/notifications.js',
   '/src/app/onboarding.js',
   '/src/app/state.js',
   '/src/app/views/goals.js',
+  '/src/app/views/notificationSettings.js',
   '/src/app/views/profile.js',
   '/src/app/views/routines.js',
   '/src/app/views/tasks.js',
@@ -62,6 +64,7 @@ const SHELL = [
   '/src/data/collectionsRepo.js',
   '/src/data/config.js',
   '/src/data/memoryStore.js',
+  '/src/data/notificationPrefsRepo.js',
   '/src/data/preferences.js',
   '/src/data/profileRepo.js',
   '/src/data/schema.js',
@@ -70,6 +73,7 @@ const SHELL = [
   '/src/domain/categories.js',
   '/src/domain/focus.js',
   '/src/domain/goal.js',
+  '/src/domain/notification.js',
   '/src/domain/priority.js',
   '/src/domain/project.js',
   '/src/domain/review.js',

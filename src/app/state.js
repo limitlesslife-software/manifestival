@@ -12,6 +12,7 @@ import { normalizeTask } from '../domain/task.js';
 import { normalizeRoutine, normalizeException } from '../domain/routine.js';
 import { normalizeGoal } from '../domain/goal.js';
 import { normalizeWellbeingEntry } from '../domain/wellbeing.js';
+import { normalizePreferences } from '../domain/notification.js';
 
 function initialState() {
   const today = todayMidnight();
@@ -27,6 +28,13 @@ function initialState() {
     projects: [],
     /** Hyvinvointimerkinnät (WP12). */
     wellbeing: [],
+    /**
+     * Muistutusasetukset.
+     *
+     * Oletus on hiljaisuus: `enabled: false`. Mitään ei lähetetä ennen kuin
+     * käyttäjä on itse kytkenyt muistutukset päälle.
+     */
+    notificationPreferences: normalizePreferences({}),
     viewDate: today,
     weekStart: startOfWeek(today),
     profile: { ...DEFAULT_PROFILE },
@@ -198,6 +206,11 @@ export function setProjects(projects) {
 
 export function setWellbeing(entries) {
   commit({ wellbeing: (entries || []).map(normalizeWellbeingEntry) });
+}
+
+/** Aseta muistutusasetukset. Normalisointi takaa kelvolliset rajat. */
+export function setNotificationPreferences(preferences) {
+  commit({ notificationPreferences: normalizePreferences(preferences) });
 }
 
 export function upsertWellbeingEntry(entry) {

@@ -34,8 +34,12 @@ import {
   setRoutines, addRoutineToState, replaceRoutineInState, removeRoutineFromState, findRoutine,
   setRoutineExceptions, addRoutineExceptionToState, removeRoutineExceptionFromState,
   setGoals, addGoalToState, replaceGoalInState, removeGoalFromState, findGoal,
-  setProjects, setWellbeing, upsertWellbeingEntry
+  setProjects, setWellbeing, upsertWellbeingEntry, setNotificationPreferences
 } from './state.js';
+import {
+  loadPreferences as loadNotificationPreferences,
+  clearPreferences as clearNotificationPreferences
+} from '../data/notificationPrefsRepo.js';
 import { showError, success, notify } from '../ui/toast.js';
 import { confirmDelete, confirmAction } from '../ui/confirm.js';
 
@@ -74,14 +78,15 @@ function warnAboutVolatileCollections() {
 /** Lataa kirjautuneen käyttäjän kaikki tiedot. */
 export async function loadUserData() {
   const [tasksResult, profileResult, routinesResult, exceptionsResult,
-    goalsResult, projectsResult, wellbeingResult] = await Promise.all([
+    goalsResult, projectsResult, wellbeingResult, preferencesResult] = await Promise.all([
     tasksRepo.listTasks(),
     profileRepo.loadProfile(),
     routinesRepo.list(),
     routineExceptionsRepo.list(),
     goalsRepo.list(),
     projectsRepo.list(),
-    wellbeingRepo.list()
+    wellbeingRepo.list(),
+    loadNotificationPreferences()
   ]);
 
   if (tasksResult.ok) setTasks(tasksResult.value);
@@ -97,6 +102,10 @@ export async function loadUserData() {
   setGoals(goalsResult.ok ? goalsResult.value : []);
   setProjects(projectsResult.ok ? projectsResult.value : []);
   setWellbeing(wellbeingResult.ok ? wellbeingResult.value : []);
+
+  // Muistutusasetukset: virhe ei saa estää sovelluksen käyttöä, ja
+  // epäonnistuessa palataan hiljaiseen oletukseen.
+  setNotificationPreferences(preferencesResult.ok ? preferencesResult.value : {});
 
   return { tasksOk: tasksResult.ok, profileOk: profileResult.ok };
 }

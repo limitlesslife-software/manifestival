@@ -32,6 +32,11 @@ function host() {
 }
 
 function render(message, tone, duration) {
+  // Ilmoitus on kertova lisä, ei toiminnon osa. Jos DOM:ia ei ole — Node,
+  // testi, service worker — toiminto on silti onnistunut, eikä puuttuva
+  // ilmoitus saa kaataa sitä jälkikäteen.
+  if (typeof document === 'undefined') return () => {};
+
   const node = document.createElement('div');
   node.className = 'toast toast-' + tone;
   node.setAttribute('role', tone === 'error' ? 'alert' : 'status');

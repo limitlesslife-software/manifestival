@@ -24,6 +24,9 @@ import { renderTasks, initTaskForm, closeForm } from './views/tasks.js';
 import { initRoutineForm, closeRoutineForm } from './views/routines.js';
 import { renderGoals, initGoalForm, closeGoalForm } from './views/goals.js';
 import { renderProfile, initProfileForm, fillProfileForm } from './views/profile.js';
+import { renderNotificationSettings } from './views/notificationSettings.js';
+import { refreshNotificationPermission, syncNotifications } from './notifications.js';
+import { clearPreferences as clearNotificationPreferences } from '../data/notificationPrefsRepo.js';
 import { clearToasts } from '../ui/toast.js';
 import { maybe } from '../ui/dom.js';
 
@@ -58,6 +61,7 @@ function renderAll() {
   renderTasks();
   renderGoals();
   renderProfile();
+  renderNotificationSettings();
 }
 
 async function onSignedIn() {
@@ -73,7 +77,19 @@ async function onSignedIn() {
 
   await loadUserData();
   fillProfileForm();
+
+  // Lupatila luetaan ENNEN ensimmäistä renderöintiä, jotta asetusnäkymä
+  // kertoo heti totuuden. Tämä EI pyydä lupaa — se vain kysyy nykyisen
+  // tilan, joka natiivikuoressa on luettavissa vain asynkronisesti.
+  await refreshNotificationPermission();
+
   renderAll();
+
+  // Muistutukset synkronoidaan vasta kun data on ladattu. Jos käyttäjä ei
+  // ole kytkenyt niitä päälle, tämä peruu aiemmin ajastetut eikä tee muuta.
+  syncNotifications().catch(error => {
+    console.warn('Manifestival: muistutusten synkronointi ei onnistunut', error);
+  });
 
   maybeShowOnboarding();
 }
@@ -84,6 +100,7 @@ function onSignedOut() {
   closeRoutineForm();
   closeGoalForm();
   clearToasts();
+  clearNotificationPreferences();
   clearDevicePreferences();
   resetState();
   showAuthGate();

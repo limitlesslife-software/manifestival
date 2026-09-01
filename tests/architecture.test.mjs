@@ -164,8 +164,18 @@ test('jokainen koodin viittaama DOM-tunniste on olemassa index.html:ssä', () =>
   const html = readIndexHtml();
   const definedIds = new Set([...html.matchAll(/\bid="([^"]+)"/g)].map(m => m[1]));
 
-  // Nämä luodaan ajon aikana, joten ne eivät ole merkinnässä.
-  const runtimeIds = new Set(['toastHost', 'confirmDialog', 'proposeBtn', 'proposalContainer']);
+  // Osa elementeistä luodaan ajon aikana, joten ne eivät ole merkinnässä.
+  //
+  // Lista JOHDETAAN koodista eikä ylläpidetä käsin: jokainen tunniste, jonka
+  // joku moduuli itse kirjoittaa `id="..."`-muodossa, on ajonaikainen. Käsin
+  // ylläpidetty lista jäi jatkuvasti jälkeen ja pakotti muokkaamaan tätä
+  // testiä joka kerta kun näkymä sai uuden elementin.
+  const runtimeIds = new Set(['toastHost', 'confirmDialog']);
+  for (const file of browserModules()) {
+    for (const match of read(file).matchAll(/\bid="([a-zA-Z][\w-]*)"/g)) {
+      runtimeIds.add(match[1]);
+    }
+  }
 
   const missing = [];
   for (const file of browserModules()) {
