@@ -1,13 +1,20 @@
 # Talous ja sijoitukset — arkkitehtuuriluonnos
 
-**TILA: PLANNED. Tästä ei ole toteutettu riviäkään koodia.**
+**TILA: SIJOITUSSEURANTA ON PLANNED — siitä ei ole toteutettu riviäkään.**
+**Laskuista ja toistuvista kuluista on kevyt domain, ei muuta.**
 
 Tämä dokumentti on suunnitelma, ei kuvaus. Se on kirjoitettu nyt, jotta
 myöhemmät päätökset — erityisesti tietoturvaa koskevat — tehdään ennen kuin
 ensimmäinen rivi on olemassa, ei sen jälkeen.
 
-Ainoa asia, joka taloudesta on tällä hetkellä olemassa, on kategoria
-`talous` tehtävissä ja tavoitteissa.
+Taloudesta on tällä hetkellä olemassa kaksi asiaa:
+
+1. Kategoria `talous` tehtävissä ja tavoitteissa.
+2. **Kevyt domain** `src/domain/finance.js`: `Bill`, `RecurringExpense` ja
+   talousmuistutukset. Puhdas ja testattu (36 testiä), mutta sillä **ei ole
+   käyttöliittymää eikä tallennusta** — se on perusta, ei ominaisuus.
+
+Sijoitusseurannasta ei ole olemassa riviäkään koodia.
 
 ---
 
@@ -107,7 +114,106 @@ Vaatii päätökset, joita ei ole tehty:
 
 ---
 
-## Ehdotettu tietomalli (ei toteutettu)
+## Sijoitusseurannan domain-malli (PLANNED, ei toteutettu)
+
+Kuusi käsitettä. Jokainen on **PLANNED** — yhtään ei ole toteutettu, eikä
+tässä aallossa integroida markkinadataa.
+
+| Käsite | Vastaa kysymykseen | Tila |
+|---|---|---|
+| `Portfolio` | Mitä kokonaisuutta seuraan? | PLANNED |
+| `Holding` | Mitä omistan ja kuinka paljon? | PLANNED |
+| `Transaction` | Mitä tapahtui ja milloin? | PLANNED |
+| `PriceSnapshot` | Mikä oli arvo tiettynä hetkenä? | PLANNED |
+| `TargetPrice` | Mihin hintaan haluan reagoida? | PLANNED |
+| `AlertRule` | Milloin minulle kerrotaan? | PLANNED |
+
+### Omaisuuslajit
+
+```
+crypto | stock | etf | fund | index
+```
+
+`index` on mukana seurattavana vertailukohtana, ei omistuksena: indeksiä ei
+voi omistaa, mutta siihen voi verrata. Siksi `Holding.quantity` on sille
+null ja se esiintyy vain seurantalistalla.
+
+### Suhteet
+
+```
+Portfolio 1 ── n Holding 1 ── n Transaction
+                   │
+                   ├── n PriceSnapshot   (aikasarja, vain luku)
+                   └── n TargetPrice ── 1 AlertRule
+```
+
+### Miksi Transaction on erillinen Holdingista
+
+`Holding` kertoo nykytilan, `Transaction` sen miten siihen päädyttiin.
+Naiivissa mallissa olisi vain `Holding.quantity` ja `Holding.unitCost`, jota
+päivitetään oston yhteydessä. Se rikkoutuu heti kun:
+
+- osto tehdään useassa erässä eri hintaan (hankintahinnan keskiarvo)
+- osa myydään (mikä erä myytiin? FIFO vai keskihinta?)
+- tarvitaan verotusta varten toteutunut voitto
+
+Tapahtumat ovat **muuttumattomia**: virhe korjataan uudella oikaisevalla
+tapahtumalla, ei muokkaamalla vanhaa. Sama periaate kuin kirjanpidossa, ja
+samasta syystä — historian jälkikäteinen muuttaminen tekee luvuista
+tarkistuskelvottomia.
+
+### Miksi Holdingissa ei ole nykyarvoa
+
+`Holding` sisältää määrän ja hankintahinnan, **ei nykyarvoa**. Nykyarvo on
+johdettu tieto, joka vanhenee heti kirjoitushetkellä — sama syy kuin miksi
+tehtävän "myöhässä" ei ole tallennettu kenttä. Arvo lasketaan viimeisimmästä
+`PriceSnapshot`-rivistä tarvittaessa.
+
+### AlertRule ja rajaus neuvontaan
+
+`AlertRule` saa kertoa vain sen, mitä käyttäjä on itse pyytänyt:
+
+```
+"Kerro kun BTC käy alle 50 000 €"        sallittu — käyttäjän oma sääntö
+"Nyt kannattaa ostaa"                     KIELLETTY — neuvo
+"Tuotto-odotus ensi vuonna on 8 %"        KIELLETTY — ennuste
+```
+
+Hälytys on kello, ei neuvonantaja. Ero on juridinen, mutta myös tuotteen
+kannalta oikea: sovellus ei tiedä käyttäjän kokonaistilannetta eikä
+riskinsietokykyä.
+
+### Kenttäluonnos
+
+```
+Portfolio       id, userId, name, baseCurrency, createdAt
+Holding         id, userId, portfolioId, assetType, symbol, label,
+                quantity, averageUnitCost, currency, watchOnly
+Transaction     id, userId, holdingId, kind (buy|sell|dividend|fee),
+                quantity, unitPrice, fee, currency, executedAt
+PriceSnapshot   id, holdingId, price, currency, capturedAt, source
+TargetPrice     id, userId, holdingId, direction (above|below),
+                price, currency, active
+AlertRule       id, userId, targetPriceId, channel, active, lastFiredAt
+```
+
+Kaikissa sama omistajuusmalli kuin muualla: `userId uuid default auth.uid()`,
+RLS neljällä politiikalla, `anon` revokoitu.
+
+### Mitä ennen toteutusta on päätettävä
+
+1. **Salataanko arvot levossa?** Jos kyllä, palvelin ei voi laskea summia
+   eikä salasanan unohtaminen ole palautettavissa.
+2. **Mistä hinnat tulevat?** Ulkoisen rajapinnan kutsut paljastavat
+   palveluntarjoajalle mitä käyttäjä omistaa.
+3. **Mitä tilin poisto tarkoittaa?** Varallisuushistoria on poistettava
+   välittömästi, ei varmuuskopioiden elinkaaren mukaan.
+
+Yhtäkään näistä ei ratkaista tässä aallossa.
+
+---
+
+## Ehdotettu tietomalli laskuille ja säästötavoitteille (ei toteutettu)
 
 Jos tasot 2 ja 3 joskus toteutetaan, muoto olisi tämä. Nimet vastaisivat
 nykyisiä käytäntöjä: `text`-tunniste, `user_id uuid default auth.uid()`,
