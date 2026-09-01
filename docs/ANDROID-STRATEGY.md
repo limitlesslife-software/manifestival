@@ -210,6 +210,33 @@ JAVA_HOME="/c/Program Files/Android/Android Studio/jbr" ./gradlew assembleDebug
 
 Android Studiosta rakennettaessa tämä tapahtuu automaattisesti.
 
+### Gradle 9.1 — miksi versio nostettiin
+
+Koneella on tasan kaksi JDK:ta: Adoptium 17 ja Android Studion mukana tuleva
+JBR 25. Kumpikaan ei toiminut Gradle 8.14.3:n kanssa:
+
+| JDK | Ongelma |
+|---|---|
+| 17 | `invalid source release: 21` — Capacitor 8 vaatii Java 21 -tason |
+| 25 | `Unsupported class file major version 69` — Gradle 8.14 ei tue Java 25:tä |
+
+Android Studion päivitys nosti JBR:n versioon 25.0.2, mikä katkaisi aiemmin
+toimineen koonnin. Gradle 8.14 tukee Javaa korkeintaan versioon 24 asti.
+
+Vaihtoehdot olivat uuden JDK 21:n asentaminen koneelle tai Gradle-wrapperin
+nosto. Wrapper valittiin, koska se on **projektin sisäinen ja
+versionhallinnassa**: se ei muuta koneen muita projekteja eikä vaadi
+asennusta muilta kehittäjiltä.
+
+```
+gradle/wrapper/gradle-wrapper.properties
+  gradle-8.14.3-all.zip  ->  gradle-9.1.0-all.zip
+```
+
+AGP 8.13.0 toimii Gradle 9.1:n kanssa; sekä `assembleDebug` että
+`assembleRelease` menevät läpi. Jos koneelle joskus asennetaan JDK 21,
+kumpikin versio toimii — Gradle 9.1 tukee myös sitä.
+
 ### Web-koonti (`dist/`) — miksi se on olemassa
 
 Web-tuotanto **ei käytä sitä lainkaan**: Vercel tarjoilee tiedostot repon
