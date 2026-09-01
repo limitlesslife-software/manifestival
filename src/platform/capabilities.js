@@ -50,7 +50,13 @@ export function platformName() {
   return 'web';
 }
 
-const NATIVE_REQUIRED = 'Vaatii natiivisovelluksen (ks. docs/ANDROID-STRATEGY.md)';
+/**
+ * Yksi ainoa teksti natiivivaatimukselle.
+ *
+ * Vietynä siksi, ettei sama lause eläisi kahtena kopiona kahdessa
+ * tiedostossa — silloin ne erkanisivat ensimmäisessä muutoksessa.
+ */
+export const NATIVE_REQUIRED = 'Vaatii natiivisovelluksen (ks. docs/ANDROID-STRATEGY.md)';
 
 // --------------------------------------------------------- tarkistimet
 
@@ -202,7 +208,7 @@ export function isAvailable(name) {
   return capability(name).available;
 }
 
-/** Onko alusta tukee kyvykkyyttä lainkaan. */
+/** Tukeeko alusta kyvykkyyttä lainkaan — riippumatta luvasta tai toteutuksesta. */
 export function isSupported(name) {
   return capability(name).supported;
 }

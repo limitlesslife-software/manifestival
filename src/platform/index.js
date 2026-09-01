@@ -13,21 +13,37 @@
 // Domain EI tunne tätä kerrosta. Kerrosjärjestys on testattu invariantti.
 
 import {
-  CAPABILITY, CAPABILITIES, PERMISSION,
+  CAPABILITY, CAPABILITIES, PERMISSION, NATIVE_REQUIRED,
   capability, isAvailable, isSupported, permissionOf, allCapabilities,
   isNativeShell, platformName
 } from './capabilities.js';
 import * as notificationPlatform from './notifications.js';
 
 export {
-  CAPABILITY, CAPABILITIES, PERMISSION,
-  capability, isAvailable, isSupported, permissionOf,
+  CAPABILITY, CAPABILITIES, PERMISSION, NATIVE_REQUIRED,
+  capability, isAvailable, isSupported, permissionOf, allCapabilities,
   isNativeShell, platformName
 };
 
+/**
+ * KOLME ERI KYSYMYSTÄ — NIITÄ EI SAA SEKOITTAA
+ *
+ *   supported    alusta pystyy tähän
+ *   implemented  Manifestival on toteuttanut tämän
+ *   permission   käyttäjä on antanut luvan
+ *   available    kaikki edellä on kunnossa juuri nyt
+ *
+ * Jokainen sovitin palauttaa `capability()`-rekisterimerkinnän SELLAISENAAN.
+ * Aiemmin sovittimet kirjoittivat `supported: state.implemented`, jolloin
+ * Android-kuori väitti ettei laite tue sijaintia — vaikka se tukee, eikä
+ * puute ollut laitteessa vaan sovelluksessa. Kutsuja erottelee itse.
+ *
+ * Vastaus tähän kysymykseen EI koskaan pyydä lupaa. Lupa kysytään vain
+ * käyttäjän omasta eleestä, ks. notifications.requestPermission.
+ */
 const NOT_IMPLEMENTED = Object.freeze({
   supported: false,
-  reason: 'Vaatii natiivisovelluksen (ks. docs/ANDROID-STRATEGY.md)'
+  reason: NATIVE_REQUIRED
 });
 
 /**
@@ -68,10 +84,7 @@ export const notifications = Object.freeze({
 // ------------------------------------------------------------- sijainti
 
 export const location = Object.freeze({
-  capability() {
-    const state = capability(CAPABILITY.LOCATION);
-    return { supported: state.implemented, reason: state.reason || NOT_IMPLEMENTED.reason };
-  },
+  capability: () => capability(CAPABILITY.LOCATION),
   /** PLANNED (WP11). */
   async current() {
     return { ok: false, ...NOT_IMPLEMENTED };
@@ -85,10 +98,7 @@ export const location = Object.freeze({
 // ----------------------------------------------------------------- puhe
 
 export const speech = Object.freeze({
-  capability() {
-    const state = capability(CAPABILITY.SPEECH);
-    return { supported: state.supported && state.implemented, reason: state.reason };
-  },
+  capability: () => capability(CAPABILITY.SPEECH),
   /**
    * Toimiiko puhekomento sovelluksen ollessa suljettuna.
    * Selaimessa ei koskaan. Tämä on yksi natiivikerroksen tärkeimmistä syistä.
@@ -101,10 +111,7 @@ export const speech = Object.freeze({
 // ------------------------------------------------------- taustatoiminta
 
 export const background = Object.freeze({
-  capability() {
-    const state = capability(CAPABILITY.BACKGROUND);
-    return { supported: state.implemented, reason: state.reason || NOT_IMPLEMENTED.reason };
-  },
+  capability: () => capability(CAPABILITY.BACKGROUND),
   /** PLANNED (WP12). */
   async register() {
     return { ok: false, ...NOT_IMPLEMENTED };

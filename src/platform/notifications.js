@@ -96,7 +96,7 @@ export async function showNow(intent) {
       silent: intent.channel === 'silent'
     });
     return { ok: true, reason: '' };
-  } catch (error) {
+  } catch {
     return { ok: false, reason: 'Ilmoitusta ei voitu näyttää' };
   }
 }
