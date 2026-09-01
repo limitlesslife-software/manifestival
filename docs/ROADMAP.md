@@ -40,6 +40,32 @@ kommentteja eikä reaktioita. Niitä ei ole myöskään koodissa.
 
 ## Työpaketit
 
+### WP7-WP12 — tuote päivän ympärille (toteutettu)
+
+Päivä lakkasi olemasta irrallinen. Ketju tavoitteesta muistutukseen on
+olemassa kokonaisuudessaan, vaikka osa lenkeistä on vielä kevyitä.
+
+| Alue | Tila |
+|---|---|
+| Rutiinit: toistosäännöt, poikkeukset, koko hallinta | Toteutettu |
+| Tavoitteet: edistyminen, tilat, oma välilehti | Toteutettu |
+| Projektit | Domain, ei näkymää |
+| Määräajat ja myöhässä olevat | Toteutettu |
+| Scheduler V3: rutiinit ja kiireellisyys mukaan | Toteutettu |
+| Muistutusten suunnittelu ja eskalaatio | Toteutettu |
+| Muistutusten ajastus Androidilla | Toteutettu (Capacitor Local Notifications) |
+| AI-komentoputki ja turvamalli | Toteutettu; käyttöliittymässä vain luonti |
+| Päivä- ja viikkonäkymä V2, katsaukset | Toteutettu |
+| Hyvinvointi ja kuormitusehdotus | Toteutettu |
+| Laskut ja toistuvat kulut | Domain, ei näkymää eikä tallennusta |
+| Sijoitusseuranta | Vain arkkitehtuuridokumentti |
+
+**Kaikki uusi tallennus on migraatioportin takana.** Migraatiot 0003-0006 on
+kirjoitettu muttei ajettu. Siihen asti tieto elää istunnon muistissa ja
+käyttöliittymä kertoo sen käyttäjälle.
+
+---
+
 ### WP1 — Kehitysperusta, autentikaatio ja tietoturva ✅ toteutettu
 
 Paikallinen Git-klooni, haaramalli, repo-hygienia, dokumentaatio, testipohja

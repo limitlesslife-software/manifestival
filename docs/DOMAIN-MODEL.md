@@ -200,19 +200,44 @@ johtavat — abstrakti luku muuttuu ymmärrettäväksi ennen tallennusta.
 
 ---
 
+## WP7-WP12:ssa lisätyt käsitteet
+
+Jokaisella on oma dokumenttinsa, jossa perustelut ovat tarkemmin.
+
+| Käsite | Moduuli | Dokumentti |
+|---|---|---|
+| Rutiini ja poikkeus | `domain/routine.js` | `docs/ROUTINES.md` |
+| Tavoite ja edistyminen | `domain/goal.js` | `docs/GOALS.md` |
+| Projekti | `domain/project.js` | `docs/GOALS.md` |
+| Määräaika ja kiireellisyys | `domain/task.js` | `docs/GOALS.md` |
+| Päivän fokus | `domain/focus.js` | — |
+| Illan ja viikon katsaus | `domain/review.js` | — |
+| Muistutus ja eskalaatio | `domain/notification.js` | `docs/NOTIFICATIONS.md` |
+| Hyvinvointimerkintä | `domain/wellbeing.js` | — |
+| Lasku ja toistuva kulu | `domain/finance.js` | `docs/INVESTMENTS-ARCHITECTURE.md` |
+
+### Kolme sääntöä, jotka toistuvat kaikissa
+
+1. **Johdettu tieto ei ole tallennettua.** Myöhästyminen, kiireellisyys ja
+   tavoitteen edistyminen lasketaan aina uudelleen. Tallennettuna ne
+   vanhenisivat heti: eilen "ajallaan" merkitty rivi olisi tänään väärässä.
+2. **Sääntö ei ole tapahtuma.** Rutiini on sääntö, ei 260 tehtävää vuodessa.
+   Toistuva kulu on sääntö, ei lista laskuja. Esiintymät lasketaan säännöstä.
+3. **Käyttäjän päätös voittaa laskennan.** Saavutetuksi merkitty tavoite on
+   100 %, vaikka tehtäviä jäisi. Käyttäjän ajastamaa tehtävää ei siirretä.
+
 ## Käsitteet, joita EI vielä ole
 
 Konseptidokumentissa määritelty, domainissa ei. Ks. `docs/ROADMAP.md`.
 
-| Käsite | Työpaketti |
+| Käsite | Tila |
 |---|---|
-| Toistuva rutiini | WP5 |
-| Tavoite ja välitavoite | WP7 |
-| Uni-toteutuma, ateria, kuormitusnäkymä | WP8 |
-| Tulo, meno, budjetti | WP9 |
-| Projekti (tehtävien ryhmä) | WP4 |
-| Muistutus ja ilmoitustaso | WP6 |
-| Sijainti ja lähtöaika | WP11 |
+| Uni-toteutuma ja ateria | Ei domainia |
+| Budjetti ja tulot | Ei domainia; laskut ja kulut ovat |
+| Sijainti ja lähtöaika | Ei toteutusta, kyvykkyysrekisterissä PLANNED |
+| Rutiinin esiintymän kuittaus | Vaatii oman taulunsa, ks. `docs/ROUTINES.md` |
+| Tavoitehierarkia käyttöliittymässä | Kenttä on, valintaa ei |
+| Sijoitusseuranta | Vain arkkitehtuuri |
 
 **Ei koodissa eikä konseptissa:** journalointi, social, julkaisut, kommentit,
 reaktiot. Nämä eivät kuulu tuotteeseen.

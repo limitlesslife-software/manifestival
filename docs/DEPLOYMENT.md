@@ -72,7 +72,7 @@ tarkoituksellinen: kirjoitusvirhe ei saa avata päätepistettä.
 `sw.js` sisältää vakion:
 
 ```js
-const CACHE_VERSION = 'v1';
+const CACHE_VERSION = 'v7';
 ```
 
 **Nosta versiota aina kun sovelluskuori muuttuu** (uusi moduuli, muuttunut

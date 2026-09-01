@@ -80,9 +80,9 @@ Huomioita:
 
 | Komento | Mitä tekee |
 |---|---|
-| `npm test` | 282 testiä (yksikkö-, arkkitehtuuri- ja turvallisuustestit) |
+| `npm test` | 778 testiä (yksikkö-, arkkitehtuuri-, turva- ja invarianttitestit) |
 | `npm run check` | Palvelinpuolen syntaksitarkistus |
-| `npm run smoke` | Koko moduuligraafi HTTP:n yli, 56 tarkistusta |
+| `npm run smoke` | Koko moduuligraafi HTTP:n yli, 74 tarkistusta |
 | `npm run serve` | Kehityspalvelin |
 | `npm run build:web` | Kokoaa `dist/` — **vain Androidia varten** |
 | `npm run sync:android` | `dist/` → Android-projektin assetit |
@@ -149,10 +149,12 @@ api/
 android/                       Capacitorin kuori. Ei sovelluslogiikkaa.
 supabase/                      inventory.sql + versionhallitut migraatiot
 scripts/                       serve, smoke, build-web
-tests/                         282 testiä
+tests/                         778 testiä
 docs/                          Arkkitehtuuri, skeema, turvallisuus, deploy,
                                roadmap, modularisointi, Android, testaus,
-                               domain-malli
+                               domain-malli, rutiinit, tavoitteet,
+                               muistutukset, puhekomennot, sijoitukset,
+                               tuotannon käyttöönotto
 ```
 
 ---
@@ -169,8 +171,18 @@ docs/                          Arkkitehtuuri, skeema, turvallisuus, deploy,
 | Puheohjaus ja AI-jäsennys | Toimii |
 | Kirjautuminen ja käyttäjäkohtainen data | Toteutettu — **vaatii migraation 0001** |
 | Offline-sovelluskuori | Toimii |
-| Android-APK | Rakennettu paikallisesti, ei testattu laitteella |
-| Ilmoitukset, sijainti, taustatoiminta | Ei toteutettu — ks. `docs/ROADMAP.md` |
+| Rutiinit (toistosäännöt, poikkeukset) | Toimii — **ei vielä tallennu**, migraatio 0003 |
+| Tavoitteet ja edistyminen | Toimii — **ei vielä tallennu**, migraatio 0004 |
+| Määräajat ja myöhässä olevat | Toimii — **ei vielä tallennu**, migraatio 0004 |
+| Päivän fokus, illan katsaus, viikkokatsaus | Toimii (johdettu, ei omaa tallennusta) |
+| Hyvinvointimerkinnät | Toimii — **ei vielä tallennu**, migraatio 0006 |
+| Muistutusten suunnittelu | Toimii — **ei vielä tallennu**, migraatio 0005 |
+| Muistutusten ajastus | Toimii Android-sovelluksessa; selaimessa vain etualalla |
+| Android-APK | Debug ja allekirjoittamaton release rakennettu, ei testattu laitteella |
+| Projektit | Domain valmis, **ei näkymää** |
+| Laskut ja toistuvat kulut | Domain valmis, **ei näkymää eikä tallennusta** |
+| Sijainti ja taustatoiminta | Ei toteutettu — ks. `docs/ROADMAP.md` |
+| Sijoitusseuranta | Vain arkkitehtuuri — `docs/INVESTMENTS-ARCHITECTURE.md` |
 
-**Kaksi migraatiota odottaa ajoa tuotantoon.** Ne ovat luonnoksia eikä niitä
+**Kuusi migraatiota odottaa ajoa tuotantoon.** Ne ovat luonnoksia eikä niitä
 ole ajettu mihinkään ympäristöön. Ks. `supabase/README.md`.

@@ -190,10 +190,37 @@ rakennetta. Molemmat on testattu.
 |---|---|---|
 | 1 | RLS-tila tuotannossa todentamaton | **Avoin — korkein prioriteetti** |
 | 2 | Anthropic-avain selkokielisenä työpöytätiedostossa | Avoin — kierrätysohje `docs/DEPLOYMENT.md` |
-| 3 | Poisto ilman vahvistusta | Avoin — WP3 |
-| 4 | Kantavirheet vain `console.error`-lokiin, ei näy käyttäjälle | Osin korjattu (profiilin tallennus näyttää virheen), loput WP3 |
-| 5 | Ei datan vientiä eikä tilin poistoa (konsepti luku 24 vaatii) | Avoin — WP:n mukaan |
-| 6 | Ei service workeria, ei offline-tukea | Avoin — WP6 |
+| 3 | Poisto ilman vahvistusta | Korjattu — `src/ui/confirm.js` |
+| 4 | Kantavirheet vain `console.error`-lokiin | Korjattu — virhe näytetään ja muutos perutaan |
+| 5 | Ei datan vientiä eikä tilin poistoa (konsepti luku 24 vaatii) | Avoin |
+| 6 | Ei service workeria, ei offline-tukea | Korjattu — `sw.js` |
+| 7 | Muistutusten sisältö näkyy laitteen lukitusnäytöllä | Hyväksytty — käyttäjä kytkee muistutukset itse |
+| 8 | Tavoiteviite voi osoittaa toisen käyttäjän tunnisteeseen | Hyväksytty — ks. migraation 0004 huomio viite-eheydestä |
+
+---
+
+## Korjattu WP7-WP12:ssa
+
+| Löydös | Vakavuus | Korjaus |
+|---|---|---|
+| Muistivarasto säilyi uloskirjautumisen yli, jolloin seuraava käyttäjä näki edellisen rutiinit ja tavoitteet samalla selaimella | **Korkea** | `clearLocalUserData()` uloskirjautuessa; 7 regressiotestiä |
+| Uloskirjautuminen kesken muistutusten synkronoinnin olisi ajastanut edellisen käyttäjän tehtävien otsikot laitteelle | Keskitaso | Asetukset tarkistetaan uudelleen odotuksen jälkeen |
+| Turvatesti "kaikki tietokantakutsut yhdessä moduulissa" tunnisti vain merkkijonona kirjoitetun taulun nimen, joten yleistetty repositorio livahti valvonnasta | Keskitaso | Kuvio korjattu; molemmille uusille repositorioille omat rajaustestit |
+| XSS-vartija ei tuntenut kenttiä `name` eikä `body` | Matala | Kentät lisätty vartijan kuvioon |
+| Tuplaklikkaussuojan tarkistuslista ei kattanut uusia näkymiä | Matala | Lista täydennetty |
+
+### Muistutusten turvamalli
+
+- Lupaa **ei koskaan** pyydetä automaattisesti. `syncNotifications()` ajetaan
+  joka avauksella eikä se kysy lupaa; kysely tapahtuu vain pääkytkimen
+  painalluksesta. Tämä on lukittu testillä.
+- Oletus on hiljaisuus sekä koodissa (`enabled: false`) että kannassa
+  (`default false`). Testi vertaa niitä toisiinsa.
+- Ajastetut muistutukset perutaan ennen uusien luontia, jottei poistetun
+  tehtävän muistutus jää elämään laitteelle.
+- Natiivin lupatilan välimuisti alkaa arvosta PROMPT eikä koskaan oleta
+  lupaa: väärä "granted" saisi sovelluksen luulemaan lähettävänsä
+  ilmoituksia, joita kukaan ei näe.
 
 ---
 

@@ -19,16 +19,22 @@ Tila: WP2:n jälkeen. Päivitetty 1.9.2026.
 │   state.js     tila + tilaajat                               │
 │   actions.js   optimistinen päivitys + peruutus              │
 │   auth.js  navigation.js  voice.js  onboarding.js            │
-│   views/  today · week · tasks · profile                     │
+│   notifications.js  domainin ja alustan ainoa kohtaamispiste │
+│   views/  today · week · tasks · routines · goals            │
+│           profile · notificationSettings                     │
 ├──────────────────────────────────────────────────────────────┤
 │ src/ui/      dom · toast · confirm     (ei tunne domainia)   │
 ├──────────────────────────────────────────────────────────────┤
-│ src/ai/      proposalSchema · parseClient                    │
+│ src/ai/      proposalSchema · parseClient · intentSchema     │
 │ src/data/    client · session · tasksRepo · profileRepo      │
-│              schema (migraatioportti) · preferences          │
-│ src/platform/ alustaerot: web nyt, natiivi myöhemmin         │
+│              collectionsRepo · notificationPrefsRepo         │
+│              memoryStore · schema (migraatioportti)          │
+│ src/platform/ capabilities · notifications                   │
+│              nativeNotifications (Capacitor)                 │
 ├──────────────────────────────────────────────────────────────┤
 │ src/domain/  task · scheduler · week · categories · priority │
+│              routine · goal · project · focus · review       │
+│              notification · wellbeing · finance              │
 │              PUHDAS: ei DOM:ia, ei verkkoa, ei kelloa        │
 ├──────────────────────────────────────────────────────────────┤
 │ src/lib/     datetime · format · rows · result · seed        │
@@ -39,6 +45,23 @@ Tila: WP2:n jälkeen. Päivitetty 1.9.2026.
 **Riippuvuudet osoittavat aina alaspäin.** Sääntö on koodattu
 `tests/architecture.test.mjs`-testeihin, jotka kaatuvat heti jos domain alkaa
 koskea DOM:iin tai jos moduulien väliin syntyy sykli.
+
+### Kolme kerrosta, kolme vastuuta — esimerkkinä muistutukset
+
+Muistutukset ovat selkein esimerkki siitä, miksi kerrosjako on olemassa:
+
+```
+domain/notification.js    MITÄ ja MILLOIN   puhdas, testattava ilman selainta
+app/notifications.js      MILLOIN SYNKRONOIDAAN
+platform/notifications.js MITEN             selain tai Capacitor
+```
+
+Domain ei tunne Capacitoria eikä `Notification`-rajapintaa. Alusta ei tunne
+tehtäviä eikä rutiineja. Kumpikin on testattavissa yksin, ja niiden välinen
+kerros on ohut tarkoituksella.
+
+Sama jako toistuu muualla: aikataulumoottori ei tiedä DOM:ista, ja
+tallennuskerros ei tiedä renderöinnistä.
 
 ---
 
