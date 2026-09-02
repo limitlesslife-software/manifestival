@@ -25,6 +25,10 @@ import { normalizeRoutine, normalizeException } from '../domain/routine.js';
 import { normalizeGoal } from '../domain/goal.js';
 import { normalizeProject } from '../domain/project.js';
 import { normalizeWellbeingEntry } from '../domain/wellbeing.js';
+import {
+  normalizeBill, normalizeRecurringExpense, normalizeSavingsGoal
+} from '../domain/finance.js';
+import { normalizeAuditEntry } from '../domain/audit.js';
 
 /** Kentät, joita client ei saa koskaan lähettää. */
 const SERVER_OWNED = Object.freeze(['user_id', 'created_at', 'updated_at']);
@@ -293,9 +297,145 @@ export const wellbeingRepo = createRepository({
   })
 });
 
+// --------------------------------------------------------------- talous
+
+/**
+ * Rahasummat kulkevat kantaan SENTTEINÄ (`amount_minor`, `bigint`).
+ * Ks. src/domain/money.js ja migraatio 0007 — liukulukua ei käytetä
+ * missään kohtaa ketjua.
+ */
+export const billsRepo = createRepository({
+  table: 'bills',
+  schemaKey: 'bills',
+  normalize: normalizeBill,
+  toRow: bill => ({
+    id: bill.id,
+    name: bill.name,
+    amount_minor: bill.amountMinor,
+    currency: bill.currency,
+    due_date: bill.dueDate,
+    status: bill.status,
+    paid_date: bill.paidDate,
+    category: bill.category,
+    task_id: bill.taskId,
+    recurring_expense_id: bill.recurringExpenseId,
+    note: bill.note
+  }),
+  fromRow: row => normalizeBill({
+    id: row.id,
+    name: row.name,
+    amountMinor: row.amount_minor,
+    currency: row.currency,
+    dueDate: row.due_date,
+    status: row.status,
+    paidDate: row.paid_date,
+    category: row.category,
+    taskId: row.task_id,
+    recurringExpenseId: row.recurring_expense_id,
+    note: row.note,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  })
+});
+
+export const recurringExpensesRepo = createRepository({
+  table: 'recurring_expenses',
+  schemaKey: 'recurringExpenses',
+  normalize: normalizeRecurringExpense,
+  toRow: expense => ({
+    id: expense.id,
+    name: expense.name,
+    amount_minor: expense.amountMinor,
+    currency: expense.currency,
+    cadence: expense.cadence,
+    day_of_month: expense.dayOfMonth,
+    next_due_date: expense.nextDueDate,
+    category: expense.category,
+    active: expense.active,
+    note: expense.note
+  }),
+  fromRow: row => normalizeRecurringExpense({
+    id: row.id,
+    name: row.name,
+    amountMinor: row.amount_minor,
+    currency: row.currency,
+    cadence: row.cadence,
+    dayOfMonth: row.day_of_month,
+    nextDueDate: row.next_due_date,
+    category: row.category,
+    active: row.active,
+    note: row.note,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  })
+});
+
+export const savingsGoalsRepo = createRepository({
+  table: 'savings_goals',
+  schemaKey: 'savingsGoals',
+  normalize: normalizeSavingsGoal,
+  toRow: goal => ({
+    id: goal.id,
+    name: goal.name,
+    target_minor: goal.targetMinor,
+    current_minor: goal.currentMinor,
+    currency: goal.currency,
+    target_date: goal.targetDate,
+    note: goal.note
+  }),
+  fromRow: row => normalizeSavingsGoal({
+    id: row.id,
+    name: row.name,
+    targetMinor: row.target_minor,
+    currentMinor: row.current_minor,
+    currency: row.currency,
+    targetDate: row.target_date,
+    note: row.note,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  })
+});
+
+// ------------------------------------------------------- AI-kirjausketju
+
+export const aiAuditRepo = createRepository({
+  table: 'ai_action_audit',
+  schemaKey: 'aiAudit',
+  normalize: normalizeAuditEntry,
+  toRow: entry => ({
+    id: entry.id,
+    occurred_at: entry.timestamp,
+    input_summary: entry.inputSummary,
+    intent: entry.intent,
+    risk: entry.risk,
+    target_type: entry.targetType,
+    target_id: entry.targetId,
+    proposal: entry.proposal,
+    confirmed: entry.confirmed,
+    executed: entry.executed,
+    result: entry.result,
+    error_code: entry.errorCode
+  }),
+  fromRow: row => normalizeAuditEntry({
+    id: row.id,
+    timestamp: row.occurred_at,
+    inputSummary: row.input_summary,
+    intent: row.intent,
+    risk: row.risk,
+    targetType: row.target_type,
+    targetId: row.target_id,
+    proposal: row.proposal,
+    confirmed: row.confirmed,
+    executed: row.executed,
+    result: row.result,
+    errorCode: row.error_code
+  })
+});
+
 /** Kaikki uudet repositoriot. Käytetään latauksessa ja tyhjennyksessä. */
 export const ALL_REPOSITORIES = Object.freeze([
-  routinesRepo, routineExceptionsRepo, goalsRepo, projectsRepo, wellbeingRepo
+  routinesRepo, routineExceptionsRepo, goalsRepo, projectsRepo, wellbeingRepo,
+  billsRepo, recurringExpensesRepo, savingsGoalsRepo, aiAuditRepo
 ]);
 
 /** Tyhjennä kaikki muistivarastot. Kutsutaan uloskirjautumisessa. */

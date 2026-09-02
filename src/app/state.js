@@ -13,6 +13,10 @@ import { normalizeRoutine, normalizeException } from '../domain/routine.js';
 import { normalizeGoal } from '../domain/goal.js';
 import { normalizeWellbeingEntry } from '../domain/wellbeing.js';
 import { normalizePreferences } from '../domain/notification.js';
+import {
+  normalizeBill, normalizeRecurringExpense, normalizeSavingsGoal
+} from '../domain/finance.js';
+import { normalizeAuditEntry } from '../domain/audit.js';
 
 function initialState() {
   const today = todayMidnight();
@@ -35,6 +39,12 @@ function initialState() {
      * käyttäjä on itse kytkenyt muistutukset päälle.
      */
     notificationPreferences: normalizePreferences({}),
+    /** Talous (WP17). Ei säily ennen migraatiota 0007. */
+    bills: [],
+    recurringExpenses: [],
+    savingsGoals: [],
+    /** AI-toimintojen kirjausketju (WP13). Ei säily ennen migraatiota 0008. */
+    aiAudit: [],
     viewDate: today,
     weekStart: startOfWeek(today),
     profile: { ...DEFAULT_PROFILE },
@@ -206,6 +216,34 @@ export function setProjects(projects) {
 
 export function setWellbeing(entries) {
   commit({ wellbeing: (entries || []).map(normalizeWellbeingEntry) });
+}
+
+/** Aseta laskut. */
+export function setBills(bills) {
+  commit({ bills: (bills || []).map(normalizeBill) });
+}
+
+/** Aseta toistuvat kulut. */
+export function setRecurringExpenses(expenses) {
+  commit({ recurringExpenses: (expenses || []).map(normalizeRecurringExpense) });
+}
+
+/** Aseta säästötavoitteet. */
+export function setSavingsGoals(goals) {
+  commit({ savingsGoals: (goals || []).map(normalizeSavingsGoal) });
+}
+
+/** Aseta AI-kirjausketju. */
+export function setAiAudit(entries) {
+  commit({ aiAudit: (entries || []).map(normalizeAuditEntry) });
+}
+
+export function findBill(id) {
+  return getState().bills.find(bill => bill.id === id) || null;
+}
+
+export function findProject(id) {
+  return getState().projects.find(project => project.id === id) || null;
 }
 
 /** Aseta muistutusasetukset. Normalisointi takaa kelvolliset rajat. */
