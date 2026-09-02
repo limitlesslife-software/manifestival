@@ -11,7 +11,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  INTENT, INTENTS, FORBIDDEN_INTENTS, RISK, COMMANDS,
+  INTENT, INTENTS, FORBIDDEN_INTENTS, RISK, RISK_LEVELS, COMMANDS,
   isAllowedIntent, resolveCommand, needsConfirmation
 } from '../src/ai/intentSchema.js';
 import { RECURRENCE } from '../src/domain/routine.js';
@@ -23,20 +23,70 @@ const context = { today: TODAY };
 
 test('sallitut intentit on määritelty nimenomaisesti', () => {
   assert.deepEqual([...INTENTS].sort(), [
-    'complete_task', 'create_goal', 'create_routine', 'create_task',
-    'show_day', 'show_week', 'update_task'
+    'complete_task',
+    'create_bill', 'create_goal', 'create_project', 'create_routine', 'create_task',
+    'delete_goal', 'delete_project', 'delete_routine', 'delete_task',
+    'mark_bill_paid',
+    'reschedule_task', 'schedule_task',
+    'set_notification_preference',
+    'show_day_plan', 'show_week_plan',
+    'uncomplete_task',
+    'update_bill', 'update_goal', 'update_project', 'update_routine', 'update_task'
   ]);
   for (const intent of INTENTS) {
     assert.ok(COMMANDS[intent], 'komento puuttuu rekisteristä: ' + intent);
   }
 });
 
-test('TURVA: poistoa ei ole allowlistissä lainkaan', () => {
-  // Poisto ei ole "vaarallinen komento jota rajoitetaan" vaan komento, jota
-  // ei ole olemassa. Sitä ei voi kutsua millään syötteellä.
+test('TURVA: poistokomennot ovat korkeaa riskiä ja vaativat tarkan kohteen', () => {
+  // MUUTOS V1:STÄ. Aiemmin poistoa ei ollut allowlistilla lainkaan — se oli
+  // yksinkertaisin mahdollinen suoja, mutta tarkoitti ettei "poista se
+  // peruttu palaveri" toiminut lainkaan.
+  //
+  // V2 sallii poiston ja korvaa puuttuvan suojan kahdella tiukemmalla:
+  // eksplisiittinen vahvistus, jota ei voi kytkeä pois, ja vaatimus siitä
+  // että kohde on tunnistettu YKSISELITTEISESTI.
+  const deleteIntents = INTENTS.filter(intent => intent.startsWith('delete_'));
+  assert.equal(deleteIntents.length, 4, 'odotettiin neljä poistokomentoa');
+
+  for (const intent of deleteIntents) {
+    const definition = COMMANDS[intent];
+    assert.equal(definition.risk, RISK.HIGH, intent + ': poiston pitää olla HIGH');
+    assert.equal(definition.requiresExactTarget, true,
+      intent + ': poisto ei saa edetä epäselvällä kohteella');
+  }
+});
+
+test('TURVA: massapoistoa ei ole olemassa', () => {
+  // Yksittäisen rivin poisto voidaan vahvistaa mielekkäästi yhdellä
+  // dialogilla. "Poista kaikki" ei voi — siksi sitä ei ole allowlistillä.
   for (const intent of INTENTS) {
-    assert.equal(intent.includes('delete'), false, 'poistokomento allowlistissä: ' + intent);
-    assert.equal(intent.includes('remove'), false);
+    assert.equal(/all|everything|account/.test(intent), false,
+      'massapoisto allowlistillä: ' + intent);
+  }
+  for (const forbidden of ['delete_all', 'delete_everything', 'delete_account']) {
+    assert.equal(isAllowedIntent(forbidden), false, forbidden);
+    assert.ok(FORBIDDEN_INTENTS.includes(forbidden), forbidden + ' puuttuu kielletyistä');
+  }
+});
+
+test('TURVA: poistokomento vaatii eksplisiittisen vahvistuksen', () => {
+  const result = resolveCommand({
+    intent: INTENT.DELETE_TASK, targetTitle: 'Peruttu palaveri'
+  }, context);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.command.risk, RISK.HIGH);
+  assert.equal(result.command.requiresConfirmation, true);
+  assert.equal(result.command.requiresExplicitConfirmation, true);
+  assert.equal(result.command.requiresExactTarget, true);
+  assert.equal(needsConfirmation(result.command), true);
+});
+
+test('TURVA: poisto ilman kohdetta hylätään', () => {
+  for (const intent of ['delete_task', 'delete_routine', 'delete_goal', 'delete_project']) {
+    const result = resolveCommand({ intent }, context);
+    assert.equal(result.ok, false, intent + ': kohteeton poisto meni läpi');
   }
 });
 
@@ -58,7 +108,8 @@ test('TURVA: tuntematon intentti hylätään turvallisesti', () => {
 
 test('isAllowedIntent tunnistaa vain rekisterin komennot', () => {
   assert.equal(isAllowedIntent(INTENT.CREATE_TASK), true);
-  assert.equal(isAllowedIntent('delete_task'), false);
+  assert.equal(isAllowedIntent(INTENT.DELETE_TASK), true, 'poisto on nyt olemassa');
+  assert.equal(isAllowedIntent('delete_all'), false, 'massapoistoa ei ole');
   assert.equal(isAllowedIntent('toString'), false, 'prototyypin kentät eivät ole komentoja');
   assert.equal(isAllowedIntent('constructor'), false);
 });
@@ -118,16 +169,38 @@ test('TURVA: tuntemattomat kentät eivät päädy payloadiin', () => {
 // -------------------------------------------------------- vahvistus
 
 test('TURVA: kaikki muuttavat komennot vaativat vahvistuksen', () => {
+  // Vahvistus JOHDETAAN riskitasosta eikä ole rekisterissä erillisenä
+  // kenttänä. Yksi totuuden lähde: jos vahvistus olisi oma lippunsa, se
+  // voisi joutua ristiriitaan riskitason kanssa — ja ristiriidassa
+  // väärä puoli voittaisi hiljaa.
   for (const intent of INTENTS) {
     const definition = COMMANDS[intent];
-    if (definition.risk === RISK.READ_ONLY) continue;
-    assert.equal(definition.requiresConfirmation, true,
+    assert.ok(RISK_LEVELS.includes(definition.risk),
+      intent + ': tuntematon riskitaso ' + definition.risk);
+
+    if (definition.risk === RISK.LOW) continue;
+    assert.equal(needsConfirmation({ risk: definition.risk }), true,
       'muuttava komento ilman vahvistusta: ' + intent);
   }
 });
 
+test('TURVA: jokainen riskitaso on nimenomaisesti valittu', () => {
+  // Oletusarvo on vaarallisin mahdollinen puuttuva päätös: uusi komento
+  // päätyisi vahingossa matalimpaan luokkaan eikä kysyisi mitään.
+  for (const intent of INTENTS) {
+    const definition = COMMANDS[intent];
+    if (intent.startsWith('delete_')) {
+      assert.equal(definition.risk, RISK.HIGH, intent);
+    } else if (intent.startsWith('show_')) {
+      assert.equal(definition.risk, RISK.LOW, intent);
+    } else {
+      assert.equal(definition.risk, RISK.MEDIUM, intent);
+    }
+  }
+});
+
 test('vain lukevat komennot ohittavat vahvistuksen', () => {
-  const show = resolveCommand({ intent: INTENT.SHOW_DAY }, context);
+  const show = resolveCommand({ intent: INTENT.SHOW_DAY_PLAN }, context);
   assert.equal(needsConfirmation(show.command), false);
 
   const create = resolveCommand({ intent: INTENT.CREATE_TASK, title: 'X' }, context);
@@ -194,7 +267,7 @@ test('"Merkitse auton pesu tehdyksi"', () => {
   }, context);
 
   assert.equal(result.ok, true);
-  assert.equal(result.command.payload.targetTitle, 'Auton pesu');
+  assert.equal(result.command.payload.targetName, 'Auton pesu');
   assert.equal(result.command.payload.completed, true);
   assert.equal(result.command.requiresConfirmation, true,
     'kuittaus muuttaa dataa, joten se vahvistetaan');
@@ -208,20 +281,20 @@ test('"Siirrä huomisen hammaslääkäri kello kolmeen"', () => {
   }, context);
 
   assert.equal(result.ok, true);
-  assert.equal(result.command.payload.targetTitle, 'Hammaslääkäri');
+  assert.equal(result.command.payload.targetName, 'Hammaslääkäri');
   assert.equal(result.command.payload.changes.time, '15:00');
   assert.equal(result.command.risk, RISK.MEDIUM);
 });
 
 test('"Näytä huominen"', () => {
-  const result = resolveCommand({ intent: INTENT.SHOW_DAY, date: '2026-09-02' }, context);
+  const result = resolveCommand({ intent: INTENT.SHOW_DAY_PLAN, date: '2026-09-02' }, context);
   assert.equal(result.ok, true);
   assert.equal(result.command.payload.date, '2026-09-02');
-  assert.equal(result.command.risk, RISK.READ_ONLY);
+  assert.equal(result.command.risk, RISK.LOW);
 });
 
 test('"Näytä viikko" ilman päivää käyttää tätä päivää', () => {
-  const result = resolveCommand({ intent: INTENT.SHOW_WEEK }, context);
+  const result = resolveCommand({ intent: INTENT.SHOW_WEEK_PLAN }, context);
   assert.equal(result.ok, true);
   assert.equal(result.command.payload.date, TODAY);
 });
@@ -329,7 +402,7 @@ test('uusi otsikko annetaan omassa kentässään', () => {
     targetTitle: 'Vanha nimi',
     newTitle: 'Uusi nimi'
   }, context);
-  assert.equal(result.command.payload.targetTitle, 'Vanha nimi');
+  assert.equal(result.command.payload.targetName, 'Vanha nimi');
   assert.equal(result.command.payload.changes.title, 'Uusi nimi');
 });
 
@@ -381,8 +454,8 @@ test('jokainen komento kuvaa itsensä käyttäjälle', () => {
     { intent: INTENT.CREATE_GOAL, title: 'Julkaise' },
     { intent: INTENT.COMPLETE_TASK, targetTitle: 'Pesu' },
     { intent: INTENT.UPDATE_TASK, targetTitle: 'Lääkäri', time: '15:00' },
-    { intent: INTENT.SHOW_DAY },
-    { intent: INTENT.SHOW_WEEK }
+    { intent: INTENT.SHOW_DAY_PLAN },
+    { intent: INTENT.SHOW_WEEK_PLAN }
   ];
   for (const sample of samples) {
     const result = resolveCommand(sample, context);
@@ -407,4 +480,170 @@ test('resolveCommand ei mutatoi syötettä', () => {
   const before = JSON.stringify(raw);
   resolveCommand(raw, context);
   assert.equal(JSON.stringify(raw), before);
+});
+
+// ------------------------------------------------ V2: uudet intentit
+
+test('"Lisää kuntosalirutiini maanantaille, keskiviikolle ja perjantaille"', () => {
+  const result = resolveCommand({
+    intent: INTENT.CREATE_ROUTINE,
+    title: 'Kuntosali',
+    recurrence: RECURRENCE.CUSTOM_WEEKDAYS,
+    weekdays: [1, 3, 5]
+  }, context);
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.command.payload.weekdays, [1, 3, 5]);
+  assert.equal(result.command.risk, RISK.MEDIUM);
+});
+
+test('"Siirrä huominen palaveri kahdella tunnilla"', () => {
+  const result = resolveCommand({
+    intent: INTENT.RESCHEDULE_TASK,
+    targetTitle: 'Palaveri',
+    shiftMinutes: 120
+  }, context);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.command.payload.shiftMinutes, 120);
+  assert.match(result.command.description, /2 h eteenpäin/);
+});
+
+test('kohtuuton siirto hylätään mutta komento ei kaadu', () => {
+  // Yli vuorokauden siirto on todennäköisemmin väärinymmärrys kuin tarkoitus.
+  const result = resolveCommand({
+    intent: INTENT.RESCHEDULE_TASK,
+    targetTitle: 'Palaveri',
+    shiftMinutes: 99999,
+    time: '15:00'
+  }, context);
+
+  assert.equal(result.ok, true, 'kelvollinen aika pelastaa komennon');
+  assert.equal(result.command.payload.shiftMinutes, null);
+  assert.ok(result.command.rejectedFields.includes('shiftMinutes'));
+});
+
+test('siirto ilman uutta aikaa hylätään', () => {
+  const result = resolveCommand({
+    intent: INTENT.RESCHEDULE_TASK, targetTitle: 'Palaveri'
+  }, context);
+  assert.equal(result.ok, false);
+});
+
+test('"Lisää projekti autotallin remontti ja sille deadline 30.9."', () => {
+  const result = resolveCommand({
+    intent: INTENT.CREATE_PROJECT,
+    name: 'Autotallin remontti',
+    deadline: '2026-09-30'
+  }, context);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.command.payload.name, 'Autotallin remontti');
+  assert.equal(result.command.payload.deadline, '2026-09-30');
+  assert.equal(result.command.targetType, 'project');
+});
+
+test('"Merkitse sähkölasku maksetuksi"', () => {
+  const result = resolveCommand({
+    intent: INTENT.MARK_BILL_PAID, targetName: 'Sähkölasku'
+  }, context);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.command.payload.targetName, 'Sähkölasku');
+  assert.equal(result.command.payload.paidDate, TODAY, 'oletuksena tänään');
+});
+
+test('KRIITTINEN: laskun summa muunnetaan sentteihin heti rajalla', () => {
+  // AI puhuu euroista, sovellus säilyttää sentit. Jos liukuluku pääsisi
+  // syvemmälle, pyöristysvirhe kertautuisi summattaessa.
+  const result = resolveCommand({
+    intent: INTENT.CREATE_BILL,
+    name: 'Sähkölasku',
+    amount: 129.95,
+    dueDate: '2026-09-30'
+  }, context);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.command.payload.amountMinor, 12995);
+  assert.equal(Number.isInteger(result.command.payload.amountMinor), true);
+});
+
+test('lasku ilman eräpäivää hylätään', () => {
+  const result = resolveCommand({
+    intent: INTENT.CREATE_BILL, name: 'Sähkölasku', amount: 50
+  }, context);
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /eräpäivä/i);
+});
+
+test('valuutta normalisoidaan isoiksi kirjaimiksi', () => {
+  const result = resolveCommand({
+    intent: INTENT.CREATE_BILL, name: 'X', amount: 1, dueDate: TODAY, currency: 'eur'
+  }, context);
+  assert.equal(result.command.payload.currency, 'EUR');
+});
+
+test('muistutusasetusten muutos rajataan sallittuihin arvoihin', () => {
+  const result = resolveCommand({
+    intent: INTENT.SET_NOTIFICATION_PREFERENCE,
+    enabled: true,
+    maxPerDay: 999,
+    taskLeadMinutes: 15,
+    quietHoursFrom: '23:00'
+  }, context);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.command.payload.changes.enabled, true);
+  assert.equal(result.command.payload.changes.taskLeadMinutes, 15);
+  assert.equal(result.command.payload.changes.quietHoursFrom, '23:00');
+  assert.equal('maxPerDay' in result.command.payload.changes, false, 'yli rajan');
+  assert.ok(result.command.rejectedFields.includes('maxPerDay'));
+});
+
+test('KRIITTINEN: uncomplete ei ole sama komento kuin complete', () => {
+  // Yhdellä komennolla ja totuusarvolla nämä sekoittuisivat helposti, ja
+  // "merkitse tehdyksi" voisi kumota valmiin tehtävän.
+  const done = resolveCommand({ intent: INTENT.COMPLETE_TASK, targetTitle: 'X' }, context);
+  const undone = resolveCommand({ intent: INTENT.UNCOMPLETE_TASK, targetTitle: 'X' }, context);
+
+  assert.equal(done.command.payload.completed, true);
+  assert.equal(undone.command.payload.completed, false);
+});
+
+test('päivitys ei koskaan ylikirjoita antamattomia kenttiä', () => {
+  // Sama suoja kuin tehtävillä, nyt myös rutiineille, tavoitteille,
+  // projekteille ja laskuille. Ilman `provided`-erottelua normalisointi
+  // täyttäisi puuttuvat kentät oletusarvoilla ja tallennus ylikirjoittaisi
+  // ne hiljaa.
+  const cases = [
+    [INTENT.UPDATE_ROUTINE, { routineId: 'r1', time: '08:00' }, ['preferredTime']],
+    [INTENT.UPDATE_GOAL, { goalId: 'g1', status: 'paused' }, ['status']],
+    [INTENT.UPDATE_PROJECT, { projectId: 'p1', deadline: '2026-12-01' }, ['deadline']],
+    [INTENT.UPDATE_BILL, { billId: 'b1', amount: 10 }, ['amountMinor']]
+  ];
+
+  for (const [intent, raw, expected] of cases) {
+    const result = resolveCommand({ intent, ...raw }, context);
+    assert.equal(result.ok, true, intent);
+    assert.deepEqual(Object.keys(result.command.payload.changes).sort(),
+      [...expected].sort(), intent);
+  }
+});
+
+test('päivitys ilman muutosta hylätään', () => {
+  for (const [intent, raw] of [
+    [INTENT.UPDATE_ROUTINE, { routineId: 'r1' }],
+    [INTENT.UPDATE_GOAL, { goalId: 'g1' }],
+    [INTENT.UPDATE_PROJECT, { projectId: 'p1' }],
+    [INTENT.UPDATE_BILL, { billId: 'b1' }]
+  ]) {
+    const result = resolveCommand({ intent, ...raw }, context);
+    assert.equal(result.ok, false, intent + ': tyhjä muutos meni läpi');
+  }
+});
+
+test('jokainen komento kertoo kohdetyyppinsä', () => {
+  for (const intent of INTENTS) {
+    assert.ok(COMMANDS[intent].targetType, intent + ': targetType puuttuu');
+  }
 });
