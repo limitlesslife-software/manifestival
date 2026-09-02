@@ -74,7 +74,13 @@ async function onSignedIn() {
 
   restoreLastScreen(getDevicePreference('lastScreen'));
 
-  await loadUserData();
+  // Lataus voi kestää, ja käyttäjä ehtii sinä aikana kirjautua ulos tai
+  // vaihtaa tiliä. Silloin loadUserData hylkää vastauksen — eikä tämän
+  // kirjautumisen jatko saa enää piirtää eikä ajastaa mitään. Toinen,
+  // uudempi onSignedIn on jo ottanut vastuun näkymästä.
+  const loaded = await loadUserData();
+  if (loaded.discarded) return;
+
   fillProfileForm();
 
   // Lupatila luetaan ENNEN ensimmäistä renderöintiä, jotta asetusnäkymä

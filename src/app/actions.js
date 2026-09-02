@@ -42,6 +42,7 @@ import {
   loadPreferences as loadNotificationPreferences,
   clearPreferences as clearNotificationPreferences
 } from '../data/notificationPrefsRepo.js';
+import { getUser } from '../data/session.js';
 import { showError, success, notify } from '../ui/toast.js';
 import { confirmDelete, confirmAction } from '../ui/confirm.js';
 
@@ -77,8 +78,28 @@ function warnAboutVolatileCollections() {
   notify('Rutiinit, tavoitteet ja hyvinvointimerkinnät säilyvät toistaiseksi vain tämän istunnon ajan.', 7000);
 }
 
-/** Lataa kirjautuneen käyttäjän kaikki tiedot. */
+/** Kuka on kirjautuneena juuri nyt. Ei heitä, toisin kuin requireUserId. */
+function currentUserId() {
+  const user = getUser();
+  return user && user.id ? String(user.id) : null;
+}
+
+/**
+ * Lataa kirjautuneen käyttäjän kaikki tiedot.
+ *
+ * VANHENTUNUT VASTAUS HYLÄTÄÄN. Lataus on kaksitoista rinnakkaista
+ * verkkokutsua, ja käyttäjä ehtii kirjautua ulos niiden aikana. Ilman
+ * tarkistusta vastaus kirjoittaisi edellisen käyttäjän rivit tilaan
+ * uloskirjautumisen JÄLKEEN — ja jos seuraava käyttäjä ehti jo kirjautua
+ * sisään, hänen näytölleen.
+ *
+ * Sama suoja kuin syncNotifications():ssa. Tämä on kolmas saman luokan
+ * vuotoreitti tässä koodikannassa, joten tarkistus tehdään nyt myös
+ * täällä eikä vain siellä missä vuoto on jo sattunut.
+ */
 export async function loadUserData() {
+  const startedFor = currentUserId();
+
   const [tasksResult, profileResult, routinesResult, exceptionsResult,
     goalsResult, projectsResult, wellbeingResult, preferencesResult,
     billsResult, expensesResult, savingsResult, auditResult] = await Promise.all([
@@ -95,6 +116,11 @@ export async function loadUserData() {
     savingsGoalsRepo.list(),
     aiAuditRepo.list()
   ]);
+
+  // Tila on voinut vaihtua odotuksen aikana.
+  if (currentUserId() !== startedFor) {
+    return { tasksOk: false, profileOk: false, discarded: true };
+  }
 
   if (tasksResult.ok) setTasks(tasksResult.value);
   else { setTasks([]); showError(tasksResult.error); }
@@ -121,7 +147,7 @@ export async function loadUserData() {
   setSavingsGoals(savingsResult.ok ? savingsResult.value : []);
   setAiAudit(auditResult.ok ? auditResult.value : []);
 
-  return { tasksOk: tasksResult.ok, profileOk: profileResult.ok };
+  return { tasksOk: tasksResult.ok, profileOk: profileResult.ok, discarded: false };
 }
 
 // ----------------------------------------------------------------- tehtävät

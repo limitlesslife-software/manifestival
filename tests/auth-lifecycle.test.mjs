@@ -15,7 +15,7 @@ import assert from 'node:assert/strict';
 import { AUTH_TRANSITION, resolveAuthTransition } from '../src/app/auth.js';
 import { setUser, clearUser, getUser, isAuthenticated, requireUserId, userEmail }
   from '../src/data/session.js';
-import { clearLocalUserData } from '../src/app/actions.js';
+import { clearLocalUserData, loadUserData } from '../src/app/actions.js';
 import {
   routinesRepo, goalsRepo, projectsRepo, wellbeingRepo, ALL_REPOSITORIES
 } from '../src/data/collectionsRepo.js';
@@ -236,4 +236,119 @@ test('tokenin uusiutuminen ei lataa dataa uudelleen', () => {
   assert.equal(block.includes('onSignedIn('), false,
     'tokenin uusiutuminen laukaisisi datan uudelleenlatauksen');
   assert.ok(block.includes('setUser('), 'käyttäjä pitää silti päivittää');
+});
+
+// ------------------------------------ FREEZE: puuttuneet elinkaaritakuut
+
+test('KRIITTINEN: uloskirjautuminen kesken latauksen hylkää vastauksen', async () => {
+  // Lataus on kaksitoista rinnakkaista verkkokutsua, ja käyttäjä ehtii
+  // kirjautua ulos niiden aikana. Ilman tarkistusta vastaus kirjoittaisi
+  // edellisen käyttäjän rivit tilaan uloskirjautumisen JÄLKEEN.
+  //
+  // Tämä on KOLMAS saman luokan vuotoreitti tässä koodikannassa
+  // (uloskirjautuminen, tilinvaihto, nyt vanhentunut vastaus).
+  setUser(USER_A);
+  await seedAs('A');
+
+  // Simuloi uloskirjautuminen kesken latauksen: repositorion listaus
+  // tyhjentää istunnon juuri ennen kuin vastaukset palautuvat.
+  const original = routinesRepo.list.bind(routinesRepo);
+  routinesRepo.list = async () => {
+    clearUser();
+    return original();
+  };
+
+  try {
+    const result = await loadUserData();
+
+    assert.equal(result.discarded, true, 'vanhentunutta vastausta ei hylätty');
+    assert.deepEqual(getState().routines, [],
+      'edellisen käyttäjän rivit kirjoitettiin tilaan uloskirjautumisen jälkeen');
+    assert.deepEqual(getState().goals, []);
+  } finally {
+    routinesRepo.list = original;
+  }
+});
+
+test('KRIITTINEN: tilinvaihto kesken latauksen hylkää edellisen vastauksen', async () => {
+  // Pahin muunnelma: A:n lataus palaa vasta kun B on jo kirjautunut.
+  setUser(USER_A);
+  await seedAs('A');
+
+  const original = routinesRepo.list.bind(routinesRepo);
+  routinesRepo.list = async () => {
+    setUser(USER_B);
+    return original();
+  };
+
+  try {
+    const result = await loadUserData();
+
+    assert.equal(result.discarded, true);
+    assert.deepEqual(getState().routines, [], 'B:n näytölle kirjoitettiin A:n rivit');
+    assert.equal(requireUserId(), USER_B.id);
+  } finally {
+    routinesRepo.list = original;
+  }
+});
+
+test('normaali lataus ei hylkää vastausta', async () => {
+  // Vartija ei saa estää tavallista käyttöä.
+  setUser(USER_A);
+  await seedAs('A');
+
+  const result = await loadUserData();
+
+  assert.equal(result.discarded, false);
+  assert.equal(getState().routines.length, 1, 'A näkee omat rivinsä');
+  assert.equal(getState().goals.length, 1);
+});
+
+test('istunnon vanheneminen kulkee saman siivouspolun kautta kuin uloskirjautuminen', () => {
+  // Supabase ilmoittaa vanhentuneesta istunnosta samalla tavalla kuin
+  // uloskirjautumisesta: session on null. Erillistä haaraa ei tarvita
+  // eikä pidä olla — kaksi polkua samaan lopputulokseen erkanisi.
+  assert.equal(resolveAuthTransition(USER_A, null), AUTH_TRANSITION.SIGNED_OUT);
+
+  const source = read('src/app/auth.js');
+  const start = source.indexOf('case AUTH_TRANSITION.SIGNED_OUT:');
+  const block = source.slice(start, source.indexOf('break;', start));
+  assert.ok(block.includes('onSignedOut()'), 'vanheneminen ei siivoa');
+});
+
+test('epäonnistunut kirjautuminen ei jätä edellistä istuntoa voimaan', () => {
+  // Väärä salasana ei tuota istuntoa, joten siirtymä on IDLE eikä
+  // SIGNED_IN. Aiempi käyttäjä on jo tyhjennetty uloskirjautuessa.
+  clearUser();
+  assert.equal(resolveAuthTransition(null, null), AUTH_TRANSITION.IDLE);
+  assert.equal(isAuthenticated(), false);
+  assert.throws(() => requireUserId());
+});
+
+test('selaimen uudelleenlataus ei säilytä käyttäjädataa muistivarastossa', async () => {
+  // Muistivarasto elää moduulin mukana. Uudelleenlataus luo uuden
+  // JS-kontekstin, joten varasto on määritelmällisesti tyhjä. Tämä
+  // testi lukitsee sen, ettei mitään ole vahingossa siirretty
+  // localStorageen, joka säilyisi latauksen yli.
+  setUser(USER_A);
+  await seedAs('A');
+
+  const persistent = read('src/data/collectionsRepo.js') + read('src/data/memoryStore.js');
+  for (const api of ['localStorage', 'sessionStorage', 'indexedDB']) {
+    assert.equal(persistent.includes(api), false,
+      `muistivarasto käyttää ${api}:a — data säilyisi uudelleenlatauksen yli`);
+  }
+});
+
+test('laitekohtaiset asetukset eivät sisällä käyttäjän sisältöä', () => {
+  // localStorage säilyy uudelleenlatauksen JA uloskirjautumisen yli, jos
+  // sitä ei erikseen tyhjennetä. Siksi siellä ei saa olla mitään, mikä
+  // paljastaisi edellisen käyttäjän tietoja.
+  const source = read('src/data/preferences.js');
+  for (const forbidden of ['task', 'goal', 'routine', 'bill', 'wellbeing', 'note', 'title']) {
+    assert.equal(new RegExp(`['"\`][^'"\`]*${forbidden}`, 'i').test(source), false,
+      `laiteasetuksissa viitataan käyttäjän sisältöön: ${forbidden}`);
+  }
+  assert.ok(read('src/app/main.js').includes('clearDevicePreferences()'),
+    'laiteasetuksia ei tyhjennetä uloskirjautuessa');
 });

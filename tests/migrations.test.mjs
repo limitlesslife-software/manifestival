@@ -415,3 +415,74 @@ test('kirjausketjun kohde ei ole vierasavain', () => {
   assert.equal(/target_id\s+text references/.test(createBlock[1]), false,
     'target_id on vierasavain — historia katoaisi kohteen mukana');
 });
+
+// ------------------------------------------ FREEZE: varmistuskyselyt
+
+test('varmistuskyselyt ovat vain lukevia', () => {
+  // Nämä tiedostot on tarkoitettu ajettaviksi tuotantokantaa vasten
+  // käsin. Yksikään ei saa koskaan muuttaa mitään. Jos joku joskus
+  // lisää tänne korjaavan lauseen, tämä testi kaatuu ensin.
+  const dir = path.join(ROOT, 'supabase/verify');
+  const files = fs.readdirSync(dir).filter(name => name.endsWith('.sql'));
+
+  assert.equal(files.length, 8, 'yksi varmistustiedosto migraatiota kohti');
+
+  // Tarkistus tehdään LAUSEEN ALKUSANASTA, ei sisältyvyydestä. Kielletty
+  // sana esiintyy laillisesti tunnisteiden sisällä: role_table_grants
+  // sisältää sanan "grant" ja odotettu "on delete set null" sanan "delete".
+  // Sisältyvyystarkistus antaisi vääriä hälytyksiä lisäämättä kattavuutta:
+  // muuttava lause voi olla vain lauseen alussa.
+  for (const name of files) {
+    // Kommentit pois: selitysteksti saa puhua migraatioista vapaasti.
+    const sql = fs.readFileSync(path.join(dir, name), 'utf8')
+      .split('\n')
+      .filter(line => !line.trim().startsWith('--'))
+      .join('\n');
+
+    const statements = sql.split(';')
+      .map(part => part.trim())
+      .filter(part => part.length > 0);
+
+    assert.ok(statements.length > 0, `${name} on tyhjä`);
+
+    for (const statement of statements) {
+      const first = statement.split(/\s+/)[0].toLowerCase();
+      assert.equal(first, 'select',
+        `${name}: lause alkaa sanalla "${first}" — vain select on sallittu`);
+    }
+  }
+});
+
+test('jokaiselle migraatiolle on varmistuskysely', () => {
+  const verify = fs.readdirSync(path.join(ROOT, 'supabase/verify'))
+    .filter(name => name.endsWith('.sql'));
+
+  for (const migration of migrationFiles()) {
+    const number = migration.slice(0, 4);
+    assert.ok(verify.includes(`verify_${number}.sql`),
+      `migraatiolta ${number} puuttuu varmistuskysely`);
+  }
+});
+
+test('varmistuskyselyt eivät lue käyttäjän sisältöä', () => {
+  // Varmistus katsoo rakennetta ja rivimääriä. Se ei saa tulostaa
+  // tehtävien otsikoita, hyvinvointimerkintöjä eikä rahasummia — eikä
+  // koskaan avaimia.
+  const dir = path.join(ROOT, 'supabase/verify');
+
+  for (const name of fs.readdirSync(dir).filter(f => f.endsWith('.sql'))) {
+    const sql = fs.readFileSync(path.join(dir, name), 'utf8')
+      .split('\n')
+      .filter(line => !line.trim().startsWith('--'))
+      .join('\n')
+      .toLowerCase();
+
+    assert.equal(/select\s+\*/.test(sql), false,
+      `${name}: select * voi paljastaa käyttäjän sisältöä`);
+
+    for (const column of ['title', 'note', 'anon_key', 'service_role', 'password']) {
+      assert.equal(sql.includes(column), false,
+        `${name} lukee saraketta ${column}`);
+    }
+  }
+});

@@ -23,6 +23,7 @@ import { normalizeRoutine, RECURRENCE } from '../src/domain/routine.js';
 import { normalizeGoal } from '../src/domain/goal.js';
 import { normalizeProject } from '../src/domain/project.js';
 import { normalizeBill } from '../src/domain/finance.js';
+import { read } from './helpers/sources.mjs';
 
 const TODAY = new Date(2026, 8, 2); // 2.9.2026 paikallista aikaa
 
@@ -410,4 +411,108 @@ test('kirjaus täydentyy eikä luo toista riviä', () => {
 
   assert.equal(getState().aiAudit.length, 1, 'kirjaus kahdentui');
   assert.equal(getState().aiAudit[0].result, AUDIT_RESULT.EXECUTED);
+});
+
+// -------------------------- FREEZE: tuhoavien komentojen ehdot
+
+test('KRIITTINEN: jokainen poistokomento vaatii EXACT-kohteen JA vahvistuksen', async () => {
+  // Kaksi pakollista ehtoa yhdessä. Kumpikin yksin ei riitä.
+  const deletes = [
+    [INTENT.DELETE_TASK, 'Osta maitoa'],
+    [INTENT.DELETE_ROUTINE, 'Aamulääkkeet'],
+    [INTENT.DELETE_GOAL, 'Julkaise Manifestival'],
+    [INTENT.DELETE_PROJECT, 'Autotallin remontti']
+  ];
+
+  for (const [intent, name] of deletes) {
+    const proposal = buildProposal({ intent, targetTitle: name, targetName: name },
+      { now: TODAY });
+
+    assert.equal(proposal.status, PROPOSAL_STATUS.READY, intent);
+    assert.equal(proposal.command.risk, RISK.HIGH, intent);
+    assert.equal(proposal.command.requiresExactTarget, true, intent);
+    assert.equal(proposal.command.requiresExplicitConfirmation, true, intent);
+    assert.equal(proposal.requiresConfirmation, true, intent);
+    assert.equal(proposal.preview.destructive, true, intent);
+    assert.ok(proposal.target, intent + ': kohde pitää olla tunnistettu');
+  }
+});
+
+test('KRIITTINEN: yksikään poistokomento ei etene epäselvällä kohteella', async () => {
+  // Sama nimi kahdesti jokaisessa kokoelmassa.
+  setTasks([
+    normalizeTask({ id: 'x1', title: 'Kaksoiskappale', date: '2026-09-03' }),
+    normalizeTask({ id: 'x2', title: 'Kaksoiskappale', date: '2026-09-04' })
+  ]);
+  setRoutines([
+    normalizeRoutine({ id: 'y1', title: 'Kaksoiskappale', active: true,
+      recurrence: { type: RECURRENCE.DAILY, weekdays: [] } }),
+    normalizeRoutine({ id: 'y2', title: 'Kaksoiskappale', active: true,
+      recurrence: { type: RECURRENCE.DAILY, weekdays: [] } })
+  ]);
+  setGoals([
+    normalizeGoal({ id: 'z1', title: 'Kaksoiskappale' }),
+    normalizeGoal({ id: 'z2', title: 'Kaksoiskappale' })
+  ]);
+  setProjects([
+    normalizeProject({ id: 'w1', name: 'Kaksoiskappale' }),
+    normalizeProject({ id: 'w2', name: 'Kaksoiskappale' })
+  ]);
+
+  for (const intent of [INTENT.DELETE_TASK, INTENT.DELETE_ROUTINE,
+    INTENT.DELETE_GOAL, INTENT.DELETE_PROJECT]) {
+    let asked = false;
+    let executed = false;
+
+    const result = await runAiCommand(
+      { intent, targetTitle: 'Kaksoiskappale', targetName: 'Kaksoiskappale' },
+      {
+        confirm: async () => { asked = true; return true; },
+        handlers: { [intent]: async () => { executed = true; return { ok: true }; } },
+        now: TODAY
+      });
+
+    assert.equal(result.status, PROPOSAL_STATUS.NEEDS_CHOICE, intent);
+    assert.equal(asked, false, intent + ': vahvistusta kysyttiin epäselvästä kohteesta');
+    assert.equal(executed, false, intent + ': POISTO SUORITETTIIN EPÄSELVÄLLÄ KOHTEELLA');
+  }
+});
+
+test('KRIITTINEN: poistoa ei suoriteta ilman vahvistusta', async () => {
+  let executed = false;
+
+  const result = await runAiCommand(
+    { intent: INTENT.DELETE_TASK, targetTitle: 'Osta maitoa' },
+    {
+      confirm: async () => false,
+      handlers: { [INTENT.DELETE_TASK]: async () => { executed = true; return { ok: true }; } },
+      now: TODAY
+    });
+
+  assert.equal(executed, false, 'poisto suoritettiin ilman vahvistusta');
+  assert.equal(result.status, 'cancelled');
+});
+
+test('KRIITTINEN: vahvistusta ei johdeta asetuksista', () => {
+  // Jos vahvistuksen tarve luettaisiin käyttäjäasetuksesta, tuhoavan
+  // komennon voisi kytkeä pois päältä. Se on nimenomaan kielletty.
+  const schema = read('src/ai/intentSchema.js');
+  const orchestration = read('src/app/aiCommands.js');
+
+  const start = schema.indexOf('export function needsConfirmation');
+  const body = schema.slice(start, schema.indexOf('\n}', start));
+
+  assert.ok(body.includes('RISK.LOW'), 'vahvistus ei perustu riskitasoon');
+  for (const forbidden of ['preferences', 'settings', 'getState', 'options', 'config']) {
+    assert.equal(body.includes(forbidden), false,
+      `vahvistuksen tarve luetaan lähteestä ${forbidden}`);
+  }
+
+  // Eikä orkestrointi saa ohittaa sitä omalla ehdollaan.
+  const runStart = orchestration.indexOf('export async function runAiCommand');
+  const runBody = orchestration.slice(runStart);
+  assert.ok(runBody.includes('if (proposal.requiresConfirmation)'),
+    'orkestrointi ei tarkista vahvistuksen tarvetta');
+  assert.equal(/requiresConfirmation\s*&&\s*!/.test(runBody), false,
+    'vahvistuksella on ohitusehto');
 });
