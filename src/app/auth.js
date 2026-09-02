@@ -151,6 +151,43 @@ export function hideAuthGate() {
  * @param {Function} handlers.onSignedOut Kutsutaan kun käyttäjä kirjautuu ulos.
  * @returns {Promise<object|null>} palautunut istunto tai null
  */
+/**
+ * Istunnon tilasiirtymät.
+ *
+ * Erotettu omaksi puhtaaksi funktiokseen, koska tämä on turvallisuuden
+ * kannalta ratkaiseva päätös eikä sitä voi testata selaimen
+ * onAuthStateChange-tapahtuman kautta.
+ */
+export const AUTH_TRANSITION = Object.freeze({
+  /** Kukaan ei ollut kirjautuneena, nyt on. */
+  SIGNED_IN: 'signed_in',
+  /** Sama käyttäjä, uusi token. Ei saa ladata dataa uudelleen. */
+  TOKEN_REFRESHED: 'token_refreshed',
+  /** ERI käyttäjä ilman välissä tapahtunutta uloskirjautumista. */
+  USER_SWITCHED: 'user_switched',
+  /** Oli kirjautuneena, ei enää. */
+  SIGNED_OUT: 'signed_out',
+  /** Ei ollut eika ole. */
+  IDLE: 'idle'
+});
+
+/**
+ * Päättele mitä istunnolle tapahtui.
+ *
+ * PUHDAS FUNKTIO. Ei kosketa tilaan, ei kutsu mitään.
+ *
+ * @param {object|null} currentUser  Kuka oli kirjautuneena
+ * @param {object|null} sessionUser  Kuka on istunnossa nyt
+ */
+export function resolveAuthTransition(currentUser, sessionUser) {
+  const current = currentUser && currentUser.id ? String(currentUser.id) : null;
+  const next = sessionUser && sessionUser.id ? String(sessionUser.id) : null;
+
+  if (!next) return current ? AUTH_TRANSITION.SIGNED_OUT : AUTH_TRANSITION.IDLE;
+  if (!current) return AUTH_TRANSITION.SIGNED_IN;
+  return current === next ? AUTH_TRANSITION.TOKEN_REFRESHED : AUTH_TRANSITION.USER_SWITCHED;
+}
+
 export async function initAuth({ onSignedIn, onSignedOut }) {
   el('authTabSignin').addEventListener('click', () => setMode('signin'));
   el('authTabSignup').addEventListener('click', () => setMode('signup'));
@@ -165,16 +202,39 @@ export async function initAuth({ onSignedIn, onSignedOut }) {
   // laukaista datan uudelleenlatausta — muuten näkymä välkkyisi ja
   // keskeneräinen lomake nollautuisi kesken päivän.
   client.auth.onAuthStateChange((_event, session) => {
-    if (session && session.user) {
-      const current = getUser();
-      const sameUserAlreadySignedIn = current && current.id === session.user.id;
-      setUser(session.user);
-      if (!sameUserAlreadySignedIn) onSignedIn(session.user);
-    } else if (getUser()) {
-      clearUser();
-      onSignedOut();
-    } else {
-      clearUser();
+    const transition = resolveAuthTransition(getUser(), session && session.user);
+
+    switch (transition) {
+      case AUTH_TRANSITION.SIGNED_IN:
+        setUser(session.user);
+        onSignedIn(session.user);
+        break;
+
+      case AUTH_TRANSITION.USER_SWITCHED:
+        // Tili vaihtui ILMAN uloskirjautumista. Ilman tätä haaraa edellisen
+        // käyttäjän muistivarastot jäisivät paikoilleen ja uusi käyttäjä
+        // näkisi ne. Kierrätetään sama siivouspolku kuin uloskirjautumisessa
+        // sen sijaan että kirjoitettaisiin toinen, erikseen unohtuva.
+        clearUser();
+        onSignedOut();
+        setUser(session.user);
+        onSignedIn(session.user);
+        break;
+
+      case AUTH_TRANSITION.TOKEN_REFRESHED:
+        // Tapahtuu taustalla tunnin välein. EI saa laukaista datan
+        // uudelleenlatausta — muuten näkymä välkkyisi ja keskeneräinen
+        // lomake nollautuisi kesken päivän.
+        setUser(session.user);
+        break;
+
+      case AUTH_TRANSITION.SIGNED_OUT:
+        clearUser();
+        onSignedOut();
+        break;
+
+      default:
+        clearUser();
     }
   });
 
