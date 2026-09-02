@@ -19,6 +19,7 @@ import * as tasksRepo from '../data/tasksRepo.js';
 import * as profileRepo from '../data/profileRepo.js';
 import {
   routinesRepo, routineExceptionsRepo, goalsRepo, projectsRepo, wellbeingRepo,
+  billsRepo, recurringExpensesRepo, savingsGoalsRepo, aiAuditRepo,
   volatileCollections, clearAllCollections
 } from '../data/collectionsRepo.js';
 import { newTaskId } from '../lib/rows.js';
@@ -34,7 +35,8 @@ import {
   setRoutines, addRoutineToState, replaceRoutineInState, removeRoutineFromState, findRoutine,
   setRoutineExceptions, addRoutineExceptionToState, removeRoutineExceptionFromState,
   setGoals, addGoalToState, replaceGoalInState, removeGoalFromState, findGoal,
-  setProjects, setWellbeing, upsertWellbeingEntry, setNotificationPreferences
+  setProjects, setWellbeing, upsertWellbeingEntry, setNotificationPreferences,
+  setBills, setRecurringExpenses, setSavingsGoals, setAiAudit
 } from './state.js';
 import {
   loadPreferences as loadNotificationPreferences,
@@ -78,7 +80,8 @@ function warnAboutVolatileCollections() {
 /** Lataa kirjautuneen käyttäjän kaikki tiedot. */
 export async function loadUserData() {
   const [tasksResult, profileResult, routinesResult, exceptionsResult,
-    goalsResult, projectsResult, wellbeingResult, preferencesResult] = await Promise.all([
+    goalsResult, projectsResult, wellbeingResult, preferencesResult,
+    billsResult, expensesResult, savingsResult, auditResult] = await Promise.all([
     tasksRepo.listTasks(),
     profileRepo.loadProfile(),
     routinesRepo.list(),
@@ -86,7 +89,11 @@ export async function loadUserData() {
     goalsRepo.list(),
     projectsRepo.list(),
     wellbeingRepo.list(),
-    loadNotificationPreferences()
+    loadNotificationPreferences(),
+    billsRepo.list(),
+    recurringExpensesRepo.list(),
+    savingsGoalsRepo.list(),
+    aiAuditRepo.list()
   ]);
 
   if (tasksResult.ok) setTasks(tasksResult.value);
@@ -106,6 +113,13 @@ export async function loadUserData() {
   // Muistutusasetukset: virhe ei saa estää sovelluksen käyttöä, ja
   // epäonnistuessa palataan hiljaiseen oletukseen.
   setNotificationPreferences(preferencesResult.ok ? preferencesResult.value : {});
+
+  // Talous ja kirjausketju. Sama periaate: virhe ei estä sovelluksen
+  // käyttöä, vaan tila jää tyhjäksi.
+  setBills(billsResult.ok ? billsResult.value : []);
+  setRecurringExpenses(expensesResult.ok ? expensesResult.value : []);
+  setSavingsGoals(savingsResult.ok ? savingsResult.value : []);
+  setAiAudit(auditResult.ok ? auditResult.value : []);
 
   return { tasksOk: tasksResult.ok, profileOk: profileResult.ok };
 }

@@ -28,7 +28,7 @@
 // Versio pitää nostaa aina kun sovelluskuori muuttuu. Vanhat välimuistit
 // siivotaan activate-vaiheessa, joten nosto on turvallinen tapa pakottaa
 // päivitys. Ks. docs/DEPLOYMENT.md.
-const CACHE_VERSION = 'v8';
+const CACHE_VERSION = 'v9';
 const CACHE_NAME = `manifestival-shell-${CACHE_VERSION}`;
 
 /**

@@ -887,11 +887,6 @@ export function isAllowedIntent(intent) {
   return typeof intent === 'string' && Object.prototype.hasOwnProperty.call(COMMANDS, intent);
 }
 
-/** Muuttaako komento mitään? */
-export function isMutation(command) {
-  return Boolean(command) && command.risk !== RISK.LOW;
-}
-
 /** Onko komento peruuttamaton? */
 export function isDestructive(command) {
   return Boolean(command) && command.risk === RISK.HIGH;

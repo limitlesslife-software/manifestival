@@ -238,14 +238,6 @@ export function setAiAudit(entries) {
   commit({ aiAudit: (entries || []).map(normalizeAuditEntry) });
 }
 
-export function findBill(id) {
-  return getState().bills.find(bill => bill.id === id) || null;
-}
-
-export function findProject(id) {
-  return getState().projects.find(project => project.id === id) || null;
-}
-
 /** Aseta muistutusasetukset. Normalisointi takaa kelvolliset rajat. */
 export function setNotificationPreferences(preferences) {
   commit({ notificationPreferences: normalizePreferences(preferences) });

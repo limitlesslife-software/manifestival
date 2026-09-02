@@ -129,7 +129,11 @@ export function log(level, message, context = null) {
   else target(prefix, message, payload);
 }
 
-export const logDebug = (message, context) => log(LOG_LEVEL.DEBUG, message, context);
-export const logInfo = (message, context) => log(LOG_LEVEL.INFO, message, context);
+/**
+ * Varoitus.
+ *
+ * Muita tasoja ei viedä erillisinä apureina ennen kuin niille on kutsuja:
+ * viemätön rajapinta on lupaus, jota kukaan ei lunasta. Taso annetaan
+ * silloin `log()`-funktiolle suoraan.
+ */
 export const logWarn = (message, context) => log(LOG_LEVEL.WARN, message, context);
-export const logFailure = (message, context) => log(LOG_LEVEL.ERROR, message, context);
