@@ -15,6 +15,10 @@ import { normalizePreferences, LEVEL, isQuietTime } from '../src/domain/notifica
 import { normalizeTask } from '../src/domain/task.js';
 import { normalizeRoutine, RECURRENCE } from '../src/domain/routine.js';
 import * as capabilities from '../src/platform/capabilities.js';
+import { setUser, clearUser } from '../src/data/session.js';
+
+const USER_A = { id: 'aaaaaaaa-0000-0000-0000-000000000001', email: 'a@example.com' };
+const USER_B = { id: 'bbbbbbbb-0000-0000-0000-000000000002', email: 'b@example.com' };
 
 const ORIGINAL_CAPACITOR = globalThis.Capacitor;
 const ORIGINAL_NOTIFICATION = globalThis.Notification;
@@ -367,4 +371,81 @@ test('REGRESSIO: kesken synkronoinnin tapahtuva uloskirjautuminen estää ajastu
   assert.equal(result.scheduled, 0);
   assert.equal(plugin.calls.schedule.length, 0,
     'edellisen käyttäjän muistutukset ajastettiin uloskirjautumisen jälkeen');
+});
+
+// ------------------------------- ISTUNNON RAJA (yöajo, HIGH-korjaus)
+
+test('KRIITTINEN: tilinvaihto kesken synkronoinnin ei ajasta edellisen käyttäjän muistutuksia', async () => {
+  // Muistutukset lasketaan A:n tehtävistä, mutta ajastetaan vasta kahden
+  // odotuksen jälkeen. Jos tili vaihtuu välissä, A:n tehtävien OTSIKOT
+  // päätyisivät laitteen ilmoitusalueelle B:n istunnossa.
+  //
+  // Vanha suoja tarkisti vain, ovatko muistutukset yhä päällä. Se ei
+  // riitä: heti kun B:n asetukset latautuvat päällä olevina, tarkistus
+  // menee läpi. Kysymys oli väärä — oikea kysymys on istunto.
+  setUser(USER_A);
+  setTasks([taskAt('a1', '09:00'), taskAt('a2', '14:00')]);
+  setNotificationPreferences({ enabled: true, maxPerDay: 10 });
+
+  const plugin = fakePlugin({ display: 'granted' });
+  installNativeShell(plugin);
+  await orchestration.refreshNotificationPermission();
+
+  // Tili vaihtuu juuri kun vanhat muistutukset perutaan — ja B:llä on
+  // muistutukset päällä, joten pelkkä asetustarkistus ei pysäyttäisi tätä.
+  // Kytkeydytään getPendingiin eikä canceliin: cancel ohitetaan kokonaan,
+  // kun laitteella ei ole vielä yhtaan ajastettua ilmoitusta.
+  const originalPending = plugin.getPending.bind(plugin);
+  plugin.getPending = async () => {
+    const result = await originalPending();
+    clearUser();
+    setUser(USER_B);
+    setNotificationPreferences({ enabled: true, maxPerDay: 10 });
+    return result;
+  };
+
+  const result = await orchestration.syncNotifications();
+
+  assert.equal(result.scheduled, 0, 'A:n muistutukset ajastettiin B:n istunnossa');
+  assert.equal(plugin.allScheduled().length, 0,
+    'A:n tehtävien otsikot päätyivät laitteelle tilinvaihdon jälkeen');
+  assert.match(result.reason, /[Ii]stunto/);
+});
+
+test('KRIITTINEN: uloskirjautuminen kesken synkronoinnin ei ajasta mitään', async () => {
+  setUser(USER_A);
+  setTasks([taskAt('a1', '09:00')]);
+  setNotificationPreferences({ enabled: true, maxPerDay: 10 });
+
+  const plugin = fakePlugin({ display: 'granted' });
+  installNativeShell(plugin);
+  await orchestration.refreshNotificationPermission();
+
+  const originalPending = plugin.getPending.bind(plugin);
+  plugin.getPending = async () => {
+    const result = await originalPending();
+    clearUser();
+    return result;
+  };
+
+  const result = await orchestration.syncNotifications();
+
+  assert.equal(plugin.allScheduled().length, 0,
+    'muistutuksia ajastettiin uloskirjautumisen jälkeen');
+  assert.equal(result.scheduled, 0);
+});
+
+test('sama istunto ajastaa muistutukset normaalisti', async () => {
+  // Vartija ei saa estää tavallista käyttöä.
+  setUser(USER_A);
+  setTasks([taskAt('a1', '09:00'), taskAt('a2', '14:00')]);
+  setNotificationPreferences({ enabled: true, maxPerDay: 10 });
+
+  const plugin = fakePlugin({ display: 'granted' });
+  installNativeShell(plugin);
+  await orchestration.refreshNotificationPermission();
+
+  const result = await orchestration.syncNotifications();
+
+  assert.ok(result.scheduled > 0, 'tavallinen synkronointi ei ajastanut mitään');
 });

@@ -42,7 +42,7 @@ import {
   loadPreferences as loadNotificationPreferences,
   clearPreferences as clearNotificationPreferences
 } from '../data/notificationPrefsRepo.js';
-import { getUser } from '../data/session.js';
+import { sessionSnapshot, isSameSession } from '../data/session.js';
 import { showError, success, notify } from '../ui/toast.js';
 import { confirmDelete, confirmAction } from '../ui/confirm.js';
 
@@ -78,12 +78,6 @@ function warnAboutVolatileCollections() {
   notify('Rutiinit, tavoitteet ja hyvinvointimerkinnät säilyvät toistaiseksi vain tämän istunnon ajan.', 7000);
 }
 
-/** Kuka on kirjautuneena juuri nyt. Ei heitä, toisin kuin requireUserId. */
-function currentUserId() {
-  const user = getUser();
-  return user && user.id ? String(user.id) : null;
-}
-
 /**
  * Lataa kirjautuneen käyttäjän kaikki tiedot.
  *
@@ -93,12 +87,12 @@ function currentUserId() {
  * uloskirjautumisen JÄLKEEN — ja jos seuraava käyttäjä ehti jo kirjautua
  * sisään, hänen näytölleen.
  *
- * Sama suoja kuin syncNotifications():ssa. Tämä on kolmas saman luokan
- * vuotoreitti tässä koodikannassa, joten tarkistus tehdään nyt myös
- * täällä eikä vain siellä missä vuoto on jo sattunut.
+ * Tarkistus tehdään istunnon TILANNEKUVASTA eikä pelkästä tunnisteesta:
+ * ketju "A ulos -> A takaisin sisään" jättää tunnisteen ennalleen, mutta
+ * kesken jäänyt lataus on siitä huolimatta vanhentunut.
  */
 export async function loadUserData() {
-  const startedFor = currentUserId();
+  const startedIn = sessionSnapshot();
 
   const [tasksResult, profileResult, routinesResult, exceptionsResult,
     goalsResult, projectsResult, wellbeingResult, preferencesResult,
@@ -117,8 +111,8 @@ export async function loadUserData() {
     aiAuditRepo.list()
   ]);
 
-  // Tila on voinut vaihtua odotuksen aikana.
-  if (currentUserId() !== startedFor) {
+  // Istunto on voinut vaihtua odotuksen aikana.
+  if (!isSameSession(startedIn)) {
     return { tasksOk: false, profileOk: false, discarded: true };
   }
 

@@ -13,8 +13,10 @@ import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { AUTH_TRANSITION, resolveAuthTransition } from '../src/app/auth.js';
-import { setUser, clearUser, getUser, isAuthenticated, requireUserId, userEmail }
-  from '../src/data/session.js';
+import {
+  setUser, clearUser, getUser, isAuthenticated, requireUserId, userEmail,
+  sessionSnapshot, isSameSession
+} from '../src/data/session.js';
 import { clearLocalUserData, loadUserData } from '../src/app/actions.js';
 import {
   routinesRepo, goalsRepo, projectsRepo, wellbeingRepo, ALL_REPOSITORIES
@@ -351,4 +353,78 @@ test('laitekohtaiset asetukset eivät sisällä käyttäjän sisältöä', () =>
   }
   assert.ok(read('src/app/main.js').includes('clearDevicePreferences()'),
     'laiteasetuksia ei tyhjennetä uloskirjautuessa');
+});
+
+// ------------------------------------- ISTUNNON SUKUPOLVI (yöajo)
+
+test('sukupolvi kasvaa jokaisessa identiteettisiirtymässä', () => {
+  const alku = sessionSnapshot().generation;
+
+  setUser(USER_A);
+  const aJalkeen = sessionSnapshot().generation;
+  assert.ok(aJalkeen > alku, 'kirjautuminen ei kasvattanut sukupolvea');
+
+  clearUser();
+  const ulosJalkeen = sessionSnapshot().generation;
+  assert.ok(ulosJalkeen > aJalkeen, 'uloskirjautuminen ei kasvattanut sukupolvea');
+
+  setUser(USER_B);
+  assert.ok(sessionSnapshot().generation > ulosJalkeen, 'tilinvaihto ei kasvattanut');
+});
+
+test('tokenin uusiutuminen EI kasvata sukupolvea', () => {
+  // Uusiutuminen tapahtuu taustalla tunnin välein. Jos se kasvattaisi
+  // sukupolvea, se hylkäisi juuri käynnissä olevan latauksen ja näkymä
+  // jäisi tyhjäksi ilman syytä.
+  setUser(USER_A);
+  const ennen = sessionSnapshot();
+
+  setUser({ ...USER_A, email: 'a@example.com' }); // sama tunniste, uusi token
+
+  assert.equal(sessionSnapshot().generation, ennen.generation);
+  assert.equal(isSameSession(ennen), true, 'uusiutuminen mitätöi istunnon');
+});
+
+test('KRIITTINEN: uloskirjautuminen ja takaisinkirjautuminen mitätöi tilannekuvan', () => {
+  // Pelkkä käyttäjätunnisteen vertailu EI havaitse tätä: tunniste on
+  // lopussa sama kuin alussa. Kesken jäänyt lataus on silti vanhentunut,
+  // ja sen kirjoittaminen tilaan ylikirjoittaisi tuoreemman tilanteen.
+  setUser(USER_A);
+  const ennenUloskirjautumista = sessionSnapshot();
+
+  clearUser();
+  setUser(USER_A);
+
+  assert.equal(sessionSnapshot().userId, ennenUloskirjautumista.userId,
+    'testin oletus: sama käyttäjä');
+  assert.equal(isSameSession(ennenUloskirjautumista), false,
+    'vanhentunut tilannekuva hyväksyttiin, koska tunniste sattui täsmäämään');
+});
+
+test('tyhjä tilannekuva ei koskaan kelpaa', () => {
+  setUser(USER_A);
+  assert.equal(isSameSession(null), false);
+  assert.equal(isSameSession(undefined), false);
+});
+
+test('KRIITTINEN: A ulos ja takaisin sisään hylkää kesken jääneen latauksen', async () => {
+  // Sama reitti päästä päähän: lataus alkaa, käyttäjä käy ulkona ja
+  // palaa, ja vanha vastaus ei saa kirjoittaa vanhaa tilannekuvaa.
+  setUser(USER_A);
+  await seedAs('A');
+
+  const original = routinesRepo.list.bind(routinesRepo);
+  routinesRepo.list = async () => {
+    clearUser();
+    setUser(USER_A); // sama käyttäjä takaisin
+    return original();
+  };
+
+  try {
+    const result = await loadUserData();
+    assert.equal(result.discarded, true,
+      'vanhentunut lataus hyväksyttiin, koska käyttäjä oli sama');
+  } finally {
+    routinesRepo.list = original;
+  }
 });

@@ -22,6 +22,7 @@ import { notifications as platformNotifications } from '../platform/index.js';
 import { PERMISSION } from '../platform/capabilities.js';
 import { getState, setNotificationPreferences } from './state.js';
 import { savePreferences, isPersistent } from '../data/notificationPrefsRepo.js';
+import { sessionSnapshot, isSameSession } from '../data/session.js';
 import { showError, notify } from '../ui/toast.js';
 
 /**
@@ -93,6 +94,11 @@ export async function syncNotifications() {
   if (syncing) return { ok: false, scheduled: 0, planned: 0, reason: 'Synkronointi on jo käynnissä' };
   syncing = true;
 
+  // Ajastettavat muistutukset lasketaan tämän käyttäjän tehtävistä, mutta
+  // ajastus tapahtuu vasta kahden odotuksen jälkeen. Istunto otetaan
+  // talteen heti, jotta tiedetään KENELLE nämä muistutukset kuuluvat.
+  const startedIn = sessionSnapshot();
+
   try {
     const preferences = normalizePreferences(getState().notificationPreferences);
 
@@ -121,10 +127,22 @@ export async function syncNotifications() {
     // asiasta, jota ei enää ole.
     await platformNotifications.cancel();
 
-    // Tila on voinut vaihtua yllä olevan odotuksen aikana — tyypillisimmin
-    // uloskirjautumiseen, joka palauttaa asetukset oletukseen. Ilman tätä
-    // tarkistusta edellisen käyttäjän tehtävien otsikot päätyisivät laitteen
-    // ilmoitusalueelle vasta uloskirjautumisen JÄLKEEN.
+    // ISTUNTO ENSIN, asetukset vasta sen jälkeen.
+    //
+    // Aiemmin tässä tarkistettiin vain, ovatko muistutukset yhä päällä.
+    // Se ei riitä: tilinvaihdossa asetukset palautuvat hetkeksi
+    // oletukseen, mutta heti kun UUDEN käyttäjän asetukset latautuvat
+    // päällä olevina, tarkistus menee läpi — ja EDELLISEN käyttäjän
+    // tehtävien otsikot ajastetaan laitteelle uuden käyttäjän istunnossa.
+    //
+    // Asetus on väärä kysymys. Oikea kysymys on, kuuluvatko nämä
+    // muistutukset yhä sille käyttäjälle, jolle ne laskettiin.
+    if (!isSameSession(startedIn)) {
+      lastSync = { at: Date.now(), scheduled: 0, planned: 0,
+        reason: 'Istunto vaihtui kesken synkronoinnin' };
+      return { ok: true, ...lastSync };
+    }
+
     if (!normalizePreferences(getState().notificationPreferences).enabled) {
       lastSync = { at: Date.now(), scheduled: 0, planned: 0,
         reason: 'Muistutukset kytkettiin pois kesken synkronoinnin' };
