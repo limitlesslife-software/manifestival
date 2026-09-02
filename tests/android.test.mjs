@@ -183,3 +183,81 @@ test('konekohtaiset polut eivät päädy versionhallintaan', () => {
   assert.ok(gitignore.includes('*.apk'), 'APK ei kuulu versionhallintaan');
   assert.ok(gitignore.includes('*.keystore'), 'allekirjoitusavaimet eivät kuulu repoon');
 });
+
+// ---------------------------------- yöajo: manifestin kovennukset
+
+/** Sovelluksen oma manifesti (ei yhdistetty). */
+function appManifest() {
+  return fs.readFileSync(
+    path.join(ROOT, 'android/app/src/main/AndroidManifest.xml'), 'utf8');
+}
+
+test('KRIITTINEN: sovellusdataa ei varmuuskopioida pilveen', { skip: !hasAndroid }, () => {
+  // Supabase-client on persistSession: true, joten kirjautumisistunto —
+  // access token ja pitkäikäinen refresh token — elää WebView'n
+  // localStoragessa. Se on sovelluksen datahakemistossa, jonka Androidin
+  // automaattinen varmuuskopio veisi käyttäjän Google Driveen.
+  //
+  // Pitkäikäistä tunnusta ei kuulu varmuuskopioon. Sama koskee tulevaa
+  // hyvinvointi- ja talousdataa.
+  const manifest = appManifest();
+
+  assert.match(manifest, /android:allowBackup="false"/,
+    'automaattinen varmuuskopio veisi kirjautumisistunnon pilveen');
+
+  // Ja peruste on kirjattu, jottei sitä palauteta tietämättömyyttään.
+  assert.ok(/refresh token|istunto/i.test(manifest),
+    'valinnalle ei ole perustelua manifestissa');
+});
+
+test('istunnon tallennus ja varmuuskopiointi eivät ole ristiriidassa', { skip: !hasAndroid }, () => {
+  // Nämä kaksi päätöstä liittyvät toisiinsa: jos istunnon säilytys joskus
+  // poistetaan, varmuuskopion voi harkita uudelleen — ja päinvastoin. Ilman
+  // tätä testiä yhteys katoaa heti kun toinen tiedosto muuttuu yksin.
+  const persists = /persistSession:\s*true/.test(read('src/data/client.js'));
+  const backedUp = /android:allowBackup="true"/.test(appManifest());
+
+  assert.equal(persists && backedUp, false,
+    'istunto säilytetään laitteella JA laite varmuuskopioidaan — tunnus päätyisi pilveen');
+});
+
+test('selväkielinen liikenne on nimenomaisesti kielletty', { skip: !hasAndroid }, () => {
+  // targetSdk 36:n oletus on jo false, mutta oletukseen ei nojata:
+  // nimenomainen arvo säilyy vaikka targetSdk joskus laskisi.
+  assert.match(appManifest(), /android:usesCleartextTraffic="false"/,
+    'selväkielistä liikennettä ei ole nimenomaisesti kielletty');
+});
+
+test('luvat rajoittuvat siihen, mitä toteutetut ominaisuudet vaativat', { skip: !hasAndroid }, () => {
+  // Oma manifesti pyytää vain INTERNETin. Loput tulevat
+  // ilmoituslisäosasta yhdistämisen kautta, eikä niitä lisätä käsin.
+  const manifest = appManifest();
+  const permissions = [...manifest.matchAll(/uses-permission android:name="([^"]+)"/g)]
+    .map(m => m[1]);
+
+  assert.deepEqual(permissions, ['android.permission.INTERNET'],
+    'omaan manifestiin lisättiin lupa: ' + permissions.join(', '));
+
+  // Sijaintia ei ole toteutettu. Lupaa ei saa pyytää suunnitelman takia.
+  for (const forbidden of ['ACCESS_FINE_LOCATION', 'ACCESS_COARSE_LOCATION',
+    'ACCESS_BACKGROUND_LOCATION', 'CAMERA', 'RECORD_AUDIO',
+    'READ_EXTERNAL_STORAGE', 'READ_CONTACTS']) {
+    assert.equal(manifest.includes(forbidden), false,
+      'lupa ilman toteutusta: ' + forbidden);
+  }
+});
+
+test('vain käynnistysaktiviteetti on ulospäin avoin', { skip: !hasAndroid }, () => {
+  const manifest = appManifest();
+
+  // FileProvider ei saa koskaan olla avoin: se antaisi pääsyn
+  // sovelluksen tiedostoihin.
+  const provider = manifest.slice(manifest.indexOf('<provider'));
+  assert.match(provider, /android:exported="false"/,
+    'FileProvider on avoin ulospäin');
+
+  // MainActivity on avoin, koska se on käynnistin. Se on ainoa.
+  const exported = [...manifest.matchAll(/android:exported="true"/g)];
+  assert.equal(exported.length, 1,
+    'useampi kuin yksi komponentti on avoin ulospäin');
+});
