@@ -120,7 +120,6 @@ src/
     format.js                  escapeHtml, capitalize, viikonpäivät, kuukaudet
     rows.js                    Kanta <-> domain -rivimuunnos, scoping-suojat
     result.js                  AppError: käyttäjäviesti erillään diagnostiikasta
-    seed.js                    Esimerkkidata (ei kytketty sovellukseen)
   domain/
     categories.js              Kategoriat yhtenä lähteenä
     priority.js                Prioriteettimalli ja järjestys

@@ -7,6 +7,12 @@ Toteutus: `src/domain/notification.js` (suunnittelu),
 Testit: `tests/domain-notification.test.mjs`, `tests/invariants.test.mjs`
 Skeema: `supabase/migrations/0005_notification_preferences.sql`
 
+> **Asetukset eivat viela saily.** Migraatiota 0005 ei ole ajettu, ja
+> skeemaportti `notificationPreferences` on `false`. Muistutusasetukset
+> elavat istunnon muistissa ja palautuvat oletukseen sivun latauksessa.
+> Kayttoliittyma kertoo taman kayttajalle.
+> Ks. [`PRODUCTION-ACTIVATION-GATE.md`](PRODUCTION-ACTIVATION-GATE.md).
+
 ---
 
 ## Toteutuksen tila — rehellisesti

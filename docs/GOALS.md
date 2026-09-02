@@ -6,6 +6,13 @@ Toteutus: `src/domain/goal.js`, `src/domain/project.js`, `src/app/views/goals.js
 Testit: `tests/domain-goal-project.test.mjs`, `tests/invariants.test.mjs`
 Skeema: `supabase/migrations/0004_goals_projects.sql`
 
+> **Ei viela saily.** Migraatiota 0004 ei ole ajettu, ja skeemaportit
+> `goals` ja `projects` ovat `false`. Tavoitteet ja projektit elavat
+> istunnon muistissa ja katoavat sivun latauksessa. Projekteilla ei ole
+> viela omaa nakymaa lainkaan. Alla oleva teksti kuvaa mallin sellaisena
+> kuin se on toteutettu ja kuten se toimii migraation jalkeen.
+> Ks. [`PRODUCTION-ACTIVATION-GATE.md`](PRODUCTION-ACTIVATION-GATE.md).
+
 ---
 
 ## Käsitteiden ero

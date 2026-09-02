@@ -18,7 +18,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { ROOT, read } from './helpers/sources.mjs';
+import { ROOT, read, browserModules } from './helpers/sources.mjs';
 
 import { RECURRENCE, ROUTINE_SCHEDULING, EXCEPTION } from '../src/domain/routine.js';
 import { GOAL_STATUS, PROGRESS_MODE } from '../src/domain/goal.js';
@@ -484,5 +484,40 @@ test('varmistuskyselyt eivät lue käyttäjän sisältöä', () => {
       assert.equal(sql.includes(column), false,
         `${name} lukee saraketta ${column}`);
     }
+  }
+});
+
+// -------------------------------- FREEZE: dokumentaation totuudellisuus
+
+test('portin takainen ominaisuusdokumentti kertoo, ettei tieto vielä säily', () => {
+  // Dokumentti, joka kuvaa ominaisuuden toimivaksi mainitsematta ettei se
+  // säily, on väärässä tavalla joka huomataan vasta kun käyttäjä menettää
+  // työnsä. Jokaisen portin takaisen ominaisuuden dokumentin pitää sanoa
+  // se ääneen.
+  const gated = [
+    ['docs/ROUTINES.md', ['routines', 'routineExceptions']],
+    ['docs/GOALS.md', ['goals', 'projects']],
+    ['docs/NOTIFICATIONS.md', ['notificationPreferences']]
+  ];
+
+  for (const [file, gates] of gated) {
+    const stillGated = gates.some(name => TABLES[name] !== true);
+    if (!stillGated) continue;
+
+    const doc = read(file);
+    assert.ok(/eiv?[aä]?t? viel[aä] s[aä]ily|eiv?[aä]?t? s[aä]ily|ei tallennu|vain istunnon/i.test(doc),
+      `${file} kuvaa portin takaista ominaisuutta kertomatta, ettei tieto vielä säily`);
+  }
+});
+
+test('dokumentaatio ei viittaa poistettuihin moduuleihin', () => {
+  // Rakennekuvaus, joka listaa tiedostoja joita ei ole, opettaa lukijaa
+  // olemaan luottamatta siihen.
+  const structureDoc = read('docs/MODULARIZATION.md');
+
+  for (const match of structureDoc.matchAll(/^\s{2,}([a-zA-Z][\w-]*\.js)\s{2,}/gm)) {
+    const name = match[1];
+    const found = browserModules().some(file => file.endsWith('/' + name));
+    assert.ok(found, `MODULARIZATION.md listaa moduulin jota ei ole: ${name}`);
   }
 });

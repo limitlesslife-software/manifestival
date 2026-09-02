@@ -9,6 +9,13 @@ Toteutus: `src/domain/routine.js`, `src/app/views/routines.js`
 Testit: `tests/domain-routine.test.mjs`, `tests/invariants.test.mjs`
 Skeema: `supabase/migrations/0003_routines.sql`
 
+> **Ei viela saily.** Migraatiota 0003 ei ole ajettu, ja skeemaportit
+> `routines` ja `routineExceptions` ovat `false`. Rutiinit elavat siis
+> istunnon muistissa ja katoavat sivun latauksessa. Kayttoliittyma kertoo
+> taman kayttajalle. Alla oleva teksti kuvaa mallin sellaisena kuin se on
+> toteutettu ja kuten se toimii migraation jalkeen.
+> Ks. [`PRODUCTION-ACTIVATION-GATE.md`](PRODUCTION-ACTIVATION-GATE.md).
+
 ---
 
 ## Miksi esiintymiä ei tallenneta
