@@ -1,42 +1,72 @@
-// Talouden domain: laskut, toistuvat kulut ja talousmuistutukset.
+// Talouden domain: laskut, toistuvat kulut, säästötavoitteet ja
+// talousmuistutukset.
 //
 // PUHDAS MODUULI. Ei DOM:ia, ei verkkoa, ei kelloa. Nykyhetki annetaan
 // parametrina, kuten muissakin domain-moduuleissa.
 //
+// ---------------------------------------------------------------------
+// TÄMÄ EI OLE PANKKISOVELLUS
+// ---------------------------------------------------------------------
+// Ei Open Bankingia, ei tiliyhteyksiä, ei maksuja, ei kortteja, ei
+// pankkitunnuksia. Kaikki tieto on käyttäjän itse kirjaamaa. PSD2-
+// integraatio vaatisi lisenssin, sopimukset ja oman tietoturva-
+// arviointinsa — se on oma pakettinsa, ei sivutuote.
+//
+// ---------------------------------------------------------------------
+// RAHA ON KOKONAISLUKU
+// ---------------------------------------------------------------------
+// Summat ovat SENTTEJÄ (`amountMinor`). Ks. src/domain/money.js — siellä
+// on perustelu ja muunnokset. Tässä moduulissa ei koskaan lasketa
+// liukuluvuilla eikä summata eri valuuttoja yhteen.
+//
+// ---------------------------------------------------------------------
 // RAJAUS, JOKA EI OLE NEUVOTELTAVISSA
-// Tämä moduuli EI anna sijoitus- eikä talousneuvontaa. Se kuvaa mitä on, ei
+// ---------------------------------------------------------------------
+// Moduuli EI anna sijoitus- eikä talousneuvontaa. Se kuvaa mitä on, ei
 // ennusta mitä tulee. Sallittua: "hätävara riittää 2,5 kuukaudeksi".
-// Kiellettyä: "sijoita tähän", "myy nyt". Sijoitusneuvonta on säänneltyä
-// toimintaa, eikä henkilökohtainen sovellus voi luvata osaamista jota
-// sillä ei ole. Ks. docs/INVESTMENTS-ARCHITECTURE.md.
+// Kiellettyä: "sijoita tähän", "myy nyt". Ks. docs/INVESTMENTS-ARCHITECTURE.md.
 //
-// EI PANKKIYHTEYTTÄ. Kaikki tieto on käyttäjän itse kirjaamaa. PSD2-
-// integraatio vaatisi lisenssin, sopimukset ja oman tietoturva-arviointinsa.
-//
+// ---------------------------------------------------------------------
 // SUHDE MUUHUN MALLIIN
-// Talous ei ole erillinen saareke. Lasku on määräaika, toistuva kulu on
-// rutiini ja kumpikin voi synnyttää tehtävän:
+// ---------------------------------------------------------------------
+// Talous ei ole erillinen saareke:
 //
-//   Lasku          -> deadline  -> muistutus -> (valinnainen tehtävä)
-//   Toistuva kulu  -> toisto    -> ennuste seuraavasta eräpäivästä
-//
-// Siksi tämä moduuli tuottaa samoja käsitteitä kuin task.js ja routine.js
-// eikä keksi omaa rinnakkaista aikakäsitystä.
+//   Lasku          -> eräpäivä on sama käsite kuin tehtävän deadline
+//   Toistuva kulu  -> SÄÄNTÖ, kuten rutiini; erääntymiset lasketaan
+//   Kumpikin       -> voi synnyttää tehtävän ja muistutuksen
 
 import { fmtISO, parseISO, addDays } from '../lib/datetime.js';
 import { isIsoDate } from './task.js';
+import {
+  DEFAULT_CURRENCY, normalizeCurrency, normalizeMinor, percentOf, remainingMinor,
+  sumByCurrency
+} from './money.js';
 
-/** Laskun tila. */
+/**
+ * Laskun tila.
+ *
+ * UPCOMING, DUE ja OVERDUE ovat JOHDETTUJA näkymiä avoimeen laskuun —
+ * ne lasketaan eräpäivästä eikä tallenneta. Tallennettuna ne vanhenisivat
+ * heti: eilen "tulossa" merkitty rivi olisi tänään väärässä.
+ *
+ * Vain OPEN, PAID ja CANCELLED ovat oikeasti tallennettuja tiloja.
+ */
 export const BILL_STATUS = Object.freeze({
-  /** Odottaa maksua. */
   OPEN: 'open',
-  /** Maksettu. */
   PAID: 'paid',
-  /** Peruttu tai hyvitetty — ei enää maksettava. */
   CANCELLED: 'cancelled'
 });
 
 export const BILL_STATUSES = Object.freeze(Object.values(BILL_STATUS));
+
+/** Laskun johdettu kiireellisyys. Lasketaan aina uudelleen. */
+export const BILL_URGENCY = Object.freeze({
+  UPCOMING: 'upcoming',
+  DUE: 'due',
+  OVERDUE: 'overdue',
+  PAID: 'paid',
+  CANCELLED: 'cancelled'
+});
 
 /** Toistuvan kulun jakso. */
 export const CADENCE = Object.freeze({
@@ -48,21 +78,7 @@ export const CADENCE = Object.freeze({
 
 export const CADENCES = Object.freeze(Object.values(CADENCE));
 
-/**
- * Jakson pituus päivinä.
- *
- * Tarkoituksella APPROKSIMAATIO eikä kalenterilaskentaa: näitä käytetään
- * vain kuukausikustannuksen arvioon ja seuraavan erääntymisen ennusteeseen.
- * Kalenteritarkka toistuvuus kuuluu rutiinimoduulille, jolla se jo on.
- */
-const CADENCE_DAYS = Object.freeze({
-  [CADENCE.WEEKLY]: 7,
-  [CADENCE.MONTHLY]: 30,
-  [CADENCE.QUARTERLY]: 91,
-  [CADENCE.YEARLY]: 365
-});
-
-/** Kuinka monta kertaa vuodessa jakso toistuu. */
+/** Kuinka monta kertaa vuodessa jakso toistuu. Käytetään kuukausiarvioon. */
 const CADENCE_PER_YEAR = Object.freeze({
   [CADENCE.WEEKLY]: 52,
   [CADENCE.MONTHLY]: 12,
@@ -81,31 +97,11 @@ export function cadenceLabel(cadence) {
   return CADENCE_LABELS[cadence] || cadence;
 }
 
-/** Oletusvaluutta. Monivaluuttatuki on PLANNED, ei toteutettu. */
-export const DEFAULT_CURRENCY = 'EUR';
+/** Kuinka monta päivää ennen eräpäivää muistutetaan oletuksena. */
+export const DEFAULT_BILL_LEAD_DAYS = 3;
 
-/** Suurin hyväksyttävä summa. Suojaa kirjoitusvirheeltä, ei rikkaudelta. */
-export const MAX_AMOUNT = 1e9;
-
-/**
- * Rahasumma sentteinä pyöristettynä.
- *
- * Rahaa EI säilytetä liukulukuna laskennassa: 0,1 + 0,2 ei ole 0,3
- * binäärisessä liukuluvussa, ja virhe kertautuu summattaessa. Arvo
- * pyöristetään kahteen desimaaliin heti normalisoinnissa.
- */
-function normalizeAmount(value) {
-  // Puuttuva arvo on TUNTEMATON, ei nolla. Number(null) ja Number('') ovat
-  // molemmat 0, joten ilman tätä tarkistusta tyhjä kenttä muuttuisi
-  // hiljaa nollan euron laskuksi — ja validointi hyväksyisi sen, koska
-  // summa ei olisi null. Käyttäjä luulisi kirjanneensa laskun oikein.
-  if (value === null || value === undefined || value === '') return null;
-
-  const number = Number(value);
-  if (!Number.isFinite(number) || number < 0) return null;
-  const rounded = Math.round(number * 100) / 100;
-  return rounded > MAX_AMOUNT ? null : rounded;
-}
+/** Enimmäismäärä laskettuja erääntymisiä. Estää rajattoman materialisoinnin. */
+export const MAX_OCCURRENCES = 200;
 
 function cleanText(value, maxLength) {
   if (value === null || value === undefined) return null;
@@ -124,9 +120,10 @@ function cleanText(value, maxLength) {
 export function normalizeBill(input = {}) {
   return {
     id: input.id != null ? String(input.id) : null,
-    title: cleanText(input.title, 200) || '',
-    amount: normalizeAmount(input.amount),
-    currency: cleanText(input.currency, 3) || DEFAULT_CURRENCY,
+    name: cleanText(input.name ?? input.title, 200) || '',
+    /** SENTTEINÄ. Ks. src/domain/money.js. */
+    amountMinor: normalizeMinor(input.amountMinor),
+    currency: normalizeCurrency(input.currency),
     /** Eräpäivä. Sama käsite kuin tehtävän deadline. */
     dueDate: isIsoDate(input.dueDate) ? input.dueDate : null,
     status: BILL_STATUSES.includes(input.status) ? input.status : BILL_STATUS.OPEN,
@@ -146,8 +143,8 @@ export function normalizeBill(input = {}) {
 
 export function validateBill(bill) {
   const errors = {};
-  if (!bill.title) errors.title = 'Anna laskulle nimi.';
-  if (bill.amount === null) errors.amount = 'Anna summa numerona.';
+  if (!bill.name) errors.name = 'Anna laskulle nimi.';
+  if (bill.amountMinor === null) errors.amountMinor = 'Anna summa.';
   if (!bill.dueDate) errors.dueDate = 'Anna eräpäivä.';
   if (bill.status === BILL_STATUS.PAID && !bill.paidDate) {
     errors.paidDate = 'Merkitse milloin lasku maksettiin.';
@@ -163,8 +160,7 @@ export function isOpenBill(bill) {
 /**
  * Onko lasku myöhässä.
  *
- * JOHDETTU tieto, ei tallennettu kenttä. Tallennettuna se vanhenisi heti:
- * eilen "ajallaan" merkitty rivi olisi tänään väärässä.
+ * JOHDETTU tieto, ei tallennettu kenttä.
  */
 export function isBillOverdue(bill, todayIso) {
   if (!isOpenBill(bill) || !bill.dueDate || !isIsoDate(todayIso)) return false;
@@ -179,6 +175,23 @@ export function daysUntilDue(bill, todayIso) {
   return Math.round((due.getTime() - today.getTime()) / 86400000);
 }
 
+/**
+ * Laskun johdettu kiireellisyys.
+ *
+ * Maksettu ja peruttu ovat omat tilansa; avoin jakautuu eräpäivän mukaan.
+ */
+export function billUrgency(bill, todayIso, leadDays = DEFAULT_BILL_LEAD_DAYS) {
+  if (!bill) return BILL_URGENCY.UPCOMING;
+  if (bill.status === BILL_STATUS.PAID) return BILL_URGENCY.PAID;
+  if (bill.status === BILL_STATUS.CANCELLED) return BILL_URGENCY.CANCELLED;
+
+  const days = daysUntilDue(bill, todayIso);
+  if (days === null) return BILL_URGENCY.UPCOMING;
+  if (days < 0) return BILL_URGENCY.OVERDUE;
+  if (days <= leadDays) return BILL_URGENCY.DUE;
+  return BILL_URGENCY.UPCOMING;
+}
+
 // -------------------------------------------------------- toistuva kulu
 
 /**
@@ -190,10 +203,18 @@ export function daysUntilDue(bill, todayIso) {
 export function normalizeRecurringExpense(input = {}) {
   return {
     id: input.id != null ? String(input.id) : null,
-    title: cleanText(input.title, 200) || '',
-    amount: normalizeAmount(input.amount),
-    currency: cleanText(input.currency, 3) || DEFAULT_CURRENCY,
+    name: cleanText(input.name ?? input.title, 200) || '',
+    amountMinor: normalizeMinor(input.amountMinor),
+    currency: normalizeCurrency(input.currency),
     cadence: CADENCES.includes(input.cadence) ? input.cadence : CADENCE.MONTHLY,
+    /**
+     * Kuukauden päivä, jona kulu erääntyy (1–31).
+     *
+     * Tarvitaan, koska kuukaudet ovat eripituisia: "vuokra 31. päivä" ei voi
+     * osua helmikuuhun. Ks. `monthlyDueDate` — päivä rajataan kuukauden
+     * viimeiseen, ei vieritetä seuraavaan kuukauteen.
+     */
+    dayOfMonth: normalizeDayOfMonth(input.dayOfMonth),
     /** Seuraava tunnettu eräpäivä. Tästä ennusteet lasketaan eteenpäin. */
     nextDueDate: isIsoDate(input.nextDueDate) ? input.nextDueDate : null,
     category: cleanText(input.category, 40) || 'talous',
@@ -205,33 +226,88 @@ export function normalizeRecurringExpense(input = {}) {
   };
 }
 
+function normalizeDayOfMonth(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  const day = Math.round(n);
+  return day >= 1 && day <= 31 ? day : null;
+}
+
 export function validateRecurringExpense(expense) {
   const errors = {};
-  if (!expense.title) errors.title = 'Anna kululle nimi.';
-  if (expense.amount === null) errors.amount = 'Anna summa numerona.';
+  if (!expense.name) errors.name = 'Anna kululle nimi.';
+  if (expense.amountMinor === null) errors.amountMinor = 'Anna summa.';
   if (!CADENCES.includes(expense.cadence)) errors.cadence = 'Valitse jakso.';
   if (!expense.nextDueDate) errors.nextDueDate = 'Anna seuraava eräpäivä.';
   return { valid: Object.keys(errors).length === 0, errors };
 }
 
 /**
- * Kulun kuukausikustannus.
+ * Kuukausikustannus sentteinä.
  *
  * Vuosimaksu jaettuna kahdellatoista on vertailukelpoinen luku, jolla eri
  * jaksoiset kulut voi laskea yhteen. Se ei ole ennuste vaan muunnos.
+ * Pyöristys tehdään kokonaisluvuksi — puolikkaita senttejä ei ole.
  */
-export function monthlyCost(expense) {
-  if (!expense || expense.amount === null) return 0;
+export function monthlyCostMinor(expense) {
+  if (!expense || expense.amountMinor === null) return 0;
   const perYear = CADENCE_PER_YEAR[expense.cadence] ?? 12;
-  return Math.round((expense.amount * perYear / 12) * 100) / 100;
+  return Math.round((expense.amountMinor * perYear) / 12);
 }
 
-/** Aktiivisten toistuvien kulujen yhteenlaskettu kuukausikustannus. */
-export function totalMonthlyCost(expenses = []) {
-  const total = expenses
-    .filter(expense => expense && expense.active)
-    .reduce((sum, expense) => sum + monthlyCost(expense), 0);
-  return Math.round(total * 100) / 100;
+/**
+ * Aktiivisten toistuvien kulujen kuukausikustannus valuutoittain.
+ * Eri valuuttoja ei lasketa yhteen.
+ */
+export function monthlyCostByCurrency(expenses = []) {
+  return sumByCurrency(
+    (expenses || [])
+      .filter(expense => expense && expense.active)
+      .map(expense => ({
+        amountMinor: monthlyCostMinor(expense),
+        currency: expense.currency
+      }))
+  );
+}
+
+/**
+ * Kuukauden päivä turvallisesti kalenterikuukauteen.
+ *
+ * "Vuokra 31. päivä" ei voi osua helmikuuhun. Vaihtoehdot olisivat
+ * vierittää maaliskuun 3. päivään (Date tekee näin itsestään) tai rajata
+ * kuukauden viimeiseen. Rajaus on oikein: lasku erääntyy helmikuussa, ei
+ * maaliskuussa, ja vieritys siirtäisi sen väärään kuukauteen kokonaan.
+ */
+export function monthlyDueDate(year, monthIndex, dayOfMonth) {
+  const lastDay = new Date(year, monthIndex + 1, 0).getDate();
+  const day = Math.min(Math.max(1, dayOfMonth), lastDay);
+  return fmtISO(new Date(year, monthIndex, day));
+}
+
+/**
+ * Seuraava erääntyminen annetusta päivästä eteenpäin.
+ *
+ * Kuukausi- ja vuosijaksot käyttävät KALENTERILASKENTAA, eivät kiinteää
+ * päivämäärää: 30 päivää ei ole kuukausi, ja 365 päivää ei ole vuosi
+ * karkausvuonna. Viikko ja neljännesvuosi lasketaan päivinä, koska niissä
+ * ero ei synny.
+ */
+function advance(dateIso, cadence, dayOfMonth) {
+  const date = parseISO(dateIso);
+
+  if (cadence === CADENCE.WEEKLY) return fmtISO(addDays(date, 7));
+
+  if (cadence === CADENCE.MONTHLY || cadence === CADENCE.QUARTERLY
+    || cadence === CADENCE.YEARLY) {
+    const step = cadence === CADENCE.MONTHLY ? 1 : cadence === CADENCE.QUARTERLY ? 3 : 12;
+    const anchor = dayOfMonth ?? date.getDate();
+    const year = date.getFullYear();
+    const month = date.getMonth() + step;
+    return monthlyDueDate(year, month, anchor);
+  }
+
+  return fmtISO(addDays(date, 30));
 }
 
 /**
@@ -242,37 +318,40 @@ export function totalMonthlyCost(expenses = []) {
  *  - Päiväjärjestyksessä, ei kahta samaa päivää
  *  - Pois kytketty kulu ei tuota yhtään erääntymistä
  *  - Ei koskaan enempää kuin MAX_OCCURRENCES riviä
+ *  - Menneet erääntymiset eivät kuulu ennusteeseen
  *
- * @returns {Array<{expenseId:string, date:string, amount:number, title:string}>}
+ * @returns {Array<{expenseId, name, amountMinor, currency, date, cadence}>}
  */
 export function projectDueDates({ expense, from, to }) {
   if (!expense || !expense.active || !expense.nextDueDate) return [];
   if (!isIsoDate(from) || !isIsoDate(to) || to < from) return [];
-
-  const step = CADENCE_DAYS[expense.cadence];
-  if (!step) return [];
+  if (!CADENCES.includes(expense.cadence)) return [];
 
   const results = [];
-  let cursor = parseISO(expense.nextDueDate);
+  let cursor = expense.nextDueDate;
   let guard = 0;
-  const MAX_OCCURRENCES = 200;
 
-  // Kelaa eteenpäin, kunnes ollaan välin sisällä. Menneet erääntymiset eivät
-  // kuulu ennusteeseen — ne ovat historiaa, eivät suunnitelmaa.
-  while (fmtISO(cursor) < from && guard++ < MAX_OCCURRENCES) {
-    cursor = addDays(cursor, step);
+  // Kelaa eteenpäin, kunnes ollaan välin sisällä. Menneet erääntymiset ovat
+  // historiaa, eivät suunnitelmaa.
+  while (cursor < from && guard++ < MAX_OCCURRENCES) {
+    const next = advance(cursor, expense.cadence, expense.dayOfMonth);
+    // Suoja: jos askel ei etene, silmukka pysähtyy sen sijaan että jumittuisi.
+    if (next <= cursor) return results;
+    cursor = next;
   }
 
-  while (fmtISO(cursor) <= to && guard++ < MAX_OCCURRENCES) {
+  while (cursor <= to && guard++ < MAX_OCCURRENCES) {
     results.push({
       expenseId: expense.id,
-      title: expense.title,
-      amount: expense.amount,
+      name: expense.name,
+      amountMinor: expense.amountMinor,
       currency: expense.currency,
-      date: fmtISO(cursor),
+      date: cursor,
       cadence: expense.cadence
     });
-    cursor = addDays(cursor, step);
+    const next = advance(cursor, expense.cadence, expense.dayOfMonth);
+    if (next <= cursor) break;
+    cursor = next;
   }
 
   return results;
@@ -283,28 +362,63 @@ export function projectAllDueDates({ expenses = [], from, to }) {
   return expenses
     .flatMap(expense => projectDueDates({ expense, from, to }))
     .sort((a, b) => a.date.localeCompare(b.date)
-      || String(a.title).localeCompare(String(b.title), 'fi'));
+      || String(a.name).localeCompare(String(b.name), 'fi'));
+}
+
+// ------------------------------------------------------ säästötavoite
+
+/**
+ * Normalisoi säästötavoite.
+ *
+ * EI sijoitustuottoja eikä oletettua korkoa. Tavoite on se mitä käyttäjä
+ * on itse pannut sivuun — ei se mitä siitä voisi kasvaa.
+ */
+export function normalizeSavingsGoal(input = {}) {
+  return {
+    id: input.id != null ? String(input.id) : null,
+    name: cleanText(input.name ?? input.title, 200) || '',
+    targetMinor: normalizeMinor(input.targetMinor),
+    currentMinor: normalizeMinor(input.currentMinor) ?? 0,
+    currency: normalizeCurrency(input.currency),
+    targetDate: isIsoDate(input.targetDate) ? input.targetDate : null,
+    note: cleanText(input.note, 500),
+    createdAt: input.createdAt ?? null,
+    updatedAt: input.updatedAt ?? null
+  };
+}
+
+export function validateSavingsGoal(goal) {
+  const errors = {};
+  if (!goal.name) errors.name = 'Anna tavoitteelle nimi.';
+  if (goal.targetMinor === null || goal.targetMinor === 0) {
+    errors.targetMinor = 'Anna tavoitesumma.';
+  }
+  return { valid: Object.keys(errors).length === 0, errors };
+}
+
+/** Säästötavoitteen edistyminen. Kaikki johdettua, mitään ei tallenneta. */
+export function summarizeSavingsGoal(goal) {
+  return {
+    goal,
+    percent: percentOf(goal.currentMinor, goal.targetMinor),
+    remainingMinor: remainingMinor(goal.currentMinor, goal.targetMinor),
+    reached: goal.targetMinor !== null && goal.currentMinor >= goal.targetMinor
+  };
 }
 
 // -------------------------------------------------------- muistutukset
-
-/** Kuinka monta päivää ennen eräpäivää muistutetaan oletuksena. */
-export const DEFAULT_BILL_LEAD_DAYS = 3;
 
 /**
  * Rakenna talousmuistutukset avoimista laskuista.
  *
  * TÄMÄ EI OLE ILMOITUSMOOTTORI. Se tuottaa saman muotoisia kuvauksia kuin
  * domain/notification.js, jotta ilmoituskerros voi käsitellä ne samoin —
- * mutta lähettäminen, rauhoitusajat ja päiväkatot kuuluvat sinne, eivät
- * tänne. Yksi vastuu per moduuli.
+ * mutta lähettäminen, rauhoitusajat ja päiväkatot kuuluvat sinne.
  *
  * TAKUUT:
  *  - Maksetusta tai perutusta laskusta ei koskaan muistuteta
  *  - Deterministinen ja eräpäiväjärjestyksessä
  *  - Myöhässä oleva lasku on aina kiireellisempi kuin tuleva
- *
- * @returns {Array<{billId, title, dueDate, amount, daysUntil, overdue, urgency}>}
  */
 export function buildFinancialReminders({
   bills = [],
@@ -316,44 +430,46 @@ export function buildFinancialReminders({
 
   return bills
     .filter(isOpenBill)
-    .map(bill => {
-      const daysUntil = daysUntilDue(bill, todayIso);
-      const overdue = isBillOverdue(bill, todayIso);
-      return {
-        billId: bill.id,
-        title: bill.title,
-        dueDate: bill.dueDate,
-        amount: bill.amount,
-        currency: bill.currency,
-        daysUntil,
-        overdue,
-        urgency: overdue ? 'overdue' : daysUntil === 0 ? 'today' : 'soon'
-      };
-    })
-    .filter(reminder =>
-      reminder.daysUntil !== null && reminder.daysUntil <= lead)
+    .map(bill => ({
+      billId: bill.id,
+      name: bill.name,
+      dueDate: bill.dueDate,
+      amountMinor: bill.amountMinor,
+      currency: bill.currency,
+      daysUntil: daysUntilDue(bill, todayIso),
+      overdue: isBillOverdue(bill, todayIso),
+      urgency: billUrgency(bill, todayIso, lead)
+    }))
+    .filter(reminder => reminder.daysUntil !== null && reminder.daysUntil <= lead)
     .sort((a, b) => String(a.dueDate).localeCompare(String(b.dueDate))
-      || String(a.title).localeCompare(String(b.title), 'fi'));
+      || String(a.name).localeCompare(String(b.name), 'fi'));
 }
 
 /**
  * Yhteenveto talouden tilasta.
  *
- * Kuvaa mitä on. Ei ennusta, ei neuvo, ei arvota.
+ * Kuvaa mitä on. Ei ennusta, ei neuvo, ei arvota. Summat valuutoittain,
+ * koska eri valuuttoja ei lasketa yhteen.
  */
-export function summarizeFinances({ bills = [], expenses = [], todayIso } = {}) {
+export function summarizeFinances({
+  bills = [], expenses = [], savingsGoals = [], todayIso
+} = {}) {
   const open = bills.filter(isOpenBill);
   const overdue = open.filter(bill => isBillOverdue(bill, todayIso));
-
-  const sum = list => Math.round(
-    list.reduce((total, bill) => total + (bill.amount || 0), 0) * 100) / 100;
+  const due = open.filter(bill => billUrgency(bill, todayIso) === BILL_URGENCY.DUE);
+  const paid = bills.filter(bill => bill.status === BILL_STATUS.PAID);
 
   return {
     openCount: open.length,
-    openAmount: sum(open),
+    openTotals: sumByCurrency(open),
     overdueCount: overdue.length,
-    overdueAmount: sum(overdue),
-    monthlyRecurring: totalMonthlyCost(expenses),
-    activeExpenses: expenses.filter(expense => expense && expense.active).length
+    overdueTotals: sumByCurrency(overdue),
+    dueSoonCount: due.length,
+    paidCount: paid.length,
+    monthlyRecurringTotals: monthlyCostByCurrency(expenses),
+    activeExpenses: expenses.filter(expense => expense && expense.active).length,
+    savingsGoals: savingsGoals.map(summarizeSavingsGoal)
   };
 }
+
+export { DEFAULT_CURRENCY };

@@ -148,6 +148,7 @@ export const routinesRepo = createRepository({
     preferred_time: routine.preferredTime,
     scheduling: routine.scheduling,
     active: routine.active,
+    goal_id: routine.goalId,
     start_date: routine.startDate,
     end_date: routine.endDate
   }),
@@ -162,6 +163,7 @@ export const routinesRepo = createRepository({
     preferredTime: row.preferred_time,
     scheduling: row.scheduling,
     active: row.active,
+    goalId: row.goal_id,
     startDate: row.start_date,
     endDate: row.end_date,
     createdAt: row.created_at,
@@ -242,18 +244,22 @@ export const projectsRepo = createRepository({
     name: project.name,
     description: project.description,
     category: project.category,
+    priority: project.priority,
     status: project.status,
     goal_id: project.goalId,
-    target_date: project.targetDate
+    start_date: project.startDate,
+    deadline: project.deadline
   }),
   fromRow: row => normalizeProject({
     id: row.id,
     name: row.name,
     description: row.description,
     category: row.category,
+    priority: row.priority,
     status: row.status,
     goalId: row.goal_id,
-    targetDate: row.target_date,
+    startDate: row.start_date,
+    deadline: row.deadline,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   })

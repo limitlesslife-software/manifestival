@@ -152,6 +152,8 @@ export function normalizeRoutine(input = {}) {
       ? ROUTINE_SCHEDULING.FIXED
       : ROUTINE_SCHEDULING.FLEXIBLE,
     active: input.active !== false,
+    /** Vapaaehtoinen yhteys tavoitteeseen. Ks. PROGRESS_MODE.ROUTINE_BASED. */
+    goalId: input.goalId != null ? String(input.goalId) : null,
     startDate: isIsoDate(input.startDate) ? input.startDate : null,
     endDate: isIsoDate(input.endDate) ? input.endDate : null,
     createdAt: input.createdAt ?? null,

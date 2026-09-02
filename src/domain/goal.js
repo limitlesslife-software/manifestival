@@ -29,6 +29,14 @@ export const GOAL_STATUS = Object.freeze({
   PAUSED: 'paused',
   /** Saavutettu. */
   COMPLETED: 'completed',
+  /**
+   * Luovutettu.
+   *
+   * Eri asia kuin arkistoitu: arkistointi on siivousta, luovuttaminen on
+   * päätös. Ero on käyttäjälle merkityksellinen, koska luovutettu tavoite
+   * kertoo jotain — arkistoitu ei kerro mitään.
+   */
+  ABANDONED: 'abandoned',
   /** Arkistoitu. Pois näkyvistä, historia säilyy. */
   ARCHIVED: 'archived'
 });
@@ -38,12 +46,24 @@ export const GOAL_STATUSES = Object.freeze(Object.values(GOAL_STATUS));
 /** Tilat, jotka vaativat käyttäjän huomiota. */
 export const OPEN_STATUSES = Object.freeze([GOAL_STATUS.ACTIVE, GOAL_STATUS.PAUSED]);
 
-/** Miten edistyminen lasketaan. */
+/**
+ * Miten edistyminen lasketaan.
+ *
+ * Kolme johdettua tapaa ja yksi manuaalinen. Johdettu on aina parempi, kun
+ * se on mahdollinen: se pysyy totena ilman että käyttäjä muistaa päivittää.
+ * Manuaalinen on olemassa tavoitteille, joita ei voi pilkkoa mielekkäästi
+ * ("opi ruotsia") — ja käyttöliittymä merkitsee sen näkyvästi, jottei
+ * lukua luulisi lasketuksi.
+ */
 export const PROGRESS_MODE = Object.freeze({
   /** Käyttäjä asettaa prosentin itse. */
   MANUAL: 'manual',
   /** Johdetaan liitettyjen tehtävien valmiustilasta. */
-  TASK_BASED: 'task_based'
+  TASK_BASED: 'task_based',
+  /** Johdetaan liitettyjen projektien edistymisestä. */
+  PROJECT_BASED: 'project_based',
+  /** Johdetaan liitettyjen rutiinien toteumasta. */
+  ROUTINE_BASED: 'routine_based'
 });
 
 export const PROGRESS_MODES = Object.freeze(Object.values(PROGRESS_MODE));
@@ -52,6 +72,7 @@ const STATUS_LABELS = Object.freeze({
   [GOAL_STATUS.ACTIVE]: 'Työn alla',
   [GOAL_STATUS.PAUSED]: 'Tauolla',
   [GOAL_STATUS.COMPLETED]: 'Saavutettu',
+  [GOAL_STATUS.ABANDONED]: 'Luovutettu',
   [GOAL_STATUS.ARCHIVED]: 'Arkistoitu'
 });
 
@@ -149,7 +170,7 @@ export function tasksForGoal(tasks, goalId) {
  *
  * @returns {{percent:number, completed:number, total:number, mode:string, derived:boolean}}
  */
-export function computeGoalProgress(goal, tasks = []) {
+export function computeGoalProgress(goal, tasks = [], context = {}) {
   if (goal.status === GOAL_STATUS.COMPLETED) {
     const linked = tasksForGoal(tasks, goal.id);
     return {
@@ -171,6 +192,14 @@ export function computeGoalProgress(goal, tasks = []) {
     };
   }
 
+  if (goal.progressMode === PROGRESS_MODE.PROJECT_BASED) {
+    return projectBasedProgress(goal, context.projects || [], tasks);
+  }
+
+  if (goal.progressMode === PROGRESS_MODE.ROUTINE_BASED) {
+    return routineBasedProgress(goal, context.routines || []);
+  }
+
   const linked = tasksForGoal(tasks, goal.id);
   const total = linked.length;
   const completed = linked.filter(task => task.completed).length;
@@ -182,6 +211,65 @@ export function computeGoalProgress(goal, tasks = []) {
     completed,
     total,
     mode: PROGRESS_MODE.TASK_BASED,
+    derived: true
+  };
+}
+
+/** Tavoitteeseen liitetyt projektit. */
+export function projectsForGoal(projects, goalId) {
+  if (!goalId || !Array.isArray(projects)) return [];
+  return projects.filter(project => project && project.goalId === goalId);
+}
+
+/** Tavoitteeseen liitetyt rutiinit. */
+export function routinesForGoal(routines, goalId) {
+  if (!goalId || !Array.isArray(routines)) return [];
+  return routines.filter(routine => routine && routine.goalId === goalId);
+}
+
+/**
+ * Edistyminen liitettyjen projektien tehtävistä.
+ *
+ * Lasketaan TEHTÄVISTÄ eikä projektien prosenttien keskiarvosta: kymmenen
+ * tehtävän projekti ei ole yhtä painava kuin yhden tehtävän projekti, ja
+ * keskiarvo antaisi niille saman painon.
+ */
+function projectBasedProgress(goal, projects, tasks) {
+  const linked = projectsForGoal(projects, goal.id);
+  const ids = new Set(linked.map(project => project.id));
+
+  const linkedTasks = (tasks || []).filter(task => task && ids.has(task.projectId));
+  const total = linkedTasks.length;
+  const completed = linkedTasks.filter(task => task.completed).length;
+
+  return {
+    percent: total === 0 ? 0 : Math.round((completed / total) * 100),
+    completed,
+    total,
+    mode: PROGRESS_MODE.PROJECT_BASED,
+    derived: true,
+    projectCount: linked.length
+  };
+}
+
+/**
+ * Edistyminen liitetyistä rutiineista.
+ *
+ * Rutiinilla ei ole "valmis"-tilaa — se on sääntö, ei tehtävä. Siksi
+ * edistyminen on osuus rutiineista, jotka ovat KÄYTÖSSÄ. Se vastaa
+ * kysymykseen "pidänkö kiinni siitä mitä lupasin", joka on ainoa
+ * mielekäs tulkinta rutiinipohjaiselle tavoitteelle.
+ */
+function routineBasedProgress(goal, routines) {
+  const linked = routinesForGoal(routines, goal.id);
+  const total = linked.length;
+  const active = linked.filter(routine => routine.active).length;
+
+  return {
+    percent: total === 0 ? 0 : Math.round((active / total) * 100),
+    completed: active,
+    total,
+    mode: PROGRESS_MODE.ROUTINE_BASED,
     derived: true
   };
 }

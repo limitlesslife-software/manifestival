@@ -81,6 +81,11 @@ create table if not exists public.routines (
   -- Pois kytketty rutiini säilyy historiana mutta ei tuota esiintymiä.
   active              boolean not null default true,
 
+  -- Vapaaehtoinen yhteys tavoitteeseen. Vierasavain lisätään vasta
+  -- migraatiossa 0004, koska goals-taulu luodaan siellä. Sarake on tässä,
+  -- jotta rutiinien skeema on kerralla valmis eikä muutu takautuvasti.
+  goal_id             text,
+
   -- Voimassaoloväli. Molemmat vapaaehtoisia: ilman niitä sääntö on
   -- voimassa toistaiseksi.
   start_date          date,

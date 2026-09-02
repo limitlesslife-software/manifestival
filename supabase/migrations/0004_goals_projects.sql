@@ -87,13 +87,13 @@ alter table public.goals
   drop constraint if exists goals_status_check;
 alter table public.goals
   add constraint goals_status_check
-  check (status in ('active', 'paused', 'completed', 'archived'));
+  check (status in ('active', 'paused', 'completed', 'abandoned', 'archived'));
 
 alter table public.goals
   drop constraint if exists goals_progress_mode_check;
 alter table public.goals
   add constraint goals_progress_mode_check
-  check (progress_mode in ('manual', 'task_based'));
+  check (progress_mode in ('manual', 'task_based', 'project_based', 'routine_based'));
 
 alter table public.goals
   drop constraint if exists goals_manual_progress_check;
@@ -137,20 +137,38 @@ create table if not exists public.projects (
   name        text not null,
   description text,
   category    text not null default 'muu',
+  priority    text not null default 'normaali',
   status      text not null default 'active',
 
   goal_id     text references public.goals(id) on delete set null,
-  target_date date,
+
+  -- Aloitus ja määräaika ovat eri asioita: projekti voi olla myöhässä
+  -- vaikka yksikään tehtävä ei olisi, ja päinvastoin.
+  start_date  date,
+  deadline    date,
 
   created_at  timestamptz not null default now(),
   updated_at  timestamptz not null default now()
 );
 
 alter table public.projects
+  drop constraint if exists projects_priority_check;
+alter table public.projects
+  add constraint projects_priority_check
+  check (priority in ('korkea', 'normaali', 'matala'));
+
+-- Määräaika ei voi olla ennen aloitusta.
+alter table public.projects
+  drop constraint if exists projects_date_range_check;
+alter table public.projects
+  add constraint projects_date_range_check
+  check (start_date is null or deadline is null or deadline >= start_date);
+
+alter table public.projects
   drop constraint if exists projects_status_check;
 alter table public.projects
   add constraint projects_status_check
-  check (status in ('active', 'on_hold', 'completed', 'archived'));
+  check (status in ('planned', 'active', 'on_hold', 'completed', 'archived'));
 
 alter table public.projects
   drop constraint if exists projects_name_check;
@@ -198,6 +216,22 @@ alter table public.tasks
 alter table public.tasks
   add constraint tasks_project_id_fkey
   foreign key (project_id) references public.projects(id) on delete set null;
+
+-- Rutiinin vapaaehtoinen yhteys tavoitteeseen. Sarake luodaan
+-- migraatiossa 0003; viite vasta tässä, koska goals syntyy nyt.
+-- Ehdollinen, jotta 0004 toimii myös ilman 0003:a.
+do $$
+begin
+  if exists (
+    select 1 from information_schema.columns
+     where table_schema = 'public' and table_name = 'routines' and column_name = 'goal_id'
+  ) then
+    alter table public.routines drop constraint if exists routines_goal_id_fkey;
+    alter table public.routines
+      add constraint routines_goal_id_fkey
+      foreign key (goal_id) references public.goals(id) on delete set null;
+  end if;
+end $$;
 
 -- Tavoitenäkymä hakee tehtävät tavoitteen mukaan.
 create index if not exists tasks_user_goal_idx
