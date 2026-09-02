@@ -41,7 +41,4 @@ export function getClient() {
   return client;
 }
 
-/** Onko client jo luotu. Käytetään siihen, ettei luoda sitä turhaan. */
-export function hasClient() {
-  return client !== null;
-}
+

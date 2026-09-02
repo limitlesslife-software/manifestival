@@ -241,3 +241,66 @@ test('näkymien renderöinti ei lisää kuuntelijoita ikkunaan tai dokumenttiin'
       `${file} lisää kuuntelijan ikkunaan — se kasaantuisi joka renderöinnillä`);
   }
 });
+
+// ------------------------------------------- yöajo: uudet invariantit
+
+test('KRIITTINEN: AI-kerros ei kirjoita tietokantaan', () => {
+  // AI ei saa koskaan koskea repositorioon suoraan. Koko turvamalli
+  // - kohteen tunnistus, riskiarvio, esikatselu, vahvistus, kirjaus -
+  // sijaitsee sovelluskerroksessa. Yksi import ohittaisi ne kaikki.
+  //
+  // Ehto pitää tällä hetkellä. Tämä testi pitää sen voimassa.
+  const rikkovat = [];
+
+  for (const file of browserModules().filter(f => f.startsWith("src/ai/"))) {
+    for (const target of importsOf(file)) {
+      if (/\/data\/(?!config\.js)/.test(target) || /Repo\.js$/.test(target)) {
+        rikkovat.push(`${file} -> ${target}`);
+      }
+    }
+  }
+
+  assert.deepEqual(rikkovat, [],
+    'AI-kerros importoi repositorion — se ohittaisi vahvistuksen:\n' + rikkovat.join('\n'));
+});
+
+test('KRIITTINEN: domain ei tuota tunnisteita eikä lue kelloa', () => {
+  // Determinismin ehto. Jos domain arpoisi tunnisteen tai lukisi kellon,
+  // sama syöte tuottaisi eri tuloksen eri hetkinä — eikä yhtäkään
+  // domain-testiä voisi enää kirjoittaa luotettavasti.
+  //
+  // Nykyhetki annetaan aina parametrina. Tunnisteet luodaan
+  // sovelluskerroksessa (lib/rows.js), jota domain ei importoi.
+  const rikkovat = [];
+
+  for (const file of browserModules().filter(f => f.startsWith("src/domain/"))) {
+    const source = readCode(file);
+
+    for (const forbidden of ['Math.random', 'Date.now(', 'crypto.randomUUID']) {
+      if (source.includes(forbidden)) rikkovat.push(`${file}: ${forbidden}`);
+    }
+    if (/new Date\(\s*\)/.test(source)) rikkovat.push(`${file}: new Date()`);
+
+    for (const target of importsOf(file)) {
+      if (target.includes('rows.js')) rikkovat.push(`${file}: tunnistegeneraattori`);
+    }
+  }
+
+  assert.deepEqual(rikkovat, [],
+    'domain ei ole enää deterministinen:\n' + rikkovat.join('\n'));
+});
+
+test('tunnistegeneraattori pysyy sovelluskerroksessa', () => {
+  // Vastapari edelliselle: generaattori saa elää vain siellä, missä
+  // sivuvaikutukset ovat sallittuja.
+  const sallitut = new Set([
+    'src/app/actions.js', 'src/app/aiCommands.js',
+    'src/data/schema.js', 'src/data/tasksRepo.js', 'src/lib/rows.js'
+  ]);
+
+  for (const file of browserModules()) {
+    if (sallitut.has(file)) continue;
+    assert.equal(importsOf(file).some(t => t.includes('rows.js')), false,
+      'tunnistegeneraattori väärässä kerroksessa: ' + file);
+  }
+});

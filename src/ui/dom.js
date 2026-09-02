@@ -86,12 +86,4 @@ export function focus(id) {
   if (node && typeof node.focus === 'function') node.focus();
 }
 
-/** Kunnioittaako käyttäjä liikkeen vähentämistä. */
-export function prefersReducedMotion() {
-  try {
-    return typeof matchMedia === 'function'
-      && matchMedia('(prefers-reduced-motion: reduce)').matches;
-  } catch {
-    return false;
-  }
-}
+

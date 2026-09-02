@@ -10,9 +10,11 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 
 import {
-  browserModules, serverModules, allSourceFiles, read, readCode, readIndexHtml
+  browserModules, serverModules, allSourceFiles, read, readCode, readIndexHtml, ROOT
 } from './helpers/sources.mjs';
 
 // ---------------------------------------------------------- salaisuudet
@@ -216,9 +218,14 @@ test('TURVA: sovellus ei kirjoita esimerkkidataa tietokantaan', () => {
   }
 });
 
-test('seed-moduuli on olemassa mutta sitä ei ole kytketty sovellukseen', () => {
-  const importers = browserModules().filter(file =>
-    file !== 'src/lib/seed.js' && readCode(file).includes('seed.js'));
+test('seed-moduulia ei ole eika sita saa palauttaa', () => {
+  // Moduuli poistettiin yoajossa: mikaan ei importoinut sita, eika
+  // esimerkkidatan kirjoittaminen kayttajan tilille ole ominaisuus, jota
+  // halutaan takaisin vahingossa.
+  assert.equal(fs.existsSync(path.join(ROOT, 'src/lib/seed.js')), false,
+    'seed-moduuli on palannut');
+
+  const importers = browserModules().filter(file => readCode(file).includes('seed.js'));
   assert.deepEqual(importers, [], 'seed-moduulia ei saa importoida: ' + importers.join(', '));
 });
 

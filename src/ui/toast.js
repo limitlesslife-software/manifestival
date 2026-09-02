@@ -81,19 +81,6 @@ export function showError(error, fallbackMessage = 'Jokin meni pieleen. Yritä u
   return render(message, 'error', 6000);
 }
 
-/**
- * Kääri tulos: näyttää virheen jos tulos epäonnistui.
- * @returns {boolean} true jos onnistui
- */
-export function reportResult(result, successMessage) {
-  if (result && result.ok) {
-    if (successMessage) success(successMessage);
-    return true;
-  }
-  showError(result && result.error);
-  return false;
-}
-
 /** Poista kaikki näkyvät ilmoitukset. Kutsutaan uloskirjautumisessa. */
 export function clearToasts() {
   for (const node of active) node.remove();

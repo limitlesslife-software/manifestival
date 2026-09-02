@@ -97,8 +97,8 @@ test('service worker sietää yksittäisen puuttuvan tiedoston asennuksessa', ()
 
 test('sovelluskuoren välimuistilista vastaa oikeasti ladattavia moduuleja', () => {
   // Verrataan siihen, mikä on TODELLA saavutettavissa entrypointista.
-  // Kytkemättömät moduulit (kuten src/lib/seed.js) eivät kuulu kuoreen —
-  // selain ei koskaan lataa niitä.
+  // Kytkemattomat moduulit eivat kuulu kuoreen - selain ei koskaan
+  // lataa niita, joten niiden valimuistitus olisi turhaa kaistaa.
   const reachable = new Set();
   const queue = ['src/app/main.js'];
   while (queue.length) {
