@@ -352,3 +352,69 @@ test('kapean näytön säännöt kattavat viisi välilehteä ja uudet komponenti
   assert.ok(narrow.includes('.wb-dot'), 'hyvinvointiasteikko ei kapene');
   assert.ok(narrow.includes('.weekday-chip'), 'viikonpäivävalinta ei kapene');
 });
+
+// ----------------------------------- WP13: AI-ehdotuksen vahvistusdialogi
+
+test('AI-vahvistus käyttää sovelluksen omaa dialogia eikä selaimen confirmia', () => {
+  // Selaimen raaka dialogi ei voi näyttää muutosrivejä eikä erottaa
+  // vaarallista toimintoa tavallisesta.
+  const source = read('src/ui/confirm.js');
+  assert.ok(source.includes('confirmProposal'), 'vahvistusdialogia ei ole');
+  assert.ok(source.includes("createElement('dialog')"), 'natiivi dialog puuttuu');
+  assert.ok(source.includes('showModal'), 'modaalisemantiikka puuttuu');
+});
+
+test('KRIITTINEN: vahvistuksen oletusfokus on peruutuksessa', () => {
+  // Vaarallinen toiminto ei saa olla oletusvalinta. Enter-näppäin ei saa
+  // poistaa mitään.
+  const source = read('src/ui/confirm.js');
+  const start = source.indexOf('export function confirmProposal');
+  const block = source.slice(start, source.indexOf('export function chooseTarget'));
+
+  assert.ok(block.includes('cancel.focus()'), 'fokus ei ole peruutuksessa');
+  assert.equal(block.includes('accept.focus()'), false,
+    'hyväksyntä ei saa olla oletusvalinta');
+});
+
+test('peruuttamaton toiminto erottuu näkyvästi', () => {
+  const source = read('src/ui/confirm.js');
+  assert.ok(source.includes('proposal-warning'), 'varoitusaluetta ei ole');
+  assert.ok(source.includes("classList.toggle('danger'"), 'vaarallista ei korosteta');
+  assert.match(source, /Poista pysyvästi/, 'painike ei kerro seurausta');
+
+  // Ja tyylit tekevät eron myös visuaalisesti, eivät vain sanoin.
+  assert.ok(css.includes('.proposal-dialog.destructive'), 'vaarallinen dialogi ei erotu');
+  assert.ok(css.includes('.proposal-warning'), 'varoituksen tyyli puuttuu');
+});
+
+test('KRIITTINEN: muutosrivit rakennetaan DOM-solmuina eikä merkkijonona', () => {
+  // Arvot ovat käyttäjän ja AI:n tuottamaa tekstiä. textContent estää
+  // injektion rakenteellisesti — se ei voi unohtua yhdestä kentästä
+  // niin kuin escapeHtml voi.
+  const source = read('src/ui/confirm.js');
+  const start = source.indexOf('function buildChangeRow');
+  const block = source.slice(start, source.indexOf('export function confirmProposal'));
+
+  assert.ok(block.includes('textContent'), 'arvoja ei aseteta textContentilla');
+  assert.equal(block.includes('innerHTML'), false,
+    'muutosrivi käyttää innerHTML:ää — injektioriski');
+});
+
+test('vaihtoehtojen valinta on painikkeita, ei klikattavia divejä', () => {
+  const source = read('src/ui/confirm.js');
+  const start = source.indexOf('export function chooseTarget');
+  const block = source.slice(start);
+
+  assert.ok(block.includes("createElement('button')"), 'vaihtoehdot eivät ole painikkeita');
+  assert.ok(block.includes("type = 'button'"), 'type puuttuu');
+  assert.ok(css.includes('.proposal-candidate:focus-visible'), 'fokus ei näy');
+});
+
+test('epäselvässä tilanteessa ei arvata ilman dialogia', () => {
+  // Jos selain ei tue dialogia, valinta palauttaa nullin eikä arvaa.
+  const source = read('src/ui/confirm.js');
+  const start = source.indexOf('export function chooseTarget');
+  const block = source.slice(start, start + 900);
+  assert.match(block, /showModal[\s\S]*?Promise\.resolve\(null\)/,
+    'ilman dialogia pitäisi palauttaa null');
+});

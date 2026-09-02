@@ -215,6 +215,10 @@ export function buildProposal(raw, options = {}) {
       action: command.label,
       description: command.description,
       targetType: command.targetType,
+      /** Kohdetyypin luettava nimi, jotta ui-kerroksen ei tarvitse tuntea
+       *  app-kerrosta. Kerrosjärjestys ei jousta edes yhden merkkijonon
+       *  vuoksi. */
+      targetTypeLabel: targetLabel(command.targetType),
       targetLabel: target ? target.label : null,
       changes: buildChangeRows(command, target ? target.entity : null),
       destructive: isDestructive(command),
