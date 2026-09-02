@@ -57,7 +57,13 @@ export const TABLES = Object.freeze({
   /** Migraatio 0005 */
   notificationPreferences: false,
   /** Migraatio 0006 */
-  wellbeing: false
+  wellbeing: false,
+  /** Migraatio 0007 */
+  bills: false,
+  recurringExpenses: false,
+  savingsGoals: false,
+  /** Migraatio 0008 */
+  aiAudit: false
 });
 
 /** Onko taulu käytettävissä tietokannassa? */

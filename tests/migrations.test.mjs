@@ -27,6 +27,9 @@ import { PRIORITIES } from '../src/domain/priority.js';
 import { SCALE_MIN, SCALE_MAX } from '../src/domain/wellbeing.js';
 import { DEFAULT_PREFERENCES } from '../src/domain/notification.js';
 import { TABLES } from '../src/data/schema.js';
+import { BILL_STATUS, CADENCE } from '../src/domain/finance.js';
+import { AUDIT_RESULTS, MAX_INPUT_SUMMARY } from '../src/domain/audit.js';
+import { RISK_LEVELS } from '../src/ai/intentSchema.js';
 
 const MIGRATION_DIR = 'supabase/migrations';
 
@@ -311,4 +314,104 @@ test('yksikään taululippu ei ole päällä ennen migraation ajoa', () => {
       `TABLES.${name} on true. Onko migraatio todella ajettu tuotannossa?`
       + ' Jos on, päivitä tämä testi samassa committissa.');
   }
+});
+
+// ------------------------------------ WP13-WP20: raha ja kirjausketju
+
+test('KRIITTINEN: rahasarakkeet ovat kokonaislukuja eivätkä liukulukuja', () => {
+  // numeric olisi tarkka kannassa, mutta se palautuu JavaScriptiin
+  // merkkijonona tai liukulukuna ajurin mukaan — ja juuri se muunnos on
+  // se kohta, jossa sentit katoavat.
+  const source = sql('0007_finance.sql');
+
+  for (const column of ['amount_minor', 'target_minor', 'current_minor']) {
+    const pattern = new RegExp(column + '\\s+(\\w+)');
+    const match = pattern.exec(source);
+    assert.ok(match, `saraketta ${column} ei löytynyt`);
+    assert.equal(match[1], 'bigint',
+      `${column} on tyyppiä ${match[1]} — pitää olla bigint`);
+  }
+
+  // Kommentit pois ennen tarkistusta: migraatio SELITTÄÄ miksi numericia
+  // ei käytetä, ja selitys osuisi muuten omaan kieltoonsa.
+  const code = source.split('\n').filter(line => !line.trim().startsWith('--')).join('\n');
+
+  for (const forbidden of ['numeric', 'decimal', 'real', 'double precision', 'float']) {
+    assert.equal(code.includes(forbidden), false,
+      `0007 käyttää liukulukutyyppiä: ${forbidden}`);
+  }
+});
+
+test('rahasarakkeilla on valuutta ja se on validoitu', () => {
+  const source = sql('0007_finance.sql');
+  for (const table of ['bills', 'recurring_expenses', 'savings_goals']) {
+    assert.match(source,
+      new RegExp('create table if not exists public\\.' + table + '[\\s\\S]*?currency'),
+      `${table}: valuutta puuttuu`);
+  }
+  assert.equal((source.match(/currency ~ '\^\[a-z\]\{3\}\$'/g) || []).length, 3,
+    'jokaisella taululla pitää olla valuuttamuodon tarkistus');
+});
+
+test('laskun tilat vastaavat domainia', () => {
+  assert.deepEqual(
+    allowedValues(sql('0007_finance.sql'), 'bills_status_check'),
+    Object.values(BILL_STATUS).sort());
+});
+
+test('toistuvan kulun jaksot vastaavat domainia', () => {
+  assert.deepEqual(
+    allowedValues(sql('0007_finance.sql'), 'recurring_expenses_cadence_check'),
+    Object.values(CADENCE).sort());
+});
+
+test('maksettu lasku vaatii maksupäivän myös kannassa', () => {
+  const source = sql('0007_finance.sql');
+  assert.match(source, /status <> 'paid' or paid_date is not null/,
+    'puolivalmis kirjaus pääsisi kantaan');
+});
+
+test('toistuvan kulun kuukauden päivä on rajattu kannassa', () => {
+  const source = sql('0007_finance.sql');
+  assert.match(source, /day_of_month >= 1 and day_of_month <= 31/);
+});
+
+test('kirjausketjun lopputulokset vastaavat domainia', () => {
+  assert.deepEqual(
+    allowedValues(sql('0008_ai_audit.sql'), 'ai_action_audit_result_check'),
+    [...AUDIT_RESULTS].sort());
+});
+
+test('kirjausketjun riskitasot vastaavat AI-mallia', () => {
+  assert.deepEqual(
+    allowedValues(sql('0008_ai_audit.sql'), 'ai_action_audit_risk_check'),
+    [...RISK_LEVELS].sort());
+});
+
+test('KRIITTINEN: kanta ei hyväksy suoritettua komentoa ilman vahvistusta', () => {
+  // Sellainen rivi olisi merkki turvamallin rikkoutumisesta. Kirjaus ei
+  // saa väittää sitä tapahtuneen edes silloin kun sovelluksessa on vika.
+  const source = sql('0008_ai_audit.sql');
+  assert.match(source, /executed = false or confirmed = true/,
+    'invariantti puuttuu kannasta');
+});
+
+test('kirjausketju rajoittaa tiivistelmän pituuden kannassa asti', () => {
+  // Sovellusvirhe ei saa johtaa siihen, että koko päiväkirjamerkintä
+  // päätyy tietokantaan.
+  const source = sql('0008_ai_audit.sql');
+  assert.match(source, /length\(input_summary\) <= \d+/);
+  assert.ok(MAX_INPUT_SUMMARY <= 200,
+    'domainin raja on löysempi kuin kannan — kanta hylkäisi kelvollisen rivin');
+});
+
+test('kirjausketjun kohde ei ole vierasavain', () => {
+  // Kohde on voitu poistaa, ja kirjaus siitä on nimenomaan se, mitä
+  // halutaan säilyttää. Vierasavain poistaisi historian kohteen mukana.
+  const source = sql('0008_ai_audit.sql');
+  const createBlock = /create table if not exists public\.ai_action_audit \(([\s\S]*?)\n\);/
+    .exec(source);
+  assert.ok(createBlock);
+  assert.equal(/target_id\s+text references/.test(createBlock[1]), false,
+    'target_id on vierasavain — historia katoaisi kohteen mukana');
 });
