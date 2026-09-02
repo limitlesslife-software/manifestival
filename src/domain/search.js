@@ -128,6 +128,23 @@ function scoreField(text, needle, isPrimary) {
  *
  * @returns {Array<{id, type, label, score, matchIndex, matchLength, entity}>}
  */
+/**
+ * Onko kohde yha ajankohtainen?
+ *
+ * Tuntematon muoto tulkitaan ajankohtaiseksi: haku ei saa piilottaa
+ * mitaan sen takia, ettei se tunnista kentta.
+ */
+function isActive(entity) {
+  if (entity.completed === true) return false;
+  if (entity.active === false) return false;
+
+  const status = typeof entity.status === 'string' ? entity.status : null;
+  if (status && ['archived', 'completed', 'abandoned', 'cancelled', 'paid']
+    .includes(status)) return false;
+
+  return true;
+}
+
 export function searchCollection({ entities = [], query, type }) {
   const needle = normalizeForSearch(query);
   if (needle.length < MIN_QUERY_LENGTH) return [];
@@ -157,6 +174,8 @@ export function searchCollection({ entities = [], query, type }) {
       label: labelOf(entity, type),
       field: best.field,
       score: best.score,
+      /** Onko kohde yha ajankohtainen. Vaikuttaa vain jarjestykseen. */
+      active: isActive(entity),
       /** Korostus indekseinä — käyttöliittymä escapettaa ensin. */
       matchIndex: best.isPrimary ? best.index : -1,
       matchLength: best.isPrimary ? needle.length : 0,
@@ -164,9 +183,17 @@ export function searchCollection({ entities = [], query, type }) {
     });
   }
 
-  // Deterministinen järjestys: pisteet, sitten nimi, sitten tunniste.
+  // Deterministinen jarjestys: ajankohtaisuus, pisteet, nimi, tunniste.
+  //
+  // AJANKOHTAISUUS ON ENSIN, ja se on tarkoituksellinen paatos.
+  // Arkistoidut ja valmiit LOYTYVAT - kayttaja tietaa arkistoineensa
+  // jotain ja haluaa loytaa sen - mutta ne eivat saa ohittaa
+  // ajankohtaista samalla osuvuudella. Komentopaletti kohdistaa
+  // Enterin parhaaseen osumaan, joten jarjestys ei ole vain
+  // mukavuuskysymys.
   return results
-    .sort((a, b) => b.score - a.score
+    .sort((a, b) => (b.active === true) - (a.active === true)
+      || b.score - a.score
       || a.label.localeCompare(b.label, 'fi')
       || a.id.localeCompare(b.id))
     .slice(0, MAX_RESULTS_PER_TYPE);
