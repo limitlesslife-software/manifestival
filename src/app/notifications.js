@@ -15,7 +15,7 @@
 //   2. Mitään ei ajasteta ennen kuin käyttäjä on kytkenyt muistutukset
 //      päälle JA lupa on myönnetty.
 
-import { fmtISO, todayMidnight } from '../lib/datetime.js';
+import { fmtISO, todayMidnight, addDays } from '../lib/datetime.js';
 import { planRange, summarizeIntents, normalizePreferences } from '../domain/notification.js';
 import { expandRoutines } from '../domain/routine.js';
 import { notifications as platformNotifications } from '../platform/index.js';
@@ -63,7 +63,11 @@ export function planUpcoming(from = todayMidnight()) {
   const todayIso = fmtISO(todayMidnight());
 
   // Rutiiniesiintymät koko horisontille kerralla — ne eivät ole tallennettuja.
-  const toDate = new Date(from.getTime() + (SYNC_HORIZON_DAYS - 1) * 86400000);
+  // KALENTERILASKU, ei millisekunteja. Kesaajan paattyessa vuorokausi on
+  // 25 tuntia, joten from.getTime() + n * 86400000 laskeutuu edelliselle
+  // paivalle - ja horisontin viimeisen paivan rutiinit jaisivat kerran
+  // vuodessa hiljaa ilman muistutusta.
+  const toDate = addDays(from, SYNC_HORIZON_DAYS - 1);
   const routineOccurrences = expandRoutines({
     routines: state.routines,
     from: fromIso,
