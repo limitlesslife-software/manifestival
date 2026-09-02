@@ -134,7 +134,24 @@ export function normalizePreferences(input = {}) {
  * Rauhoitusaika ylittää tyypillisesti keskiyön (22:00–06:30).
  */
 export function isQuietTime(time, quietHours) {
+  // PUOLIAVOIN VALI [from, to): alkuhetki kuuluu rauhoitukseen, loppuhetki ei.
+  //
+  // from === to tarkoittaa NOLLAN MITTAISTA valia eli ei rauhoitusta
+  // lainkaan. Vaihtoehto olisi tulkita se koko vuorokaudeksi, mutta se
+  // olisi ristiriidassa valin muun kasittelyn kanssa: [22:00, 22:00) ei
+  // sisalla yhtaan hetkea, aivan kuten tyhja valikin.
+  //
+  // Tama on TARKOITUKSELLINEN paatos eika sivuvaikutus. Kaytannon
+  // seuraus: jos kayttaja asettaa alun ja lopun samaksi, muistutukset
+  // kulkevat lapi normaalisti.
   if (!isTimeOfDay(time) || !quietHours) return false;
+
+  // Osittainen olio ei saa heittaa. Nykyinen ainoa kutsuja antaa aina
+  // normalisoidut asetukset, joten tama ei ole tavoitettavissa sielta -
+  // mutta viety funktio, joka kaatuu muotoa {} olevaan syotteeseen, on
+  // ansa seuraavalle kutsujalle.
+  if (!isTimeOfDay(quietHours.from) || !isTimeOfDay(quietHours.to)) return false;
+
   const minutes = toMinutes(time);
   const from = toMinutes(quietHours.from);
   const to = toMinutes(quietHours.to);

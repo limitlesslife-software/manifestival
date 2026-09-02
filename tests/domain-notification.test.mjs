@@ -403,3 +403,128 @@ test('PLANNED_TYPES luettelee tyypit joita ei ole toteutettu', () => {
       `toteuttamaton tyyppi ${intent.type} päätyi suunnitelmaan`);
   }
 });
+
+// ------------------------------- yöajo: rajatapaukset ja determinismi
+
+test('rauhoitusaika: alku ja loppu samana tarkoittaa EI rauhoitusta', () => {
+  // Nollan mittainen väli. Tämä on tarkoituksellinen päätös, ei
+  // sivuvaikutus — ks. isQuietTime():n kommentti. Testi lukitsee sen,
+  // jottei tulkinta vaihdu huomaamatta.
+  const quiet = { from: '22:00', to: '22:00' };
+
+  for (const time of ['21:59', '22:00', '22:01', '03:00', '12:00', '00:00']) {
+    assert.equal(isQuietTime(time, quiet), false,
+      time + ' tulkittiin rauhoitetuksi nollan mittaisella välillä');
+  }
+});
+
+test('rauhoitusaika: vuorokauden rajat', () => {
+  const quiet = { from: '22:00', to: '07:00' };
+
+  assert.equal(isQuietTime('00:00', quiet), true, 'keskiyö on rauhoitettu');
+  assert.equal(isQuietTime('23:59', quiet), true);
+  assert.equal(isQuietTime('06:59', quiet), true);
+  assert.equal(isQuietTime('07:00', quiet), false, 'loppuhetki ei kuulu väliin');
+
+  // Koko vuorokauden kattava väli 00:00–00:00 on samoin nollan mittainen.
+  const nolla = { from: '00:00', to: '00:00' };
+  assert.equal(isQuietTime('12:00', nolla), false);
+});
+
+test('rauhoitusaika kestää kelvottoman syötteen', () => {
+  for (const bad of [null, undefined, {}, { from: 'x', to: 'y' },
+    { from: '25:00', to: '99:99' }]) {
+    assert.doesNotThrow(() => isQuietTime('12:00', bad));
+  }
+  for (const bad of [null, undefined, '', 'x', '25:00']) {
+    assert.equal(isQuietTime(bad, { from: '22:00', to: '07:00' }), false);
+  }
+});
+
+test('KRIITTINEN: sama muistutus ei synny kahdesti', () => {
+  // Tunniste on tyyppi + kohde + päivä. Jos sama tehtävä tuottaa
+  // muistutuksen kahta reittiä, laitteelle ei saa mennä kahta ilmoitusta.
+  const task = normalizeTask({
+    id: 'kaksois', title: 'Yksi tehtävä', date: '2026-09-10', time: '10:00'
+  });
+
+  const intents = planNotifications({
+    tasks: [task, task],  // sama tehtävä kahdesti
+    dateIso: '2026-09-10',
+    todayIso: '2026-09-10',
+    preferences: { enabled: true, maxPerDay: 20 }
+  });
+
+  const ids = intents.map(i => i.id);
+  assert.equal(ids.length, new Set(ids).size, 'sama tunniste esiintyi kahdesti');
+});
+
+test('KRIITTINEN: päiväkatto ei ylity edes kiireellisillä', () => {
+  // Korkea prioriteetti ei saa aiheuttaa rajatonta ilmoitusryöppyä.
+  const tasks = [];
+  for (let i = 0; i < 60; i++) {
+    tasks.push(normalizeTask({
+      id: 'yli' + i, title: 'Kiireellinen ' + i, date: '2026-09-10',
+      time: String(8 + (i % 12)).padStart(2, '0') + ':00',
+      priority: 'korkea'
+    }));
+  }
+
+  const intents = planNotifications({
+    tasks, dateIso: '2026-09-10', todayIso: '2026-09-10',
+    preferences: { enabled: true, maxPerDay: 5 }
+  });
+
+  assert.ok(intents.length <= 5, 'päiväkatto ylittyi: ' + intents.length);
+});
+
+test('päiväkatto säilyttää tärkeimmät mutta palauttaa aikajärjestyksessä', () => {
+  const tasks = [
+    normalizeTask({ id: 'a', title: 'Aikainen', date: '2026-09-10', time: '08:00' }),
+    normalizeTask({ id: 'b', title: 'Myöhäinen', date: '2026-09-10', time: '20:00' })
+  ];
+
+  const intents = planNotifications({
+    tasks, dateIso: '2026-09-10', todayIso: '2026-09-10',
+    preferences: { enabled: true, maxPerDay: 10 }
+  });
+
+  const times = intents.map(i => i.atMinutes).filter(m => m != null);
+  const sorted = [...times].sort((x, y) => x - y);
+  assert.deepEqual(times, sorted, 'muistutukset eivät ole aikajärjestyksessä');
+});
+
+test('KRIITTINEN: sama syöte tuottaa täsmälleen saman suunnitelman', () => {
+  // Epädeterministinen suunnitelma tarkoittaisi, että sama päivä
+  // synkronoituna kahdesti peruisi ja ajastaisi kaiken uudelleen —
+  // ja laite näyttäisi saman muistutuksen kahdesti.
+  const tasks = [
+    normalizeTask({ id: 't1', title: 'Aamu', date: '2026-09-10', time: '09:00' }),
+    normalizeTask({ id: 't2', title: 'Sama aika', date: '2026-09-10', time: '09:00' }),
+    normalizeTask({ id: 't3', title: 'Ilta', date: '2026-09-10', time: '18:00' })
+  ];
+  const args = {
+    tasks, dateIso: '2026-09-10', todayIso: '2026-09-10',
+    preferences: { enabled: true, maxPerDay: 20 }
+  };
+
+  const first = JSON.stringify(planNotifications(args));
+  for (let i = 0; i < 5; i++) {
+    assert.equal(JSON.stringify(planNotifications(args)), first,
+      'suunnitelma vaihteli kierroksella ' + i);
+  }
+});
+
+test('valmiista tehtävästä ei muistuteta eikä maksetusta laskusta', () => {
+  const intents = planNotifications({
+    tasks: [normalizeTask({
+      id: 'valmis', title: 'Jo tehty', date: '2026-09-10',
+      time: '10:00', completed: true
+    })],
+    dateIso: '2026-09-10', todayIso: '2026-09-10',
+    preferences: { enabled: true, maxPerDay: 20 }
+  });
+
+  assert.equal(intents.some(i => i.targetId === 'valmis'), false,
+    'valmiista tehtävästä muistutettiin');
+});
