@@ -38,7 +38,7 @@ test('KRIITTINEN: pitkää syötettä ei tallenneta kokonaisuudessaan', () => {
 
   const summary = summarizeInput(pitkä);
 
-  assert.ok(summary.length <= MAX_INPUT_SUMMARY + 1, `pituus ${summary.length}`);
+  assert.ok(summary.length <= MAX_INPUT_SUMMARY, `pituus ${summary.length}`);
   assert.ok(summary.length < pitkä.length);
   assert.equal(summary.includes('sydäntä'), false, 'loppuosa vuoti kirjaukseen');
 });

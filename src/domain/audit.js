@@ -60,7 +60,10 @@ export function summarizeInput(input) {
   const text = String(input).replace(/\s+/g, ' ').trim();
   if (text.length <= MAX_INPUT_SUMMARY) return text;
 
-  const cut = text.slice(0, MAX_INPUT_SUMMARY);
+  // Kolme pistetta mahtuu rajan SISAAN. Muuten MAX_INPUT_SUMMARY ei
+  // tarkoita sita mita se sanoo, ja kannan CHECK-rajoite, joka joskus
+  // asetetaan taman vakion mukaan, hylkaisi rivin.
+  const cut = text.slice(0, MAX_INPUT_SUMMARY - 1);
   const lastSpace = cut.lastIndexOf(' ');
   return (lastSpace > MAX_INPUT_SUMMARY * 0.6 ? cut.slice(0, lastSpace) : cut) + '…';
 }

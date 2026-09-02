@@ -274,30 +274,140 @@ test('uloskirjautuminen tyhjentää sovelluksen tilan', () => {
 
 // ------------------------------------------------------------- XSS-suojaus
 
+/**
+ * Kaikki template-literaalit, jotka päätyvät HTML:ksi.
+ *
+ * Luetaan KOKONAISINA literaaleina eikä riveittäin. Riveittäin lukeva
+ * tarkistus ohittaa interpolaation, joka sattuu olemaan omalla rivillään
+ * ilman tagia — ja juuri niin monirivinen kooste kirjoitetaan:
+ *
+ *     container.innerHTML = `<div class="card">
+ *       ${task.title}
+ *     </div>`;
+ *
+ * Rivi `${task.title}` ei sisällä tagia, joten riveittäin lukeva tarkistus
+ * ei koskaan katsoisi sitä.
+ */
+function htmlTemplates(source) {
+  const templates = [];
+  const start = /(innerHTML\s*=\s*|insertAdjacentHTML\s*\([^,]+,\s*)`/g;
+  let match;
+
+  while ((match = start.exec(source)) !== null) {
+    let i = match.index + match[0].length;
+    let depth = 0;
+    let body = '';
+
+    while (i < source.length) {
+      const ch = source[i];
+      if (ch === '\\') { body += ch + source[i + 1]; i += 2; continue; }
+      if (ch === '$' && source[i + 1] === '{') { depth++; body += '${'; i += 2; continue; }
+      if (ch === '}' && depth > 0) { depth--; body += ch; i++; continue; }
+      if (ch === '`' && depth === 0) break;
+      body += ch;
+      i++;
+    }
+    templates.push(body);
+  }
+  return templates;
+}
+
+/**
+ * Kaikki interpolaatiot literaalista, sisäkkäiset mukaan lukien.
+ *
+ * Sisäkkäinen literaali puretaan omiksi interpolaatioikseen sen sijaan
+ * että koko ehtolauseke käsiteltäisiin yhtenä merkkijonona. Muuten
+ * sisäkkäisen HTML:n luokkanimi (esim. `class="field-label"`) osuisi
+ * kentännimeen ja tuottaisi väärän hälytyksen — ja sen vaientaminen
+ * sokeuttaisi tarkistuksen juuri siellä, missä ehdollisuutta on eniten.
+ */
+function interpolations(template) {
+  const found = [];
+
+  for (let i = 0; i < template.length; i++) {
+    if (template[i] !== '$' || template[i + 1] !== '{') continue;
+
+    // Luetaan lauseke sulkujen syvyyttä laskien. Säännöllinen lauseke ei
+    // tähän riitä: se katkeaa ensimmäiseen parittomaan sulkeeseen ja
+    // jättää sisäkkäisen literaalin puolitiehen, jolloin sitä ei voi
+    // erottaa ympäröivästä HTML:stä.
+    let depth = 1;
+    let j = i + 2;
+    let expression = '';
+
+    while (j < template.length && depth > 0) {
+      const ch = template[j];
+      if (ch === '{') depth++;
+      else if (ch === '}') { depth--; if (depth === 0) break; }
+      expression += ch;
+      j++;
+    }
+
+    // Sisäkkäisten literaalien sisällöt käsitellään omina koosteinaan, ja
+    // itse lauseke tarkastetaan ilman niitä.
+    for (const inner of expression.matchAll(/`([\s\S]*?)`/g)) {
+      found.push(...interpolations(inner[1]));
+    }
+    found.push(expression.replace(/`[\s\S]*?`/g, ''));
+
+    i = j;
+  }
+  return found;
+}
+
 test('TURVA: käyttäjän syöttämä teksti suojataan HTML-koosteissa', () => {
-  // Tarkastellaan vain rivejä, jotka oikeasti rakentavat HTML:ää (sisältävät
-  // avaavan tagin). Näin pelkkä tekstimuotoilu — esim. window.confirm-varasuunnitelman
-  // `${title}\n\n${message}` — ei aiheuta väärää hälytystä.
+  // Kentännimiin perustuva tarkistus. Se ei ole täydellinen — se ei voi
+  // olla — mutta se kattaa jokaisen tunnetun paikan, jossa käyttäjän oma
+  // teksti päätyy sivulle, ja kaatuu jos uusi lisätään suojaamattomana.
+  //
+  // `query` ja `transcript` ovat mukana, koska haku ja puhe tuottavat
+  // käyttäjän tekstiä siinä missä lomakekin. Puheen litterointi on yhtä
+  // epäluotettavaa syötettä kuin näppäimistöltä kirjoitettu.
+  const USER_DATA = new RegExp('\\b(' + [
+    'title', 'note', 'notes', 'description', 'reason', 'email', 'label',
+    'name', 'body', 'query', 'transcript', 'summary', 'message', 'inputSummary'
+  ].join('|') + ')\\b', 'i');
+
   const risky = [];
-  // `name` kattaa projektit ja `body` ilmoitusten leipätekstin. Molemmat
-  // ovat käyttäjän syöttämää tekstiä, eikä kumpikaan ollut aiemmin listalla.
-  const USER_DATA = /\b(title|note|description|reason|email|label|name|body)\b/;
 
   for (const file of browserModules()) {
-    const lines = readCode(file).split('\n');
-    for (const line of lines) {
-      if (!/<[a-z]/.test(line) || !line.includes('${')) continue;
-
-      for (const match of line.matchAll(/\$\{([^}]+)\}/g)) {
-        const expression = match[1];
+    for (const template of htmlTemplates(readCode(file))) {
+      for (const expression of interpolations(template)) {
         if (!USER_DATA.test(expression)) continue;
         if (expression.includes('escapeHtml')) continue;
-        risky.push(`${file}: \${${expression.trim()}}`);
+        risky.push(`${file}: \${${expression.trim().replace(/\s+/g, ' ').slice(0, 80)}}`);
       }
     }
   }
 
   assert.deepEqual(risky, [], 'suojaamaton käyttäjädata HTML-koosteessa:\n' + risky.join('\n'));
+});
+
+test('HTML-koosteiden tarkistus löytää myös omalla rivillään olevan kentän', () => {
+  // Tarkistus itsessään on turvallisuuden kannalta merkityksellinen: jos
+  // se lakkaa löytämästä, se ei kerro siitä mitään. Siksi se testataan.
+  const source = 'node.innerHTML = `<div class="card">\n  ${task.title}\n</div>`;';
+  const [template] = htmlTemplates(source);
+
+  assert.ok(template, 'template-literaalia ei löytynyt lainkaan');
+  assert.ok(template.includes('${task.title}'),
+    'monirivisen koosteen interpolaatio jäi löytymättä');
+});
+
+test('HTML-koosteiden tarkistus lukee sisäkkäiset literaalit', () => {
+  // Sisäkkäinen literaali on tavallisin tapa rakentaa ehdollinen osa.
+  // Jos lukija katkaisisi ensimmäiseen kenoaaltosulkuun, sisältö jäisi
+  // tarkistamatta juuri siellä missä ehdollisuutta on eniten.
+  const source = 'x.innerHTML = `<p>${a ? `<b>${goal.title}</b>` : \'\'}</p>`;';
+  const [template] = htmlTemplates(source);
+
+  assert.ok(template.includes('goal.title'),
+    'sisäkkäisen literaalin sisältö jäi lukematta');
+
+  // Ja purku erottaa sisäkkäisen kentän omaksi lausekkeekseen, jotta
+  // ymparoiva HTML ei peita sita eika toisin pain.
+  assert.ok(interpolations(template).includes('goal.title'),
+    'sisakkaista kenttaa ei eroteltu omaksi lausekkeekseen');
 });
 
 test('escapeHtml suojaa myös lainausmerkit', async () => {
