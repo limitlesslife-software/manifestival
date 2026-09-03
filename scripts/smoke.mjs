@@ -10,6 +10,7 @@
 //   npm run smoke
 
 import { spawn } from 'node:child_process';
+import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -70,6 +71,36 @@ async function crawlModules(entryPath) {
     }
   }
   return loaded;
+}
+
+/**
+ * Onko portissa jo joku muu?
+ *
+ * Ilman tätä smoke-testi antaa hämmentävän tuloksen: oma palvelin ei saa
+ * porttia, waitForServer saa vastauksen VIERAALTA palvelimelta, ja testi
+ * joko läpäisee väärästä syystä tai kaatuu keskellä JSON-jäsennykseen
+ * ("Unexpected token '<'"). Kumpikaan ei kerro, mistä oli kyse.
+ *
+ * Tyypillinen syy: aiempi `npm run serve` jäi päälle — tai jokin aivan
+ * muu työkalu, sillä 4173 on myös Viten oletusportti.
+ *
+ * Tarkistus tehdään SITOMALLA portti, ei HTTP-pyynnöllä. Vieras palvelin
+ * voi vastata hitaasti, jolloin aikakatkaisuun nojaava tarkistus päättelisi
+ * portin vapaaksi juuri silloin kun se ei ole.
+ */
+function portIsTaken() {
+  return new Promise(resolve => {
+    const probe = net.createServer();
+    probe.once('error', () => resolve(true));
+    probe.once('listening', () => probe.close(() => resolve(false)));
+    probe.listen(PORT, '127.0.0.1');
+  });
+}
+
+if (await portIsTaken()) {
+  console.log(`FAIL  portissa ${PORT} on jo palvelin`);
+  console.log('      Sulje se, tai aja: SMOKE_PORT=<vapaa portti> npm run smoke');
+  process.exit(1);
 }
 
 const server = spawn(process.execPath, [path.join(ROOT, 'scripts', 'serve.mjs')], {
