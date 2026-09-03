@@ -3,9 +3,15 @@
 Tässä hakemistossa on tietokannan inventointi ja versionhallitut migraatiot.
 
 **Yksikään migraatio ei ole ajettu missään ympäristössä.** Kaikki ovat
-luonnoksia. Production-Supabase on tällä hetkellä pausella eikä
-`inventory.sql`-inventointia ole vielä tehty, joten migraatioiden oletuksia
-ei ole voitu vahvistaa oikeaa skeemaa vasten.
+luonnoksia.
+
+`inventory.sql` **on** ajettu kerran, ja **migraatio 0001 on sovitettu sen
+tulokseen**: `profile` 1 rivi arvolla `'me'` (tyyppi `text`), `tasks` 36
+riviä ilman `user_id`-saraketta, molemmilla "salli kaikki" -tyyppinen
+politiikka. 0001 tarkistaa nämä itse ja keskeytyy, jos jokin ei täsmää.
+
+Migraatiot 0002–0008 ovat yhä yleisluonteisia, koska ne luovat uusia
+tauluja eivätkä kosketa olemassa olevaa dataa.
 
 ## Tiedostot
 
@@ -25,21 +31,22 @@ Migraatiot ajetaan numerojärjestyksessä. 0001 on kaikkien muiden esiehto:
 ilman `user_id`-saraketta ja RLS:ää uusilla tauluilla ei olisi omistajaa.
 
 ```
-1. Aja inventory.sql Supabase SQL Editorissa
-2. Vertaa tulosta migraation "OLETUKSET"-osioon
-3. Korjaa migraatio, jos oletukset eivät päde
-4. Ota varmuuskopio (Database -> Backups)
-5. Luo tili sovelluksen kirjautumisnäkymästä
-6. Hae oma tunniste: select id, email from auth.users;
-7. Korvaa migraation 0001 VAIHE 0 -paikanpitäjä sillä arvolla
-8. Aja migraatio 0001
-9. Aja migraation lopun varmistuskyselyt
-10. Aja 0002, 0003, 0004, 0005 ja 0006 samalla tavalla, yksi kerrallaan
+1. Ota varmuuskopio (Database -> Backups)
+2. Aja inventory.sql Supabase SQL Editorissa
+3. Vertaa tulosta migraation TODENNETTU LÄHTÖTILA -osioon
+4. Jos rivimäärä on muuttunut, päivitä luku 0001:n VAIHE 0 -lohkoon
+5. Aja migraatio 0001 kokonaisuudessaan, yhtenä ajona
+6. Aja verify/verify_0001.sql
+7. Tee kahden tilin eristystesti (runbookin PYSÄYTYS 5) — PAKOLLINEN
+8. Aja 0002-0008 samalla tavalla, yksi kerrallaan, lippu kerrallaan
 ```
 
-Migraatio 0001 keskeytyy virheeseen eikä muuta mitään, jos paikanpitäjä on
-yhä paikallaan tai jos annettu tunniste ei vastaa yhtään `auth.users`-riviä.
-Migraatiot 0002–0006 keskeytyvät, jos 0001 ei ole ajettu.
+Vaiheet, pysäytyspisteet ja odotusarvot:
+[`docs/PRODUCTION-ACTIVATION-RUNBOOK.md`](../docs/PRODUCTION-ACTIVATION-RUNBOOK.md).
+
+Migraatio 0001 keskeytyy virheeseen eikä muuta mitään, jos lähtötila ei
+vastaa inventaariota tai jos omistajaa ei löydy `auth.users`-taulusta.
+Migraatiot 0002–0008 keskeytyvät, jos 0001 ei ole ajettu.
 
 ## Koodin liput
 
@@ -70,11 +77,16 @@ epäonnistuu, mitään ei jää puolitiehen.
 
 ## Peruutus
 
-Migraatio 0001 **ei ole häviöttömästi peruttavissa**. Se muuttaa
-`profile.id`-sarakkeen tyypin `text -> uuid`, jolloin vanha arvo `'me'` katoaa.
-Ainoa luotettava peruutus on palautus varmuuskopiosta.
+Migraatio 0001 **ei muuta `profile.id`:n tyyppiä.** Tuotannon arvo `'me'`
+ei ole uuid, joten muunnos kaatuisi. Vanha sarake nimetään `legacy_id`:ksi
+ja uusi `uuid`-sarake lisätään sen rinnalle — alkuperäinen arvo säilyy.
 
-Migraatiot 0002–0006 ovat peruttavissa: jokaisen lopussa on rollback-lohko.
+Peruminen jakautuu siksi kolmeen tapaukseen: keskeytynyt ajo peruuntuu
+itsestään (yksi transaktio), läpimennyt ajo puretaan käsin `legacy_id`:n
+avulla, ja kadonnut data vain varmuuskopiosta. Ks. runbookin
+*0001:n peruminen*. **Varmuuskopio on silti pakollinen.**
+
+Migraatiot 0002–0008 ovat peruttavissa: jokaisen lopussa on rollback-lohko.
 Peruutus kadottaa vain sen tiedon, joka on kirjoitettu migraation jälkeen
 uusiin sarakkeisiin tai tauluihin.
 

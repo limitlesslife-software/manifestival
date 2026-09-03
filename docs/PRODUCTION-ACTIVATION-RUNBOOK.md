@@ -23,6 +23,26 @@ tilaan, jossa vanha ja uusi omistajuusmalli ovat yhtä aikaa voimassa.
 Tarvitset: pääsyn Supabasen SQL-editoriin, varmuuskopion, ja tiedon siitä
 kuinka monta riviä `tasks`-taulussa on juuri nyt.
 
+### Todennettu lähtötila
+
+`inventory.sql` on ajettu kerran, ja **0001 on sovitettu juuri tähän
+tulokseen** — se ei ole enää yleisluonteinen malli:
+
+| | |
+|---|---|
+| `public.profile` | 1 rivi, `id = 'me'`, tyyppi `text` |
+| `public.tasks` | 36 riviä, **ei** `user_id`-saraketta |
+| Politiikat | "salli kaikki" -tyyppinen politiikka molemmilla |
+| Omistaja | `2cc00622-f927-4604-a518-361a4328481b` |
+
+Migraatio **tarkistaa nämä itse** ja keskeytyy, jos jokin ei täsmää. Se
+ei siis luota siihen, että inventaario on yhä voimassa.
+
+**Jos olet luonut tehtäviä inventoinnin jälkeen**, rivimäärä ei enää ole
+36 ja migraatio pysähtyy virheeseen `public.tasks: N rivia, odotettiin
+36`. Se ei ole vika vaan tarkoitus. Aja `inventory.sql` uudelleen,
+päivitä luku migraation VAIHE 0 -lohkoon ja aja uudelleen.
+
 ---
 
 ## Vaihe 1 — Varmuuskopio
@@ -50,29 +70,73 @@ Kirjaa ylös:
 - montako politiikkaa on olemassa
 - mitä oikeuksia `anon`-roolilla on
 
+Vertaa tulosta yllä olevaan **Todennettu lähtötila** -taulukkoon.
+
 ### PYSÄYTYS 2
-Tulos vastaa odotusta. Erityisesti: jos `user_id` on jo olemassa,
-**0001 on osittain ajettu** ja tilanne on selvitettävä ennen jatkoa.
+Tulos vastaa odotusta. Erityisesti:
+
+- jos `tasks.user_id` on jo olemassa, **0001 on osittain ajettu** —
+  selvitä tilanne ennen jatkoa
+- jos `profile.legacy_id` on jo olemassa, sama asia
+- jos `tasks`-rivimäärä ei ole 36, **päivitä luku migraation VAIHE 0
+  -lohkoon** ennen ajoa. Älä poista tarkistusta.
 
 ---
 
 ## Vaihe 3 — Migraatio 0001 (auth-omistajuus)
 
-Aja `supabase/migrations/0001_auth_user_scoping.sql` kokonaisuudessaan.
+Aja `supabase/migrations/0001_auth_user_scoping.sql` kokonaisuudessaan
+— **koko tiedosto kerralla, ei lohko kerrallaan.** Se on yksi
+transaktio. Paloittain ajettuna transaktion suoja katoaa ja kanta voi
+jäädä puolitiehen.
 
 Tämä on ainoa **pakollinen** migraatio. Kaikki muut ovat valinnaisia ja
 voi jättää ajamatta pysyvästi.
 
+Lue tuloslokista `NOTICE`-rivit. Niiden pitää kertoa:
+- `Esiehdot kunnossa. Omistaja 2cc00622-…, tehtavia 36, profiileja 1.`
+- montako vanhaa politiikkaa poistettiin
+- `Lopputila kunnossa: 8 politiikkaa, RLS paalla, anon ilman oikeuksia.`
+
+Jos ajo päättyy `ERROR`-riviin, **mitään ei ole muuttunut** — koko
+tiedosto peruuntuu itsestään. Lue virheteksti: se nimeää sen esiehdon,
+joka ei täyttynyt.
+
+#### Skeemavälimuisti
+
+PostgREST — se rajapinta, jota selain käyttää — pitää skeemasta
+välimuistia. 0001 muuttaa `profile`-taulun sarakkeet, joten välimuisti on
+ajon jälkeen vanhentunut. Supabase päivittää sen yleensä itse muutaman
+sekunnin sisällä.
+
+Jos sovellus antaa heti ajon jälkeen virheen, jonka mukaan saraketta ei
+ole olemassa, **odota hetki ja lataa sivu uudelleen** ennen kuin alat
+etsiä vikaa migraatiosta. Välimuistin voi myös pakottaa päivittymään
+Supabasen Dashboardista: *Settings → API → Reload schema cache*.
+
 ### PYSÄYTYS 3
-Aja `supabase/verify/verify_0001.sql`. Tarkista:
-- `tasks` ja `profile`: RLS päällä
-- politiikkoja yhteensä 8
-- `tasks.user_id`: ei yhtään null-arvoa
-- rivimäärä sama kuin vaiheessa 2
-- `anon`-roolilla ei ole oikeuksia kumpaankaan tauluun
+Aja `supabase/verify/verify_0001.sql`. Odotusarvot ovat täsmällisiä:
+
+| Kohta | Odotus |
+|---|---|
+| RLS | `true` molemmilla |
+| Politiikkoja | **tasan 8**, jokaisen rooli `{authenticated}` |
+| `tasks.user_id` | `uuid`, `NO`, oletus `auth.uid()` |
+| `profile.id` | `uuid`, `NO`, oletus `auth.uid()` |
+| `profile.legacy_id` | `text`, `YES` — sisältää yhä `me` |
+| Rivimäärät | `tasks` 36, `profile` 1 |
+| Omistajuus | molemmat `bool_and` = `true` |
+| Eri omistajia | 1 |
+| Orvot viitteet | 0 ja 0 |
+| Vierasavaimet | 2 riviä, `confdeltype = c` |
+| `anon`-oikeudet | **nolla riviä** |
+| `authenticated`-oikeudet | tasan 8 riviä |
 
 Jos rivimäärä muuttui: **palauta varmuuskopiosta.** Migraatio ei saa
 hävittää yhtään riviä.
+
+Jos `anon`-oikeuksissa on yksikin rivi: **älä jatka.** Julkinen avain on
+selaimessa, ja anonin oikeus tekee RLS:stä ainoan esteen.
 
 ---
 
@@ -91,17 +155,114 @@ rikkinäisen pohjan päälle.**
 
 ---
 
-## Vaihe 5 — Toisella tilillä: eristystesti
+## Vaihe 5 — PAKOLLINEN eristystesti kahdella tilillä
 
-Luo toinen testitili. Kirjaudu sillä sisään. Varmista, ettei se näe
-ensimmäisen tilin yhtään tehtävää.
+**Tämä vaihe ei ole valinnainen, eikä sitä saa ohittaa.** Kaikki muu
+tässä repossa on päättelyä: testit lukevat SQL:ää tekstinä, eivät aja
+sitä. RLS:n toiminnasta on olemassa täsmälleen yksi todiste, ja tämä on
+se.
 
-Tämä on koko turvamallin ainoa oikea todiste. Kaikki muu on päättelyä.
+Ennen tätä vaihetta **yhtäkään lippua ei käännetä** eikä yhtäkään muuta
+migraatiota ajeta.
+
+### Valmistelu
+
+Luo **tili B** sovelluksen kirjautumisnäkymästä. Käytä oikeaa
+sähköpostiosoitetta, johon pääset käsiksi — Supabase vaatii
+vahvistuksen. Älä käytä tilin A osoitetta.
+
+Kirjaa tilin B tunniste talteen:
+
+```sql
+select id, email from auth.users order by created_at;
+```
+
+Tilin A tunnisteen pitää olla `2cc00622-f927-4604-a518-361a4328481b`.
+
+### T1 — Tili B ei näe tilin A tehtäviä
+
+Kirjaudu sisään tilillä B. Avaa päivänäkymä ja siirry siihen
+päivämäärään, jolla tiedät tilillä A olevan tehtäviä.
+
+**Odotus: nolla tehtävää. Ei yhtään.**
+
+Jos näkyy yksikin tilin A tehtävä: **RLS ei ole voimassa.** Pysäytä
+kaikki. Älä käännä lippuja. Palaa PYSÄYTYS 3:n varmistuskyselyyn ja
+katso, mikä sen kohdista oli väärin.
+
+### T2 — Tili B ei näe tilin A profiilia
+
+Avaa profiiliasetukset tilillä B. Kenttien pitää olla tyhjiä tai
+oletusarvoisia — **ei tilin A ikää, painoa eikä heräämisaikaa.**
+
+Tämä on erillinen tarkistus, koska `profile` käyttää eri
+omistajuusmallia kuin `tasks`: omistajuus on `id`-sarakkeessa, ei
+`user_id`-sarakkeessa. Yksi näistä voi toimia ilman että toinen toimii.
+
+### T3 — Tili B ei voi kirjoittaa tilin A datan päälle
+
+Luo tilillä B tehtävä. Palaa tilille A ja tarkista, **ettei tilin B
+tehtävä näy siellä.**
+
+Sen jälkeen SQL-editorissa:
+
+```sql
+select count(*) as tehtavia_b
+from public.tasks
+where user_id <> '2cc00622-f927-4604-a518-361a4328481b'::uuid;
+```
+
+Luvun pitää olla tasan se määrä tehtäviä, jonka loit tilillä B.
+
+### T4 — Tili A ei menettänyt mitään
+
+Kirjaudu takaisin tilille A. Kaikkien 36 tehtävän pitää olla paikallaan
+ja profiilin arvojen ennallaan.
+
+```sql
+select count(*) as tehtavia_a
+from public.tasks
+where user_id = '2cc00622-f927-4604-a518-361a4328481b'::uuid;
+```
+
+**Odotus: 36.**
+
+### T5 — Kirjautumaton ei näe mitään
+
+Kirjaudu ulos. Lataa sovellus uudelleen. Näkymän pitää olla tyhjä ja
+kirjautumislomakkeen näkyvissä — ei välähdystäkään tilin A datasta.
 
 ### PYSÄYTYS 5
-Tili B ei näe tilin A dataa. Jos näkee: **RLS ei ole voimassa.**
-Pysäytä kaikki ja selvitä syy ennen kuin yhtäkään muuta migraatiota
-ajetaan.
+
+| | |
+|---|---|
+| T1 | Tili B ei näe tilin A tehtäviä |
+| T2 | Tili B ei näe tilin A profiilia |
+| T3 | Tilien data pysyy erillään molempiin suuntiin |
+| T4 | Tili A:lla on yhä 36 tehtävää |
+| T5 | Kirjautumaton ei näe mitään |
+
+**Kaikkien viiden on toteuduttava.** Yksikin epäonnistuminen tarkoittaa,
+että henkilökohtainen data on toisen käyttäjän saatavilla. Pysäytä
+kaikki, älä käännä yhtäkään lippua, äläkä aja yhtäkään muuta
+migraatiota ennen kuin syy on selvitetty.
+
+### Testitilin siivous
+
+Kun kaikki viisi kohtaa ovat vihreitä, poista tili B Supabasen
+Authentication-näkymästä. `on delete cascade` vie sen tehtävät mukanaan
+— se on samalla ainoa kerta, kun poistoketju tulee oikeasti testattua.
+
+Tarkista poiston jälkeen, että tilin A luku on yhä 36:
+
+```sql
+select count(*) as tehtavia_a
+from public.tasks
+where user_id = '2cc00622-f927-4604-a518-361a4328481b'::uuid;
+```
+
+Jos luku putosi, poistoketju osui vääriin riveihin. **Palauta
+varmuuskopiosta.**
 
 ---
 
@@ -256,11 +417,62 @@ rajoite puuttuu.
 | 0004 | `drop table` projects → goals; kolme saraketta pois `tasks`-taulusta |
 | 0003 | `drop table` routine_exceptions → routines |
 | 0002 | Kuusi saraketta pois `tasks`-taulusta |
-| 0001 | **Vain varmuuskopiosta** |
+| 0001 | Ks. alla — **kolme eri tilannetta, kolme eri vastausta** |
 
 **Käännä aina lippu `false`:ksi ja deployaa ENNEN kuin taulu pudotetaan.**
 Toisin päin sovellus kirjoittaa olemattomaan tauluun ja jokainen
 tallennus epäonnistuu.
+
+### 0001:n peruminen
+
+Älä kysy "miten 0001 perutaan". Kysy ensin **mikä meni pieleen** — vastaus
+on eri jokaisessa kolmessa tapauksessa.
+
+**1. Ajo keskeytyi virheeseen.**
+Ei tarvita mitään. Migraatio on yksi transaktio, ja jokainen tarkistus on
+sen sisällä. Postgres peruu kaiken itse. Kanta on täsmälleen siinä
+tilassa kuin ennen ajoa. Lue virheteksti — se nimeää esiehdon, joka ei
+täyttynyt, ja korjaus on yleensä yhden luvun päivitys migraation VAIHE
+0 -lohkoon.
+
+Tämä on **ylivoimaisesti todennäköisin** tapaus, ja se on jo hoidettu.
+
+**2. Ajo meni läpi, mutta malli halutaan purkaa.**
+Tämä on mahdollista ilman varmuuskopiota, koska alkuperäinen `me` säilyy
+sarakkeessa `profile.legacy_id`. Migraatio ei pudota sitä.
+
+Käänteisiä vaiheita ei ole kirjoitettu valmiiksi skriptiksi, eikä sitä
+pidä tehdä. **Käänteismigraatio, jota kukaan ei ole koskaan ajanut, on
+vaarallisempi kuin sen puuttuminen** — se antaa vaikutelman
+turvaverkosta, joka ei ole olemassa. Vaiheet on kuvattu 0001:n
+ROLLBACK-osiossa luettavaksi ja käsin sovellettavaksi.
+
+Huomaa lisäksi, mitä purkaminen tarkoittaa: paluu tilaan, jossa
+julkinen anon-avain riittää lukemaan kaiken. **Peruminen on
+tietoturvan heikennys.** Tee se vain, jos migraatio oikeasti rikkoi
+jotain — ei siksi, että jokin näyttää oudolta.
+
+**3. Dataa katosi tai se meni väärälle omistajalle.**
+Palauta varmuuskopiosta. Tähän ei ole muuta vastausta.
+
+Migraation rivimäärätarkistukset (vaiheet 2c, 3f ja 7) ja PYSÄYTYS 3:n
+varmistuskysely on kirjoitettu juuri sitä varten, ettei tähän tarvitse
+päätyä. Ne kaikki ajetaan ennen committia tai heti sen jälkeen, joten
+tapaus 3 vaatii käytännössä sen, että vika on jossain muualla kuin
+migraatiossa.
+
+### Mitä `legacy_id` on ja miksi se jää
+
+Sarake `profile.legacy_id` sisältää migraation jälkeen arvon `me`. Se on
+tarkoituksellinen jäänne:
+
+- sovellus ei lue sitä (`profileFromRow` ei tunne kenttää)
+- se ei sisällä henkilökohtaista tietoa
+- se on ainoa asia, joka tekee tapauksesta 2 mahdollisen
+
+Sen saa pudottaa myöhemmin **erillisenä päätöksenä**, kun uusi
+omistajuusmalli on ollut tuotannossa riittävän kauan. Sitä ei kannata
+tehdä samalla kertaa 0001:n kanssa.
 
 ---
 

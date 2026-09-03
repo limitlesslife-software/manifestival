@@ -26,22 +26,38 @@ suositeltava mutta ei pakollinen.
 
 ---
 
-## 0001 — `auth_user_scoping` (218 riviä, 8 politiikkaa, 1 indeksi)
+## 0001 — `auth_user_scoping` (518 riviä, 8 politiikkaa, 1 indeksi)
+
+**Ainoa migraatio, joka on sovitettu todennettuun tuotantoskeemaan.**
+Muut kahdeksan ovat yleisluonteisia, koska ne luovat uusia tauluja eivätkä
+kosketa olemassa olevaa dataa. 0001 koskettaa.
 
 | | |
 |---|---|
-| **Tarkoitus** | Vaihtaa omistajuusmalli laitetunnisteesta oikeaan `auth.uid()`-pohjaiseen malliin |
+| **Tarkoitus** | Vaihtaa omistajuusmalli kiinteästä `'me'`-tunnisteesta oikeaan `auth.uid()`-pohjaiseen malliin |
 | **Riippuu** | ei mistään — **tämä on pohja** |
-| **Taulut** | `tasks`, `profile` (olemassa olevia) |
-| **Sarakkeet** | `user_id uuid not null references auth.users(id) on delete cascade`, oletus `auth.uid()` |
-| **RLS** | Päälle molempiin; 4 politiikkaa/taulu (select/insert/update/delete), ehto `auth.uid() = user_id` |
-| **Omistajuus** | **Tietokanta asettaa**, ei asiakas |
+| **Taulut** | `tasks` (36 riviä), `profile` (1 rivi) — molemmat olemassa |
+| **Sarakkeet** | `tasks.user_id uuid not null default auth.uid()`; `profile.id` uusi `uuid`, vanha arvo säilyy sarakkeessa `profile.legacy_id` |
+| **Vierasavaimet** | molemmat `references auth.users(id) on delete cascade` |
+| **RLS** | Päälle molempiin; 4 politiikkaa/taulu roolille `authenticated`. Ehto `auth.uid() = user_id` (tasks) ja `auth.uid() = id` (profile) |
+| **Omistajuus** | **Tietokanta asettaa**, ei asiakas. Omistaja kovakoodattu — ei rivijärjestystä, ei `LIMIT 1`, ei sähköpostihakua |
+| **Esiehdot** | 7 tarkistusta ennen ensimmäistä muutosta; migraatio keskeyttää itse jos lähtötila ei täsmää |
 | **Avaa lipun** | ei yhtään — mahdollistaa kaikki muut |
-| **Palautus** | **Vaikea.** Sisältää olemassa olevan datan siirron. Ilman varmuuskopiota ei ole paluuta |
-| **Varmistus** | `pg_policies` näyttää 8 riviä; `relrowsecurity = true`; `tasks.user_id` ei null yhdelläkään rivillä; anon-oikeudet revokoitu |
+| **Palautus** | Kolme eri tapausta, ks. runbookin *0001:n peruminen*. Keskeytynyt ajo peruuntuu itse; läpimennyt ajo on purettavissa käsin `legacy_id`:n ansiosta; kadonnut data vain varmuuskopiosta |
+| **Varmistus** | `verify_0001.sql`, 15 kyselyä. Ks. runbookin PYSÄYTYS 3 -taulukko |
 
-**Kriittinen kohta:** `revoke all on public.profile from anon`. Jos anon
+**Kriittinen kohta 1:** `profile.id` **ei** muunnu tyyppiä vaihtamalla.
+Tuotannon ainoan rivin arvo on `'me'`, eikä `'me'` ole uuid — `id::uuid`
+kaatuisi heti. Vanha sarake nimetään `legacy_id`:ksi ja uusi uuid-sarake
+lisätään sen rinnalle.
+
+**Kriittinen kohta 2:** `revoke all on public.profile from anon`. Jos anon
 säilyttää oikeudet, RLS ei suojaa mitään — anon-rooli näkisi kaikkien rivit.
+
+**Kriittinen kohta 3:** vanhat "salli kaikki" -politiikat poistetaan
+nimestä riippumatta, `pg_policies`-kyselyn kautta. Politiikat ovat
+OR-ehtoja keskenään: yksi jäljelle jäänyt salliva politiikka kumoaisi
+kaikki kahdeksan uutta.
 
 ---
 

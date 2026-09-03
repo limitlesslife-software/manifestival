@@ -70,14 +70,18 @@ eikä sitä voi perua ilman palautusta.
 
 `inventory.sql` on **vain luku**. Se ei muuta mitään.
 
-Vertaa tulosta migraation 0001 OLETUKSET-osioon. Erityisesti:
+Vertaa tulosta migraation 0001 **TODENNETTU LÄHTÖTILA** -osioon.
+Erityisesti:
 
-- Ovatko `public.tasks` ja `public.profile` olemassa?
-- Onko `tasks.id` tekstityyppinen?
-- Onko `profile`-taulussa yksi rivi arvolla `'me'`?
-- Puuttuuko `user_id` kummastakin?
+- `public.tasks`: 36 riviä, ei `user_id`-saraketta
+- `public.profile`: 1 rivi, `id = 'me'`, tyyppi `text`
+- `public.profile`: ei `legacy_id`-saraketta
 
-**Jos jokin oletus ei päde, pysähdy ja korjaa migraatio ennen ajoa.**
+Migraatio tarkistaa nämä itse ja keskeytyy, jos jokin ei täsmää — se ei
+luota siihen, että inventaario on yhä voimassa.
+
+**Jos rivimäärä on muuttunut, päivitä luku migraation VAIHE 0 -lohkoon.
+Älä poista tarkistusta.**
 
 ---
 
@@ -266,7 +270,7 @@ select grantee, table_name, privilege_type
 
 | Vaihe | Peruutus |
 |---|---|
-| 0001 | **Vain varmuuskopiosta.** `profile.id` menetti arvon `'me'` |
+| 0001 | Keskeytynyt ajo peruuntuu itse (yksi transaktio). Läpimennyt ajo puretaan käsin — `profile.legacy_id` säilyttää arvon `'me'`. Kadonnut data vain varmuuskopiosta. Ks. runbookin *0001:n peruminen* |
 | 0002–0006 | Migraation lopussa oleva rollback-lohko + lipun palautus |
 | Avaimen kierto | Luo taas uusi avain; vanhaa ei voi palauttaa |
 | Vercel-julkaisu | Vercel -> Deployments -> aiempi -> Promote to Production |

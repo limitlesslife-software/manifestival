@@ -97,12 +97,33 @@ ilman autentikaatiota ei ole olemassa luotettavaa käyttäjäidentiteettiä, jot
 `anon`-roolille ei voi määritellä turvallista "omaa" rajausta. Mikä tahansa
 tällainen politiikka olisi ollut näennäisturvaa.
 
-### Todentamaton
+### Yllä kuvattu on migraation 0001 JÄLKEINEN tila
 
-**RLS:n nykytilaa tuotannossa ei ole todennettu.** Jos RLS on tällä hetkellä
-pois päältä, kuka tahansa internetin käyttäjä voi lukea, muuttaa ja poistaa
-kaiken datan julkisesti näkyvillä tiedoilla. Tämä on projektin vakavin avoin
-riski, kunnes `supabase/inventory.sql` on ajettu.
+Mikään edellä kuvatuista politiikoista ei ole tällä hetkellä voimassa.
+`supabase/migrations/0001_auth_user_scoping.sql` on luonnos, jota ei ole
+ajettu.
+
+### Todennettu nykytila — projektin vakavin avoin riski
+
+`supabase/inventory.sql` on ajettu, joten tätä ei enää arvailla.
+Tuotannossa on juuri nyt:
+
+- `public.tasks`: 36 riviä, **ei omistajuussaraketta**
+- `public.profile`: 1 rivi, `id = 'me'` — kaikille sama rivi
+- molemmilla taululla **"salli kaikki" -tyyppinen politiikka**
+- `anon`-roolilla on taulukohtaiset oikeudet
+
+Sovellus toimii tälläkin hetkellä ilman kirjautumista, mikä on itsessään
+todiste siitä, että julkinen `anon`-avain riittää pääsyyn. Avain on
+selaimessa jokaisella sivulatauksella.
+
+**Käytännössä: kuka tahansa, joka löytää projektin URL-osoitteen ja
+anon-avaimen, voi lukea, muuttaa ja poistaa kaiken datan.** Politiikka,
+joka sallii kaiken, ei ole pääsynvalvontaa.
+
+Tämä on projektin vakavin avoin riski, ja se pysyy avoinna kunnes 0001 on
+ajettu ja runbookin **PYSÄYTYS 5** (kahden tilin eristystesti) on läpäisty.
+Ks. [`PRODUCTION-ACTIVATION-RUNBOOK.md`](PRODUCTION-ACTIVATION-RUNBOOK.md).
 
 ---
 

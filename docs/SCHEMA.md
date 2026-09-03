@@ -81,9 +81,15 @@ id uuid PRIMARY KEY
 `profile` käyttää `id = auth.uid()` -mallia: yksi rivi per käyttäjä, ei
 erillistä `user_id`-saraketta. Siksi RLS-politiikat kohdistuvat `id`-sarakkeeseen.
 
-Migraatio siirtää vanhan `'me'`-rivin omistajalle ja muuttaa tyypin
-`text -> uuid`. Tämä vaihe **ei ole häviöttömästi peruttavissa**, joten
-varmuuskopio on pakollinen.
+Migraatio **ei** muuta `profile.id`:n tyyppiä. Tuotannon ainoan rivin
+arvo on `'me'`, eikä `'me'` ole uuid — `id::uuid` kaatuisi heti.
+Sen sijaan vanha sarake nimetään `legacy_id`:ksi ja sen rinnalle
+lisätään uusi `uuid`-sarake `id`, joka saa omistajan tunnisteen.
+
+Alkuperäinen arvo säilyy siis kannassa. Se on tarkoituksellista: se on
+ainoa asia, joka tekee migraatiosta purettavaksi ilman varmuuskopiota.
+Varmuuskopio on silti pakollinen — ks.
+[`PRODUCTION-ACTIVATION-RUNBOOK.md`](PRODUCTION-ACTIVATION-RUNBOOK.md).
 
 ---
 

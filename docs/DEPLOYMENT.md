@@ -115,7 +115,7 @@ tuotannon.
 2. Sovita migraatio 0001 todelliseen skeemaan
 3. Ota Supabase-varmuuskopio
 4. Aseta uusi ANTHROPIC_API_KEY Verceliin        (ks. avaimen kierto)
-5. Luo itsellesi tili -> hae auth.users-tunniste
+5. Luo itsellesi tili -> varmista auth.users-tunniste (odotus: 2cc00622-...)
 6. Aja migraatio 0001                            (lyhyt katko alkaa)
 7. Merge develop -> main                         (tuotanto päivittyy)
 8. Todenna: kirjautuminen, oma data, uloskirjautuminen
