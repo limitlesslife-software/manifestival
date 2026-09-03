@@ -521,3 +521,237 @@ test('dokumentaatio ei viittaa poistettuihin moduuleihin', () => {
     assert.ok(found, `MODULARIZATION.md listaa moduulin jota ei ole: ${name}`);
   }
 });
+
+// ================================================================
+// 0001 on sovitettu TODELLISEEN tuotantoskeemaan
+// ================================================================
+//
+// Nämä testit eivät tarkista SQL:n syntaksia — sitä ei voi tarkistaa
+// ilman kantaa. Ne vartioivat niitä KOHTIA, joissa yleisluonteinen
+// migraatio meni tuotantoa vasten rikki, ja joissa tulevaisuuden
+// muokkaaja voisi rikkoa sen uudelleen tietämättä miksi.
+//
+// Tuotannon todennettu lähtötila:
+//   profile  1 rivi, id = 'me', tyyppi text
+//   tasks   36 riviä, ei user_id-saraketta
+
+const MIGRATION_0001 = '0001_auth_user_scoping.sql';
+const OWNER_UUID = '2cc00622-f927-4604-a518-361a4328481b';
+
+/** 0001 ilman kommentteja. Selitysteksti saa puhua vapaasti. */
+function code0001() {
+  return read(`${MIGRATION_DIR}/${MIGRATION_0001}`)
+    .split('\n')
+    .filter(line => !line.trim().startsWith('--'))
+    .join('\n')
+    .toLowerCase();
+}
+
+test('KRIITTINEN: 0001 ei yritä muuntaa profile.id:tä uuid-tyypiksi', () => {
+  // Tuotannon ainoan profiilirivin id on 'me'. Se EI ole uuid.
+  //   alter column id type uuid using id::uuid
+  // kaatuu heti ensimmäiseen riviin ja keskeyttää migraation.
+  //
+  // Tämä on se yksi virhe, jonka takia 0001 kirjoitettiin uusiksi.
+  // Jos joku palauttaa sen, tämä testi kaatuu ensin.
+  const code = code0001();
+
+  assert.equal(/id\s*::\s*uuid/.test(code), false,
+    'profile.id:tä muunnetaan uuid:ksi — tuotannon arvo on "me" ja muunnos kaatuu');
+  assert.equal(/alter\s+column\s+id\s+type\s+uuid/.test(code), false,
+    'profile.id:n tyyppiä muutetaan — tuotannon arvo ei ole uuid');
+});
+
+test('KRIITTINEN: 0001 säilyttää alkuperäisen tunnisteen', () => {
+  // Vanha arvo 'me' on ainoa asia, joka tekee migraatiosta peruttavan
+  // ilman varmuuskopion palautusta. Sen pudottaminen tekisi
+  // rollback-osion valheeksi.
+  const code = code0001();
+
+  assert.match(code, /rename\s+column\s+id\s+to\s+legacy_id/,
+    'vanhaa tunnistetta ei siirretä talteen');
+  assert.equal(/alter\s+table\s+public\.profile\s+drop\s+column/.test(code), false,
+    '0001 pudottaa sarakkeen profile-taulusta — alkuperäinen arvo katoaisi');
+});
+
+test('KRIITTINEN: 0001 nimeää omistajan vakiona eikä valitse sitä ajossa', () => {
+  // Dynaaminen valinta antaisi väärän vastauksen sillä hetkellä, kun
+  // kantaan on ehtinyt syntyä toinen tili — ja 36 tehtävää siirtyisi
+  // väärälle ihmiselle peruuttamattomasti.
+  const code = code0001();
+
+  assert.ok(code.includes(OWNER_UUID),
+    'omistajan tunnistetta ei ole kirjoitettu migraatioon');
+
+  assert.equal(/\blimit\s+1\b/.test(code), false,
+    'migraatio käyttää LIMIT 1 -valintaa');
+  assert.equal(/order\s+by\s+created_at/.test(code), false,
+    'migraatio valitsee omistajan rivijärjestyksen perusteella');
+  assert.equal(/\bemail\s*=/.test(code), false,
+    'migraatio arvaa omistajan sähköpostin perusteella');
+
+  // Paikanpitäjä oli aiemman luonnoksen tapa. Sitä ei saa palata.
+  assert.equal(code.includes('00000000-0000-0000-0000-000000000000'), false,
+    'paikanpitäjä-uuid on palannut migraatioon');
+});
+
+test('0001 tarkistaa esiehdot ennen kuin se muuttaa mitään', () => {
+  // Migraatio ei saa luottaa siihen, että inventaario on yhä voimassa.
+  // Kanta on voinut muuttua inventoinnin ja ajon välissä.
+  const code = code0001();
+
+  const firstChange = Math.min(
+    ...['alter table public.tasks', 'alter table public.profile', 'update public.']
+      .map(needle => {
+        const at = code.indexOf(needle);
+        return at === -1 ? Number.MAX_SAFE_INTEGER : at;
+      }));
+
+  const firstGuard = code.indexOf('raise exception');
+  assert.ok(firstGuard !== -1, 'esiehtotarkistuksia ei ole lainkaan');
+  assert.ok(firstGuard < firstChange,
+    'ensimmäinen muutos tapahtuu ennen ensimmäistä esiehtoa');
+
+  // Jokainen tarkistus vastaa yhtä tapaa tehdä vahinkoa.
+  for (const guard of [
+    'expected_task_rows',        // rivimäärä on yhä sama
+    'expected_profile_rows',
+    'legacy_profile_id',         // ainoa rivi on tunnettu
+    'auth.users',                // omistaja on olemassa
+    "column_name = 'user_id'",   // ei osittain ajettu
+    "column_name = 'legacy_id'"
+  ]) {
+    assert.ok(code.includes(guard.toLowerCase()),
+      `esiehto puuttuu: ${guard}`);
+  }
+});
+
+test('KRIITTINEN: user_id lukitaan pakolliseksi vasta backfillin jälkeen', () => {
+  // Väärä järjestys kaataisi migraation 36 olemassa olevaan riviin.
+  const code = code0001();
+
+  const backfill = code.indexOf('update public.tasks');
+  const notNull  = code.indexOf('alter column user_id set not null');
+  const check    = code.indexOf('user_id is null');
+
+  assert.ok(backfill !== -1 && notNull !== -1, 'backfill tai lukitus puuttuu');
+  assert.ok(backfill < notNull,
+    'user_id lukitaan pakolliseksi ennen kuin data on täytetty');
+  assert.ok(check !== -1 && check > backfill && check < notNull,
+    'täyttöä ei tarkisteta backfillin ja lukituksen välissä');
+});
+
+test('KRIITTINEN: profile.id lukitaan vasta täytön jälkeen', () => {
+  const code = code0001();
+
+  const backfill = code.indexOf('update public.profile');
+  const notNull  = code.indexOf('alter column id set not null');
+
+  assert.ok(backfill !== -1 && notNull !== -1, 'backfill tai lukitus puuttuu');
+  assert.ok(backfill < notNull,
+    'profile.id lukitaan pakolliseksi ennen kuin arvo on asetettu');
+});
+
+test('KRIITTINEN: 0001 poistaa vanhat salli-kaikki-politiikat', () => {
+  // Politiikat ovat OR-ehtoja keskenään. Yksi jäljelle jäänyt salliva
+  // politiikka kumoaa kaikki kahdeksan uutta.
+  const code = code0001();
+
+  assert.match(code, /drop policy/,
+    'vanhoja politiikkoja ei poisteta');
+  assert.match(code, /from pg_policies/,
+    'poisto nojaa politiikan nimeen — nimi on voitu antaa käsin');
+
+  assert.ok(code.indexOf('drop policy') < code.indexOf('create policy'),
+    'vanhat politiikat poistetaan vasta uusien luonnin jälkeen');
+});
+
+test('0001 luo kahdeksan omistajuuspolitiikkaa authenticated-roolille', () => {
+  const code = code0001();
+
+  for (const table of ['tasks', 'profile']) {
+    const column = table === 'tasks' ? 'user_id' : 'id';
+    for (const action of ['select', 'insert', 'update', 'delete']) {
+      assert.match(code,
+        new RegExp(`create policy ${table}_${action}_own on public\\.${table}`),
+        `${table}: ${action}-politiikka puuttuu`);
+    }
+    assert.match(code, new RegExp(`auth\\.uid\\(\\) = ${column}`),
+      `${table}: omistajuusehto ei osoita sarakkeeseen ${column}`);
+  }
+
+  assert.equal((code.match(/create policy/g) || []).length, 8,
+    'politiikkoja ei ole tasan kahdeksaa');
+  assert.equal((code.match(/for \w+ to authenticated/g) || []).length, 8,
+    'jokaisen politiikan pitää kohdistua rooliin authenticated');
+});
+
+test('KRIITTINEN: 0001 poistaa anonin oikeudet molemmista tauluista', () => {
+  // Julkinen avain on selaimessa. Jos anon säilyttää oikeudet, RLS on
+  // ainoa este ja yksi väärin kirjoitettu politiikka avaa kaiken.
+  const code = code0001();
+
+  for (const table of ['tasks', 'profile']) {
+    assert.match(code, new RegExp(`revoke all on public\\.${table}\\s+from anon`),
+      `${table}: anonin oikeuksia ei revokoida`);
+  }
+
+  // authenticated saa takaisin vain rivioperaatiot — ei TRUNCATE,
+  // REFERENCES eikä TRIGGER.
+  assert.equal((code.match(/grant select, insert, update, delete/g) || []).length, 2,
+    'authenticated-roolin oikeuksia ei rajata neljään operaatioon');
+});
+
+test('0001 sitoo molemmat taulut auth.users-tauluun', () => {
+  const code = code0001();
+
+  assert.match(code,
+    /add constraint tasks_user_id_fkey[\s\S]*?references auth\.users\(id\) on delete cascade/,
+    'tasks.user_id ilman viitettä auth.users-tauluun');
+  assert.match(code,
+    /add constraint profile_id_fkey[\s\S]*?references auth\.users\(id\) on delete cascade/,
+    'profile.id ilman viitettä auth.users-tauluun');
+});
+
+test('0001 antaa omistajuuden tietokannalle, ei selaimelle', () => {
+  // Jos client saisi valita user_id:n, RLS ei suojaisi mitään.
+  // Sama päätös kuin src/lib/rows.js: SERVER_OWNED_FIELDS.
+  const code = code0001();
+
+  assert.match(code, /alter column user_id set default auth\.uid\(\)/);
+  assert.match(code, /alter column id set default auth\.uid\(\)/);
+});
+
+test('varmistuskysely 0001 tarkistaa saman omistajan kuin migraatio', () => {
+  // Kaksi tiedostoa, yksi totuus. Jos migraation omistaja vaihtuu mutta
+  // varmistus jää vanhaan, varmistus näyttäisi vihreää väärästä syystä.
+  const verify = read('supabase/verify/verify_0001.sql');
+
+  assert.ok(verify.includes(OWNER_UUID),
+    'varmistuskysely ei tarkista omistajaa lainkaan');
+  assert.ok(code0001().includes(OWNER_UUID),
+    'migraatio ja varmistus eivät käytä samaa omistajaa');
+});
+
+test('varmistuskysely 0001 tarkistaa juuri ne asiat jotka voivat mennä pieleen', () => {
+  const verify = read('supabase/verify/verify_0001.sql')
+    .split('\n')
+    .filter(line => !line.trim().startsWith('--'))
+    .join('\n')
+    .toLowerCase();
+
+  const required = [
+    ['relrowsecurity',             'RLS-tila'],
+    ['pg_policies',                'politiikat'],
+    ["grantee = 'anon'",           'anonin oikeudet'],
+    ['user_id is null',            'omistajattomat rivit'],
+    ['count(distinct user_id)',    'omistajien lukumäärä'],
+    ['confdeltype',                'vierasavaimen poistosääntö'],
+    ['legacy_id',                  'säilytetty alkuperäinen tunniste'],
+    ['tasks_user_id_date_idx',     'indeksi']
+  ];
+
+  for (const [needle, what] of required) {
+    assert.ok(verify.includes(needle), `varmistuksesta puuttuu: ${what}`);
+  }
+});
