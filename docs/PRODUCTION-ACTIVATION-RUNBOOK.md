@@ -123,20 +123,35 @@ Aja `supabase/verify/verify_0001.sql`. Odotusarvot ovat täsmällisiä:
 | Politiikkoja | **tasan 8**, jokaisen rooli `{authenticated}` |
 | `tasks.user_id` | `uuid`, `NO`, oletus `auth.uid()` |
 | `profile.id` | `uuid`, `NO`, oletus `auth.uid()` |
-| `profile.legacy_id` | `text`, `YES` — sisältää yhä `me` |
+| `profile.legacy_id` | `text`, `YES`, **oletus tyhjä** — sisältää yhä `me` |
 | Rivimäärät | `tasks` 36, `profile` 1 |
 | Omistajuus | molemmat `bool_and` = `true` |
 | Eri omistajia | 1 |
 | Orvot viitteet | 0 ja 0 |
 | Vierasavaimet | 2 riviä, `confdeltype = c` |
-| `anon`-oikeudet | **nolla riviä** |
-| `authenticated`-oikeudet | tasan 8 riviä |
+| `anon` suorat oikeudet | **nolla riviä** |
+| `authenticated` suorat oikeudet | tasan 8 riviä |
+| **`PUBLIC`-myönnöt** | **nolla riviä** |
+| **Tehollinen oikeus** | `anon_saa` = `false` kaikilla 14 rivillä |
+| **Tehollinen oikeus** | `authenticated_saa` = `true` vain neljällä per taulu |
 
 Jos rivimäärä muuttui: **palauta varmuuskopiosta.** Migraatio ei saa
 hävittää yhtään riviä.
 
-Jos `anon`-oikeuksissa on yksikin rivi: **älä jatka.** Julkinen avain on
+Jos `anon`-oikeuksissa on yksikin rivi, tai jos kohdassa 17 on yksikin
+`true` sarakkeessa `anon_saa`: **älä jatka.** Julkinen avain on
 selaimessa, ja anonin oikeus tekee RLS:stä ainoan esteen.
+
+**Miksi kolme eri oikeustarkistusta.** Kohta 14 näyttää vain
+nimenomaiset myönnöt roolille `anon`. PostgreSQL-rooli `PUBLIC`
+tarkoittaa "kaikki roolit", ja sille myönnetyn oikeuden **perii myös
+anon** — perittyä oikeutta ei näy kohdassa 14 lainkaan. Kohta 16
+paljastaa PUBLIC-myönnöt, ja kohta 17 kertoo `has_table_privilege`illä
+mitä rooli lopulta *todella* saa tehdä. Vain kohta 17 on todiste.
+
+Jos `profile.legacy_id`-sarakkeella on oletusarvo: **älä jatka.**
+Silloin jokainen uusi profiilirivi saisi `legacy_id = 'me'`, ja sarake
+lakkaisi kertomasta kuka oli alkuperäinen omistaja.
 
 ---
 

@@ -692,7 +692,7 @@ test('KRIITTINEN: 0001 poistaa anonin oikeudet molemmista tauluista', () => {
   const code = code0001();
 
   for (const table of ['tasks', 'profile']) {
-    assert.match(code, new RegExp(`revoke all on public\\.${table}\\s+from anon`),
+    assert.match(code, new RegExp(`revoke all on table public\\.${table}\\s+from anon`),
       `${table}: anonin oikeuksia ei revokoida`);
   }
 
@@ -700,6 +700,125 @@ test('KRIITTINEN: 0001 poistaa anonin oikeudet molemmista tauluista', () => {
   // REFERENCES eikä TRIGGER.
   assert.equal((code.match(/grant select, insert, update, delete/g) || []).length, 2,
     'authenticated-roolin oikeuksia ei rajata neljään operaatioon');
+});
+
+test('KRIITTINEN: 0001 sulkee myös PUBLIC-roolin perintäpolun', () => {
+  // PostgreSQL-rooli PUBLIC tarkoittaa "kaikki roolit". Sille myönnetyn
+  // oikeuden perii jokainen rooli, myös anon — eikä
+  //   revoke all on public.tasks from anon
+  // poista sitä, koska anonilla ei ole sitä suoraan. Se on peritty.
+  //
+  // Pelkkä anon-revoke on siis todiste vain siitä, ettei anonilla ole
+  // SUORAA oikeutta. Se ei ole todiste siitä, ettei anon pääse tauluun.
+  const code = code0001();
+
+  for (const table of ['tasks', 'profile']) {
+    assert.match(code, new RegExp(`revoke all on table public\\.${table}\\s+from public`),
+      `${table}: PUBLIC-roolin oikeuksia ei revokoida — anon perisi ne`);
+  }
+
+  // Järjestys: revoke ennen grantia. Toisin päin authenticated
+  // menettäisi juuri saamansa oikeudet.
+  const lastRevoke = code.lastIndexOf('revoke all on table');
+  const firstGrant = code.indexOf('grant select, insert, update, delete');
+  assert.ok(lastRevoke !== -1 && firstGrant !== -1);
+  assert.ok(lastRevoke < firstGrant,
+    'oikeuksia myönnetään ennen kuin vanhat on poistettu');
+});
+
+test('KRIITTINEN: 0001 todentaa TEHOLLISET oikeudet, ei vain myönnettyjä', () => {
+  // Suora grant-luettelo ei näe perintää. Kaksi eri tarkistusta
+  // todistavat eri asian, ja kumpikin yksin jättäisi aukon:
+  //   aclexplode           -> mitä on nimenomaisesti myönnetty (PUBLIC näkyy)
+  //   has_table_privilege  -> mitä rooli todella saa tehdä (perintä mukana)
+  const code = code0001();
+
+  assert.match(code, /aclexplode/,
+    'PUBLIC-myöntöjä ei tarkisteta — role_table_grants ei näytä niitä');
+  assert.match(code, /a\.grantee = 0/,
+    'PUBLIC-myöntöä ei tunnisteta (grantee 0)');
+  assert.match(code, /has_table_privilege\('anon'/,
+    'anonin tehollista oikeutta ei tarkisteta');
+  assert.match(code, /has_table_privilege\('authenticated'/,
+    'authenticated-roolin tehollista oikeutta ei tarkisteta');
+
+  // Tarkistuksen pitää kattaa myös ne kolme oikeutta, joita kumpikaan
+  // rooli ei tarvitse. Pelkkä CRUD-tarkistus päästäisi TRUNCATEn läpi.
+  for (const privilege of ['truncate', 'references', 'trigger']) {
+    assert.ok(code.includes(`'${privilege}'`),
+      `tehollisten oikeuksien tarkistus ei kata oikeutta ${privilege}`);
+  }
+});
+
+test('KRIITTINEN: legacy_id menettää vanhan oletusarvon', () => {
+  // Tuotannon profile.id:llä on `default 'me'`, ja Postgresissa
+  // oletusarvo SEURAA saraketta uudelleennimeämisessä.
+  //
+  // Ilman nimenomaista drop defaultia jokainen migraation jälkeen
+  // syntyvä profiilirivi saisi automaattisesti legacy_id = 'me'.
+  // Sarake, jonka nimi lupaa historiatietoa, täyttyisi uudella datalla,
+  // ja rollback-osion oletus "legacy_id kertoo mikä rivi oli
+  // alkuperäinen" lakkaisi pitämästä paikkaansa.
+  const code = code0001();
+
+  const rename    = code.indexOf('rename column id to legacy_id');
+  const dropDeflt = code.indexOf('alter column legacy_id drop default');
+
+  assert.ok(rename !== -1, 'uudelleennimeämistä ei löytynyt');
+  assert.ok(dropDeflt !== -1,
+    'legacy_id ei menetä vanhaa oletusarvoa — uudet rivit perisivät arvon "me"');
+  assert.ok(rename < dropDeflt,
+    'oletusarvo pudotetaan ennen uudelleennimeämistä — sarakenimi ei vielä osu');
+
+  // Oletuksen katoaminen myös tarkistetaan ajossa, ei vain kirjoiteta.
+  assert.match(code, /column_default into v_default/,
+    'oletusarvon katoamista ei varmisteta ajon aikana');
+});
+
+test('KRIITTINEN: alkuperäinen legacy-arvo säilyy koskemattomana', () => {
+  // legacy_id on ainoa asia, joka tekee migraatiosta purettavaksi ilman
+  // varmuuskopiota. Sen tyhjentäminen tai pudottaminen tekisi
+  // rollback-osiosta valheen.
+  const code = code0001();
+
+  assert.equal(/update public\.profile[\s\S]{0,200}?set\s+legacy_id/.test(code), false,
+    '0001 kirjoittaa legacy_id-sarakkeen päälle');
+  assert.equal(/drop column\s+(if exists\s+)?legacy_id/.test(code), false,
+    '0001 pudottaa legacy_id-sarakkeen');
+
+  // Ja säilyminen tarkistetaan ajossa.
+  assert.match(code, /legacy_id = \(select legacy_profile_id from _migration_params\)/,
+    'legacy-arvon säilymistä ei tarkisteta ajon aikana');
+});
+
+test('KRIITTINEN: sovelluskoodi ei riipu legacy_id-sarakkeesta', () => {
+  // legacy_id on migraation historiatietoa. Jos ajonaikainen koodi
+  // alkaisi lukea tai kirjoittaa sitä, sarakkeen pudottaminen myöhemmin
+  // rikkoisi sovelluksen — ja juuri se pudottaminen on dokumentoitu
+  // sallituksi myöhemmäksi päätökseksi.
+  for (const file of browserModules()) {
+    assert.equal(read(file).includes('legacy_id'), false,
+      `${file} viittaa sarakkeeseen legacy_id`);
+  }
+});
+
+test('varmistuskysely 0001 todentaa PUBLIC-perinnän ja tehollisen oikeuden', () => {
+  const verify = read('supabase/verify/verify_0001.sql')
+    .split('\n')
+    .filter(line => !line.trim().startsWith('--'))
+    .join('\n')
+    .toLowerCase();
+
+  assert.ok(verify.includes('aclexplode'),
+    'varmistus ei näe PUBLIC-roolille myönnettyjä oikeuksia');
+  assert.ok(verify.includes('a.grantee = 0'),
+    'varmistus ei tunnista PUBLIC-myöntöä');
+  assert.ok(verify.includes("has_table_privilege('anon'"),
+    'varmistus ei tarkista anonin tehollista oikeutta');
+  assert.ok(verify.includes("has_table_privilege('authenticated'"),
+    'varmistus ei tarkista authenticated-roolin tehollista oikeutta');
+  assert.ok(verify.includes('legacy_id'),
+    'varmistus ei katso legacy_id-saraketta');
 });
 
 test('0001 sitoo molemmat taulut auth.users-tauluun', () => {

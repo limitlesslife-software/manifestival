@@ -37,10 +37,17 @@ where table_schema = 'public' and table_name = 'tasks'
   and column_name = 'user_id';
 
 -- 5. profile.id ja profile.legacy_id.
---    Odotus: id = uuid, NO, auth.uid()
---            legacy_id = text, YES, ei oletusta
+--    Odotus: id        = uuid, NO,  auth.uid()
+--            legacy_id = text, YES, oletus TYHJA
+--
 --    legacy_id on tarkoituksella jaljella. Se sisaltaa alkuperaisen
 --    arvon 'me' ja on ainoa asia, joka tekee migraatiosta peruttavan.
+--
+--    KATSO OLETUSSARAKE. Tuotannossa profile.id:lla oli default 'me',
+--    ja oletus seuraa saraketta uudelleennimeamisessa. Jos oletus on
+--    yha voimassa, JOKAINEN uusi profiilirivi saa legacy_id = 'me' ja
+--    sarake lakkaa kertomasta kuka oli alkuperainen. Odotusarvo on
+--    tyhja solu, ei mitaan muuta.
 select column_name as sarake, data_type as tyyppi,
        is_nullable as sallii_nullin, column_default as oletus
 from information_schema.columns
@@ -107,19 +114,53 @@ from pg_indexes
 where schemaname = 'public' and tablename = 'tasks'
   and indexname = 'tasks_user_id_date_idx';
 
--- 14. anon-roolin oikeudet. Odotus: NOLLA RIVIA.
---     Tama on koko migraation tarkein yksittainen tarkistus. Julkinen
---     avain on selaimessa. Jos anonilla on oikeuksia, RLS on ainoa este
---     ja yksi vaarin kirjoitettu politiikka avaa kaiken.
+-- 14. anon-roolin SUORAT oikeudet. Odotus: NOLLA RIVIA.
 select table_name as taulu, privilege_type as oikeus
 from information_schema.role_table_grants
 where table_schema = 'public' and grantee = 'anon'
   and table_name in ('tasks', 'profile');
 
--- 15. authenticated-roolin oikeudet. Odotus: TASAN 8 rivia
+-- 15. authenticated-roolin SUORAT oikeudet. Odotus: TASAN 8 rivia
 --     (4 operaatiota x 2 taulua). Ei TRUNCATE, ei REFERENCES, ei TRIGGER.
 select table_name as taulu, privilege_type as oikeus
 from information_schema.role_table_grants
 where table_schema = 'public' and grantee = 'authenticated'
   and table_name in ('tasks', 'profile')
 order by table_name, privilege_type;
+
+-- 16. PUBLIC-roolin oikeudet. Odotus: NOLLA RIVIA.
+--
+--     Kohta 14 EI riita yksinaan. PostgreSQL-rooli PUBLIC tarkoittaa
+--     "kaikki roolit": sille myonnetyn oikeuden perii jokainen rooli,
+--     myos anon. Perittya oikeutta ei nay kohdassa 14 lainkaan, koska
+--     role_table_grants listaa vain nimenomaiset myonnot roolinimelle.
+--
+--     aclexplode purkaa taulun oikeuslistan riveiksi. PUBLIC on siina
+--     grantee-arvo 0. Jos relacl on tyhja, oikeuksia ei ole myonnetty
+--     kenellekaan omistajan ulkopuolella eika tama palauta rivia.
+select c.relname as taulu, a.privilege_type as oikeus
+from pg_class c, aclexplode(c.relacl) a
+where c.oid = any (array['public.tasks'::regclass, 'public.profile'::regclass])
+  and a.grantee = 0;
+
+-- 17. TEHOLLISET oikeudet. Tama on lopullinen todiste.
+--
+--     has_table_privilege kertoo mita rooli TODELLA saa tehda: se ottaa
+--     huomioon seka PUBLIC-perinnan etta roolijasenyydet. Kohdat 14-16
+--     kertovat mista oikeus tulee, tama kertoo onko sita.
+--
+--     Odotus, 14 rivia:
+--       anon_saa            = false JOKAISELLA rivilla
+--       authenticated_saa   = true  neljalla ensimmaisella per taulu
+--                                   (delete, insert, select, update)
+--       authenticated_saa   = false loput (references, trigger, truncate)
+--
+--     Yksikin true anon-sarakkeessa tarkoittaa, etta julkinen avain
+--     riittaa paasyyn ja RLS on ainoa jaljella oleva este.
+select t.taulu, p.oikeus,
+       has_table_privilege('anon', t.taulu, p.oikeus) as anon_saa,
+       has_table_privilege('authenticated', t.taulu, p.oikeus) as authenticated_saa
+from (select unnest(array['public.tasks', 'public.profile']) as taulu) t
+cross join (select unnest(array['select', 'insert', 'update', 'delete',
+                                'truncate', 'references', 'trigger']) as oikeus) p
+order by t.taulu, p.oikeus;

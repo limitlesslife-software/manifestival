@@ -295,27 +295,48 @@ end $$;
 -- 3b. Vanha sarake sivuun, arvo tallella.
 alter table public.profile rename column id to legacy_id;
 
--- 3c. Nimenomainen NULL-sallivuus. Pääavaimen poisto jättää
+-- 3c. Vanha oletusarvo pois.
+--
+--     TÄMÄ ON PAKOLLINEN, EI SIISTEYTTÄ. Tuotannon sarakkeella on
+--     `default 'me'`, ja Postgresissa oletusarvo seuraa saraketta
+--     uudelleennimeämisessä. Ilman tätä riviä JOKAINEN migraation
+--     jälkeen syntyvä profiilirivi saisi automaattisesti
+--     legacy_id = 'me'.
+--
+--     Se olisi hiljainen virhe pahimmassa muodossaan: sarake, jonka
+--     nimi lupaa historiatietoa, täyttyisikin uudella datalla, ja
+--     rollback-osion oletus "legacy_id kertoo mikä rivi oli
+--     alkuperäinen" lakkaisi pitämästä paikkaansa.
+--
+--     Olemassa olevaa arvoa EI kosketa. 'me' jää sinne missä se on.
+alter table public.profile alter column legacy_id drop default;
+
+-- 3d. Nimenomainen NULL-sallivuus. Pääavaimen poisto jättää
 --     NOT NULL -merkinnän voimaan joissakin Postgres-versioissa, ja
 --     uudet käyttäjät eivät koskaan saa legacy-arvoa.
 alter table public.profile alter column legacy_id drop not null;
 
--- 3d. Uusi avainsarake.
+-- 3e. Uusi avainsarake.
 alter table public.profile add column id uuid;
 
--- 3e. Omistajuus tunnetulle käyttäjälle.
+-- 3f. Omistajuus tunnetulle käyttäjälle.
 update public.profile
    set id = (select owner_user_id from _migration_params)
  where legacy_id = (select legacy_profile_id from _migration_params);
 
--- 3f. Tarkistus ennen lukitsemista.
+-- 3g. Tarkistus ennen lukitsemista. Myös legacy-arvo tarkistetaan:
+--     sen katoaminen tarkoittaisi, että perumisen edellytys on mennyt.
 do $$
 declare
-  v_null  bigint;
-  v_total bigint;
+  v_null   bigint;
+  v_total  bigint;
+  v_legacy bigint;
+  v_default text;
 begin
   select count(*) into v_null  from public.profile where id is null;
   select count(*) into v_total from public.profile;
+  select count(*) into v_legacy from public.profile
+    where legacy_id = (select legacy_profile_id from _migration_params);
 
   if v_null <> 0 then
     raise exception 'profile: % rivia jai ilman uutta tunnistetta.', v_null;
@@ -323,16 +344,31 @@ begin
   if v_total <> (select expected_profile_rows from _migration_params) then
     raise exception 'profile: rivimaara muuttui migraation aikana: %.', v_total;
   end if;
+  if v_legacy <> 1 then
+    raise exception
+      'profile.legacy_id: alkuperainen arvo katosi (% rivia). Peruminen ei olisi enaa mahdollista.',
+      v_legacy;
+  end if;
+
+  select column_default into v_default
+    from information_schema.columns
+   where table_schema = 'public' and table_name = 'profile'
+     and column_name = 'legacy_id';
+  if v_default is not null then
+    raise exception
+      'profile.legacy_id sai jaada oletusarvon %. Uudet rivit perisivat sen.',
+      v_default;
+  end if;
 end $$;
 
--- 3g. Uusi pääavain.
+-- 3h. Uusi pääavain.
 alter table public.profile alter column id set not null;
 alter table public.profile add constraint profile_pkey primary key (id);
 
--- 3h. Uusi rivi kuuluu aina kutsujalle. Sama periaate kuin tasks-taulussa.
+-- 3i. Uusi rivi kuuluu aina kutsujalle. Sama periaate kuin tasks-taulussa.
 alter table public.profile alter column id set default auth.uid();
 
--- 3i. Viite auth.users-tauluun. Tilin poisto vie profiilin mukanaan,
+-- 3j. Viite auth.users-tauluun. Tilin poisto vie profiilin mukanaan,
 --     samasta syystä kuin vaiheessa 2f.
 alter table public.profile
   add constraint profile_id_fkey
@@ -427,15 +463,32 @@ create policy profile_delete_own on public.profile
 -- RLS on ensimmäinen puolustuslinja, oikeudet toinen. Kirjautumaton ei
 -- tarvitse pääsyä henkilökohtaiseen dataan millään tasolla.
 --
--- revoke all kattaa myös oikeudet TRUNCATE, REFERENCES ja TRIGGER, joita
--- kumpikaan rooli ei tarvitse. authenticated saa takaisin vain neljä
--- rivioperaatiota — ei enempää.
+-- PUBLIC ENSIN. Tämä on olennaista eikä pelkkää huolellisuutta:
+-- PostgreSQL-rooli PUBLIC ei ole rooli vaan "kaikki roolit". Sille
+-- myönnetyn oikeuden perii jokainen rooli, myös anon — eikä
+-- `revoke all ... from anon` poista sitä, koska anonilla ei ole sitä
+-- suoraan. Se on peritty.
+--
+-- Toisin sanoen: pelkkä anon-revoke EI ole todiste siitä, ettei anon
+-- pääse tauluun. Se on todiste vain siitä, ettei sillä ole SUORAA
+-- oikeutta. Siksi PUBLIC suljetaan nimenomaisesti.
+--
+-- revoke all kattaa myös oikeudet TRUNCATE, REFERENCES ja TRIGGER,
+-- joita yksikään näistä rooleista ei tarvitse. authenticated saa
+-- takaisin vain neljä rivioperaatiota — ei enempää.
+--
+-- service_role ei ole tässä listassa tarkoituksella. Sen oikeudet ovat
+-- nimenomaisia eivätkä perustu PUBLICiin, joten ne säilyvät
+-- koskemattomina. Palvelinpuolen ylläpito ei saa rikkoutua tästä.
 -- ---------------------------------------------------------------------
-revoke all on public.tasks   from anon;
-revoke all on public.profile from anon;
+revoke all on table public.tasks   from public;
+revoke all on table public.profile from public;
 
-revoke all on public.tasks   from authenticated;
-revoke all on public.profile from authenticated;
+revoke all on table public.tasks   from anon;
+revoke all on table public.profile from anon;
+
+revoke all on table public.tasks   from authenticated;
+revoke all on table public.profile from authenticated;
 
 grant select, insert, update, delete on public.tasks   to authenticated;
 grant select, insert, update, delete on public.profile to authenticated;
@@ -446,12 +499,43 @@ grant select, insert, update, delete on public.profile to authenticated;
 -- Viimeinen mahdollisuus perua automaattisesti. Tämän jälkeen commit on
 -- lopullinen, ja korjaus vaatii ihmisen.
 -- ---------------------------------------------------------------------
+-- Oikeuksien tarkistus tehdään KAHDELLA eri tavalla, koska ne todistavat
+-- eri asian:
+--
+--   1. pg_class.relacl + aclexplode  -> mitä on NIMENOMAISESTI myönnetty.
+--      Tässä PUBLIC näkyy grantee-arvona 0. Se on ainoa luotettava tapa
+--      nähdä PUBLIC-myönnöt; information_schema.role_table_grants ei
+--      listaa niitä roolinimellä lainkaan.
+--
+--   2. has_table_privilege()         -> mitä rooli TODELLA saa tehdä.
+--      Tämä ottaa huomioon sekä PUBLICin että roolijäsenyydet, eli juuri
+--      ne perintäpolut, jotka suora revoke jättäisi näkemättä.
+--
+-- Kohta 1 yksin ei riitä (perintä jäisi huomaamatta). Kohta 2 yksin ei
+-- riitä (ei kertoisi MISTÄ oikeus tulee). Molemmat yhdessä riittävät.
 do $$
 declare
+  v_tables text[] := array['public.tasks', 'public.profile'];
+  v_all    text[] := array['select', 'insert', 'update', 'delete',
+                           'truncate', 'references', 'trigger'];
+  v_crud   text[] := array['select', 'insert', 'update', 'delete'];
+  v_extra  text[] := array['truncate', 'references', 'trigger'];
+  t          text;
+  pr         text;
   v_policies int;
-  v_anon     int;
   v_rls      int;
+  v_public   int;
 begin
+  -- 7.1 Roolien olemassaolo. Ilman tätä has_table_privilege heittäisi
+  --     epäselvän virheen, ja puuttuva rooli olisi itsessään merkki
+  --     siitä, ettei tämä ole se kanta jota luultiin.
+  foreach pr in array array['anon', 'authenticated'] loop
+    if not exists (select 1 from pg_roles where rolname = pr) then
+      raise exception 'Roolia % ei ole. Onko tama oikea Supabase-kanta?', pr;
+    end if;
+  end loop;
+
+  -- 7.2 Politiikat.
   select count(*) into v_policies
     from pg_policies
    where schemaname = 'public' and tablename in ('tasks', 'profile');
@@ -459,6 +543,7 @@ begin
     raise exception 'Politiikkoja on %, pitaisi olla 8.', v_policies;
   end if;
 
+  -- 7.3 RLS.
   select count(*) into v_rls
     from pg_class
    where relnamespace = 'public'::regnamespace
@@ -468,16 +553,50 @@ begin
     raise exception 'RLS on paalla vain %:ssa taulussa kahdesta.', v_rls;
   end if;
 
-  select count(*) into v_anon
-    from information_schema.role_table_grants
-   where table_schema = 'public'
-     and grantee = 'anon'
-     and table_name in ('tasks', 'profile');
-  if v_anon <> 0 then
-    raise exception 'anon-roolilla on yha % oikeutta.', v_anon;
+  -- 7.4 PUBLIC-roolille ei yhtään myönnettyä oikeutta. grantee = 0 on
+  --     aclexplode-esityksessä PUBLIC.
+  select count(*) into v_public
+    from pg_class c, aclexplode(c.relacl) a
+   where c.oid = any (array['public.tasks'::regclass,
+                            'public.profile'::regclass])
+     and a.grantee = 0;
+  if v_public <> 0 then
+    raise exception
+      'PUBLIC-roolilla on % myonnettya oikeutta. Jokainen rooli perii ne, myos anon.',
+      v_public;
   end if;
 
-  raise notice 'Lopputila kunnossa: 8 politiikkaa, RLS paalla, anon ilman oikeuksia.';
+  foreach t in array v_tables loop
+    -- 7.5 anon: ei yhtään TEHOLLISTA oikeutta. Tämä on se tarkistus,
+    --     joka kattaa myös perityn oikeuden.
+    foreach pr in array v_all loop
+      if has_table_privilege('anon', t, pr) then
+        raise exception
+          'anon-roolilla on tehollinen oikeus % tauluun %. Julkinen avain riittaisi paasyyn.',
+          pr, t;
+      end if;
+    end loop;
+
+    -- 7.6 authenticated: tasan neljä rivioperaatiota.
+    foreach pr in array v_crud loop
+      if not has_table_privilege('authenticated', t, pr) then
+        raise exception
+          'authenticated-roolilta puuttuu oikeus % tauluun %. Sovellus ei toimisi.',
+          pr, t;
+      end if;
+    end loop;
+
+    -- 7.7 ...eikä yhtään enempää.
+    foreach pr in array v_extra loop
+      if has_table_privilege('authenticated', t, pr) then
+        raise exception
+          'authenticated-roolilla on tarpeeton oikeus % tauluun %.', pr, t;
+      end if;
+    end loop;
+  end loop;
+
+  raise notice
+    'Lopputila kunnossa: 8 politiikkaa, RLS paalla, PUBLIC tyhja, anon ilman tehollista oikeutta, authenticated tasan 4.';
 end $$;
 
 commit;
@@ -506,8 +625,13 @@ commit;
 --      - pudota vierasavaimet profile_id_fkey ja tasks_user_id_fkey
 --      - pudota profile_pkey, pudota sarake profile.id
 --      - nimeä profile.legacy_id takaisin id:ksi ja palauta pääavain
+--      - palauta sarakkeen oletusarvo 'me', jos vanha malli otetaan
+--        oikeasti takaisin käyttöön (migraatio pudotti sen vaiheessa 3c)
 --      - pudota sarake tasks.user_id ja indeksi tasks_user_id_date_idx
---      - palauta anon-roolin oikeudet, jos niitä oikeasti tarvitaan
+--      - palauta anon-roolin oikeudet, jos niitä oikeasti tarvitaan.
+--        HUOM: PUBLIC-roolin oikeuksia EI palauteta. Ne olivat
+--        perintäpolku anonille, ja niiden palauttaminen avaisi taulut
+--        jokaiselle roolille kerralla.
 --
 --    Huomaa mitä tämä TARKOITTAA: paluu tilaan, jossa julkinen
 --    anon-avain riittää lukemaan kaiken. Peruminen on tietoturvan
