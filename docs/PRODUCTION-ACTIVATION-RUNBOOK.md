@@ -126,7 +126,8 @@ välilehdessä. Sulje se ja aja uudelleen.
 Lue tuloslokista `NOTICE`-rivit. Niiden pitää kertoa:
 - `Esiehdot kunnossa. Omistaja 2cc00622-…, tehtavia 36, profiileja 1.`
 - montako vanhaa politiikkaa poistettiin
-- `Lopputila kunnossa: 8 politiikkaa, RLS paalla, anon ilman oikeuksia.`
+- `Lopputila kunnossa: 8 politiikkaa, RLS paalla, PUBLIC tyhja, anon
+  ilman tehollista oikeutta, authenticated tasan 4.`
 
 Jos ajo päättyy `ERROR`-riviin, **mitään ei ole muuttunut** — koko
 tiedosto peruuntuu itsestään. Lue virheteksti: se nimeää sen esiehdon,
@@ -145,43 +146,66 @@ etsiä vikaa migraatiosta. Välimuistin voi myös pakottaa päivittymään
 Supabasen Dashboardista: *Settings → API → Reload schema cache*.
 
 ### PYSÄYTYS 3
-Aja `supabase/verify/verify_0001.sql`. Odotusarvot ovat täsmällisiä:
+Aja `supabase/verify/verify_0001.sql`. Tiedostossa on 20 numeroitua
+kohtaa, ja odotusarvot ovat täsmällisiä:
 
-| Kohta | Odotus |
-|---|---|
-| RLS | `true` molemmilla |
-| Politiikkoja | **tasan 8**, jokaisen rooli `{authenticated}` |
-| `tasks.user_id` | `uuid`, `NO`, oletus `auth.uid()` |
-| `profile.id` | `uuid`, `NO`, oletus `auth.uid()` |
-| `profile.legacy_id` | `text`, `YES`, **oletus tyhjä** — sisältää yhä `me` |
-| Rivimäärät | `tasks` 36, `profile` 1 |
-| Omistajuus | molemmat `bool_and` = `true` |
-| Eri omistajia | 1 |
-| Orvot viitteet | 0 ja 0 |
-| Vierasavaimet | 2 riviä, `confdeltype = c` |
-| `anon` suorat oikeudet | **nolla riviä** |
-| `authenticated` suorat oikeudet | tasan 8 riviä |
-| **`PUBLIC`-myönnöt** | **nolla riviä** |
-| **Tehollinen oikeus** | `anon_saa` = `false` kaikilla 14 rivillä |
-| **Tehollinen oikeus** | `authenticated_saa` = `true` vain neljällä per taulu |
+| # | Kohta | Odotus |
+|---|---|---|
+| 1 | RLS | `true` molemmilla |
+| 2 | Politiikkojen määritelmät | 8 riviä, rooli `{authenticated}`, `qual` ja `with_check` näkyvissä |
+| 3 | Politiikkojen määrä | **tasan 8** |
+| 4 | **Politiikat vs. odotettu** | `tulos` = `OK` jokaisella, `poikkeavia_yhteensa` = **0** |
+| 5 | `tasks.user_id` | `uuid`, `NO`, oletus `auth.uid()` |
+| 6 | `profile.id` / `legacy_id` | `uuid`/`NO`/`auth.uid()` ja `text`/`YES`/**oletus tyhjä** |
+| 7 | **Perumisen merkkipaalu** | `1, 1, 1, 0` |
+| 8 | Rivimäärät | `tasks` 36, `profile` 1 |
+| 9 | Omistajattomat | 0 |
+| 10 | Omistajuus | molemmat `bool_and` = `true` |
+| 11 | Eri omistajia | 1 |
+| 12 | Orvot viitteet | 0 ja 0 |
+| 13 | **Vierasavainten päät** | `tulos` = `OK` molemmilla, `poikkeavia_yhteensa` = **0** |
+| 14 | **Ylimääräiset vierasavaimet** | **nolla riviä** |
+| 15 | `profile`-pääavain | yksi rivi, sarakkeena `id` |
+| 16 | Indeksi | `tasks_user_id_date_idx` löytyy |
+| 17 | `anon` suorat oikeudet | **nolla riviä** |
+| 18 | `authenticated` suorat oikeudet | tasan 8 riviä |
+| 19 | `PUBLIC`-myönnöt | **nolla riviä** |
+| 20 | Tehollinen oikeus | `anon_saa` = `false` kaikilla 14 rivillä; `authenticated_saa` = `true` vain neljällä per taulu |
 
 Jos rivimäärä muuttui: **palauta varmuuskopiosta.** Migraatio ei saa
 hävittää yhtään riviä.
 
-Jos `anon`-oikeuksissa on yksikin rivi, tai jos kohdassa 17 on yksikin
+Jos `anon`-oikeuksissa on yksikin rivi, tai jos kohdassa 20 on yksikin
 `true` sarakkeessa `anon_saa`: **älä jatka.** Julkinen avain on
 selaimessa, ja anonin oikeus tekee RLS:stä ainoan esteen.
 
-**Miksi kolme eri oikeustarkistusta.** Kohta 14 näyttää vain
+**Miksi neljä eri oikeustarkistusta.** Kohta 17 näyttää vain
 nimenomaiset myönnöt roolille `anon`. PostgreSQL-rooli `PUBLIC`
 tarkoittaa "kaikki roolit", ja sille myönnetyn oikeuden **perii myös
-anon** — perittyä oikeutta ei näy kohdassa 14 lainkaan. Kohta 16
-paljastaa PUBLIC-myönnöt, ja kohta 17 kertoo `has_table_privilege`illä
-mitä rooli lopulta *todella* saa tehdä. Vain kohta 17 on todiste.
+anon** — perittyä oikeutta ei näy kohdassa 17 lainkaan. Kohta 19
+paljastaa PUBLIC-myönnöt, ja kohta 20 kertoo `has_table_privilege`illä
+mitä rooli lopulta *todella* saa tehdä. Vain kohta 20 on todiste.
 
-Jos `profile.legacy_id`-sarakkeella on oletusarvo: **älä jatka.**
-Silloin jokainen uusi profiilirivi saisi `legacy_id = 'me'`, ja sarake
-lakkaisi kertomasta kuka oli alkuperäinen omistaja.
+**Miksi politiikkojen ehdot luetaan auki.** Politiikan olemassaolo ei
+todista mitään. Väärä ehto näyttää ulospäin tasan samalta kuin oikea:
+sama nimi, sama operaatio, sama rooli. Ero on vain USING- ja
+WITH CHECK -lausekkeissa, ja juuri ne ratkaisevat näkeekö käyttäjä
+toisen rivit. Kohta 2 näyttää ne luettavaksi, kohta 4 vertaa ne
+odotettuun puolestasi — kahdeksan riviä lausekkeita on juuri sopivan
+pituinen lista siihen, että yksi väärä merkki jää huomaamatta
+silmämääräisessä luvussa.
+
+**Miksi vierasavaimista katsotaan päät.** Rajoitteen nimi ei kerro
+mihin se osoittaa. Oikean niminen vierasavain väärään sarakkeeseen
+näyttäisi nimilistassa täysin oikealta. Kohta 13 todistaa että odotetut
+kaksi osoittavat tarkalleen `auth.users(id)`-tauluun `CASCADE`-säännöllä,
+kohta 14 että muita ei ole.
+
+Jos kohdassa 7 `legacy_me` ei ole `1`, tai jos `profile.legacy_id`
+-sarakkeella on kohdassa 6 oletusarvo: **älä jatka.** Ilman säilynyttä
+alkuperäistä arvoa migraation ROLLBACK-osion kohta 2 ei enää pidä
+paikkaansa, ja jäänyt oletusarvo antaisi jokaiselle uudelle
+profiiliriville `legacy_id = 'me'`.
 
 ---
 

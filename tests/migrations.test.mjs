@@ -920,12 +920,17 @@ test('varmistuskysely 0001 tarkistaa saman omistajan kuin migraatio', () => {
     'migraatio ja varmistus eivät käytä samaa omistajaa');
 });
 
-test('varmistuskysely 0001 tarkistaa juuri ne asiat jotka voivat mennä pieleen', () => {
-  const verify = read('supabase/verify/verify_0001.sql')
+/** verify_0001.sql ilman kommentteja. Selitysteksti saa puhua vapaasti. */
+function verify0001() {
+  return read('supabase/verify/verify_0001.sql')
     .split('\n')
     .filter(line => !line.trim().startsWith('--'))
     .join('\n')
     .toLowerCase();
+}
+
+test('varmistuskysely 0001 tarkistaa juuri ne asiat jotka voivat mennä pieleen', () => {
+  const verify = verify0001();
 
   const required = [
     ['relrowsecurity',             'RLS-tila'],
@@ -935,10 +940,114 @@ test('varmistuskysely 0001 tarkistaa juuri ne asiat jotka voivat mennä pieleen'
     ['count(distinct user_id)',    'omistajien lukumäärä'],
     ['confdeltype',                'vierasavaimen poistosääntö'],
     ['legacy_id',                  'säilytetty alkuperäinen tunniste'],
-    ['tasks_user_id_date_idx',     'indeksi']
+    ['tasks_user_id_date_idx',     'indeksi'],
+    ['tasks_user_id_fkey',         'tehtävän vierasavain nimeltä'],
+    ['profile_id_fkey',            'profiilin vierasavain nimeltä'],
+    ['column_default',             'sarakkeiden oletusarvot']
   ];
 
   for (const [needle, what] of required) {
     assert.ok(verify.includes(needle), `varmistuksesta puuttuu: ${what}`);
+  }
+});
+
+test('KRIITTINEN: varmistus lukee politiikkojen EHDOT, ei vain nimiä', () => {
+  // Politiikan olemassaolo ei todista mitään. Väärä ehto näyttää
+  // ulospäin tasan samalta kuin oikea: sama nimi, sama operaatio, sama
+  // rooli. Ero on vain USING- ja WITH CHECK -lausekkeissa, ja juuri ne
+  // ratkaisevat näkeekö käyttäjä toisen rivit.
+  const verify = verify0001();
+
+  assert.ok(verify.includes('qual'),
+    'varmistus ei lue USING-lauseketta — väärä ehto menisi läpi');
+  assert.ok(verify.includes('with_check'),
+    'varmistus ei lue WITH CHECK -lauseketta — toisen nimiin kirjoittaminen menisi läpi');
+
+  // Jokainen kahdeksasta nimeltä, jotta yksikään ei voi kadota
+  // huomaamatta.
+  for (const table of ['tasks', 'profile']) {
+    for (const action of ['select', 'insert', 'update', 'delete']) {
+      assert.ok(verify.includes(`${table}_${action}_own`),
+        `varmistus ei tunne politiikkaa ${table}_${action}_own`);
+    }
+  }
+
+  // Odotetut lausekkeet on kirjoitettu auki, ei vain luettu kannasta.
+  // Ilman odotusarvoa vertailua ei ole, vain tuloste.
+  assert.ok(verify.includes('auth.uid()=user_id'),
+    'tasks-politiikoille ei ole odotettua lauseketta');
+  assert.ok(verify.includes('auth.uid()=id'),
+    'profile-politiikoille ei ole odotettua lauseketta');
+
+  // Objektiivinen yhteenveto: kahdeksan riviä lausekkeita on juuri
+  // sopivan pituinen lista siihen, että yksi väärä merkki jää
+  // huomaamatta silmämääräisessä luvussa.
+  assert.match(verify, /count\(\*\) filter \(where x\.tulos <> 'ok'\) over \(\)/,
+    'poikkeamille ei ole koontilukua — virhe voisi piiloutua riveihin');
+
+  // Normalisointi saa koskea vain muotoilua.
+  assert.match(verify, /btrim\(replace\(coalesce\(p\.qual/,
+    'lausekevertailu ei normalisoi muotoilua — se olisi hauras');
+});
+
+test('KRIITTINEN: varmistus todentaa vierasavaimen PÄÄT, ei vain nimeä', () => {
+  // Rajoitteen nimi ei kerro mihin se osoittaa. Oikean niminen
+  // vierasavain väärään sarakkeeseen tai väärään tauluun näyttäisi
+  // nimilistassa täysin oikealta.
+  const verify = verify0001();
+
+  for (const [needle, what] of [
+    ['con.conkey',   'lähdesarake'],
+    ['con.confkey',  'kohdesarake'],
+    ['con.confrelid', 'kohdetaulu'],
+    ['nspname',      'skeema']
+  ]) {
+    assert.ok(verify.includes(needle),
+      `vierasavaimen ${what} jää todentamatta`);
+  }
+
+  assert.ok(verify.includes("<> 'auth'") || verify.includes("'auth'"),
+    'kohdeskeemaa auth ei tarkisteta');
+  assert.ok(verify.includes("'users'"),
+    'kohdetaulua auth.users ei tarkisteta');
+
+  // Ja ettei odotettujen lisäksi ole muita.
+  assert.match(verify, /conname not in \('tasks_user_id_fkey', 'profile_id_fkey'\)/,
+    'ylimääräisiä vierasavaimia ei havaita');
+});
+
+test('KRIITTINEN: varmistus todentaa perumisen merkkipaalun', () => {
+  // legacy_id on ainoa asia, joka tekee läpimenneestä migraatiosta
+  // purettavan ilman varmuuskopiota. Jos arvo on kadonnut, migraation
+  // ROLLBACK-osio ei enää pidä paikkaansa — ja se huomattaisiin vasta
+  // silloin kun perumista oikeasti tarvitaan.
+  const verify = verify0001();
+
+  assert.match(verify, /filter \(where legacy_id = 'me'\)/,
+    'alkuperäisen arvon säilymistä ei tarkisteta');
+  assert.match(verify, /filter \(where legacy_id is not null\)/,
+    'ei-tyhjien legacy-arvojen määrää ei tarkisteta');
+  assert.match(verify, /legacy_id <> 'me'/,
+    'muita legacy-arvoja ei havaita — jäänyt oletusarvo jäisi huomaamatta');
+});
+
+test('KRIITTINEN: varmistus 0001 ei muuta mitään', () => {
+  // Sama sääntö kuin kaikilla varmistustiedostoilla, mutta erikseen
+  // tälle: tämä on ainoa tiedosto, jota ajetaan tuotantoa vasten heti
+  // migraation jälkeen, ja se ajetaan käsin liittämällä.
+  const statements = read('supabase/verify/verify_0001.sql')
+    .split('\n')
+    .filter(line => !line.trim().startsWith('--'))
+    .join('\n')
+    .split(';')
+    .map(part => part.trim())
+    .filter(part => part.length > 0);
+
+  assert.ok(statements.length >= 20,
+    `varmistuksessa on vain ${statements.length} lausetta — onko jotain kadonnut?`);
+
+  for (const statement of statements) {
+    assert.equal(statement.split(/\s+/)[0].toLowerCase(), 'select',
+      `lause alkaa väärin: ${statement.slice(0, 60)}`);
   }
 });

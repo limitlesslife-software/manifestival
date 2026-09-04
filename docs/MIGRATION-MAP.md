@@ -45,7 +45,7 @@ kosketa olemassa olevaa dataa. 0001 koskettaa.
 | **Esiehdot** | 7 tarkistusta, kaikki lukon takana ja ennen ensimmäistä muutosta; migraatio keskeyttää itse jos lähtötila ei täsmää |
 | **Avaa lipun** | ei yhtään — mahdollistaa kaikki muut |
 | **Palautus** | Kolme eri tapausta, ks. runbookin *0001:n peruminen*. Keskeytynyt ajo peruuntuu itse; läpimennyt ajo on purettavissa käsin `legacy_id`:n ansiosta; kadonnut data vain varmuuskopiosta |
-| **Varmistus** | `verify_0001.sql`, 17 kyselyä. Ks. runbookin PYSÄYTYS 3 -taulukko |
+| **Varmistus** | `verify_0001.sql`, 20 kohtaa — mukaan lukien politiikkojen USING/WITH CHECK -lausekkeet odotettuun verrattuna ja vierasavainten päät. Ks. runbookin PYSÄYTYS 3 -taulukko |
 
 **Kriittinen kohta 1:** `profile.id` **ei** muunnu tyyppiä vaihtamalla.
 Tuotannon ainoan rivin arvo on `'me'`, eikä `'me'` ole uuid — `id::uuid`
