@@ -75,7 +75,71 @@ select
   'me'::text as legacy_profile_id;
 
 -- ---------------------------------------------------------------------
--- VAIHE 1: esiehdot
+-- VAIHE 1A: onko täällä mitään lukittavaa
+--
+-- Vain olemassaolo. Ei rivimääriä, ei sisältöä, ei mitään jonka toinen
+-- istunto voisi muuttaa. Tämä on ainoa asia, joka on pakko tarkistaa
+-- ENNEN lukitusta: LOCK TABLE olemattomaan tauluun antaisi
+-- epäselvemmän virheen kuin oma tarkistus.
+-- ---------------------------------------------------------------------
+do $$
+begin
+  if to_regclass('public.tasks') is null then
+    raise exception 'Taulua public.tasks ei ole. Vaara kanta tai vaara skeema.';
+  end if;
+  if to_regclass('public.profile') is null then
+    raise exception 'Taulua public.profile ei ole. Vaara kanta tai vaara skeema.';
+  end if;
+end $$;
+
+-- ---------------------------------------------------------------------
+-- VAIHE 1B: taulut lukkoon ENNEN kuin niiden tilaan luotetaan
+--
+-- TÄTÄ RIVIÄ EI SAA POISTAA EIKÄ SIIRTÄÄ ALEMMAS.
+--
+-- begin; yksinään ei jäädytä mitään. Postgresin oletuseristystaso on
+-- READ COMMITTED, ja pelkkä select ottaa vain ACCESS SHARE -lukon, joka
+-- ei estä toisen istunnon kirjoituksia lainkaan.
+--
+-- Ilman tätä lukkoa aukko olisi todellinen: sovellus on pystyssä ja
+-- PostgREST palvelee pyyntöjä koko ajon ajan. Puhelimeen jäänyt
+-- välilehti tai taustaan jäänyt synkronointi voisi lisätä tehtävän
+-- SEN JÄLKEEN kun rivimäärä on todettu 36:ksi mutta ENNEN kuin
+-- migraatio saa oman DDL-lukkonsa. Silloin migraatio tekisi päätöksensä
+-- tilasta, jota ei enää ole — ja juuri se on se vika, jonka kaikki
+-- esiehtotarkistukset oli tarkoitettu estämään.
+--
+-- ACCESS EXCLUSIVE on oikea vahvuus, ei liioittelua: se on sama lukko
+-- jonka jokainen myöhempi ALTER TABLE joka tapauksessa ottaa. Ainoa ero
+-- on, että se otetaan nyt eikä myöhemmin — eli ennen kuin tilaan
+-- luotetaan, ei sen jälkeen.
+--
+-- Molemmat taulut lukitaan YHDELLÄ lauseella. Kaksi peräkkäistä lukkoa
+-- eri järjestyksessä eri istunnoissa on klassinen lukkiutuma.
+--
+-- HINTA: sovellus ei pysty lukemaan eikä kirjoittamaan näihin tauluihin
+-- ennen committia. Ajo kestää sekunteja, joten katko on lyhyt — mutta
+-- se on olemassa. Ks. runbookin vaihe 3.
+--
+-- lock_timeout on tässä turvaverkko, ei koristelu. ACCESS EXCLUSIVE
+-- asettuu jonoon, ja JONOSSA ODOTTAVA lukko estää jo itsessään kaikki
+-- uudet lukijat. Jos jokin istunto roikkuu auki (esimerkiksi unohtunut
+-- transaktio SQL-editorissa), ilman aikakatkaisua migraatio jäisi
+-- odottamaan rajattomasti ja veisi sovelluksen alas odottaessaan.
+-- Viisi sekuntia riittää normaalitilanteeseen; ylitys tarkoittaa, että
+-- jokin muu on kesken ja ajo pitää aloittaa myöhemmin uudelleen.
+--
+-- set local koskee vain tätä transaktiota ja palautuu itsestään.
+-- ---------------------------------------------------------------------
+set local lock_timeout = '5s';
+
+lock table public.tasks, public.profile in access exclusive mode;
+
+-- ---------------------------------------------------------------------
+-- VAIHE 1C: esiehdot
+--
+-- Nyt ja vasta nyt tuotannon tilaan voi luottaa: taulut ovat lukossa
+-- eikä yksikään toinen istunto voi muuttaa niitä ennen committia.
 --
 -- Jokainen tarkistus vastaa yhteen tapaan, jolla tämä migraatio voisi
 -- tehdä vahinkoa. Kaikki ajetaan ENNEN yhtäkään muutosta, samassa
@@ -89,14 +153,6 @@ declare
   v_constraint text;
 begin
   select * into p from _migration_params;
-
-  -- 1.1 Taulut ovat olemassa.
-  if to_regclass('public.tasks') is null then
-    raise exception 'Taulua public.tasks ei ole. Vaara kanta tai vaara skeema.';
-  end if;
-  if to_regclass('public.profile') is null then
-    raise exception 'Taulua public.profile ei ole. Vaara kanta tai vaara skeema.';
-  end if;
 
   -- 1.2 Omistaja on olemassa. Ilman tätä backfill loisi orpoja rivejä,
   --     ja vierasavaimen lisäys kaatuisi vasta myöhemmin.

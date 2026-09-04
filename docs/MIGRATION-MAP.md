@@ -26,7 +26,7 @@ suositeltava mutta ei pakollinen.
 
 ---
 
-## 0001 — `auth_user_scoping` (518 riviä, 8 politiikkaa, 1 indeksi)
+## 0001 — `auth_user_scoping` (708 riviä, 8 politiikkaa, 1 indeksi)
 
 **Ainoa migraatio, joka on sovitettu todennettuun tuotantoskeemaan.**
 Muut kahdeksan ovat yleisluonteisia, koska ne luovat uusia tauluja eivätkä
@@ -41,18 +41,22 @@ kosketa olemassa olevaa dataa. 0001 koskettaa.
 | **Vierasavaimet** | molemmat `references auth.users(id) on delete cascade` |
 | **RLS** | Päälle molempiin; 4 politiikkaa/taulu roolille `authenticated`. Ehto `auth.uid() = user_id` (tasks) ja `auth.uid() = id` (profile) |
 | **Omistajuus** | **Tietokanta asettaa**, ei asiakas. Omistaja kovakoodattu — ei rivijärjestystä, ei `LIMIT 1`, ei sähköpostihakua |
-| **Esiehdot** | 7 tarkistusta ennen ensimmäistä muutosta; migraatio keskeyttää itse jos lähtötila ei täsmää |
+| **Lukitus** | `ACCESS EXCLUSIVE` molempiin tauluihin heti olemassaolotarkistuksen jälkeen, `lock_timeout 5s`. Lyhyt katko sovellukselle |
+| **Esiehdot** | 7 tarkistusta, kaikki lukon takana ja ennen ensimmäistä muutosta; migraatio keskeyttää itse jos lähtötila ei täsmää |
 | **Avaa lipun** | ei yhtään — mahdollistaa kaikki muut |
 | **Palautus** | Kolme eri tapausta, ks. runbookin *0001:n peruminen*. Keskeytynyt ajo peruuntuu itse; läpimennyt ajo on purettavissa käsin `legacy_id`:n ansiosta; kadonnut data vain varmuuskopiosta |
-| **Varmistus** | `verify_0001.sql`, 15 kyselyä. Ks. runbookin PYSÄYTYS 3 -taulukko |
+| **Varmistus** | `verify_0001.sql`, 17 kyselyä. Ks. runbookin PYSÄYTYS 3 -taulukko |
 
 **Kriittinen kohta 1:** `profile.id` **ei** muunnu tyyppiä vaihtamalla.
 Tuotannon ainoan rivin arvo on `'me'`, eikä `'me'` ole uuid — `id::uuid`
 kaatuisi heti. Vanha sarake nimetään `legacy_id`:ksi ja uusi uuid-sarake
 lisätään sen rinnalle.
 
-**Kriittinen kohta 2:** `revoke all on public.profile from anon`. Jos anon
-säilyttää oikeudet, RLS ei suojaa mitään — anon-rooli näkisi kaikkien rivit.
+**Kriittinen kohta 2:** oikeudet revokoidaan **myös roolilta `PUBLIC`**,
+ei vain `anon`-roolilta. PUBLIC tarkoittaa "kaikki roolit": sille
+myönnetyn oikeuden perii myös anon, eikä `revoke ... from anon` poista
+sitä. Tehollinen oikeus todennetaan `has_table_privilege`-funktiolla,
+koska pelkkä myönnettyjen oikeuksien luettelo ei näe perintää.
 
 **Kriittinen kohta 3:** vanhat "salli kaikki" -politiikat poistetaan
 nimestä riippumatta, `pg_policies`-kyselyn kautta. Politiikat ovat

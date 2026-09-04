@@ -93,6 +93,36 @@ jäädä puolitiehen.
 Tämä on ainoa **pakollinen** migraatio. Kaikki muut ovat valinnaisia ja
 voi jättää ajamatta pysyvästi.
 
+### Lyhyt katko — tiedosta se ennen kuin painat Run
+
+Migraatio ottaa heti alussa **ACCESS EXCLUSIVE -lukon** molempiin
+tauluihin:
+
+```sql
+lock table public.tasks, public.profile in access exclusive mode;
+```
+
+Sen jälkeen sovellus **ei pysty lukemaan eikä kirjoittamaan** näihin
+tauluihin ennen kuin transaktio päättyy. Ajo kestää sekunteja, joten
+katko on lyhyt — mutta se on todellinen.
+
+Lukko ei ole varotoimi vaan välttämättömyys. `begin;` yksinään ei
+jäädytä mitään: Postgresin oletuseristystaso on READ COMMITTED, ja
+pelkkä `select` ottaa vain ACCESS SHARE -lukon, joka ei estä toisen
+istunnon kirjoituksia. Ilman lukkoa puhelimeen jäänyt välilehti voisi
+lisätä tehtävän sen jälkeen kun rivimäärä on todettu 36:ksi mutta ennen
+kuin migraatio saa oman DDL-lukkonsa — ja migraatio tekisi päätöksensä
+tilasta, jota ei enää ole.
+
+**Sulje sovellus kaikilta laitteilta ennen ajoa.** Se ei ole pakollista,
+mutta avoin välilehti näkee virheen katkon ajan ja voi yrittää
+uudelleenlähetystä.
+
+Migraatiossa on `lock_timeout = 5s`. Jos lukkoa ei saada siinä ajassa,
+ajo **keskeytyy eikä muuta mitään** — silloin jokin toinen istunto on
+kesken. Yleisin syy on unohtunut avoin transaktio SQL-editorin toisessa
+välilehdessä. Sulje se ja aja uudelleen.
+
 Lue tuloslokista `NOTICE`-rivit. Niiden pitää kertoa:
 - `Esiehdot kunnossa. Omistaja 2cc00622-…, tehtavia 36, profiileja 1.`
 - montako vanhaa politiikkaa poistettiin

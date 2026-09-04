@@ -595,6 +595,74 @@ test('KRIITTINEN: 0001 nimeää omistajan vakiona eikä valitse sitä ajossa', (
     'paikanpitäjä-uuid on palannut migraatioon');
 });
 
+test('KRIITTINEN: 0001 lukitsee taulut ennen kuin luottaa niiden tilaan', () => {
+  // begin; ei jäädytä mitään. Postgresin oletuseristystaso on
+  // READ COMMITTED, ja pelkkä select ottaa vain ACCESS SHARE -lukon,
+  // joka ei estä toisen istunnon kirjoituksia.
+  //
+  // Ilman lukkoa aukko on todellinen: sovellus on pystyssä koko ajon
+  // ajan, ja taustalle jäänyt välilehti voisi lisätä tehtävän SEN
+  // JÄLKEEN kun rivimäärä on todettu 36:ksi mutta ENNEN kuin migraatio
+  // saa oman DDL-lukkonsa. Migraatio tekisi päätöksensä tilasta, jota
+  // ei enää ole — juuri se vika, jonka esiehdot oli tarkoitettu
+  // estämään.
+  const code = code0001();
+
+  const lock = code.indexOf('lock table public.tasks, public.profile');
+  assert.ok(lock !== -1,
+    'tauluja ei lukita lainkaan — esiehdot voivat vanhentua kesken ajon');
+  assert.match(code.slice(lock, lock + 120), /in access exclusive mode/,
+    'lukko ei ole ACCESS EXCLUSIVE — heikompi ei estä kaikkia kirjoituksia');
+
+  // Molemmat samassa lauseessa. Kaksi peräkkäistä lukkoa eri
+  // järjestyksessä eri istunnoissa on klassinen lukkiutuma.
+  assert.equal((code.match(/^lock table /gm) || []).length, 1,
+    'lukkoja on useampi lause — lukkiutumisen riski');
+
+  // Olemassaolotarkistus ENNEN lukkoa: LOCK TABLE olemattomaan tauluun
+  // antaisi epäselvemmän virheen kuin oma tarkistus.
+  const existence = code.indexOf('to_regclass');
+  assert.ok(existence !== -1 && existence < lock,
+    'lukitaan ennen kuin on varmistettu että taulut ovat olemassa');
+
+  // Tuotannon tauluja ei LUETA ennen lukkoa. Tämä on se varsinainen
+  // sääntö: mikä tahansa rivimäärä tai sisältö, joka luetaan lukitse-
+  // mattomasta taulusta, voi olla vanhentunut jo seuraavalla rivillä.
+  //
+  // Vakioiden esittely vaiheessa 0 ei ole tuotannon lukemista, joten
+  // tarkistus kohdistuu nimenomaan taulusta lukemiseen.
+  for (const read of ['from public.tasks', 'from public.profile']) {
+    const first = code.indexOf(read);
+    assert.ok(first !== -1, `migraatio ei lue taulua lainkaan: ${read}`);
+    assert.ok(first > lock,
+      `taulusta luetaan ennen lukkoa (${read}) — tila voi muuttua sen jälkeen`);
+  }
+
+  // Osittaisen ajon tunnistus kuuluu myös lukon taakse: toinen istunto
+  // voisi muuten ehtiä lisätä saman sarakkeen.
+  for (const guard of ["column_name = 'user_id'", "column_name = 'legacy_id'"]) {
+    const at = code.indexOf(guard.toLowerCase());
+    assert.ok(at !== -1, `esiehto puuttuu: ${guard}`);
+    assert.ok(at > lock, `esiehto "${guard}" tarkistetaan ennen lukkoa`);
+  }
+
+  // Ja lukko on ennen ensimmäistä muutosta.
+  const firstChange = Math.min(
+    ...['alter table public.tasks', 'alter table public.profile', 'update public.']
+      .map(needle => {
+        const at = code.indexOf(needle);
+        return at === -1 ? Number.MAX_SAFE_INTEGER : at;
+      }));
+  assert.ok(lock < firstChange, 'ensimmäinen muutos tapahtuu ennen lukkoa');
+
+  // Jonossa odottava ACCESS EXCLUSIVE estää jo itsessään kaikki uudet
+  // lukijat. Ilman aikakatkaisua roikkuva istunto veisi sovelluksen alas.
+  assert.match(code, /set local lock_timeout/,
+    'lukon odotukselle ei ole aikakatkaisua');
+  assert.ok(code.indexOf('set local lock_timeout') < lock,
+    'aikakatkaisu asetetaan vasta lukon jälkeen');
+});
+
 test('0001 tarkistaa esiehdot ennen kuin se muuttaa mitään', () => {
   // Migraatio ei saa luottaa siihen, että inventaario on yhä voimassa.
   // Kanta on voinut muuttua inventoinnin ja ajon välissä.
