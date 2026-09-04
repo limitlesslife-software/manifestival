@@ -17,12 +17,57 @@ order by tablename, cmd;
 -- 3. TARKEIN TARKISTUS: jokaisen vierasavaimen on oltava SET NULL.
 --    Jos yhdessakin lukee CASCADE, tavoitteen poisto veisi tehtavat
 --    mukanaan. ALA KAANNA LIPPUJA ennen kuin tama on kunnossa.
+--
+--    KUUSI viitetta, ei nelja. Kaksi niista syntyy create table
+--    -lauseen sisalla eika erillisena add constraint -lauseena, joten
+--    ne on helppo unohtaa:
+--
+--      goals_parent_goal_id_fkey  goals.parent_goal_id  -> goals(id)
+--      projects_goal_id_fkey      projects.goal_id      -> goals(id)
+--      goals_project_id_fkey      goals.project_id      -> projects(id)
+--      tasks_goal_id_fkey         tasks.goal_id         -> goals(id)
+--      tasks_project_id_fkey      tasks.project_id      -> projects(id)
+--      routines_goal_id_fkey      routines.goal_id      -> goals(id)
+--
+--    Viimeinen syntyy vain jos 0003 on ajettu. Ilman sita rivia on
+--    viisi, ei kuusi — se on oikein, ei puute.
+--
+--    Miksi juuri nama: jos projects_goal_id_fkey olisi cascade,
+--    tavoitteen poisto veisi kaikki sen projektit. Jos
+--    goals_parent_goal_id_fkey olisi cascade, ylatavoitteen poisto veisi
+--    kaikki alatavoitteet. Kumpikaan ei nakyisi missaan ennen kuin
+--    kayttaja poistaa yhden tavoitteen ja menettaa kymmenen.
 select conrelid::regclass as taulu, conname as rajoite,
+       confdeltype as poistosaanto,
        pg_get_constraintdef(oid) as maaritelma
 from pg_constraint
 where contype = 'f'
-  and conname in ('tasks_goal_id_fkey', 'tasks_project_id_fkey',
-                  'goals_project_id_fkey', 'routines_goal_id_fkey')
+  and conname in ('goals_parent_goal_id_fkey', 'projects_goal_id_fkey',
+                  'goals_project_id_fkey', 'tasks_goal_id_fkey',
+                  'tasks_project_id_fkey', 'routines_goal_id_fkey')
+order by conname;
+
+-- 3b. Sama asia yhtena lukuna. Odotus: 0.
+--     confdeltype = 'n' on SET NULL. Mika tahansa muu naissa on virhe.
+select count(*) as vaaria_poistosaantoja
+from pg_constraint
+where contype = 'f'
+  and conname in ('goals_parent_goal_id_fkey', 'projects_goal_id_fkey',
+                  'goals_project_id_fkey', 'tasks_goal_id_fkey',
+                  'tasks_project_id_fkey', 'routines_goal_id_fkey')
+  and confdeltype <> 'n';
+
+-- 3c. Odottamattomat viitteet goals- ja projects-tauluihin.
+--     Odotus: vain omistajuusviitteet auth.users-tauluun (cascade).
+--     Kohta 3 todistaa etta odotetut ovat oikein. Tama todistaa ettei
+--     muita ole ilmestynyt.
+select conrelid::regclass as taulu, conname as rajoite,
+       confdeltype as poistosaanto
+from pg_constraint
+where contype = 'f'
+  and conrelid in ('public.goals'::regclass, 'public.projects'::regclass)
+  and conname not in ('goals_parent_goal_id_fkey', 'projects_goal_id_fkey',
+                      'goals_project_id_fkey')
 order by conname;
 
 -- 4. Uudet tasks-sarakkeet. Odotus: kolme rivia.

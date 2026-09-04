@@ -453,6 +453,60 @@ test('varmistuskyselyt ovat vain lukevia', () => {
   }
 });
 
+test('KRIITTINEN: jokainen vierasavain on varmistuskyselyn ulottuvilla', () => {
+  // Vierasavaimen poistosääntö on domain-päätös, joka elää vain
+  // kannassa. Jos SET NULL vaihtuisi CASCADEksi, tavoitteen poisto
+  // veisi tehtävät — eikä mikään sovelluskoodissa huomaisi sitä.
+  // Varmistuskysely on ainoa paikka, jossa se voitaisiin nähdä.
+  //
+  // Tämä testi löysi verify_0004:stä oikean aukon: se listasi
+  // vierasavaimet NIMELTÄ ja kaksi kuudesta puuttui listasta. Molemmat
+  // syntyvät create table -lauseen sisällä, joten ne on helppo unohtaa.
+  //
+  // Kaksi hyväksyttyä tapaa kattaa vierasavain:
+  //   1. rajoite mainitaan nimeltä
+  //   2. kysely rajataan taulun conrelid-arvolla, jolloin kaikki sen
+  //      taulun vierasavaimet tulevat mukaan nimistä riippumatta
+  for (const name of migrationFiles()) {
+    const number = name.slice(0, 4);
+    const source = sql(name);
+    const verify = read(`supabase/verify/verify_${number}.sql`).toLowerCase();
+
+    /** taulu -> vierasavaimen nimi, sekä nimetyt että create tablen sisäiset. */
+    const foreignKeys = new Map();
+    const add = (table, constraint) => {
+      if (!foreignKeys.has(table)) foreignKeys.set(table, new Set());
+      foreignKeys.get(table).add(constraint);
+    };
+
+    for (const match of source.matchAll(
+      /alter table public\.(\w+)[\s\S]{0,120}?add constraint (\w+)\s+foreign key/g)) {
+      add(match[1], match[2]);
+    }
+
+    for (const table of source.matchAll(
+      /create table if not exists public\.(\w+) \(([\s\S]*?)\n\);/g)) {
+      for (const column of table[2].matchAll(
+        /^\s+(\w+)\s+\w+[^\n]*?references\s+public\./gm)) {
+        add(table[1], `${table[1]}_${column[1]}_fkey`);
+      }
+    }
+
+    for (const [table, constraints] of foreignKeys) {
+      // Taulukohtainen rajaus kattaa kaikki taulun vierasavaimet.
+      const scopedByTable = verify.includes(`'public.${table}'::regclass`);
+      if (scopedByTable) continue;
+
+      for (const constraint of constraints) {
+        assert.ok(verify.includes(constraint),
+          `verify_${number}.sql ei kata vierasavainta ${constraint}`
+          + ` — ei nimeltä eikä taulun ${table} kautta.`
+          + ' Väärä poistosääntö jäisi huomaamatta.');
+      }
+    }
+  }
+});
+
 test('jokaiselle migraatiolle on varmistuskysely', () => {
   const verify = fs.readdirSync(path.join(ROOT, 'supabase/verify'))
     .filter(name => name.endsWith('.sql'));

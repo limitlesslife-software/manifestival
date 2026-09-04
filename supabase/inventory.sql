@@ -82,3 +82,33 @@ select id as your_user_id, email, created_at
 from auth.users
 order by created_at
 limit 10;
+
+-- 12. Onko odotettu omistaja olemassa? Odotus: 1.
+--     Migraatio 0001 tarkistaa tämän itsekin, mutta on parempi tietää
+--     ennen kuin sovellus menee katkolle.
+select count(*) as omistaja_loytyi
+from auth.users
+where id = '2cc00622-f927-4604-a518-361a4328481b'::uuid;
+
+-- 13. Onko avoimia transaktioita? Odotus: NOLLA RIVIÄ.
+--     Avoin transaktio estää migraation ACCESS EXCLUSIVE -lukon. Koska
+--     jonossa odottava lukko estää jo itsessään kaikki uudet lukijat,
+--     hidas ajo veisi sovelluksen alas odottaessaan. Yleisin syy on
+--     SQL-editorin toinen välilehti, jossa on ajettu begin; ilman
+--     commit;- tai rollback;-lausetta.
+select pid, state, state_change, left(query, 60) as kysely
+from pg_stat_activity
+where datname = current_database()
+  and state in ('idle in transaction', 'idle in transaction (aborted)')
+order by state_change;
+
+-- 14. Viittaako mikään taulu public.profile-tauluun? Odotus: NOLLA RIVIÄ.
+--     Viite estäisi pääavaimen vaihdon migraatiossa 0001.
+select tc.constraint_name, tc.table_name
+from information_schema.table_constraints tc
+join information_schema.constraint_column_usage ccu
+  on tc.constraint_name = ccu.constraint_name
+ and tc.table_schema = ccu.table_schema
+where tc.constraint_type = 'FOREIGN KEY'
+  and ccu.table_schema = 'public'
+  and ccu.table_name = 'profile';

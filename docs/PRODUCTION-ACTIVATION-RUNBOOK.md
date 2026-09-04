@@ -6,11 +6,18 @@ Jokainen vaihe on erillinen päätös. Vaiheiden välissä on PYSÄYTYS, jossa
 on tarkoitus katsoa tulos ja päättää jatketaanko. **Ei ole olemassa
 "aja kaikki migraatiot" -vaihetta eikä sellaista pidä rakentaa.**
 
-Liittyvät: [`MIGRATION-MAP.md`](MIGRATION-MAP.md) ·
+**Jos haluat vain ajaa 0001:n etkä lukea perusteluja:**
+[`PRODUCTION-PREFLIGHT.md`](PRODUCTION-PREFLIGHT.md) on tiivis
+operaattoripaketti — preflight, suoritus, hyväksyntäportti ja
+palautumisen päätöspuu yhdessä tiedostossa. Tämä runbook kertoo miksi.
+
+Liittyvät: [`PRODUCTION-PREFLIGHT.md`](PRODUCTION-PREFLIGHT.md) ·
+[`MIGRATION-MAP.md`](MIGRATION-MAP.md) ·
 [`PRODUCTION-ACTIVATION-GATE.md`](PRODUCTION-ACTIVATION-GATE.md)
 
-Varmistuskyselyt: `supabase/verify/` — **vain lukevia**, ei yhtään
-`insert`, `update`, `delete` tai `alter`.
+Varmistuskyselyt: `supabase/verify/` — **vain lukevia**. Jokainen lause
+alkaa sanalla `select`: ei `insert`, `update`, `delete`, `alter`,
+`create`, `drop`, `grant` eikä `revoke`. Testi vartioi tätä.
 
 ---
 
@@ -47,15 +54,22 @@ päivitä luku migraation VAIHE 0 -lohkoon ja aja uudelleen.
 
 ## Vaihe 1 — Varmuuskopio
 
-Ota Supabasen kautta täysi varmuuskopio. Kirjaa aikaleima muistiin.
+Ota Supabasen kautta **tuore** varmuuskopio: Dashboard → Database →
+Backups. Kirjaa sen aikaleima runbookin ajopäiväkirjaan.
+
+**Tuore tarkoittaa tänään, ennen tätä ajoa.** Aiempi havainto
+`03 Sep 2026 13:36:47 UTC` on kirjattu vain siksi, että sellainen oli
+olemassa. **Se ei kelpaa tämän ajon varmuuskopioksi**, ellei sen jälkeen
+ole todistettavasti tapahtunut nolla muutosta — mitä et voi tietää.
 
 **0001 ei ole peruttavissa ilman tätä.** Se siirtää olemassa olevan datan
 omistajuuden. Jos siirto menee pieleen eikä varmuuskopiota ole, dataa ei
 saa takaisin.
 
 ### PYSÄYTYS 1
-Varmuuskopio on olemassa ja sen aikaleima on kirjattu.
-Jos ei: **älä jatka.**
+Varmuuskopio on otettu **tänään**, se näkyy Supabasen listassa
+onnistuneena, ja sen aikaleima on kirjattu ylös.
+Jos jokin näistä ei päde: **älä jatka.**
 
 ---
 
@@ -92,6 +106,23 @@ jäädä puolitiehen.
 
 Tämä on ainoa **pakollinen** migraatio. Kaikki muut ovat valinnaisia ja
 voi jättää ajamatta pysyvästi.
+
+### Kirjaa mitä ajoit
+
+Liität tiedoston sisällön käsin selaimeen. Kuukauden päästä ei ole mitään
+tapaa tietää, mikä versio meni läpi, ellei sitä kirjata nyt.
+
+Ota talteen ennen ajoa:
+
+```
+git rev-parse --short HEAD
+git hash-object supabase/migrations/0001_auth_user_scoping.sql
+git hash-object supabase/verify/verify_0001.sql
+```
+
+Kirjaa kaikki kolme ajopäiväkirjaan yhdessä varmuuskopion aikaleiman
+kanssa. Jos jokin menee myöhemmin pieleen, tämä on ainoa tapa todeta,
+ajettiinko odotettu versio.
 
 ### Lyhyt katko — tiedosta se ennen kuin painat Run
 
@@ -234,104 +265,239 @@ se.
 Ennen tätä vaihetta **yhtäkään lippua ei käännetä** eikä yhtäkään muuta
 migraatiota ajeta.
 
+### Miksi pelkkä katsominen ei riitä
+
+Aiempi versio tästä testistä katsoi vain, **näkyykö** toisen tilin data.
+Se on puolet asiasta. Politiikassa on kaksi eri ehtoa, ja ne
+epäonnistuvat eri tavoin:
+
+| Ehto | Mitä se estää | Missä testataan |
+|---|---|---|
+| `USING` | toisen rivien **lukemisen, muuttamisen ja poistamisen** | T2, T4 |
+| `WITH CHECK` | rivin kirjoittamisen **toisen nimiin** | T3 |
+
+Pelkkä `USING` voi olla oikein ja `WITH CHECK` väärin. Silloin tili B ei
+näkisi mitään tilin A dataa, mutta voisi silti luoda rivin, jonka
+omistaja on A. Se ei näkyisi missään ennen kuin A ihmettelee, mistä
+kalenteriin ilmestyi tekemätöntä työtä.
+
 ### Valmistelu
 
-Luo **tili B** sovelluksen kirjautumisnäkymästä. Käytä oikeaa
+**1. Luo tili B** sovelluksen kirjautumisnäkymästä. Käytä oikeaa
 sähköpostiosoitetta, johon pääset käsiksi — Supabase vaatii
 vahvistuksen. Älä käytä tilin A osoitetta.
 
-Kirjaa tilin B tunniste talteen:
+**2. Hae molempien tunnisteet:**
 
 ```sql
-select id, email from auth.users order by created_at;
+select id, created_at from auth.users order by created_at;
 ```
 
-Tilin A tunnisteen pitää olla `2cc00622-f927-4604-a518-361a4328481b`.
+Tilin A tunnisteen on oltava `2cc00622-f927-4604-a518-361a4328481b`.
+Kirjaa tilin B tunniste ylös. Alla siitä käytetään merkintää `<B_UUID>`.
 
-### T1 — Tili B ei näe tilin A tehtäviä
+**3. Kirjaa lähtöluvut:**
 
-Kirjaudu sisään tilillä B. Avaa päivänäkymä ja siirry siihen
-päivämäärään, jolla tiedät tilillä A olevan tehtäviä.
+```sql
+select count(*) filter (where user_id = '2cc00622-f927-4604-a518-361a4328481b'::uuid) as a_ennen,
+       count(*) filter (where user_id <> '2cc00622-f927-4604-a518-361a4328481b'::uuid) as muut_ennen
+from public.tasks;
+```
 
-**Odotus: nolla tehtävää. Ei yhtään.**
+Odotus: `36` ja `0`.
 
-Jos näkyy yksikin tilin A tehtävä: **RLS ei ole voimassa.** Pysäytä
-kaikki. Älä käännä lippuja. Palaa PYSÄYTYS 3:n varmistuskyselyyn ja
-katso, mikä sen kohdista oli väärin.
+---
 
-### T2 — Tili B ei näe tilin A profiilia
+### T1 — Tili A näkee OMAN datansa
 
-Avaa profiiliasetukset tilillä B. Kenttien pitää olla tyhjiä tai
-oletusarvoisia — **ei tilin A ikää, painoa eikä heräämisaikaa.**
+Kirjaudu sovellukseen tilillä A. Avaa päivänäkymä ja profiili.
 
-Tämä on erillinen tarkistus, koska `profile` käyttää eri
+**Odotus: kaikki 36 tehtävää ja profiilin arvot näkyvät normaalisti.**
+
+Tämä kohta on ensimmäisenä tarkoituksella. Liian tiukka politiikka
+lukitsisi omistajan ulos omasta datastaan, ja se on yhtä paha vika kuin
+liian löysä — vain helpompi huomata. Jos A ei näe omaa dataansa,
+`USING`-ehto tai `user_id`-backfill on väärin. **Pysäytä.**
+
+### T2 — Tili B ei näe tilin A dataa
+
+Kirjaudu ulos ja sisään tilillä B.
+
+- **Päivänäkymä:** siirry päivään, jolla tiedät tilillä A olevan
+  tehtäviä. **Odotus: nolla tehtävää.**
+- **Profiili:** kenttien pitää olla tyhjiä tai oletusarvoisia —
+  **ei tilin A ikää, painoa eikä heräämisaikaa.**
+
+Profiili on erillinen tarkistus, koska `profile` käyttää eri
 omistajuusmallia kuin `tasks`: omistajuus on `id`-sarakkeessa, ei
-`user_id`-sarakkeessa. Yksi näistä voi toimia ilman että toinen toimii.
+`user_id`-sarakkeessa. Toinen voi toimia ilman että toinen toimii.
 
-### T3 — Tili B ei voi kirjoittaa tilin A datan päälle
+Jos näkyy yksikin tilin A rivi: **RLS ei ole voimassa. Pysäytä kaikki.**
 
-Luo tilillä B tehtävä. Palaa tilille A ja tarkista, **ettei tilin B
-tehtävä näy siellä.**
+### T3 — Tili B ei voi kirjoittaa riviä tilin A nimiin
 
-Sen jälkeen SQL-editorissa:
+Tämä on `WITH CHECK` -ehdon testi, eikä sitä voi tehdä
+käyttöliittymästä: sovellus ei koskaan lähetä `user_id`-kenttää, joten
+UI ei pysty edes yrittämään väärinkäytöstä. Se on pakko tehdä SQL:llä.
+
+> **LUE TÄMÄ ENSIN.** Alla olevassa lohkossa on `insert`-lause, mutta se
+> päättyy `rollback`-lauseeseen eikä `commit`-lauseeseen. **Aja koko
+> lohko kerralla.** Jos ajat sen rivi kerrallaan ja unohdat lopun, jätät
+> transaktion auki — ja avoin transaktio on juuri se, mikä estää
+> seuraavan migraation lukituksen. Jos et ole varma, älä aja tätä.
+
+```sql
+begin;
+set local role authenticated;
+set local request.jwt.claims = '{"sub":"<B_UUID>","role":"authenticated"}';
+
+-- Yritetaan luoda rivi TILIN A nimiin. Taman PITAA epaonnistua.
+insert into public.tasks (id, date, title, user_id)
+values ('rls-test-t3', current_date, 'ei saa onnistua',
+        '2cc00622-f927-4604-a518-361a4328481b'::uuid);
+
+rollback;
+```
+
+**Odotus: virhe**
+`new row violates row-level security policy for table "tasks"`
+
+**Jos lause menee läpi: turvamalli on rikki.** `WITH CHECK` puuttuu tai
+on väärin. Aja `rollback;` heti, pysäytä kaikki äläkä käännä yhtäkään
+lippua.
+
+Toista sama ilman `user_id`-kenttää. Tämän **pitää onnistua**, ja rivin
+omistajaksi tulee B, ei A:
+
+```sql
+begin;
+set local role authenticated;
+set local request.jwt.claims = '{"sub":"<B_UUID>","role":"authenticated"}';
+
+insert into public.tasks (id, date, title)
+values ('rls-test-t3b', current_date, 'oma rivi');
+
+select user_id = '<B_UUID>'::uuid as omistaja_on_b
+from public.tasks where id = 'rls-test-t3b';
+
+rollback;
+```
+
+**Odotus: `omistaja_on_b` = `true`.** Tämä todistaa, että
+`default auth.uid()` toimii ja omistajuuden asettaa kanta, ei asiakas.
+
+### T4 — Tili B ei voi muuttaa eikä poistaa tilin A rivejä
+
+Tämä on `USING`-ehdon testi kirjoituspuolella. Sama varoitus kuin
+T3:ssa: **aja koko lohko kerralla, se päättyy `rollback`-lauseeseen.**
+
+```sql
+begin;
+set local role authenticated;
+set local request.jwt.claims = '{"sub":"<B_UUID>","role":"authenticated"}';
+
+-- Yritetaan muuttaa KAIKKIA tehtavia. RLS rajaa nakyvat rivit,
+-- joten taman pitaa koskea nollaa rivia.
+update public.tasks set title = 'kaapattu';
+
+-- Yritetaan poistaa kaikki tehtavat. Sama asia.
+delete from public.tasks;
+
+-- Yritetaan muuttaa tilin A profiilia.
+update public.profile set age = 999;
+
+rollback;
+```
+
+**Odotus: jokainen lause raportoi `UPDATE 0` tai `DELETE 0`.**
+
+Nolla riviä on oikea tulos, ei virhe: RLS ei heitä poikkeusta `update`-
+ja `delete`-lauseissa, vaan **rajaa rivit pois**. Rivi, jota ei näe, ei
+ole rivi, jota voi muuttaa.
+
+**Jos jokin lause raportoi enemmän kuin 0 riviä: pysäytä kaikki
+välittömästi**, aja `rollback;`, ja palauta varmuuskopiosta jos et ole
+varma että `rollback` ehti. Se tarkoittaisi, että tili B pystyi
+muuttamaan toisen ihmisen dataa.
+
+### T5 — Tili A ei menettänyt mitään, ja kirjautumaton ei näe mitään
+
+Kirjaudu sovellukseen tilillä A.
+
+```sql
+select count(*) as tehtavia_a
+from public.tasks
+where user_id = '2cc00622-f927-4604-a518-361a4328481b'::uuid;
+```
+
+**Odotus: 36** — sama luku kuin valmistelun `a_ennen`.
+
+Tarkista myös, ettei yksikään testirivi jäänyt kantaan:
+
+```sql
+select count(*) as testirivit
+from public.tasks
+where id in ('rls-test-t3', 'rls-test-t3b');
+```
+
+**Odotus: 0.** Jos tässä on rivi, jokin `rollback` ei mennyt läpi.
+Poista rivi käsin ja selvitä miksi, ennen kuin jatkat.
+
+Lopuksi kirjaudu ulos ja lataa sovellus uudelleen. Näkymän pitää olla
+tyhjä ja kirjautumislomakkeen näkyvissä — **ei välähdystäkään** tilin A
+datasta.
+
+---
+
+### PYSÄYTYS 5
+
+| | Testi | Mitä todistaa |
+|---|---|---|
+| T1 | A näkee oman datansa | `USING` ei ole liian tiukka |
+| T2 | B ei näe A:n tehtäviä eikä profiilia | `USING` estää lukemisen molemmissa omistajuusmalleissa |
+| T3 | B ei voi kirjoittaa A:n nimiin; oma rivi saa omistajan kannasta | `WITH CHECK` ja `default auth.uid()` |
+| T4 | B:n `update` ja `delete` koskevat nollaa riviä | `USING` estää myös kirjoittamisen |
+| T5 | A:lla on yhä 36 tehtävää, testirivejä ei jäänyt, kirjautumaton ei näe mitään | ei sivuvaikutuksia, ei anon-pääsyä |
+
+**Kaikkien viiden on toteuduttava.** Yksikin epäonnistuminen tarkoittaa,
+että henkilökohtainen data on toisen käyttäjän saatavilla tai
+muokattavissa. Pysäytä kaikki, älä käännä yhtäkään lippua, äläkä aja
+yhtäkään muuta migraatiota ennen kuin syy on selvitetty.
+
+Koko hyväksyntäportti G1–G10 on koottu yhteen taulukkoon:
+[`PRODUCTION-PREFLIGHT.md`](PRODUCTION-PREFLIGHT.md), osa 3. **Vasta kun
+kaikki kymmenen ovat tosia**, saa harkita skeemaporttien kääntämistä tai
+siirtymistä migraatioon 0002.
+
+### Testitilin siivous
+
+Kirjaa ensin, montako riviä tilillä B on:
 
 ```sql
 select count(*) as tehtavia_b
 from public.tasks
-where user_id <> '2cc00622-f927-4604-a518-361a4328481b'::uuid;
+where user_id = '<B_UUID>'::uuid;
 ```
 
-Luvun pitää olla tasan se määrä tehtäviä, jonka loit tilillä B.
+Poista sitten tili B Supabasen **Authentication**-näkymästä.
 
-### T4 — Tili A ei menettänyt mitään
-
-Kirjaudu takaisin tilille A. Kaikkien 36 tehtävän pitää olla paikallaan
-ja profiilin arvojen ennallaan.
+`on delete cascade` vie sen tehtävät mukanaan — tämä on samalla ainoa
+kerta, kun poistoketju tulee oikeasti testattua, joten tarkista tulos:
 
 ```sql
-select count(*) as tehtavia_a
-from public.tasks
-where user_id = '2cc00622-f927-4604-a518-361a4328481b'::uuid;
+select count(*) filter (where user_id = '2cc00622-f927-4604-a518-361a4328481b'::uuid) as a_jalkeen,
+       count(*) as kaikki_jalkeen
+from public.tasks;
 ```
 
-**Odotus: 36.**
+**Odotus: `a_jalkeen` = 36 ja `kaikki_jalkeen` = 36.**
 
-### T5 — Kirjautumaton ei näe mitään
+Jos `a_jalkeen` putosi, poistoketju osui vääriin riveihin.
+**Palauta varmuuskopiosta.**
 
-Kirjaudu ulos. Lataa sovellus uudelleen. Näkymän pitää olla tyhjä ja
-kirjautumislomakkeen näkyvissä — ei välähdystäkään tilin A datasta.
-
-### PYSÄYTYS 5
-
-| | |
-|---|---|
-| T1 | Tili B ei näe tilin A tehtäviä |
-| T2 | Tili B ei näe tilin A profiilia |
-| T3 | Tilien data pysyy erillään molempiin suuntiin |
-| T4 | Tili A:lla on yhä 36 tehtävää |
-| T5 | Kirjautumaton ei näe mitään |
-
-**Kaikkien viiden on toteuduttava.** Yksikin epäonnistuminen tarkoittaa,
-että henkilökohtainen data on toisen käyttäjän saatavilla. Pysäytä
-kaikki, älä käännä yhtäkään lippua, äläkä aja yhtäkään muuta
-migraatiota ennen kuin syy on selvitetty.
-
-### Testitilin siivous
-
-Kun kaikki viisi kohtaa ovat vihreitä, poista tili B Supabasen
-Authentication-näkymästä. `on delete cascade` vie sen tehtävät mukanaan
-— se on samalla ainoa kerta, kun poistoketju tulee oikeasti testattua.
-
-Tarkista poiston jälkeen, että tilin A luku on yhä 36:
-
-```sql
-select count(*) as tehtavia_a
-from public.tasks
-where user_id = '2cc00622-f927-4604-a518-361a4328481b'::uuid;
-```
-
-Jos luku putosi, poistoketju osui vääriin riveihin. **Palauta
-varmuuskopiosta.**
+Jos `kaikki_jalkeen` on suurempi kuin 36, tilin B rivit jäivät orvoiksi
+eikä cascade toiminut. Se ei ole tietoturvaongelma, mutta se tarkoittaa,
+ettei tilin poisto siivoa dataa — ks. `docs/ACCOUNT-DELETION.md`.
 
 ---
 
@@ -386,9 +552,24 @@ rutiini että poikkeus säilyivät.
 Aja `0004_goals_projects.sql`.
 
 ### PYSÄYTYS 10
-Aja `verify_0004.sql`. Tarkista erityisesti: **kaikki neljä
-vierasavainta ovat `SET NULL`, ei yksikään `CASCADE`.** Jos jokin on
-cascade, tavoitteen poisto veisi tehtävät mukanaan.
+Aja `verify_0004.sql`. Tarkista erityisesti: **kaikki KUUSI
+vierasavainta ovat `SET NULL`, ei yksikään `CASCADE`.** Kohdan 3b
+`vaaria_poistosaantoja` on oltava **0**.
+
+Kuusi, ei neljä. Kaksi niistä syntyy `create table` -lauseen sisällä
+eikä erillisenä `add constraint` -lauseena, joten ne on helppo unohtaa:
+
+| Rajoite | Jos tämä olisi CASCADE |
+|---|---|
+| `goals_parent_goal_id_fkey` | ylätavoitteen poisto veisi kaikki alatavoitteet |
+| `projects_goal_id_fkey` | tavoitteen poisto veisi kaikki sen projektit |
+| `goals_project_id_fkey` | projektin poisto veisi tavoitteen |
+| `tasks_goal_id_fkey` | tavoitteen poisto veisi tehtävät |
+| `tasks_project_id_fkey` | projektin poisto veisi tehtävät |
+| `routines_goal_id_fkey` | tavoitteen poisto veisi rutiinit |
+
+Jos 0003 on ajamatta, `routines_goal_id_fkey` puuttuu ja rivejä on
+viisi. Se on oikein, ei puute.
 
 ---
 
@@ -507,8 +688,18 @@ täyttynyt, ja korjaus on yleensä yhden luvun päivitys migraation VAIHE
 Tämä on **ylivoimaisesti todennäköisin** tapaus, ja se on jo hoidettu.
 
 **2. Ajo meni läpi, mutta malli halutaan purkaa.**
-Tämä on mahdollista ilman varmuuskopiota, koska alkuperäinen `me` säilyy
-sarakkeessa `profile.legacy_id`. Migraatio ei pudota sitä.
+Skeema ja data ovat palautettavissa ilman varmuuskopiota: alkuperäinen
+`me` säilyy sarakkeessa `profile.legacy_id`, migraatio ei pudota sitä,
+eikä `tasks.user_id` ole pudottanut mitään vanhaa.
+
+**Politiikat eivät kuitenkaan palaudu.** Migraatio poistaa vanhat
+"salli kaikki" -politiikat nimestä riippumatta eikä tallenna niiden
+määritelmiä mihinkään. Jos et ottanut niitä talteen ennen ajoa
+(preflight-kohta P10), et voi palauttaa niitä sellaisina kuin ne olivat
+— voit vain kirjoittaa uudet. Käytännössä se ei haittaa, koska
+palauttaminen tarkoittaisi joka tapauksessa paluuta tilaan, jota ei
+pitäisi haluta takaisin. Mutta älä usko, että purkaminen on täydellinen
+peruutus. Se ei ole.
 
 Käänteisiä vaiheita ei ole kirjoitettu valmiiksi skriptiksi, eikä sitä
 pidä tehdä. **Käänteismigraatio, jota kukaan ei ole koskaan ajanut, on

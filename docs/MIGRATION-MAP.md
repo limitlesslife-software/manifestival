@@ -110,7 +110,7 @@ cascade on tarkoituksellinen käyttäjädatan välillä.
 | **Riippuu** | 0001; **ehdollisesti** 0003 |
 | **Taulut** | `goals`, `projects` |
 | **Sarakkeet muualle** | `tasks.deadline`, `tasks.goal_id`, `tasks.project_id` |
-| **Viitteet** | `projects.goal_id`, `tasks.goal_id`, `tasks.project_id`, `routines.goal_id` — **kaikki `on delete set null`** |
+| **Viitteet** | **Kuusi**, kaikki `on delete set null`: `goals.parent_goal_id`→`goals`, `goals.project_id`→`projects`, `projects.goal_id`→`goals`, `tasks.goal_id`→`goals`, `tasks.project_id`→`projects`, `routines.goal_id`→`goals` (vain jos 0003 ajettu). Kaksi ensimmäistä syntyy `create table` -lauseen sisällä eikä erillisenä `add constraint` -lauseena |
 | **RLS** | Päälle molempiin, 4+4 politiikkaa |
 | **Avaa liput** | `goals`, `projects` (**yhdessä**) |
 | **Palautus** | Keskitaso: `drop table` + kolmen sarakkeen poisto `tasks`-taulusta. Linkitykset menetetään, tehtävät säilyvät |
