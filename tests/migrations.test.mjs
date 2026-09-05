@@ -19,6 +19,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { ROOT, read, browserModules } from './helpers/sources.mjs';
+import { MARKER_PREFIX } from '../tools/rls-acceptance/acceptance.js';
 
 import { RECURRENCE, ROUTINE_SCHEDULING, EXCEPTION } from '../src/domain/routine.js';
 import { GOAL_STATUS, PROGRESS_MODE } from '../src/domain/goal.js';
@@ -32,6 +33,7 @@ import { AUDIT_RESULTS, MAX_INPUT_SUMMARY } from '../src/domain/audit.js';
 import { RISK_LEVELS } from '../src/ai/intentSchema.js';
 
 const MIGRATION_DIR = 'supabase/migrations';
+const NEWLINE = String.fromCharCode(10);
 
 /** Kaikki migraatiotiedostot numerojärjestyksessä. */
 function migrationFiles() {
@@ -427,14 +429,25 @@ test('varmistuskyselyt ovat vain lukevia', () => {
 
   assert.equal(files.length, 8, 'yksi varmistustiedosto migraatiota kohti');
 
+  // supabase/acceptance elaa saman saannon alla. Se ei ole
+  // migraatiokohtainen varmistus, joten se on eri hakemistossa, mutta se
+  // ajetaan tuotantoa vasten kasin samalla tavalla — ja siksi sen on
+  // oltava yhta ehdottomasti vain lukeva.
+  const kaikki = [
+    ...files.map(name => ['supabase/verify', name]),
+    ...fs.readdirSync(path.join(ROOT, 'supabase/acceptance'))
+      .filter(name => name.endsWith('.sql'))
+      .map(name => ['supabase/acceptance', name])
+  ];
+
   // Tarkistus tehdään LAUSEEN ALKUSANASTA, ei sisältyvyydestä. Kielletty
   // sana esiintyy laillisesti tunnisteiden sisällä: role_table_grants
   // sisältää sanan "grant" ja odotettu "on delete set null" sanan "delete".
   // Sisältyvyystarkistus antaisi vääriä hälytyksiä lisäämättä kattavuutta:
   // muuttava lause voi olla vain lauseen alussa.
-  for (const name of files) {
+  for (const [hakemisto, name] of kaikki) {
     // Kommentit pois: selitysteksti saa puhua migraatioista vapaasti.
-    const sql = fs.readFileSync(path.join(dir, name), 'utf8')
+    const sql = fs.readFileSync(path.join(ROOT, hakemisto, name), 'utf8')
       .split('\n')
       .filter(line => !line.trim().startsWith('--'))
       .join('\n');
@@ -522,10 +535,13 @@ test('varmistuskyselyt eivät lue käyttäjän sisältöä', () => {
   // Varmistus katsoo rakennetta ja rivimääriä. Se ei saa tulostaa
   // tehtävien otsikoita, hyvinvointimerkintöjä eikä rahasummia — eikä
   // koskaan avaimia.
-  const dir = path.join(ROOT, 'supabase/verify');
+  const tiedostot = ['supabase/verify', 'supabase/acceptance'].flatMap(hakemisto =>
+    fs.readdirSync(path.join(ROOT, hakemisto))
+      .filter(f => f.endsWith('.sql'))
+      .map(f => [hakemisto, f]));
 
-  for (const name of fs.readdirSync(dir).filter(f => f.endsWith('.sql'))) {
-    const sql = fs.readFileSync(path.join(dir, name), 'utf8')
+  for (const [hakemisto, name] of tiedostot) {
+    const sql = fs.readFileSync(path.join(ROOT, hakemisto, name), 'utf8')
       .split('\n')
       .filter(line => !line.trim().startsWith('--'))
       .join('\n')
@@ -994,7 +1010,7 @@ test('varmistuskysely 0001 tarkistaa juuri ne asiat jotka voivat mennä pieleen'
     ['count(distinct user_id)',    'omistajien lukumäärä'],
     ['confdeltype',                'vierasavaimen poistosääntö'],
     ['legacy_id',                  'säilytetty alkuperäinen tunniste'],
-    ['tasks_user_id_date_idx',     'indeksi'],
+    ['indkey[0]',                  'indeksin ensimmäinen sarake'],
     ['tasks_user_id_fkey',         'tehtävän vierasavain nimeltä'],
     ['profile_id_fkey',            'profiilin vierasavain nimeltä'],
     ['column_default',             'sarakkeiden oletusarvot']
@@ -1070,6 +1086,119 @@ test('KRIITTINEN: varmistus todentaa vierasavaimen PÄÄT, ei vain nimeä', () =
     'ylimääräisiä vierasavaimia ei havaita');
 });
 
+test('KRIITTINEN: indeksitarkistus katsoo rakennetta eikä nimeä', () => {
+  // LÖYTYNYT VIKA, JOTA TÄMÄ VARTIOI
+  //
+  // Tuotannon indeksi on yhdistelmä (user_id, date). Nimeen tai
+  // täsmälliseen sarakelistaan (user_id) sidottu tarkistus raportoi
+  // siitä FAILin, vaikka kanta oli kunnossa — ja väärä hälytys keskellä
+  // tuotannon aktivointia on kallis: se pysäyttää oikean työn ja
+  // opettaa ohittamaan varmistuksen.
+  //
+  // Sama sidonta pettää myös toisin päin. Indeksi nimeltä
+  // tasks_user_id_date_idx voi olla sarakkeella (date), ja nimeen
+  // luottava tarkistus hyväksyisi sen.
+  //
+  // Vaatimus on rakenteellinen: jonkin indeksin ENSIMMÄISEN sarakkeen on
+  // oltava user_id. btree-indeksiä voi käyttää etuliitteellään, joten
+  // (user_id, date) täyttää sen.
+  const verify = verify0001();
+
+  assert.ok(verify.includes('indkey[0]'),
+    'indeksin ensimmäistä saraketta ei katsota lainkaan');
+  assert.ok(verify.includes("a.attname = 'user_id'"),
+    'ensimmäistä saraketta ei verrata user_id:hen');
+
+  // Nimi saa esiintyä tuloksessa, mutta se ei saa olla ehto.
+  const indexCheck = verify0001()
+    .split(';')
+    .map(part => part.trim())
+    .find(part => part.includes('pg_index'));
+
+  assert.ok(indexCheck, 'indeksitarkistusta ei löytynyt lainkaan');
+  assert.equal(indexCheck.includes('tasks_user_id_date_idx'), false,
+    'indeksitarkistus on yhä sidottu indeksin nimeen');
+  assert.equal(/indexname\s*=/.test(indexCheck), false,
+    'indeksitarkistus vertaa yhä indeksin nimeä');
+
+  // Ja migraatio luo yhä sen indeksin, jota tarkistus edellyttää.
+  assert.ok(code0001().includes('create index if not exists tasks_user_id_date_idx'),
+    'migraatio ei enää luo user_id-alkuista indeksiä');
+  assert.ok(code0001().includes('on public.tasks (user_id, date)'),
+    'migraatio ei enää luo (user_id, date) -indeksiä');
+});
+
+/**
+ * Poimii indeksitarkistuksen SÄÄNNÖN suoraan SQL:stä.
+ *
+ * Tämä ei ole SQL:n uudelleentoteutus vaan sen lukemista. Sääntö on
+ * kokonaan kahdessa kohdassa: mihin indeksin sarakkeeseen katsotaan
+ * (`indkey[n]`) ja mihin nimeen sitä verrataan (`attname = '...'`).
+ * Molemmat luetaan tiedostosta, joten jos joku vaihtaisi tarkistuksen
+ * takaisin nimipohjaiseksi, poiminta ei löytäisi sääntöä lainkaan — ja
+ * jos joku vaihtaisi alaindeksin ykköseksi, alla olevat tapaukset
+ * kääntyisivät toisin päin.
+ *
+ * @returns {(index: {columns: string[]}) => boolean}
+ */
+function indexRuleFrom(sqlSource, tiedosto) {
+  const subscript = /indkey\[(\d+)\]/.exec(sqlSource);
+  const column = /attname = '([a-z_]+)'/.exec(sqlSource);
+
+  assert.ok(subscript, `${tiedosto}: indeksitarkistus ei katso indkey-alkiota`);
+  assert.ok(column, `${tiedosto}: indeksitarkistus ei vertaa sarakkeen nimeä`);
+
+  const position = Number(subscript[1]);
+  const expected = column[1];
+  return index => index.columns[position] === expected;
+}
+
+test('KRIITTINEN: indeksisääntö hyväksyy etuliitteen ja hylkää väärän järjestyksen', () => {
+  // TÄMÄ ON SE VIKA, JOKA OIKEASTI SATTUI
+  //
+  // Kertaluontoinen varmistin vaati täsmälleen sarakelistan (user_id).
+  // Tuotannossa on (user_id, date), joten varmistin raportoi FAILin
+  // kannasta joka oli kunnossa. Väärä hälytys keskellä tuotannon
+  // aktivointia on kallis: se pysäyttää oikean työn ja opettaa
+  // ohittamaan varmistuksen.
+  //
+  // Sidonta pettää myös toisin päin: (date, user_id) on eri indeksi.
+  // btree-indeksiä voi käyttää etuliitteellään, joten (user_id, date)
+  // kelpaa omistajahakuun mutta (date, user_id) ei — jälkimmäisessä
+  // omistajalla suodattava kysely joutuu lukemaan koko indeksin.
+  //
+  // Sääntö luetaan molemmista tiedostoista erikseen: ne ovat eri
+  // tiedostoja, ja toinen voi ajautua erilleen huomaamatta.
+  const lahteet = [
+    ['verify_0001.sql', verify0001()
+      .split(';').map(part => part.trim()).find(part => part.includes('pg_index'))],
+    ['verify_acceptance.sql', read('supabase/acceptance/verify_acceptance.sql')
+      .split(NEWLINE)
+      .filter(line => !line.trim().startsWith('--'))
+      .join(NEWLINE)
+      .toLowerCase()]
+  ];
+
+  const tapaukset = [
+    ['(user_id)',            ['user_id'],         true,  'pelkkä omistajaindeksi kelpaa'],
+    ['(user_id, date)',      ['user_id', 'date'], true,  'yhdistelmä, jonka etuliite on user_id, kelpaa'],
+    ['(date, user_id)',      ['date', 'user_id'], false, 'väärä järjestys ei kelpaa'],
+    ['(id)',                 ['id'],              false, 'pääavain ei kelpaa omistajaindeksiksi'],
+    ['(date)',               ['date'],            false, 'liittymätön indeksi ei kelpaa'],
+    ['(completed, user_id)', ['completed', 'user_id'], false, 'user_id muualla kuin ensimmäisenä ei kelpaa']
+  ];
+
+  for (const [tiedosto, sqlSource] of lahteet) {
+    assert.ok(sqlSource, `${tiedosto}: indeksitarkistusta ei löytynyt lainkaan`);
+    const kelpaa = indexRuleFrom(sqlSource, tiedosto);
+
+    for (const [nimi, columns, odotus, miksi] of tapaukset) {
+      assert.equal(kelpaa({ columns }), odotus,
+        `${tiedosto}: indeksi ${nimi} — ${miksi}`);
+    }
+  }
+});
+
 test('KRIITTINEN: varmistus todentaa perumisen merkkipaalun', () => {
   // legacy_id on ainoa asia, joka tekee läpimenneestä migraatiosta
   // purettavan ilman varmuuskopiota. Jos arvo on kadonnut, migraation
@@ -1083,6 +1212,65 @@ test('KRIITTINEN: varmistus todentaa perumisen merkkipaalun', () => {
     'ei-tyhjien legacy-arvojen määrää ei tarkisteta');
   assert.match(verify, /legacy_id <> 'me'/,
     'muita legacy-arvoja ei havaita — jäänyt oletusarvo jäisi huomaamatta');
+});
+
+test('hyväksyntätestin jälkivarmistus kattaa jokaisen vaaditun kohdan', () => {
+  // Selaimessa ajettu hyväksyntätesti katsoo kantaa RLS:n läpi. Se ei
+  // siis voi nähdä, jäikö toisen tilin rivi kantaan — RLS piilottaisi
+  // juuri sen rivin, jota etsitään. Tämä tiedosto on ainoa paikka,
+  // josta jäännöksen voi nähdä, ja siksi sen kattavuus lukitaan tässä.
+  const sql = read('supabase/acceptance/verify_acceptance.sql')
+    .split(NEWLINE)
+    .filter(line => !line.trim().startsWith('--'))
+    .join(NEWLINE)
+    .toLowerCase();
+
+  // Yhtenainen tuloste: check_no / section / check_name / status / details.
+  for (const sarake of ['check_no', 'section', 'check_name', 'status', 'details']) {
+    assert.ok(sql.includes(sarake), `jälkivarmistuksesta puuttuu sarake ${sarake}`);
+  }
+
+  const vaaditut = [
+    ['relrowsecurity',            'RLS on yhä päällä'],
+    ['indkey[0]',                 'indeksin ensimmäinen sarake'],
+    ['pg_policies',               'politiikat ovat yhä tallella'],
+    ['with_check',                'politiikkojen kirjoitusehdot'],
+    [OWNER_UUID.toLowerCase(),    'omistajan tunniste'],
+    ['user_id is null',           'omistajattomat rivit'],
+    // Vahvempi kuin omistajien lukumäärä: count(distinct user_id) = 1
+    // olisi tosi myös silloin, kun se yksi omistaja on joku muu kuin A.
+    // is distinct from nimeää omistajan ja näkee myös NULL-omistajan,
+    // jonka tavallinen <>-vertailu jättäisi huomaamatta.
+    ['user_id is distinct from', 'omistajan nimenomainen vertailu'],
+    ['left join auth.users',      'orvot viittaukset'],
+    ["legacy_id = 'me'",          'perumisen merkkipaalu'],
+    [`${MARKER_PREFIX}%`,         'hyväksyntätestin jäännösrivit'],
+    ['from auth.users',           'väliaikaisen tilin poisto'],
+    ['confdeltype',               'vierasavaimen poistosääntö'],
+    ["has_table_privilege('anon'", 'anonin teholliset oikeudet'],
+    ['aclexplode',                'PUBLIC-roolin oikeudet']
+  ];
+
+  for (const [needle, mita] of vaaditut) {
+    assert.ok(sql.includes(needle), `jälkivarmistuksesta puuttuu: ${mita}`);
+  }
+
+  // Odotettu rivimäärä on kirjoitettu auki, ei pääteltävissä.
+  assert.ok(sql.includes("'36'"), 'tehtävien odotettua määrää ei tarkisteta');
+});
+
+test('KRIITTINEN: hyväksyntätestin tunniste on sama JS:ssä ja SQL:ssä', () => {
+  // Kaksi eri kieltä, yksi sopimus. Jos ajuri vaihtaisi etuliitteen ja
+  // jälkivarmistus etsisi vanhaa, siivouksen aukko jäisi näkymättömäksi:
+  // SQL raportoisi tyytyväisenä nolla jäännösriviä, koska se etsii
+  // etuliitettä, jota kukaan ei enää käytä.
+  const sql = read('supabase/acceptance/verify_acceptance.sql');
+  assert.ok(sql.includes(`${MARKER_PREFIX}%`),
+    `jälkivarmistus ei etsi etuliitettä ${MARKER_PREFIX}`);
+
+  const runner = read('tools/rls-acceptance/acceptance.js');
+  assert.ok(runner.includes(`'${MARKER_PREFIX}'`),
+    'ajurin etuliite ei ole enää vakio');
 });
 
 test('KRIITTINEN: varmistus 0001 ei muuta mitään', () => {

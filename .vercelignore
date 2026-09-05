@@ -1,0 +1,7 @@
+# Kehitystyokalut EIVAT kuulu julkaistuun sivustoon.
+#
+# tools/rls-acceptance on kirjautumislomake, joka ottaa yhteyden
+# tuotantoon oikeilla tunnuksilla. Se on tarkoitettu ajettavaksi vain
+# paikallisesti (npm run serve). Sivu tarkistaa taman myos itse
+# (main.js: isLocal), mutta poissulku on halvempi este kuin koodi.
+tools/

@@ -15,9 +15,41 @@ Liittyvät: [`PRODUCTION-PREFLIGHT.md`](PRODUCTION-PREFLIGHT.md) ·
 [`MIGRATION-MAP.md`](MIGRATION-MAP.md) ·
 [`PRODUCTION-ACTIVATION-GATE.md`](PRODUCTION-ACTIVATION-GATE.md)
 
-Varmistuskyselyt: `supabase/verify/` — **vain lukevia**. Jokainen lause
-alkaa sanalla `select`: ei `insert`, `update`, `delete`, `alter`,
-`create`, `drop`, `grant` eikä `revoke`. Testi vartioi tätä.
+Varmistuskyselyt: `supabase/verify/` ja `supabase/acceptance/` — **vain
+lukevia**. Jokainen lause alkaa sanalla `select`: ei `insert`, `update`,
+`delete`, `alter`, `create`, `drop`, `grant` eikä `revoke`. Testi
+vartioi tätä.
+
+---
+
+## MISSÄ MENNÄÄN JUURI NYT
+
+**Vaiheet 1–4 on tehty. Migraatio 0001 on ajettu tuotantoon ja
+`verify_0001.sql` on läpi.** Todennettu: RLS päällä molemmissa tauluissa,
+kahdeksan politiikkaa oikein ehdoin, `tasks.user_id` ja `profile.id` ovat
+`uuid not null default auth.uid()`, `legacy_id` on tallella, 36 tehtävää
+ja 1 profiili kuuluvat omistajalle
+`2cc00622-f927-4604-a518-361a4328481b`, orpoja viittauksia ei ole,
+vierasavaimet ovat `CASCADE`, anonilla ei ole oikeuksia ja
+`authenticated`-roolilla on tasan CRUD.
+
+**SEURAAVA IHMISEN TOIMENPIDE: vaihe 5 — eristystesti kahdella tilillä.**
+Ohje ja työkalu: [`RLS-ACCEPTANCE.md`](RLS-ACCEPTANCE.md). Ensimmäinen
+askel siinä on väliaikaisen tilin B luonti Supabasen Authentication-
+näkymästä, ja se vaatii nimenomaisen luvan, koska se on tuotannon
+auth-kirjoitus.
+
+**Migraatiot 0002–0008 ovat PYSÄYTETTYINÄ** ja kaikki yksitoista
+skeemaporttia ovat `false`, kunnes vaiheen 5 kaikki kolme ehtoa ovat
+täyttyneet.
+
+> **Huomio varmistimeen, ei kantaan.** Kertaluontoinen kaiken kattava
+> varmistin raportoi kohdasta 16 FAILin, koska se hyväksyi vain
+> täsmällisen sarakelistan `(user_id)`. Tuotannossa on yhdistelmäindeksi
+> `tasks_user_id_date_idx (user_id, date)`, joka täyttää vaatimuksen:
+> btree-indeksiä voi käyttää etuliitteellään. Kyseessä oli varmistimen
+> virhe, ei kannan. `verify_0001.sql` kohta 16 katsoo nyt indeksin
+> **ensimmäistä saraketta** eikä nimeä tai sarakelistaa.
 
 ---
 
@@ -265,239 +297,69 @@ se.
 Ennen tätä vaihetta **yhtäkään lippua ei käännetä** eikä yhtäkään muuta
 migraatiota ajeta.
 
-### Miksi pelkkä katsominen ei riitä
+**Koko ohje, työkalu ja jälkivarmistus:
+[`RLS-ACCEPTANCE.md`](RLS-ACCEPTANCE.md).** Se ei ole liite vaan tämän
+vaiheen sisältö. Alla on vain se, mitä runbookin lukijan on tiedettävä
+ennen kuin hän avaa sen.
 
-Aiempi versio tästä testistä katsoi vain, **näkyykö** toisen tilin data.
-Se on puolet asiasta. Politiikassa on kaksi eri ehtoa, ja ne
-epäonnistuvat eri tavoin:
+### Mikä muuttui aiempaan versioon nähden
 
-| Ehto | Mitä se estää | Missä testataan |
-|---|---|---|
-| `USING` | toisen rivien **lukemisen, muuttamisen ja poistamisen** | T2, T4 |
-| `WITH CHECK` | rivin kirjoittamisen **toisen nimiin** | T3 |
+Aiempi versio teki kirjoituskiellot SQL-editorissa tempulla
+`set local role authenticated` + `request.jwt.claims`. Se testaa
+politiikan lausekkeen, mutta ohittaa JWT:n todennuksen, julkisen
+anon-avaimen, PostgRESTin roolinvaihdon ja roolin `authenticated`
+GRANTit — eli juuri ne kerrokset, joissa vika olisi näkymätön.
+Politiikka voi olla täysin oikein ja pääsy silti auki, jos GRANT on
+väärä.
 
-Pelkkä `USING` voi olla oikein ja `WITH CHECK` väärin. Silloin tili B ei
-näkisi mitään tilin A dataa, mutta voisi silti luoda rivin, jonka
-omistaja on A. Se ei näkyisi missään ennen kuin A ihmettelee, mistä
-kalenteriin ilmestyi tekemätöntä työtä.
+Testi ajetaan nyt **oikeilla kirjautuneilla istunnoilla** samalla
+julkisella anon-avaimella kuin sovellus, yhtenä ajona, ja se tuottaa
+yhden kopioitavan taulukon. Kaksikymmentä käsin ajettavaa
+SQL-kyselyä ei enää ole.
 
-### Valmistelu
+### Mitä ajetaan
 
-**1. Luo tili B** sovelluksen kirjautumisnäkymästä. Käytä oikeaa
-sähköpostiosoitetta, johon pääset käsiksi — Supabase vaatii
-vahvistuksen. Älä käytä tilin A osoitetta.
-
-**2. Hae molempien tunnisteet:**
-
-```sql
-select id, created_at from auth.users order by created_at;
+```
+npm run serve
+http://localhost:3000/tools/rls-acceptance/
 ```
 
-Tilin A tunnisteen on oltava `2cc00622-f927-4604-a518-361a4328481b`.
-Kirjaa tilin B tunniste ylös. Alla siitä käytetään merkintää `<B_UUID>`.
+Ennen ajoa on luotava väliaikainen tili B Supabasen Authentication-
+näkymästä. **Se on tuotannon auth-kirjoitus ja vaatii nimenomaisen
+luvan.** Ohje: `RLS-ACCEPTANCE.md`, kohta A.
 
-**3. Kirjaa lähtöluvut:**
-
-```sql
-select count(*) filter (where user_id = '2cc00622-f927-4604-a518-361a4328481b'::uuid) as a_ennen,
-       count(*) filter (where user_id <> '2cc00622-f927-4604-a518-361a4328481b'::uuid) as muut_ennen
-from public.tasks;
-```
-
-Odotus: `36` ja `0`.
-
----
-
-### T1 — Tili A näkee OMAN datansa
-
-Kirjaudu sovellukseen tilillä A. Avaa päivänäkymä ja profiili.
-
-**Odotus: kaikki 36 tehtävää ja profiilin arvot näkyvät normaalisti.**
-
-Tämä kohta on ensimmäisenä tarkoituksella. Liian tiukka politiikka
-lukitsisi omistajan ulos omasta datastaan, ja se on yhtä paha vika kuin
-liian löysä — vain helpompi huomata. Jos A ei näe omaa dataansa,
-`USING`-ehto tai `user_id`-backfill on väärin. **Pysäytä.**
-
-### T2 — Tili B ei näe tilin A dataa
-
-Kirjaudu ulos ja sisään tilillä B.
-
-- **Päivänäkymä:** siirry päivään, jolla tiedät tilillä A olevan
-  tehtäviä. **Odotus: nolla tehtävää.**
-- **Profiili:** kenttien pitää olla tyhjiä tai oletusarvoisia —
-  **ei tilin A ikää, painoa eikä heräämisaikaa.**
-
-Profiili on erillinen tarkistus, koska `profile` käyttää eri
-omistajuusmallia kuin `tasks`: omistajuus on `id`-sarakkeessa, ei
-`user_id`-sarakkeessa. Toinen voi toimia ilman että toinen toimii.
-
-Jos näkyy yksikin tilin A rivi: **RLS ei ole voimassa. Pysäytä kaikki.**
-
-### T3 — Tili B ei voi kirjoittaa riviä tilin A nimiin
-
-Tämä on `WITH CHECK` -ehdon testi, eikä sitä voi tehdä
-käyttöliittymästä: sovellus ei koskaan lähetä `user_id`-kenttää, joten
-UI ei pysty edes yrittämään väärinkäytöstä. Se on pakko tehdä SQL:llä.
-
-> **LUE TÄMÄ ENSIN.** Alla olevassa lohkossa on `insert`-lause, mutta se
-> päättyy `rollback`-lauseeseen eikä `commit`-lauseeseen. **Aja koko
-> lohko kerralla.** Jos ajat sen rivi kerrallaan ja unohdat lopun, jätät
-> transaktion auki — ja avoin transaktio on juuri se, mikä estää
-> seuraavan migraation lukituksen. Jos et ole varma, älä aja tätä.
-
-```sql
-begin;
-set local role authenticated;
-set local request.jwt.claims = '{"sub":"<B_UUID>","role":"authenticated"}';
-
--- Yritetaan luoda rivi TILIN A nimiin. Taman PITAA epaonnistua.
-insert into public.tasks (id, date, title, user_id)
-values ('rls-test-t3', current_date, 'ei saa onnistua',
-        '2cc00622-f927-4604-a518-361a4328481b'::uuid);
-
-rollback;
-```
-
-**Odotus: virhe**
-`new row violates row-level security policy for table "tasks"`
-
-**Jos lause menee läpi: turvamalli on rikki.** `WITH CHECK` puuttuu tai
-on väärin. Aja `rollback;` heti, pysäytä kaikki äläkä käännä yhtäkään
-lippua.
-
-Toista sama ilman `user_id`-kenttää. Tämän **pitää onnistua**, ja rivin
-omistajaksi tulee B, ei A:
-
-```sql
-begin;
-set local role authenticated;
-set local request.jwt.claims = '{"sub":"<B_UUID>","role":"authenticated"}';
-
-insert into public.tasks (id, date, title)
-values ('rls-test-t3b', current_date, 'oma rivi');
-
-select user_id = '<B_UUID>'::uuid as omistaja_on_b
-from public.tasks where id = 'rls-test-t3b';
-
-rollback;
-```
-
-**Odotus: `omistaja_on_b` = `true`.** Tämä todistaa, että
-`default auth.uid()` toimii ja omistajuuden asettaa kanta, ei asiakas.
-
-### T4 — Tili B ei voi muuttaa eikä poistaa tilin A rivejä
-
-Tämä on `USING`-ehdon testi kirjoituspuolella. Sama varoitus kuin
-T3:ssa: **aja koko lohko kerralla, se päättyy `rollback`-lauseeseen.**
-
-```sql
-begin;
-set local role authenticated;
-set local request.jwt.claims = '{"sub":"<B_UUID>","role":"authenticated"}';
-
--- Yritetaan muuttaa KAIKKIA tehtavia. RLS rajaa nakyvat rivit,
--- joten taman pitaa koskea nollaa rivia.
-update public.tasks set title = 'kaapattu';
-
--- Yritetaan poistaa kaikki tehtavat. Sama asia.
-delete from public.tasks;
-
--- Yritetaan muuttaa tilin A profiilia.
-update public.profile set age = 999;
-
-rollback;
-```
-
-**Odotus: jokainen lause raportoi `UPDATE 0` tai `DELETE 0`.**
-
-Nolla riviä on oikea tulos, ei virhe: RLS ei heitä poikkeusta `update`-
-ja `delete`-lauseissa, vaan **rajaa rivit pois**. Rivi, jota ei näe, ei
-ole rivi, jota voi muuttaa.
-
-**Jos jokin lause raportoi enemmän kuin 0 riviä: pysäytä kaikki
-välittömästi**, aja `rollback;`, ja palauta varmuuskopiosta jos et ole
-varma että `rollback` ehti. Se tarkoittaisi, että tili B pystyi
-muuttamaan toisen ihmisen dataa.
-
-### T5 — Tili A ei menettänyt mitään, ja kirjautumaton ei näe mitään
-
-Kirjaudu sovellukseen tilillä A.
-
-```sql
-select count(*) as tehtavia_a
-from public.tasks
-where user_id = '2cc00622-f927-4604-a518-361a4328481b'::uuid;
-```
-
-**Odotus: 36** — sama luku kuin valmistelun `a_ennen`.
-
-Tarkista myös, ettei yksikään testirivi jäänyt kantaan:
-
-```sql
-select count(*) as testirivit
-from public.tasks
-where id in ('rls-test-t3', 'rls-test-t3b');
-```
-
-**Odotus: 0.** Jos tässä on rivi, jokin `rollback` ei mennyt läpi.
-Poista rivi käsin ja selvitä miksi, ennen kuin jatkat.
-
-Lopuksi kirjaudu ulos ja lataa sovellus uudelleen. Näkymän pitää olla
-tyhjä ja kirjautumislomakkeen näkyvissä — **ei välähdystäkään** tilin A
-datasta.
-
----
-
-### PYSÄYTYS 5
+### Mitä testi kattaa
 
 | | Testi | Mitä todistaa |
 |---|---|---|
-| T1 | A näkee oman datansa | `USING` ei ole liian tiukka |
+| T1 | A lukee oman datansa | `USING` ei ole liian tiukka |
 | T2 | B ei näe A:n tehtäviä eikä profiilia | `USING` estää lukemisen molemmissa omistajuusmalleissa |
-| T3 | B ei voi kirjoittaa A:n nimiin; oma rivi saa omistajan kannasta | `WITH CHECK` ja `default auth.uid()` |
-| T4 | B:n `update` ja `delete` koskevat nollaa riviä | `USING` estää myös kirjoittamisen |
-| T5 | A:lla on yhä 36 tehtävää, testirivejä ei jäänyt, kirjautumaton ei näe mitään | ei sivuvaikutuksia, ei anon-pääsyä |
+| T3 | B ei voi muuttaa, poistaa eikä kirjoittaa A:n nimiin | `USING` kirjoituspuolella ja `WITH CHECK` |
+| T4 | B luo, lukee, muuttaa ja poistaa oman datansa | politiikka ei ole `using (false)` |
+| T5 | A ei näe eikä muuta B:n dataa | eristys on kaksisuuntainen |
+| T6 | Kirjautumaton ei saa mitään | anon-roolilta on peruttu oikeudet |
 
-**Kaikkien viiden on toteuduttava.** Yksikin epäonnistuminen tarkoittaa,
-että henkilökohtainen data on toisen käyttäjän saatavilla tai
-muokattavissa. Pysäytä kaikki, älä käännä yhtäkään lippua, äläkä aja
-yhtäkään muuta migraatiota ennen kuin syy on selvitetty.
+Tilin A 36 oikeaa tehtävää ja profiili **eivät ole testin kohteena**.
+Kiellot todistetaan A:n omistamaa syöttiriviä, B:n väliaikaista dataa ja
+arvot säilyttävää payloadia vastaan. Perustelu jokaiselle valinnalle on
+`RLS-ACCEPTANCE.md`:ssä.
 
-Koko hyväksyntäportti G1–G10 on koottu yhteen taulukkoon:
-[`PRODUCTION-PREFLIGHT.md`](PRODUCTION-PREFLIGHT.md), osa 3. **Vasta kun
-kaikki kymmenen ovat tosia**, saa harkita skeemaporttien kääntämistä tai
-siirtymistä migraatioon 0002.
+### PYSÄYTYS 5
 
-### Testitilin siivous
+Migraatiota 0002 ei ajeta eikä yhtäkään lippua käännetä, ennen kuin
+**kaikki kolme** ovat totta:
 
-Kirjaa ensin, montako riviä tilillä B on:
+1. Selaintestin raportti: `TULOS: PASS` — ei yhtäkään FAIL, ERROR eikä SKIP
+2. Väliaikainen tili B on poistettu Supabasen Authentication-näkymästä
+3. `supabase/acceptance/verify_acceptance.sql`: kaikki 18 kohtaa `PASS`
+   ja `poikkeavia_yhteensa` = 0
 
-```sql
-select count(*) as tehtavia_b
-from public.tasks
-where user_id = '<B_UUID>'::uuid;
-```
+Liitä molemmat raportit ajolokiin sellaisenaan.
 
-Poista sitten tili B Supabasen **Authentication**-näkymästä.
-
-`on delete cascade` vie sen tehtävät mukanaan — tämä on samalla ainoa
-kerta, kun poistoketju tulee oikeasti testattua, joten tarkista tulos:
-
-```sql
-select count(*) filter (where user_id = '2cc00622-f927-4604-a518-361a4328481b'::uuid) as a_jalkeen,
-       count(*) as kaikki_jalkeen
-from public.tasks;
-```
-
-**Odotus: `a_jalkeen` = 36 ja `kaikki_jalkeen` = 36.**
-
-Jos `a_jalkeen` putosi, poistoketju osui vääriin riveihin.
-**Palauta varmuuskopiosta.**
-
-Jos `kaikki_jalkeen` on suurempi kuin 36, tilin B rivit jäivät orvoiksi
-eikä cascade toiminut. Se ei ole tietoturvaongelma, mutta se tarkoittaa,
-ettei tilin poisto siivoa dataa — ks. `docs/ACCOUNT-DELETION.md`.
+Yksikin poikkeama tarkoittaa, että henkilökohtainen data on toisen
+käyttäjän saatavilla tai muokattavissa. Pysäytä kaikki, älä käännä
+yhtäkään lippua äläkä aja yhtäkään muuta migraatiota ennen kuin syy on
+selvitetty. Vikataulukko: `RLS-ACCEPTANCE.md`, *Vikatilanteet*.
 
 ---
 
@@ -617,6 +479,11 @@ Aja `0006_wellbeing.sql`, aja `verify_0006.sql`, käännä lippu `wellbeing`.
 Tämä on terveystietoa. **Toista vaiheen 5 eristystesti tälle taululle
 erikseen** kahdella tilillä. Älä ohita sitä sillä perusteella, että RLS
 todettiin toimivaksi jo kerran.
+
+`tools/rls-acceptance` kattaa vain taulut `tasks` ja `profile` — ne ovat
+ne, jotka 0001 muuttaa. Uusi taulu vaatii oman kierroksensa: laajenna
+työkalua tai tee testi käsin samalla kaavalla (lue, kirjoita toisen
+nimiin, muuta, poista — molempiin suuntiin).
 
 ---
 

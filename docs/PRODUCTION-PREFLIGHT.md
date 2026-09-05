@@ -9,6 +9,12 @@ tuotantoon turvallisesti.
 Yksityiskohtaiset perustelut: [`PRODUCTION-ACTIVATION-RUNBOOK.md`](PRODUCTION-ACTIVATION-RUNBOOK.md)
 · [`MIGRATION-MAP.md`](MIGRATION-MAP.md)
 
+> **TILANNE:** vaiheet 1–8 on tehty. Migraatio 0001 on ajettu ja
+> `verify_0001.sql` on läpi. **Seuraava ihmisen toimenpide on rivi 9.**
+> Ohje ja työkalu: [`RLS-ACCEPTANCE.md`](RLS-ACCEPTANCE.md).
+> Migraatiot 0002–0008 ovat pysäytettyinä ja kaikki skeemaportit ovat
+> `false`, kunnes rivit 9–12 ovat PASS.
+
 ---
 
 ## Mitä 0001 tekee, yhdellä kappaleella
@@ -184,8 +190,10 @@ Vain kun **kaikki** preflight-kohdat ovat kunnossa.
 | 6 | Aja `verify/verify_0001.sql` | SQL Editor |
 | 7 | Käy läpi kaikki 20 kohtaa | runbook, PYSÄYTYS 3 |
 | 8 | Savutesti tilillä A | sovellus |
-| 9 | Eristystesti T1–T5 | runbook, vaihe 5 |
-| 10 | Siivoa testitili B | Dashboard |
+| 9 | Luo väliaikainen tili B (**vaatii luvan**) | Dashboard → Authentication |
+| 10 | Eristystesti T1–T6 yhtenä ajona | `tools/rls-acceptance/` |
+| 11 | Poista tili B — vasta kun siivous on PASS | Dashboard → Authentication |
+| 12 | Aja `acceptance/verify_acceptance.sql` | SQL Editor |
 
 **Koko tiedosto kerralla, ei lohko kerrallaan.** Se on yksi transaktio.
 Paloittain ajettuna transaktion suoja katoaa.
@@ -223,8 +231,8 @@ tarkoittaa, ettei mitään seuraavaa saa tehdä.
 | G6 | Politiikkojen ehdot vastaavat odotettua | kohta 4, `poikkeavia_yhteensa` = 0 |
 | G7 | Perumisen merkkipaalu tallella | kohta 7, `1, 1, 1, 0` |
 | G8 | Sovelluksen savutesti läpi tilillä A | luonti, muokkaus, poisto, uloskirjautuminen |
-| G9 | T1–T5 kaikki läpi | runbookin PYSÄYTYS 5 |
-| G10 | Testitili B poistettu, `tasks` = 36 | siivousvaiheen kysely |
+| G9 | Eristystesti T1–T6: `TULOS: PASS`, ei FAIL, ERROR eikä SKIP | `tools/rls-acceptance/` |
+| G10 | Tili B poistettu ja `verify_acceptance.sql` 18/18 `PASS` | `supabase/acceptance/` |
 
 **Vasta kun G1–G10 ovat kaikki tosia**, saa harkita:
 
@@ -339,18 +347,30 @@ sen yleensä itse muutamassa sekunnissa. Voit pakottaa sen:
 
 **Älä palauta varmuuskopiosta** eikä pura migraatiota tämän takia.
 
-### G. Kaikki näyttää oikealta, mutta eristystestin T3 tai T4
-epäonnistuu
+### G. Kaikki näyttää oikealta, mutta eristystestissä on FAIL
 
 **Tämä on vakavin mahdollinen tulos.** Se tarkoittaa, että toinen
-käyttäjä pystyy kirjoittamaan tai muuttamaan toisen dataa.
+käyttäjä pystyy lukemaan, kirjoittamaan tai muuttamaan toisen dataa.
 
-1. Aja `rollback;` jos transaktio on auki.
-2. Älä käännä yhtäkään porttia.
-3. Vertaa `verify_0001` kohtaa 4: mikä politiikka ei ole `OK`.
-4. `WITH CHECK` -vika → T3 epäonnistuu. `USING` -vika → T4 epäonnistuu.
-5. Luo puuttuva tai väärä politiikka uudelleen 0001:n VAIHE 5 -lohkon
-   mukaisesti ja toista koko T1–T5.
+1. Älä käännä yhtäkään porttia.
+2. Vertaa `verify_0001` kohtaa 4: mikä politiikka ei ole `OK`.
+3. Lue rivin numero raportista — se kertoo suoraan mikä ehto on rikki:
+
+   | Rivi | Rikki oleva ehto |
+   |---|---|
+   | `T2*` | `SELECT`-politiikan `USING` |
+   | `T3a`, `T5c` | `UPDATE`-politiikan `USING` |
+   | `T3b`, `T5d`, `T5e` | `DELETE`-politiikan `USING` |
+   | `T3c` | `profile`-taulun `UPDATE`-politiikka |
+   | `T3d` | `INSERT`-politiikan `WITH CHECK` |
+   | `T4*` | politiikka on liian tiukka — sovellus ei toimisi lainkaan |
+   | `T6*` | `anon`-roolilta ei ole peruttu oikeuksia |
+
+4. Luo puuttuva tai väärä politiikka uudelleen 0001:n VAIHE 5 -lohkon
+   mukaisesti ja toista koko ajo alusta.
+5. Rivi `ERROR` ei ole sama asia kuin `FAIL`: kysely ei päässyt edes
+   yrittämään. Korjaa yhteys ja aja uudelleen — älä tulkitse sitä
+   tulokseksi suuntaan eikä toiseen.
 
 ---
 

@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="fi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Manifestival — RLS-eristystesti T1–T5</title>
+<style>
+  body { font: 15px/1.5 system-ui, sans-serif; margin: 0; padding: 24px; max-width: 1100px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p.lead { margin: 0 0 20px; color: #444; }
+  .warn { border: 2px solid #a00; background: #fff4f4; padding: 12px 16px; margin: 0 0 20px; }
+  .warn strong { color: #a00; }
+  fieldset { border: 1px solid #ccc; margin: 0 0 16px; padding: 12px 16px; }
+  legend { font-weight: 600; padding: 0 6px; }
+  label { display: block; margin: 8px 0 2px; font-size: 13px; color: #333; }
+  input { width: 100%; box-sizing: border-box; padding: 6px 8px; font: inherit; }
+  .row { display: flex; gap: 16px; flex-wrap: wrap; }
+  .row > div { flex: 1 1 260px; }
+  button { font: inherit; padding: 8px 18px; margin-right: 8px; }
+  #status { margin: 16px 0; padding: 10px 14px; background: #f2f2f2; white-space: pre-wrap; }
+  #status.pass { background: #e6f6e6; border-left: 4px solid #2a7; }
+  #status.fail { background: #fdecec; border-left: 4px solid #a00; }
+  table { border-collapse: collapse; width: 100%; margin: 16px 0; font-size: 13px; }
+  th, td { border: 1px solid #ddd; padding: 5px 8px; text-align: left; vertical-align: top; }
+  th { background: #f2f2f2; }
+  tr.pass td:nth-child(3) { background: #e6f6e6; font-weight: 600; }
+  tr.fail td:nth-child(3) { background: #fdecec; font-weight: 600; color: #a00; }
+  tr.error td:nth-child(3) { background: #fff3e0; font-weight: 600; }
+  tr.skip td:nth-child(3) { background: #eee; }
+  textarea { width: 100%; height: 220px; font: 12px/1.4 ui-monospace, monospace; }
+</style>
+</head>
+<body>
+
+<h1>Manifestival — RLS-eristystesti T1–T5</h1>
+<p class="lead">
+  Ajaa koko kahden tilin eristystestin oikeilla kirjautuneilla istunnoilla
+  yhtenä ajona ja tuottaa yhden kopioitavan raportin.
+</p>
+
+<div class="warn">
+  <p><strong>Lue ennen ajoa.</strong></p>
+  <ul>
+    <li>Tämä sivu ottaa yhteyden <strong>tuotantoon</strong>. Se käyttää
+      samaa julkista anon-avainta kuin sovellus, <strong>ei</strong>
+      RLS:n ohittavaa palvelinavainta.</li>
+    <li>Tili B on <strong>luotava käsin ennen ajoa</strong>. Ks.
+      <code>docs/RLS-ACCEPTANCE.md</code>.</li>
+    <li>Testi luo omat rivinsä etuliitteellä <code>manifestival_rls_acceptance_</code>
+      ja poistaa ne itse. Tilin A 36 oikeaa tehtävää ja profiili eivät ole
+      testin kohteena.</li>
+    <li>Salasanoja ei tallenneta. Kentät tyhjennetään heti kirjautumisen
+      jälkeen.</li>
+    <li>Sivu toimii vain paikallisesti: <code>npm run serve</code> ja
+      <code>http://localhost:3000/tools/rls-acceptance/</code>.</li>
+  </ul>
+</div>
+
+<fieldset>
+  <legend>Tili A — nykyinen omistaja</legend>
+  <div class="row">
+    <div>
+      <label for="emailA">Sähköposti</label>
+      <input id="emailA" type="email" autocomplete="off">
+    </div>
+    <div>
+      <label for="passwordA">Salasana</label>
+      <input id="passwordA" type="password" autocomplete="off">
+    </div>
+  </div>
+  <label for="ownerA">Odotettu tunniste (kirjautuneen on täsmättävä tähän)</label>
+  <input id="ownerA" type="text" value="2cc00622-f927-4604-a518-361a4328481b">
+  <label for="expectedCount">Tehtävien lähtömäärä</label>
+  <input id="expectedCount" type="number" value="36">
+</fieldset>
+
+<fieldset>
+  <legend>Tili B — väliaikainen testitili</legend>
+  <div class="row">
+    <div>
+      <label for="emailB">Sähköposti</label>
+      <input id="emailB" type="email" autocomplete="off">
+    </div>
+    <div>
+      <label for="passwordB">Salasana</label>
+      <input id="passwordB" type="password" autocomplete="off">
+    </div>
+  </div>
+</fieldset>
+
+<button id="run" type="button">Aja hyväksyntätesti</button>
+<button id="copy" type="button">Kopioi raportti</button>
+
+<div id="status">Valmis.</div>
+
+<table id="results"></table>
+
+<label for="report">Raportti — kopioi tämä kokonaisuudessaan</label>
+<textarea id="report" readonly></textarea>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script type="module" src="./main.js"></script>
+
+</body>
+</html>

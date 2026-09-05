@@ -260,11 +260,41 @@ join pg_attribute col
 where con.conrelid = 'public.profile'::regclass
   and con.contype = 'p';
 
--- 16. Indeksi. Odotus: tasks_user_id_date_idx loytyy.
-select indexname as indeksi
-from pg_indexes
-where schemaname = 'public' and tablename = 'tasks'
-  and indexname = 'tasks_user_id_date_idx';
+-- 16. Indeksi. Odotus: vahintaan yksi rivi, jolla tulos = 'OK', ja
+--     kelpaavia_indekseja >= 1.
+--
+--     TARKISTETAAN RAKENNE, EI NIMEA. Aiempi versio vaati taydellisen
+--     osuman indeksin nimeen. Se on kahdella tapaa vaarin:
+--
+--       1. Nimi ei todista mitaan. Indeksi nimelta tasks_user_id_date_idx
+--          voisi olla sarakkeella (date), ja nimeen luottava tarkistus
+--          hyvaksyisi sen.
+--       2. Oikea indeksi hylattaisiin vaaralla perusteella. Tuotannossa
+--          on yhdistelmaindeksi (user_id, date). Tasmalleen sarakelistaa
+--          (user_id) vaatinut tarkistus raportoi siita FAILin, vaikka
+--          kanta oli kunnossa. Se oli varmistimen virhe, ei kannan.
+--
+--     Vaatimus on rakenteellinen: jonkin indeksin ENSIMMAISEN sarakkeen
+--     on oltava user_id. Yhdistelmaindeksi (user_id, date) tayttaa sen,
+--     koska btree-indeksia voi kayttaa myos pelkalla etuliitteellaan.
+--     Toinen sarake on nopeutta, ei oikeellisuutta.
+--
+--     indkey on int2vector ja alkaa nollasta: indkey[0] on indeksin
+--     ensimmainen sarake. Lausekeindeksien attnum on 0 eika liity
+--     pg_attributeen — ne putoavat pois liitoksessa, mika on oikein,
+--     koska lauseke ei ole sarake user_id.
+select c.relname as indeksi,
+       a.attname as ensimmainen_sarake,
+       pg_get_indexdef(x.indexrelid) as maaritelma,
+       case when a.attname = 'user_id' then 'OK' else '-' end as tulos,
+       count(*) filter (where a.attname = 'user_id') over () as kelpaavia_indekseja
+from pg_index x
+join pg_class c on c.oid = x.indexrelid
+join pg_class t on t.oid = x.indrelid
+join pg_namespace n on n.oid = t.relnamespace
+join pg_attribute a on a.attrelid = t.oid and a.attnum = x.indkey[0]
+where n.nspname = 'public' and t.relname = 'tasks'
+order by (a.attname = 'user_id') desc, c.relname;
 
 -- 17. anon-roolin SUORAT oikeudet. Odotus: NOLLA RIVIA.
 select table_name as taulu, privilege_type as oikeus

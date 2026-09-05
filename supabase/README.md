@@ -37,7 +37,8 @@ ilman `user_id`-saraketta ja RLS:ää uusilla tauluilla ei olisi omistajaa.
 4. Jos rivimäärä on muuttunut, päivitä luku 0001:n VAIHE 0 -lohkoon
 5. Aja migraatio 0001 kokonaisuudessaan, yhtenä ajona
 6. Aja verify/verify_0001.sql
-7. Tee kahden tilin eristystesti (runbookin PYSÄYTYS 5) — PAKOLLINEN
+7. Tee kahden tilin eristystesti (tools/rls-acceptance) — PAKOLLINEN
+   ja aja sen jalkeen acceptance/verify_acceptance.sql
 8. Aja 0002-0008 samalla tavalla, yksi kerrallaan, lippu kerrallaan
 ```
 
