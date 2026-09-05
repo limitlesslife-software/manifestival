@@ -83,7 +83,15 @@ export function fromRow(row) {
     description: row.description ?? null,
     durationMinutes: row.duration_minutes ?? null,
     priority: row.priority ?? undefined,
-    schedulingState: row.scheduling_state ?? undefined
+    schedulingState: row.scheduling_state ?? undefined,
+    // Aikaleimat ovat kannan omaisuutta: created_at saa arvonsa
+    // oletusarvosta ja updated_at liipaisimesta (migraatio 0002).
+    // Client LUKEE ne mutta ei koskaan kirjoita — ne eivät ole
+    // sarakelistoissa, ja assertClientSafe kaataisi kirjoituksen jos ne
+    // livahtaisivat payloadiin. Ennen 0002:ta sarakkeita ei ole, jolloin
+    // arvoksi jää null aivan kuten ennenkin.
+    createdAt: row.created_at ?? null,
+    updatedAt: row.updated_at ?? null
   };
 }
 

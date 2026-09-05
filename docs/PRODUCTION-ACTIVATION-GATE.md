@@ -31,7 +31,7 @@ sivun latauksessa ja uloskirjautumisessa.
 
 | Portti | Domain | Repo | UI | Migraatio | Persistenssi |
 |---|---|---|---|---|---|
-| `TASK_EXTENDED_FIELDS` | ✔ | ✔ | ✔ | 0002 | **EI** |
+| `TASK_EXTENDED_FIELDS` | ✔ | ✔ | ✔ | 0002 **ajettu** | **EI** — odottaa aktivointia |
 | `routines` | ✔ | ✔ | ✔ | 0003 | **EI** |
 | `routineExceptions` | ✔ | ✔ | ✔ | 0003 | **EI** |
 | `goals` | ✔ | ✔ | ✔ | 0004 | **EI** |
@@ -58,8 +58,8 @@ portin takana.
 | **Repo** | `tasksRepo`, `taskColumns()` valitsee sarakejoukon |
 | **UI** | Valmis — kentät näkyvissä tehtävälomakkeessa |
 | **Persistenssi** | **EI.** Kentät elävät istunnon muistissa |
-| **Ennen kytkentää** | Runbookin GATE 0–6 läpi: `preflight_0002.sql` puhdas, 0002 ajettu kerran, `verify_0002.sql` kauttaaltaan `PASS` (`poikkeavia_yhteensa` = 0) |
-| **Milloin** | GATE 7, ei aiemmin |
+| **Ennen kytkentää** | ✔ 0002 ajettu ja `verify_0002.sql` kauttaaltaan `PASS`. Jäljellä: `predeploy_task_extended_fields.sql` puhdas ja koodi julkaistu lipun ollessa vielä `false` |
+| **Milloin** | GATE E, ks. [`TASK-EXTENDED-FIELDS-ACTIVATION.md`](TASK-EXTENDED-FIELDS-ACTIVATION.md) |
 | **Miten varmistetaan** | `npm test` läpi; tuotannossa luotu tehtävä, jolla on kuvaus ja prioriteetti, säilyy sivun uudelleenlatauksen yli |
 
 Erityishuomio: tämä on ainoa portti, joka muuttaa **olemassa olevan** taulun

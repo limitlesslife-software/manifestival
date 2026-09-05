@@ -2,7 +2,13 @@
 -- Manifestival — migraatio 0002: tehtävän domain-kentät
 -- =====================================================================
 --
--- TILA: EI AJETTU TUOTANTOON. Sovitettu 0001:n hyväksyttyyn lähtötilaan.
+-- TILA: AJETTU JA HYVÄKSYTTY TUOTANNOSSA.
+--
+-- verify_0002.sql kauttaaltaan PASS, poikkeavia_yhteensa = 0.
+-- Tuotannossa 36 tehtävää: 1 unscheduled, 35 manual.
+--
+-- TÄTÄ EI AJETA UUDELLEEN. Migraatio tunnistaa aiemman ajon ja
+-- keskeytyy viestiin "Migraatio 0002 on JO AJETTU".
 --
 -- ESIEHDOT
 --   1. Migraatio 0001 on ajettu ja hyväksytty (user_id, RLS, 8 politiikkaa)

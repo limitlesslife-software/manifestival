@@ -24,33 +24,32 @@ vartioi tätä.
 
 ## MISSÄ MENNÄÄN JUURI NYT
 
-**Vaiheet 1–5 on tehty. Migraatio 0001 on ajettu, todennettu ja
+**Vaiheet 1–6 on tehty. Migraatiot 0001 ja 0002 on ajettu, todennettu ja
 hyväksytty tuotannossa.**
 
 | | Tulos |
 |---|---|
 | `verify_0001.sql` | läpi |
-| Kahden tilin eristystesti | **34/34 PASS** — 0 FAIL, 0 ERROR, 0 SKIP |
-| Väliaikainen tili B | poistettu |
-| `verify_acceptance.sql` | **18/18 PASS**, `poikkeavia_yhteensa` = 0 |
+| Kahden tilin eristystesti | **34/34 PASS** |
+| `verify_acceptance.sql` | **18/18 PASS** |
+| `verify_0002.sql` | **kauttaaltaan PASS**, `poikkeavia_yhteensa` = 0 |
 
-Todennettu tuotantotila: 36 tehtävää ja 1 profiili omistajalla
-`2cc00622-f927-4604-a518-361a4328481b`, tasan yksi auth-käyttäjä, ei
-hyväksyntätestin jäännöksiä, RLS päällä molemmissa tauluissa, kahdeksan
-omistajuuspolitiikkaa oikein ehdoin, vierasavaimet `auth.users(id)`:hen
-`ON DELETE CASCADE`, user_id-alkuinen indeksi, anonilla ei oikeuksia,
-`authenticated`-roolilla tasan CRUD, `PUBLIC` tyhjä.
+Todennettu tuotantotila: 36 tehtävää omistajalla
+`2cc00622-f927-4604-a518-361a4328481b` (1 `unscheduled`, 35 `manual`),
+1 profiili, tasan yksi auth-käyttäjä, RLS päällä, kahdeksan
+omistajuuspolitiikkaa oikein ehdoin, liipaisin ja indeksi paikallaan,
+anonilla ei oikeuksia, `authenticated`-roolilla tasan CRUD.
 
-**0001 on suljettu. Sitä ei ajeta uudelleen** — migraatio keskeytyisi
-esiehtoon, koska `profile.id` ei ole enää tekstiä.
+**0001 ja 0002 ovat suljettuja. Kumpaakaan ei ajeta uudelleen** —
+molemmat keskeytyvät esiehtoon.
 
-**SEURAAVA IHMISEN TOIMENPIDE: vaihe 6, migraatio 0002 — GATE 0 ja
-GATE 1.** GATE 1 on lukeva preflight
-(`supabase/preflight/preflight_0002.sql`), joka ei muuta mitään. Vasta
-GATE 3 on nimenomainen lupa ajaa migraatio. Perustelut, portti ja
-palautuminen: [`MIGRATION-0002-RECOVERY.md`](MIGRATION-0002-RECOVERY.md).
+**SEURAAVA IHMISEN TOIMENPIDE: lipun `TASK_EXTENDED_FIELDS` aktivointi,
+GATE A–H.** Ohje on omassa dokumentissaan:
+[`TASK-EXTENDED-FIELDS-ACTIVATION.md`](TASK-EXTENDED-FIELDS-ACTIVATION.md).
+GATE B on lukeva esitarkistus, GATE D julkaisee koodin lipun ollessa yhä
+`false`, ja vasta GATE E kääntää lipun.
 
-**Migraatiot 0002–0008 ovat ajamatta** ja kaikki yksitoista
+**Migraatiot 0003–0008 ovat ajamatta** ja kaikki yksitoista
 skeemaporttia ovat `false`, `TASK_EXTENDED_FIELDS` mukaan lukien.
 
 ## Ennen aloitusta
@@ -454,12 +453,17 @@ Jos jokin niistä on FAIL, eristystesti on toistettava ennen jatkoa:
 
 ---
 
-## Vaihe 7 — GATE 7: lippu `TASK_EXTENDED_FIELDS`
+## Vaihe 7 — lippu `TASK_EXTENDED_FIELDS`
 
-Vasta kun GATE 0–6 ovat kaikki läpi.
+**Tämä vaihe on kasvanut omaksi dokumentikseen:
+[`TASK-EXTENDED-FIELDS-ACTIVATION.md`](TASK-EXTENDED-FIELDS-ACTIVATION.md)**
+— kenttäsopimus, aktivointimekanismi, GATE A–H, käyttökokeilut,
+peruminen ja laitehyväksynnän backlog.
 
-Vaihda `src/data/schema.js`:ssä `TASK_EXTENDED_FIELDS` arvoon `true`.
-Aja `npm test`. Committoi ja julkaise.
+Lyhyesti: vaihda `src/data/schema.js`:ssä `TASK_EXTENDED_FIELDS` arvoon
+`true`, aja `npm test`, committoi ja julkaise. Sitä ennen aja
+`supabase/preflight/predeploy_task_extended_fields.sql` ja sen jälkeen
+`supabase/verify/verify_task_extended_activation.sql`.
 
 **Käännä lippu pian migraation jälkeen.** Väliaikana sovellus ei lähetä
 `scheduling_state`-saraketta, jolloin uudet kellonajattomat tehtävät

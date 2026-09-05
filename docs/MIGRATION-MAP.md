@@ -65,7 +65,7 @@ kaikki kahdeksan uutta.
 
 ---
 
-## 0002 — `task_domain_fields` (1 indeksi, 3 tarkistetta) — EI AJETTU
+## 0002 — `task_domain_fields` (1 indeksi, 3 tarkistetta) — AJETTU, PASS
 
 | | |
 |---|---|
@@ -74,7 +74,7 @@ kaikki kahdeksan uutta.
 | **Sarakkeet** | `description`, `duration_minutes`, `priority`, `scheduling_state`, `created_at`, `updated_at` |
 | **Muut objektit** | `touch_updated_at()` (jaettu 0003/0004:n kanssa), liipaisin `tasks_touch_updated_at`, indeksi `tasks_user_date_priority_idx` |
 | **RLS** | Ei muutosta — uudet sarakkeet perivät 0001:n politiikat |
-| **Avaa lipun** | `TASK_EXTENDED_FIELDS` (nyt `false`) |
+| **Avaa lipun** | `TASK_EXTENDED_FIELDS` — **yhä `false`**, aktivointi on erillinen päätös ([`TASK-EXTENDED-FIELDS-ACTIVATION.md`](TASK-EXTENDED-FIELDS-ACTIVATION.md)) |
 | **Uudelleenajo** | **Keskeytyy.** Migraatio tunnistaa aiemman ja kesken jääneen ajon eikä ole idempotentti |
 | **Preflight** | `supabase/preflight/preflight_0002.sql`, 19 kohtaa |
 | **Varmistus** | `supabase/verify/verify_0002.sql`, 29 kohtaa yhtenä taulukkona |

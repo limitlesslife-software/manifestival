@@ -5,8 +5,16 @@ saa kääntää, ja mitä tehdään jos jokin menee pieleen. Suoritusohje on
 runbookissa ([`PRODUCTION-ACTIVATION-RUNBOOK.md`](PRODUCTION-ACTIVATION-RUNBOOK.md),
 vaihe 6).
 
-**Tila: 0002 EI OLE AJETTU TUOTANTOON.** Migraatio 0001 on ajettu ja
-hyväksytty; 0002 on jonossa seuraavana.
+> **TILA: 0002 ON AJETTU JA HYVÄKSYTTY TUOTANNOSSA.** `verify_0002.sql`
+> kauttaaltaan PASS, `poikkeavia_yhteensa` = 0. Tuotannossa 36 tehtävää:
+> 1 `unscheduled`, 35 `manual`.
+>
+> **Migraatiota ei ajeta uudelleen** — se tunnistaa aiemman ajon ja
+> keskeytyy. Tämä dokumentti jää palautumisohjeeksi: kohdat C ja D ovat
+> yhä voimassa, ja kohta D on se, joka koskee nykyhetkeä.
+>
+> Seuraava askel on lipun `TASK_EXTENDED_FIELDS` aktivointi:
+> [`TASK-EXTENDED-FIELDS-ACTIVATION.md`](TASK-EXTENDED-FIELDS-ACTIVATION.md).
 
 ---
 

@@ -75,7 +75,10 @@ test('jokaisen migraation tilamerkintä kertoo totuuden', () => {
   // Vakio, joka ei voi muuttua, ei ole tilamerkintä vaan koriste.
   // Tilamerkinnän on seurattava todellisuutta, ja tämä testi on paikka,
   // joka pakottaa päivittämään sen samalla kun migraatio ajetaan.
-  const AJETUT = new Set(['0001_auth_user_scoping.sql']);
+  const AJETUT = new Set([
+    '0001_auth_user_scoping.sql',
+    '0002_task_domain_fields.sql'
+  ]);
 
   for (const name of migrationFiles()) {
     const source = read(`${MIGRATION_DIR}/${name}`);
@@ -90,10 +93,15 @@ test('jokaisen migraation tilamerkintä kertoo totuuden', () => {
     }
   }
 
-  // Ja lippujen on oltava linjassa: ajamaton migraatio ei voi olla
-  // käytössä. TASK_EXTENDED_FIELDS vartioi 0002:ta.
+  // Migraation ajaminen ja lipun kääntäminen ovat ERI päätöksiä.
+  // 0002 on ajettu, mutta lippu on yhä false: sovellus ei kirjoita
+  // uusiin sarakkeisiin ennen kuin aktivointi on erikseen hyväksytty
+  // (docs/TASK-EXTENDED-FIELDS-ACTIVATION.md, GATE E).
+  //
+  // Tämä testi kaatuu, kun lippu käännetään — se on tarkoitus. Silloin
+  // päivitetään myös tämä perustelu ja aktivointidokumentin tila.
   assert.equal(TASK_EXTENDED_FIELDS, false,
-    'lippu on käännetty, vaikka 0002 on merkitty ajamattomaksi');
+    'lippu on käännetty — päivitä aktivointidokumentti ja tämä testi');
 });
 
 test('jokainen migraatio ajetaan yhtenä transaktiona', () => {
@@ -450,7 +458,14 @@ test('varmistuskyselyt ovat vain lukevia', () => {
   const dir = path.join(ROOT, 'supabase/verify');
   const files = fs.readdirSync(dir).filter(name => name.endsWith('.sql'));
 
-  assert.equal(files.length, 8, 'yksi varmistustiedosto migraatiota kohti');
+  // Migraatiokohtaisia varmistuksia on tasan yksi per migraatio. Muut
+  // varmistukset samassa hakemistossa (esim. lipun aktivoinnin jälkeen
+  // ajettava) eivät kuulu tähän lukuun — ne eivät varmista migraatiota
+  // vaan sovelluksen käyttöönottoa. Aiemmin ehto oli pelkkä
+  // tiedostomäärä, jolloin uusi varmistus näytti puuttuvalta
+  // migraatiolta.
+  const migraatiokohtaiset = files.filter(name => /^verify_\d{4}\.sql$/.test(name));
+  assert.equal(migraatiokohtaiset.length, 8, 'yksi varmistustiedosto migraatiota kohti');
 
   // supabase/acceptance elaa saman saannon alla. Se ei ole
   // migraatiokohtainen varmistus, joten se on eri hakemistossa, mutta se
@@ -1718,4 +1733,102 @@ test('KRIITTINEN: preflight ja varmistus kysyvät samat luvut', () => {
   // Molemmat lukevat tehtävien kokonaismäärän, jotta ne voi verrata.
   assert.ok(preflight.includes('count(*)::text from public.tasks'));
   assert.ok(verify.includes('count(*)::text from public.tasks'));
+});
+
+// ================================================================
+// TASK_EXTENDED_FIELDS — aktivoinnin SQL-varmistukset
+// ================================================================
+
+/** Aktivoinnin SQL-tiedostot: ennen ja jälkeen. */
+const AKTIVOINNIN_SQL = [
+  ['supabase/preflight/predeploy_task_extended_fields.sql', 'ennen aktivointia'],
+  ['supabase/verify/verify_task_extended_activation.sql', 'aktivoinnin jälkeen']
+];
+
+test('aktivoinnin varmistukset ovat ALL-IN-ONE: yksi lause, yksi taulukko', () => {
+  for (const [tiedosto, milloin] of AKTIVOINNIN_SQL) {
+    const raw = read(tiedosto);
+    const lauseet = raw.split(NEWLINE)
+      .filter(line => !line.trim().startsWith('--'))
+      .join(NEWLINE)
+      .split(';')
+      .map(part => part.trim())
+      .filter(Boolean);
+
+    assert.equal(lauseet.length, 1, `${milloin}: ei ole yksi lause`);
+    assert.equal(lauseet[0].split(/\s+/)[0].toLowerCase(), 'select');
+
+    for (const sarake of ['check_no', 'section', 'check_name', 'status',
+                          'details', 'poikkeavia_yhteensa']) {
+      assert.ok(raw.includes(sarake), `${milloin}: tulosteesta puuttuu sarake ${sarake}`);
+    }
+
+    // INFO ei saa näyttää PASSilta.
+    assert.match(raw.toLowerCase(), /when c\.odotus = 'info'\s+then 'info'/,
+      `${milloin}: INFO-rivi voisi näyttää PASSilta`);
+  }
+});
+
+test('KRIITTINEN: aktivoinnin varmistukset kattavat jokaisen kelvottoman tilan', () => {
+  // Aktivointi on hetki, jolloin sovellus alkaa kirjoittaa kahteen
+  // NOT NULL -sarakkeeseen. Jos jokin kirjoituspolku ohittaa
+  // normalisoinnin, se näkyy kannassa juuri näinä arvoina — eikä
+  // missään muualla.
+  const jalkeen = read('supabase/verify/verify_task_extended_activation.sql').toLowerCase();
+
+  const vaaditut = [
+    ['priority is null',              'tyhjä prioriteetti'],
+    ['scheduling_state is null',      'tyhjä aikataulutustila'],
+    ["priority not in",               'kelvoton prioriteetti'],
+    ["scheduling_state not in",       'kelvoton aikataulutustila'],
+    ['duration_minutes',              'kelvoton kesto'],
+    ["description = ''",              'tyhjä merkkijono kuvauksena'],
+    ['updated_at < created_at',       'taaksepäin vieritetty aikaleima'],
+    ['user_id is null',               'omistajaton rivi'],
+    ['left join auth.users',          'orpo viittaus'],
+    ['relrowsecurity',                'RLS'],
+    ['with_check',                    'politiikkojen kirjoitusehdot'],
+    ["has_table_privilege('anon'",    'anonin oikeudet'],
+    ['has_column_privilege',          'sarakekohtaiset oikeudet'],
+    ['aclexplode',                    'PUBLIC-roolin oikeudet'],
+    ['routine_exceptions',            'myöhempien migraatioiden taulut']
+  ];
+
+  for (const [needle, mita] of vaaditut) {
+    assert.ok(jalkeen.includes(needle),
+      `aktivoinnin varmistuksesta puuttuu: ${mita}`);
+  }
+});
+
+test('KRIITTINEN: aktivoinnin varmistus tuntee lipun näkyvyyden rajan', () => {
+  // Lipun arvo on sovelluksen koodissa, ei kannassa. Varmistus, joka
+  // väittäisi näkevänsä sen, valehtelisi. Rehellinen vaihtoehto on
+  // sanoa raja ääneen ja tarjota lähin mahdollinen todiste:
+  // onko sovellus oikeasti kirjoittanut uusiin sarakkeisiin.
+  for (const [tiedosto, milloin] of AKTIVOINNIN_SQL) {
+    const raw = read(tiedosto);
+    assert.match(raw, /MITA TAMA EI VOI NAHDA|MITA TAMA EI VOI/,
+      `${milloin}: näkyvyyden rajaa ei kerrota`);
+    assert.ok(raw.includes('src/data/schema.js'),
+      `${milloin}: ei kerro missä lipun arvo oikeasti on`);
+  }
+
+  const jalkeen = read('supabase/verify/verify_task_extended_activation.sql');
+  assert.ok(jalkeen.includes('description is not null'),
+    'aktivoinnin varmistus ei näe, kirjoittiko sovellus uusiin sarakkeisiin');
+});
+
+test('aktivoinnin varmistukset käyttävät samoja arvoja kuin domain', () => {
+  // Sama ajautumisen vaara kuin migraatiossa: jos domain saa uuden
+  // prioriteettitason, varmistus merkitsisi sen kelvottomaksi.
+  const jalkeen = read('supabase/verify/verify_task_extended_activation.sql');
+
+  for (const arvo of PRIORITY_KEYS) {
+    assert.ok(jalkeen.includes(`'${arvo}'`),
+      `aktivoinnin varmistus ei tunne prioriteettia ${arvo}`);
+  }
+  for (const arvo of ['manual', 'auto', 'unscheduled']) {
+    assert.ok(jalkeen.includes(`'${arvo}'`),
+      `aktivoinnin varmistus ei tunne aikataulutustilaa ${arvo}`);
+  }
 });

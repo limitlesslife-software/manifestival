@@ -13,14 +13,32 @@
 import { getClient } from './client.js';
 import { requireUserId } from './session.js';
 import { taskColumns } from './schema.js';
+import { normalizeTask } from '../domain/task.js';
 import { toRow, fromRow, assertClientSafe } from '../lib/rows.js';
 import { ok, fail } from '../lib/result.js';
 
 const TABLE = 'tasks';
 
-/** Rakentaa kirjoitus-payloadin nykyisen skeemakyvykkyyden mukaan. */
+/**
+ * Rakentaa kirjoitus-payloadin nykyisen skeemakyvykkyyden mukaan.
+ *
+ * NORMALISOINTI TEHDÄÄN TÄÄLLÄ, EI KUTSUPAIKASSA.
+ *
+ * Aiemmin tämä luotti siihen, että jokainen kutsuja on ajanut
+ * normalizeTaskin. Se piti paikkansa, mutta se oli sopimus eikä rakenne:
+ * mikään ei estänyt uutta kutsupaikkaa rakentamasta tehtäväoliota käsin.
+ * Migraation 0002 jälkeen se ei ole enää tyylikysymys — `priority` ja
+ * `scheduling_state` ovat NOT NULL, ja toRow lähettäisi normalisoimatta
+ * jääneestä oliosta nimenomaisen nullin. Nimenomainen null EI ota
+ * sarakkeen oletusarvoa käyttöön: kanta hylkää rivin, ja JOKAINEN
+ * tallennus epäonnistuisi.
+ *
+ * normalizeTask ei heitä koskaan ja on idempotentti, joten sen ajaminen
+ * uudelleen jo normalisoidulle oliolle ei muuta mitään. Sama malli on
+ * käytössä kaikissa muissa repositorioissa (collectionsRepo).
+ */
 function payloadFor(task) {
-  return assertClientSafe(toRow(task, taskColumns()));
+  return assertClientSafe(toRow(normalizeTask(task), taskColumns()));
 }
 
 /**

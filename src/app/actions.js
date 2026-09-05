@@ -189,9 +189,23 @@ export async function editTask(id, changes) {
     ...changes,
     // Käyttäjän tekemä ajan muutos on aina manuaalinen päätös. Automaatti
     // ei saa myöhemmin siirtää sitä.
-    schedulingState: changes.time
-      ? SCHEDULING.MANUAL
-      : (changes.time === null ? SCHEDULING.UNSCHEDULED : previous.schedulingState)
+    //
+    // POIKKEUS: kutsuja saa asettaa tilan nimenomaisesti. Ilman tätä
+    // acceptProposal() ei toimi lainkaan: se antaa sekä ajan että tilan
+    // AUTO, ja johdettu sääntö ylikirjoitti tilan MANUALiksi — koska
+    // aika oli mukana. Ehdotuksen hyväksyminen merkitsi siis tehtävän
+    // käyttäjän omaksi päätökseksi, eikä automaatti saanut enää koskea
+    // siihen (canReschedule). Ennen migraatiota 0002 vika oli
+    // näkymätön, koska kenttä ei säilynyt tallennuksen yli. Lipun
+    // TASK_EXTENDED_FIELDS kääntämisen jälkeen se olisi pysyvää dataa.
+    //
+    // Lomake ei koskaan lähetä schedulingStatea (ks. readForm), joten
+    // käyttäjän polku toimii täsmälleen kuten ennenkin.
+    schedulingState: changes.schedulingState !== undefined
+      ? changes.schedulingState
+      : (changes.time
+        ? SCHEDULING.MANUAL
+        : (changes.time === null ? SCHEDULING.UNSCHEDULED : previous.schedulingState))
   });
 
   const { valid, errors } = validateTask(updated);

@@ -106,6 +106,17 @@ export function isMovableByScheduler(task) {
  * Tuntemattomat kentät pudotetaan, virheelliset arvot korvataan oletuksilla.
  * Ei koskaan heitä poikkeusta — validointiin käytä validateTask().
  */
+/**
+ * Trimmattu teksti tai null. Tyhjä merkkijono EI ole kelvollinen arvo:
+ * "ei arvoa" on kannassa null, eikä samalle asialle saa olla kahta
+ * esitystapaa.
+ */
+function normalizeText(value, maxLength) {
+  if (value == null) return null;
+  const trimmed = String(value).trim().slice(0, maxLength);
+  return trimmed === '' ? null : trimmed;
+}
+
 export function normalizeTask(input = {}) {
   const time = isTimeOfDay(input.time) ? input.time : null;
   const endTime = isTimeOfDay(input.endTime) ? input.endTime : null;
@@ -118,9 +129,13 @@ export function normalizeTask(input = {}) {
   return {
     id: input.id != null ? String(input.id) : null,
     title: String(input.title ?? '').trim().slice(0, MAX_TITLE_LENGTH),
-    description: input.description
-      ? String(input.description).trim().slice(0, MAX_DESCRIPTION_LENGTH)
-      : null,
+    // Trimmaus ENNEN tyhjyystarkistusta. Aiemmin pelkkiä välilyöntejä
+    // sisältänyt kuvaus muuttui tyhjäksi merkkijonoksi, jolloin "ei
+    // kuvausta" oli kannassa kahdessa muodossa: null ja ''. Ennen
+    // migraatiota 0002 sillä ei ollut väliä, koska kenttä ei säilynyt.
+    // Sen jälkeen ero on pysyvä, ja `description is null` -kysely ohittaisi
+    // juuri ne rivit, joissa on pelkkiä välilyöntejä.
+    description: normalizeText(input.description, MAX_DESCRIPTION_LENGTH),
     date: isIsoDate(input.date) ? input.date : null,
     /**
      * Määräaika — MILLOIN TEHTÄVÄN ON OLTAVA VALMIS.

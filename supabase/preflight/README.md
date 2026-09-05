@@ -5,7 +5,8 @@ sanalla select, eika yksikaan muuta mitaan.
 
 | Tiedosto | Milloin |
 |---|---|
-| `preflight_0002.sql` | ennen migraatiota 0002, runbookin GATE 1 |
+| `preflight_0002.sql` | ennen migraatiota 0002 — AJETTU, migraatio on tehty |
+| `predeploy_task_extended_fields.sql` | ennen lipun TASK_EXTENDED_FIELDS kaantamista, GATE B |
 
 MIKSI ERILLINEN MIGRAATION ESIEHDOISTA: migraatio tarkistaa samat asiat
 itsekin ja keskeytyy jos jokin ei tasmaa. Preflight kertoo saman ilman
@@ -22,4 +23,4 @@ tietaa etukateen: rivimaaria ja objektien lukumaaria. Ne kirjataan yloos
 ja verrataan migraation jalkeen verify-tiedoston vastaaviin. Keksitty
 PASS olisi huonompi kuin rehellinen INFO.
 
-Naita ei ole ajettu.
+preflight_0002.sql on ajettu. predeploy_task_extended_fields.sql ei ole.
