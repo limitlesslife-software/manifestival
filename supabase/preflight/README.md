@@ -7,6 +7,7 @@ sanalla select, eika yksikaan muuta mitaan.
 |---|---|
 | `preflight_0002.sql` | ennen migraatiota 0002 — AJETTU, migraatio on tehty |
 | `predeploy_task_extended_fields.sql` | ennen lipun TASK_EXTENDED_FIELDS kaantamista, GATE B |
+| `recovery_snapshot_post_0002.sql` | ennen mita tahansa riskialtista, GATE C |
 
 MIKSI ERILLINEN MIGRAATION ESIEHDOISTA: migraatio tarkistaa samat asiat
 itsekin ja keskeytyy jos jokin ei tasmaa. Preflight kertoo saman ilman
@@ -23,4 +24,10 @@ tietaa etukateen: rivimaaria ja objektien lukumaaria. Ne kirjataan yloos
 ja verrataan migraation jalkeen verify-tiedoston vastaaviin. Keksitty
 PASS olisi huonompi kuin rehellinen INFO.
 
-preflight_0002.sql on ajettu. predeploy_task_extended_fields.sql ei ole.
+preflight_0002.sql on ajettu. Muita ei ole ajettu.
+
+recovery_snapshot_post_0002.sql on erikoistapaus: se ei tarkista
+valmiutta johonkin vaan KIRJAA nykytilan. Tuorein fyysinen varmuuskopio
+(2026-09-05 06:57:15 UTC) on otettu ENNEN migraatiota 0002, joten
+palautus siita ei palauta nykyista tilaa. Tilannekuva kertoo, mika on
+palautettava — ja sen tulos on sailytettava, ei vain katsottava.
