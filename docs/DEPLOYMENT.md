@@ -7,16 +7,60 @@
 ```
 paikallinen klooni
    └─ feature/wp-N-...
-        └─ develop
-             └─ main  ──────>  Vercel  ──────>  https://manifestival-ten.vercel.app
+        └─ main  ──────>  Vercel  ──────>  https://manifestival-ten.vercel.app
 ```
 
-Vercel on kytketty GitHub-repoon ja deployaa `main`-haarasta. Repon
-`homepageUrl` osoittaa tuotantodomainiin.
+**Todennettu ihmisen toimesta Vercelin hallintapaneelista:**
 
-> **Todentamaton:** Vercel-projektin asetuksia ei ole tarkistettu. Alla oleva
-> perustuu repon rakenteeseen ja Vercelin nollakonfiguraation konventioihin.
-> Tarkista kohdan "Vercel-asetusten tarkistus" asiat dashboardista.
+| | |
+|---|---|
+| Vercel-projekti | `manifestival` |
+| Kytketty repo | `limitlesslife-software/manifestival` |
+| Production Branch Tracking | `main` |
+| Vaikutus | **jokainen push `main`iin luo Production-julkaisun** |
+| Tuotantodomain | `https://manifestival-ten.vercel.app`, automaattinen osoitteenanto päällä |
+| `ANTHROPIC_API_KEY` | on olemassa, laajuus Production + Preview |
+| `PARSE_REQUIRE_AUTH` | **ei ole asetettu** — ja se on oikein, ks. alla |
+
+Muita haaroja ei ole etärepossa: `origin` sisältää vain `main`.
+
+---
+
+## VAROITUS: `main` on yhä vanha prototyyppi
+
+**Tuotannossa on tällä hetkellä 7 tiedoston prototyyppi** (`bd652fa`):
+`index.html`, `api/parse.js`, `manifest.json`, `package.json` ja kolme
+ikonia. Se on 59 committia jäljessä kehityshaarasta, eikä se sisällä
+Supabase-autentikaatiota, `src/`-moduulipuuta, turvaotsakkeita eikä
+API:n kovennusta.
+
+**Tuotannon sovellus ja tuotannon tietokanta ovat siis eri aikakausilta.**
+Tietokantaan on ajettu migraatiot 0001 ja 0002: omistajuus on
+`auth.uid()`, RLS on päällä ja anon-roolilta on peruttu kaikki
+oikeudet. Prototyyppi taas tekee jokaisen kyselynsä anonina ja hakee
+profiilin ehdolla `.eq('id', 'me')`.
+
+Käytännössä tämä tarkoittaa, että **tuotantosivusto on ollut rikki siitä
+lähtien kun 0001 ajettiin**: jokainen luku palauttaa `42501 permission
+denied` ja profiilikysely `22P02 invalid input syntax for type uuid`.
+
+Ensimmäinen oikea julkaisu ei siis ole riskinotto vaan korjaus.
+
+---
+
+## Paluu vanhaan versioon EI ole turvallinen
+
+**`bd652fa` ei ole kelvollinen paluukohde.** Vercelin *Redeploy previous
+deployment* palauttaisi prototyypin, joka ei toimi nykyistä tietokantaa
+vasten lainkaan — ei osittain, vaan ei ollenkaan.
+
+Sama koskee jokaista committia ennen migraatiota 0001. Ainoa kelvollinen
+paluukohde on **ensimmäisen onnistuneen julkaisun SHA**, ja siksi se on
+merkittävä muistiin heti kun savutesti on läpi (ks. *Julkaisun
+merkitseminen*).
+
+Tietokantaa ei palauteta taaksepäin koodin takia. Jos koodi on rikki,
+korjataan koodi.
 
 ---
 
@@ -51,19 +95,49 @@ Asetetaan: Vercel -> projekti -> **Settings** -> **Environment Variables**.
 Ilman Anthropic-avainta sovellus toimii muuten normaalisti; puheohjaus
 tallentaa komennon raakatekstinä eikä jäsennä sitä.
 
-### PARSE_REQUIRE_AUTH — tärkeä julkaisujärjestys
+### PARSE_REQUIRE_AUTH — miksi sitä EI aseteta
 
-`/api/parse` vaatii oletuksena kirjautuneen käyttäjän. **Uusi selainkoodi
-lähettää tokenin, vanha ei.**
+`/api/parse` vaatii kirjautuneen käyttäjän. Ehto on `api/_auth.js`:ssä:
 
-Tämä tarkoittaa, että `api/` ja selainkoodi pitää julkaista **yhdessä**. Jos
-vain `api/` päivittyisi, tuotannossa oleva vanha selain lakkaisi jäsentämästä
-puhetta. Koska molemmat ovat samassa repossa ja samassa deployssa, tämä
-tapahtuu automaattisesti — mutta jos jokin menee pieleen, hätävara on asettaa
-`PARSE_REQUIRE_AUTH=false` ja korjata tilanne rauhassa.
+```js
+function authRequired() {
+  return process.env.PARSE_REQUIRE_AUTH !== 'false';
+}
+```
 
-Mikä tahansa muu arvo kuin `false` pitää todennuksen päällä. Tämä on
-tarkoituksellinen: kirjoitusvirhe ei saa avata päätepistettä.
+Tämä on **fail-closed**. Taulukko kaikista tapauksista:
+
+| `PARSE_REQUIRE_AUTH` | Todennus | Huomio |
+|---|---|---|
+| ei asetettu | **vaaditaan** | nykytila, turvallinen oletus |
+| `"true"` | vaaditaan | sama kuin asettamatta jättäminen |
+| `"false"` | **ei vaadita** | ainoa tapa avata päätepiste |
+| `"False"`, `"0"`, `""`, mikä tahansa muu | vaaditaan | kirjoitusvirhe **ei** avaa päätepistettä |
+
+**Muuttujaa ei siis tarvitse eikä kannata asettaa ennen julkaisua.**
+Asettaminen arvoon `true` ei muuta mitään, mutta se lisää yhden asian,
+joka voi mennä väärin. Muuttuja on hätävara: jos jokin menee julkaisussa
+pieleen, `PARSE_REQUIRE_AUTH=false` avaa päätepisteen väliaikaisesti.
+
+Todennus tehdään antamalla kutsujan token Supabasen omalle
+`/auth/v1/user`-päätepisteelle. Palvelimelle ei siis tarvita JWT-salaisuutta.
+
+Uusi selainkoodi lähettää tokenin aina (`src/ai/parseClient.js`), vanha
+prototyyppi ei. Koska molemmat julkaistaan samasta repostosta samassa
+deployssa, tämä ei ole ongelma — mutta se on syy siihen, ettei `api/`
+saa koskaan päivittyä yksinään.
+
+### Mitä /api/parse tekee ennen kuin se kuluttaa kiintiötä
+
+Järjestys on olennainen: todennus on ensimmäisenä, joten kirjautumaton
+kutsu hylätään ennen kuin se ehtii kuluttaa mitään.
+
+1. `POST` — muut metodit `405`
+2. **todennus** — ei tokenia tai vanhentunut token `401`
+3. pyyntörajoitin — 20 pyyntöä / 60 s **käyttäjäkohtaisesti**, `429`
+4. syötevalidointi — runko enintään 8 kt, litterointi enintään 1000 merkkiä
+5. `ANTHROPIC_API_KEY` palvelimen ympäristöstä — puuttuessa `500`
+6. kutsu Anthropicille, aikakatkaisu 15 s
 
 ---
 
@@ -229,3 +303,57 @@ luotu. Avain **ei koskaan** mene versionhallintaan (`.gitignore`: `*.keystore`,
 
 Migraatio 0001 ajetaan yhdessä transaktiossa: jos jokin vaihe epäonnistuu,
 mitään ei jää puolitiehen.
+
+---
+
+## Julkaisun merkitseminen
+
+Kun ensimmäinen julkaisu on tehty ja savutesti on läpi, merkitse SHA
+muistiin. Se on ainoa kelvollinen paluukohde.
+
+```
+git tag -a prod-2026-09-first-release -m "Ensimmainen tuotantojulkaisu" <SHA>
+git push origin prod-2026-09-first-release
+```
+
+Älä luo merkintää ennen savutestiä: merkintä tarkoittaa "tämän tiedetään
+toimivan tuotannossa", ei "tämä julkaistiin".
+
+---
+
+## Skeemaporttien tila julkaisuhetkellä
+
+Kaikki yksitoista porttia ovat `false`. Se on tarkoitus: ensimmäinen
+julkaisu vie sovelluksen tuotantoon **ilman** yhtäkään ominaisuutta,
+jonka migraatiota ei ole ajettu.
+
+| Portti | Migraatio | Migraatio ajettu | Portti |
+|---|---|---|---|
+| `TASK_EXTENDED_FIELDS` | 0002 | kyllä | `false` — aktivointi on GATE E |
+| `routines`, `routineExceptions` | 0003 | ei | `false` |
+| `goals`, `projects` | 0004 | ei | `false` |
+| `notificationPreferences` | 0005 | ei | `false` |
+| `wellbeing` | 0006 | ei | `false` |
+| `bills`, `recurringExpenses`, `savingsGoals` | 0007 | ei | `false` |
+| `aiAudit` | 0008 | ei | `false` |
+
+Testi `KRIITTINEN: yksikään portti ei ole auki ilman ajettua migraatiota`
+lukee migraatiotiedostojen omat tilamerkinnät ja kaatuu, jos portti
+avataan ennen sen migraatiota.
+
+---
+
+## Suositus: suojaa `main`
+
+Jokainen push `main`iin julkaisee tuotannon. Nyt suoja on yksinomaan
+muistin varassa.
+
+Suositeltavat asetukset GitHubissa (**ei toteutettu — päätös on ihmisen**):
+
+- Branch protection `main`-haaralle
+- Suora push kielletty, muutokset vain pull requestin kautta
+- Vaadittu status check: `npm test`
+- Force-push ja haaran poisto estetty
+
+Nämä eivät estä ensimmäistä julkaisua — ne kannattaa ottaa käyttöön
+vasta sen jälkeen, jottei ensimmäinen push jää oman suojauksensa taakse.

@@ -1832,3 +1832,49 @@ test('aktivoinnin varmistukset käyttävät samoja arvoja kuin domain', () => {
       `aktivoinnin varmistus ei tunne aikataulutustilaa ${arvo}`);
   }
 });
+
+test('KRIITTINEN: yksikään portti ei ole auki ilman ajettua migraatiota', () => {
+  // Ensimmäinen tuotantojulkaisu vie kerralla 59 committia. Jos yksikin
+  // skeemaportti olisi vahingossa `true`, sovellus alkaisi kirjoittaa
+  // tauluun, jota tuotannossa EI OLE — ja jokainen tallennus
+  // epäonnistuisi heti julkaisun jälkeen.
+  //
+  // Portin ja migraation side luetaan migraatiotiedoston omasta
+  // tilamerkinnästä, ei käsin kirjoitetusta listasta. Näin nämä kaksi
+  // eivät voi ajautua erilleen: portin saa avata vasta kun migraation
+  // tilamerkintä kertoo sen olevan ajettu.
+  const PORTIN_MIGRAATIO = {
+    TASK_EXTENDED_FIELDS: '0002',
+    routines: '0003', routineExceptions: '0003',
+    goals: '0004', projects: '0004',
+    notificationPreferences: '0005',
+    wellbeing: '0006',
+    bills: '0007', recurringExpenses: '0007', savingsGoals: '0007',
+    aiAudit: '0008'
+  };
+
+  const ajettu = numero => {
+    const tiedosto = migrationFiles().find(name => name.startsWith(numero));
+    assert.ok(tiedosto, `migraatiota ${numero} ei löytynyt`);
+    return /TILA: AJETTU JA HYVÄKSYTTY TUOTANNOSSA/.test(read(`${MIGRATION_DIR}/${tiedosto}`));
+  };
+
+  const portit = { TASK_EXTENDED_FIELDS, ...TABLES };
+
+  // Jokaisella portilla on migraatio, ja jokaisella migraatiolla 0002-0008
+  // on vähintään yksi portti. Kumpikaan suunta ei saa jäädä auki.
+  assert.deepEqual(Object.keys(portit).sort(), Object.keys(PORTIN_MIGRAATIO).sort(),
+    'porttien ja niiden migraatiokartan välillä on ero');
+
+  for (const [portti, arvo] of Object.entries(portit)) {
+    if (arvo !== true) continue;
+    assert.ok(ajettu(PORTIN_MIGRAATIO[portti]),
+      `portti ${portti} on auki, mutta migraatiota ${PORTIN_MIGRAATIO[portti]} ei ole merkitty ajetuksi`);
+  }
+
+  // Nykytila on kirjoitettu auki, jotta muutos näkyy diffissä eikä vain
+  // testin läpimenossa: yksitoista porttia, kaikki kiinni.
+  assert.equal(Object.values(portit).filter(Boolean).length, 0,
+    'jokin portti on auki — ensimmäinen tuotantojulkaisu tehdään kaikki portit kiinni');
+  assert.equal(Object.keys(portit).length, 11);
+});
