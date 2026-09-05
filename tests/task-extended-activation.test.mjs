@@ -684,3 +684,71 @@ test('käyttäjän tekemä ajan muutos on yhä aina manuaalinen päätös', asyn
 
   resetState();
 });
+
+// =====================================================================
+// JULKAISUPAKETIN PORTTI
+// =====================================================================
+
+test('KRIITTINEN: julkaistavassa paketissa ei ole aktivoitua lippua', async () => {
+  // GATE D julkaisee koodin lippu YHÄ FALSE. Aiemmat testit tarkistavat
+  // tuodun vakion arvon; tämä tarkistaa TIEDOSTOT, jotka oikeasti
+  // tarjoillaan. Ero on olennainen: tuotu arvo tulee siitä samasta
+  // tiedostosta, mutta julkaisuun voi päätyä myös koontituloksia, joita
+  // yksikään import ei koske — esimerkiksi APK:n assetit.
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const { ROOT, browserModules, serverModules } = await import('./helpers/sources.mjs');
+
+  // Vercel tarjoilee repon juuren; .vercelignore sulkee pois tools/.
+  const julkaistavat = [
+    ...browserModules(),
+    ...serverModules(),
+    'index.html',
+    'sw.js'
+  ];
+
+  // Koontitulokset eivät ole versionhallinnassa, mutta ne päätyvät
+  // APK:hon. Jos ne ovat olemassa, ne kuuluvat samaan porttiin.
+  const koonnit = [
+    'dist/src/data/schema.js',
+    'android/app/src/main/assets/public/src/data/schema.js'
+  ].filter(rel => fs.existsSync(path.join(ROOT, rel)));
+
+  const kaikki = [...julkaistavat, ...koonnit];
+  assert.ok(kaikki.length > 20, `julkaistavia tiedostoja löytyi vain ${kaikki.length}`);
+
+  const aktivoitu = /TASK_EXTENDED_FIELDS\s*=\s*true/;
+  for (const file of kaikki) {
+    const source = fs.readFileSync(path.join(ROOT, file), 'utf8');
+    assert.equal(aktivoitu.test(source), false,
+      `${file} sisältää aktivoidun lipun — tätä pakettia ei saa julkaista`);
+  }
+
+  // Ja määrittelyjä on tasan yksi, arvo false. Kaksi määrittelyä
+  // tarkoittaisi, ettei kukaan tiedä kumpi on voimassa.
+  const maarittelyt = kaikki.filter(file =>
+    /export const TASK_EXTENDED_FIELDS\s*=/.test(fs.readFileSync(path.join(ROOT, file), 'utf8')));
+
+  assert.equal(maarittelyt.includes('src/data/schema.js'), true,
+    'lipun lähdemäärittely puuttuu');
+  assert.equal(maarittelyt.filter(f => f.startsWith('src/')).length, 1,
+    `lipulla on ${maarittelyt.filter(f => f.startsWith('src/')).length} määrittelyä lähdekoodissa`);
+
+  for (const file of maarittelyt) {
+    const arvo = /export const TASK_EXTENDED_FIELDS\s*=\s*(\w+)/
+      .exec(fs.readFileSync(path.join(ROOT, file), 'utf8'))[1];
+    assert.equal(arvo, 'false', `${file}: lipun arvo on ${arvo}`);
+  }
+});
+
+test('service workerin välimuistiversio on nostettu tätä julkaisua varten', () => {
+  // Service worker on network-first, joten uusi koodi tulee käyttöön
+  // seuraavalla latauksella. Version nosto siivoaa vanhat välimuistit
+  // myös offline-käyttäjiltä, joille vanha kopio olisi muuten yhä
+  // auktoritatiivinen.
+  const sw = read('sw.js');
+  const versio = /const CACHE_VERSION = 'v(\d+)'/.exec(sw);
+  assert.ok(versio, 'välimuistin versiota ei löytynyt');
+  assert.ok(Number(versio[1]) >= 10,
+    `välimuistin versio on v${versio[1]}, odotettiin vähintään v10`);
+});
