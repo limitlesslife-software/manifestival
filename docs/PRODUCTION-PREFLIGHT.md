@@ -9,11 +9,16 @@ tuotantoon turvallisesti.
 Yksityiskohtaiset perustelut: [`PRODUCTION-ACTIVATION-RUNBOOK.md`](PRODUCTION-ACTIVATION-RUNBOOK.md)
 · [`MIGRATION-MAP.md`](MIGRATION-MAP.md)
 
-> **TILANNE:** vaiheet 1–8 on tehty. Migraatio 0001 on ajettu ja
-> `verify_0001.sql` on läpi. **Seuraava ihmisen toimenpide on rivi 9.**
-> Ohje ja työkalu: [`RLS-ACCEPTANCE.md`](RLS-ACCEPTANCE.md).
-> Migraatiot 0002–0008 ovat pysäytettyinä ja kaikki skeemaportit ovat
-> `false`, kunnes rivit 9–12 ovat PASS.
+> **TILANNE: tämä dokumentti on suoritettu loppuun.** Migraatio 0001 on
+> ajettu, `verify_0001.sql` on läpi, eristystesti tuotti 34/34 PASS ja
+> `verify_acceptance.sql` 18/18 PASS. Rivit 1–12 ovat kaikki tehty.
+>
+> **Seuraava ihmisen toimenpide on migraatio 0002**, eri dokumentissa:
+> [`MIGRATION-0002-RECOVERY.md`](MIGRATION-0002-RECOVERY.md) ja
+> runbookin vaihe 6 (GATE 0–7). Lukeva preflight on
+> `supabase/preflight/preflight_0002.sql`.
+>
+> Migraatiot 0002–0008 ovat ajamatta ja kaikki skeemaportit ovat `false`.
 
 ---
 

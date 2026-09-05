@@ -10,6 +10,8 @@ avaimia eika kayttajan sisaltoa - vain rakenteen ja rivimaaria.
 Ajojarjestys ja tulkinta: `docs/PRODUCTION-ACTIVATION-RUNBOOK.md`.
 
 TILANNE: verify_0001.sql on ajettu tuotantoa vasten ja se on lapi.
+verify_0002.sql on kirjoitettu valmiiksi ALL-IN-ONE-muotoon (29
+tarkistusta, yksi taulukko), mutta migraatiota 0002 ei ole ajettu.
 verify_0002 - verify_0008 odottavat viela vastaavia migraatioita, joita ei
 ole ajettu.
 

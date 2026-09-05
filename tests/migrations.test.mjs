@@ -27,7 +27,9 @@ import { PROJECT_STATUS } from '../src/domain/project.js';
 import { PRIORITIES } from '../src/domain/priority.js';
 import { SCALE_MIN, SCALE_MAX } from '../src/domain/wellbeing.js';
 import { DEFAULT_PREFERENCES } from '../src/domain/notification.js';
-import { TABLES } from '../src/data/schema.js';
+import { TABLES, TASK_EXTENDED_FIELDS } from '../src/data/schema.js';
+import { normalizeTask } from '../src/domain/task.js';
+import { toRow, fromRow, TASK_COLUMNS_EXTENDED } from '../src/lib/rows.js';
 import { BILL_STATUS, CADENCE } from '../src/domain/finance.js';
 import { AUDIT_RESULTS, MAX_INPUT_SUMMARY } from '../src/domain/audit.js';
 import { RISK_LEVELS } from '../src/ai/intentSchema.js';
@@ -65,12 +67,33 @@ const PRIORITY_KEYS = PRIORITIES.map(p => p.key).sort();
 
 // ------------------------------------------------------ perusmuotoilu
 
-test('jokainen migraatio on merkitty ajamattomaksi luonnokseksi', () => {
+test('jokaisen migraation tilamerkintä kertoo totuuden', () => {
+  // Aiemmin jokainen migraatio väitti samaa: "LUONNOS, ei ajettu
+  // mihinkään ympäristöön". Se oli tosi siihen asti, kun 0001 ajettiin
+  // tuotantoon — ja sen jälkeen tiedosto valehteli lukijalleen.
+  //
+  // Vakio, joka ei voi muuttua, ei ole tilamerkintä vaan koriste.
+  // Tilamerkinnän on seurattava todellisuutta, ja tämä testi on paikka,
+  // joka pakottaa päivittämään sen samalla kun migraatio ajetaan.
+  const AJETUT = new Set(['0001_auth_user_scoping.sql']);
+
   for (const name of migrationFiles()) {
     const source = read(`${MIGRATION_DIR}/${name}`);
-    assert.match(source, /TILA: LUONNOS\. TÄTÄ EI OLE AJETTU MIHINKÄÄN YMPÄRISTÖÖN\./,
-      `${name}: tilamerkintä puuttuu`);
+    if (AJETUT.has(name)) {
+      assert.match(source, /TILA: AJETTU JA HYVÄKSYTTY TUOTANNOSSA/,
+        `${name} on ajettu tuotantoon, mutta tiedosto ei kerro sitä`);
+      assert.equal(/TILA: EI AJETTU/.test(source), false,
+        `${name}: kaksi ristiriitaista tilamerkintää`);
+    } else {
+      assert.match(source, /TILA: EI AJETTU TUOTANTOON\./,
+        `${name}: tilamerkintä puuttuu tai on väärä`);
+    }
   }
+
+  // Ja lippujen on oltava linjassa: ajamaton migraatio ei voi olla
+  // käytössä. TASK_EXTENDED_FIELDS vartioi 0002:ta.
+  assert.equal(TASK_EXTENDED_FIELDS, false,
+    'lippu on käännetty, vaikka 0002 on merkitty ajamattomaksi');
 });
 
 test('jokainen migraatio ajetaan yhtenä transaktiona', () => {
@@ -435,9 +458,10 @@ test('varmistuskyselyt ovat vain lukevia', () => {
   // oltava yhta ehdottomasti vain lukeva.
   const kaikki = [
     ...files.map(name => ['supabase/verify', name]),
-    ...fs.readdirSync(path.join(ROOT, 'supabase/acceptance'))
-      .filter(name => name.endsWith('.sql'))
-      .map(name => ['supabase/acceptance', name])
+    ...['supabase/acceptance', 'supabase/preflight'].flatMap(hakemisto =>
+      fs.readdirSync(path.join(ROOT, hakemisto))
+        .filter(name => name.endsWith('.sql'))
+        .map(name => [hakemisto, name]))
   ];
 
   // Tarkistus tehdään LAUSEEN ALKUSANASTA, ei sisältyvyydestä. Kielletty
@@ -535,7 +559,8 @@ test('varmistuskyselyt eivät lue käyttäjän sisältöä', () => {
   // Varmistus katsoo rakennetta ja rivimääriä. Se ei saa tulostaa
   // tehtävien otsikoita, hyvinvointimerkintöjä eikä rahasummia — eikä
   // koskaan avaimia.
-  const tiedostot = ['supabase/verify', 'supabase/acceptance'].flatMap(hakemisto =>
+  const tiedostot = ['supabase/verify', 'supabase/acceptance',
+                     'supabase/preflight'].flatMap(hakemisto =>
     fs.readdirSync(path.join(ROOT, hakemisto))
       .filter(f => f.endsWith('.sql'))
       .map(f => [hakemisto, f]));
@@ -1292,4 +1317,405 @@ test('KRIITTINEN: varmistus 0001 ei muuta mitään', () => {
     assert.equal(statement.split(/\s+/)[0].toLowerCase(), 'select',
       `lause alkaa väärin: ${statement.slice(0, 60)}`);
   }
+});
+
+// ================================================================
+// 0002 on sovitettu 0001:n HYVÄKSYTTYYN tuotantotilaan
+// ================================================================
+//
+// 0001 on ajettu ja hyväksytty tuotannossa. 0002 on seuraava, eikä sitä
+// ole ajettu. Nämä testit vartioivat niitä kohtia, joissa additiivinen
+// migraatio voi silti tehdä vahinkoa: lukitsematta jättäminen, hiljainen
+// uudelleenajo ja odotusarvo joka on toive eikä rajoite.
+//
+// Nämä ovat staattisia tarkistuksia: ne lukevat SQL:ää tekstinä eivätkä
+// aja sitä. Ne eivät siis todista, että migraatio toimii — ne todistavat,
+// ettei se sisällä niitä rakenteita, jotka aiemmin menivät pieleen.
+
+const MIGRATION_0002 = '0002_task_domain_fields.sql';
+
+/** 0002 ilman kommentteja. */
+function code0002() {
+  return read(`${MIGRATION_DIR}/${MIGRATION_0002}`)
+    .split(NEWLINE)
+    .filter(line => !line.trim().startsWith('--'))
+    .join(NEWLINE)
+    .toLowerCase();
+}
+
+/** verify_0002 ilman kommentteja. */
+function verify0002() {
+  return read('supabase/verify/verify_0002.sql')
+    .split(NEWLINE)
+    .filter(line => !line.trim().startsWith('--'))
+    .join(NEWLINE)
+    .toLowerCase();
+}
+
+test('KRIITTINEN: 0002 lukitsee taulun ennen kuin luottaa sen tilaan', () => {
+  // Sama vika kuin 0001:ssä oli. `begin` ei jäädytä taulua: READ
+  // COMMITTED -tasolla jokainen lause näkee oman tuoreen tilannekuvansa,
+  // joten esiehto voi olla tosi luettaessa ja epätosi toimittaessa.
+  //
+  // lock_timeout on erillinen vaatimus ja päinvastaisesta syystä. Ilman
+  // sitä ACCESS EXCLUSIVE -pyyntö jää jonoon pitkän kyselyn taakse, ja
+  // koska lukkojono on FIFO, sen taakse jonoutuu kaikki muu. Migraatio,
+  // joka odottaa hiljaa, kaataa sovelluksen odottaessaan.
+  const code = code0002();
+
+  const lukitus = code.indexOf('lock table public.tasks in access exclusive mode');
+  assert.ok(lukitus > 0, '0002 ei lukitse taulua lainkaan');
+  assert.ok(code.includes('set local lock_timeout'), '0002:lta puuttuu lock_timeout');
+  assert.ok(code.indexOf('set local lock_timeout') < lukitus,
+    'lock_timeout on asetettava ENNEN lukitusta, muuten se ei koske siihen');
+
+  // Jokainen tuotantotaulun luku on lukituksen jälkeen.
+  for (const luku of ['from public.tasks', 'update public.tasks']) {
+    const ensimmainen = code.indexOf(luku);
+    assert.ok(ensimmainen === -1 || ensimmainen > lukitus,
+      `"${luku}" tapahtuu ennen lukitusta`);
+  }
+});
+
+test('KRIITTINEN: 0002 tunnistaa aiemman ja kesken jääneen ajon', () => {
+  // Aiempi versio käytti `if not exists` -muotoa joka kohdassa. Silloin
+  // toinen ajo, kesken jäänyt ajo ja tuore ajo näyttivät kaikki
+  // samalta: onnistuneelta. Tila, jota ei voi erottaa, on tila jota ei
+  // voi korjata.
+  const code = code0002();
+
+  assert.match(code, /raise exception 'migraatio 0002 on jo ajettu/,
+    'toinen ajo menisi hiljaa läpi');
+  assert.match(code, /raise exception 'migraatio 0002 on kesken/,
+    'kesken jäänyttä ajoa ei tunnisteta');
+
+  // Tunnistus laskee objektit — kaikki kaksitoista, ei vain sarakkeita.
+  for (const objekti of ['tasks_priority_check', 'touch_updated_at',
+                         'tasks_touch_updated_at', 'tasks_user_date_priority_idx']) {
+    assert.ok(code.includes(objekti),
+      `osittaisen ajon tunnistus ei kata objektia ${objekti}`);
+  }
+});
+
+test('KRIITTINEN: 0002 ei piilota tuntematonta tilaa if not exists -muodon taakse', () => {
+  // Fail-closed on tässä oikea valinta, koska VAIHE 1C on juuri
+  // todistanut, ettei yhtäkään objektia ole. `if not exists` sen
+  // jälkeen ei suojaisi miltään — se vain hiljentäisi yllätyksen.
+  const code = code0002();
+
+  const ddl = code.split(NEWLINE).filter(line =>
+    /^\s*(alter table|create index|create trigger)/.test(line));
+
+  assert.ok(ddl.length >= 8, `DDL-lauseita löytyi vain ${ddl.length}`);
+  for (const line of ddl) {
+    assert.equal(/if not exists/.test(line), false,
+      `fail-closed rikki: ${line.trim()}`);
+  }
+});
+
+test('KRIITTINEN: 0002 ei poista eikä muuta olemassa olevaa saraketta', () => {
+  // Additiivisuus on koko migraation turvallisuusväite. Jos se rikkoutuu,
+  // tuotannossa oleva data on vaarassa eikä peruminen enää auta.
+  const code = code0002();
+
+  for (const kielletty of ['drop column', 'drop table', 'rename column',
+                           'rename to', 'truncate', 'delete from', 'alter column date',
+                           'using id::', 'type uuid']) {
+    assert.equal(code.includes(kielletty), false,
+      `0002 sisältää tuhoavan lauseen: ${kielletty}`);
+  }
+
+  // Ainoa kirjoitus olemassa oleviin riveihin on scheduling_state.
+  const updatet = [...code.matchAll(/update public\.tasks\s+set (\w+)/g)].map(m => m[1]);
+  assert.deepEqual(updatet, ['scheduling_state'],
+    `0002 kirjoittaa myös sarakkeisiin: ${updatet.join(', ')}`);
+});
+
+test('KRIITTINEN: scheduling_state täytetään ennen kuin siitä tehdään pakollinen', () => {
+  // Järjestys on koko vaiheen turvallisuus. NOT NULL ennen täyttöä
+  // kaataisi migraation jokaisella olemassa olevalla rivillä. Oletusarvo
+  // ennen täyttöä taas kirjoittaisi kellonajattomille riveille arvon
+  // 'manual', jolloin automaatti ei koskaan enää koskisi niihin.
+  const code = code0002();
+
+  const lisays  = code.indexOf('add column scheduling_state');
+  const taytto  = code.indexOf("set scheduling_state = case");
+  const oletus  = code.indexOf('alter column scheduling_state set default');
+  const notNull = code.indexOf('alter column scheduling_state set not null');
+
+  assert.ok(lisays > 0 && taytto > 0 && oletus > 0 && notNull > 0,
+    'jokin scheduling_state-vaihe puuttuu kokonaan');
+  assert.ok(lisays < taytto, 'saraketta täytetään ennen kuin se on olemassa');
+  assert.ok(taytto < oletus, 'oletusarvo asetetaan ennen täyttöä');
+  assert.ok(taytto < notNull, 'NOT NULL asetetaan ennen täyttöä');
+});
+
+test('KRIITTINEN: NOT NULL -sarakkeet ovat rajoitteita, eivät odotusarvoja', () => {
+  // `check (x in ('a','b'))` EI hylkää nullia: null ei ole epätosi vaan
+  // tuntematon. Ilman NOT NULLia sarake jäisi tyhjäksi aina kun asiakas
+  // lähettää siihen nimenomaisen nullin — ja varmistus, joka odottaa
+  // nollaa tyhjää, olisi toive eikä tae.
+  const code = code0002();
+
+  assert.match(code, /alter column scheduling_state set not null/,
+    'scheduling_state voi jäädä tyhjäksi');
+  assert.match(code, /add column priority text not null/,
+    'priority voi jäädä tyhjäksi');
+  for (const sarake of ['created_at', 'updated_at']) {
+    assert.ok(new RegExp(`add column ${sarake} timestamptz not null`).test(code),
+      `${sarake} voi jäädä tyhjäksi`);
+  }
+});
+
+test('KRIITTINEN: sovellus ei koskaan lähetä nullia pakolliseen sarakkeeseen', () => {
+  // Tämä on ketjun toinen pää. Kanta hylkää nimenomaisen nullin
+  // NOT NULL -sarakkeeseen: oletusarvo ei pelasta, koska oletus koskee
+  // vain pois jätettyä saraketta. Jos toRow lähettäisi priority: null,
+  // JOKAINEN tehtävän tallennus epäonnistuisi lipun kääntämisen jälkeen.
+  //
+  // Suojaus on siinä, että jokainen kirjoituspolku kulkee
+  // normalizeTaskin läpi. Tämä testi lukitsee sen.
+  const tyhjin = normalizeTask({});
+  const rivi = toRow(tyhjin, TASK_COLUMNS_EXTENDED);
+
+  for (const sarake of ['priority', 'scheduling_state']) {
+    assert.notEqual(rivi[sarake], null,
+      `toRow lähettää ${sarake}: null — kanta hylkäisi rivin`);
+    assert.notEqual(rivi[sarake], undefined, `${sarake} puuttuu payloadista`);
+  }
+
+  // Ja arvot ovat niitä, jotka migraation tarkiste sallii.
+  assert.ok(allowedValues(sql(MIGRATION_0002), 'tasks_priority_check')
+    .includes(rivi.priority), `prioriteetti ${rivi.priority} ei läpäise tarkistetta`);
+  assert.ok(allowedValues(sql(MIGRATION_0002), 'tasks_scheduling_state_check')
+    .includes(rivi.scheduling_state),
+    `aikataulutustila ${rivi.scheduling_state} ei läpäise tarkistetta`);
+
+  // Sama myös kannasta luetulle riville: fromRow palauttaa
+  // määrittelemättömän prioriteetin ennen 0002:ta, ja juuri se kiertäisi
+  // oletusarvon jos se päätyisi takaisin kantaan sellaisenaan.
+  const kannasta = normalizeTask(fromRow({
+    id: 'x', date: '2026-09-05', title: 'y', completed: false, is_wake: false
+  }));
+  assert.notEqual(toRow(kannasta, TASK_COLUMNS_EXTENDED).priority, null,
+    'kannasta luettu rivi palaisi nullilla');
+});
+
+test('KRIITTINEN: 0002 tarkistaa 0001:n perustan ennen yhtäkään muutosta', () => {
+  const code = code0002();
+  const ensimmainenMuutos = code.indexOf('alter table public.tasks add column');
+  assert.ok(ensimmainenMuutos > 0, 'DDL:ää ei löytynyt');
+
+  for (const [ehto, mita] of [
+    ['user_id',        'omistajasarakkeen olemassaolo'],
+    ['relrowsecurity', 'RLS:n tila'],
+    ['pg_policies',    'politiikkojen määrä'],
+    ['auth.users',     'omistajan olemassaolo'],
+    ['user_id is null', 'omistajattomat rivit']
+  ]) {
+    const kohta = code.indexOf(ehto);
+    assert.ok(kohta > 0 && kohta < ensimmainenMuutos,
+      `esiehto puuttuu tai on liian myöhässä: ${mita}`);
+  }
+
+  assert.ok(code.includes(OWNER_UUID.toLowerCase()),
+    '0002 ei tarkista olevansa oikeassa tietokannassa');
+});
+
+test('KRIITTINEN: jaettu liipaisinfunktio on identtinen kaikissa migraatioissa', () => {
+  // touch_updated_at luodaan `create or replace` -lauseella kolmessa
+  // migraatiossa. Korvaus vaihtaa KOKO funktion, joten poikkeava versio
+  // myöhemmässä migraatiossa purkaisi hiljaa aiemman kovennuksen — ja
+  // verify_0002 olisi ajettu jo aiemmin, joten mikään ei huomaisi sitä.
+  const versiot = ['0002_task_domain_fields.sql', '0003_routines.sql',
+                   '0004_goals_projects.sql'].map(name => {
+    const match = /create or replace function public\.touch_updated_at\(\)[\s\S]*?end \$\$;/
+      .exec(read(`${MIGRATION_DIR}/${name}`));
+    assert.ok(match, `${name}: funktiomäärittelyä ei löytynyt`);
+    return [name, match[0].replace(/\s+/g, ' ').trim()];
+  });
+
+  for (const [name, teksti] of versiot) {
+    assert.equal(teksti, versiot[0][1],
+      `${name} määrittelee touch_updated_at eri tavalla kuin 0002`);
+    assert.ok(teksti.includes('security invoker'),
+      `${name}: funktio ei ole nimenomaisesti SECURITY INVOKER`);
+    assert.ok(teksti.includes('set search_path'),
+      `${name}: funktion search_path ei ole kiinnitetty`);
+  }
+});
+
+test('0002:n perumisohje ei pudota jaettua funktiota sokeasti', () => {
+  // drop function public.touch_updated_at() rikkoisi 0003:n ja 0004:n
+  // liipaisimet, jos ne on ajettu. Ohjeen on sanottava se.
+  const rollback = read(`${MIGRATION_DIR}/${MIGRATION_0002}`)
+    .split('ROLLBACK — PERUMINEN')[1];
+  assert.ok(rollback, 'perumisosiota ei löytynyt');
+
+  const aktiiviset = rollback.split(NEWLINE)
+    .filter(line => line.trim().startsWith('--   '))
+    .join(NEWLINE);
+  assert.equal(aktiiviset.includes('drop function'), false,
+    'perumisohje pudottaa jaetun funktion ehdoitta');
+  assert.ok(rollback.includes('0003') && rollback.includes('0004'),
+    'perumisohje ei varoita myöhempien migraatioiden liipaisimista');
+  assert.ok(/lipun kääntämisen jälkeen/i.test(rollback),
+    'perumisohje ei erottele lipun kääntämistä edeltävää ja seuraavaa tilaa');
+});
+
+// ---------------------------------------------------------------- verify_0002
+
+test('varmistus 0002 on ALL-IN-ONE: yksi lause, yksi taulukko', () => {
+  const raw = read('supabase/verify/verify_0002.sql');
+  const lauseet = raw.split(NEWLINE)
+    .filter(line => !line.trim().startsWith('--'))
+    .join(NEWLINE)
+    .split(';')
+    .map(part => part.trim())
+    .filter(Boolean);
+
+  assert.equal(lauseet.length, 1, 'varmistus ei ole yksi lause');
+  assert.equal(lauseet[0].split(/\s+/)[0].toLowerCase(), 'select');
+
+  for (const sarake of ['check_no', 'section', 'check_name', 'status',
+                        'details', 'poikkeavia_yhteensa']) {
+    assert.ok(raw.includes(sarake), `tulosteesta puuttuu sarake ${sarake}`);
+  }
+});
+
+test('KRIITTINEN: varmistus 0002 kattaa jokaisen 0002:n luoman invariantin', () => {
+  const verify = verify0002();
+
+  const vaaditut = [
+    ['information_schema.columns', 'sarakkeiden olemassaolo'],
+    ['is_nullable',                'nullius'],
+    ['column_default',             'oletusarvot'],
+    ['pg_get_constraintdef',       'tarkisteiden ehdot'],
+    ['scheduling_state is null',   'tyhjät aikataulutustilat'],
+    ['priority is null',           'tyhjät prioriteetit'],
+    ['user_id is null',            'omistajattomat rivit'],
+    ['left join auth.users',       'orvot viittaukset'],
+    ['user_id is distinct from',   'vieras omistaja'],
+    ['indkey',                     'indeksin rakenne'],
+    ['pg_trigger',                 'liipaisin'],
+    ['tgtype',                     'liipaisimen tyyppi'],
+    ['prosecdef',                  'funktion turvakonteksti'],
+    ['proconfig',                  'funktion search_path'],
+    ['relrowsecurity',             'RLS'],
+    ['with_check',                 'politiikkojen kirjoitusehdot'],
+    ["has_table_privilege('anon'", 'anonin oikeudet'],
+    ['has_column_privilege',       'sarakekohtaiset oikeudet'],
+    ['aclexplode',                 'PUBLIC-roolin oikeudet']
+  ];
+
+  for (const [needle, mita] of vaaditut) {
+    assert.ok(verify.includes(needle), `varmistuksesta 0002 puuttuu: ${mita}`);
+  }
+});
+
+test('KRIITTINEN: varmistuksen 0002 odotusarvot kuvaavat turvallista tilaa', () => {
+  // Varmistus, joka läpäisee vain oikean skeeman, ei riitä. Sen on
+  // HYLÄTTÄVÄ väärä. Tässä luetaan varmistuksen omat odotustaulukot ja
+  // tarkistetaan, että ne kuvaavat juuri sen tilan, jonka pitää olla
+  // ainoa hyväksytty — eivät jotain löysempää.
+  const verify = verify0002();
+
+  // 1. Nullius: neljä saraketta EI saa sallia nullia.
+  for (const sarake of ['priority', 'scheduling_state', 'created_at', 'updated_at']) {
+    assert.ok(new RegExp(`\\('${sarake}',\\s*'no'\\)`).test(verify),
+      `varmistus sallisi nullin sarakkeessa ${sarake}`);
+  }
+
+  // 2. Tyypit: aikaleimat aikavyöhykkeen kanssa, kesto kokonaisluku.
+  assert.ok(verify.includes("'timestamp with time zone'"),
+    'varmistus hyväksyisi aikavyöhykkeettömän aikaleiman');
+  assert.ok(/\('duration_minutes',\s*'integer'\)/.test(verify),
+    'varmistus ei lukitse keston tyyppiä');
+
+  // 3. Politiikat: yksikään odotettu ehto ei saa olla `true`.
+  const politiikat = [...verify.matchAll(/'(auth\.uid\(\)=[a-z_]+)'/g)].map(m => m[1]);
+  assert.ok(politiikat.length >= 8, 'politiikkojen ehtoja odotetaan liian vähän');
+  assert.equal(verify.includes("'true'"), false,
+    'varmistus hyväksyisi politiikan ehdon true');
+
+  // 4. Oikeudet: anonille nolla, PUBLICille nolla, authenticatedille CRUD.
+  assert.match(verify, /'anon-roolilla ei ole yhtaan tehollista oikeutta[^']*',\s*'0'/,
+    'anonin odotusarvo ei ole nolla');
+  assert.match(verify, /'public-roolilla ei ole oikeuksia[^']*',\s*'0'/,
+    'PUBLIC-roolin odotusarvo ei ole nolla');
+  assert.match(verify, /'authenticated-roolilla on tasan crud[^']*',\s*'4'/,
+    'authenticated-roolin odotusarvo ei ole tasan CRUD');
+
+  // 5. Indeksi: täsmälleen odotetut sarakkeet odotetussa järjestyksessä.
+  assert.ok(verify.includes("array['user_id', 'date', 'priority']"),
+    'indeksin sarakejärjestystä ei lukita');
+
+  // 6. Liipaisin: rivikohtainen BEFORE UPDATE, ei mikä tahansa.
+  for (const bitti of ['(tgtype & 1) = 1', '(tgtype & 2) = 2', '(tgtype & 16) = 16']) {
+    assert.ok(verify.includes(bitti), `liipaisimen tyyppiä ei lukita: ${bitti}`);
+  }
+
+  // 7. Funktio: ei SECURITY DEFINER, search_path kiinnitetty.
+  assert.ok(verify.includes('p.prosecdef = false'),
+    'varmistus hyväksyisi SECURITY DEFINER -funktion');
+});
+
+test('KRIITTINEN: varmistuksen 0002 indeksisääntö tunnistaa etuliitteen', () => {
+  const indeksitarkistus = verify0002()
+    .split('union all')
+    .find(part => part.includes('indkey[0]'));
+  assert.ok(indeksitarkistus, 'omistajahaun indeksitarkistusta ei löytynyt');
+
+  const kelpaa = indexRuleFrom(indeksitarkistus, 'verify_0002.sql');
+  assert.equal(kelpaa({ columns: ['user_id'] }), true);
+  assert.equal(kelpaa({ columns: ['user_id', 'date'] }), true);
+  assert.equal(kelpaa({ columns: ['user_id', 'date', 'priority'] }), true);
+  assert.equal(kelpaa({ columns: ['date', 'user_id'] }), false);
+  assert.equal(kelpaa({ columns: ['priority'] }), false);
+});
+
+test('preflight 0002 on vain lukeva ja verrattavissa varmistukseen', () => {
+  const raw = read('supabase/preflight/preflight_0002.sql');
+  const lauseet = raw.split(NEWLINE)
+    .filter(line => !line.trim().startsWith('--'))
+    .join(NEWLINE)
+    .split(';')
+    .map(part => part.trim())
+    .filter(Boolean);
+
+  assert.equal(lauseet.length, 1, 'preflight ei ole yksi lause');
+  assert.equal(lauseet[0].split(/\s+/)[0].toLowerCase(), 'select');
+
+  const preflight = raw.toLowerCase();
+
+  // Preflightin tehtävä on todeta, ettei 0002 ole vielä ajettu.
+  assert.ok(preflight.includes('tasks_user_date_priority_idx'),
+    'preflight ei tarkista, onko 0002 jo ajettu');
+  assert.ok(preflight.includes('idle in transaction'),
+    'preflight ei näe avointa transaktiota, joka estäisi lukituksen');
+
+  // INFO-rivit ovat kirjattavia lukuja, eivät keksittyjä PASSeja.
+  assert.ok(preflight.includes("'info'"), 'preflight ei erottele INFO-rivejä');
+  assert.match(preflight, /when c\.odotus = 'info'\s+then 'info'/,
+    'INFO-rivi voisi näyttää PASSilta');
+});
+
+test('KRIITTINEN: preflight ja varmistus kysyvät samat luvut', () => {
+  // INFO-rivien arvo on siinä, että ne verrataan toisiinsa. Jos toinen
+  // tiedosto lakkaisi kysymästä jotain, vertailu jäisi hiljaa tekemättä.
+  const preflight = read('supabase/preflight/preflight_0002.sql').toLowerCase();
+  const verify = verify0002();
+
+  for (const luku of ['count(*)::text from public.tasks',
+                      "scheduling_state = 'unscheduled'",
+                      'from pg_constraint',
+                      'from pg_indexes']) {
+    const molemmissa = preflight.includes(luku.split(' where')[0]) || preflight.includes(luku);
+    assert.ok(molemmissa || verify.includes(luku),
+      `lukua ei kysytä kummassakaan: ${luku}`);
+  }
+
+  // Molemmat lukevat tehtävien kokonaismäärän, jotta ne voi verrata.
+  assert.ok(preflight.includes('count(*)::text from public.tasks'));
+  assert.ok(verify.includes('count(*)::text from public.tasks'));
 });

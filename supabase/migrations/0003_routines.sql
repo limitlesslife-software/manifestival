@@ -2,7 +2,7 @@
 -- Manifestival — migraatio 0003: rutiinit ja niiden poikkeukset
 -- =====================================================================
 --
--- TILA: LUONNOS. TÄTÄ EI OLE AJETTU MIHINKÄÄN YMPÄRISTÖÖN.
+-- TILA: EI AJETTU TUOTANTOON.
 --
 -- ESIEHDOT
 --   1. Migraatio 0001 on ajettu ja todennettu (user_id, RLS)
@@ -204,10 +204,18 @@ create index if not exists routine_exceptions_user_date_idx
 -- Funktio public.touch_updated_at() luodaan migraatiossa 0002. Se luodaan
 -- tässä uudelleen `create or replace`-lauseella, jotta tämä migraatio
 -- toimii myös jos 0002 ajetaan vasta myöhemmin.
+--
+-- MÄÄRITTELYN ON OLTAVA SANASTA SANAAN SAMA KUIN 0002:SSA. `create or
+-- replace` korvaa koko funktion, joten poikkeava versio täällä purkaisi
+-- hiljaa 0002:n kovennuksen (security invoker, kiinnitetty search_path)
+-- ilman että mikään varmistus huomaisi sitä — verify_0002 olisi ajettu
+-- jo aiemmin. Testi vartioi, että kaikki kolme kopiota ovat identtiset.
 -- ---------------------------------------------------------------------
 create or replace function public.touch_updated_at()
 returns trigger
 language plpgsql
+security invoker
+set search_path = pg_catalog, public
 as $$
 begin
   new.updated_at = now();

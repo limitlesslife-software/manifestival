@@ -58,10 +58,17 @@ portin takana.
 | **Repo** | `tasksRepo`, `taskColumns()` valitsee sarakejoukon |
 | **UI** | Valmis — kentät näkyvissä tehtävälomakkeessa |
 | **Persistenssi** | **EI.** Kentät elävät istunnon muistissa |
-| **Ennen kytkentää** | 0002 ajettu; `information_schema.columns` näyttää `description`, `duration_minutes`, `priority`, `scheduling_state`, `created_at`, `updated_at`; `tasks_priority_check` ja `tasks_scheduling_state_check` olemassa; `scheduling_state` ei ole null yhdelläkään rivillä |
+| **Ennen kytkentää** | Runbookin GATE 0–6 läpi: `preflight_0002.sql` puhdas, 0002 ajettu kerran, `verify_0002.sql` kauttaaltaan `PASS` (`poikkeavia_yhteensa` = 0) |
+| **Milloin** | GATE 7, ei aiemmin |
+| **Miten varmistetaan** | `npm test` läpi; tuotannossa luotu tehtävä, jolla on kuvaus ja prioriteetti, säilyy sivun uudelleenlatauksen yli |
 
 Erityishuomio: tämä on ainoa portti, joka muuttaa **olemassa olevan** taulun
 kirjoituksia. Väärä kytkentä rikkoo tehtävien tallennuksen kokonaan.
+
+**Käännä lippu pian migraation jälkeen.** Väliaikana sovellus ei lähetä
+`scheduling_state`-saraketta, jolloin uudet kellonajattomat tehtävät saavat
+oletusarvon `manual` eivätkä `unscheduled` — automaatti ei ehdota niille
+aikaa. Ks. [`MIGRATION-0002-RECOVERY.md`](MIGRATION-0002-RECOVERY.md).
 
 ### `routines` ja `routineExceptions` — migraatio 0003
 

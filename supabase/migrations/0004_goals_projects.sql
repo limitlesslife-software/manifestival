@@ -2,7 +2,7 @@
 -- Manifestival — migraatio 0004: tavoitteet, projektit ja määräajat
 -- =====================================================================
 --
--- TILA: LUONNOS. TÄTÄ EI OLE AJETTU MIHINKÄÄN YMPÄRISTÖÖN.
+-- TILA: EI AJETTU TUOTANTOON.
 --
 -- ESIEHDOT
 --   1. Migraatio 0001 on ajettu ja todennettu (user_id, RLS)
@@ -248,6 +248,8 @@ create index if not exists tasks_user_deadline_idx
 create or replace function public.touch_updated_at()
 returns trigger
 language plpgsql
+security invoker
+set search_path = pg_catalog, public
 as $$
 begin
   new.updated_at = now();

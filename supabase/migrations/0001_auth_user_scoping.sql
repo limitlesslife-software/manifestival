@@ -2,7 +2,11 @@
 -- Manifestival — migraatio 0001: käyttäjäkohtainen omistajuus ja RLS
 -- =====================================================================
 --
--- TILA: LUONNOS. TÄTÄ EI OLE AJETTU MIHINKÄÄN YMPÄRISTÖÖN.
+-- TILA: AJETTU JA HYVÄKSYTTY TUOTANNOSSA 2026-09-05.
+--
+-- Eristystesti kahdella tilillä 34/34 PASS ja jälkivarmistus 18/18 PASS.
+-- Ks. docs/RLS-ACCEPTANCE.md. TÄTÄ EI AJETA UUDELLEEN: migraatio
+-- keskeytyy esiehtoon, koska profile.id ei ole enää tekstiä.
 --
 -- Tämä tiedosto on sovitettu TODENNETTUUN tuotantoskeemaan. Se ei ole
 -- enää yleisluonteinen malli. Jos tuotanto ei vastaa alla kuvattua

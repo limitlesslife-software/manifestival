@@ -39,7 +39,9 @@ ilman `user_id`-saraketta ja RLS:ää uusilla tauluilla ei olisi omistajaa.
 6. Aja verify/verify_0001.sql
 7. Tee kahden tilin eristystesti (tools/rls-acceptance) — PAKOLLINEN
    ja aja sen jalkeen acceptance/verify_acceptance.sql
-8. Aja 0002-0008 samalla tavalla, yksi kerrallaan, lippu kerrallaan
+8. Aja preflight/preflight_0002.sql, sitten 0002, sitten
+   verify/verify_0002.sql — ja vasta sitten lippu
+9. Aja 0003-0008 samalla tavalla, yksi kerrallaan, lippu kerrallaan
 ```
 
 Vaiheet, pysäytyspisteet ja odotusarvot:

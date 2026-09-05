@@ -3,9 +3,18 @@
 Tämä on runbookin **vaihe 5** kokonaisuudessaan: ohje, työkalu ja
 jälkivarmistus. Runbook viittaa tänne eikä toista sisältöä.
 
-Migraatio 0001 on ajettu ja `verify_0001.sql` on läpi. Tämä on ainoa
-asia, joka on vielä tekemättä ennen kuin migraatiota 0002 saa edes
-harkita.
+> **TILA: SUORITETTU JA HYVÄKSYTTY.** Testi ajettiin tuotantoa vasten
+> ja tuotti **34/34 PASS** (0 FAIL, 0 ERROR, 0 SKIP). Väliaikainen tili B
+> on poistettu ja `verify_acceptance.sql` tuotti **18/18 PASS**,
+> `poikkeavia_yhteensa` = 0.
+>
+> Ohje jää tänne kahdesta syystä: se on toistettava, jos jokin muutos
+> koskee politiikkoja tai lisää uuden käyttäjäkohtaisen taulun, ja se on
+> ainoa paikka, jossa lukee miksi testi on rakennettu juuri näin.
+>
+> **Migraatio 0002 EI vaadi tämän toistamista:** se ei luo tauluja eikä
+> kosketa politiikkoihin. `verify_0002.sql` kohdat 19–24 todistavat, että
+> RLS, kahdeksan politiikkaa ja oikeudet ovat ennallaan.
 
 ## Työnkulku yhdellä silmäyksellä
 

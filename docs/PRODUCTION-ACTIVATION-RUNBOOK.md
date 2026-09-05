@@ -24,34 +24,34 @@ vartioi tätä.
 
 ## MISSÄ MENNÄÄN JUURI NYT
 
-**Vaiheet 1–4 on tehty. Migraatio 0001 on ajettu tuotantoon ja
-`verify_0001.sql` on läpi.** Todennettu: RLS päällä molemmissa tauluissa,
-kahdeksan politiikkaa oikein ehdoin, `tasks.user_id` ja `profile.id` ovat
-`uuid not null default auth.uid()`, `legacy_id` on tallella, 36 tehtävää
-ja 1 profiili kuuluvat omistajalle
-`2cc00622-f927-4604-a518-361a4328481b`, orpoja viittauksia ei ole,
-vierasavaimet ovat `CASCADE`, anonilla ei ole oikeuksia ja
-`authenticated`-roolilla on tasan CRUD.
+**Vaiheet 1–5 on tehty. Migraatio 0001 on ajettu, todennettu ja
+hyväksytty tuotannossa.**
 
-**SEURAAVA IHMISEN TOIMENPIDE: vaihe 5 — eristystesti kahdella tilillä.**
-Ohje ja työkalu: [`RLS-ACCEPTANCE.md`](RLS-ACCEPTANCE.md). Ensimmäinen
-askel siinä on väliaikaisen tilin B luonti Supabasen Authentication-
-näkymästä, ja se vaatii nimenomaisen luvan, koska se on tuotannon
-auth-kirjoitus.
+| | Tulos |
+|---|---|
+| `verify_0001.sql` | läpi |
+| Kahden tilin eristystesti | **34/34 PASS** — 0 FAIL, 0 ERROR, 0 SKIP |
+| Väliaikainen tili B | poistettu |
+| `verify_acceptance.sql` | **18/18 PASS**, `poikkeavia_yhteensa` = 0 |
 
-**Migraatiot 0002–0008 ovat PYSÄYTETTYINÄ** ja kaikki yksitoista
-skeemaporttia ovat `false`, kunnes vaiheen 5 kaikki kolme ehtoa ovat
-täyttyneet.
+Todennettu tuotantotila: 36 tehtävää ja 1 profiili omistajalla
+`2cc00622-f927-4604-a518-361a4328481b`, tasan yksi auth-käyttäjä, ei
+hyväksyntätestin jäännöksiä, RLS päällä molemmissa tauluissa, kahdeksan
+omistajuuspolitiikkaa oikein ehdoin, vierasavaimet `auth.users(id)`:hen
+`ON DELETE CASCADE`, user_id-alkuinen indeksi, anonilla ei oikeuksia,
+`authenticated`-roolilla tasan CRUD, `PUBLIC` tyhjä.
 
-> **Huomio varmistimeen, ei kantaan.** Kertaluontoinen kaiken kattava
-> varmistin raportoi kohdasta 16 FAILin, koska se hyväksyi vain
-> täsmällisen sarakelistan `(user_id)`. Tuotannossa on yhdistelmäindeksi
-> `tasks_user_id_date_idx (user_id, date)`, joka täyttää vaatimuksen:
-> btree-indeksiä voi käyttää etuliitteellään. Kyseessä oli varmistimen
-> virhe, ei kannan. `verify_0001.sql` kohta 16 katsoo nyt indeksin
-> **ensimmäistä saraketta** eikä nimeä tai sarakelistaa.
+**0001 on suljettu. Sitä ei ajeta uudelleen** — migraatio keskeytyisi
+esiehtoon, koska `profile.id` ei ole enää tekstiä.
 
----
+**SEURAAVA IHMISEN TOIMENPIDE: vaihe 6, migraatio 0002 — GATE 0 ja
+GATE 1.** GATE 1 on lukeva preflight
+(`supabase/preflight/preflight_0002.sql`), joka ei muuta mitään. Vasta
+GATE 3 on nimenomainen lupa ajaa migraatio. Perustelut, portti ja
+palautuminen: [`MIGRATION-0002-RECOVERY.md`](MIGRATION-0002-RECOVERY.md).
+
+**Migraatiot 0002–0008 ovat ajamatta** ja kaikki yksitoista
+skeemaporttia ovat `false`, `TASK_EXTENDED_FIELDS` mukaan lukien.
 
 ## Ennen aloitusta
 
@@ -365,18 +365,113 @@ selvitetty. Vikataulukko: `RLS-ACCEPTANCE.md`, *Vikatilanteet*.
 
 ## Vaihe 6 — Migraatio 0002 (tasks-lisäkentät)
 
-Aja `0002_task_domain_fields.sql`.
+Kuusi uutta saraketta tauluun `tasks`, kolme tarkistetta, liipaisin ja
+indeksi. Ei uusia tauluja, ei muutoksia RLS:ään eikä politiikkoihin.
 
-### PYSÄYTYS 6
-Aja `supabase/verify/verify_0002.sql`. Kuusi saraketta olemassa,
-`scheduling_state` ei null, kaksi tarkistetta olemassa.
+Perustelut, portti ja palautuminen:
+[`MIGRATION-0002-RECOVERY.md`](MIGRATION-0002-RECOVERY.md). Alla on
+suoritus.
+
+### GATE 0 — lähtötila
+
+- [ ] Työpuu puhdas, oikea branch
+- [ ] Migraation tiiviste kirjattu:
+      `git log -1 --format=%H -- supabase/migrations/0002_task_domain_fields.sql`
+- [ ] Projektiviite on `twpyubcymdnbvelsjidg`
+- [ ] 0001 on yhä hyväksytty — ei tuotantomuutoksia sen jälkeen
+- [ ] Mikään muu tuotantotyö ei ole kesken
+
+### GATE 1 — preflight
+
+Aja `supabase/preflight/preflight_0002.sql`. **Vain lukeva.**
+
+- [ ] Jokainen PASS/FAIL-rivi on `PASS`
+- [ ] `poikkeavia_yhteensa` = 0
+- [ ] INFO-rivien luvut kirjattu ylös (14–19): rivimäärä, kellonajattomat,
+      kellonajalliset, auth-käyttäjät, rajoitteet, indeksit
+
+**Yksikin FAIL → STOP.** Preflight kertoo saman kuin migraation esiehdot,
+mutta ilman lukkoa ja ilman katkoa. Keskeytynyt migraatio on kalliimpi.
+
+### GATE 2 — palautuminen
+
+- [ ] Tuore varmuuskopio otettu **tänään**
+- [ ] Tiedät, miten palautus tehdään
+- [ ] [`MIGRATION-0002-RECOVERY.md`](MIGRATION-0002-RECOVERY.md) luettu,
+      erityisesti kohdat C ja D
+
+**STOP, jos palautumisesta ei ole näyttöä.**
+
+### GATE 3 — nimenomainen lupa
+
+Ihminen päättää, että 0002 ajetaan nyt. Tämä ei ole automaattinen askel.
+
+Sulje sovellus laitteilta. Migraatio ottaa `ACCESS EXCLUSIVE` -lukon:
+36 rivillä se kestää millisekunteja, mutta lukon ajan taulu on kokonaan
+poissa käytöstä. `lock_timeout` on 5 s — jos taulu on varattu, migraatio
+keskeytyy eikä jää odottamaan.
+
+### GATE 4 — suoritus
+
+Aja `supabase/migrations/0002_task_domain_fields.sql` **kokonaisuudessaan,
+yhtenä ajona, kerran.**
+
+Odotetut `NOTICE`-rivit:
+
+```
+Esiehdot kunnossa. Omistaja 2cc00622-..., tehtavia N, puuttuvia objekteja 12.
+Migraatio 0002 valmis. Aja seuraavaksi supabase/verify/verify_0002.sql.
+```
+
+- [ ] Kellonaika ja tulos kirjattu
+
+**Virheen sattuessa: STOP. Älä aja uudelleen sokeasti.** Migraatio
+tunnistaa aiemman ja kesken jääneen ajon ja keskeytyy niihin
+tarkoituksella — uudelleenajo ei korjaa kumpaakaan. Virheviestien
+taulukko on recovery-dokumentissa.
+
+### GATE 5 — varmistus
+
+Aja `supabase/verify/verify_0002.sql`. Yksi taulukko, 29 riviä.
+
+- [ ] Jokainen PASS/FAIL-rivi on `PASS`
+- [ ] `poikkeavia_yhteensa` = 0
+- [ ] INFO-rivit 25–29 vastaavat preflightin lukuja:
+      rivimäärä sama, `unscheduled` = preflight 15, `manual` = preflight 16,
+      rajoitteita 3 enemmän, indeksejä 1 enemmän
+
+**Yksikin FAIL → lippua ei käännetä.**
+
+### GATE 6 — tarvitaanko uusi eristystesti
+
+**Ei tarvita.** 0002 ei luo tauluja eikä kosketa politiikkoihin, joten
+0001:n kahden tilin hyväksyntä on yhä voimassa. `verify_0002` kohdat
+19–24 todistavat, että RLS, kahdeksan politiikkaa ja oikeudet ovat
+ennallaan.
+
+Jos jokin niistä on FAIL, eristystesti on toistettava ennen jatkoa:
+[`RLS-ACCEPTANCE.md`](RLS-ACCEPTANCE.md).
 
 ---
 
-## Vaihe 7 — Lippu `TASK_EXTENDED_FIELDS`
+## Vaihe 7 — GATE 7: lippu `TASK_EXTENDED_FIELDS`
+
+Vasta kun GATE 0–6 ovat kaikki läpi.
 
 Vaihda `src/data/schema.js`:ssä `TASK_EXTENDED_FIELDS` arvoon `true`.
-Aja `npm test`. Committoi.
+Aja `npm test`. Committoi ja julkaise.
+
+**Käännä lippu pian migraation jälkeen.** Väliaikana sovellus ei lähetä
+`scheduling_state`-saraketta, jolloin uudet kellonajattomat tehtävät
+saavat oletusarvon `manual` eivätkä `unscheduled` — automaatti ei siis
+ehdota niille aikaa. Se ei ole tietohäviö, mutta se on korjattavaa työtä
+joka kasvaa joka päivä.
+
+### PYSÄYTYS 7
+Luo tuotannossa tehtävä, jolla on kuvaus ja prioriteetti. Lataa sivu
+uudelleen. Molempien on säilyttävä. Jos virhe väittää saraketta
+puuttuvaksi vaikka `verify_0002` näki sen, kyse on skeemavälimuistista:
+*Settings → API → Reload schema cache*.
 
 Deployaa. Kokeile tehtävän luontia kuvauksella ja prioriteetilla.
 Lataa sivu uudelleen ja tarkista, että kentät ovat yhä siellä.

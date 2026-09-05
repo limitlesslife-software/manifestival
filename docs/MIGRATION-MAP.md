@@ -65,21 +65,29 @@ kaikki kahdeksan uutta.
 
 ---
 
-## 0002 — `task_domain_fields` (181 riviä, 1 indeksi, 6 tarkistetta)
+## 0002 — `task_domain_fields` (1 indeksi, 3 tarkistetta) — EI AJETTU
 
 | | |
 |---|---|
 | **Tarkoitus** | Domainin tehtäväkentät tietokantaan |
-| **Riippuu** | 0001 |
+| **Riippuu** | 0001 (ajettu ja hyväksytty). **Ei riipu 0003–0008:sta** |
 | **Sarakkeet** | `description`, `duration_minutes`, `priority`, `scheduling_state`, `created_at`, `updated_at` |
-| **RLS** | Ei muutosta — perii 0001:n politiikat |
-| **Avaa lipun** | `TASK_EXTENDED_FIELDS` |
-| **Palautus** | Helppo: `drop column`. Sarakkeiden data menetetään |
-| **Varmistus** | Kuusi saraketta olemassa; `tasks_priority_check` ja `tasks_scheduling_state_check` olemassa; `scheduling_state` ei null |
+| **Muut objektit** | `touch_updated_at()` (jaettu 0003/0004:n kanssa), liipaisin `tasks_touch_updated_at`, indeksi `tasks_user_date_priority_idx` |
+| **RLS** | Ei muutosta — uudet sarakkeet perivät 0001:n politiikat |
+| **Avaa lipun** | `TASK_EXTENDED_FIELDS` (nyt `false`) |
+| **Uudelleenajo** | **Keskeytyy.** Migraatio tunnistaa aiemman ja kesken jääneen ajon eikä ole idempotentti |
+| **Preflight** | `supabase/preflight/preflight_0002.sql`, 19 kohtaa |
+| **Varmistus** | `supabase/verify/verify_0002.sql`, 29 kohtaa yhtenä taulukkona |
+| **Palautus** | Turvallinen ennen lipun kääntämistä, **ei sen jälkeen** — ks. [`MIGRATION-0002-RECOVERY.md`](MIGRATION-0002-RECOVERY.md) |
 
 **Kriittinen kohta:** ainoa migraatio, joka muuttaa **jo tuotannossa
 käytössä olevan** taulun kirjoituspolkua. Lipun kääntäminen ennen ajoa
 rikkoo tehtävien tallennuksen kokonaan.
+
+**Toinen kriittinen kohta:** `touch_updated_at()` luodaan `create or
+replace` -lauseella myös migraatioissa 0003 ja 0004. Määrittelyn on
+oltava kaikissa kolmessa sanasta sanaan sama, muuten myöhempi migraatio
+purkaa hiljaa aiemman kovennuksen. Testi vartioi tätä.
 
 ---
 

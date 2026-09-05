@@ -2,7 +2,7 @@
 -- Manifestival — migraatio 0007: laskut, toistuvat kulut ja säästötavoitteet
 -- =====================================================================
 --
--- TILA: LUONNOS. TÄTÄ EI OLE AJETTU MIHINKÄÄN YMPÄRISTÖÖN.
+-- TILA: EI AJETTU TUOTANTOON.
 --
 -- ESIEHDOT
 --   1. Migraatio 0001 on ajettu ja todennettu (user_id, RLS)
