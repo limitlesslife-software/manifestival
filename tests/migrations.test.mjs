@@ -297,8 +297,11 @@ test('collectionsRepo kirjoittaa vain sarakkeisiin jotka migraatio luo', () => {
   };
 
   for (const [table, migration] of Object.entries(tableToMigration)) {
+    // `if not exists` on valinnainen: fail-closed-migraatio jättää sen
+    // pois, koska esiehdot ovat jo todistaneet ettei taulua ole. Sarakkeiden
+    // poiminnalle muodolla ei ole merkitystä — idempotenssia vartioi eri testi.
     const createMatch = new RegExp(
-      `create table if not exists public\\.${table} \\(([\\s\\S]*?)\\n\\);`)
+      `create table (?:if not exists )?public\\.${table} \\(([\\s\\S]*?)\\n\\);`)
       .exec(sql(migration));
     assert.ok(createMatch, `${table}: create table ei löytynyt`);
 
@@ -585,8 +588,20 @@ test('varmistuskyselyt eivät lue käyttäjän sisältöä', () => {
     assert.equal(/select\s+\*/.test(sql), false,
       `${name}: select * voi paljastaa käyttäjän sisältöä`);
 
+    // ITSENAINEN TUNNISTE, EI OSAJONO.
+    //
+    // Sisaltyvyystarkistus antoi vaaria halytyksia: rajoitteen nimi
+    // routines_title_check sisaltaa sanan "title", vaikka se ei lue
+    // yhtaan riviarvoa. Varmistus olisi pitanyt heikentaa lopettamalla
+    // rajoitteen tarkistaminen — eli oikea tarkistus olisi purettu
+    // valheellisen halytyksen takia.
+    //
+    // Nyt sana lasketaan vain kun se esiintyy omana tunnisteenaan.
+    // Alaviivalla ymparoity osajono (routines_title_check,
+    // routine_exceptions_type_check) ei ole sarakkeen luku.
     for (const column of ['title', 'note', 'anon_key', 'service_role', 'password']) {
-      assert.equal(sql.includes(column), false,
+      const itsenaisena = new RegExp(`(^|[^a-z0-9_])${column}([^a-z0-9_]|$)`);
+      assert.equal(itsenaisena.test(sql), false,
         `${name} lukee saraketta ${column}`);
     }
   }
@@ -1964,5 +1979,212 @@ test('aktivointia edeltava varmistus on verrattavissa tilannekuvaan', () => {
   ]) {
     assert.ok(ennen.includes(kaava) && tilannekuva.includes(kaava),
       `sormenjäljen kaava eroaa tiedostojen välillä: ${kaava}`);
+  }
+});
+
+// ================================================================
+// 0003 on valmisteltu tuotantoon — samat vaatimukset kuin 0002:lla
+// ================================================================
+
+/** Migraatio ilman kommentteja, pienaakkosin. */
+function migraationKoodi(name) {
+  return read(`${MIGRATION_DIR}/${name}`)
+    .split(NEWLINE)
+    .filter(line => !line.trim().startsWith('--'))
+    .join(NEWLINE)
+    .toLowerCase();
+}
+
+test('KRIITTINEN: valmistellut migraatiot asettavat lock_timeoutin', () => {
+  // Jokainen migraatio viittaa auth.users-tauluun vierasavaimella, ja
+  // vierasavaimen luonti ottaa viitattuun tauluun lukon. auth.users on
+  // taulu, jota jokainen kirjautuminen koskee.
+  //
+  // Ilman aikakatkaisua pitkä transaktio siellä jättäisi migraation
+  // jonoon — ja koska lukkojono on FIFO, sen taakse jonoutuisi jokainen
+  // kirjautuminen. Migraatio, joka odottaa hiljaa, kaataa sovelluksen
+  // odottaessaan.
+  //
+  // Lista kasvaa sitä mukaa kuin migraatioita valmistellaan
+  // tuotantoon. 0004–0008 liittyvät tähän omissa paketeissaan; niitä ei
+  // ole vielä auditoitu eikä niitä saa ajaa.
+  const VALMISTELLUT = ['0001_auth_user_scoping.sql',
+                        '0002_task_domain_fields.sql',
+                        '0003_routines.sql'];
+
+  for (const name of VALMISTELLUT) {
+    const code = migraationKoodi(name);
+    assert.ok(code.includes('set local lock_timeout'),
+      `${name}: lock_timeout puuttuu`);
+
+    // Ja se on asetettava ennen ensimmäistä lukkoa ottavaa lausetta.
+    const timeout = code.indexOf('set local lock_timeout');
+    for (const lause of ['lock table', 'create table', 'alter table']) {
+      const kohta = code.indexOf(lause);
+      if (kohta === -1) continue;
+      assert.ok(timeout < kohta,
+        `${name}: "${lause}" tapahtuu ennen lock_timeoutin asettamista`);
+    }
+  }
+});
+
+test('KRIITTINEN: 0003 tunnistaa aiemman ja kesken jääneen ajon', () => {
+  // Aiempi versio käytti `if not exists` -muotoa joka kohdassa. Silloin
+  // toinen ajo, kesken jäänyt ajo ja tuore ajo näyttivät kaikki samalta:
+  // onnistuneelta. Tila, jota ei voi erottaa, on tila jota ei voi
+  // korjata.
+  const code = migraationKoodi('0003_routines.sql');
+
+  assert.match(code, /raise exception 'migraatio 0003 on jo ajettu/,
+    'toinen ajo menisi hiljaa läpi');
+  assert.match(code, /raise exception 'migraatio 0003 on kesken/,
+    'kesken jäänyttä ajoa ei tunnisteta');
+
+  // Tunnistus kattaa kaikki objektiluokat, ei vain tauluja.
+  for (const objekti of ['routines_owner_row_key', 'routine_exceptions_unique_day',
+                         'routines_user_active_idx', 'routines_touch_updated_at',
+                         'pg_policies']) {
+    assert.ok(code.includes(objekti),
+      `osittaisen ajon tunnistus ei kata objektia ${objekti}`);
+  }
+});
+
+test('KRIITTINEN: 0003 ei piilota tuntematonta tilaa if not exists -muodon taakse', () => {
+  const code = migraationKoodi('0003_routines.sql');
+
+  const ddl = code.split(NEWLINE).filter(line =>
+    /^\s*(create table|create index|create trigger)/.test(line));
+
+  assert.ok(ddl.length >= 6, `DDL-lauseita löytyi vain ${ddl.length}`);
+  for (const line of ddl) {
+    assert.equal(/if not exists/.test(line), false,
+      `fail-closed rikki: ${line.trim()}`);
+  }
+
+  // Funktio on poikkeus ja se on perusteltu: sen luo jo 0002, joka on
+  // ajettu. Siksi se on yhä create or replace.
+  assert.ok(code.includes('create or replace function public.touch_updated_at'),
+    'jaettu funktio ei ole enää create or replace');
+});
+
+test('KRIITTINEN: 0003 tarkistaa 0001:n ja 0002:n perustan ennen muutoksia', () => {
+  const code = migraationKoodi('0003_routines.sql');
+  const ensimmainenDDL = code.indexOf('create table public.routines');
+  assert.ok(ensimmainenDDL > 0, 'taulun luontia ei löytynyt');
+
+  for (const [ehto, mita] of [
+    ['tasks', 'tasks-taulun tila'],
+    ['relrowsecurity', 'RLS:n tila'],
+    ['pg_policies', 'politiikkojen määrä'],
+    ['auth.users', 'omistajan olemassaolo'],
+    ['scheduling_state', '0002:n sarakkeet']
+  ]) {
+    const kohta = code.indexOf(ehto);
+    assert.ok(kohta > 0 && kohta < ensimmainenDDL,
+      `esiehto puuttuu tai on liian myöhässä: ${mita}`);
+  }
+
+  assert.ok(code.includes(OWNER_UUID.toLowerCase()),
+    '0003 ei tarkista olevansa oikeassa tietokannassa');
+});
+
+test('KRIITTINEN: 0003 sulkee PUBLIC-roolin perintäpolun', () => {
+  // Sama vika, jonka 0001 joutui korjaamaan jälkikäteen. PostgreSQL-rooli
+  // PUBLIC tarkoittaa "kaikki roolit", ja sille myönnetyn oikeuden perii
+  // myös anon. Perittyä oikeutta ei näy roolikohtaisissa listauksissa
+  // lainkaan, joten `revoke ... from anon` ei poista sitä.
+  const code = migraationKoodi('0003_routines.sql');
+
+  for (const taulu of ['routines', 'routine_exceptions']) {
+    for (const rooli of ['public', 'anon', 'authenticated']) {
+      assert.match(code,
+        new RegExp(`revoke all on public\\.${taulu}\\s+from ${rooli};`),
+        `${taulu}: oikeuksia ei peruta roolilta ${rooli} ennen myöntöä`);
+    }
+  }
+
+  // Ja peruminen tapahtuu ennen myöntöä, muuten se pyyhkisi myönnön.
+  const revoke = code.lastIndexOf('revoke all on');
+  const grant = code.indexOf('grant select, insert, update, delete');
+  assert.ok(revoke < grant, 'peruminen tapahtuu myönnön jälkeen');
+});
+
+test('KRIITTINEN: poikkeus ei voi viitata toisen käyttäjän rutiiniin', () => {
+  // LÖYTYNYT AUKKO, JOTA TÄMÄ VARTIOI
+  //
+  // Vierasavaimen tarkistus ei kulje RLS:n läpi. Pelkällä
+  // routine_id-viittauksella käyttäjä B olisi voinut luoda poikkeuksen,
+  // joka osoittaa käyttäjän A rutiiniin: B ei näkisi A:n rutiinia, mutta
+  // rivi olisi silti olemassa ja viittaisi toisen ihmisen dataan.
+  // RLS estää lukemisen, ei viittaamista.
+  //
+  // Yhdistelmävierasavain (user_id, routine_id) sitoo omistajat yhteen.
+  const code = migraationKoodi('0003_routines.sql');
+
+  assert.match(code, /foreign key \(user_id, routine_id\)\s+references public\.routines \(user_id, id\)/,
+    'poikkeuksen vierasavain ei sido omistajaa rutiinin omistajaan');
+  assert.ok(code.includes('constraint routines_owner_row_key unique (user_id, id)'),
+    'routines-taulusta puuttuu yhdistelmäavaimen kohde');
+
+  // Eikä vanhaa yhden sarakkeen viittausta saa jäädä.
+  assert.equal(/routine_id\s+text not null references public\.routines\(id\)/.test(code), false,
+    'yhden sarakkeen vierasavain on yhä paikallaan');
+
+  // Ja varmistus todentaa saman kannasta.
+  const verify = read('supabase/verify/verify_0003.sql').toLowerCase();
+  assert.ok(verify.includes("array['routine_id', 'user_id']"),
+    'varmistus ei tarkista yhdistelmävierasavainta');
+});
+
+test('KRIITTINEN: 0003:n varmistus kattaa jokaisen luodun invariantin', () => {
+  const verify = read('supabase/verify/verify_0003.sql').toLowerCase();
+
+  const vaaditut = [
+    ['information_schema.columns', 'sarakkeet'],
+    ["data_type = 'uuid'",         'omistajasarakkeen tyyppi'],
+    ['auth.uid()',                 'omistajan oletusarvo'],
+    ['pg_get_constraintdef',       'tarkisteiden ehdot'],
+    ['confdeltype',                'vierasavaimen poistosääntö'],
+    ['conkey',                     'vierasavaimen sarakkeet'],
+    ['indkey',                     'indeksin sarakkeet'],
+    ['tgtype',                     'liipaisimen ajoitus'],
+    ['prosecdef',                  'funktion turvakonteksti'],
+    ['proconfig',                  'funktion search_path'],
+    ['relrowsecurity',             'RLS'],
+    ['with_check',                 'politiikkojen kirjoitusehdot'],
+    ["has_table_privilege('anon'", 'anonin oikeudet'],
+    ['aclexplode',                 'PUBLIC-roolin oikeudet'],
+    ['left join public.routines',  'orvot poikkeukset']
+  ];
+
+  for (const [needle, mita] of vaaditut) {
+    assert.ok(verify.includes(needle), `verify_0003:sta puuttuu: ${mita}`);
+  }
+
+  // Myöhempien migraatioiden puuttuminen on osa 0003:n hyväksyntää.
+  assert.ok(verify.includes("'savings_goals'"),
+    'verify_0003 ei tarkista, että 0004-0008 ovat yhä ajamatta');
+});
+
+test('0003:n preflight ja tilannekuva ovat vain lukevia ALL-IN-ONE-kyselyitä', () => {
+  for (const tiedosto of ['supabase/preflight/preflight_0003.sql',
+                          'supabase/preflight/recovery_snapshot_pre_0003.sql',
+                          'supabase/verify/verify_0003.sql']) {
+    const raw = read(tiedosto);
+    const lauseet = raw.split(NEWLINE)
+      .filter(line => !line.trim().startsWith('--'))
+      .join(NEWLINE)
+      .split(';')
+      .map(part => part.trim())
+      .filter(Boolean);
+
+    assert.equal(lauseet.length, 1, `${tiedosto}: ei ole yksi lause`);
+    assert.equal(lauseet[0].split(/\s+/)[0].toLowerCase(), 'select',
+      `${tiedosto}: lause ei ala sanalla select`);
+
+    for (const sarake of ['check_no', 'section', 'check_name', 'status',
+                          'details', 'poikkeavia_yhteensa']) {
+      assert.ok(raw.includes(sarake), `${tiedosto}: puuttuu sarake ${sarake}`);
+    }
   }
 });

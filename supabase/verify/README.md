@@ -10,8 +10,9 @@ avaimia eika kayttajan sisaltoa - vain rakenteen ja rivimaaria.
 Ajojarjestys ja tulkinta: `docs/PRODUCTION-ACTIVATION-RUNBOOK.md`.
 
 TILANNE: verify_0001.sql ja verify_0002.sql on ajettu tuotantoa vasten
-ja molemmat ovat lapi. verify_0003 - verify_0008 odottavat vastaavia
-migraatioita, joita ei ole ajettu.
+ja molemmat ovat lapi. verify_0003 on kirjoitettu ALL-IN-ONE-muotoon (32 tarkistusta) ja
+migraatio 0003 on auditoitu, mutta sita ei ole ajettu. verify_0004 -
+verify_0008 odottavat seka auditointia etta migraatiota.
 
 Hakemistossa on myos verify_task_extended_activation.sql. Se EI ole
 migraatiokohtainen varmistus vaan ajetaan kerran, kun lippu

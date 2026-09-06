@@ -8,6 +8,8 @@ sanalla select, eika yksikaan muuta mitaan.
 | `preflight_0002.sql` | ennen migraatiota 0002 — AJETTU, migraatio on tehty |
 | `predeploy_task_extended_fields.sql` | ennen lipun TASK_EXTENDED_FIELDS kaantamista, GATE B |
 | `recovery_snapshot_post_0002.sql` | ennen mita tahansa riskialtista, GATE C |
+| `preflight_0003.sql` | ennen migraatiota 0003 |
+| `recovery_snapshot_pre_0003.sql` | ennen migraatiota 0003, tulos sailytetaan |
 
 MIKSI ERILLINEN MIGRAATION ESIEHDOISTA: migraatio tarkistaa samat asiat
 itsekin ja keskeytyy jos jokin ei tasmaa. Preflight kertoo saman ilman

@@ -68,6 +68,20 @@ export function createRepository({ table, schemaKey, normalize, toRow, fromRow }
     /** Muistivarasto — vain testejä ja uloskirjautumista varten. */
     memory,
 
+    /**
+     * Rivimuunnokset tarkastelua varten.
+     *
+     * Portin ollessa false tietokantapolkua ei voi ajaa, joten sen
+     * lähettämää payloadia ei voi todentaa ajamalla. Tämä paljastaa
+     * muunnoksen sellaisenaan, jotta testi voi tarkistaa TÄSMÄLLEEN
+     * mitä kantaan lähtisi portin auettua — ilman että porttia
+     * avataan.
+     *
+     * Vain luku: nämä ovat samat funktiot joita insert ja update
+     * käyttävät, eivät kopio.
+     */
+    mapping: Object.freeze({ toRow, fromRow, normalize }),
+
     async list() {
       if (!usesDatabase()) return memory.list();
       try {
