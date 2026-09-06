@@ -93,15 +93,10 @@ test('jokaisen migraation tilamerkintä kertoo totuuden', () => {
     }
   }
 
-  // Migraation ajaminen ja lipun kääntäminen ovat ERI päätöksiä.
-  // 0002 on ajettu, mutta lippu on yhä false: sovellus ei kirjoita
-  // uusiin sarakkeisiin ennen kuin aktivointi on erikseen hyväksytty
-  // (docs/TASK-EXTENDED-FIELDS-ACTIVATION.md, GATE E).
-  //
-  // Tämä testi kaatuu, kun lippu käännetään — se on tarkoitus. Silloin
-  // päivitetään myös tämä perustelu ja aktivointidokumentin tila.
-  assert.equal(TASK_EXTENDED_FIELDS, false,
-    'lippu on käännetty — päivitä aktivointidokumentti ja tämä testi');
+  // Lipun arvoa ei tarkisteta täällä. Portin ja migraation välinen side
+  // kuuluu testille "yksikään portti ei ole auki ilman ajettua
+  // migraatiota", joka lukee saman tilamerkinnän. Kahdessa paikassa
+  // tarkistettu sääntö ajautuu ennen pitkää erilleen itsestään.
 });
 
 test('jokainen migraatio ajetaan yhtenä transaktiona', () => {
@@ -1873,10 +1868,19 @@ test('KRIITTINEN: yksikään portti ei ole auki ilman ajettua migraatiota', () =
   }
 
   // Nykytila on kirjoitettu auki, jotta muutos näkyy diffissä eikä vain
-  // testin läpimenossa: yksitoista porttia, kaikki kiinni.
-  assert.equal(Object.values(portit).filter(Boolean).length, 0,
-    'jokin portti on auki — ensimmäinen tuotantojulkaisu tehdään kaikki portit kiinni');
+  // testin läpimenossa: yksitoista porttia, joista TASAN YKSI on auki.
+  //
+  // TASK_EXTENDED_FIELDS avattiin, kun 0002 oli ajettu ja todennettu.
+  // Kaikki muut odottavat omaa migraatiotaan. Jos tämä luku muuttuu,
+  // muutos on tarkoituksellinen ja sen näkee diffistä.
+  const auki = Object.entries(portit).filter(([, v]) => v === true).map(([k]) => k);
+  assert.deepEqual(auki, ['TASK_EXTENDED_FIELDS'],
+    `auki olevat portit: ${auki.join(', ') || 'ei yhtään'}`);
   assert.equal(Object.keys(portit).length, 11);
+
+  // Ja avatun portin migraatio on todella ajettu — sama sääntö kuin yllä,
+  // mutta nimenomaisesti sille portille joka on auki.
+  assert.ok(ajettu('0002'), 'TASK_EXTENDED_FIELDS on auki, mutta 0002 ei ole ajettu');
 });
 
 test('KRIITTINEN: aktivointia edeltava varmistus on vain lukeva ALL-IN-ONE', () => {

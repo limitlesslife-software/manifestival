@@ -29,7 +29,7 @@ import {
   toRow, fromRow, assertClientSafe,
   TASK_COLUMNS_CORE, TASK_COLUMNS_EXTENDED, SERVER_OWNED_FIELDS
 } from '../src/lib/rows.js';
-import { TASK_EXTENDED_FIELDS, taskColumns, volatileFields } from '../src/data/schema.js';
+import { TASK_EXTENDED_FIELDS, taskColumns, volatileFields, isPersisted } from '../src/data/schema.js';
 import { PRIORITY_KEYS, DEFAULT_PRIORITY } from '../src/domain/priority.js';
 import { setClient } from '../src/data/client.js';
 import { setUser, clearUser } from '../src/data/session.js';
@@ -362,24 +362,46 @@ test('aikaleimat puuttuvat siististi, jos migraatiota ei ole ajettu', () => {
 // LIPUN KOLME TILAA
 // =====================================================================
 
-test('TILA A: lipun ollessa false kirjoitetaan täsmälleen ydinsarakkeet', () => {
-  assert.equal(TASK_EXTENDED_FIELDS, false, 'lippu on käännetty tuotantoa vastaamattomaksi');
-  assert.deepEqual([...taskColumns()], [...TASK_COLUMNS_CORE]);
+test('TILA B: lippu on päällä ja kirjoitetaan täsmälleen laajennetut sarakkeet', () => {
+  // Migraatio 0002 on ajettu ja todennettu, joten lippu on true.
+  assert.equal(TASK_EXTENDED_FIELDS, true, 'lippu ei ole päällä');
+  assert.deepEqual([...taskColumns()], [...TASK_COLUMNS_EXTENDED]);
 
-  const rivi = toRow(normalizeTask({ id: 'x', date: '2026-09-05', title: 'x',
+  const rivi = toRow(normalizeTask({ id: 'x', date: '2026-09-05', time: '09:00', title: 'x',
     description: 'kuvaus', durationMinutes: 30, priority: 'korkea' }), taskColumns());
+
+  assert.deepEqual(Object.keys(rivi).sort(), [...TASK_COLUMNS_EXTENDED].sort());
+  for (const laajennettu of ['description', 'duration_minutes', 'priority', 'scheduling_state']) {
+    assert.ok(laajennettu in rivi, `${laajennettu} ei lähde kantaan, vaikka lippu on päällä`);
+  }
+  // Palvelimen omistamat kentät eivät ole mukana edes nyt.
+  assert.doesNotThrow(() => assertClientSafe(rivi));
+});
+
+test('HÄTÄVARA: lipun kääntäminen takaisin palauttaa ydinsarakkeet', () => {
+  // Lipun voi kääntää takaisin false, jos jokin menee pieleen. Sarakkeet
+  // jäävät kantaan koskemattomina ja sovellus vain lakkaa kirjoittamasta
+  // niihin. Tämä testaa sen polun, jota taskColumns() käyttäisi silloin.
+  const rivi = toRow(normalizeTask({
+    id: 'x', date: '2026-09-05', title: 'x',
+    description: 'kuvaus', durationMinutes: 30, priority: 'korkea'
+  }), TASK_COLUMNS_CORE);
 
   assert.deepEqual(Object.keys(rivi).sort(), [...TASK_COLUMNS_CORE].sort());
   for (const laajennettu of ['description', 'duration_minutes', 'priority', 'scheduling_state']) {
     assert.equal(laajennettu in rivi, false,
-      `${laajennettu} lähtisi kantaan, vaikka lippu on false`);
+      `${laajennettu} lähtisi kantaan hätävarapolulla`);
   }
 });
 
-test('TILA A: käyttöliittymä kertoo, mitkä kentät eivät vielä säily', () => {
-  // Vaihtoehto — teeskennellä tallennusta — olisi pahempaa kuin puute.
-  assert.deepEqual(volatileFields().sort(),
-    ['description', 'durationMinutes', 'priority', 'schedulingState'].sort());
+test('TILA B: yksikään kenttä ei ole enää haihtuva', () => {
+  // Lipun ollessa false käyttöliittymä kertoi, ettei kuvaus, kesto,
+  // prioriteetti eikä aikataulutuksen tila säily. Nyt ne säilyvät, joten
+  // varoitusta ei saa enää näyttää — se olisi valhe toiseen suuntaan.
+  assert.deepEqual(volatileFields(), []);
+  for (const kentta of ['description', 'durationMinutes', 'priority', 'schedulingState']) {
+    assert.equal(isPersisted(kentta), true, `${kentta} ei muka säily`);
+  }
 });
 
 test('TILA B: lipun ollessa true kirjoitetaan täsmälleen laajennetut sarakkeet', () => {
@@ -689,7 +711,7 @@ test('käyttäjän tekemä ajan muutos on yhä aina manuaalinen päätös', asyn
 // JULKAISUPAKETIN PORTTI
 // =====================================================================
 
-test('KRIITTINEN: julkaistavassa paketissa ei ole aktivoitua lippua', async () => {
+test('KRIITTINEN: julkaistava paketti sisältää aktivoidun lipun eikä yhtään vanhentunutta kopiota', async () => {
   // GATE D julkaisee koodin lippu YHÄ FALSE. Aiemmat testit tarkistavat
   // tuodun vakion arvon; tämä tarkistaa TIEDOSTOT, jotka oikeasti
   // tarjoillaan. Ero on olennainen: tuotu arvo tulee siitä samasta
@@ -717,11 +739,16 @@ test('KRIITTINEN: julkaistavassa paketissa ei ole aktivoitua lippua', async () =
   const kaikki = [...julkaistavat, ...koonnit];
   assert.ok(kaikki.length > 20, `julkaistavia tiedostoja löytyi vain ${kaikki.length}`);
 
-  const aktivoitu = /TASK_EXTENDED_FIELDS\s*=\s*true/;
-  for (const file of kaikki) {
+  // Vanhentunut kopio on nyt se vaara, ei aktivoitu lippu. Jos jokin
+  // julkaistava tiedosto sisältäisi yhä `= false`, sovellus lakkaisi
+  // kirjoittamasta laajennettuja kenttiä juuri siellä missä se kopio
+  // ladataan — ja vika näkyisi vasta kun käyttäjä huomaa kuvauksen
+  // kadonneen.
+  const vanhentunut = /TASK_EXTENDED_FIELDS\s*=\s*false/;
+  for (const file of julkaistavat) {
     const source = fs.readFileSync(path.join(ROOT, file), 'utf8');
-    assert.equal(aktivoitu.test(source), false,
-      `${file} sisältää aktivoidun lipun — tätä pakettia ei saa julkaista`);
+    assert.equal(vanhentunut.test(source), false,
+      `${file} sisältää vanhentuneen lipun arvon false`);
   }
 
   // Ja määrittelyjä on tasan yksi, arvo false. Kaksi määrittelyä
@@ -734,10 +761,27 @@ test('KRIITTINEN: julkaistavassa paketissa ei ole aktivoitua lippua', async () =
   assert.equal(maarittelyt.filter(f => f.startsWith('src/')).length, 1,
     `lipulla on ${maarittelyt.filter(f => f.startsWith('src/')).length} määrittelyä lähdekoodissa`);
 
-  for (const file of maarittelyt) {
+  for (const file of maarittelyt.filter(f => f.startsWith('src/'))) {
     const arvo = /export const TASK_EXTENDED_FIELDS\s*=\s*(\w+)/
       .exec(fs.readFileSync(path.join(ROOT, file), 'utf8'))[1];
-    assert.equal(arvo, 'false', `${file}: lipun arvo on ${arvo}`);
+    assert.equal(arvo, 'true', `${file}: lipun arvo on ${arvo}`);
+  }
+
+  // KOONTITULOKSET ovat eri asia kuin julkaistava lähde. dist/ ja
+  // Capacitorin assetit eivät ole versionhallinnassa eivätkä päädy
+  // Verceliin — ne menevät APK:hon. Jos ne ovat vanhentuneet, se on
+  // laitehyväksynnän asia (backlog D1) eikä verkkojulkaisun este.
+  // Testi ei siis kaadu niihin, mutta backlogin on oltava kirjattuna.
+  const vanhentuneetKoonnit = koonnit.filter(file =>
+    vanhentunut.test(fs.readFileSync(path.join(ROOT, file), 'utf8')));
+
+  if (vanhentuneetKoonnit.length > 0) {
+    const aktivointidoc = read('docs/TASK-EXTENDED-FIELDS-ACTIVATION.md');
+    assert.match(aktivointidoc, /D1/,
+      `koontituloksissa on vanhentunut lippu (${vanhentuneetKoonnit.join(', ')}), `
+      + 'mutta laitehyväksynnän backlogia ei ole kirjattu');
+    assert.ok(aktivointidoc.includes('sync:android'),
+      'backlog ei kerro, miten koontitulokset päivitetään');
   }
 });
 
@@ -749,6 +793,191 @@ test('service workerin välimuistiversio on nostettu tätä julkaisua varten', (
   const sw = read('sw.js');
   const versio = /const CACHE_VERSION = 'v(\d+)'/.exec(sw);
   assert.ok(versio, 'välimuistin versiota ei löytynyt');
-  assert.ok(Number(versio[1]) >= 10,
-    `välimuistin versio on v${versio[1]}, odotettiin vähintään v10`);
+  // Versio nostettiin lipun aktivoinnissa v11:een. Se ei ole kosmetiikkaa:
+  // sw.js:n muuttuminen on AINOA asia, josta selain huomaa uuden service
+  // workerin ja hakee SHELL-listan uudelleen `cache: 'reload'` -tilassa.
+  // Ilman nostoa offline-kykyisellä asennuksella olisi yhä välimuistissa
+  // schema.js, jossa lippu on false — eikä mikään koskaan päivittäisi sitä.
+  assert.ok(Number(versio[1]) >= 11,
+    `välimuistin versio on v${versio[1]}, odotettiin vähintään v11`);
+});
+
+// =====================================================================
+// AKTIVOIDUN TILAN SOPIMUSTESTIT
+//
+// Lippu on päällä, joten jokainen tehtävän kirjoitus sisältää nyt neljä
+// uutta saraketta. Nämä testit ajavat oikean repositoriopolun ja
+// tarkastavat TÄSMÄLLEEN sen payloadin, joka lähtisi verkkoon.
+// =====================================================================
+
+/** Aja yksi kirjoitus ja palauta lähtenyt payload. */
+async function payloadOf(fn) {
+  const client = recordingClient();
+  setUser(USER);
+  setClient(client);
+  await fn();
+  assert.equal(client.kirjatut.length, 1, 'odotettiin tasan yhtä kirjoitusta');
+  return client.kirjatut[0];
+}
+
+test('LUONTI: jokainen laajennettu kenttä lähtee kantaan', async () => {
+  const tapaukset = [
+    ['ajallinen tehtävä', { time: '09:00' }, { scheduling_state: 'manual' }],
+    ['ajaton tehtävä', { time: null }, { scheduling_state: 'unscheduled' }],
+    ['kuvaus', { description: '  pitkä konteksti  ' }, { description: 'pitkä konteksti' }],
+    ['kesto', { durationMinutes: 45 }, { duration_minutes: 45 }],
+    ['korkea prioriteetti', { priority: 'korkea' }, { priority: 'korkea' }],
+    ['matala prioriteetti', { priority: 'matala' }, { priority: 'matala' }],
+    ['automaatin sijoitus', { time: '09:00', schedulingState: SCHEDULING.AUTO },
+      { scheduling_state: 'auto' }]
+  ];
+
+  for (const [nimi, syote, odotus] of tapaukset) {
+    const { op, payload } = await payloadOf(() => tasksRepo.insertTask(normalizeTask({
+      id: 'uusi', date: '2026-09-06', title: 'testi', ...syote
+    })));
+
+    assert.equal(op, 'insert', nimi + ': väärä operaatio');
+    for (const [sarake, arvo] of Object.entries(odotus)) {
+      assert.equal(payload[sarake], arvo,
+        nimi + ': ' + sarake + ' = ' + JSON.stringify(payload[sarake])
+        + ', odotettiin ' + JSON.stringify(arvo));
+    }
+    // Sarakejoukko on täsmälleen laajennettu — ei enempää eikä vähempää.
+    assert.deepEqual(Object.keys(payload).sort(), [...TASK_COLUMNS_EXTENDED].sort(),
+      nimi + ': väärä sarakejoukko');
+  }
+});
+
+test('LUONTI: tyhjät valinnaiset kentät lähtevät nullina, pakolliset eivät koskaan', async () => {
+  const { payload } = await payloadOf(() => tasksRepo.insertTask(normalizeTask({
+    id: 'uusi', date: '2026-09-06', title: 'vain pakolliset'
+  })));
+
+  assert.equal(payload.description, null, 'tyhjä kuvaus ei ole null');
+  assert.equal(payload.duration_minutes, null, 'tyhjä kesto ei ole null');
+  assert.equal(payload.priority, 'normaali', 'prioriteetti ei saanut oletusta');
+  assert.equal(payload.scheduling_state, 'unscheduled', 'aikataulutustila väärin');
+});
+
+test('MUOKKAUS: laajennettujen kenttien asetus, muutos ja tyhjennys', async () => {
+  const { editTask } = await import('../src/app/actions.js');
+  const { resetState, setTasks } = await import('../src/app/state.js');
+
+  const alku = normalizeTask({
+    id: 'muokattava', date: '2026-09-06', time: '09:00', title: 'tehtävä',
+    description: 'alkuperäinen', durationMinutes: 30, priority: 'korkea'
+  });
+
+  const askeleet = [
+    ['kuvauksen muutos', { description: 'muutettu' }, { description: 'muutettu' }],
+    ['kuvauksen tyhjennys', { description: '' }, { description: null }],
+    ['keston muutos', { durationMinutes: 90 }, { duration_minutes: 90 }],
+    ['keston tyhjennys', { durationMinutes: null }, { duration_minutes: null }],
+    ['prioriteetin muutos', { priority: 'matala' }, { priority: 'matala' }],
+    ['aikataulutustilan muutos', { schedulingState: SCHEDULING.AUTO }, { scheduling_state: 'auto' }]
+  ];
+
+  for (const [nimi, muutos, odotus] of askeleet) {
+    const client = recordingClient();
+    setUser(USER);
+    setClient(client);
+    resetState();
+    setTasks([alku]);
+
+    const tulos = await editTask('muokattava', muutos);
+    assert.equal(tulos.ok, true, nimi + ': muokkaus epäonnistui');
+
+    const { payload } = client.kirjatut.find(k => k.op === 'update');
+    for (const [sarake, arvo] of Object.entries(odotus)) {
+      assert.equal(payload[sarake], arvo,
+        nimi + ': ' + sarake + ' = ' + JSON.stringify(payload[sarake]));
+    }
+    resetState();
+  }
+});
+
+test('KRIITTINEN: tavallinen muokkaus ei pyyhi laajennettuja kenttiä', async () => {
+  // Koko rivin kirjoitus on ylikirjoitus. Jos otsikon vaihtaminen
+  // lähettäisi tyhjän kuvauksen, käyttäjän kirjoittama teksti katoaisi
+  // ilman että mikään kertoisi siitä.
+  const { editTask } = await import('../src/app/actions.js');
+  const { resetState, setTasks } = await import('../src/app/state.js');
+
+  const client = recordingClient();
+  setUser(USER);
+  setClient(client);
+  resetState();
+  setTasks([normalizeTask({
+    id: 'sailyva', date: '2026-09-06', time: '09:00', title: 'vanha otsikko',
+    description: 'tärkeä konteksti', durationMinutes: 45, priority: 'korkea'
+  })]);
+
+  await editTask('sailyva', { title: 'uusi otsikko', date: '2026-09-07' });
+
+  const { payload } = client.kirjatut.find(k => k.op === 'update');
+  assert.equal(payload.title, 'uusi otsikko');
+  assert.equal(payload.date, '2026-09-07');
+  assert.equal(payload.description, 'tärkeä konteksti', 'kuvaus katosi otsikon muutoksessa');
+  assert.equal(payload.duration_minutes, 45, 'kesto katosi');
+  assert.equal(payload.priority, 'korkea', 'prioriteetti katosi');
+  resetState();
+});
+
+test('KRIITTINEN: osittaiset kirjoitukset koskevat tasan yhteen sarakkeeseen', async () => {
+  // setCompleted ja herätysmerkinnän nollaus lähettävät VAIN oman
+  // sarakkeensa. Jos ne lähettäisivät koko rivin, ne ylikirjoittaisivat
+  // laajennetut kentät sillä tilannekuvalla, joka selaimella sattuu
+  // olemaan — ja valmiiksi merkitseminen voisi pyyhkiä kuvauksen.
+  const valmis = await payloadOf(() => tasksRepo.setCompleted('x', true));
+  assert.equal(valmis.op, 'update');
+  assert.deepEqual(Object.keys(valmis.payload), ['completed'],
+    'setCompleted lähetti: ' + Object.keys(valmis.payload).join(', '));
+
+  const heratys = await payloadOf(() => tasksRepo.clearOtherWakeFlags('2026-09-06', 'x'));
+  assert.equal(heratys.op, 'update');
+  assert.deepEqual(Object.keys(heratys.payload), ['is_wake'],
+    'clearOtherWakeFlags lähetti: ' + Object.keys(heratys.payload).join(', '));
+});
+
+test('KRIITTINEN: aikaleimat eivät lähde kantaan edes aktivoituna', async () => {
+  const { payload } = await payloadOf(() => tasksRepo.insertTask(normalizeTask({
+    id: 'uusi', date: '2026-09-06', title: 'x',
+    createdAt: '1999-01-01T00:00:00Z', updatedAt: '1999-01-01T00:00:00Z'
+  })));
+
+  assert.equal('created_at' in payload, false, 'created_at lähti kantaan');
+  assert.equal('updated_at' in payload, false, 'updated_at lähti kantaan');
+  assert.equal('user_id' in payload, false, 'user_id lähti kantaan');
+});
+
+test('LUKUPOLKU: tuotannon 36 rivin malli luetaan ja kirjoitetaan ehjänä', async () => {
+  // Tuotannossa on 35 manual- ja 1 unscheduled-riviä, eikä yhdelläkään
+  // ole vielä kuvausta, kestoa tai muuta kuin oletusprioriteetti.
+  const tuotanto = [
+    ...Array.from({ length: 35 }, (_, i) => legacyRow({
+      id: 'manual-' + i, time: '08:30', scheduling_state: 'manual'
+    })),
+    legacyRow({ id: 'unscheduled-1', time: null, scheduling_state: 'unscheduled' })
+  ];
+
+  const luetut = tuotanto.map(rivi => normalizeTask(fromRow(rivi)));
+
+  assert.equal(luetut.filter(t => t.schedulingState === SCHEDULING.MANUAL).length, 35);
+  assert.equal(luetut.filter(t => t.schedulingState === SCHEDULING.UNSCHEDULED).length, 1);
+
+  for (const tehtava of luetut) {
+    // Käyttöliittymä ei saa kaatua tyhjiin valinnaisiin kenttiin.
+    assert.equal(tehtava.description, null);
+    assert.equal(tehtava.durationMinutes, null);
+    assert.equal(tehtava.priority, 'normaali');
+    assert.ok(tehtava.createdAt, 'created_at ei luettu');
+    assert.ok(tehtava.updatedAt, 'updated_at ei luettu');
+
+    // Ja takaisin kirjoitettuna rivi on kelvollinen laajennetussa tilassa.
+    const rivi = toRow(tehtava, TASK_COLUMNS_EXTENDED);
+    assert.notEqual(rivi.priority, null);
+    assert.notEqual(rivi.scheduling_state, null);
+    assert.equal('created_at' in rivi, false);
+  }
 });

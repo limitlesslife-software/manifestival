@@ -5,9 +5,12 @@ mutta sovellus ei kirjoita niihin. Tämä dokumentti kattaa sen viimeisen
 askeleen: mitä kentät tarkoittavat, miten lippu käännetään, ja mitä
 tehdään jos jokin menee pieleen.
 
-> **TILA: VALMIS AKTIVOITAVAKSI. EI AKTIVOITU.**
-> `TASK_EXTENDED_FIELDS = false`. Aktivointi on GATE E, ja se vaatii
-> nimenomaisen luvan.
+> **TILA: AKTIVOITU KOODISSA. ODOTTAA TUOTANNON HYVÄKSYNTÄÄ.**
+> `TASK_EXTENDED_FIELDS = true`. GATE A–E on tehty; jäljellä ovat
+> GATE F (käyttökokeilut selaimessa) ja GATE G (jälkivarmistus SQL:llä).
+>
+> Tietokantaan ei koskettu: 0002 oli ajettu jo aiemmin, ja aktivointi oli
+> yhden rivin muutos sovelluskoodissa.
 
 ---
 
@@ -158,9 +161,16 @@ Kovakoodattu vakio maksaa yhden julkaisun. Se on tässä oikea hinta.
 ### Vanhentunut välimuisti
 
 Service worker on **network-first**: se hakee aina verkosta ja käyttää
-välimuistia vain kun verkko ei vastaa. Uusi `schema.js` tulee siis
-käyttöön seuraavalla latauksella. `CACHE_VERSION` on nostettu arvoon
-`v10`, mikä siivoaa vanhat välimuistit myös offline-käyttäjiltä.
+välimuistia vain kun verkko ei vastaa. Verkossa oleva käyttäjä saa siis
+uuden `schema.js`:n heti seuraavalla latauksella.
+
+`CACHE_VERSION` nostettiin aktivoinnissa arvoon **`v11`**, eikä se ole
+kosmetiikkaa. `schema.js` on esiladattavassa SHELL-listassa, ja
+`sw.js`:n muuttuminen on **ainoa** asia, josta selain huomaa uuden
+service workerin ja hakee listan uudelleen `cache: 'reload'` -tilassa.
+Ilman nostoa offline-kykyisellä asennuksella olisi yhä välimuistissa
+`schema.js`, jossa lippu on `false` — eikä mikään päivittäisi sitä
+koskaan.
 
 **Android on eri asia.** Capacitor kopioi `src/`-hakemiston APK:n
 assetteihin (`android/app/src/main/assets/public/`, ei
@@ -210,9 +220,10 @@ eivät liity lippuun (ehdotuksen hyväksyminen, repositorion normalisointi,
 tyhjä kuvaus). Jos ne julkaistaan yhdessä lipun kanssa ja jokin
 rikkoutuu, ei tiedetä kumpi rikkoi.
 
-### GATE E — käännä lippu
+### GATE E — käännä lippu ✔ TEHTY
 
-**Vaatii nimenomaisen luvan. Tämä työpaketti päättyy tähän.**
+Lippu on käännetty ja julkaistu. Alla oleva on tallessa siltä varalta,
+että se on joskus tehtävä uudelleen.
 
 1. `src/data/schema.js`: `TASK_EXTENDED_FIELDS = false` → `true`
 2. `npm test` — tämä kaataa testin *"jokaisen migraation tilamerkintä
@@ -345,7 +356,7 @@ Nämä vaativat fyysisen Android-laitteen eikä niitä tehdä nyt.
 
 | # | Mitä | Miksi vain laitteella |
 |---|---|---|
-| D1 | APK:n koonti lipun kääntämisen jälkeen (`npm run sync:android`) | Capacitor kopioi `src/`-hakemiston APK:n assetteihin. Sovelluskuori **ei** päivity Vercel-julkaisusta, joten Android-käyttäjä jää vanhaan lippuun kunnes uusi APK asennetaan. |
+| D1 | APK:n koonti lipun kääntämisen jälkeen (`npm run sync:android`) | **Ajankohtainen nyt.** `android/app/src/main/assets/public/src/data/schema.js` sisältää yhä `TASK_EXTENDED_FIELDS = false`: Capacitorin assetit ovat edellisestä synkronoinnista eivätkä päivity Vercel-julkaisusta. Verkkokäyttö ei kärsi, mutta Android-kuori jää vanhaan lippuun kunnes assetit synkronoidaan ja uusi APK rakennetaan. Ei este verkkojulkaisulle. |
 | D2 | Laajennettujen kenttien tallennus natiivikuoressa | WebView on eri selainmoottori kuin työpöydällä. Verkkovirheiden käsittely ja istunnon säilyminen taustalla käyttäytyvät eri tavalla. |
 | D3 | Offline-kirjoitus ja paluu verkkoon | Service worker on network-first; offline-tilan käyttäytyminen laitteella on todettava käsin. |
 

@@ -9,13 +9,9 @@
 // Ilman tätä porttia sovellus yrittäisi kirjoittaa olemattomiin sarakkeisiin
 // ja JOKAINEN tallennus epäonnistuisi tuotannossa.
 //
-// MITEN MIGRAATIO OTETAAN KÄYTTÖÖN
-//   1. Aja supabase/migrations/0002_task_domain_fields.sql
-//   2. Vaihda TASK_EXTENDED_FIELDS arvoon true
-//   3. Aja npm test
-//   4. Julkaise
-//
-// Se on tarkoituksella yhden rivin muutos: kaikki muu koodi on jo valmiina.
+// TILA: migraatio 0002 on ajettu tuotantoon ja lippu on käännetty.
+// Kuvaus, kesto, prioriteetti ja aikataulutuksen tila tallentuvat nyt.
+// Ks. docs/TASK-EXTENDED-FIELDS-ACTIVATION.md.
 
 import { TASK_COLUMNS_CORE, TASK_COLUMNS_EXTENDED } from '../lib/rows.js';
 
@@ -27,9 +23,12 @@ import { TASK_COLUMNS_CORE, TASK_COLUMNS_EXTENDED } from '../lib/rows.js';
  *         selaimen muistissa ja katoavat sivun latauksessa.
  * true  = kaikki domainin kentät tallentuvat.
  *
- * PRODUCTION GATE — älä muuta ilman että migraatio on todella ajettu.
+ * PRODUCTION GATE. Migraatio 0002 on ajettu ja todennettu, joten tämä on
+ * true. Takaisin false vaihtaminen on turvallinen hätävara: sarakkeet
+ * jäävät kantaan koskemattomina ja sovellus vain lakkaa kirjoittamasta
+ * niihin. Sarakkeita EI saa pudottaa — niissä on käyttäjän tietoa.
  */
-export const TASK_EXTENDED_FIELDS = false;
+export const TASK_EXTENDED_FIELDS = true;
 
 /** Sarakkeet, joita tehtävän kirjoituksissa saa käyttää juuri nyt. */
 export function taskColumns() {
