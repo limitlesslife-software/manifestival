@@ -21,6 +21,12 @@ docs/TASK-EXTENDED-FIELDS-ACTIVATION.md, GATE G.
 verify_0002 - verify_0008 odottavat viela vastaavia migraatioita, joita ei
 ole ajettu.
 
+Hakemistossa on myos diagnose_0003_routine_exception_columns.sql. Se ei
+ole varmistus vaan selvitys: se listaa taulun routine_exceptions
+sarakkeet nimelta ja kertoo mika on odotettu. Se kirjoitettiin, kun
+verify_0003 pysahtyi sarakemaaraan 11 vaikka odotti kymmenta —
+odotusarvo oli laskettu kasin vaarin, ei kanta.
+
 Naiden lisaksi on `supabase/acceptance/verify_acceptance.sql`. Se ei ole
 migraatiokohtainen varmistus vaan kahden tilin eristystestin
 jalkivarmistus: se todistaa, etta tuotanto palasi lahtotilaan testin

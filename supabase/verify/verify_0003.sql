@@ -33,44 +33,72 @@ from (
              and tablename in ('routines', 'routine_exceptions')) as toteutui
 
   union all
-  -- SARAKKEET TARKISTETAAN KAHDESSA OSASSA.
+  -- SARAKKEET TARKISTETAAN KOLMESSA OSASSA.
   --
-  -- Nimeltä luetellaan ne, joilla on rakenteellinen merkitys. Kaksi
-  -- sisältökenttää jätetään tarkoituksella nimeämättä: varmistustiedostot
-  -- eivät saa sisältää käyttäjän sisältökenttien nimiä lainkaan, jotta
-  -- yksinkertainen tarkistus "lukeeko varmistus sisältöä" pysyy
-  -- luotettavana eikä sitä tarvitse tehdä ovelaksi. Kokonaismäärä
-  -- kohdissa 03 ja 05 sulkee jäljelle jäävän aukon.
-  select '02', 'taulut', 'routines-taulun rakenteelliset sarakkeet ovat olemassa', '15',
+  -- Nimeltä luetellaan ne, joilla on rakenteellinen merkitys.
+  -- Sisältökenttiä ei nimetä lainkaan: varmistustiedostot eivät saa
+  -- sisältää käyttäjän sisältökenttien nimiä, jotta yksinkertainen
+  -- tarkistus "lukeeko varmistus sisältöä" pysyy luotettavana eikä sitä
+  -- tarvitse tehdä ovelaksi.
+  --
+  -- KOLMAS OSA ON OLENNAINEN. Aiemmin tarkistuksia oli kaksi: nimetyt
+  -- sarakkeet ja kokonaismäärä. Kokonaismäärä oli laskettu käsin väärin
+  -- (10 eikä 11, koska updated_at unohtui kummastakin listasta), ja
+  -- tuotannon varmistus pysähtyi siihen — vaikka kanta oli täsmälleen
+  -- migraation mukainen.
+  --
+  -- Kokonaismäärä yksin ei myöskään todista mitään: se voisi täsmätä,
+  -- vaikka odotettu sarake puuttuisi ja tilalla olisi tuntematon.
+  -- Nimeämättömien sarakkeiden lukumäärä sulkee sen aukon nimeämättä
+  -- niitä: nimetyt + nimeämättömät = kokonaismäärä, ja jokainen kolmesta
+  -- luvusta on lukittu erikseen.
+  select '02', 'taulut', 'routines-taulun rakenteelliset sarakkeet ovat olemassa', '16',
          (select count(*)::text from information_schema.columns
            where table_schema = 'public' and table_name = 'routines'
              and column_name in ('id', 'user_id', 'description', 'category',
                                  'priority', 'duration_minutes', 'recurrence_type',
                                  'recurrence_weekdays', 'preferred_time', 'scheduling',
                                  'active', 'goal_id', 'start_date', 'end_date',
-                                 'created_at'))
+                                 'created_at', 'updated_at'))
 
   union all
-  select '03', 'taulut', 'routines-taulussa on tasan 17 saraketta', '17',
+  select '03', 'taulut', 'routines-taulussa on tasan yksi nimeamaton sarake', '1',
+         (select count(*)::text from information_schema.columns
+           where table_schema = 'public' and table_name = 'routines'
+             and column_name not in ('id', 'user_id', 'description', 'category',
+                                     'priority', 'duration_minutes', 'recurrence_type',
+                                     'recurrence_weekdays', 'preferred_time', 'scheduling',
+                                     'active', 'goal_id', 'start_date', 'end_date',
+                                     'created_at', 'updated_at'))
+
+  union all
+  select '04', 'taulut', 'routines-taulussa on tasan 17 saraketta', '17',
          (select count(*)::text from information_schema.columns
            where table_schema = 'public' and table_name = 'routines')
 
   union all
-  select '04', 'taulut', 'routine_exceptions-taulun rakenteelliset sarakkeet ovat olemassa', '8',
+  select '05', 'taulut', 'routine_exceptions-taulun rakenteelliset sarakkeet ovat olemassa', '9',
          (select count(*)::text from information_schema.columns
            where table_schema = 'public' and table_name = 'routine_exceptions'
              and column_name in ('id', 'user_id', 'routine_id', 'date', 'type',
-                                 'time', 'duration_minutes', 'created_at'))
+                                 'time', 'duration_minutes', 'created_at', 'updated_at'))
 
   union all
-  select '05', 'taulut', 'routine_exceptions-taulussa on tasan 10 saraketta', '10',
+  select '06', 'taulut', 'routine_exceptions-taulussa on tasan kaksi nimeamatonta saraketta', '2',
+         (select count(*)::text from information_schema.columns
+           where table_schema = 'public' and table_name = 'routine_exceptions'
+             and column_name not in ('id', 'user_id', 'routine_id', 'date', 'type',
+                                     'time', 'duration_minutes', 'created_at', 'updated_at'))
+
+  union all
+  select '07', 'taulut', 'routine_exceptions-taulussa on tasan 11 saraketta', '11',
          (select count(*)::text from information_schema.columns
            where table_schema = 'public' and table_name = 'routine_exceptions')
 
   union all
   -- Omistajasarake on uuid eika text. Tyyppi ratkaisee, toimiiko
   -- auth.uid() = user_id -vertailu lainkaan.
-  select '06', 'taulut', 'user_id on uuid ja NOT NULL molemmissa tauluissa', '2',
+  select '08', 'taulut', 'user_id on uuid ja NOT NULL molemmissa tauluissa', '2',
          (select count(*)::text from information_schema.columns
            where table_schema = 'public'
              and table_name in ('routines', 'routine_exceptions')
@@ -78,7 +106,7 @@ from (
              and data_type = 'uuid' and is_nullable = 'NO')
 
   union all
-  select '07', 'taulut', 'user_id saa oletusarvonsa auth.uid()-kutsusta', '2',
+  select '09', 'taulut', 'user_id saa oletusarvonsa auth.uid()-kutsusta', '2',
          (select count(*)::text from information_schema.columns
            where table_schema = 'public'
              and table_name in ('routines', 'routine_exceptions')
@@ -90,7 +118,7 @@ from (
   -- ================================================================
 
   union all
-  select '08', 'rajoitteet', 'Yhdeksan tarkistetta on olemassa', '9',
+  select '10', 'rajoitteet', 'Yhdeksan tarkistetta on olemassa', '9',
          (select count(*)::text from pg_constraint
            where contype = 'c'
              and conname in ('routines_recurrence_type_check', 'routines_scheduling_check',
@@ -101,7 +129,7 @@ from (
 
   union all
   -- Rajoitteen olemassaolo ei kerro mita se sallii.
-  select '09', 'rajoitteet', 'Tarkisteiden ehdot sisaltavat odotetut arvot', '4',
+  select '11', 'rajoitteet', 'Tarkisteiden ehdot sisaltavat odotetut arvot', '4',
          (select count(*)::text from pg_constraint
            where contype = 'c'
              and ((conname = 'routines_recurrence_type_check'
@@ -114,12 +142,12 @@ from (
                    and pg_get_constraintdef(oid) like '%reschedule%')))
 
   union all
-  select '10', 'rajoitteet', 'Poikkeuksen yksikasitteisyys (routine_id, date) on voimassa', '1',
+  select '12', 'rajoitteet', 'Poikkeuksen yksikasitteisyys (routine_id, date) on voimassa', '1',
          (select count(*)::text from pg_constraint
            where conname = 'routine_exceptions_unique_day' and contype = 'u')
 
   union all
-  select '11', 'rajoitteet', 'Rutiinin omistajarivin avain (user_id, id) on olemassa', '1',
+  select '13', 'rajoitteet', 'Rutiinin omistajarivin avain (user_id, id) on olemassa', '1',
          (select count(*)::text from pg_constraint
            where conname = 'routines_owner_row_key' and contype = 'u')
 
@@ -128,7 +156,7 @@ from (
   -- ================================================================
 
   union all
-  select '12', 'vierasavaimet', 'Molemmat taulut viittaavat auth.users(id):hen CASCADElla', '2',
+  select '14', 'vierasavaimet', 'Molemmat taulut viittaavat auth.users(id):hen CASCADElla', '2',
          (select count(*)::text
             from pg_constraint con
             join pg_class t on t.oid = con.conrelid
@@ -148,7 +176,7 @@ from (
   --
   -- conkey on sarakenumeroiden vektori: kahden sarakkeen vierasavain
   -- on siina kahtena alkiona.
-  select '13', 'vierasavaimet', 'Poikkeus viittaa rutiiniin yhdistelmalla (user_id, routine_id)', '1',
+  select '15', 'vierasavaimet', 'Poikkeus viittaa rutiiniin yhdistelmalla (user_id, routine_id)', '1',
          (select count(*)::text
             from pg_constraint con
             join pg_class t on t.oid = con.conrelid
@@ -170,7 +198,7 @@ from (
   union all
   -- Sarakkeet luetaan indeksista, ei nimesta. Nimi voi olla oikea ja
   -- sarakkeet vaarat, jolloin kysely lukisi koko taulun.
-  select '14', 'indeksit', 'routines_user_active_idx on sarakkeilla (user_id, active)', '1',
+  select '16', 'indeksit', 'routines_user_active_idx on sarakkeilla (user_id, active)', '1',
          (select count(*)::text
             from pg_index x
             join pg_class ic on ic.oid = x.indexrelid
@@ -184,7 +212,7 @@ from (
                  = array['user_id', 'active'])
 
   union all
-  select '15', 'indeksit', 'routine_exceptions_user_date_idx on sarakkeilla (user_id, date)', '1',
+  select '17', 'indeksit', 'routine_exceptions_user_date_idx on sarakkeilla (user_id, date)', '1',
          (select count(*)::text
             from pg_index x
             join pg_class ic on ic.oid = x.indexrelid
@@ -198,7 +226,7 @@ from (
                  = array['user_id', 'date'])
 
   union all
-  select '16', 'indeksit', 'Molemmissa tauluissa on user_id-alkuinen indeksi', '2',
+  select '18', 'indeksit', 'Molemmissa tauluissa on user_id-alkuinen indeksi', '2',
          (select count(distinct t.relname)::text
             from pg_index x
             join pg_class t on t.oid = x.indrelid
@@ -214,7 +242,7 @@ from (
 
   union all
   -- tgtype-bitit: 1 = rivikohtainen, 2 = before, 16 = update.
-  select '17', 'liipaisimet', 'Molemmat liipaisimet ovat rivikohtaisia BEFORE UPDATE', '2',
+  select '19', 'liipaisimet', 'Molemmat liipaisimet ovat rivikohtaisia BEFORE UPDATE', '2',
          (select count(*)::text from pg_trigger
            where tgname in ('routines_touch_updated_at', 'routine_exceptions_touch_updated_at')
              and not tgisinternal
@@ -225,7 +253,7 @@ from (
   -- 0003 luo funktion uudelleen `create or replace` -lauseella. Jos sen
   -- maarittely poikkeaisi 0002:n versiosta, se purkaisi hiljaa
   -- aiemman kovennuksen — myos tasks-taulun liipaisimelta.
-  select '18', 'liipaisimet', 'Funktio ei ole SECURITY DEFINER ja polku on kiinnitetty', '1',
+  select '20', 'liipaisimet', 'Funktio ei ole SECURITY DEFINER ja polku on kiinnitetty', '1',
          (select count(*)::text
             from pg_proc p join pg_namespace n on n.oid = p.pronamespace
            where n.nspname = 'public' and p.proname = 'touch_updated_at'
@@ -233,7 +261,7 @@ from (
              and array_to_string(coalesce(p.proconfig, array[]::text[]), ',') like '%search_path=%')
 
   union all
-  select '19', 'liipaisimet', 'tasks-taulun liipaisin on yha ehja', '1',
+  select '21', 'liipaisimet', 'tasks-taulun liipaisin on yha ehja', '1',
          (select count(*)::text from pg_trigger
            where tgrelid = 'public.tasks'::regclass
              and tgname = 'tasks_touch_updated_at' and not tgisinternal
@@ -244,7 +272,7 @@ from (
   -- ================================================================
 
   union all
-  select '20', 'turva', 'RLS on paalla molemmissa uusissa tauluissa', '2',
+  select '22', 'turva', 'RLS on paalla molemmissa uusissa tauluissa', '2',
          (select count(*)::text from pg_class
            where relnamespace = 'public'::regnamespace
              and relname in ('routines', 'routine_exceptions') and relrowsecurity)
@@ -252,7 +280,7 @@ from (
   union all
   -- Kahdeksan politiikkaa oikein ehdoin. Maara ei riita: vaara ehto
   -- nayttaa ulospain samalta kuin oikea.
-  select '21', 'turva', 'Kahdeksan politiikkaa tasmaa odotettuun ehtoon', '8',
+  select '23', 'turva', 'Kahdeksan politiikkaa tasmaa odotettuun ehtoon', '8',
          (select count(*)::text
             from pg_policies p
             join (values
@@ -271,13 +299,13 @@ from (
            where p.schemaname = 'public' and p.roles = '{authenticated}'::name[])
 
   union all
-  select '22', 'turva', 'Uusissa tauluissa ei ole yhtaan ylimaaraista politiikkaa', '8',
+  select '24', 'turva', 'Uusissa tauluissa ei ole yhtaan ylimaaraista politiikkaa', '8',
          (select count(*)::text from pg_policies
            where schemaname = 'public'
              and tablename in ('routines', 'routine_exceptions'))
 
   union all
-  select '23', 'turva', '0001:n kahdeksan politiikkaa ovat yha tallella', '8',
+  select '25', 'turva', '0001:n kahdeksan politiikkaa ovat yha tallella', '8',
          (select count(*)::text from pg_policies
            where schemaname = 'public' and tablename in ('tasks', 'profile'))
 
@@ -286,7 +314,7 @@ from (
   -- ================================================================
 
   union all
-  select '24', 'oikeudet', 'anon-roolilla ei ole tehollista oikeutta uusiin tauluihin', '0',
+  select '26', 'oikeudet', 'anon-roolilla ei ole tehollista oikeutta uusiin tauluihin', '0',
          (select count(*)::text
             from (select unnest(array['public.routines', 'public.routine_exceptions']) as taulu) tt
             cross join (select unnest(array['select', 'insert', 'update', 'delete',
@@ -294,7 +322,7 @@ from (
            where has_table_privilege('anon', tt.taulu, pp.oikeus))
 
   union all
-  select '25', 'oikeudet', 'authenticated-roolilla on tasan CRUD molempiin tauluihin', '8',
+  select '27', 'oikeudet', 'authenticated-roolilla on tasan CRUD molempiin tauluihin', '8',
          (select count(*)::text
             from (select unnest(array['public.routines', 'public.routine_exceptions']) as taulu) tt
             cross join (select unnest(array['select', 'insert', 'update', 'delete',
@@ -302,7 +330,7 @@ from (
            where has_table_privilege('authenticated', tt.taulu, pp.oikeus))
 
   union all
-  select '26', 'oikeudet', 'PUBLIC-roolilla ei ole oikeuksia uusiin tauluihin', '0',
+  select '28', 'oikeudet', 'PUBLIC-roolilla ei ole oikeuksia uusiin tauluihin', '0',
          (select count(*)::text
             from pg_class cl, aclexplode(cl.relacl) acl
            where cl.oid = any (array['public.routines'::regclass,
@@ -314,28 +342,28 @@ from (
   -- ================================================================
 
   union all
-  select '27', 'data', 'Uudet taulut ovat tyhjia', '0',
+  select '29', 'data', 'Uudet taulut ovat tyhjia', '0',
          ((select count(*) from public.routines)
         + (select count(*) from public.routine_exceptions))::text
 
   union all
-  select '28', 'data', 'Omistajattomia rivejä ei ole uusissa tauluissa', '0',
+  select '30', 'data', 'Omistajattomia rivejä ei ole uusissa tauluissa', '0',
          ((select count(*) from public.routines where user_id is null)
         + (select count(*) from public.routine_exceptions where user_id is null))::text
 
   union all
-  select '29', 'data', 'Orpoja poikkeuksia ei ole', '0',
+  select '31', 'data', 'Orpoja poikkeuksia ei ole', '0',
          (select count(*)::text
             from public.routine_exceptions e
             left join public.routines r on r.id = e.routine_id and r.user_id = e.user_id
            where r.id is null)
 
   union all
-  select '30', 'data', 'Tehtavia on yha 36 — 0003 ei koskenut niihin', '36',
+  select '32', 'data', 'Tehtavia on yha 36 — 0003 ei koskenut niihin', '36',
          (select count(*)::text from public.tasks)
 
   union all
-  select '31', 'rajaus', 'Migraatioiden 0004-0008 tauluja ei ole olemassa', '0',
+  select '33', 'rajaus', 'Migraatioiden 0004-0008 tauluja ei ole olemassa', '0',
          (select count(*)::text from pg_tables
            where schemaname = 'public'
              and tablename in ('goals', 'projects', 'notification_preferences',
@@ -343,7 +371,7 @@ from (
                                'savings_goals', 'ai_audit'))
 
   union all
-  select '32', 'kirjattavat', 'Varmistuksen hetki (UTC)', 'INFO',
+  select '34', 'kirjattavat', 'Varmistuksen hetki (UTC)', 'INFO',
          to_char(now() at time zone 'UTC', 'YYYY-MM-DD HH24:MI:SS')
 
 ) c

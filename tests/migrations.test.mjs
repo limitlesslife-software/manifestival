@@ -28,6 +28,8 @@ import { PRIORITIES } from '../src/domain/priority.js';
 import { SCALE_MIN, SCALE_MAX } from '../src/domain/wellbeing.js';
 import { DEFAULT_PREFERENCES } from '../src/domain/notification.js';
 import { TABLES, TASK_EXTENDED_FIELDS } from '../src/data/schema.js';
+import { routineExceptionsRepo } from '../src/data/collectionsRepo.js';
+import { normalizeException } from '../src/domain/routine.js';
 import { normalizeTask } from '../src/domain/task.js';
 import { toRow, fromRow, TASK_COLUMNS_EXTENDED } from '../src/lib/rows.js';
 import { BILL_STATUS, CADENCE } from '../src/domain/finance.js';
@@ -2328,4 +2330,214 @@ test('oletusoikeuksien diagnostiikka on vain lukeva ja purkaa luvun osiin', () =
   // Ja se sisältää todisteen siitä, että neutralointi toimii jo.
   assert.ok(raw.includes("has_table_privilege('anon'"),
     'diagnostiikka ei todista neutralointia olemassa olevilla tauluilla');
+});
+
+// ================================================================
+// 0003:n sarakemäärät — varmistus lasketaan migraatiosta
+// ================================================================
+//
+// LÖYTYNYT VIKA, JOTA NÄMÄ VARTIOIVAT
+//
+// verify_0003.sql odotti taululta routine_exceptions kymmentä
+// saraketta. Migraatio luo yksitoista. Odotusarvo oli laskettu käsin
+// ("yhdeksän nimettyä + kaksi sisältökenttää"), ja `updated_at` unohtui
+// kummastakin listasta. Tuotannon varmistus pysähtyi siihen, vaikka
+// kanta oli täsmälleen migraation mukainen.
+//
+// Käsin laskettu odotusarvo vanhenee aina. Nämä testit laskevat sen
+// migraatiosta, joten sarakkeen lisääminen tai poistaminen kaataa
+// varmistuksen samassa commitissa jossa muutos tehdään.
+
+/** Yhden taulun sarakkeet migraation create table -lauseesta. */
+function migraationSarakkeet(migraatio, taulu) {
+  const luonti = new RegExp(`create table public\\.${taulu} \\(([\\s\\S]*?)\\n\\);`)
+    .exec(read(`${MIGRATION_DIR}/${migraatio}`));
+  assert.ok(luonti, `${taulu}: create table ei löytynyt`);
+
+  return luonti[1].split(NEWLINE)
+    .map(line => /^ {2}(\w+)\s+\S/.exec(line))
+    .filter(Boolean)
+    .map(m => m[1])
+    .filter(nimi => nimi !== 'constraint' && nimi !== 'foreign');
+}
+
+/** Varmistuksen odotusarvo annetulle tarkistuksen nimelle. */
+function odotusarvo(sql, osuma) {
+  const rivi = sql.split('union all').find(osa => osa.includes(osuma));
+  assert.ok(rivi, `tarkistusta ei löytynyt: ${osuma}`);
+  const m = /',\s*'(\d+)',/.exec(rivi);
+  assert.ok(m, `odotusarvoa ei löytynyt: ${osuma}`);
+  return Number(m[1]);
+}
+
+test('KRIITTINEN: varmistuksen sarakemäärät vastaavat migraatiota', () => {
+  const verify = read('supabase/verify/verify_0003.sql');
+
+  for (const [taulu, osuma] of [
+    ['routines', 'routines-taulussa on tasan 17 saraketta'],
+    ['routine_exceptions', 'routine_exceptions-taulussa on tasan 11 saraketta']
+  ]) {
+    const kannassa = migraationSarakkeet('0003_routines.sql', taulu);
+    const odotettu = odotusarvo(verify, osuma);
+
+    assert.equal(odotettu, kannassa.length,
+      `${taulu}: varmistus odottaa ${odotettu} saraketta, migraatio luo ${kannassa.length}`
+      + ` (${kannassa.join(', ')})`);
+  }
+});
+
+test('KRIITTINEN: nimetyt + nimeämättömät = kokonaismäärä', () => {
+  // Kokonaismäärä yksin ei todista mitään: se voisi täsmätä, vaikka
+  // odotettu sarake puuttuisi ja tilalla olisi tuntematon. Kolmen luvun
+  // on oltava keskenään johdonmukaiset, ja jokainen niistä lukittu.
+  const verify = read('supabase/verify/verify_0003.sql');
+
+  const tapaukset = [
+    ['routines', 'routines-taulun rakenteelliset sarakkeet ovat olemassa',
+     'routines-taulussa on tasan yksi nimeamaton sarake',
+     'routines-taulussa on tasan 17 saraketta'],
+    ['routine_exceptions', 'routine_exceptions-taulun rakenteelliset sarakkeet ovat olemassa',
+     'routine_exceptions-taulussa on tasan kaksi nimeamatonta saraketta',
+     'routine_exceptions-taulussa on tasan 11 saraketta']
+  ];
+
+  for (const [taulu, nimetyt, nimeamattomat, yhteensa] of tapaukset) {
+    const a = odotusarvo(verify, nimetyt);
+    const b = odotusarvo(verify, nimeamattomat);
+    const c = odotusarvo(verify, yhteensa);
+
+    assert.equal(a + b, c,
+      `${taulu}: ${a} nimettyä + ${b} nimeämätöntä <> ${c} yhteensä`);
+    assert.ok(b >= 1, `${taulu}: nimeämättömien määrää ei lukita lainkaan`);
+  }
+});
+
+test('KRIITTINEN: nimettyjen sarakkeiden lista ja sen odotusarvo eivät voi ajautua erilleen', () => {
+  // Odotusarvo (esim. '9') ja `column_name in (...)` -lista ovat kaksi
+  // eri paikkaa, jotka kuvaavat samaa asiaa. Jos listasta poistetaan
+  // nimi mutta luku jää ennalleen, varmistus kaatuu tuotannossa — ja
+  // kaatuu VÄÄRÄSTÄ syystä, aivan kuten sarakemäärän kanssa kävi.
+  //
+  // Tämä testi lukee molemmat ja vertaa ne toisiinsa.
+  const verify = read('supabase/verify/verify_0003.sql');
+
+  const lohkot = verify.split('union all')
+    .filter(osa => osa.includes('rakenteelliset sarakkeet ovat olemassa'));
+  assert.equal(lohkot.length, 2, `nimettyjen sarakkeiden tarkistuksia löytyi ${lohkot.length}`);
+
+  for (const lohko of lohkot) {
+    const odotettu = Number(/',\s*'(\d+)',/.exec(lohko)[1]);
+    const lista = /column_name in \(([\s\S]*?)\)\)/.exec(lohko);
+    assert.ok(lista, 'sarakelistaa ei löytynyt');
+
+    const nimet = [...lista[1].matchAll(/'([a-z_]+)'/g)].map(m => m[1]);
+    assert.equal(nimet.length, odotettu,
+      `lista sisältää ${nimet.length} nimeä mutta odotusarvo on ${odotettu}: ${nimet.join(', ')}`);
+
+    // Ja jokainen nimetty sarake on oikeasti migraation luoma.
+    const taulu = lohko.includes('routine_exceptions') ? 'routine_exceptions' : 'routines';
+    const kannassa = migraationSarakkeet('0003_routines.sql', taulu);
+    for (const nimi of nimet) {
+      assert.ok(kannassa.includes(nimi),
+        `${taulu}: varmistus odottaa saraketta ${nimi}, jota migraatio ei luo`);
+    }
+  }
+});
+
+test('KRIITTINEN: nimeämättömien laskenta käyttää samaa listaa kuin nimettyjen', () => {
+  // `in (...)` ja `not in (...)` on oltava sama joukko. Jos ne
+  // eroaisivat, "nimetyt + nimeämättömät = kokonaismäärä" olisi
+  // mielivaltainen yhtälö eikä todistaisi mitään.
+  const verify = read('supabase/verify/verify_0003.sql');
+
+  for (const taulu of ['routines', 'routine_exceptions']) {
+    const nimetty = verify.split('union all')
+      .find(osa => osa.includes(`${taulu}-taulun rakenteelliset sarakkeet`));
+    const nimeamaton = verify.split('union all')
+      .find(osa => osa.includes(`${taulu}-taulussa on tasan`) && osa.includes('nimeam'));
+
+    assert.ok(nimetty && nimeamaton, `${taulu}: molempia tarkistuksia ei löytynyt`);
+
+    // Ilman dynaamista RegExpiä: sulkujen ja kenoviivojen pakeneminen
+    // mallinelausekkeen sisällä on juuri se paikka, jossa tarkistus
+    // rikkoutuu hiljaa. Merkkijonohaku on tylsempi ja luotettavampi.
+    const poimi = (teksti, avainsana) => {
+      const alku = teksti.indexOf('column_name ' + avainsana + ' (');
+      assert.ok(alku >= 0, `${taulu}: ${avainsana}-listaa ei löytynyt`);
+      const loppu = teksti.indexOf('))', alku);
+      const lista = teksti.slice(alku, loppu);
+      return [...lista.matchAll(/'([a-z_]+)'/g)].map(x => x[1]).sort();
+    };
+
+    assert.deepEqual(poimi(nimetty, 'in'), poimi(nimeamaton, 'not in'),
+      `${taulu}: nimettyjen ja nimeämättömien listat eroavat`);
+  }
+});
+
+test('KRIITTINEN: varmistus ei nojaa pelkkään kokonaismäärään', () => {
+  // Jos nimeämättömien lukumäärä poistettaisiin, ylimääräinen sarake
+  // jäisi huomaamatta silloin kun jokin odotettu puuttuu samaan aikaan.
+  const verify = read('supabase/verify/verify_0003.sql');
+
+  for (const osuma of ['tasan yksi nimeamaton sarake',
+                       'tasan kaksi nimeamatonta saraketta']) {
+    assert.ok(verify.includes(osuma), `puuttuu tarkistus: ${osuma}`);
+  }
+  assert.ok(verify.includes('column_name not in'),
+    'nimeämättömiä sarakkeita ei lasketa lainkaan');
+});
+
+test('KRIITTINEN: sovelluksen kirjoittamat + palvelimen omistamat = kaikki sarakkeet', () => {
+  // Tämä on riippumaton tapa laskea sama luku. Repositorio kirjoittaa
+  // kahdeksan saraketta; user_id, created_at ja updated_at ovat kannan
+  // omaisuutta. 8 + 3 = 11.
+  //
+  // Jos migraatio saisi uuden sarakkeen jota sovellus ei kirjoita eikä
+  // palvelin omista, tämä kaatuisi — ja se on oikea hetki huomata,
+  // ettei kenttää ole kytketty mihinkään.
+  const kannassa = migraationSarakkeet('0003_routines.sql', 'routine_exceptions');
+  const kirjoitetut = Object.keys(routineExceptionsRepo.mapping.toRow(
+    normalizeException({ id: 'x', routineId: 'r', date: '2026-09-07', type: 'skip' })));
+
+  const palvelimenOmat = ['user_id', 'created_at', 'updated_at'];
+
+  assert.equal(kirjoitetut.length + palvelimenOmat.length, kannassa.length,
+    `${kirjoitetut.length} kirjoitettua + ${palvelimenOmat.length} palvelimen `
+    + `<> ${kannassa.length} saraketta`);
+
+  // Eikä sovellus kirjoita yhtäkään palvelimen omistamaa saraketta.
+  for (const kielletty of palvelimenOmat) {
+    assert.equal(kirjoitetut.includes(kielletty), false,
+      `sovellus kirjoittaa palvelimen omistaman sarakkeen ${kielletty}`);
+  }
+
+  // Ja jokainen kirjoitettu sarake on olemassa kannassa.
+  for (const sarake of kirjoitetut) {
+    assert.ok(kannassa.includes(sarake),
+      `sovellus kirjoittaa sarakkeeseen ${sarake}, jota migraatio ei luo`);
+  }
+});
+
+test('sarakediagnostiikka on vain lukeva ja listaa sarakkeet nimeltä', () => {
+  const tiedosto = 'supabase/verify/diagnose_0003_routine_exception_columns.sql';
+  const raw = read(tiedosto);
+
+  const lauseet = raw.split(NEWLINE)
+    .filter(line => !line.trim().startsWith('--'))
+    .join(NEWLINE)
+    .split(';')
+    .map(part => part.trim())
+    .filter(Boolean);
+
+  assert.equal(lauseet.length, 1, 'diagnostiikka ei ole yksi lause');
+  assert.equal(lauseet[0].split(/\s+/)[0].toLowerCase(), 'select');
+
+  for (const needle of ['ordinal_position', 'column_name', 'udt_name',
+                        'is_nullable', 'column_default', 'is_identity', 'is_generated']) {
+    assert.ok(raw.includes(needle), `diagnostiikasta puuttuu ${needle}`);
+  }
+
+  // Yhteenvetorivi vertaa odotettua ja todellista.
+  assert.ok(raw.includes('Sarakkeita on tasan 11'),
+    'diagnostiikka ei kerro odotettua sarakemäärää');
 });
