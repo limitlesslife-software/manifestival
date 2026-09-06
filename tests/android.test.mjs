@@ -72,8 +72,28 @@ test('SÄÄNTÖ: Android-assetit tulevat koonnista, niitä ei muokata käsin', {
   if (!fs.existsSync(assets)) return;
 
   // Assettien index.html pitää olla identtinen repon juuren kanssa.
-  const shipped = fs.readFileSync(path.join(assets, 'index.html'), 'utf8');
-  const source = read('index.html');
+  //
+  // RIVINVAIHDOT NORMALISOIDAAN ENNEN VERTAILUA. Vertailun kaksi puolta
+  // elävät eri sääntöjen alla: repon juuren tiedosto on gitin hallussa
+  // ja saa työpuussa alustan mukaiset rivinvaihdot (`* text=auto` ja
+  // core.autocrlf), kun taas Capacitorin kopioima assetti on se mitä
+  // koonti sattui kirjoittamaan.
+  //
+  // Ero paljastui ensimmäisessä tuotantojulkaisussa: haaranvaihto
+  // main-haaraan ja takaisin kirjoitti työpuun tiedostot uudelleen
+  // CRLF-muodossa, jolloin tämä testi kaatui vaikka sisältö oli sama
+  // merkki merkiltä.
+  //
+  // Testin tarkoitus on estää APK-assettien KÄSIN MUOKKAAMINEN.
+  // Rivinvaihto ei ole käsin tehty muutos, joten sen ei kuulu kaataa
+  // tätä. Kaikki muu ero kaataa yhä.
+  // Poistetaan pelkat CR-merkit. Rakennetaan merkkikoodista, jottei
+  // rivinvaihto katkaise itse lauseketta.
+  const CR = String.fromCharCode(13);
+  const rivinvaihdot = text => text.split(CR).join('');
+
+  const shipped = rivinvaihdot(fs.readFileSync(path.join(assets, 'index.html'), 'utf8'));
+  const source = rivinvaihdot(read('index.html'));
   assert.equal(shipped, source,
     'APK:n index.html eroaa lähteestä — aja npm run sync:android');
 });

@@ -1878,3 +1878,87 @@ test('KRIITTINEN: yksikään portti ei ole auki ilman ajettua migraatiota', () =
     'jokin portti on auki — ensimmäinen tuotantojulkaisu tehdään kaikki portit kiinni');
   assert.equal(Object.keys(portit).length, 11);
 });
+
+test('KRIITTINEN: aktivointia edeltava varmistus on vain lukeva ALL-IN-ONE', () => {
+  // Tämä tiedosto ajetaan tuotantoa vasten käsin liittämällä, ja se on
+  // viimeinen portti ennen lipun kääntämistä. Jos siihen livahtaisi
+  // muuttava lause, se ajettaisiin juuri siinä hetkessä, jossa kannan
+  // pitää olla koskematon.
+  //
+  // Yleinen "varmistuskyselyt ovat vain lukevia" -testi kattaa tämän
+  // hakemistona. Tässä sama todetaan erikseen ja tiukemmin: myös
+  // lauseiden lukumäärä ja tulosteen muoto.
+  const tiedosto = 'supabase/verify/verify_pre_task_extended_activation.sql';
+  const raw = read(tiedosto);
+
+  const lauseet = raw.split(NEWLINE)
+    .filter(line => !line.trim().startsWith('--'))
+    .join(NEWLINE)
+    .split(';')
+    .map(part => part.trim())
+    .filter(Boolean);
+
+  assert.equal(lauseet.length, 1, `${tiedosto}: ei ole yksi lause`);
+  assert.equal(lauseet[0].split(/\s+/)[0].toLowerCase(), 'select',
+    'lause ei ala sanalla select');
+
+  const koodi = lauseet[0].toLowerCase();
+  for (const kielletty of ['insert ', 'update ', 'delete ', 'drop ', 'alter ',
+                           'create ', 'grant ', 'revoke ', 'truncate ']) {
+    assert.equal(new RegExp(`(^|[\s(])${kielletty}`).test(koodi), false,
+      `${tiedosto} sisältää muuttavan lauseen: ${kielletty.trim()}`);
+  }
+
+  for (const sarake of ['check_no', 'section', 'check_name', 'status',
+                        'details', 'poikkeavia_yhteensa']) {
+    assert.ok(raw.includes(sarake), `tulosteesta puuttuu sarake ${sarake}`);
+  }
+});
+
+test('KRIITTINEN: aktivointia edeltava varmistus todistaa kirjoituskokeen jäljettömyyden', () => {
+  // Kertakäyttöinen tehtävä luotiin ja poistettiin tuotannossa. Pelkkä
+  // rivimäärä ei riitä todisteeksi: 36 voisi tarkoittaa myös "yksi
+  // alkuperäinen poistettiin ja yksi uusi jäi".
+  //
+  // Migraatio 0002 antoi kaikille riveille SAMAN created_at-arvon,
+  // koska vakio-oletus talletetaan kerran metatietoon eikä rivejä
+  // kirjoiteta uudelleen. Jokainen sovelluksen luoma rivi saa siis oman
+  // myöhemmän arvonsa — ja siksi erillisten luontiaikojen lukumäärä on
+  // tarkempi jäännösmittari kuin rivimäärä.
+  const sql = read('supabase/verify/verify_pre_task_extended_activation.sql').toLowerCase();
+
+  assert.ok(sql.includes('count(distinct created_at)'),
+    'jäännöstä ei havaita luontiaikojen perusteella');
+  assert.ok(sql.includes('created_at > (select min(created_at)'),
+    'migraation jälkeen luotuja rivejä ei etsitä');
+
+  // Ja kolme riippumatonta mittaria samasta asiasta.
+  assert.ok(sql.includes("'36'"), 'odotettua rivimäärää ei tarkisteta');
+  assert.ok(sql.includes('md5(string_agg(id'), 'tunnisteiden sormenjälki puuttuu');
+
+  // Laajennettujen kenttien lähtötila on nolla niin kauan kuin lippu on
+  // false. Tämä on lähin kannasta näkyvä todiste lipun tilasta.
+  for (const [needle, mita] of [
+    ['description is not null', 'kuvauksellisten rivien määrä'],
+    ['duration_minutes is not null', 'kestollisten rivien määrä'],
+    ["priority <> 'normaali'", 'ei-oletusprioriteetit']
+  ]) {
+    assert.ok(sql.includes(needle), `lipun lähtötilaa ei todeta: ${mita}`);
+  }
+});
+
+test('aktivointia edeltava varmistus on verrattavissa tilannekuvaan', () => {
+  // Sormenjälki on hyödytön, jos sitä ei voi verrata mihinkään. Molempien
+  // tiedostojen on laskettava se samalla tavalla, muuten vertailu
+  // näyttäisi erolta joka ei ole ero.
+  const ennen = read('supabase/verify/verify_pre_task_extended_activation.sql');
+  const tilannekuva = read('supabase/preflight/recovery_snapshot_post_0002.sql');
+
+  for (const kaava of [
+    "md5(string_agg(id, '|' order by id))",
+    "'#' order by id)), 'tyhja')"
+  ]) {
+    assert.ok(ennen.includes(kaava) && tilannekuva.includes(kaava),
+      `sormenjäljen kaava eroaa tiedostojen välillä: ${kaava}`);
+  }
+});
