@@ -10,6 +10,7 @@ sanalla select, eika yksikaan muuta mitaan.
 | `recovery_snapshot_post_0002.sql` | ennen mita tahansa riskialtista, GATE C |
 | `preflight_0003.sql` | ennen migraatiota 0003 |
 | `recovery_snapshot_pre_0003.sql` | ennen migraatiota 0003, tulos sailytetaan |
+| `diagnose_default_acl_0003.sql` | kun oletusoikeudet vaativat selitysta |
 
 MIKSI ERILLINEN MIGRAATION ESIEHDOISTA: migraatio tarkistaa samat asiat
 itsekin ja keskeytyy jos jokin ei tasmaa. Preflight kertoo saman ilman

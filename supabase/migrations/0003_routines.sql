@@ -470,6 +470,26 @@ begin
     raise exception 'anon-roolilla on % tehollista oikeutta uusiin tauluihin.', luku;
   end if;
 
+  -- PUBLIC-roolilla ei saa olla mitaan, ja tama katsotaan TAULUN
+  -- OIKEUSLISTASTA eika roolikohtaisesti.
+  --
+  -- Kaksi menetelmaa, koska kumpikaan ei yksin riita: has_table_privilege
+  -- kertoo ONKO oikeus (perinta mukaan lukien), aclexplode kertoo MISTA
+  -- se tulee. PUBLICille myonnetty oikeus ei nay roolikohtaisissa
+  -- listauksissa lainkaan — juuri siksi tama tarkistus on erikseen.
+  --
+  -- Supabase myontaa vakiona oletusoikeudet tuleville tauluille, joten
+  -- uusi taulu voi hyvinkin SYNTYA avoimena. Ylla oleva revoke sulkee
+  -- sen, ja tama todistaa etta se sulkeutui.
+  select count(*) into luku
+    from pg_class cl, aclexplode(cl.relacl) acl
+   where cl.oid = any (array['public.routines'::regclass,
+                             'public.routine_exceptions'::regclass])
+     and acl.grantee = 0;
+  if luku <> 0 then
+    raise exception 'PUBLIC-roolilla on % oikeutta uusiin tauluihin.', luku;
+  end if;
+
   -- authenticated saa tasan CRUD, ei enempaa.
   select count(*) into luku
     from (select unnest(array['public.routines', 'public.routine_exceptions']) as taulu) tt

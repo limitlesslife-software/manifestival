@@ -71,16 +71,45 @@ olisi pahempaa kuin puute.
 | | Vaatimus |
 |---|---|
 | 1 | Tuore varmuuskopio, **otettu tänään** |
-| 2 | `supabase/preflight/preflight_0003.sql` ajettu, 21/21 PASS/FAIL-riviä `PASS` |
+| 2 | `supabase/preflight/preflight_0003.sql` ajettu, 21/21 PASS/FAIL-riviä `PASS` (7 INFO-riviä ei estä) |
 | 3 | `supabase/preflight/recovery_snapshot_pre_0003.sql` ajettu ja **tulos säilytetty** |
 | 4 | Sormenjäljet 15–18 kirjattu ylös |
 | 5 | Migraation tiiviste kirjattu |
 
-Preflightin kohdat 18–19 ovat erityisen tärkeitä: ne tarkistavat, ettei
-kannassa ole **oletusoikeuksia** (`ALTER DEFAULT PRIVILEGES`), jotka
-myöntäisivät uusille tauluille oikeuksia automaattisesti. Jos sellainen
-olisi, uudet taulut syntyisivät avoimina eikä `revoke ... from anon` sitä
-korjaisi.
+### Oletusoikeudet — miksi preflight ei pysähdy niihin
+
+Tuotannossa on **60 oletusoikeusmerkintää roolille `anon`**
+(`pg_default_acl`). Luku ei tarkoita 60 taulua: `pg_default_acl`
+sisältää yhden rivin per (omistaja, skeema, objektityyppi), ja
+`aclexplode` purkaa jokaisen yksittäisiksi oikeuksiksi. Luku on siis
+rivien ja oikeuksien tulo. Purku:
+`supabase/preflight/diagnose_default_acl_0003.sql`.
+
+Tämä on **Supabasen normaali ympäristön tila**, ei tässä kannassa tehty
+virhe. Se tarkoittaa, että uusi taulu voi hyvinkin **syntyä avoimena** —
+ja juuri siksi migraation oma peruminen ei ole valinnainen.
+
+Suojaus on kolmiosainen, ja jokainen osa on välttämätön:
+
+1. `revoke all ... from public, anon, authenticated` **ennen** myöntöä
+2. myöntö tasan CRUD roolille `authenticated`
+3. lopputuloksen vahvistus samassa transaktiossa kahdella menetelmällä:
+   `has_table_privilege` (onko oikeus, perintä mukaan lukien) ja
+   `aclexplode` grantee = 0 (tuleeko se PUBLICilta)
+
+**Välitilaa ei ole.** DDL on PostgreSQL:ssä transaktionaalinen: yksikään
+toinen istunto ei näe uusia tauluja ennen `COMMIT`ia, joten hetkeä jona
+`anon` näkisi ne ei ole olemassa.
+
+Preflight raportoi oletusoikeuksien määrän **INFO-rivinä** ja tarkistaa
+PASS/FAIL:na sen mikä oikeasti ratkaisee: että sama neutralointi on jo
+toiminut tässä kannassa tauluille `tasks` ja `profile`. Jos se ei olisi
+toiminut niillä, se ei toimisi uusillakaan — ja silloin 0003:a ei saisi
+ajaa.
+
+**Globaaleja oletusoikeuksia ei muuteta** (`ALTER DEFAULT PRIVILEGES`).
+Se vaikuttaisi kaikkiin tuleviin Supabase-objekteihin, ei vain näihin
+kahteen tauluun. Migraatiokohtainen `revoke` riittää ja on rajatumpi.
 
 ---
 

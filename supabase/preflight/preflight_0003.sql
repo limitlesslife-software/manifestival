@@ -164,21 +164,65 @@ from (
            where cl.oid = 'public.tasks'::regclass and acl.grantee = 0)
 
   union all
-  -- 0003 luo uudet taulut ja luottaa siihen, etta oletusoikeudet eivat
-  -- myonna niille mitaan PUBLICille. Tama tarkistaa sen ETUKATEEN:
-  -- jos oletusoikeuksissa on PUBLIC-myonto, uudet taulut syntyisivat
-  -- avoimina ja `revoke ... from anon` ei sita korjaisi.
-  select '18', 'oikeudet', 'Oletusoikeuksissa ei ole PUBLIC-myontoja', '0',
+  -- OLETUSOIKEUDET OVAT TIETO, EIVAT ESTE.
+  --
+  -- Aiempi versio vaati naiden olevan nolla ja pysaytti migraation
+  -- tuotannossa lukemaan 60. Vaatimus oli vaara kahdesta syysta.
+  --
+  -- 1. Supabase myontaa vakiona oletusoikeudet tuleville objekteille
+  --    rooleille anon ja authenticated. Se on ymparistön normaali tila,
+  --    ei tassa kannassa tehty virhe. Sen "korjaaminen" globaalilla
+  --    ALTER DEFAULT PRIVILEGES -lauseella vaikuttaisi kaikkiin
+  --    tuleviin Supabase-objekteihin, ei vain naihin kahteen tauluun.
+  --
+  -- 2. Migraatio neutraloi sen itse. 0003 perii oikeudet rooleilta
+  --    public, anon ja authenticated ENNEN myontoa ja ennen committia,
+  --    ja vahvistaa lopputuloksen has_table_privilege-kutsuilla samassa
+  --    transaktiossa. DDL on PostgreSQLssa transaktionaalinen: yksikaan
+  --    toinen istunto ei nae uusia tauluja ennen COMMITia, joten
+  --    valitilaa jossa anon nakisi ne ei ole olemassa.
+  --
+  -- Luku ei myoskaan tarkoita sita milta se nayttaa: pg_default_acl
+  -- sisaltaa yhden rivin per (omistaja, skeema, objektityyppi), ja
+  -- aclexplode purkaa jokaisen YKSITTAISIKSI OIKEUKSIKSI. 60 on siis
+  -- rivien ja oikeuksien tulo, ei 60 taulua.
+  --
+  -- Purku: supabase/preflight/diagnose_default_acl_0003.sql.
+  select '18', 'ymparisto', 'Oletusoikeusmerkintoja roolille anon (INFO, ks. diagnose_default_acl_0003.sql)', 'INFO',
+         (select count(*)::text
+            from pg_default_acl d, aclexplode(d.defaclacl) acl
+            join pg_roles r on r.oid = acl.grantee
+           where r.rolname = 'anon')
+
+  union all
+  select '19', 'ymparisto', 'Oletusoikeusmerkintoja roolille PUBLIC (INFO)', 'INFO',
          (select count(*)::text
             from pg_default_acl d, aclexplode(d.defaclacl) acl
            where acl.grantee = 0)
 
   union all
-  select '19', 'oikeudet', 'Oletusoikeuksissa ei ole anon-myontoja', '0',
+  -- TAMA ON SE, MIKA OIKEASTI RATKAISEE.
+  --
+  -- Taulut tasks ja profile luotiin samassa kannassa samojen
+  -- oletusoikeuksien vallitessa, ja migraatio 0001 perui niilta anonin
+  -- oikeudet. Jos tama on nolla, neutralointi TOIMII tassa kannassa —
+  -- ja 0003 tekee saman kahdelle uudelle taululle.
+  --
+  -- Jos tama EI ole nolla, oletusoikeus on todellinen ongelma eika
+  -- 0003:a saa ajaa: silloin perumismalli ei toimi.
+  select '20', 'oikeudet', 'Oletusoikeudet on jo neutraloitu: anon ei paase tauluihin tasks/profile', '0',
          (select count(*)::text
-            from pg_default_acl d, aclexplode(d.defaclacl) acl
-            join pg_roles r on r.oid = acl.grantee
-           where r.rolname = 'anon')
+            from (select unnest(array['public.tasks', 'public.profile']) as taulu) tt
+            cross join (select unnest(array['select', 'insert', 'update', 'delete',
+                                            'truncate', 'references', 'trigger']) as oikeus) pp
+           where has_table_privilege('anon', tt.taulu, pp.oikeus))
+
+  union all
+  select '21', 'oikeudet', 'Oletusoikeudet on jo neutraloitu: PUBLIC ei paase tauluihin tasks/profile', '0',
+         (select count(*)::text
+            from pg_class cl, aclexplode(cl.relacl) acl
+           where cl.oid = any (array['public.tasks'::regclass, 'public.profile'::regclass])
+             and acl.grantee = 0)
 
   -- ================================================================
   -- ESTEET
@@ -188,14 +232,14 @@ from (
   -- 0003 ottaa auth.users-tauluun SHARE ROW EXCLUSIVE -lukon
   -- vierasavaimia luodessaan. auth.users on taulu, jota jokainen
   -- kirjautuminen koskee, joten avoin transaktio siella on este.
-  select '20', 'esteet', 'Avoimia idle in transaction -istuntoja ei ole', '0',
+  select '22', 'esteet', 'Avoimia idle in transaction -istuntoja ei ole', '0',
          (select count(*)::text from pg_stat_activity
            where datname = current_database()
              and state in ('idle in transaction', 'idle in transaction (aborted)')
              and pid <> pg_backend_pid())
 
   union all
-  select '21', 'esteet', 'Yli minuutin kestaneita kyselyita ei ole kaynnissa', '0',
+  select '23', 'esteet', 'Yli minuutin kestaneita kyselyita ei ole kaynnissa', '0',
          (select count(*)::text from pg_stat_activity
            where datname = current_database()
              and state = 'active' and pid <> pg_backend_pid()
@@ -206,23 +250,23 @@ from (
   -- ================================================================
 
   union all
-  select '22', 'kirjattavat', 'Tarkistuksen hetki (UTC)', 'INFO',
+  select '24', 'kirjattavat', 'Tarkistuksen hetki (UTC)', 'INFO',
          to_char(now() at time zone 'UTC', 'YYYY-MM-DD HH24:MI:SS')
 
   union all
-  select '23', 'kirjattavat', 'Tietokanta', 'INFO', current_database()
+  select '25', 'kirjattavat', 'Tietokanta', 'INFO', current_database()
 
   union all
-  select '24', 'kirjattavat', 'Tehtavien tunnisteiden tiiviste', 'INFO',
+  select '26', 'kirjattavat', 'Tehtavien tunnisteiden tiiviste', 'INFO',
          (select coalesce(md5(string_agg(id, '|' order by id)), 'tyhja')
             from public.tasks)
 
   union all
-  select '25', 'kirjattavat', 'Tauluja public-skeemassa', 'INFO',
+  select '27', 'kirjattavat', 'Tauluja public-skeemassa', 'INFO',
          (select count(*)::text from pg_tables where schemaname = 'public')
 
   union all
-  select '26', 'kirjattavat', 'Politiikkoja public-skeemassa', 'INFO',
+  select '28', 'kirjattavat', 'Politiikkoja public-skeemassa', 'INFO',
          (select count(*)::text from pg_policies where schemaname = 'public')
 
 ) c

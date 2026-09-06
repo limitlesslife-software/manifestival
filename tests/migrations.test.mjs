@@ -2188,3 +2188,144 @@ test('0003:n preflight ja tilannekuva ovat vain lukevia ALL-IN-ONE-kyselyitä', 
     }
   }
 });
+
+// ================================================================
+// OLETUSOIKEUDET (pg_default_acl) — 0003:n turvallisuuden ehto
+// ================================================================
+//
+// Supabase myöntää vakiona oletusoikeudet tuleville objekteille
+// rooleille anon ja authenticated. Uusi taulu voi siis SYNTYÄ avoimena.
+// Se ei ole vika ympäristössä eikä este migraatiolle — mutta se tekee
+// migraation omasta perumisesta pakollisen, ei valinnaisen.
+//
+// Nämä testit vartioivat sitä ketjua: peruminen on olemassa, se on
+// oikeassa kohdassa, ja lopputulos vahvistetaan ennen committia.
+
+test('KRIITTINEN: oletusoikeus ei voi ohittaa 0003:n perumista', () => {
+  // Ketju on kolmiosainen, ja jokainen osa on välttämätön:
+  //   1. peruminen kaikilta kolmelta roolilta
+  //   2. peruminen ENNEN myöntöä ja ennen committia
+  //   3. lopputuloksen vahvistus samassa transaktiossa
+  //
+  // Jos yksikin puuttuu, oletusoikeus jäisi voimaan uusiin tauluihin.
+  const code = migraationKoodi('0003_routines.sql');
+
+  const revoke = code.indexOf('revoke all on');
+  const viimeinenRevoke = code.lastIndexOf('revoke all on');
+  const grant = code.indexOf('grant select, insert, update, delete');
+  const vahvistus = code.lastIndexOf('has_table_privilege');
+  const commit = code.lastIndexOf(NEWLINE + 'commit;');
+
+  assert.ok(revoke > 0, 'perumista ei ole lainkaan');
+  assert.ok(viimeinenRevoke < grant, 'peruminen tapahtuu myönnön jälkeen');
+  assert.ok(grant < vahvistus, 'vahvistus tapahtuu ennen myöntöä');
+  assert.ok(vahvistus < commit, 'vahvistus tapahtuu vasta committin jälkeen');
+
+  // Ja peruminen kattaa nimenomaan sen roolin, jolle Supabase myöntää
+  // oletusoikeudet — sekä PUBLICin, jonka kautta anon perii.
+  for (const rooli of ['public', 'anon', 'authenticated']) {
+    assert.ok(new RegExp(`revoke all on public\\.routines\\s+from ${rooli};`).test(code),
+      `routines: oikeuksia ei peruta roolilta ${rooli}`);
+  }
+});
+
+test('KRIITTINEN: 0003 vahvistaa lopulliset oikeudet kahdella menetelmällä', () => {
+  // has_table_privilege kertoo ONKO oikeus, perintä mukaan lukien.
+  // aclexplode kertoo MISTÄ se tulee. Kumpikaan ei riitä yksin:
+  // PUBLICille myönnetty oikeus ei näy roolikohtaisissa listauksissa
+  // lainkaan, ja pelkkä ACL-listaus ei näe roolijäsenyyksien kautta
+  // perittyä oikeutta.
+  const code = migraationKoodi('0003_routines.sql');
+
+  assert.ok(code.includes("has_table_privilege('anon'"),
+    'anonin tehollisia oikeuksia ei vahvisteta');
+  assert.ok(code.includes("has_table_privilege('authenticated'"),
+    'authenticated-roolin oikeuksia ei vahvisteta');
+  assert.ok(code.includes('aclexplode') && code.includes('acl.grantee = 0'),
+    'PUBLIC-roolin oikeuksia ei vahvisteta taulun oikeuslistasta');
+
+  // Vahvistukset ovat transaktion sisällä, eivät kommentissa.
+  const commit = code.lastIndexOf(NEWLINE + 'commit;');
+  assert.ok(code.indexOf('aclexplode') < commit,
+    'PUBLIC-vahvistus on committin jälkeen');
+
+  // Ja jokainen niistä johtaa poikkeukseen, ei pelkkään ilmoitukseen.
+  assert.ok(code.includes('raise exception \'anon-roolilla on'),
+    'anonin poikkeama ei keskeytä migraatiota');
+  assert.ok(code.includes('raise exception \'public-roolilla on'),
+    'PUBLICin poikkeama ei keskeytä migraatiota');
+});
+
+test('KRIITTINEN: preflight ei pysäytä ympäristön normaaliin tilaan', () => {
+  // LÖYTYNYT VÄÄRÄ HÄLYTYS
+  //
+  // Kohta 19 vaati, ettei oletusoikeuksissa ole anon-myöntöjä, ja
+  // pysäytti tuotannossa lukemaan 60. Vaatimus oli väärä: Supabase
+  // myöntää ne vakiona, ja luku on rivien ja yksittäisten oikeuksien
+  // tulo — ei 60 taulua.
+  //
+  // Väärä hälytys keskellä valmistelua on kallis kahdesti: se pysäyttää
+  // oikean työn, ja se houkuttelee "korjaamaan" globaalit
+  // oletusoikeudet, mikä vaikuttaisi kaikkiin tuleviin Supabase-
+  // objekteihin.
+  const preflight = read('supabase/preflight/preflight_0003.sql');
+
+  // Oletusoikeuksien määrä on INFO, ei PASS/FAIL.
+  const anonRivi = preflight.split('union all')
+    .find(osa => osa.includes('Oletusoikeusmerkintoja roolille anon'));
+  assert.ok(anonRivi, 'oletusoikeuksien määrää ei raportoida lainkaan');
+  assert.match(anonRivi, /'INFO'/,
+    'oletusoikeuksien määrä on yhä PASS/FAIL-tarkistus');
+
+  // Ja tilalle on tullut se, mikä oikeasti ratkaisee: neutralointi
+  // toimii tässä kannassa, koska se toimi jo tauluille tasks ja profile.
+  assert.ok(preflight.includes('Oletusoikeudet on jo neutraloitu'),
+    'neutraloinnin todistetta ei tarkisteta');
+  assert.match(preflight, /neutraloitu: anon ei paase tauluihin tasks\/profile', '0'/,
+    'anonin neutralointia ei tarkisteta nollaa vasten');
+  assert.match(preflight, /neutraloitu: PUBLIC ei paase tauluihin tasks\/profile', '0'/,
+    'PUBLICin neutralointia ei tarkisteta nollaa vasten');
+
+  // Diagnostiikkaan viitataan, jotta luvun voi purkaa osiin.
+  assert.ok(preflight.includes('diagnose_default_acl_0003.sql'),
+    'preflight ei kerro, mistä luvun purku löytyy');
+});
+
+test('oletusoikeuksien diagnostiikka on vain lukeva ja purkaa luvun osiin', () => {
+  const tiedosto = 'supabase/preflight/diagnose_default_acl_0003.sql';
+  const raw = read(tiedosto);
+
+  const lauseet = raw.split(NEWLINE)
+    .filter(line => !line.trim().startsWith('--'))
+    .join(NEWLINE)
+    .split(';')
+    .map(part => part.trim())
+    .filter(Boolean);
+
+  assert.equal(lauseet.length, 1, 'diagnostiikka ei ole yksi lause');
+  assert.equal(lauseet[0].split(/\s+/)[0].toLowerCase(), 'select');
+
+  for (const sarake of ['check_no', 'section', 'check_name', 'status',
+                        'details', 'poikkeavia_yhteensa']) {
+    assert.ok(raw.includes(sarake), `puuttuu sarake ${sarake}`);
+  }
+
+  // Purku erittelee omistajan, skeeman, objektityypin ja saajan —
+  // muuten luvusta 60 ei voi paatella mitaan.
+  for (const [needle, mita] of [
+    ['defaclrole', 'oletusoikeuden omistajarooli'],
+    ['defaclnamespace', 'skeema'],
+    ['defaclobjtype', 'objektityyppi'],
+    ['privilege_type', 'yksittäinen oikeus'],
+    ["'r'", 'taulut erotettuna muista objektityypeistä'],
+    ["'S'", 'jonot'],
+    ["'f'", 'funktiot'],
+    ['has_schema_privilege', 'skeeman käyttöoikeus']
+  ]) {
+    assert.ok(raw.includes(needle), `diagnostiikasta puuttuu: ${mita}`);
+  }
+
+  // Ja se sisältää todisteen siitä, että neutralointi toimii jo.
+  assert.ok(raw.includes("has_table_privilege('anon'"),
+    'diagnostiikka ei todista neutralointia olemassa olevilla tauluilla');
+});
