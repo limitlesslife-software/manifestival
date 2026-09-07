@@ -18,7 +18,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { runAcceptance, formatReport, idsFor, taskRow, profileRow,
-         routineRow, exceptionRow, MARKER_PREFIX, STATUS }
+         routineRow, exceptionRow,
+         goalRow, projectRow, wellbeingRow, recurringExpenseRow,
+         billRow, savingsGoalRow, auditRow, notificationPrefsRow,
+         MARKER_PREFIX, STATUS }
   from '../tools/rls-acceptance/acceptance.js';
 import { read, readCode } from './helpers/sources.mjs';
 import { SUPABASE_ANON_KEY } from '../src/data/config.js';
@@ -45,8 +48,87 @@ function makeDb() {
     // false, joten sovellus ei ole kirjoittanut niihin mitään.
     routines: [],
     routine_exceptions: [],
+    // Migraatioiden 0004-0008 taulut. Nekin ovat tuotannossa tyhjia:
+    // portit ovat false, joten sovellus ei ole kirjoittanut niihin.
+    goals: [],
+    projects: [],
+    notification_preferences: [],
+    wellbeing_entries: [],
+    recurring_expenses: [],
+    bills: [],
+    savings_goals: [],
+    ai_action_audit: [],
     users: [OWNER_A, USER_B]
   };
+}
+
+/**
+ * Taulut, joissa omistaja on paaavain itse eika erillinen user_id.
+ *
+ * profile tuli migraatiosta 0001, notification_preferences 0005:sta.
+ * Molemmissa rivi on tasan yksi per kayttaja, joten erillista
+ * paaavainta ei tarvita — ja silloin politiikatkin rajaavat id:lla.
+ */
+const OMISTAJA_ON_ID = new Set(['profile', 'notification_preferences']);
+
+/**
+ * Omistajuuden yhdistelmavierasavaimet, sellaisina kuin migraatiot ne
+ * luovat.
+ *
+ * MIKSI TAMA ON TAALLA
+ * Tekokannan on torjuttava ristiinkiinnitys samoin kuin oikean kannan,
+ * muuten hyokkaystestit menisivat lapi tekokantaa vasten vaikka suoja
+ * puuttuisi. Lista on siis osa testin todistusvoimaa, ei kulissi.
+ *
+ * Lista verrataan migraatioihin omassa testissaan alempana, joten se ei
+ * voi hiljaa erkaantua niista.
+ */
+const YHDISTELMAVIERASAVAIMET = [
+  { table: 'routine_exceptions', column: 'routine_id',           parent: 'routines' },
+  { table: 'goals',              column: 'parent_goal_id',       parent: 'goals' },
+  { table: 'goals',              column: 'project_id',           parent: 'projects' },
+  { table: 'projects',           column: 'goal_id',              parent: 'goals' },
+  { table: 'tasks',              column: 'goal_id',              parent: 'goals' },
+  { table: 'tasks',              column: 'project_id',           parent: 'projects' },
+  { table: 'routines',           column: 'goal_id',              parent: 'goals' },
+  { table: 'bills',              column: 'task_id',              parent: 'tasks' },
+  { table: 'bills',              column: 'recurring_expense_id', parent: 'recurring_expenses' }
+];
+
+/**
+ * Yhdistelmavierasavainten tarkistus.
+ *
+ * Palauttaa virheen, jos rivi viittaa riviin jota ei ole TAI joka
+ * kuuluu toiselle omistajalle.
+ *
+ * `compositeFkOff` matkii vikaa, jossa vierasavain olisi vain yhden
+ * sarakkeen mittainen: viitattu rivi haetaan silloin pelkalla
+ * tunnisteella, omistajaa katsomatta. Juuri niin oli ennen kuin
+ * migraatiot korjattiin.
+ */
+function tarkistaViitteet(db, table, row, flaws) {
+  for (const fk of YHDISTELMAVIERASAVAIMET) {
+    if (fk.table !== table) continue;
+    const arvo = row[fk.column];
+    // MATCH SIMPLE: NULL-viite ohittaa tarkistuksen kokonaan.
+    if (arvo == null) continue;
+
+    // fkOff poistaa YHDEN nimetyn viitteen kerrallaan. Sita tarvitaan
+    // sen todistamiseen, etta jokainen hyokkaystesti osuu OMAAN
+    // vierasavaimeensa eika johonkin yhteiseen: jos kaikki kahdeksan
+    // menisivat lapi saman tarkistuksen kautta, seitseman niista voisi
+    // olla suojaamatta ilman etta yksikaan testi huomaisi.
+    if (flaws.fkOff && flaws.fkOff.has(`${fk.table}.${fk.column}`)) continue;
+
+    const kohde = (db[fk.parent] || []).find(parent =>
+      parent.id === arvo
+      && (flaws.compositeFkOff || parent.user_id === row.user_id));
+
+    if (!kohde) {
+      return { data: null, error: { code: '23503', message: 'foreign key violation' } };
+    }
+  }
+  return null;
 }
 
 const PRIVILEGE_ERROR = code => ({
@@ -76,6 +158,14 @@ class Query {
   eq(column, value) {
     this.filterDescriptions.push({ kind: 'eq', column, value });
     this.filters.push(row => row[column] === value);
+    return this;
+  }
+  in(column, values) {
+    // supabase-js:n `.in()`. Tekoclientin on tarjottava se, koska ajuri
+    // kayttaa sita — muuten testi kaatuisi puuttuvaan metodiin eika
+    // kertoisi mitaan RLS:sta.
+    this.filterDescriptions.push({ kind: 'in', column, value: values });
+    this.filters.push(row => values.includes(row[column]));
     return this;
   }
   like(column, pattern) {
@@ -122,7 +212,7 @@ function makeClient(db, uid, flaws = {}, ledger = null) {
 
       // profile on ainoa taulu, jossa omistajuus on id-sarakkeessa.
       // Kaikilla muilla se on user_id.
-      const ownerColumn = query.table === 'profile' ? 'id' : 'user_id';
+      const ownerColumn = OMISTAJA_ON_ID.has(query.table) ? 'id' : 'user_id';
       const owns = row => row[ownerColumn] === uid;
       const matches = row => query.filters.every(check => check(row));
       const rows = db[query.table];
@@ -147,12 +237,15 @@ function makeClient(db, uid, flaws = {}, ledger = null) {
         // siksi se on ainoa este ristiinkiinnitykselle. Jos parina
         // (omistaja, rutiini) ei loydy routines-taulusta, kanta hylkaa
         // rivin koodilla 23503.
-        if (query.table === 'routine_exceptions' && !flaws.compositeFkOff) {
-          const kohde = db.routines.find(r =>
-            r.id === row.routine_id && r.user_id === row.user_id);
-          if (!kohde) {
-            return { data: null, error: { code: '23503', message: 'foreign key violation' } };
-          }
+        const viiteVirhe = tarkistaViitteet(db, query.table, row, flaws);
+        if (viiteVirhe) return viiteVirhe;
+
+        // ai_action_audit_confirmed_check: kirjaus ei saa vaittaa, etta
+        // komento suoritettiin ilman vahvistusta.
+        if (query.table === 'ai_action_audit'
+            && row.executed === true && row.confirmed !== true
+            && !flaws.checkConstraintOff) {
+          return { data: null, error: { code: '23514', message: 'check violation' } };
         }
 
         const existing = rows.find(candidate => candidate.id === row.id);
@@ -167,6 +260,23 @@ function makeClient(db, uid, flaws = {}, ledger = null) {
 
       if (query.op === 'update') {
         const targets = rows.filter(row => (flaws.updateUsingOff || owns(row)) && matches(row));
+
+        // VIITTEET TARKISTETAAN MYOS UPDATESSA.
+        //
+        // INSERT ei ole ainoa tapa saada rivi osoittamaan toisen
+        // kayttajan riviin: B voi ottaa OMAN rivinsa ja kaantaa
+        // viitteen. Silloin rivi lapaisee seka USINGin etta WITH
+        // CHECKin — omistaja ei muutu — ja vain vierasavain voi torjua
+        // sen.
+        //
+        // Jos tama puuttuisi, tekokanta hyvaksyisi U1-U8 -hyokkaykset
+        // ja testit menisivat lapi vaikka suoja olisi vain puolittainen.
+        for (const row of targets) {
+          const viiteVirhe = tarkistaViitteet(db, query.table,
+            { ...row, ...query.payload }, flaws);
+          if (viiteVirhe) return viiteVirhe;
+        }
+
         for (const row of targets) {
           Object.assign(row, query.payload);
           // stampOnUpdate matkii kantaa, jossa on updated_at-liipaisin:
@@ -282,11 +392,27 @@ test('testin luomat tunnisteet on erotettavissa oikeista riveistä', () => {
     assert.ok(value.startsWith(MARKER_PREFIX),
       `tunniste ${value} ei ole tunnistettavissa siivousta varten`);
   }
-  // Yksitoista eri riviä, ei törmäyksiä. Neljä alkuperäistä
-  // (tasks/profile) ja seitsemän migraation 0003 tauluille.
-  assert.equal(new Set(Object.values(ids)).size, 11);
+  // Neljäkymmentäkaksi eri riviä, ei törmäyksiä.
+  //
+  // Törmäys olisi pahempi kuin puuttuva tunniste: kaksi eri tarkoitusta
+  // käyttäisi samaa riviä, ja toinen niistä testaisi jotain muuta kuin
+  // mitä sen nimi lupaa. Siksi määrä lasketaan joukkona.
+  //
+  //    4  alkuperäiset (tasks, profile)
+  //    7  migraatio 0003 (rutiinit ja poikkeukset)
+  //   22  migraatiot 0004-0008 (kahdeksan taulua, A/B/väärennös)
+  //    8  ristiinkiinnityshyökkäykset, yksi per yhdistelmävierasavain
+  //    1  sallittu oma viite (X9)
+  assert.equal(new Set(Object.values(ids)).size, 42);
+
   for (const avain of ['routineA', 'routineB', 'exceptionA', 'exceptionB',
-                       'attackExceptionB']) {
+                       'attackExceptionB',
+                       'goalA', 'goalB', 'projectA', 'projectB',
+                       'wellbeingA', 'expenseA', 'billA', 'savingsA', 'auditA',
+                       'attackGoalParentB', 'attackGoalProjectB',
+                       'attackProjectGoalB', 'attackTaskGoalB',
+                       'attackTaskProjectB', 'attackRoutineGoalB',
+                       'attackBillTaskB', 'attackBillExpenseB', 'ownLinkB']) {
     assert.ok(ids[avain], `tunniste ${avain} puuttuu`);
   }
 });
@@ -935,4 +1061,386 @@ test('KRIITTINEN: rutiiniportit pysyvät kiinni hyväksyntätestistä huolimatta
   const { TABLES } = await import('../src/data/schema.js');
   assert.equal(TABLES.routines, false, 'rutiiniportti on auki');
   assert.equal(TABLES.routineExceptions, false, 'poikkeusportti on auki');
+});
+
+// =====================================================================
+// MIGRAATIOT 0004–0008: OMISTAJUUSMATRIISI JA RISTIINKIINNITYS
+// =====================================================================
+
+test('ehjä RLS: kaikkien kahdeksan uuden taulun matriisi menee läpi', async () => {
+  const { rows } = await runAgainst();
+  const numerot = rows.map(e => e.test_no);
+
+  // Jokainen tauluryhmä on mukana ajossa. Puuttuva ryhmä olisi
+  // pahempi kuin kaatuva: raportti näyttäisi vihreältä eikä kertoisi,
+  // ettei taulua testattu lainkaan.
+  for (const alku of ['G1', 'G2', 'G3', 'G4', 'G5',   // tavoitteet
+                      'J1', 'J2', 'J3', 'J4', 'J5',   // projektit
+                      'W1', 'W2', 'W3', 'W4', 'W5',   // hyvinvointi
+                      'X1', 'L1', 'S1', 'K1',         // talous ja kirjaus
+                      'N1', 'N3', 'N5']) {            // muistutusasetukset
+    assert.ok(numerot.some(no => no.startsWith(alku)),
+      `tapausryhmä ${alku} puuttuu ajosta`);
+  }
+
+  for (const entry of rows.filter(e => /^[GJWXLSKNU]\d/.test(e.test_no))) {
+    assert.equal(entry.status, STATUS.PASS,
+      `${entry.test_no} (${entry.test_name}): ${entry.status} — ${entry.actual}`);
+  }
+});
+
+test('KRIITTINEN: kaikki kahdeksan ristiinkiinnitystä torjutaan vierasavaimella', async () => {
+  // TÄMÄ ON KOKO PAKETIN TÄRKEIN TESTI.
+  //
+  // Kahdeksan viitettä, kaksi hyökkäystä kumpaakin kohti: INSERT luo
+  // uuden rivin joka viittaa A:n riviin, UPDATE kääntää B:n OMAN rivin
+  // viitteen A:han.
+  //
+  // Odotettu koodi on osa väitettä. Jos jokin näistä palauttaisi
+  // 42501:n, rivi olisi kyllä torjuttu — mutta RLS:n toimesta, ei
+  // eheysrajoitteen. Silloin suoja riippuisi politiikasta, joka voidaan
+  // muuttaa, eikä rakenteesta.
+  const { rows } = await runAgainst();
+
+  const hyokkaykset = ['X1', 'X2', 'X3', 'X4', 'X5', 'X6', 'X7', 'X8',
+                       'U1', 'U2', 'U3', 'U4', 'U5', 'U6', 'U7', 'U8'];
+
+  for (const no of hyokkaykset) {
+    const entry = byNumber(rows, no);
+    assert.ok(entry, `hyökkäystapaus ${no} puuttuu kokonaan`);
+    assert.equal(entry.status, STATUS.PASS, `${no}: ${entry.actual}`);
+    assert.match(entry.actual, /23503/,
+      `${no} hyväksyttiin väärällä koodilla — vain vierasavainvirhe todistaa väitteen`);
+  }
+});
+
+test('KRIITTINEN: sallittu oma viite onnistuu — kielto ei ole rikki kaikille', async () => {
+  // Ilman tätä koko hyökkäysosuus voisi mennä läpi siksi, että viitteet
+  // ovat rikki kaikilta. Kielto on merkityksellinen vain jos sallittu
+  // tapaus toimii.
+  const { rows } = await runAgainst();
+  const x9 = byNumber(rows, 'X9');
+
+  assert.ok(x9, 'X9 puuttuu');
+  assert.equal(x9.status, STATUS.PASS,
+    `B ei saanut liittää tehtäväänsä omaan tavoitteeseensa: ${x9.actual}`);
+});
+
+test('MUTAATIO: yhdistelmävierasavaimet pois — kaikki 16 hyökkäystä onnistuisi', async () => {
+  // Jos viitteet olisivat yhden sarakkeen mittaisia, jokainen näistä
+  // menisi läpi: RLS ei estä niitä, koska rivin omistaja on oikein.
+  const { rows, summary } = await runAgainst({ compositeFkOff: true });
+
+  assert.equal(summary.verdict, 'FAIL');
+  for (const no of ['X1', 'X2', 'X3', 'X4', 'X5', 'X6', 'X7', 'X8',
+                    'U1', 'U2', 'U3', 'U4', 'U5', 'U6', 'U7', 'U8']) {
+    assert.equal(byNumber(rows, no).status, STATUS.FAIL,
+      `${no}: ristiinkiinnitys meni läpi eikä testi huomannut`);
+  }
+});
+
+test('KRIITTINEN: jokainen hyökkäys osuu OMAAN vierasavaimeensa', async () => {
+  // Edellinen mutaatio poisti kaikki viitteet kerralla. Se ei todista,
+  // että kukin testi osuu omaan viitteeseensä: jos kaikki kahdeksan
+  // kulkisivat saman tarkistuksen läpi, seitsemän voisi olla
+  // suojaamatta ilman että yksikään testi huomaisi.
+  //
+  // Siksi jokainen viite poistetaan vuorollaan yksin, ja vain sen omien
+  // testien pitää kaatua.
+  const kartta = [
+    ['goals.parent_goal_id',              ['X1', 'U1']],
+    ['goals.project_id',                  ['X2', 'U2']],
+    ['projects.goal_id',                  ['X3', 'U3']],
+    ['tasks.goal_id',                     ['X4', 'U4']],
+    ['tasks.project_id',                  ['X5', 'U5']],
+    ['routines.goal_id',                  ['X6', 'U6']],
+    ['bills.task_id',                     ['X7', 'U7']],
+    ['bills.recurring_expense_id',        ['X8', 'U8']]
+  ];
+
+  const kaikkiHyokkaykset = kartta.flatMap(([, numerot]) => numerot);
+
+  for (const [viite, omat] of kartta) {
+    const { rows } = await runAgainst({ fkOff: new Set([viite]) });
+
+    for (const no of omat) {
+      assert.equal(byNumber(rows, no).status, STATUS.FAIL,
+        `viite ${viite} poistettiin, mutta ${no} ei huomannut sitä`);
+    }
+
+    // Ja NIMENOMAAN vain omat. Jos muutkin kaatuvat, testit eivät
+    // erottele viitteitä toisistaan.
+    for (const no of kaikkiHyokkaykset.filter(n => !omat.includes(n))) {
+      assert.equal(byNumber(rows, no).status, STATUS.PASS,
+        `viite ${viite} poistettiin, mutta myös ${no} kaatui`
+        + ' — testit eivät erottele viitteitä toisistaan');
+    }
+  }
+});
+
+test('KRIITTINEN: hyökkäysrivit eivät jää kantaan', async () => {
+  // Siivouksen onnistuminen ei todista tätä: siivous poistaisi rivin
+  // jos se olisi syntynyt. Nämä rivit EIVÄT SAANEET SYNTYÄ lainkaan.
+  const { rows, db } = await runAgainst();
+
+  const hyokkaysTunnisteet = Object.entries(idsFor('testiajo'))
+    .filter(([avain]) => avain.startsWith('attack'))
+    .map(([, arvo]) => arvo);
+
+  for (const taulu of ['goals', 'projects', 'tasks', 'routines', 'bills']) {
+    const loytyi = db[taulu].filter(r => hyokkaysTunnisteet.includes(r.id));
+    assert.deepEqual(loytyi, [],
+      `taulussa ${taulu} on hyökkäysrivejä: ${loytyi.map(r => r.id).join(', ')}`);
+  }
+
+  for (const no of ['C13-goals', 'C13-projects', 'C13-tasks',
+                    'C13-routines', 'C13-bills']) {
+    assert.equal(byNumber(rows, no).status, STATUS.PASS,
+      `${no}: hyökkäysrivien tarkistus ei mennyt läpi`);
+  }
+});
+
+test('MUTAATIO: hyökkäysrivi jää kantaan — jäännöstarkistus huomaa', async () => {
+  // Jos suoja pettäisi ja siivous osuisi rivin ohi, C13 on ainoa joka
+  // kertoisi siitä.
+  const { rows } = await runAgainst({
+    compositeFkOff: true,
+    deleteDrops: rivi => String(rivi.id).includes('_attack_')
+  });
+
+  const huomasi = ['C13-goals', 'C13-projects', 'C13-tasks',
+                   'C13-routines', 'C13-bills']
+    .some(no => byNumber(rows, no).status === STATUS.FAIL);
+
+  assert.ok(huomasi, 'yksikään jäännöstarkistus ei huomannut kantaan jäänyttä hyökkäysriviä');
+});
+
+// ------------------------------------------ muistutusasetukset (0005)
+
+test('KRIITTINEN: B ei voi kirjoittaa A:n muistutusasetuksia', async () => {
+  // Tässä taulussa pääavain ON omistaja, joten väärennös on pääavaimen
+  // väärennös. Jos se menisi läpi, B päättäisi milloin A saa
+  // ilmoituksia.
+  const { rows } = await runAgainst();
+  const n3 = byNumber(rows, 'N3');
+
+  assert.ok(n3, 'N3 puuttuu');
+  assert.equal(n3.status, STATUS.PASS, `N3: ${n3.actual}`);
+  assert.match(n3.actual, /42501/, 'N3 hyväksyttiin väärällä koodilla');
+});
+
+test('MUTAATIO: WITH CHECK auki — muistutusasetusten suoja pettää', async () => {
+  // TÄSSÄ TAULUSSA MUTAATION TULOS ON ERI KUIN MUUALLA, JA SYY ON
+  // OPETTAVAINEN.
+  //
+  // Muissa tauluissa B:n väärennös luo uuden rivin, joten WITH CHECKin
+  // poisto päästää sen läpi ja testi kaatuu FAILiin.
+  //
+  // Täällä rivi on tasan yksi per käyttäjä ja sen tunniste ON käyttäjä.
+  // A on jo luonut omansa (N1), joten B:n väärennös törmää pääavaimeen
+  // ja saa koodin 23505 eikä odotettua 42501:tä. Testi kirjaa sen
+  // ERRORiksi — hylätty, mutta väärästä syystä.
+  //
+  // Se on oikea luokitus, ei kiertotie. Rivi torjuttiin sattumalta:
+  // pääavaimen törmäys ei ole turvamalli, ja jos A ei vielä olisi
+  // luonut asetuksiaan, sama yritys menisi läpi. Siksi tässä
+  // vaaditaan vain, ETTEI se ole PASS.
+  const { rows, summary } = await runAgainst({ withCheckOff: true });
+
+  assert.equal(summary.verdict, 'FAIL');
+  assert.notEqual(byNumber(rows, 'N3').status, STATUS.PASS,
+    'muistutusasetusten väärennös kirjattiin onnistuneeksi kielloksi');
+
+  // Ja UPDATE-polku kaatuu suoraan, koska siinä rivi on jo olemassa.
+  const { rows: rows2 } = await runAgainst({ updateUsingOff: true });
+  assert.equal(byNumber(rows2, 'N4').status, STATUS.FAIL,
+    'B pääsi muokkaamaan A:n muistutusasetuksia eikä testi huomannut');
+});
+
+// ------------------------------------------------- kirjausketju (0008)
+
+test('KRIITTINEN: vahvistamatonta suoritusta ei voi kirjata', async () => {
+  // Kirjaus, joka voi väittää komennon suoritetuksi ilman vahvistusta,
+  // on kirjaus jota ei voi käyttää todisteena mistään.
+  const { rows } = await runAgainst();
+  const k9 = byNumber(rows, 'K9');
+
+  assert.ok(k9, 'K9 puuttuu');
+  assert.equal(k9.status, STATUS.PASS, `K9: ${k9.actual}`);
+  assert.match(k9.actual, /23514/,
+    'K9 hyväksyttiin väärällä koodilla — vain tarkisterikkomus todistaa väitteen');
+});
+
+test('MUTAATIO: vahvistustarkiste pois — kirjaus voi valehdella', async () => {
+  const { rows, summary } = await runAgainst({ checkConstraintOff: true });
+
+  assert.equal(summary.verdict, 'FAIL');
+  assert.equal(byNumber(rows, 'K9').status, STATUS.FAIL,
+    'vahvistamaton suoritus kirjattiin eikä testi huomannut');
+});
+
+// -------------------------------------------------------- siivous
+
+test('KRIITTINEN: siivous tyhjentää kaikki kahdeksan uutta taulua', async () => {
+  const { db, rows } = await runAgainst();
+
+  for (const taulu of ['goals', 'projects', 'wellbeing_entries',
+                       'recurring_expenses', 'bills', 'savings_goals',
+                       'ai_action_audit', 'notification_preferences']) {
+    assert.deepEqual(db[taulu], [], `tauluun ${taulu} jäi rivejä`);
+  }
+
+  // Ja molemmat tilit tarkistivat sen erikseen. Yksi tili ei riitä:
+  // RLS piilottaa toisen rivit, joten A:n puhdas näkymä ei kerro
+  // mitään siitä, jäikö B:lle jotain.
+  for (const lyhenne of ['g', 'j', 'w', 'x', 'l', 's', 'k', 'n']) {
+    for (const tunnus of ['C11', 'C12']) {
+      const entry = byNumber(rows, `${tunnus}-${lyhenne}`);
+      assert.ok(entry, `jäännöstarkistus ${tunnus}-${lyhenne} puuttuu`);
+      assert.equal(entry.status, STATUS.PASS,
+        `${tunnus}-${lyhenne}: ${entry.actual}`);
+    }
+  }
+});
+
+test('MUTAATIO: siivous jättää tavoitteen — molemmat tilit tarkistavat', async () => {
+  const { rows, summary } = await runAgainst({
+    deleteDrops: rivi => String(rivi.id).endsWith('_b_goal')
+  });
+
+  assert.equal(summary.verdict, 'FAIL');
+  assert.equal(byNumber(rows, 'C12-g').status, STATUS.FAIL,
+    'B:n jäljelle jäänyttä tavoitetta ei huomattu');
+  assert.equal(byNumber(rows, 'C11-g').status, STATUS.PASS,
+    'A ei näe B:n tavoitetta — juuri siksi molemmat tarkistetaan');
+});
+
+test('MUTAATIO: muistutusasetukset jäävät — tunnisteella tarkistus huomaa', async () => {
+  // Näiden rivien tunniste on käyttäjän uuid, joten etuliitehaku ei
+  // löytäisi niitä. Jos jäännöstarkistus nojaisi pelkkään etuliitteeseen,
+  // rivi jäisi kantaan huomaamatta.
+  const { rows, summary } = await runAgainst({
+    deleteDrops: rivi => rivi.id === USER_B && rivi.enabled === false
+  });
+
+  assert.equal(summary.verdict, 'FAIL');
+  assert.equal(byNumber(rows, 'C12-n').status, STATUS.FAIL,
+    'B:n jäljelle jääneitä muistutusasetuksia ei huomattu');
+});
+
+// ------------------------------------------------------ anon
+
+test('MUTAATIO: anonilla on oikeuksia kaikkiin uusiin tauluihin', async () => {
+  const { rows, summary } = await runAgainst({ anonAllowed: true });
+
+  assert.equal(summary.verdict, 'FAIL');
+  for (const lyhenne of ['g', 'j', 'n', 'w', 'x', 'l', 's', 'k']) {
+    assert.equal(byNumber(rows, `T6-${lyhenne}-select`).status, STATUS.FAIL,
+      `T6-${lyhenne}-select: kirjautumaton pääsi tauluun`);
+  }
+});
+
+test('KRIITTINEN: anon testataan jokaisella operaatiolla, ei vain lukemisella', async () => {
+  // GRANT on operaatiokohtainen. Puuttuva revoke yhdelle operaatiolle
+  // jäisi näkymättä, jos vain SELECT tarkistettaisiin.
+  const { rows } = await runAgainst();
+
+  for (const lyhenne of ['r', 'e', 'g', 'j', 'n', 'w', 'x', 'l', 's', 'k']) {
+    for (const operaatio of ['select', 'insert', 'update', 'delete']) {
+      const entry = byNumber(rows, `T6-${lyhenne}-${operaatio}`);
+      assert.ok(entry, `T6-${lyhenne}-${operaatio} puuttuu`);
+      assert.equal(entry.status, STATUS.PASS, `${entry.test_no}: ${entry.actual}`);
+    }
+  }
+});
+
+// ---------------------------------------------- sopimus migraatioihin
+
+test('KRIITTINEN: tekokannan vierasavainlista vastaa migraatioita', async () => {
+  // Tekokanta torjuu ristiinkiinnityksen oman listansa perusteella. Jos
+  // lista erkanisi migraatioista, hyökkäystestit menisivät läpi
+  // tekokantaa vasten vaikka oikeassa kannassa suojaa ei olisi — eli
+  // testi todistaisi vain itsensä.
+  const fs = await import('node:fs');
+  const migraatiot = ['0003_routines.sql', '0004_goals_projects.sql',
+                      '0007_finance.sql'];
+
+  const kannassa = [];
+  for (const nimi of migraatiot) {
+    const lahde = fs.readFileSync(`supabase/migrations/${nimi}`, 'utf8')
+      .split('\n')
+      .filter(line => !line.trim().startsWith('--'))
+      .join('\n');
+
+    for (const m of lahde.matchAll(
+      /foreign key \(user_id,\s*(\w+)\)\s*references public\.(\w+)\s*\(user_id,\s*id\)/g)) {
+      kannassa.push({ column: m[1], parent: m[2] });
+    }
+  }
+
+  // Migraatiot luovat yhdeksän omistajuusviitettä: yksi 0003:ssa,
+  // kuusi 0004:ssä ja kaksi 0007:ssä.
+  assert.equal(kannassa.length, 9,
+    `migraatioista löytyi ${kannassa.length} yhdistelmävierasavainta, odotettiin 9`);
+
+  for (const { column, parent } of kannassa) {
+    const loytyi = YHDISTELMAVIERASAVAIMET.some(
+      fk => fk.column === column && fk.parent === parent);
+    assert.ok(loytyi,
+      `migraatio luo viitteen ${column} -> ${parent}, jota tekokanta ei tunne`);
+  }
+
+  for (const fk of YHDISTELMAVIERASAVAIMET) {
+    const loytyi = kannassa.some(
+      k => k.column === fk.column && k.parent === fk.parent);
+    assert.ok(loytyi,
+      `tekokanta tuntee viitteen ${fk.column} -> ${fk.parent}, jota migraatio ei luo`);
+  }
+});
+
+test('KRIITTINEN: uusien taulujen testirivit vastaavat sovelluksen sarakkeita', async () => {
+  // Työkalu puhuu kannalle suoraan, joten se voisi kirjoittaa
+  // sarakkeisiin joihin sovellus ei koskaan koske. Silloin se testaisi
+  // eri asiaa kuin mitä tuotannossa tapahtuu.
+  const repos = await import('../src/data/collectionsRepo.js');
+
+  const parit = [
+    [goalRow('x', 'otsikko'), repos.goalsRepo, { id: 'x', title: 'otsikko' }],
+    [projectRow('x', 'nimi'), repos.projectsRepo, { id: 'x', name: 'nimi' }],
+    [wellbeingRow('x', '1990-01-01'), repos.wellbeingRepo,
+      { id: 'x', date: '1990-01-01', energy: 3 }],
+    [recurringExpenseRow('x', 'nimi', '2026-10-01'), repos.recurringExpensesRepo,
+      { id: 'x', name: 'nimi', amountMinor: 1000, nextDueDate: '2026-10-01' }],
+    [billRow('x', 'nimi', '2026-10-01'), repos.billsRepo,
+      { id: 'x', name: 'nimi', amountMinor: 1000, dueDate: '2026-10-01' }],
+    [savingsGoalRow('x', 'nimi'), repos.savingsGoalsRepo,
+      { id: 'x', name: 'nimi', targetMinor: 1000 }],
+    [auditRow('x'), repos.aiAuditRepo,
+      { id: 'x', intent: 'create_task', risk: 'medium' }]
+  ];
+
+  for (const [testirivi, repo, esimerkki] of parit) {
+    const sovelluksen = repo.mapping.toRow(repo.mapping.normalize(esimerkki));
+    assert.deepEqual(Object.keys(testirivi).sort(), Object.keys(sovelluksen).sort(),
+      `taulun ${repo.table} testirivi ei vastaa sovelluksen kirjoittamia sarakkeita`);
+
+    // Eikä yksikään lähetä palvelimen omistamia kenttiä.
+    for (const kielletty of ['user_id', 'created_at', 'updated_at']) {
+      assert.equal(kielletty in testirivi, false,
+        `${repo.table}: testirivi lähettää palvelimen omistaman kentän ${kielletty}`);
+    }
+  }
+});
+
+test('KRIITTINEN: kaikki kahdeksan porttia pysyvät kiinni', async () => {
+  // Työkalu puhuu kannalle suoraan eikä sovelluksen repositorion
+  // kautta, joten hyväksyntätesti EI vaadi porttien avaamista — eikä
+  // sitä saa tehdä ennen kuin testi on ajettu ja hyväksytty.
+  const { TABLES } = await import('../src/data/schema.js');
+
+  for (const portti of ['routines', 'routineExceptions', 'goals', 'projects',
+                        'notificationPreferences', 'wellbeing', 'bills',
+                        'recurringExpenses', 'savingsGoals', 'aiAudit']) {
+    assert.equal(TABLES[portti], false, `portti ${portti} on auki`);
+  }
 });

@@ -92,7 +92,52 @@ export function idsFor(runId) {
     exceptionB: `${base}_b_exception`,
     forgedRoutineB: `${base}_b_forged_routine`,
     forgedExceptionB: `${base}_b_forged_exception`,
-    attackExceptionB: `${base}_b_attack_exception`
+    attackExceptionB: `${base}_b_attack_exception`,
+
+    // Migraatioiden 0004-0008 taulut. Jokaisella on A:n rivi, B:n rivi
+    // ja B:n vaarennosyritys A:n nimiin.
+    goalA: `${base}_a_goal`,
+    goalB: `${base}_b_goal`,
+    forgedGoalB: `${base}_b_forged_goal`,
+    projectA: `${base}_a_project`,
+    projectB: `${base}_b_project`,
+    forgedProjectB: `${base}_b_forged_project`,
+    wellbeingA: `${base}_a_wellbeing`,
+    wellbeingB: `${base}_b_wellbeing`,
+    forgedWellbeingB: `${base}_b_forged_wellbeing`,
+    expenseA: `${base}_a_expense`,
+    expenseB: `${base}_b_expense`,
+    forgedExpenseB: `${base}_b_forged_expense`,
+    billA: `${base}_a_bill`,
+    billB: `${base}_b_bill`,
+    forgedBillB: `${base}_b_forged_bill`,
+    savingsA: `${base}_a_savings`,
+    savingsB: `${base}_b_savings`,
+    forgedSavingsB: `${base}_b_forged_savings`,
+    auditA: `${base}_a_audit`,
+    auditB: `${base}_b_audit`,
+    forgedAuditB: `${base}_b_forged_audit`,
+    invariantB: `${base}_b_invariant`,
+
+    // RISTIINKIINNITYSHYOKKAYKSET.
+    //
+    // Kahdeksan yritysta, yksi jokaista yhdistelmavierasavainta kohti.
+    // Naiden EI ole tarkoitus paatya kantaan lainkaan: jos jokin niista
+    // on siella ajon jalkeen, suoja petti. Siksi ne ovat omia
+    // tunnisteitaan eivatka jaa muiden sekaan.
+    attackGoalParentB: `${base}_b_attack_goal_parent`,
+    attackGoalProjectB: `${base}_b_attack_goal_project`,
+    attackProjectGoalB: `${base}_b_attack_project_goal`,
+    attackTaskGoalB: `${base}_b_attack_task_goal`,
+    attackTaskProjectB: `${base}_b_attack_task_project`,
+    attackRoutineGoalB: `${base}_b_attack_routine_goal`,
+    attackBillTaskB: `${base}_b_attack_bill_task`,
+    attackBillExpenseB: `${base}_b_attack_bill_expense`,
+
+    // Sallittu viite: B:n tehtava B:n omaan tavoitteeseen. Ilman tata
+    // kiellot voisivat menna lapi siksi, etta viitteet ovat rikki
+    // kaikille.
+    ownLinkB: `${base}_b_own_link`
   });
 }
 
@@ -186,6 +231,162 @@ function row(no, name, expected, outcome, details) {
 
 function skipped(no, name, expected, why) {
   return row(no, name, expected, { status: STATUS.SKIP, actual: 'ohitettu' }, why);
+}
+
+/**
+ * Yhden taulun omistajuusmatriisi.
+ *
+ * Kahdeksan uutta taulua noudattavat samaa turvamallia: omistaja on
+ * `user_id`, sen asettaa kanta, ja nelja politiikkaa rajaavat rivit
+ * omistajaan. Siksi niiden testit ovat samat, ja ne ajetaan yhdesta
+ * paikasta.
+ *
+ * MIKSI GENEERINEN EIKA KAHDEKSAN KOPIOTA
+ * Kopioiduissa testeissa yksi unohtunut muutos jaa huomaamatta: seitseman
+ * taulua tarkistaa jotain, kahdeksas ei, eika mikaan kerro sita. Kun
+ * matriisi on yksi funktio, jokainen taulu saa saman kohtelun tai ei
+ * yhtaan.
+ *
+ * MITA TAMA EI KATA
+ * Ristiinkiinnitys EI ole taalla. Se on jokaisessa taulussa eri viite ja
+ * eri hyokkays, ja se kirjoitetaan auki omana lohkonaan — sita ei saa
+ * piilottaa silmukan sisaan.
+ *
+ * @returns {Promise<{aExists: boolean, bExists: boolean}>}
+ */
+async function ownershipSection(ctx, spec) {
+  const { push, a, b, ownerAId, userBId } = ctx;
+  const { code, table, label, rowA, rowB, forged, patch, patchField, patchValue } = spec;
+
+  // --- 1: A luo ja hallitsee omansa ----------------------------------
+  const luotuA = await call(() => a.from(table).insert(rowA).select());
+  const omistajaA = luotuA.rows[0] ? luotuA.rows[0].user_id : null;
+  push(row(`${code}1a`, `A luo ${label} ja kanta asettaa omistajaksi A:n`,
+    '1 rivi, user_id = A',
+    luotuA.error
+      ? { status: STATUS.ERROR, actual: describeError(luotuA.error) }
+      : { status: omistajaA === ownerAId ? STATUS.PASS : STATUS.FAIL,
+          actual: `${luotuA.rows.length} riviä, user_id=${omistajaA || '-'}` },
+    'user_id:tä ei lähetetä — DEFAULT auth.uid() asettaa sen'));
+
+  const aExists = luotuA.rows.length === 1;
+
+  push(aExists
+    ? row(`${code}1b`, `A lukee oman ${label}`, '1 rivi',
+        expectRows(await call(() =>
+          a.from(table).select('id').eq('id', rowA.id)), 1), '')
+    : skipped(`${code}1b`, `A lukee oman ${label}`, '1 rivi', 'riviä ei syntynyt'));
+
+  push(aExists
+    ? row(`${code}1c`, `A päivittää oman ${label}`, '1 rivi',
+        expectRows(await call(() =>
+          a.from(table).update(patch).eq('id', rowA.id).select()), 1), '')
+    : skipped(`${code}1c`, `A päivittää oman ${label}`, '1 rivi', 'riviä ei syntynyt'));
+
+  push(aExists
+    ? row(`${code}1d`, `A:n listaus taulusta ${table} ei paljasta vieraita rivejä`,
+        'vain omistajan A rivejä',
+        await (async () => {
+          const lista = await call(() => a.from(table).select('id,user_id'));
+          if (lista.error) return { status: STATUS.ERROR, actual: describeError(lista.error) };
+          const vieraat = lista.rows.filter(r => r.user_id !== ownerAId);
+          if (vieraat.length > 0) {
+            return { status: STATUS.FAIL, actual: `${vieraat.length} riviä vieraalla omistajalla` };
+          }
+          return { status: lista.rows.some(r => r.id === rowA.id) ? STATUS.PASS : STATUS.FAIL,
+                   actual: `${lista.rows.length} riviä, kaikki omistajalla A` };
+        })(),
+        'listaus on eri koodipolku kuin yksittäisen rivin haku')
+    : skipped(`${code}1d`, `A:n listaus taulusta ${table}`, '1 rivi', 'riviä ei syntynyt'));
+
+  // --- 2: B ei nae A:n rivia -----------------------------------------
+  push(row(`${code}2a`, `B ei näe yhtään A:n riviä taulussa ${table}`, '0 riviä',
+    expectDenied(await call(() =>
+      b.from(table).select('id').eq('user_id', ownerAId))),
+    'SELECT-politiikan USING'));
+
+  push(aExists
+    ? row(`${code}2b`, `B ei näe A:n ${label}, jonka tunnisteen se tietää`, '0 riviä',
+        expectDenied(await call(() =>
+          b.from(table).select('id').eq('id', rowA.id))),
+        'tunnisteen tietäminen ei riitä — RLS rajaa rivin pois')
+    : skipped(`${code}2b`, `B ei näe A:n ${label}`, '0 riviä', 'riviä ei syntynyt'));
+
+  // --- 3: B ei voi muuttaa eika poistaa A:n rivia --------------------
+  push(aExists
+    ? row(`${code}3a`, `B:n UPDATE A:n ${label} osuu nollaan riviin`, '0 riviä',
+        expectDenied(await call(() =>
+          b.from(table).update(patch).eq('id', rowA.id).select())),
+        'UPDATE-politiikan USING')
+    : skipped(`${code}3a`, `B:n UPDATE A:n ${label}`, '0 riviä', 'riviä ei syntynyt'));
+
+  push(aExists
+    ? row(`${code}3b`, `B:n DELETE A:n ${label} osuu nollaan riviin`, '0 riviä',
+        expectDenied(await call(() =>
+          b.from(table).delete().eq('id', rowA.id).select())),
+        'DELETE-politiikan USING')
+    : skipped(`${code}3b`, `B:n DELETE A:n ${label}`, '0 riviä', 'riviä ei syntynyt'));
+
+  push(row(`${code}3c`, `B ei voi luoda ${label} A:n nimiin`,
+    `virhe ${INSUFFICIENT_PRIVILEGE}`,
+    expectRejected(await call(() =>
+      b.from(table).insert({ ...forged, user_id: ownerAId }).select())),
+    'INSERT-politiikan WITH CHECK — omistajuuden väärennös'));
+
+  push(aExists
+    ? row(`${code}3d`, `B ei voi siirtää A:n ${label} itselleen`, '0 riviä',
+        expectDenied(await call(() =>
+          b.from(table).update({ user_id: userBId }).eq('id', rowA.id).select())),
+        'USING estää rivin näkymisen, joten omistajan vaihto ei osu mihinkään')
+    : skipped(`${code}3d`, `B ei voi siirtää A:n ${label} itselleen`, '0 riviä',
+        'riviä ei syntynyt'));
+
+  push(aExists
+    ? row(`${code}3e`, `A:n ${label} on koskematon B:n yritysten jälkeen`,
+        '1 rivi, arvot ennallaan',
+        await (async () => {
+          const jalkeen = await call(() =>
+            a.from(table).select(`id,user_id,${patchField}`).eq('id', rowA.id));
+          if (jalkeen.error) return { status: STATUS.ERROR, actual: describeError(jalkeen.error) };
+          const rivi = jalkeen.rows[0];
+          const ok = jalkeen.rows.length === 1
+            && rivi.user_id === ownerAId
+            && String(rivi[patchField]) === String(patchValue);
+          return { status: ok ? STATUS.PASS : STATUS.FAIL,
+                   actual: `${jalkeen.rows.length} riviä, omistaja=${rivi ? rivi.user_id : '-'},`
+                           + ` ${patchField}=${rivi ? rivi[patchField] : '-'}` };
+        })(),
+        'todiste ettei kielto onnistunut vain siksi ettei riviä ollut')
+    : skipped(`${code}3e`, `A:n ${label} on koskematon`, '1 rivi', 'riviä ei syntynyt'));
+
+  // --- 4: B hallitsee omaansa ----------------------------------------
+  const luotuB = await call(() => b.from(table).insert(rowB).select());
+  const omistajaB = luotuB.rows[0] ? luotuB.rows[0].user_id : null;
+  push(row(`${code}4a`, `B luo oman ${label} ja kanta asettaa omistajaksi B:n`,
+    '1 rivi, user_id = B',
+    luotuB.error
+      ? { status: STATUS.ERROR, actual: describeError(luotuB.error) }
+      : { status: omistajaB === userBId ? STATUS.PASS : STATUS.FAIL,
+          actual: `${luotuB.rows.length} riviä, user_id=${omistajaB || '-'}` },
+    'sama polku kuin A:lla — kielto ei johdu siitä että B ei voisi kirjoittaa'));
+
+  const bExists = luotuB.rows.length === 1;
+
+  // --- 5: A ei nae eika muuta B:n rivia ------------------------------
+  push(bExists
+    ? row(`${code}5a`, `A ei näe B:n ${label}`, '0 riviä',
+        expectDenied(await call(() =>
+          a.from(table).select('id').eq('id', rowB.id))),
+        'eristys on molempiin suuntiin, ei vain B:stä A:han')
+    : skipped(`${code}5a`, `A ei näe B:n ${label}`, '0 riviä', 'B:n riviä ei syntynyt'));
+
+  push(bExists
+    ? row(`${code}5b`, `A:n UPDATE B:n ${label} osuu nollaan riviin`, '0 riviä',
+        expectDenied(await call(() =>
+          a.from(table).update(patch).eq('id', rowB.id).select())), '')
+    : skipped(`${code}5b`, `A:n UPDATE B:n ${label}`, '0 riviä', 'B:n riviä ei syntynyt'));
+
+  return { aExists, bExists };
 }
 
 // ---------------------------------------------------------------------
@@ -792,6 +993,361 @@ export async function runAcceptance(options) {
         'todiste ettei E6b/E6c onnistunut vain siksi että rivi katosi')
     : skipped('E6d', 'B:n poikkeus on tallella', '1 rivi', 'poikkeusta ei syntynyt'));
 
+  // =================================================================
+  // MIGRAATIOT 0004-0008: TAVOITTEET, PROJEKTIT, ASETUKSET,
+  // HYVINVOINTI, TALOUS JA KIRJAUSKETJU
+  // =================================================================
+  //
+  // Seitseman naista kahdeksasta taulusta noudattaa samaa turvamallia:
+  // omistaja on user_id, sen asettaa kanta, ja nelja politiikkaa
+  // rajaavat rivit omistajaan. Niiden matriisi ajetaan yhdesta
+  // paikasta (ownershipSection), jotta jokainen taulu saa saman
+  // kohtelun tai ei yhtaan.
+  //
+  // notification_preferences on kahdeksas ja erilainen: sen omistaja on
+  // paaavain itse. Se testataan erikseen alla.
+  //
+  // RISTIINKIINNITYS EI OLE TAALLA. Se on jokaisessa taulussa eri viite
+  // ja eri hyokkays, ja se kirjoitetaan auki omana lohkonaan.
+
+  const ctx = { push, a, b, ownerAId, userBId };
+
+  // --- G: tavoitteet -------------------------------------------------
+  const goals = await ownershipSection(ctx, {
+    code: 'G', table: 'goals', label: 'tavoitteen',
+    rowA: goalRow(id.goalA, 'A:n tavoite'),
+    rowB: goalRow(id.goalB, 'B:n tavoite'),
+    forged: goalRow(id.forgedGoalB, 'ei saa onnistua'),
+    patch: { title: 'muokattu' }, patchField: 'title', patchValue: 'muokattu'
+  });
+
+  // --- J: projektit --------------------------------------------------
+  const projects = await ownershipSection(ctx, {
+    code: 'J', table: 'projects', label: 'projektin',
+    rowA: projectRow(id.projectA, 'A:n projekti'),
+    rowB: projectRow(id.projectB, 'B:n projekti'),
+    forged: projectRow(id.forgedProjectB, 'ei saa onnistua'),
+    patch: { name: 'muokattu' }, patchField: 'name', patchValue: 'muokattu'
+  });
+
+  // --- W: hyvinvointimerkinnat ---------------------------------------
+  //
+  // Paivamaarat ovat tarkoituksella kaukana menneisyydessa ja eri
+  // kummallakin tilillae. Taulussa on `unique (user_id, date)`, ja
+  // oikean paivan kayttaminen voisi tormata kayttajan omaan merkintaan
+  // — silloin testi kaatuisi syysta, jolla ei ole tekemista RLS:n
+  // kanssa.
+  const wellbeing = await ownershipSection(ctx, {
+    code: 'W', table: 'wellbeing_entries', label: 'merkinnän',
+    rowA: wellbeingRow(id.wellbeingA, '1990-01-01', 3),
+    rowB: wellbeingRow(id.wellbeingB, '1990-01-02', 3),
+    forged: wellbeingRow(id.forgedWellbeingB, '1990-01-03', 3),
+    patch: { energy: 5 }, patchField: 'energy', patchValue: 5
+  });
+
+  // --- X: toistuvat kulut --------------------------------------------
+  const expenses = await ownershipSection(ctx, {
+    code: 'X', table: 'recurring_expenses', label: 'toistuvan kulun',
+    rowA: recurringExpenseRow(id.expenseA, 'A:n kulu', today),
+    rowB: recurringExpenseRow(id.expenseB, 'B:n kulu', today),
+    forged: recurringExpenseRow(id.forgedExpenseB, 'ei saa onnistua', today),
+    patch: { name: 'muokattu' }, patchField: 'name', patchValue: 'muokattu'
+  });
+
+  // --- L: laskut -----------------------------------------------------
+  const bills = await ownershipSection(ctx, {
+    code: 'L', table: 'bills', label: 'laskun',
+    rowA: billRow(id.billA, 'A:n lasku', today),
+    rowB: billRow(id.billB, 'B:n lasku', today),
+    forged: billRow(id.forgedBillB, 'ei saa onnistua', today),
+    patch: { name: 'muokattu' }, patchField: 'name', patchValue: 'muokattu'
+  });
+
+  // --- S: saastotavoitteet -------------------------------------------
+  await ownershipSection(ctx, {
+    code: 'S', table: 'savings_goals', label: 'säästötavoitteen',
+    rowA: savingsGoalRow(id.savingsA, 'A:n säästö'),
+    rowB: savingsGoalRow(id.savingsB, 'B:n säästö'),
+    forged: savingsGoalRow(id.forgedSavingsB, 'ei saa onnistua'),
+    patch: { name: 'muokattu' }, patchField: 'name', patchValue: 'muokattu'
+  });
+
+  // --- K: AI-kirjausketju --------------------------------------------
+  await ownershipSection(ctx, {
+    code: 'K', table: 'ai_action_audit', label: 'kirjauksen',
+    rowA: auditRow(id.auditA),
+    rowB: auditRow(id.auditB),
+    forged: auditRow(id.forgedAuditB),
+    patch: { result: 'cancelled' }, patchField: 'result', patchValue: 'cancelled'
+  });
+
+  // --- K9: kirjausketjun keskeinen invariantti -----------------------
+  //
+  // Kirjaus ei saa vaittaa, etta komento suoritettiin ilman
+  // vahvistusta. Migraatio testaa taman ajaessaan, mutta se testaa sen
+  // kannan omistajan oikeuksilla. Tama testaa saman OIKEALLA
+  // kayttajalla: rajoite ei saa olla sellainen, joka koskee vain
+  // migraatiota.
+  push(row('K9', 'Vahvistamatonta suoritusta ei voi kirjata',
+    'virhe 23514 (check_violation)',
+    expectRejected(await call(() =>
+      b.from('ai_action_audit')
+        .insert({ ...auditRow(id.invariantB), executed: true, confirmed: false })
+        .select()), '23514'),
+    'ai_action_audit_confirmed_check — turvamallin rikkoutumista ei saa voida kirjata tapahtuneeksi'));
+
+  // --- N: muistutusasetukset -----------------------------------------
+  //
+  // TAMAN TAULUN OMISTAJUUSMALLI ON ERI KUIN MUIDEN.
+  //
+  // Omistaja ei ole erillinen user_id-sarake vaan paaavain itse:
+  // `id uuid primary key default auth.uid()`. Politiikat kohdistuvat
+  // id-sarakkeeseen, ja rivi on tasan yksi per kayttaja.
+  //
+  // Siksi taalla ei ole "B ei voi luoda rivia A:n nimiin" erillisena
+  // vaarennoksena: rivin luominen A:n nimiin ON id:n asettaminen A:ksi,
+  // ja se on N3.
+  const prefsA = await call(() =>
+    a.from('notification_preferences').insert(notificationPrefsRow(ownerAId)).select());
+  push(row('N1', 'A luo omat muistutusasetuksensa', '1 rivi, id = A',
+    prefsA.error
+      ? { status: STATUS.ERROR, actual: describeError(prefsA.error) }
+      : { status: prefsA.rows[0] && prefsA.rows[0].id === ownerAId ? STATUS.PASS : STATUS.FAIL,
+          actual: `${prefsA.rows.length} riviä, id=${prefsA.rows[0] ? prefsA.rows[0].id : '-'}` },
+    'id on sekä pääavain että omistaja'));
+
+  const prefsAExists = prefsA.rows.length === 1;
+
+  push(prefsAExists
+    ? row('N2', 'B ei näe A:n muistutusasetuksia', '0 riviä',
+        expectDenied(await call(() =>
+          b.from('notification_preferences').select('id').eq('id', ownerAId))),
+        'SELECT-politiikka rajaa id:llä, ei user_id:llä')
+    : skipped('N2', 'B ei näe A:n muistutusasetuksia', '0 riviä', 'A:n riviä ei syntynyt'));
+
+  // TAMA ON TAMAN TAULUN TARKEIN TESTI.
+  //
+  // B yrittaa kirjoittaa rivin, jonka id on A. Muissa tauluissa
+  // vastaava yritys on omistajakentan vaarennos; taalla se on
+  // paaavaimen vaarennos, ja jos se menisi lapi, B kirjoittaisi A:n
+  // asetukset — eli paattaisi milloin A saa ilmoituksia.
+  push(row('N3', 'B ei voi kirjoittaa A:n muistutusasetuksia',
+    `virhe ${INSUFFICIENT_PRIVILEGE}`,
+    expectRejected(await call(() =>
+      b.from('notification_preferences')
+        .insert({ ...notificationPrefsRow(ownerAId), enabled: true })
+        .select())),
+    'INSERT-politiikan WITH CHECK (auth.uid() = id)'));
+
+  push(prefsAExists
+    ? row('N4', 'B:n UPDATE A:n asetuksiin osuu nollaan riviin', '0 riviä',
+        expectDenied(await call(() =>
+          b.from('notification_preferences').update({ enabled: true })
+            .eq('id', ownerAId).select())),
+        'UPDATE-politiikan USING')
+    : skipped('N4', 'B:n UPDATE A:n asetuksiin', '0 riviä', 'A:n riviä ei syntynyt'));
+
+  const prefsB = await call(() =>
+    b.from('notification_preferences').insert(notificationPrefsRow(userBId)).select());
+  push(row('N5', 'B luo omat muistutusasetuksensa', '1 rivi, id = B',
+    prefsB.error
+      ? { status: STATUS.ERROR, actual: describeError(prefsB.error) }
+      : { status: prefsB.rows[0] && prefsB.rows[0].id === userBId ? STATUS.PASS : STATUS.FAIL,
+          actual: `${prefsB.rows.length} riviä, id=${prefsB.rows[0] ? prefsB.rows[0].id : '-'}` },
+    'kielto ei johdu siitä että B ei voisi kirjoittaa lainkaan'));
+
+  const prefsBExists = prefsB.rows.length === 1;
+
+  push(prefsAExists
+    ? row('N6', 'A:n asetukset ovat koskemattomat', '1 rivi, enabled = false',
+        await (async () => {
+          const jalkeen = await call(() =>
+            a.from('notification_preferences').select('id,enabled').eq('id', ownerAId));
+          if (jalkeen.error) return { status: STATUS.ERROR, actual: describeError(jalkeen.error) };
+          const ok = jalkeen.rows.length === 1 && jalkeen.rows[0].enabled === false;
+          return { status: ok ? STATUS.PASS : STATUS.FAIL,
+                   actual: `${jalkeen.rows.length} riviä, enabled=`
+                           + `${jalkeen.rows[0] ? jalkeen.rows[0].enabled : '-'}` };
+        })(),
+        'B yritti kääntää A:n ilmoitukset päälle — hiljaisuus on oletus')
+    : skipped('N6', 'A:n asetukset ovat koskemattomat', '1 rivi', 'A:n riviä ei syntynyt'));
+
+  // =================================================================
+  // RISTIINKIINNITYSHYOKKAYKSET
+  // =================================================================
+  //
+  // TAMA ON KOKO HYVAKSYNTATESTIN TARKEIN OSUUS.
+  //
+  // Migraatiot 0004 ja 0007 muuttivat kahdeksan yhden sarakkeen
+  // vierasavainta yhdistelmavierasavaimiksi. Tama osuus todistaa, etta
+  // muutos puree oikeaa kantaa vasten oikealla kayttajalla — ei vain
+  // sita, etta rajoite nakyy luettelossa.
+  //
+  // MIKSI RLS EI RIITA
+  //
+  //   RLS ESTAA LUKEMISEN, EI VIITTAAMISTA.
+  //
+  // Kun B lahettaa rivin, jonka goal_id on A:n tavoitteen tunniste,
+  // INSERT-politiikan WITH CHECK vertaa vain OMISTAJAA — ja omistaja on
+  // oikein, B. Vierasavaimen tarkistus taas ei kulje RLS:n lapi
+  // lainkaan: kanta katsoo, onko rivi olemassa, ei sita saisiko
+  // viittaaja nahda sen.
+  //
+  // Ainoa este on yhdistelmavierasavain
+  // (user_id, viite) -> kohde(user_id, id). Paria (B, A:n rivi) ei ole
+  // olemassa, joten kanta hylkaa rivin koodilla 23503.
+  //
+  // ODOTETTU KOODI ON OSA VAITETTA. Jos jokin nailla palauttaisi
+  // 42501:n, rivi olisi kylla torjuttu — mutta RLS:n toimesta, ei
+  // eheysrajoitteen. Silloin suoja riippuisi politiikasta, joka voidaan
+  // muuttaa, eika rakenteesta. Siksi vaara koodi on ERROR eika PASS.
+  //
+  // KAHDEKSAN VIITETTA, KAKSI TAPAA KUMPIKIN
+  // INSERT: B luo uuden rivin, joka viittaa A:n riviin.
+  // UPDATE: B ottaa OMAN olemassa olevan rivinsa ja kaantaa viitteen
+  //         A:n riviin. Tama on eri koodipolku: rivi lapaisee RLS:n,
+  //         koska se on B:n oma, ja vain vierasavain voi torjua sen.
+
+  /** Yksi ristiinkiinnitysyritys, INSERT. */
+  const attackInsert = async (no, table, kuvaus, rivi, edellytys, selite) => {
+    push(edellytys
+      ? row(no, kuvaus, `virhe ${FOREIGN_KEY_VIOLATION}`,
+          expectRejected(await call(() => b.from(table).insert(rivi).select()),
+            FOREIGN_KEY_VIOLATION),
+          selite)
+      : skipped(no, kuvaus, `virhe ${FOREIGN_KEY_VIOLATION}`,
+          'kohderiviä ei syntynyt — hyökkäystä ei voitu kokeilla'));
+  };
+
+  /** Yksi ristiinkiinnitysyritys, UPDATE omaan riviin. */
+  const attackUpdate = async (no, table, kuvaus, omaId, muutos, edellytys, selite) => {
+    push(edellytys
+      ? row(no, kuvaus, `virhe ${FOREIGN_KEY_VIOLATION}`,
+          expectRejected(await call(() =>
+            b.from(table).update(muutos).eq('id', omaId).select()),
+            FOREIGN_KEY_VIOLATION),
+          selite)
+      : skipped(no, kuvaus, `virhe ${FOREIGN_KEY_VIOLATION}`,
+          'oma tai kohderivi puuttuu — hyökkäystä ei voitu kokeilla'));
+  };
+
+  // --- 0004:n kuusi viitetta -----------------------------------------
+
+  await attackInsert('X1', 'goals',
+    'B ei voi tehdä tavoitteestaan A:n tavoitteen alatavoitetta',
+    goalRow(id.attackGoalParentB, 'hyökkäys', { parentGoalId: id.goalA }),
+    goals.aExists,
+    'goals_parent_goal_fkey (user_id, parent_goal_id) -> goals (user_id, id)');
+
+  await attackInsert('X2', 'goals',
+    'B ei voi liittää tavoitettaan A:n projektiin',
+    goalRow(id.attackGoalProjectB, 'hyökkäys', { projectId: id.projectA }),
+    projects.aExists,
+    'goals_project_id_fkey (user_id, project_id) -> projects (user_id, id)');
+
+  await attackInsert('X3', 'projects',
+    'B ei voi liittää projektiaan A:n tavoitteeseen',
+    projectRow(id.attackProjectGoalB, 'hyökkäys', { goalId: id.goalA }),
+    goals.aExists,
+    'projects_goal_id_fkey (user_id, goal_id) -> goals (user_id, id)');
+
+  await attackInsert('X4', 'tasks',
+    'B ei voi liittää tehtäväänsä A:n tavoitteeseen',
+    { ...taskRow(id.attackTaskGoalB, today, 'hyökkäys'), goal_id: id.goalA },
+    goals.aExists,
+    'tasks_goal_id_fkey (user_id, goal_id) -> goals (user_id, id)');
+
+  await attackInsert('X5', 'tasks',
+    'B ei voi liittää tehtäväänsä A:n projektiin',
+    { ...taskRow(id.attackTaskProjectB, today, 'hyökkäys'), project_id: id.projectA },
+    projects.aExists,
+    'tasks_project_id_fkey (user_id, project_id) -> projects (user_id, id)');
+
+  await attackInsert('X6', 'routines',
+    'B ei voi liittää rutiiniaan A:n tavoitteeseen',
+    { ...routineRow(id.attackRoutineGoalB, 'hyökkäys'), goal_id: id.goalA },
+    goals.aExists,
+    'routines_goal_id_fkey (user_id, goal_id) -> goals (user_id, id)');
+
+  // --- 0007:n kaksi viitetta -----------------------------------------
+
+  await attackInsert('X7', 'bills',
+    'B ei voi liittää laskuaan A:n tehtävään',
+    billRow(id.attackBillTaskB, 'hyökkäys', today, { taskId: id.baitA }),
+    true,
+    'bills_task_id_fkey (user_id, task_id) -> tasks (user_id, id)');
+
+  await attackInsert('X8', 'bills',
+    'B ei voi liittää laskuaan A:n toistuvaan kuluun',
+    billRow(id.attackBillExpenseB, 'hyökkäys', today, { recurringExpenseId: id.expenseA }),
+    expenses.aExists,
+    'bills_recurring_expense_id_fkey (user_id, recurring_expense_id) -> recurring_expenses (user_id, id)');
+
+  // --- Samat kahdeksan UPDATElla -------------------------------------
+  //
+  // Nama ovat eri koodipolku kuin ylla. INSERTissa koko rivi on uusi ja
+  // RLS arvioi sen WITH CHECKilla. UPDATEssa rivi on jo olemassa ja se
+  // on B:n oma, joten se lapaisee seka USINGin etta WITH CHECKin —
+  // omistaja ei muutu. Vain vierasavain voi torjua muutoksen.
+  //
+  // Jos vain INSERT testattaisiin, kanta voisi olla suojattu luonnissa
+  // ja auki muokkauksessa, eika mikaan kertoisi sita.
+
+  await attackUpdate('U1', 'goals',
+    'B ei voi UPDATElla siirtää tavoitettaan A:n alatavoitteeksi',
+    id.goalB, { parent_goal_id: id.goalA }, goals.aExists && goals.bExists,
+    'sama vierasavain kuin X1, eri koodipolku');
+
+  await attackUpdate('U2', 'goals',
+    'B ei voi UPDATElla liittää tavoitettaan A:n projektiin',
+    id.goalB, { project_id: id.projectA }, projects.aExists && goals.bExists,
+    'sama vierasavain kuin X2, eri koodipolku');
+
+  await attackUpdate('U3', 'projects',
+    'B ei voi UPDATElla liittää projektiaan A:n tavoitteeseen',
+    id.projectB, { goal_id: id.goalA }, goals.aExists && projects.bExists,
+    'sama vierasavain kuin X3, eri koodipolku');
+
+  await attackUpdate('U4', 'tasks',
+    'B ei voi UPDATElla liittää tehtäväänsä A:n tavoitteeseen',
+    id.keepB, { goal_id: id.goalA }, goals.aExists,
+    'sama vierasavain kuin X4, eri koodipolku');
+
+  await attackUpdate('U5', 'tasks',
+    'B ei voi UPDATElla liittää tehtäväänsä A:n projektiin',
+    id.keepB, { project_id: id.projectA }, projects.aExists,
+    'sama vierasavain kuin X5, eri koodipolku');
+
+  await attackUpdate('U6', 'routines',
+    'B ei voi UPDATElla liittää rutiiniaan A:n tavoitteeseen',
+    id.routineB, { goal_id: id.goalA }, goals.aExists,
+    'sama vierasavain kuin X6, eri koodipolku');
+
+  await attackUpdate('U7', 'bills',
+    'B ei voi UPDATElla liittää laskuaan A:n tehtävään',
+    id.billB, { task_id: id.baitA }, bills.bExists,
+    'sama vierasavain kuin X7, eri koodipolku');
+
+  await attackUpdate('U8', 'bills',
+    'B ei voi UPDATElla liittää laskuaan A:n toistuvaan kuluun',
+    id.billB, { recurring_expense_id: id.expenseA }, expenses.aExists && bills.bExists,
+    'sama vierasavain kuin X8, eri koodipolku');
+
+  // --- X9: oma viite SAA onnistua ------------------------------------
+  //
+  // Ilman tata koko osuus voisi menna lapi siksi, etta viitteet ovat
+  // rikki kaikille. Kielto on merkityksellinen vain jos sallittu tapaus
+  // toimii.
+  push(goals.bExists
+    ? row('X9', 'B saa liittää oman tehtävänsä OMAAN tavoitteeseensa', '1 rivi',
+        expectRows(await call(() =>
+          b.from('tasks')
+            .insert({ ...taskRow(id.ownLinkB, today, 'oma liitos'), goal_id: id.goalB })
+            .select()), 1),
+        'todiste ettei kielto johdu siitä että viitteet olisivat rikki kaikille')
+    : skipped('X9', 'B saa liittää tehtävänsä omaan tavoitteeseensa', '1 rivi',
+        'B:n tavoitetta ei syntynyt'));
+
   // --- T6: kirjautumaton ei saa mitään -------------------------------
   //
   // anon-roolilta on peruttu kaikki oikeudet, joten tämä ei edes yllä
@@ -810,7 +1366,17 @@ export async function runAcceptance(options) {
   // lukukielto ei riittaisi: GRANT on operaatiokohtainen, ja puuttuva
   // revoke yhdelle operaatiolle jaisi nakymatta jos vain SELECT
   // tarkistettaisiin.
-  for (const taulu of ['routines', 'routine_exceptions']) {
+  // Jokainen uusi taulu, jokainen operaatio. Lyhenne on raportin
+  // luettavuutta varten; taulun nimi on rivin tekstissa.
+  const ANON_TAULUT = [
+    ['r', 'routines'], ['e', 'routine_exceptions'],
+    ['g', 'goals'], ['j', 'projects'],
+    ['n', 'notification_preferences'], ['w', 'wellbeing_entries'],
+    ['x', 'recurring_expenses'], ['l', 'bills'],
+    ['s', 'savings_goals'], ['k', 'ai_action_audit']
+  ];
+
+  for (const [lyhenne, taulu] of ANON_TAULUT) {
     const yritykset = [
       ['select', () => anon.from(taulu).select('id')],
       ['insert', () => anon.from(taulu).insert({ id: `${MARKER_PREFIX}anon` }).select()],
@@ -820,7 +1386,7 @@ export async function runAcceptance(options) {
     ];
 
     for (const [operaatio, kysely] of yritykset) {
-      push(row(`T6-${taulu === 'routines' ? 'r' : 'e'}-${operaatio}`,
+      push(row(`T6-${lyhenne}-${operaatio}`,
         `Kirjautumaton ei saa ${operaatio}-oikeutta tauluun ${taulu}`,
         `virhe ${INSUFFICIENT_PRIVILEGE}`,
         expectRejected(await call(kysely)),
@@ -892,6 +1458,53 @@ export async function runAcceptance(options) {
       ''));
   }
 
+  // UUDET TAULUT, RIIPPUVUUSJARJESTYKSESSA.
+  //
+  // Laskut ensin: ne viittaavat seka tehtaviin etta toistuviin
+  // kuluihin. Viitteet ovat ON DELETE SET NULL, joten cascade ei
+  // poistaisi niita — kohteen poisto jattaisi laskun kantaan ilman
+  // viitetta, ja se jaisi jaannokseksi.
+  //
+  // Tavoitteet ja projektit viittaavat toisiinsa molempiin suuntiin,
+  // molemmat SET NULLilla. Poistojarjestys on siksi vapaa, mutta ne
+  // tulevat laskujen ja tehtavien jalkeen: tehtava voi viitata
+  // tavoitteeseen, ja rivit poistetaan mieluummin lapsista juureen.
+  const SIIVOTTAVAT = [
+    'bills', 'recurring_expenses', 'savings_goals',
+    'ai_action_audit', 'wellbeing_entries',
+    'goals', 'projects'
+  ];
+
+  let siivousNo = 13;
+  for (const taulu of SIIVOTTAVAT) {
+    for (const [client, kuka] of [[a, 'A'], [b, 'B']]) {
+      const poisto = await call(() =>
+        client.from(taulu).delete().like('id', `${MARKER_PREFIX}%`).select());
+      push(row(`C${siivousNo}`, `${kuka} poistaa omat testirivinsä taulusta ${taulu}`,
+        'ei virhettä',
+        poisto.error
+          ? { status: STATUS.ERROR, actual: describeError(poisto.error) }
+          : { status: STATUS.PASS, actual: `${poisto.rows.length} riviä` },
+        'like-ehto on turvallinen vain koska RLS rajaa sen omiin riveihin'));
+      siivousNo += 1;
+    }
+  }
+
+  // Muistutusasetukset poistetaan tunnisteella, ei etuliitteella: rivin
+  // tunniste ON kayttajan uuid, joten etuliite ei osuisi siihen
+  // koskaan. Kumpikin tili poistaa vain omansa.
+  for (const [client, kuka, uid] of [[a, 'A', ownerAId], [b, 'B', userBId]]) {
+    const poisto = await call(() =>
+      client.from('notification_preferences').delete().eq('id', uid).select());
+    push(row(`C${siivousNo}`, `${kuka} poistaa omat muistutusasetuksensa`,
+      'ei virhettä',
+      poisto.error
+        ? { status: STATUS.ERROR, actual: describeError(poisto.error) }
+        : { status: STATUS.PASS, actual: `${poisto.rows.length} riviä` },
+      'tunniste on käyttäjän uuid, joten etuliite ei osuisi siihen'));
+    siivousNo += 1;
+  }
+
   // --- Loppuvarmistus ------------------------------------------------
   const finalA = await call(() => a.from('tasks').select('id'));
   push(row('C8', 'A:n tehtävämäärä on palannut lähtöarvoon',
@@ -909,15 +1522,62 @@ export async function runAcceptance(options) {
   // Molemmat tilit tarkistavat molemmat uudet taulut. Yksi tili ei riitä:
   // RLS piilottaa toisen rivit, joten A:n puhdas näkymä ei kerro mitään
   // siitä, jäikö B:lle jotain.
+  const JAANNOSTAULUT = [
+    ['r', 'routines'], ['e', 'routine_exceptions'],
+    ['g', 'goals'], ['j', 'projects'],
+    ['w', 'wellbeing_entries'], ['x', 'recurring_expenses'],
+    ['l', 'bills'], ['s', 'savings_goals'], ['k', 'ai_action_audit']
+  ];
+
   for (const [tunnus, client, kuka] of [['C11', a, 'A'], ['C12', b, 'B']]) {
-    for (const taulu of ['routines', 'routine_exceptions']) {
+    for (const [lyhenne, taulu] of JAANNOSTAULUT) {
       const jaannos = await call(() =>
         client.from(taulu).select('id').like('id', `${MARKER_PREFIX}%`));
-      push(row(`${tunnus}-${taulu === 'routines' ? 'r' : 'e'}`,
+      push(row(`${tunnus}-${lyhenne}`,
         `${kuka} ei näe jäännöstä taulussa ${taulu}`,
         '0 riviä', expectRows(jaannos, 0),
         jaannos.rows.map(r => r.id).join(', ')));
     }
+  }
+
+  // MUISTUTUSASETUKSET ERIKSEEN.
+  //
+  // Rivin tunniste on kayttajan uuid, joten etuliitehaku ei loytaisi
+  // sita. Kumpikin tili tarkistaa oman rivinsa erikseen.
+  for (const [tunnus, client, kuka, uid] of
+       [['C11-n', a, 'A', ownerAId], ['C12-n', b, 'B', userBId]]) {
+    const jaannos = await call(() =>
+      client.from('notification_preferences').select('id').eq('id', uid));
+    push(row(tunnus, `${kuka} ei näe jäännöstä muistutusasetuksissa`,
+      '0 riviä', expectRows(jaannos, 0), ''));
+  }
+
+  // RISTIINKIINNITYSYRITYKSET EIVAT SAA OLLA KANNASSA.
+  //
+  // Tama on eri vaite kuin "siivous onnistui". Yksikaan naista rivista
+  // EI SAANUT SYNTYA lainkaan: jokainen niista oli hyokkays, jonka
+  // kannan piti torjua. Jos jokin niista loytyy, suoja petti — eika
+  // sita nakisi siivouksen rivimaarista, koska siivous poisti ne.
+  //
+  // Tarkistus tehdaan B:n silmin, koska hyokkaykset olivat B:n rivejae:
+  // A ei nakisi niita vaikka ne olisivat kannassa.
+  const hyokkaykset = [
+    ['goals', [id.attackGoalParentB, id.attackGoalProjectB]],
+    ['projects', [id.attackProjectGoalB]],
+    ['tasks', [id.attackTaskGoalB, id.attackTaskProjectB]],
+    ['routines', [id.attackRoutineGoalB]],
+    ['bills', [id.attackBillTaskB, id.attackBillExpenseB]]
+  ];
+
+  for (const [taulu, tunnisteet] of hyokkaykset) {
+    const loytyi = await call(() =>
+      b.from(taulu).select('id').in('id', tunnisteet));
+    push(row(`C13-${taulu}`,
+      `Ristiinkiinnitysyrityksiä ei ole kannassa taulussa ${taulu}`,
+      '0 riviä', expectRows(loytyi, 0),
+      loytyi.rows.length > 0
+        ? `LÄPI MENNEET: ${loytyi.rows.map(r => r.id).join(', ')}`
+        : 'yksikään hyökkäysrivi ei syntynyt'));
   }
 
   return finish(rows, { runId, ids: id, aborted: null });
@@ -981,6 +1641,190 @@ export function exceptionRow(id, routineId, date, type = 'skip') {
     duration_minutes: null,
     title: null,
     note: null
+  };
+}
+
+/**
+ * Testirivi goals-tauluun.
+ *
+ * Sarakkeet ovat samat yksitoista, jotka sovellus kirjoittaa
+ * (collectionsRepo, goalsRepo.toRow). user_id, created_at ja updated_at
+ * EIVAT ole mukana: ne ovat kannan omaisuutta.
+ *
+ * parent_goal_id ja project_id ovat parametreja, koska juuri niilla
+ * ristiinkiinnitysta yritetaan. Oletuksena molemmat ovat null.
+ */
+export function goalRow(id, title, { parentGoalId = null, projectId = null } = {}) {
+  return {
+    id,
+    title,
+    description: null,
+    category: 'muu',
+    priority: 'normaali',
+    status: 'active',
+    target_date: null,
+    progress_mode: 'task_based',
+    manual_progress: 0,
+    parent_goal_id: parentGoalId,
+    project_id: projectId
+  };
+}
+
+/**
+ * Testirivi projects-tauluun.
+ *
+ * Yhdeksan saraketta, samat jotka projectsRepo.toRow kirjoittaa.
+ * goal_id on parametri samasta syysta kuin goalRow:ssa.
+ */
+export function projectRow(id, name, { goalId = null } = {}) {
+  return {
+    id,
+    name,
+    description: null,
+    category: 'muu',
+    priority: 'normaali',
+    status: 'active',
+    goal_id: goalId,
+    start_date: null,
+    deadline: null
+  };
+}
+
+/**
+ * Testirivi wellbeing_entries-tauluun.
+ *
+ * Seitseman saraketta, samat jotka wellbeingRepo.toRow kirjoittaa.
+ *
+ * `note` jaa aina nulliksi. Se on kayttajan vapaata tekstia, eika tama
+ * tyokalu kirjoita sellaista edes omiin testiriveihinsa: rivi voi jaada
+ * kantaan jos siivous epaonnistuu, ja silloin siina ei saa olla mitaan
+ * mika muistuttaa oikeaa merkintaa.
+ */
+export function wellbeingRow(id, date, energy = 3) {
+  return {
+    id,
+    date,
+    energy,
+    mood: null,
+    stress: null,
+    sleep_hours: null,
+    note: null
+  };
+}
+
+/**
+ * Testirivi recurring_expenses-tauluun.
+ *
+ * Kymmenen saraketta, samat jotka recurringExpensesRepo.toRow
+ * kirjoittaa. Summa on SENTTEINA (bigint), kuten koko sovelluksessa.
+ */
+export function recurringExpenseRow(id, name, nextDueDate) {
+  return {
+    id,
+    name,
+    amount_minor: 1000,
+    currency: 'EUR',
+    cadence: 'monthly',
+    day_of_month: null,
+    next_due_date: nextDueDate,
+    category: 'talous',
+    active: true,
+    note: null
+  };
+}
+
+/**
+ * Testirivi bills-tauluun.
+ *
+ * Yksitoista saraketta, samat jotka billsRepo.toRow kirjoittaa.
+ *
+ * task_id ja recurring_expense_id ovat parametreja: ne ovat ne kaksi
+ * viitetta, joilla ristiinkiinnitysta yritetaan.
+ */
+export function billRow(id, name, dueDate, { taskId = null, recurringExpenseId = null } = {}) {
+  return {
+    id,
+    name,
+    amount_minor: 1000,
+    currency: 'EUR',
+    due_date: dueDate,
+    status: 'open',
+    paid_date: null,
+    category: 'talous',
+    task_id: taskId,
+    recurring_expense_id: recurringExpenseId,
+    note: null
+  };
+}
+
+/**
+ * Testirivi savings_goals-tauluun.
+ *
+ * Seitseman saraketta, samat jotka savingsGoalsRepo.toRow kirjoittaa.
+ */
+export function savingsGoalRow(id, name) {
+  return {
+    id,
+    name,
+    target_minor: 100000,
+    current_minor: 0,
+    currency: 'EUR',
+    target_date: null,
+    note: null
+  };
+}
+
+/**
+ * Testirivi ai_action_audit-tauluun.
+ *
+ * Samat sarakkeet jotka aiAuditRepo.toRow kirjoittaa, PAITSI
+ * occurred_at: repositorio jattaa sen pois kun aikaleimaa ei ole, jotta
+ * kannan oletus `now()` paasee voimaan. Nimenomainen NULL kaataisi
+ * rivin koodilla 23502, koska sarake on NOT NULL.
+ *
+ * `input_summary` ja `proposal` jaavat tyhjiksi. Ne ovat kayttajan omaa
+ * tekstia, ja koko taulun tarkoitus on rajata sen maaraa.
+ */
+export function auditRow(id) {
+  return {
+    id,
+    input_summary: '',
+    intent: 'create_task',
+    risk: 'medium',
+    target_type: null,
+    target_id: null,
+    proposal: null,
+    confirmed: false,
+    executed: false,
+    result: 'proposed',
+    error_code: null
+  };
+}
+
+/**
+ * Testirivi notification_preferences-tauluun.
+ *
+ * Tama on ainoa taulu, jossa selain lahettaa omistajan: paaavain ON
+ * omistaja, eika upsertilla ole muuta kohdetta. Politiikka
+ * `with check (auth.uid() = id)` hylkaa rivin, jonka id ei ole
+ * kirjoittaja itse — selain saa kertoa kuka se on, muttei valehdella.
+ *
+ * Juuri sita alla oleva N3 yrittaa.
+ */
+export function notificationPrefsRow(userId) {
+  return {
+    id: userId,
+    enabled: false,
+    task_lead_minutes: 10,
+    routine_lead_minutes: 5,
+    daily_plan_time: '07:30',
+    evening_review_time: '21:00',
+    daily_plan_enabled: true,
+    evening_review_enabled: true,
+    deadline_warnings_enabled: true,
+    max_per_day: 12,
+    quiet_hours_from: '22:00',
+    quiet_hours_to: '06:30'
   };
 }
 
