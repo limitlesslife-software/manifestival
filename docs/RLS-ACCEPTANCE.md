@@ -4,7 +4,10 @@ Tämä on runbookin **vaihe 5** kokonaisuudessaan: ohje, työkalu ja
 jälkivarmistus. Runbook viittaa tänne eikä toista sisältöä.
 
 > **TILA: SUORITETTU JA HYVÄKSYTTY.** Testi ajettiin tuotantoa vasten
-> ja tuotti **34/34 PASS** (0 FAIL, 0 ERROR, 0 SKIP). Väliaikainen tili B
+> ja tuotti **34/34 PASS** (0 FAIL, 0 ERROR, 0 SKIP) siinä laajuudessa
+> kuin se silloin oli. Työkalu kattaa nyt **271 tarkistusta**: migraatiot
+> 0003–0008, kymmenen taulua ja kuusitoista ristiinkiinnityshyökkäystä.
+> Väliaikainen tili B
 > on poistettu ja `verify_acceptance.sql` tuotti **18/18 PASS**,
 > `poikkeavia_yhteensa` = 0.
 >
@@ -87,6 +90,36 @@ läpi ja raportti kertoisi vain siitä.
 | **R1–R5** | Sama matriisi `routines`-taululle | 0003:n politiikat toimivat |
 | **E1–E6** | Sama matriisi `routine_exceptions`-taululle | 0003:n politiikat toimivat |
 | **E4** | **B ei voi kiinnittää poikkeustaan A:n rutiiniin** | yhdistelmävierasavain — **RLS ei estäisi tätä** |
+| **G, J** | Sama matriisi `goals`- ja `projects`-tauluille | 0004:n politiikat toimivat |
+| **W** | Sama matriisi `wellbeing_entries`-taululle | 0006:n politiikat toimivat |
+| **X, L, S** | Sama matriisi taloustauluille | 0007:n politiikat toimivat |
+| **K** | Sama matriisi `ai_action_audit`-taululle | 0008:n politiikat toimivat |
+| **K9** | Vahvistamatonta suoritusta ei voi kirjata | tarkiste puree oikealla käyttäjällä (23514) |
+| **N1–N6** | `notification_preferences` — omistaja on pääavain | eri omistajuusmalli kuin muissa |
+| **X1–X8** | **Ristiinkiinnitys INSERTillä, kahdeksan viitettä** | yhdistelmävierasavaimet (23503) |
+| **U1–U8** | **Ristiinkiinnitys UPDATElla, samat kahdeksan** | eri koodipolku — rivi läpäisee RLS:n |
+| **X9** | B saa liittää tehtävänsä **omaan** tavoitteeseensa | kielto ei johdu siitä että viitteet ovat rikki |
+
+### Ristiinkiinnityshyökkäykset ovat osuuden ydin
+
+Kahdeksan viitettä, kaksi hyökkäystä kumpaakin kohti.
+
+**INSERT (X1–X8):** B luo uuden rivin, joka viittaa A:n riviin.
+
+**UPDATE (U1–U8):** B ottaa **oman** rivinsä ja kääntää viitteen A:han.
+Tämä on eri koodipolku, ei lisätesti: rivi läpäisee sekä `USING`in että
+`WITH CHECK`in — omistaja ei muutu — ja vain vierasavain voi torjua
+muutoksen. Jos vain INSERT testattaisiin, kanta voisi olla suojattu
+luonnissa ja auki muokkauksessa.
+
+**Odotettu koodi `23503` on osa väitettä.** Jos jokin näistä palauttaisi
+`42501`:n, rivi olisi kyllä torjuttu — mutta RLS:n toimesta, ei
+eheysrajoitteen. Silloin suoja riippuisi politiikasta, joka voidaan
+muuttaa, eikä rakenteesta. Siksi väärä koodi kirjataan ERRORiksi eikä
+PASSiksi.
+
+**X9 todistaa vastakohdan.** Ilman sitä kaikki kuusitoista kieltoa
+voisivat mennä läpi siksi, että viitteet ovat rikki kaikilta.
 
 **T4 on yhtä tärkeä kuin kiellot.** Politiikka `using (false)` läpäisisi
 jokaisen kieltotestin ja rikkoisi sovelluksen täysin. Ilman T4:ää testi
@@ -225,7 +258,7 @@ erillisessä clientissä samalla sivulla (`persistSession: false` ja oma
 
 Paina **Kopioi raportti**. Se on yksi taulukko sarakkeilla
 `test_no`, `test_name`, `status`, `expected`, `actual`, `details` sekä
-loppurivi muodossa `TULOS: PASS — 64/64 PASS, 0 FAIL, 0 ERROR, 0 SKIP`.
+loppurivi muodossa `TULOS: PASS — 271/271 PASS, 0 FAIL, 0 ERROR, 0 SKIP`.
 
 Liitä se runbookin ajolokiin sellaisenaan.
 
