@@ -260,8 +260,8 @@ from (
          (select count(*)::text from pg_tables
            where schemaname = 'public'
              and tablename in ('routines', 'routine_exceptions', 'goals', 'projects',
-                               'notification_preferences', 'wellbeing', 'bills',
-                               'recurring_expenses', 'savings_goals', 'ai_audit'))
+                               'notification_preferences', 'wellbeing_entries', 'bills',
+                               'recurring_expenses', 'savings_goals', 'ai_action_audit'))
 
   -- ================================================================
   -- KIRJATTAVAT LUVUT

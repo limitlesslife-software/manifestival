@@ -2541,3 +2541,51 @@ test('sarakediagnostiikka on vain lukeva ja listaa sarakkeet nimeltä', () => {
   assert.ok(raw.includes('Sarakkeita on tasan 11'),
     'diagnostiikka ei kerro odotettua sarakemäärää');
 });
+
+test('KRIITTINEN: rajaustarkistukset käyttävät migraatioiden todellisia taulunimiä', () => {
+  // LÖYTYNYT VIKA, JOTA TÄMÄ VARTIOI
+  //
+  // Kahdeksan varmistus- ja preflight-tiedostoa tarkisti, ettei
+  // migraatioiden 0004–0008 tauluja ole olemassa. Lista oli kirjoitettu
+  // käsin, ja kahdessa nimessä oli virhe: `ai_audit` (oikea nimi on
+  // `ai_action_audit`) ja `wellbeing` (oikea on `wellbeing_entries`).
+  //
+  // Tarkistukset olisivat siis raportoineet PASSin vaikka 0008 olisi
+  // ajettu. Rajaustarkistus, joka ei näe rajan ylitystä, on pahempi kuin
+  // ei tarkistusta: se antaa väärän varmuuden.
+  //
+  // Nyt odotettu lista luetaan migraatioista, joten uusi taulu tai
+  // uudelleennimeäminen kaataa tämän samassa commitissa.
+  const myohemmat = migrationFiles().filter(name => /^000[4-8]/.test(name));
+  assert.equal(myohemmat.length, 5, `myöhempiä migraatioita löytyi ${myohemmat.length}`);
+
+  const taulut = new Set();
+  for (const name of myohemmat) {
+    for (const m of read(`${MIGRATION_DIR}/${name}`)
+      .matchAll(/create table (?:if not exists )?public\.(\w+)/g)) {
+      taulut.add(m[1]);
+    }
+  }
+  assert.ok(taulut.size >= 8, `tauluja löytyi vain ${taulut.size}`);
+
+  // Rajaustarkistus tunnistetaan siitä VÄITTEESTÄ jonka se esittää, ei
+  // siitä että jokin taulunimi sattuu esiintymään tiedostossa.
+  // verify_0007 mainitsee savings_goals-taulun koska se VARMISTAA sen —
+  // se ei väitä mitään myöhempien migraatioiden puuttumisesta.
+  const kaikkiSql = ['supabase/verify', 'supabase/preflight', 'supabase/acceptance']
+    .flatMap(hakemisto => fs.readdirSync(path.join(ROOT, hakemisto))
+      .filter(n => n.endsWith('.sql'))
+      .map(n => `${hakemisto}/${n}`));
+
+  const rajaavat = kaikkiSql.filter(n => /tauluja ei ole olemassa/.test(read(n)));
+  assert.ok(rajaavat.length >= 5,
+    `rajaustarkistuksia löytyi vain ${rajaavat.length}: ${rajaavat.join(', ')}`);
+
+  for (const tiedosto of rajaavat) {
+    const sisalto = read(tiedosto);
+    for (const taulu of taulut) {
+      assert.ok(sisalto.includes(`'${taulu}'`),
+        `${tiedosto}: rajaustarkistuksesta puuttuu taulu ${taulu}`);
+    }
+  }
+});

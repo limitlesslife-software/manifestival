@@ -200,7 +200,7 @@ from (
            where schemaname = 'public'
              and tablename in ('goals', 'projects', 'notification_preferences',
                                'wellbeing_entries', 'bills', 'recurring_expenses',
-                               'savings_goals', 'ai_audit'))
+                               'savings_goals', 'ai_action_audit'))
 
 ) c
 order by c.check_no;
