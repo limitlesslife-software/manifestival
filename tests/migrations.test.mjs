@@ -713,6 +713,217 @@ test('kirjausketjun kohde ei ole vierasavain', () => {
     'target_id on vierasavain — historia katoaisi kohteen mukana');
 });
 
+
+// =====================================================================
+// VARMISTUSTEN SARAKELISTAT LASKETAAN MIGRAATIOSTA
+// =====================================================================
+//
+// LÖYTYNYT VIKA, JOTA NÄMÄ VARTIOIVAT
+//
+// verify_0003.sql odotti taululta routine_exceptions kymmentä saraketta.
+// Migraatio luo yksitoista. Odotusarvo oli laskettu käsin ja `updated_at`
+// unohtui. Tuotannon varmistus pysähtyi siihen, vaikka kanta oli
+// täsmälleen migraation mukainen — ja pysähtynyt varmistus tarkoittaa,
+// ettei lippua saa kääntää.
+//
+// Käsin laskettu odotusarvo vanhenee aina. Nämä testit laskevat sen
+// migraatiosta, joten sarakkeen lisääminen tai poistaminen kaataa
+// varmistuksen samassa commitissa jossa muutos tehdään — eikä
+// tuotannossa.
+
+/** Taulu -> migraatio ja varmistus, joissa se esiintyy. */
+const TAULUKARTTA = [
+  ['goals',                    '0004_goals_projects.sql',           'verify_0004.sql'],
+  ['projects',                 '0004_goals_projects.sql',           'verify_0004.sql'],
+  ['notification_preferences', '0005_notification_preferences.sql', 'verify_0005.sql'],
+  ['wellbeing_entries',        '0006_wellbeing.sql',                'verify_0006.sql'],
+  ['recurring_expenses',       '0007_finance.sql',                  'verify_0007.sql'],
+  ['bills',                    '0007_finance.sql',                  'verify_0007.sql'],
+  ['savings_goals',            '0007_finance.sql',                  'verify_0007.sql'],
+  ['ai_action_audit',          '0008_ai_audit.sql',                 'verify_0008.sql']
+];
+
+/** Yhden taulun sarakkeet migraation create table -lauseesta. */
+function luodutSarakkeet(migraatio, taulu) {
+  const luonti = new RegExp(`create table public\\.${taulu} \\(([\\s\\S]*?)\\n\\);`)
+    .exec(read(`${MIGRATION_DIR}/${migraatio}`));
+  assert.ok(luonti, `${taulu}: create table ei löytynyt tiedostosta ${migraatio}`);
+
+  return luonti[1].split(NEWLINE)
+    .map(line => /^ {2}(\w+)\s+\S/.exec(line))
+    .filter(Boolean)
+    .map(m => m[1])
+    .filter(nimi => nimi !== 'constraint' && nimi !== 'foreign');
+}
+
+/** Varmistuksen nimetty sarakelista tälle taululle. */
+function varmistuksenSarakkeet(varmistus, taulu) {
+  const lohko = new RegExp(
+    `table_name = '${taulu}'\\s*\\n\\s*and column_name in \\(([^)]*)\\)`)
+    .exec(read(`supabase/verify/${varmistus}`));
+  assert.ok(lohko, `${varmistus}: taululle ${taulu} ei ole nimettyä sarakelistaa`);
+  return [...lohko[1].matchAll(/'(\w+)'/g)].map(m => m[1]);
+}
+
+test('KRIITTINEN: varmistusten sarakelistat vastaavat migraatioita', () => {
+  for (const [taulu, migraatio, varmistus] of TAULUKARTTA) {
+    const kannassa = luodutSarakkeet(migraatio, taulu);
+    const odotetut = varmistuksenSarakkeet(varmistus, taulu);
+
+    const puuttuu = kannassa.filter(s => !odotetut.includes(s));
+    const yli = odotetut.filter(s => !kannassa.includes(s));
+
+    assert.deepEqual(puuttuu, [],
+      `${varmistus}: taulun ${taulu} sarakkeita ei ole nimetty: ${puuttuu.join(', ')}`);
+    assert.deepEqual(yli, [],
+      `${varmistus}: taululle ${taulu} nimetään sarakkeita joita migraatio ei luo: ${yli.join(', ')}`);
+  }
+});
+
+test('KRIITTINEN: varmistusten sarakemäärät vastaavat migraatioita', () => {
+  // Nimilista voi olla oikein ja odotusarvo silti väärä: luku on eri
+  // paikassa tiedostoa kuin lista. Juuri niin kävi 0003:ssa.
+  for (const [taulu, migraatio, varmistus] of TAULUKARTTA) {
+    const maara = luodutSarakkeet(migraatio, taulu).length;
+    const lahde = read(`supabase/verify/${varmistus}`);
+
+    const rivi = lahde.split('union all')
+      .find(osa => new RegExp(`table_name = '${taulu}'$`, 'm').test(osa)
+                && osa.includes('column_name in ('));
+    assert.ok(rivi, `${varmistus}: taulun ${taulu} tarkistusta ei löytynyt`);
+
+    const odotus = /',\s*'(\d+)',/.exec(rivi);
+    assert.ok(odotus, `${varmistus}: taulun ${taulu} odotusarvoa ei löytynyt`);
+
+    assert.equal(Number(odotus[1]), maara,
+      `${varmistus}: taululle ${taulu} odotetaan ${odotus[1]} saraketta,`
+      + ` migraatio luo ${maara}`);
+  }
+});
+
+test('KRIITTINEN: varmistus laskee myös nimeämättömät sarakkeet', () => {
+  // Kokonaismäärä yksin ei todista mitään: se voisi täsmätä, vaikka
+  // odotettu sarake puuttuisi ja tilalla olisi tuntematon. Kolmen luvun
+  // — nimetyt, nimeämättömät, yhteensä — on oltava keskenään
+  // johdonmukaiset, ja jokainen niistä lukittu.
+  for (const [taulu, , varmistus] of TAULUKARTTA) {
+    const lahde = read(`supabase/verify/${varmistus}`);
+
+    assert.ok(new RegExp(`table_name = '${taulu}'\\s*\\n\\s*and column_name not in`)
+      .test(lahde),
+      `${varmistus}: taululle ${taulu} ei lasketa nimeämättömiä sarakkeita`);
+  }
+});
+
+test('KRIITTINEN: jokainen 0004–0008 -varmistus todistaa omistajuusmallinsa', () => {
+  // Jokaisen taulun kohdalla on tehty valinta: joko viittaukset ovat
+  // yhdistelmävierasavaimia, tai taulussa ei ole viittauksia lainkaan.
+  // Kumpikin valinta on väite, joka voi vanhentua. Varmistuksen on
+  // testattava se väite, ei vain sen seurauksia.
+  const vaatimukset = [
+    // Viittaavat taulut: rakenne luetaan katalogista.
+    ['verify_0004.sql', ['confdelsetcols', 'conkey', 'owner_row_key']],
+    ['verify_0007.sql', ['confdelsetcols', 'conkey', 'owner_row_key']],
+    // Viittaamattomat taulut: väite on "viitteitä ei ole".
+    ['verify_0005.sql', ['confrelid', 'auth.uid()=id']],
+    ['verify_0006.sql', ['confrelid', 'wellbeing_entries_unique_day']],
+    ['verify_0008.sql', ['confrelid', 'ai_action_audit_confirmed_check']]
+  ];
+
+  for (const [varmistus, tarvittavat] of vaatimukset) {
+    // KOODISTA, EI KOMMENTEISTA.
+    //
+    // Nama tarkistukset olivat aluksi pelkkia sisaltyvyystestejae koko
+    // tiedostoon, ja mutaatiotesti paljasti ne tyhjiksi: kun
+    // `aclexplode` poistettiin SQL:sta, sana jai kommenttiin joka
+    // selittaa miksi se on siella — ja testi meni lapi. Kommentti ei
+    // tarkista mitaan.
+    const lahde = koodi(varmistus);
+    for (const needle of tarvittavat) {
+      assert.ok(lahde.includes(needle),
+        `${varmistus}: omistajuusmallia ei todisteta — puuttuu ${needle}`);
+    }
+  }
+});
+
+/** Varmistuksen suorittava osa: kommenttirivit pois. */
+function koodi(varmistus) {
+  return read(`supabase/verify/${varmistus}`).split(NEWLINE)
+    .filter(line => !line.trim().startsWith('--'))
+    .join(NEWLINE);
+}
+
+test('KRIITTINEN: rakennetarkistuksia on oikea maara, ei vain yksi nayte', () => {
+  // Sisaltyvyystesti ei riita: varmistuksessa voi olla kaksi
+  // omistajuustarkistusta, joista toinen menettaa rakenne-ehtonsa.
+  // Silloin sana esiintyy yha, mutta toinen tarkistus ei enaa todista
+  // mitaan. Mutaatiotesti paljasti tasmalleen taman.
+  //
+  // Luvut vastaavat migraatioiden yhdistelmavierasavainryhmia:
+  //   0004  kaksi tarkistusta — viisi ehdotonta viitetta (12) ja
+  //         rutiinin ehdollinen viite (13)
+  //   0007  yksi tarkistus — laskun kaksi viitetta samassa (12)
+  // Jos ryhmien maara muuttuu, tama kaatuu, ja se on oikea hetki
+  // tarkistaa etta jokainen ryhma yha luetaan katalogista.
+  const odotukset = [
+    // [tiedosto, conkey-ehtoja, confdelsetcols-pituusehtoja]
+    ['verify_0004.sql', 2, 2],
+    ['verify_0007.sql', 1, 1]
+  ];
+
+  for (const [varmistus, conkeyja, setcolseja] of odotukset) {
+    const lahde = koodi(varmistus);
+
+    assert.equal(
+      lahde.split('array_length(con.conkey, 1) = 2').length - 1, conkeyja,
+      `${varmistus}: yhdistelmavierasavaimen sarakemaaraa ei tarkisteta joka kohdassa`);
+
+    assert.equal(
+      lahde.split('array_length(con.confdelsetcols, 1) = 1').length - 1, setcolseja,
+      `${varmistus}: poistossa nollattavia sarakkeita ei rajata joka kohdassa`);
+  }
+
+  // Ja jokaisessa varmistuksessa on tasan yksi PUBLIC-oikeuslistan
+  // tarkistus. Nolla tarkoittaisi, ettei perittya oikeutta nahda
+  // lainkaan.
+  for (const numero of ['0004', '0005', '0006', '0007', '0008']) {
+    const lahde = koodi(`verify_${numero}.sql`);
+    assert.equal(lahde.split('aclexplode').length - 1, 1,
+      `verify_${numero}.sql: PUBLIC-oikeuslistan tarkistuksia ei ole tasan yhta`);
+  }
+});
+
+test('KRIITTINEN: varmistukset tarkistavat molemmat politiikan puolet', () => {
+  // USING ratkaisee mitä riviä saa muokata, WITH CHECK mihin sen saa
+  // muuttaa. Jos vain USING tarkistettaisiin, käyttäjä voisi ottaa oman
+  // rivinsä ja kirjoittaa sen toisen nimiin — eikä varmistus huomaisi.
+  for (const numero of ['0004', '0005', '0006', '0007', '0008']) {
+    const lahde = koodi(`verify_${numero}.sql`);
+
+    assert.ok(lahde.includes('p.qual') && lahde.includes('p.with_check'),
+      `verify_${numero}.sql: ei vertaa politiikan molempia puolia`);
+    assert.ok(lahde.includes("roles = '{authenticated}'::name[]"),
+      `verify_${numero}.sql: ei tarkista, mille roolille politiikka on`);
+  }
+});
+
+test('KRIITTINEN: varmistukset todistavat PUBLIC-roolin kahdella menetelmällä', () => {
+  // has_table_privilege kertoo ONKO oikeus (perintä mukaan lukien),
+  // aclexplode kertoo MISTÄ se tulee. PUBLICille myönnetty oikeus ei näy
+  // roolikohtaisissa listauksissa lainkaan, joten pelkkä
+  // has_table_privilege('anon', ...) ei riitä.
+  for (const numero of ['0004', '0005', '0006', '0007', '0008']) {
+    const lahde = koodi(`verify_${numero}.sql`);
+
+    assert.ok(lahde.includes('aclexplode'),
+      `verify_${numero}.sql: ei katso taulun oikeuslistaa`);
+    assert.ok(lahde.includes('acl.grantee = 0'),
+      `verify_${numero}.sql: ei etsi PUBLIC-roolia oikeuslistasta`);
+    assert.ok(lahde.includes("has_table_privilege('anon'"),
+      `verify_${numero}.sql: ei tarkista anon-roolin tehollisia oikeuksia`);
+  }
+});
+
 // ------------------------------------------ FREEZE: varmistuskyselyt
 
 test('varmistuskyselyt ovat vain lukevia', () => {
@@ -865,9 +1076,24 @@ test('varmistuskyselyt eivät lue käyttäjän sisältöä', () => {
     // Nyt sana lasketaan vain kun se esiintyy omana tunnisteenaan.
     // Alaviivalla ymparoity osajono (routines_title_check,
     // routine_exceptions_type_check) ei ole sarakkeen luku.
+    //
+    // TOINEN VAARA HALYTYS, SAMA PERIAATE.
+    //
+    // Varmistus nimeaa odotetut sarakkeet luettelona:
+    //   and column_name in ('id', 'user_id', 'title', ...)
+    // Nama ovat merkkijonovakioita, joita verrataan
+    // information_schema.columns-taulun sisaltoon. Ne eivat lue
+    // yhtaan riviarvoa — `where column_name = 'title'` on
+    // rakennekysely, `select title from goals` on sisallon luku.
+    //
+    // Ero on siina, onko sana lainausmerkeissa. Merkkijonovakio ei voi
+    // lukea saraketta, joten vakiot poistetaan ennen tarkistusta.
+    // Paljas tunniste kaataa testin yha.
+    const ilmanVakioita = sql.replace(/'[^']*'/g, "''");
+
     for (const column of ['title', 'note', 'anon_key', 'service_role', 'password']) {
       const itsenaisena = new RegExp(`(^|[^a-z0-9_])${column}([^a-z0-9_]|$)`);
-      assert.equal(itsenaisena.test(sql), false,
+      assert.equal(itsenaisena.test(ilmanVakioita), false,
         `${name} lukee saraketta ${column}`);
     }
   }
