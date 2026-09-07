@@ -18,14 +18,32 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { runAcceptance, formatReport, idsFor, taskRow, profileRow,
-         routineRow, exceptionRow,
+         routineRow, exceptionRow, exceptionDates, ANON_KOHTEET, NIL_UUID,
          goalRow, projectRow, wellbeingRow, recurringExpenseRow,
          billRow, savingsGoalRow, auditRow, notificationPrefsRow,
          MARKER_PREFIX, STATUS }
   from '../tools/rls-acceptance/acceptance.js';
-import { read, readCode } from './helpers/sources.mjs';
+import fs from 'node:fs';
+import path from 'node:path';
+
+import { ROOT, read, readCode } from './helpers/sources.mjs';
 import { SUPABASE_ANON_KEY } from '../src/data/config.js';
 import { TASK_COLUMNS_CORE, SERVER_OWNED_FIELDS } from '../src/lib/rows.js';
+
+const MIGRATION_DIR = 'supabase/migrations';
+const NEWLINE = String.fromCharCode(10);
+
+/** Kaikki migraatiotiedostot numerojarjestyksessa. */
+function migrationFiles() {
+  return fs.readdirSync(path.join(ROOT, MIGRATION_DIR))
+    .filter(name => name.endsWith('.sql'))
+    .sort();
+}
+
+/** Migraation sisalto pienaakkosin — SQL ei ole kirjainkokoherkkaa. */
+function sql(name) {
+  return read(`${MIGRATION_DIR}/${name}`).toLowerCase();
+}
 
 const OWNER_A = '2cc00622-f927-4604-a518-361a4328481b';
 const USER_B = '11111111-2222-3333-4444-555555555555';
@@ -94,6 +112,60 @@ const YHDISTELMAVIERASAVAIMET = [
   { table: 'bills',              column: 'task_id',              parent: 'tasks' },
   { table: 'bills',              column: 'recurring_expense_id', parent: 'recurring_expenses' }
 ];
+
+/**
+ * Yksikasitteisyysrajoitteet, sellaisina kuin migraatiot ne luovat.
+ *
+ * MIKSI TAMA ON TAALLA
+ *
+ * Tekokanta ei mallintanut naita lainkaan, ja siksi se ei toistanut
+ * tuotannon kayttaytymista. E4 meni tekokannassa lapi ja tuotannossa
+ * kaatui koodilla 23505: rajoite on `unique (routine_id, date)` —
+ * RUTIINIkohtainen, ei kayttajakohtainen — ja E1 oli jo varannut parin
+ * (A:n rutiini, today).
+ *
+ * Simulaatio, joka ei tunne rajoitetta, ei voi ennustaa sita vastaan
+ * kaatuvaa lausetta. Nyt se tuntee.
+ */
+const YKSIKASITTEISYYDET = [
+  { table: 'routine_exceptions', columns: ['routine_id', 'date'] },
+  { table: 'wellbeing_entries',  columns: ['user_id', 'date'] }
+];
+
+/** Osuuko rivi olemassa olevaan yksikasitteisyysrajoitteeseen? */
+function tarkistaYksikasitteisyys(db, table, row, omaOid) {
+  for (const rajoite of YKSIKASITTEISYYDET) {
+    if (rajoite.table !== table) continue;
+    const osuma = (db[table] || []).find(vanha =>
+      vanha !== omaOid
+      && rajoite.columns.every(sarake => vanha[sarake] === row[sarake]));
+    if (osuma) {
+      return { data: null, error: { code: '23505', message: 'duplicate key value' } };
+    }
+  }
+  return null;
+}
+
+/**
+ * Taulut, joiden `id` on UUID.
+ *
+ * MIKSI TAMA ON TAALLA
+ *
+ * T6-n-update ja T6-n-delete odottivat 42501:ta mutta saivat
+ * tuotannossa 22P02:n: harness syotti merkkijonon
+ * `manifestival_rls_acceptance_anon` uuid-sarakkeeseen, ja PostgreSQL
+ * hylkasi arvon ennen kuin oikeustarkistus ehti tapahtua.
+ *
+ * Tekokanta on tyypiton JavaScript-olio, joten se hyvaksyi arvon
+ * ilomielin — eika testi voinut nahda vikaa. Nyt se tarkistaa tyypin.
+ */
+const UUID_AVAIMELLISET = new Set(['profile', 'notification_preferences']);
+const UUID_HAHMO = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const TYYPPIVIRHE = arvo => ({
+  data: null,
+  error: { code: '22P02', message: `invalid input syntax for type uuid: "${arvo}"` }
+});
 
 /**
  * Yhdistelmavierasavainten tarkistus.
@@ -203,6 +275,27 @@ function makeClient(db, uid, flaws = {}, ledger = null) {
         return { data: null, error: { code: '08006', message: 'connection failure' } };
       }
 
+      // TYYPPI ENNEN OIKEUKSIA — SUODATTIMEN ARVOLLE.
+      //
+      // UPDATE ja DELETE rakentavat WHERE-ehdon, jonka arvo on
+      // muunnettava sarakkeen tyypiksi jo suunnitteluvaiheessa. Kelvoton
+      // uuid kaatuu siihen ennen kuin oikeustarkistus ehtii tapahtua —
+      // juuri niin kavi tuotannossa testeille T6-n-update ja
+      // T6-n-delete.
+      //
+      // INSERTin payload tarkistetaan vasta oikeuksien JALKEEN, koska
+      // tuotannossa anonin insert palautti 42501:n eika 22P02:ta.
+      // Epasymmetria on havaittu, ei arvattu.
+      if (UUID_AVAIMELLISET.has(query.table)) {
+        for (const suodatin of query.filterDescriptions) {
+          if (suodatin.column !== 'id') continue;
+          const arvot = Array.isArray(suodatin.value) ? suodatin.value : [suodatin.value];
+          for (const arvo of arvot) {
+            if (!UUID_HAHMO.test(String(arvo))) return TYYPPIVIRHE(arvo);
+          }
+        }
+      }
+
       // anon-roolilta on peruttu kaikki oikeudet, joten kysely ei yllä
       // RLS:ään asti — kanta hylkää sen oikeudettomana.
       if (!uid) {
@@ -228,6 +321,12 @@ function makeClient(db, uid, flaws = {}, ledger = null) {
         if (ownerColumn in row && row[ownerColumn] !== uid && !flaws.withCheckOff) {
           return PRIVILEGE_ERROR('42501');
         }
+        // Payload vasta oikeuksien jalkeen, ks. perustelu ylla.
+        if (UUID_AVAIMELLISET.has(query.table)
+            && row.id != null && !UUID_HAHMO.test(String(row.id))) {
+          return TYYPPIVIRHE(row.id);
+        }
+
         // DEFAULT auth.uid(): kanta asettaa omistajan, ei asiakas.
         if (!(ownerColumn in row)) row[ownerColumn] = uid;
 
@@ -237,6 +336,19 @@ function makeClient(db, uid, flaws = {}, ledger = null) {
         // siksi se on ainoa este ristiinkiinnitykselle. Jos parina
         // (omistaja, rutiini) ei loydy routines-taulusta, kanta hylkaa
         // rivin koodilla 23503.
+        // JARJESTYS ON OSA VAITETTA.
+        //
+        // Kannassa lauseen kohtaa ensin RLS:n WITH CHECK, sitten
+        // yksikasitteisyysindeksi ja vasta lopuksi vierasavaimen
+        // liipaisin. Havaittu tuotannossa: E3c sai 42501:n (RLS torjui
+        // ensin) ja E4 sai 23505:n (indeksi torjui ennen vierasavainta).
+        //
+        // Jos tama jarjestys olisi tekokannassa vaarin, E4 nayttaisi
+        // menevan lapi eika kertoisi mitaan siita, mita tuotannossa
+        // tapahtuu.
+        const yksiVirhe = tarkistaYksikasitteisyys(db, query.table, row, null);
+        if (yksiVirhe) return yksiVirhe;
+
         const viiteVirhe = tarkistaViitteet(db, query.table, row, flaws);
         if (viiteVirhe) return viiteVirhe;
 
@@ -1443,4 +1555,291 @@ test('KRIITTINEN: kaikki kahdeksan porttia pysyvät kiinni', async () => {
                         'recurringExpenses', 'savingsGoals', 'aiAudit']) {
     assert.equal(TABLES[portti], false, `portti ${portti} on auki`);
   }
+});
+
+// =====================================================================
+// TUOTANTOAJOSSA 20260907181539 LÖYTYNEET KOLME VIRHETTÄ
+// =====================================================================
+//
+// Ajo tuotti 268/271 PASS, 0 FAIL, 3 ERROR. Kaikki kolme olivat
+// harnessin vikoja, eivät kannan — mutta kumpikaan ei olisi näkynyt
+// näissä testeissä, koska tekokanta ei mallintanut niitä rajoitteita
+// joihin lauseet kaatuivat.
+//
+// ERROR on oikea luokitus molemmille: lause torjuttiin, mutta VÄÄRÄSTÄ
+// syystä, eikä testi siis todistanut sitä mitä sen piti todistaa.
+// Väärällä koodilla saatu torjunta ei ole todiste.
+
+test('KRIITTINEN: E4 kohtaa vierasavaimen, ei yksikäsitteisyysindeksiä', () => {
+  // VIKA 1 — E4 sai 23505 (duplicate key) odotetun 23503:n sijaan.
+  //
+  // Rajoite on `unique (routine_id, date)` — RUTIINIkohtainen, ei
+  // käyttäjäkohtainen. E1 loi A:n poikkeuksen pariin
+  // (A:n rutiini, today), ja E4 yritti kiinnittää B:n poikkeuksen
+  // SAMAAN rutiiniin SAMALLE päivälle. Indeksi torjui rivin ennen kuin
+  // vierasavain ehti sanoa mitään.
+  //
+  // Järjestys kannassa: RLS WITH CHECK -> yksikäsitteisyysindeksi ->
+  // vierasavaimen liipaisin.
+  //
+  // Jokaisen A:n rutiiniin kohdistuvan fikstuurin on siksi käytettävä
+  // omaa päiväänsä.
+  const paivat = exceptionDates('2026-09-05');
+
+  // Nämä kolme kohdistuvat A:n rutiiniin. Jos kaksi jakaa päivän,
+  // jälkimmäinen kohtaa indeksin eikä sitä rajoitetta jota testataan.
+  const aRutiiniin = [paivat.ownA, paivat.forgedB, paivat.attackB];
+  assert.equal(new Set(aRutiiniin).size, aRutiiniin.length,
+    `A:n rutiiniin kohdistuvat poikkeukset jakavat päivän: ${aRutiiniin.join(', ')}`
+    + ' — yksikäsitteisyysindeksi torjuisi ennen vierasavainta');
+
+  // Ja ne ovat kelvollisia ISO-päiviä, eivät esimerkiksi NaN-siirtymiä.
+  for (const paiva of Object.values(paivat)) {
+    assert.match(paiva, /^\d{4}-\d{2}-\d{2}$/, `kelvoton päivä: ${paiva}`);
+  }
+
+  // E5 saa jakaa päivän E1:n kanssa: se kohdistuu B:n OMAAN rutiiniin,
+  // joten pari (rutiini, päivä) on eri.
+  assert.equal(paivat.ownB, paivat.ownA,
+    'E5 ei enää jaa päivää E1:n kanssa — jos tämä on tarkoituksellista,'
+    + ' päivitä myös perustelu exceptionDates-funktiossa');
+});
+
+test('KRIITTINEN: E4 odottaa yhä nimenomaan vierasavainvirhettä', async () => {
+  // Vian houkutteleva "korjaus" olisi ollut hyväksyä 23505 odotukseksi.
+  // Se olisi tehnyt testistä sellaisen, joka menee läpi ilman että
+  // yhdistelmävierasavainta on koskaan koeteltu.
+  const { rows } = await runAgainst();
+  const e4 = byNumber(rows, 'E4');
+
+  assert.ok(e4, 'E4 puuttuu kokonaan');
+  assert.equal(e4.status, STATUS.PASS, `E4: ${e4.actual}`);
+  assert.match(e4.expected, /23503/, 'E4 ei enää odota vierasavainvirhettä');
+  assert.match(e4.actual, /23503/, `E4 torjuttiin väärällä koodilla: ${e4.actual}`);
+  assert.equal(/23505/.test(e4.actual), false,
+    'E4 osui yksikäsitteisyysindeksiin — se ei todista vierasavainta');
+});
+
+test('KRIITTINEN: anon-kohde on tyypiltään taulun avaimen mukainen', () => {
+  // VIKA 2 ja 3 — T6-n-update ja T6-n-delete saivat 22P02
+  // (invalid input syntax for type uuid) odotetun 42501:n sijaan.
+  //
+  // notification_preferences.id on uuid, ja harness syötti siihen
+  // merkkijonon `manifestival_rls_acceptance_anon`. PostgreSQL hylkäsi
+  // arvon ennen kuin oikeustarkistus ehti tapahtua, joten testi ei
+  // todistanut mitään anon-roolin oikeuksista.
+  //
+  // Odotettu tyyppi luetaan MIGRAATIOSTA, ei kirjoiteta käsin: jos
+  // jonkin taulun avain joskus vaihtuu, tämä kaatuu.
+  const uuidHahmo = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+  /** Taulun id-sarakkeen tyyppi migraatioista. */
+  const avaintyyppi = taulu => {
+    for (const nimi of fs.readdirSync(path.join(ROOT, 'supabase/migrations'))
+                        .filter(n => n.endsWith('.sql'))) {
+      const lahde = fs.readFileSync(path.join(ROOT, 'supabase/migrations', nimi), 'utf8');
+      const luonti = new RegExp(`create table public\\.${taulu} \\(([\\s\\S]*?)\\n\\);`)
+        .exec(lahde);
+      if (!luonti) continue;
+      const rivi = /^ {2}id\s+(\w+)/m.exec(luonti[1]);
+      assert.ok(rivi, `${taulu}: id-saraketta ei löytynyt`);
+      return rivi[1].toLowerCase();
+    }
+    return null;
+  };
+
+  let uuidTauluja = 0;
+  for (const { taulu, kohde } of ANON_KOHTEET) {
+    const tyyppi = avaintyyppi(taulu);
+    assert.ok(tyyppi, `taulua ${taulu} ei löydy yhdestäkään migraatiosta`);
+
+    if (tyyppi === 'uuid') {
+      uuidTauluja += 1;
+      assert.match(kohde, uuidHahmo,
+        `${taulu}: anon-kohde "${kohde}" ei ole kelvollinen uuid`
+        + ' — kanta hylkäisi sen ennen oikeustarkistusta (22P02)');
+    } else {
+      assert.ok(kohde.startsWith(MARKER_PREFIX),
+        `${taulu}: anon-kohde ei ole tunnistettavissa etuliitteestä`);
+    }
+  }
+
+  // Tyhjentymissuoja: jos hahmo lakkaisi osumasta, silmukka kävisi läpi
+  // nolla uuid-taulua ja menisi läpi.
+  assert.equal(uuidTauluja, 1,
+    `uuid-avaimellisia tauluja löytyi ${uuidTauluja}, odotettiin 1`
+    + ' (notification_preferences)');
+});
+
+test('KRIITTINEN: anon-kohde on olematon eikä kenenkään tunniste', () => {
+  // Kohteen on oltava syntaktisesti kelvollinen mutta olematon.
+  // Oikean käyttäjän tunnistetta ei käytetä: anon ei saa kohdistaa
+  // mitään olemassa olevaan riviin edes epäonnistuakseen.
+  assert.equal(NIL_UUID, '00000000-0000-0000-0000-000000000000');
+
+  for (const { taulu, kohde } of ANON_KOHTEET) {
+    assert.notEqual(kohde, OWNER_A, `${taulu}: anon-kohde on tilin A tunniste`);
+    assert.notEqual(kohde, USER_B, `${taulu}: anon-kohde on tilin B tunniste`);
+  }
+});
+
+test('KRIITTINEN: T6-n-update ja T6-n-delete odottavat yhä 42501:tä', async () => {
+  // Vian houkutteleva "korjaus" olisi ollut hyväksyä 22P02 odotukseksi.
+  // Silloin testi menisi läpi ilman että anon-roolin oikeuksia on
+  // koskaan koeteltu — se todistaisi vain, ettei merkkijono ole uuid.
+  const { rows } = await runAgainst();
+
+  for (const operaatio of ['select', 'insert', 'update', 'delete']) {
+    const entry = byNumber(rows, `T6-n-${operaatio}`);
+    assert.ok(entry, `T6-n-${operaatio} puuttuu`);
+    assert.equal(entry.status, STATUS.PASS, `T6-n-${operaatio}: ${entry.actual}`);
+    assert.match(entry.expected, /42501/,
+      `T6-n-${operaatio} ei enää odota oikeusvirhettä`);
+    assert.equal(/22P02/.test(entry.actual), false,
+      `T6-n-${operaatio} kaatui tyyppivirheeseen: ${entry.actual}`);
+  }
+});
+
+test('KRIITTINEN: tekokanta mallintaa ne rajoitteet joihin tuotanto kaatui', () => {
+  // Kumpikaan vika ei näkynyt näissä testeissä, koska tekokanta ei
+  // tuntenut kumpaakaan rajoitetta. Simulaatio, joka ei tunne
+  // rajoitetta, ei voi ennustaa sitä vastaan kaatuvaa lausetta — se
+  // antaa väärän varmuuden.
+  //
+  // Nämä väitteet pitävät mallin paikallaan.
+  const migraatio = sql('0003_routines.sql');
+
+  // 1. Yksikäsitteisyys on RUTIINIkohtainen, ei käyttäjäkohtainen.
+  //    Jos tämä joskus muuttuu, E4:n päiväjärjestely on turha — ja
+  //    tekokannan malli väärä.
+  assert.ok(migraatio.includes('constraint routine_exceptions_unique_day unique (routine_id, date)'),
+    'routine_exceptions_unique_day ei ole enää (routine_id, date)'
+    + ' — tarkista E4:n päivät ja tekokannan malli');
+
+  const mallissa = YKSIKASITTEISYYDET.find(r => r.table === 'routine_exceptions');
+  assert.ok(mallissa, 'tekokanta ei mallinna routine_exceptions-yksikäsitteisyyttä');
+  assert.deepEqual(mallissa.columns, ['routine_id', 'date'],
+    'tekokannan malli ei vastaa migraatiota');
+
+  // 2. Hyvinvointimerkintöjen yksikäsitteisyys on käyttäjäkohtainen.
+  assert.ok(sql('0006_wellbeing.sql')
+    .includes('constraint wellbeing_entries_unique_day unique (user_id, date)'),
+    'wellbeing_entries_unique_day ei ole enää (user_id, date)');
+
+  // 3. Jokaisen migraatioiden luoman yksikäsitteisyysrajoitteen, joka
+  //    kattaa muutakin kuin pelkän id:n, on oltava mallissa. Muuten
+  //    seuraava samanlainen vika jää taas näkymättä.
+  const kannassa = [];
+  for (const name of migrationFiles()) {
+    for (const m of sql(name).matchAll(/constraint (\w+_unique_\w+) unique \(([^)]*)\)/g)) {
+      kannassa.push({ nimi: m[1], columns: m[2].split(',').map(x => x.trim()) });
+    }
+  }
+  assert.ok(kannassa.length >= 2, `yksikäsitteisyysrajoitteita löytyi ${kannassa.length}`);
+
+  for (const { nimi, columns } of kannassa) {
+    const loytyi = YKSIKASITTEISYYDET.some(r =>
+      r.columns.length === columns.length
+      && r.columns.every((sarake, i) => sarake === columns[i]));
+    assert.ok(loytyi,
+      `rajoitetta ${nimi} (${columns.join(', ')}) ei ole tekokannan mallissa`
+      + ' — sitä vastaan kaatuva lause menisi simulaatiossa läpi');
+  }
+
+  // 4. Ja jokainen uuid-avaimellinen taulu on tyyppimallissa. Ilman
+  //    sitä tekokanta hyväksyisi merkkijonon uuid-sarakkeeseen eikä
+  //    voisi ennustaa tuotannon 22P02:ta.
+  const uuidTaulut = [];
+  for (const name of migrationFiles()) {
+    for (const m of sql(name).matchAll(/create table public\.(\w+) \(([\s\S]*?)\n\);/g)) {
+      if (/^ {2}id\s+uuid/m.test(m[2])) uuidTaulut.push(m[1]);
+    }
+  }
+  // profile syntyi ennen migraatiota 0003, joten se ei nay yllaolevassa
+  // haussa — se lisataan kasin, ja sen avaintyyppi on tarkistettu
+  // migraatiossa 0001.
+  for (const taulu of uuidTaulut) {
+    assert.ok(UUID_AVAIMELLISET.has(taulu),
+      `taulun ${taulu} avain on uuid, mutta tekokanta ei tyypitä sitä`);
+  }
+  assert.ok(uuidTaulut.includes('notification_preferences'),
+    'notification_preferences ei enää ole uuid-avaimellinen — tarkista anon-kohteet');
+});
+
+test('KRIITTINEN: tekokanta torjuu samassa järjestyksessä kuin PostgreSQL', async () => {
+  // MALLIN OMA TESTI, EI HARNESSIN.
+  //
+  // Kaksi edellistä mutaatiota pääsi läpi, koska ne heikensivät
+  // TEKOKANTAA eivätkä harnessia: kun fikstuurit ovat kunnossa,
+  // puuttuva rajoitemalli ei näy missään. Se palauttaisi juuri sen
+  // sokean pisteen, joka päästi nämä kolme virhettä tuotantoon asti.
+  //
+  // Siksi malli testataan suoraan: rakennetaan tilanne, jossa
+  // rajoitteen PITÄÄ laueta, ja katsotaan laukeaako se — ja oikeassa
+  // järjestyksessä.
+  const db = makeDb();
+  const a = makeClient(db, OWNER_A);
+  const b = makeClient(db, USER_B);
+
+  // A:n rutiini ja poikkeus. Pari (rutiini, päivä) on nyt varattu.
+  await a.from('routines').insert(routineRow('r-a', 'A:n rutiini')).select();
+  await a.from('routine_exceptions')
+    .insert(exceptionRow('e-a', 'r-a', '2026-09-05')).select();
+
+  // 1. YKSIKÄSITTEISYYS ON RUTIINIKOHTAINEN, EI KÄYTTÄJÄKOHTAINEN.
+  //    A yrittää toista poikkeusta samalle rutiinille samana päivänä.
+  const omaTormays = await a.from('routine_exceptions')
+    .insert(exceptionRow('e-a2', 'r-a', '2026-09-05')).select();
+  assert.equal(omaTormays.error?.code, '23505',
+    'tekokanta ei tunne rajoitetta unique (routine_id, date)');
+
+  // 2. JÄRJESTYS: yksikäsitteisyys ENNEN vierasavainta.
+  //    B:n rivi viittaa A:n rutiiniin JA osuu varattuun päivään.
+  //    Kumpikin rajoite rikkoutuu; PostgreSQL raportoi indeksin.
+  //    Juuri tämä nähtiin tuotannossa E4:ssä.
+  const molemmatRikki = await b.from('routine_exceptions')
+    .insert(exceptionRow('e-b', 'r-a', '2026-09-05')).select();
+  assert.equal(molemmatRikki.error?.code, '23505',
+    'tekokanta tarkistaa vierasavaimen ennen yksikäsitteisyyttä'
+    + ' — väärä järjestys piilottaisi E4:n vian');
+
+  // 3. VAPAALLA PÄIVÄLLÄ sama rivi kohtaa vierasavaimen.
+  //    Tämä on se, mitä E4:n pitää mitata.
+  const vainViiteRikki = await b.from('routine_exceptions')
+    .insert(exceptionRow('e-b2', 'r-a', '2026-09-09')).select();
+  assert.equal(vainViiteRikki.error?.code, '23503',
+    'yhdistelmävierasavain ei torjunut ristiinkiinnitystä');
+
+  // 4. ERI RUTIINI, SAMA PÄIVÄ: sallittu.
+  await b.from('routines').insert(routineRow('r-b', 'B:n rutiini')).select();
+  const eriRutiini = await b.from('routine_exceptions')
+    .insert(exceptionRow('e-b3', 'r-b', '2026-09-05')).select();
+  assert.equal(eriRutiini.error, null,
+    'tekokanta estää poikkeuksen eri rutiinille samana päivänä');
+});
+
+test('KRIITTINEN: tekokanta tarkistaa uuid-tyypin ennen oikeuksia', async () => {
+  // Sama asia toisin päin: jos tyyppitarkistus katoaa mallista,
+  // T6-n-update ja T6-n-delete näyttäisivät taas läpimeneviltä
+  // vaikka tuotannossa ne kaatuvat 22P02:een.
+  const db = makeDb();
+  const anon = makeClient(db, null);
+
+  const kelvoton = await anon.from('notification_preferences')
+    .update({ id: 'ei-ole-uuid' }).eq('id', 'ei-ole-uuid').select();
+  assert.equal(kelvoton.error?.code, '22P02',
+    'tekokanta hyväksyy merkkijonon uuid-sarakkeeseen'
+    + ' — se ei voi ennustaa tuotannon tyyppivirhettä');
+
+  // Kelvollisella uuid:lla lause pääsee oikeustarkistukseen asti.
+  const kelvollinen = await anon.from('notification_preferences')
+    .update({ id: NIL_UUID }).eq('id', NIL_UUID).select();
+  assert.equal(kelvollinen.error?.code, '42501',
+    'kelvollinen uuid ei päässyt oikeustarkistukseen');
+
+  // Ja tekstiavaimellinen taulu ei tyypitä mitään.
+  const teksti = await anon.from('goals')
+    .update({ id: 'mika-tahansa' }).eq('id', 'mika-tahansa').select();
+  assert.equal(teksti.error?.code, '42501',
+    'tekstiavaimellinen taulu tyypittää turhaan');
 });

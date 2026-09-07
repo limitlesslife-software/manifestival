@@ -75,6 +75,104 @@ const INSUFFICIENT_PRIVILEGE = '42501';
 const FOREIGN_KEY_VIOLATION = '23503';
 
 /** Testin luomien rivien tunnisteet yhdestä ajotunnuksesta. */
+/**
+ * Kelvollinen mutta olematon UUID.
+ *
+ * Nolla-UUID on syntaktisesti oikea eika ole kenenkaan tunniste:
+ * auth.users-tunnisteet ovat satunnaisia. Sita kaytetaan kohteena
+ * niissa anon-testeissa, joissa taulun avain on uuid — ks.
+ * ANON_KOHTEET.
+ */
+export const NIL_UUID = '00000000-0000-0000-0000-000000000000';
+
+/** ISO-paiva N vuorokautta annetusta, UTC:ssa. */
+function dayOffset(iso, days) {
+  const paiva = new Date(`${iso}T00:00:00Z`);
+  paiva.setUTCDate(paiva.getUTCDate() + days);
+  return paiva.toISOString().slice(0, 10);
+}
+
+/**
+ * Poikkeusten paivamaarat, yksi kutakin kiinnityskohdetta kohti.
+ *
+ * LOYTYNYT VIKA, JOTA TAMA KORJAA
+ *
+ * Rajoite on `unique (routine_id, date)` — RUTIINIkohtainen, ei
+ * kayttajakohtainen. Kaikki poikkeusfikstuurit kayttivat samaa paivaa
+ * `today`, ja E1 loi A:n poikkeuksen pariin (A:n rutiini, today).
+ *
+ * Kun E4 sitten yritti kiinnittaa B:n poikkeuksen SAMAAN rutiiniin
+ * SAMALLE paivalle, PostgreSQL torjui rivin yksikasitteisyysindeksiin
+ * — koodilla 23505 — eika koskaan paassyt yhdistelmavierasavaimeen
+ * asti. Testi ei siis todistanut sita mita sen piti todistaa.
+ *
+ * Jarjestys kannassa on: RLS WITH CHECK -> yksikasitteisyysindeksi ->
+ * vierasavaimen liipaisin. E3c saa siksi yha 42501:n (RLS torjuu sen
+ * ensin), mutta E4 lapaisee RLS:n — sen rivin omistaja ON B — ja
+ * pysahtyi indeksiin.
+ *
+ * Korjaus: jokainen A:n rutiiniin kohdistuva fikstuuri saa OMAN
+ * paivansa. Silloin yksikasitteisyys ei ole tiella, ja jokainen testi
+ * kohtaa sen rajoitteen jonka se on tarkoitettu kohtaamaan.
+ *
+ * Paivat johdetaan ajon `today`-arvosta, joten ne ovat deterministisia
+ * eivatka riipu kellonajasta.
+ */
+export function exceptionDates(today) {
+  return Object.freeze({
+    // E1: A:n oma poikkeus A:n rutiiniin.
+    ownA: today,
+    // E3c: B:n vaarennos A:n nimiin, A:n rutiiniin. RLS torjuu, mutta
+    // oma paiva varmistaa ettei se torju yksikasitteisyyden takia.
+    forgedB: dayOffset(today, 1),
+    // E4: B:n ristiinkiinnitys A:n rutiiniin. TAMAN on paastava
+    // vierasavaimeen asti.
+    attackB: dayOffset(today, 2),
+    // E5: B:n oma poikkeus B:n OMAAN rutiiniin. Eri rutiini, joten
+    // paiva saa olla sama kuin E1:lla.
+    ownB: today
+  });
+}
+
+/**
+ * Anon-testien kohteet: taulu ja OLEMATON tunniste, jota vastaan
+ * kirjautumattoman oikeudet koetellaan.
+ *
+ * LOYTYNYT VIKA, JOTA TAMA KORJAA
+ *
+ * Kaikki taulut kayttivat samaa merkkijonoa
+ * `manifestival_rls_acceptance_anon`. Se toimii tekstiavaimellisissa
+ * tauluissa, mutta notification_preferences.id on UUID: PostgreSQL
+ * hylkasi arvon syntaksivirheena (22P02) ENNEN kuin oikeustarkistus
+ * ehti tapahtua.
+ *
+ * Testi nayttti siis epaonnistuvan, mutta se ei ollut todistanut
+ * mitaan anon-roolin oikeuksista — se oli todistanut, ettei
+ * merkkijono ole UUID.
+ *
+ * Kohde on nyt TYYPILTAAN taulun mukainen, jolloin lause paasee
+ * oikeustarkistukseen asti ja odotettu 42501 on oikeasti se, mita
+ * mitataan.
+ *
+ * Kohteen on oltava olematon. Nolla-UUID ei ole kenenkaan tunniste:
+ * auth.users-tunnisteet ovat satunnaisia. Oikean kayttajan tunnistetta
+ * EI kayteta — anon ei saa kohdistaa mitaan olemassa olevaan riviin
+ * edes epaonnistuakseen.
+ */
+export const ANON_KOHTEET = Object.freeze([
+  { lyhenne: 'r', taulu: 'routines',                 kohde: `${MARKER_PREFIX}anon` },
+  { lyhenne: 'e', taulu: 'routine_exceptions',       kohde: `${MARKER_PREFIX}anon` },
+  { lyhenne: 'g', taulu: 'goals',                    kohde: `${MARKER_PREFIX}anon` },
+  { lyhenne: 'j', taulu: 'projects',                 kohde: `${MARKER_PREFIX}anon` },
+  // AINOA UUID-AVAIMELLINEN TAULU taman silmukan tauluista.
+  { lyhenne: 'n', taulu: 'notification_preferences', kohde: NIL_UUID },
+  { lyhenne: 'w', taulu: 'wellbeing_entries',        kohde: `${MARKER_PREFIX}anon` },
+  { lyhenne: 'x', taulu: 'recurring_expenses',       kohde: `${MARKER_PREFIX}anon` },
+  { lyhenne: 'l', taulu: 'bills',                    kohde: `${MARKER_PREFIX}anon` },
+  { lyhenne: 's', taulu: 'savings_goals',            kohde: `${MARKER_PREFIX}anon` },
+  { lyhenne: 'k', taulu: 'ai_action_audit',          kohde: `${MARKER_PREFIX}anon` }
+]);
+
 export function idsFor(runId) {
   const base = `${MARKER_PREFIX}${runId}`;
   return Object.freeze({
@@ -851,9 +949,14 @@ export async function runAcceptance(options) {
   // =================================================================
 
   // --- E1: A luo ja hallitsee oman poikkeuksensa ---------------------
+  //
+  // Jokainen A:n rutiiniin kohdistuva poikkeus saa oman paivansa, koska
+  // `unique (routine_id, date)` on rutiinikohtainen. Ks. exceptionDates.
+  const poikkeusPaivat = exceptionDates(today);
+
   const exceptionA = routineAExists
     ? await call(() => a.from('routine_exceptions')
-        .insert(exceptionRow(id.exceptionA, id.routineA, today)).select())
+        .insert(exceptionRow(id.exceptionA, id.routineA, poikkeusPaivat.ownA)).select())
     : null;
   const exceptionAOwner = exceptionA && exceptionA.rows[0] ? exceptionA.rows[0].user_id : null;
   push(exceptionA
@@ -905,7 +1008,8 @@ export async function runAcceptance(options) {
         `virhe ${INSUFFICIENT_PRIVILEGE}`,
         expectRejected(await call(() =>
           b.from('routine_exceptions')
-            .insert({ ...exceptionRow(id.forgedExceptionB, id.routineA, today),
+            .insert({ ...exceptionRow(id.forgedExceptionB, id.routineA,
+                                      poikkeusPaivat.forgedB),
                       user_id: ownerAId })
             .select())),
         'INSERT-politiikan WITH CHECK')
@@ -935,7 +1039,7 @@ export async function runAcceptance(options) {
         `virhe ${FOREIGN_KEY_VIOLATION}`,
         expectRejected(await call(() =>
           b.from('routine_exceptions')
-            .insert(exceptionRow(id.attackExceptionB, id.routineA, today))
+            .insert(exceptionRow(id.attackExceptionB, id.routineA, poikkeusPaivat.attackB))
             .select()), FOREIGN_KEY_VIOLATION),
         'yhdistelmävierasavain (user_id, routine_id) — RLS ei estäisi tätä')
     : skipped('E4', 'B ei voi kiinnittää poikkeustaan A:n rutiiniin',
@@ -944,7 +1048,7 @@ export async function runAcceptance(options) {
   // --- E5: B hallitsee omaa poikkeustaan -----------------------------
   const exceptionB = routineBExists
     ? await call(() => b.from('routine_exceptions')
-        .insert(exceptionRow(id.exceptionB, id.routineB, today)).select())
+        .insert(exceptionRow(id.exceptionB, id.routineB, poikkeusPaivat.ownB)).select())
     : null;
   push(exceptionB
     ? row('E5a', 'B luo poikkeuksen omaan rutiiniinsa',
@@ -1368,21 +1472,13 @@ export async function runAcceptance(options) {
   // tarkistettaisiin.
   // Jokainen uusi taulu, jokainen operaatio. Lyhenne on raportin
   // luettavuutta varten; taulun nimi on rivin tekstissa.
-  const ANON_TAULUT = [
-    ['r', 'routines'], ['e', 'routine_exceptions'],
-    ['g', 'goals'], ['j', 'projects'],
-    ['n', 'notification_preferences'], ['w', 'wellbeing_entries'],
-    ['x', 'recurring_expenses'], ['l', 'bills'],
-    ['s', 'savings_goals'], ['k', 'ai_action_audit']
-  ];
-
-  for (const [lyhenne, taulu] of ANON_TAULUT) {
+  for (const { lyhenne, taulu, kohde } of ANON_KOHTEET) {
     const yritykset = [
       ['select', () => anon.from(taulu).select('id')],
-      ['insert', () => anon.from(taulu).insert({ id: `${MARKER_PREFIX}anon` }).select()],
-      ['update', () => anon.from(taulu).update({ id: `${MARKER_PREFIX}anon` })
-        .eq('id', `${MARKER_PREFIX}anon`).select()],
-      ['delete', () => anon.from(taulu).delete().eq('id', `${MARKER_PREFIX}anon`).select()]
+      ['insert', () => anon.from(taulu).insert({ id: kohde }).select()],
+      ['update', () => anon.from(taulu).update({ id: kohde })
+        .eq('id', kohde).select()],
+      ['delete', () => anon.from(taulu).delete().eq('id', kohde).select()]
     ];
 
     for (const [operaatio, kysely] of yritykset) {

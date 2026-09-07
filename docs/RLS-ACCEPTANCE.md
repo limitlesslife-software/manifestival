@@ -121,6 +121,31 @@ PASSiksi.
 **X9 todistaa vastakohdan.** Ilman sitä kaikki kuusitoista kieltoa
 voisivat mennä läpi siksi, että viitteet ovat rikki kaikilta.
 
+### Fikstuurien on kohdattava se rajoite, jota ne testaavat
+
+Tuotantoajo 20260907181539 tuotti kolme ERRORia, jotka olivat kaikki
+harnessin vikoja — ei kannan. Molemmat opetukset ovat samoja:
+
+**E4 sai 23505:n odotetun 23503:n sijaan.** Rajoite
+`routine_exceptions_unique_day` on `unique (routine_id, date)` —
+RUTIINIkohtainen, ei käyttäjäkohtainen. E1 oli varannut parin
+(A:n rutiini, tämä päivä), ja E4 yritti samaa paria. Yksikäsitteisyys-
+indeksi torjui rivin ennen kuin vierasavain ehti sanoa mitään.
+
+Järjestys kannassa on **RLS WITH CHECK → yksikäsitteisyysindeksi →
+vierasavaimen liipaisin**. Siksi jokainen A:n rutiiniin kohdistuva
+poikkeus käyttää nyt omaa päiväänsä (`exceptionDates`).
+
+**T6-n-update ja T6-n-delete saivat 22P02:n odotetun 42501:n sijaan.**
+`notification_preferences.id` on uuid, ja harness syötti siihen
+merkkijonon. PostgreSQL hylkäsi arvon ennen oikeustarkistusta, joten
+testi todisti vain sen, ettei merkkijono ole uuid. Kohde on nyt
+tyypiltään taulun avaimen mukainen (`ANON_KOHTEET`).
+
+Kumpaakaan ei korjattu löysäämällä odotusta. Väärällä koodilla saatu
+torjunta ei ole todiste: 23505 ei kerro mitään omistajuudesta eikä
+22P02 mitään oikeuksista.
+
 **T4 on yhtä tärkeä kuin kiellot.** Politiikka `using (false)` läpäisisi
 jokaisen kieltotestin ja rikkoisi sovelluksen täysin. Ilman T4:ää testi
 ei erottaisi turvallista kannasta, joka ei toimi lainkaan.
