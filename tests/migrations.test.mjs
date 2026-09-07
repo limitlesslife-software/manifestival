@@ -1664,6 +1664,333 @@ test('KRIITTINEN: hyväksynnän varmistus etsii jäännöstä kahdella tavalla',
     'ei tarkisteta, että tili B on poistettu');
 });
 
+
+// =====================================================================
+// SECURITY DEFINER -FUNKTIOIDEN SALLITTAVUUS
+// =====================================================================
+//
+// LÖYTYNYT VIKA, JOTA NÄMÄ VARTIOIVAT
+//
+// verify_0004_0008_final.sql vaati, ettei public-skeemassa ole
+// YHTÄKÄÄN SECURITY DEFINER -funktiota. Tuotannossa se tuotti yhden
+// FAILin, joka ei tarkoittanut vikaa:
+//
+//   public.rls_auto_enable() -> event_trigger
+//
+// Se on ympäristön oma infrastruktuurifunktio, joka kytkee RLS:n päälle
+// jokaiseen uuteen public-skeeman tauluun. Yksikään Manifestivalin
+// migraatio ei luo sitä, eikä sen nimi esiinny repositoriossa —
+// migraatiot luovat tasan yhden funktion, `touch_updated_at`.
+//
+// Väärä invariantti on huonompi kuin puuttuva: se opettaa ohittamaan
+// FAILin. Seuraavan kerran ohitettu FAIL voi olla oikea.
+//
+// MITÄ NÄMÄ TESTIT TODISTAVAT — JA MITÄ EIVÄT
+//
+// Nämä lukevat SQL:n tekstinä. Ne todistavat, että varmistus KYSYY
+// oikeat kysymykset: että jokainen tunnistusehto on paikallaan ja että
+// sallittavuus ei nojaa nimeen. Ne EIVÄT todista, että PostgreSQL
+// vastaa niihin oikein — sen näkee vasta ajamalla varmistuksen kantaa
+// vasten.
+
+const LOPPUVARMISTUS = 'supabase/verify/verify_0004_0008_final.sql';
+
+/** Loppuvarmistuksen suorittava osa: kommenttirivit pois. */
+function loppuKoodi() {
+  return read(LOPPUVARMISTUS).split(NEWLINE)
+    .filter(line => !line.trim().startsWith('--'))
+    .join(NEWLINE);
+}
+
+/**
+ * Sallittavuuden tunnistusehdot.
+ *
+ * Jokainen rivi on yksi ehto, jonka on oltava varmistuksessa, ja se
+ * skenaario jonka kyseinen ehto torjuu. Taulukko on testin
+ * päätöstaulu: jos ehto katoaa, skenaario menisi läpi.
+ */
+const TUNNISTUSEHDOT = [
+  ["proname = 'rls_auto_enable'",
+   'väärän niminen SECURITY DEFINER -funktio'],
+  ["prokind = 'f'",
+   'proseduuri tai aggregaatti samalla nimellä'],
+  ['pronargs = 0',
+   'samanniminen funktio, joka ottaa argumentteja'],
+  ["prorettype = 'pg_catalog.event_trigger'::regtype",
+   'samanniminen funktio, jota voi kutsua suoraan (väärä paluutyyppi)'],
+  ["pg_get_userbyid(f.proowner) = 'postgres'",
+   'samanniminen funktio, jonka omistaja on joku muu'],
+  ['proconfig is not null',
+   'samanniminen funktio ilman search_path-asetusta'],
+  ['array_length(f.proconfig, 1) = 1',
+   'samanniminen funktio, jolla on ylimääräisiä asetuksia'],
+  ["= 'pg_catalog'",
+   'samanniminen funktio, jonka search_path ei ole rajattu pg_catalogiin'],
+  ["lanname = 'plpgsql'",
+   'samanniminen funktio jollain muulla kielellä (esim. C)'],
+  ['pg_event_trigger_ddl_commands',
+   'samanniminen funktio, joka ei käsittele DDL-tapahtumia'],
+  ['enable[[:space:]]+row[[:space:]]+level[[:space:]]+security',
+   'samanniminen funktio, joka ei kytke RLS:ää päälle'],
+  ['pg_read_file',
+   'runko, joka lukee palvelimen tiedostoja'],
+  ['(grant|revoke)',
+   'runko, joka myöntää tai peruu oikeuksia'],
+  // Kenoviivat pois hakusanasta. SQL:ssa ehto on kirjoitettu
+  // sanarajoilla, mutta niiden kirjoittaminen JS-merkkijonoon on
+  // turha ansa: tama katkelma esiintyy vain siina ehdossa.
+  ['(create|alter|drop|set)',
+   'runko, joka kasittelee rooleja']
+];
+
+test('KRIITTINEN: loppuvarmistus ei enää vaadi nollaa SECURITY DEFINER -funktiota', () => {
+  // Vanha muoto oli yksi laskuri ilman poikkeuksia:
+  //
+  //   where n.nspname = 'public' and p.prosecdef      -> odotus '0'
+  //
+  // Jos se palaa, tuotannon varmistus alkaa taas antaa FAILin joka ei
+  // tarkoita vikaa.
+  const koodi = loppuKoodi();
+
+  assert.equal(
+    /where n\.nspname = 'public' and p\.prosecdef\)/.test(koodi), false,
+    'loppuvarmistus vaatii taas nollaa SECURITY DEFINER -funktiota'
+    + ' — se antaa FAILin ympäristön omasta infrastruktuurifunktiosta');
+
+  // Uusi muoto laskee TUNTEMATTOMAT, ei kaikkia.
+  assert.ok(koodi.includes('Tuntemattomia SECURITY DEFINER -funktioita ei ole'),
+    'loppuvarmistuksesta puuttuu tuntemattomien funktioiden tarkistus');
+});
+
+test('KRIITTINEN: sallittavuus ei nojaa nimeen', () => {
+  // Nimi ei ole tunniste: kuka tahansa voi luoda funktion millä tahansa
+  // nimellä. Jos sallittavuus olisi pelkkä nimivertailu, hyökkääjä
+  // nimeäisi funktionsa rls_auto_enableksi ja saisi SECURITY
+  // DEFINER -funktion ohittamaan koko tarkistuksen.
+  const koodi = loppuKoodi();
+
+  for (const [ehto, skenaario] of TUNNISTUSEHDOT) {
+    assert.ok(koodi.includes(ehto),
+      `loppuvarmistuksesta puuttuu ehto "${ehto}"`
+      + ` — läpi menisi: ${skenaario}`);
+  }
+
+  // Ja tunnistus on YKSI konjunktio, ei joukko vaihtoehtoja. `or`
+  // tunnistuslohkossa tarkoittaisi, että yksi täsmäävä ehto riittää.
+  const lohko = koodi.slice(koodi.indexOf('tunniste as ('),
+                            koodi.indexOf('select c.check_no'));
+  assert.ok(lohko.length > 200, 'tunnistuslohkoa ei löytynyt');
+  assert.equal(/\bor\b/i.test(lohko), false,
+    'tunnistuslohko sisältää or-ehdon — yksi täsmäävä ehto riittäisi');
+});
+
+test('KRIITTINEN: tuntematon funktio kaataa varmistuksen, ei jää INFOksi', () => {
+  // INFO-rivi ei kasvata poikkeavia_yhteensa-lukua eikä pysäytä
+  // ketään. SECURITY DEFINER ohittaa RLS:n; se on tarkalleen se
+  // rakenne, jolla koko paketin omistajuussuoja kierretään.
+  const koodi = loppuKoodi();
+
+  const lohko = koodi.split('union all')
+    .find(osa => osa.includes('Tuntemattomia SECURITY DEFINER'));
+  assert.ok(lohko, 'tarkistusta 23a ei löytynyt');
+
+  assert.equal(lohko.includes("'INFO'"), false,
+    'tuntemattomien funktioiden tarkistus on INFO — se ei pysäytä mitään');
+  assert.ok(/'0',/.test(lohko),
+    'tuntemattomien funktioiden odotusarvo ei ole 0');
+
+  // Ja se laskee nimenomaan ne, jotka EIVÄT täytä molempia ehtoja.
+  assert.ok(lohko.includes('not (identiteetti_ok and runko_ok)'),
+    'tarkistus ei laske tunnistamattomia funktioita');
+});
+
+test('KRIITTINEN: tunnistus ja runko tarkistetaan myös erikseen', () => {
+  // 23a kertoo että jokin on pielessä. 23b ja 23c kertovat MIKÄ.
+  // Ilman niitä operaattori näkisi vain luvun eikä tietäisi, onko
+  // kannassa tuntematon funktio vai muuttunut tunnettu.
+  const koodi = loppuKoodi();
+
+  for (const [tunnus, kentta] of [['23b', 'identiteetti_ok'], ['23c', 'runko_ok']]) {
+    const lohko = koodi.split('union all').find(osa => osa.includes(`'${tunnus}'`));
+    assert.ok(lohko, `tarkistus ${tunnus} puuttuu`);
+
+    // Odotus lasketaan kannan tilasta: jos funktiota ei ole, odotus on
+    // 0 eikä tarkistus vaadi sen olemassaoloa.
+    assert.ok(lohko.includes("where proname = 'rls_auto_enable'"),
+      `${tunnus}: odotusta ei lasketa kannan tilasta`);
+    assert.ok(lohko.includes(kentta),
+      `${tunnus}: ei vertaa kenttää ${kentta}`);
+  }
+});
+
+test('KRIITTINEN: SECURITY INVOKER -funktiot eivät osu tarkistukseen', () => {
+  // touch_updated_at on SECURITY INVOKER. Se ajetaan kutsujan
+  // oikeuksilla eikä ohita RLS:ää, joten sen ei pidä päätyä
+  // tuntemattomien joukkoon — muuten varmistus antaisi FAILin
+  // sovelluksen omasta, oikein kovennetusta funktiosta.
+  const koodi = loppuKoodi();
+
+  const cte = koodi.slice(koodi.indexOf('definer_funktiot as ('),
+                          koodi.indexOf('tunniste as ('));
+  assert.ok(cte.length > 100, 'definer_funktiot-lohkoa ei löytynyt');
+  assert.ok(/and p\.prosecdef\b/.test(cte),
+    'lohko ei rajaa SECURITY DEFINER -funktioihin');
+  assert.equal(/prosecdef = false/.test(cte), false,
+    'lohko poimii myös SECURITY INVOKER -funktioita');
+
+  // Ja touch_updated_at tarkistetaan yhä erikseen INVOKERiksi.
+  assert.ok(koodi.includes("p.proname = 'touch_updated_at'")
+    && koodi.includes('p.prosecdef = false'),
+    'touch_updated_at -tarkistus katosi');
+});
+
+test('KRIITTINEN: sormenjälki tekee rungon muutoksen näkyväksi', () => {
+  // Rakenteelliset ehdot eivät voi kattaa jokaista mahdollista muutosta
+  // rungossa. Tiiviste kattaa: jos runko muuttuu millään tavalla, rivi
+  // muuttuu ja ero näkyy ajolokissa.
+  const koodi = loppuKoodi();
+  const lohko = koodi.split('union all').find(osa => osa.includes("'23d'"));
+
+  assert.ok(lohko, 'sormenjälkiriviä ei löytynyt');
+  assert.ok(lohko.includes('md5(f.prosrc)'), 'sormenjälki ei kata funktion runkoa');
+  assert.ok(lohko.includes('proowner'), 'sormenjälki ei kata omistajaa');
+  assert.ok(lohko.includes('proconfig'), 'sormenjälki ei kata asetuksia');
+  assert.ok(lohko.includes("'INFO'"),
+    'sormenjälki ei ole INFO — muuttunut ympäristö ei saa kaataa varmistusta');
+});
+
+test('KRIITTINEN: sallittavuus on kirjoitettu havaitun funktion mukaan', () => {
+  // SKENAARIO A: tunnettu rls_auto_enable menee läpi.
+  //
+  // Tätä ei voi todistaa mutaatiolla — mutaatio poistaa ehtoja ja
+  // näyttää mikä hylätään, ei mikä hyväksytään. Positiivinen tapaus
+  // todistetaan toisin: kirjataan se, mitä tuotannosta oikeasti
+  // havaittiin, ja vaaditaan että jokainen sallittavuusehto on
+  // kirjoitettu VASTAAMAAN sitä.
+  //
+  // Jos joku myöhemmin kiristää ehtoa niin, ettei havaittu funktio enää
+  // kelpaa, tämä kaatuu — ja se on oikea hetki huomata, ettei
+  // varmistus mene enää tuotannossa läpi.
+  //
+  // Havainto on tuotannon vain lukevasta diagnostiikasta:
+  //
+  //   public.rls_auto_enable()
+  //   owner: postgres,  returns: event_trigger,  SECURITY DEFINER
+  //   volatility: volatile,  SET search_path TO 'pg_catalog'
+  //   runko iteroi pg_event_trigger_ddl_commands() ja kytkee RLS:n
+  //   uusiin public-skeeman tauluihin
+  const HAVAITTU = {
+    skeema: 'public',
+    nimi: 'rls_auto_enable',
+    omistaja: 'postgres',
+    paluutyyppi: 'event_trigger',
+    securityDefiner: true,
+    argumentteja: 0,
+    searchPath: 'pg_catalog',
+    kieli: 'plpgsql'
+  };
+
+  const koodi = read('supabase/verify/verify_0004_0008_final.sql')
+    .split(NEWLINE)
+    .filter(line => !line.trim().startsWith('--'))
+    .join(NEWLINE);
+
+  // Jokainen havaittu ominaisuus on kirjoitettu sallittavuusehtoon
+  // TÄSMÄLLEEN siinä muodossa, jossa se kannasta luetaan.
+  const vastaavuudet = [
+    [`n.nspname = '${HAVAITTU.skeema}'`, 'skeema'],
+    [`f.proname = '${HAVAITTU.nimi}'`, 'nimi'],
+    [`pg_get_userbyid(f.proowner) = '${HAVAITTU.omistaja}'`, 'omistaja'],
+    [`f.prorettype = 'pg_catalog.${HAVAITTU.paluutyyppi}'::regtype`, 'paluutyyppi'],
+    [`f.pronargs = ${HAVAITTU.argumentteja}`, 'argumenttien määrä'],
+    [`= '${HAVAITTU.searchPath}'`, 'search_path'],
+    [`lanname = '${HAVAITTU.kieli}'`, 'kieli']
+  ];
+
+  for (const [ehto, mika] of vastaavuudet) {
+    assert.ok(koodi.includes(ehto),
+      `sallittavuusehto ei vastaa havaittua funktiota kohdassa ${mika}:`
+      + ` odotettiin katkelmaa "${ehto}"`);
+  }
+
+  // Ja funktio on nimenomaan SECURITY DEFINER — sitä varten koko
+  // sallittavuuslohko on olemassa.
+  assert.equal(HAVAITTU.securityDefiner, true);
+  assert.ok(/and p\.prosecdef\b/.test(koodi),
+    'sallittavuuslohko ei rajaa SECURITY DEFINER -funktioihin');
+
+  // SKENAARIO F: tavalliset SECURITY INVOKER -funktiot eivät osu
+  // tarkistukseen lainkaan. Sovelluksen oma touch_updated_at on
+  // INVOKER, ja sen on jäätävä kokonaan tämän lohkon ulkopuolelle —
+  // muuten varmistus antaisi FAILin oikein kovennetusta funktiosta.
+  const migraationFunktio = sql('0002_task_domain_fields.sql');
+  assert.ok(migraationFunktio.includes('security invoker'),
+    'touch_updated_at ei ole enää SECURITY INVOKER');
+  assert.equal(migraationFunktio.includes('security definer'), false,
+    'jokin migraatio luo SECURITY DEFINER -funktion');
+});
+
+test('KRIITTINEN: yksikään muu varmistus ei vaadi nollaa SECURITY DEFINER -funktiota', () => {
+  // Sama väärä oletus voi elää muissa tiedostoissa. Jokainen
+  // prosecdef-viittaus on rajattava NIMETTYYN funktioon tai
+  // sallittavuuslohkoon — koko skeeman kattava laskuri ilman
+  // poikkeuksia on se muoto, joka antoi väärän FAILin.
+  const hakemistot = ['supabase/verify', 'supabase/preflight', 'supabase/acceptance'];
+
+  let tarkastettuja = 0;
+  for (const hakemisto of hakemistot) {
+    for (const nimi of fs.readdirSync(path.join(ROOT, hakemisto))
+                        .filter(n => n.endsWith('.sql'))) {
+      const koodi = fs.readFileSync(path.join(ROOT, hakemisto, nimi), 'utf8')
+        .split(NEWLINE)
+        .filter(line => !line.trim().startsWith('--'))
+        .join(NEWLINE);
+
+      if (!koodi.includes('prosecdef')) continue;
+
+      // Jokainen esiintymä omassa lohkossaan: `union all` erottaa
+      // tarkistukset, `with` ja alkukohta rajaavat ensimmäisen.
+      for (const lohko of koodi.split('union all')) {
+        if (!lohko.includes('prosecdef')) continue;
+        tarkastettuja += 1;
+
+        const rajattu = lohko.includes('proname')
+          || lohko.includes('identiteetti_ok')
+          || lohko.includes('definer_funktiot');
+
+        assert.ok(rajattu,
+          `${nimi}: prosecdef-tarkistus ei rajaa nimettyyn funktioon`
+          + ' — koko skeeman kattava laskuri antaa FAILin ympäristön'
+          + ' omasta infrastruktuurifunktiosta');
+      }
+    }
+  }
+
+  assert.ok(tarkastettuja >= 10,
+    `prosecdef-tarkistuksia löytyi vain ${tarkastettuja} — hahmo ei osu`);
+});
+
+test('KRIITTINEN: rls_auto_enable ei ole Manifestivalin funktio', () => {
+  // Tämä on se havainto, jonka nojalla funktio sallitaan. Jos jokin
+  // migraatio joskus luo sen, väite vanhenee: silloin se on
+  // sovelluksen funktio, ja sen pitäisi olla SECURITY INVOKER tai
+  // erikseen perusteltu.
+  for (const name of migrationFiles()) {
+    assert.equal(sql(name).includes('rls_auto_enable'), false,
+      `${name} luo funktion rls_auto_enable — sallittavuuden peruste vanhentui`);
+  }
+
+  // Ja migraatiot luovat yhä tasan yhden funktion.
+  const funktiot = new Set();
+  for (const name of migrationFiles()) {
+    for (const m of sql(name).matchAll(/create (?:or replace )?function public\.(\w+)/g)) {
+      funktiot.add(m[1]);
+    }
+  }
+  assert.deepEqual([...funktiot], ['touch_updated_at'],
+    'migraatiot luovat muitakin funktioita kuin touch_updated_at');
+});
+
 // ------------------------------------------ FREEZE: varmistuskyselyt
 
 test('varmistuskyselyt ovat vain lukevia', () => {
@@ -1714,8 +2041,55 @@ test('varmistuskyselyt ovat vain lukevia', () => {
 
     for (const statement of statements) {
       const first = statement.split(/\s+/)[0].toLowerCase();
-      assert.equal(first, 'select',
-        `${name}: lause alkaa sanalla "${first}" — vain select on sallittu`);
+
+      // `with` on sallittu, MUTTA VAIN LUKEVANA.
+      //
+      // PostgreSQL tuntee dataa muuttavat CTE:t:
+      //
+      //   with poistetut as (delete from t returning *) select * from poistetut
+      //
+      // Sellainen lause alkaa sanalla `with` ja muuttaa kantaa. Pelkkä
+      // alkusanan salliminen olisi siis reikä, ei laajennus. Siksi
+      // `with`-lauseelle on kaksi lisäehtoa, jotka `select`-lause
+      // täyttää väistämättä.
+      assert.ok(first === 'select' || first === 'with',
+        `${name}: lause alkaa sanalla "${first}" — vain select ja with ovat sallittuja`);
+
+      if (first !== 'with') continue;
+
+      // 1. Jokainen CTE-runko alkaa sanalla select. Juuri tähän
+      //    dataa muuttava CTE kirjoitettaisiin.
+      const rungot = [...statement.matchAll(/\bas\s*\(\s*(\w+)/gi)].map(m => m[1].toLowerCase());
+      assert.ok(rungot.length > 0, `${name}: with-lauseessa ei ole yhtään CTE:tä`);
+      for (const runko of rungot) {
+        assert.equal(runko, 'select',
+          `${name}: CTE alkaa sanalla "${runko}" — vain select on sallittu`);
+      }
+
+      // 2. Uloimmalla tasolla ei ole yhtään muuttavaa avainsanaa.
+      //    Sulkeiden sisältö riisutaan pois, koska siellä sanat
+      //    esiintyvät laillisesti merkkijonoina — esimerkiksi
+      //    oikeuslistassa array['select', 'insert', 'update', 'delete'].
+      let syvyys = 0;
+      let ulkotaso = '';
+      for (const merkki of statement) {
+        if (merkki === '(') syvyys += 1;
+        else if (merkki === ')') syvyys -= 1;
+        else if (syvyys === 0) ulkotaso += merkki;
+      }
+
+      // KAKSOISKENOVIIVA ON PAKOLLINEN. Template literalissa `\b`
+      // on askelpalautin, ei sanaraja: RegExp saisi ohjausmerkin ja
+      // ehto ei osuisi koskaan mihinkaan. Regex-literaalissa
+      // (/\bselect\b/) sama merkinta tarkoittaa sanarajaa.
+      for (const kielletty of ['insert', 'update', 'delete', 'merge', 'truncate',
+                               'create', 'drop', 'alter', 'grant', 'revoke']) {
+        assert.ok(!new RegExp(`\\b${kielletty}\\b`, 'i').test(ulkotaso),
+          `${name}: with-lauseen uloin taso sisältää sanan "${kielletty}"`);
+      }
+
+      assert.match(ulkotaso, /\bselect\b/i,
+        `${name}: with-lause ei pääty select-kyselyyn`);
     }
   }
 });

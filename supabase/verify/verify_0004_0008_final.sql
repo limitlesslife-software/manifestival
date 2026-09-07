@@ -15,9 +15,19 @@
 --     tuli yhteensä.
 --   * Funktio touch_updated_at on yhteinen. Yksi migraatio voi korvata
 --     sen kovettamattomana, ja seuraava migraatio ei huomaisi.
+--   * Kannassa voi olla funktioita, joita yksikään migraatio ei luo.
+--     SECURITY DEFINER -funktio ohittaa RLS:n, joten se on ainoa
+--     rakenne, joka voi mitätöidä koko erän omistajuussuojan — ja
+--     migraatiokohtainen varmistus ei etsi sellaista lainkaan.
 --
 -- Tämä varmistus katsoo lopputilaa. Se ei toista migraatiokohtaisia
 -- tarkistuksia vaan kysyy, mitä kannassa on NYT.
+--
+-- HUOM. TARKISTUKSET 23a-23d
+-- Ympäristö asettaa oman infrastruktuurifunktionsa
+-- public.rls_auto_enable(), joka kytkee RLS:n uusiin tauluihin. Se on
+-- sallittu, mutta VAIN täsmälleen tunnetussa muodossa. Ks. seuraava
+-- lohko — perustelu on siellä, ei täällä.
 --
 -- ODOTUS: jokaisen PASS/FAIL-rivin status = 'PASS' ja
 -- poikkeavia_yhteensa = 0.
@@ -29,6 +39,100 @@
 -- jälkeen supabase/acceptance/verify_0003_0008_acceptance.sql.
 --
 -- Tama tiedosto EI lue kayttajan sisaltoa.
+
+with
+
+-- ===================================================================
+-- SECURITY DEFINER -FUNKTIOIDEN SALLITTAVUUS
+-- ===================================================================
+--
+-- MIKSI TÄMÄ ON OMANA LOHKONAAN
+--
+-- Tämän varmistuksen aiempi versio vaati, ettei public-skeemassa ole
+-- YHTÄKÄÄN SECURITY DEFINER -funktiota. Se oli väärä invariantti, ja se
+-- tuotti tuotannossa yhden FAILin, joka ei tarkoittanut mitään vikaa.
+--
+-- Kannassa on ympäristön oma infrastruktuurifunktio:
+--
+--   public.rls_auto_enable()  ->  event_trigger
+--
+-- Se on tapahtumaliipaisin, joka kytkee RLS:n päälle jokaiseen uuteen
+-- public-skeeman tauluun. Se ei ole Manifestivalin funktio: yksikään
+-- migraatio ei luo sitä, eikä sen nimi esiinny repositoriossa. Se on
+-- ympäristön asettama lisäsuoja, ja se toimii samaan suuntaan kuin tämä
+-- varmistus.
+--
+-- Sitä EI silti voi vain ohittaa. SECURITY DEFINER -funktio ajetaan
+-- omistajansa oikeuksilla ja ohittaa RLS:n; se on tarkalleen se
+-- rakenne, jolla RLS voidaan kiertää. Nimi ei riitä tunnisteeksi —
+-- kuka tahansa voi luoda funktion millä tahansa nimellä.
+--
+-- Siksi sallittavuus on TÄSMÄLLINEN: funktio hyväksytään vain jos se on
+-- joka suhteessa se, minkä tunnemme. Mikä tahansa muu SECURITY DEFINER
+-- -funktio — myös samanniminen mutta erimuotoinen — on poikkeama.
+--
+-- Tarkistus on jaettu kolmeen osaan (23a, 23b, 23c), jotta vika kertoo
+-- itsestään: onko kannassa jotain tuntematonta, onko tunnettu funktio
+-- muuttunut tunnistetiedoiltaan, vai onko sen runko muuttunut.
+
+-- Kaikki public-skeeman SECURITY DEFINER -funktiot. SECURITY INVOKER
+-- -funktiot (kuten touch_updated_at) eivät kuulu tähän lainkaan: ne
+-- ajetaan kutsujan oikeuksilla eivätkä ohita RLS:ää.
+definer_funktiot as (
+  select p.oid, p.proname, p.prosrc, p.proconfig, p.proowner,
+         p.prokind, p.pronargs, p.prorettype, p.prolang
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public'
+     and p.prosecdef
+),
+
+-- Kahden kysymyksen erottelu: onko funktio TUNNISTETIEDOILTAAN se
+-- jonka tunnemme, ja tekeekö sen RUNKO sitä mitä sen pitäisi.
+--
+-- coalesce(..., false) on tarkoituksellinen. prosrc on NULL esimerkiksi
+-- C-kielisellä funktiolla, jolloin jokainen runkoehto olisi NULL ja
+-- `not (...)` olisi NULL — rivi ei osuisi mihinkään laskuriin ja
+-- livahtaisi läpi. Tuntematon on poikkeama, ei tyhjä.
+tunniste as (
+  select f.oid,
+         f.proname,
+         coalesce(
+           f.proname = 'rls_auto_enable'
+           -- Tavallinen funktio, ei proseduuri, aggregaatti eikä ikkuna.
+           and f.prokind = 'f'
+           -- Ei argumentteja: tapahtumaliipaisin ei ota niitä.
+           and f.pronargs = 0
+           -- Paluutyyppi on nimenomaan event_trigger. Tavallinen
+           -- SECURITY DEFINER -funktio palauttaisi jotain muuta, ja
+           -- sellaista voisi kutsua suoraan.
+           and f.prorettype = 'pg_catalog.event_trigger'::regtype
+           and f.prolang = (select oid from pg_language where lanname = 'plpgsql')
+           -- Omistaja ratkaisee, KENEN oikeuksilla funktio ajetaan.
+           and pg_get_userbyid(f.proowner) = 'postgres'
+           -- search_path on kiinnitettävä, ja TASAN yhteen arvoon.
+           -- Ilman sitä funktion nimenselvitystä voi ohjata kutsun
+           -- ympäriltä; useampi asetus tarkoittaisi, että jotain muuta
+           -- on ujutettu mukaan.
+           and f.proconfig is not null
+           and array_length(f.proconfig, 1) = 1
+           and f.proconfig[1] like 'search\_path=%'
+           and btrim(replace(split_part(f.proconfig[1], '=', 2), '"', '')) = 'pg_catalog'
+         , false) as identiteetti_ok,
+
+         coalesce(
+           -- Runko tekee sitä mitä RLS:n automaattinen kytkentä vaatii.
+           f.prosrc ~* 'pg_event_trigger_ddl_commands'
+           and f.prosrc ~* 'enable[[:space:]]+row[[:space:]]+level[[:space:]]+security'
+           -- Eikä mitään, mikä ei kuulu RLS:n kytkemiseen. Nämä ovat
+           -- SECURITY DEFINER -funktiossa nimenomaan niitä rakenteita,
+           -- joilla oikeuksia laajennetaan tai tiedostoja luetaan.
+           and f.prosrc !~* '\m(pg_read_file|pg_read_binary_file|lo_import|lo_export|dblink)\M'
+           and f.prosrc !~* '\m(grant|revoke)\M'
+           and f.prosrc !~* '\m(create|alter|drop|set)\M[[:space:]]+\mrole\M'
+         , false) as runko_ok
+    from definer_funktiot f
+)
 
 select c.check_no, c.section, c.check_name,
        case when c.odotus = 'INFO' then 'INFO'
@@ -364,12 +468,72 @@ from (
                           where a like 'search\_path=%'))
 
   union all
-  -- Eika public-skeemassa ole muita SECURITY DEFINER -funktioita.
-  -- Sellainen ajetaan omistajansa oikeuksilla ja ohittaa RLS:n.
-  select '23', 'liipaisimet', 'Public-skeemassa ei ole SECURITY DEFINER -funktioita', '0',
-         (select count(*)::text from pg_proc p
-            join pg_namespace n on n.oid = p.pronamespace
-           where n.nspname = 'public' and p.prosecdef)
+  -- PÄÄPORTTI: yhtään tuntematonta SECURITY DEFINER -funktiota ei ole.
+  --
+  -- Tämä on se tarkistus, joka pysäyttää kaiken. Se laskee jokaisen
+  -- public-skeeman SECURITY DEFINER -funktion, joka EI ole täsmälleen
+  -- tunnettu infrastruktuurifunktio — mukaan lukien samanniminen mutta
+  -- erimuotoinen.
+  --
+  -- Jos tämä on nollaa suurempi, älä käännä yhtäkään porttia ennen kuin
+  -- olet lukenut kyseisen funktion rungon. SECURITY DEFINER ohittaa
+  -- RLS:n; se on tarkalleen se rakenne, jolla tämän paketin koko
+  -- omistajuussuoja voidaan kiertää.
+  select '23a', 'funktiot', 'Tuntemattomia SECURITY DEFINER -funktioita ei ole', '0',
+         (select count(*)::text from tunniste
+           where not (identiteetti_ok and runko_ok))
+
+  union all
+  -- Tunnettu infrastruktuurifunktio on tunnistetiedoiltaan oikea.
+  --
+  -- Odotus lasketaan kannan tilasta: jos funktiota ei ole, odotus on 0
+  -- ja tarkistus menee läpi. Se ei siis vaadi funktion olemassaoloa —
+  -- vain sen, että JOS se on, se on oikea.
+  --
+  -- Erillinen 23a:sta diagnostiikan takia: 23a kertoo että jokin on
+  -- pielessä, tämä kertoo että pielessä on nimenomaan omistaja,
+  -- allekirjoitus tai search_path.
+  select '23b', 'funktiot', 'Funktio rls_auto_enable on tunnistetiedoiltaan odotettu',
+         (select count(*)::text from definer_funktiot
+           where proname = 'rls_auto_enable'),
+         (select count(*)::text from tunniste
+           where proname = 'rls_auto_enable' and identiteetti_ok)
+
+  union all
+  -- Ja sen runko tekee sitä mitä RLS:n automaattinen kytkentä vaatii,
+  -- eikä mitään muuta.
+  --
+  -- Tämä on erillinen 23b:stä, koska funktio voi olla oikean
+  -- niminen, oikean omistajan ja oikein rajatun search_pathin takana ja
+  -- silti sisältää mitä tahansa. Omistaja ja allekirjoitus kertovat
+  -- kuka sen ajaa; runko kertoo mitä se tekee.
+  select '23c', 'funktiot', 'Funktion rls_auto_enable runko vastaa RLS-kytkentää',
+         (select count(*)::text from definer_funktiot
+           where proname = 'rls_auto_enable'),
+         (select count(*)::text from tunniste
+           where proname = 'rls_auto_enable' and runko_ok)
+
+  union all
+  -- SORMENJÄLKI (INFO).
+  --
+  -- Rakenteelliset ehdot yllä eivät voi kattaa jokaista mahdollista
+  -- muutosta funktion rungossa. Tiiviste kattaa: jos runko muuttuu
+  -- millään tavalla, tämä rivi muuttuu.
+  --
+  -- Se ei kaada varmistusta — muutos voi olla ympäristön oma päivitys.
+  -- Se tekee muutoksen näkyväksi ajolokissa, jotta sen voi verrata
+  -- edelliseen ajoon ja kysyä miksi.
+  select '23d', 'funktiot', 'SECURITY DEFINER -funktioiden sormenjälki (INFO)', 'INFO',
+         coalesce(
+           (select string_agg(
+                     f.proname
+                     || ' owner=' || pg_get_userbyid(f.proowner)
+                     || ' ret=' || pg_catalog.format_type(f.prorettype, null)
+                     || ' cfg=' || coalesce(array_to_string(f.proconfig, ','), 'EI ASETUSTA')
+                     || ' md5=' || coalesce(md5(f.prosrc), 'EI RUNKOA'),
+                     ' | ' order by f.proname)
+              from definer_funktiot f),
+           'ei yhtään SECURITY DEFINER -funktiota')
 
   -- ================================================================
   -- UUDET TAULUT OVAT TYHJIÄ, VANHA DATA KOSKEMATON
