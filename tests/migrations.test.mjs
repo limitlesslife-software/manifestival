@@ -1441,6 +1441,229 @@ test('KRIITTINEN: kaikki kahdeksan porttia ovat yhä kiinni', async () => {
   }
 });
 
+
+// =====================================================================
+// ERÄN LOPPUVARMISTUS JA HYVÄKSYNNÄN JÄLKEINEN VARMISTUS
+// =====================================================================
+//
+// Loppuvarmistuksen luvut ovat kokonaislukuja koko skeemasta: kymmenen
+// taulua, 40 politiikkaa, yhdeksän viitettä. Käsin laskettuina ne
+// vanhenevat ensimmäisessä muutoksessa, ja vanhentunut odotusarvo
+// pysäyttää tuotannon varmistuksen vaikka kanta olisi oikein — juuri
+// niin kävi migraation 0003 varmistuksessa.
+//
+// Siksi nämä testit laskevat samat luvut migraatioista ja vertaavat
+// niitä varmistustiedoston odotusarvoihin.
+
+/** Migraatioiden 0003–0008 luomat objektit koko erästä. */
+function eranObjektit() {
+  const kaikki = {
+    taulut: [], politiikat: [], liipaisimet: [],
+    viitteet: [], omistajaAvaimet: [], uidOletukset: [], userIdNotNull: []
+  };
+
+  // VAIN 0003-0008. Migraatiot 0001 ja 0002 loivat tasks- ja
+  // profile-taulujen politiikat ja tasks-taulun liipaisimen; ne ovat
+  // tuotannon hyvaksytty lahtotila eivatka taman eran objekteja.
+  //
+  // Ilman rajausta politiikkoja loytyi 48 (40 + 8), ja luku olisi
+  // nayttanyt siltae kuin loppuvarmistus odottaisi liian vahan.
+  for (const name of migrationFiles().filter(nimi => /^000[3-8]/.test(nimi))) {
+    const lahde = sql(name).split(`${NEWLINE}commit;`)[0]
+      .split(NEWLINE)
+      .filter(line => !line.trim().startsWith('--'))
+      .join(NEWLINE);
+
+    for (const m of lahde.matchAll(/create table public\.(\w+)/g)) {
+      kaikki.taulut.push(m[1]);
+    }
+    for (const m of lahde.matchAll(/create policy (\w+)/g)) {
+      kaikki.politiikat.push(m[1]);
+    }
+    for (const m of lahde.matchAll(/create trigger (\w+)/g)) {
+      kaikki.liipaisimet.push(m[1]);
+    }
+    for (const m of lahde.matchAll(
+      /foreign key \(user_id,\s*(\w+)\)\s*references public\.(\w+)\s*\(user_id,\s*id\)\s*([^;]*);/g)) {
+      kaikki.viitteet.push({ column: m[1], parent: m[2], toiminto: m[3] });
+    }
+    for (const m of lahde.matchAll(/constraint (\w+_owner_row_key) unique \(user_id, id\)/g)) {
+      kaikki.omistajaAvaimet.push(m[1]);
+    }
+    for (const m of lahde.matchAll(/create table public\.(\w+) \(([\s\S]*?)\n\);/g)) {
+      const [, taulu, runko] = m;
+      if (/auth\.uid\(\)/.test(runko)) kaikki.uidOletukset.push(taulu);
+      if (/user_id\s+uuid not null/.test(runko)) kaikki.userIdNotNull.push(taulu);
+    }
+  }
+  return kaikki;
+}
+
+/** Varmistuksen odotusarvo annetulle tarkistuksen nimelle. */
+function loppuOdotus(osuma) {
+  const lahde = read('supabase/verify/verify_0004_0008_final.sql');
+  const osa = lahde.split('union all').find(pala => pala.includes(osuma));
+  assert.ok(osa, `loppuvarmistuksesta ei löydy tarkistusta: ${osuma}`);
+  const m = /',\s*'(\d+)',/.exec(osa);
+  assert.ok(m, `odotusarvoa ei löytynyt: ${osuma}`);
+  return Number(m[1]);
+}
+
+test('KRIITTINEN: loppuvarmistuksen luvut lasketaan migraatioista', () => {
+  const objektit = eranObjektit();
+
+  // Kymmenen porttitaulua: kaksi 0003:sta ja kahdeksan 0004-0008:sta.
+  assert.equal(objektit.taulut.length, 10,
+    `migraatiot luovat ${objektit.taulut.length} taulua, odotettiin 10`);
+  assert.equal(loppuOdotus('RLS on paalla kaikissa kymmenessa taulussa'), 10);
+  assert.equal(loppuOdotus('Kaikilla kymmenella taululla on nelja politiikkaa'),
+    objektit.politiikat.length);
+
+  // Neljä politiikkaa per taulu, ei enempää eikä vähempää.
+  assert.equal(objektit.politiikat.length, objektit.taulut.length * 4,
+    'jokaisella taululla ei ole neljää politiikkaa');
+
+  // Yhdeksän omistajuusviitettä kolmessa migraatiossa.
+  assert.equal(objektit.viitteet.length, 9,
+    `migraatiot luovat ${objektit.viitteet.length} yhdistelmävierasavainta`);
+  assert.equal(loppuOdotus('Yhdeksan omistajuuden yhdistelmavierasavainta'), 9);
+
+  // Kahdeksan niistä on SET NULL, yksi CASCADE.
+  const nollaavat = objektit.viitteet.filter(v => /on delete set null \(/.test(v.toiminto));
+  const kaskadi = objektit.viitteet.filter(v => /on delete cascade/.test(v.toiminto));
+  assert.equal(nollaavat.length, 8, 'nollaavien viitteiden määrä muuttui');
+  assert.equal(kaskadi.length, 1, 'kaskadoivien viitteiden määrä muuttui');
+  assert.equal(loppuOdotus('nollaavaa viitetta rajaa nollauksen sarakkeeseen'), 8);
+
+  // Viisi omistajan rivin avainta. Osa on omana lauseenaan, osa taulun
+  // sisällä, joten molemmat muodot lasketaan.
+  const avaimet = new Set(objektit.omistajaAvaimet);
+  for (const name of migrationFiles()) {
+    for (const m of sql(name).matchAll(/add constraint (\w+_owner_row_key)/g)) {
+      avaimet.add(m[1]);
+    }
+  }
+  assert.equal(avaimet.size, 5,
+    `omistajan rivin avaimia on ${avaimet.size}, odotettiin 5: ${[...avaimet].join(', ')}`);
+  assert.equal(loppuOdotus('Viisi omistajan rivin avainta'), 5);
+
+  // Yhdeksän liipaisinta erässä: jokaiselle taululle jolla on
+  // updated_at. Pois jää ai_action_audit — kirjaus ei muutu
+  // jälkikäteen. Kymmenes on tasks, jonka liipaisin syntyi jo
+  // migraatiossa 0002 ja on tuotannossa.
+  assert.equal(objektit.liipaisimet.length, 9,
+    `erän liipaisimia on ${objektit.liipaisimet.length}, odotettiin 9`);
+  assert.ok(sql('0002_task_domain_fields.sql').includes('create trigger tasks_touch_updated_at'),
+    'tasks-taulun liipaisin ei ole enää migraatiossa 0002 — loppuvarmistuksen luku 10 vanhentui');
+  assert.equal(loppuOdotus('updated_at-liipaisinta ajetaan ennen muutosta'), 10);
+
+  // Kymmenen taulua, joissa omistajan asettaa kanta.
+  assert.equal(objektit.uidOletukset.length, 10,
+    `auth.uid()-oletuksia on ${objektit.uidOletukset.length}, odotettiin 10`);
+  assert.equal(loppuOdotus('Omistajan asettaa kanta jokaisessa uudessa taulussa'), 10);
+
+  // user_id NOT NULL yhdeksässä uudessa taulussa plus tasks = 10.
+  assert.equal(objektit.userIdNotNull.length + 1, 10,
+    'user_id NOT NULL -taulujen määrä muuttui');
+  assert.equal(loppuOdotus('user_id on NOT NULL kaikissa kymmenessa taulussa'), 10);
+});
+
+test('KRIITTINEN: loppuvarmistus katsoo koko skeemaa, ei vain erän tauluja', () => {
+  // Erän tauluihin rajattu tarkistus ei näkisi taulua, joka lisätään
+  // myöhemmin ilman RLS:ää tai yhden sarakkeen viitteellä. Juuri
+  // sellainen olisi hiljaisin tapa avata aukko: mikään olemassa oleva
+  // tarkistus ei kohdistuisi siihen.
+  const lahde = read('supabase/verify/verify_0004_0008_final.sql');
+
+  const koodi = lahde.split(NEWLINE)
+    .filter(line => !line.trim().startsWith('--'))
+    .join(NEWLINE);
+
+  assert.ok(koodi.includes("relkind = 'r' and not relrowsecurity"),
+    'loppuvarmistus ei etsi RLS:ttä tauluja koko skeemasta');
+  assert.ok(koodi.includes("cl.relnamespace = 'public'::regnamespace")
+    && koodi.includes('acl.grantee = 0'),
+    'loppuvarmistus ei etsi PUBLIC-oikeuksia koko skeemasta');
+  // KAKSI ERI TARKISTUSTA, KAKSI ERI VAITETTA.
+  //
+  //   1. touch_updated_at on SECURITY INVOKER  (prosecdef = false)
+  //   2. public-skeemassa ei ole yhtaan SECURITY DEFINER -funktiota
+  //
+  // Pelkka sisaltyvyystesti meni lapi, kun jalkimmainen neutraloitiin:
+  // sana jai ensimmaiseen. Siksi esiintymat lasketaan.
+  assert.equal(koodi.split('prosecdef').length - 1, 2,
+    'loppuvarmistuksesta puuttuu toinen SECURITY DEFINER -tarkistus');
+});
+
+test('KRIITTINEN: hyväksynnän jälkeinen varmistus kattaa jokaisen viitteen', () => {
+  // Selaimessa ajettu testi katsoo kantaa RLS:n läpi eikä voi nähdä,
+  // jäikö toisen tilin rivi kantaan. Tämä tiedosto on ainoa paikka
+  // josta ristiinkiinnityksen jäännöksen voi nähdä — ja siksi sen on
+  // katettava jokainen viite, ei otos.
+  const lahde = read('supabase/acceptance/verify_0003_0008_acceptance.sql');
+  const viitteet = eranObjektit().viitteet;
+
+  assert.equal(viitteet.length, 9, 'viitteiden määrä muuttui');
+
+  // Sisältyvyystesti ei riitä: jos yhden tarkistuksen ehto
+  // neutraloidaan, sarakkeen nimi jää silti liitosehtoon ja testi
+  // menisi läpi. Mutaatiotesti paljasti tämän.
+  //
+  // Siksi jokainen eheystarkistus luetaan omana lohkonaan, ja siltä
+  // vaaditaan molemmat osat: liitos omistajalla (user_id) ja orvon
+  // etsintä (is null). Kumpikaan yksin ei todista mitään — liitos ilman
+  // orpoehtoa ei löydä mitään, ja orpoehto ilman omistajaliitosta
+  // löytäisi vain puuttuvat rivit, ei väärälle omistajalle kuuluvia.
+  const eheysLohkot = lahde.split('union all')
+    .filter(lohko => lohko.includes("'eheys'") && lohko.includes('kiinnitetty'));
+
+  assert.equal(eheysLohkot.length, viitteet.length,
+    `eheystarkistuksia on ${eheysLohkot.length}, viitteitä ${viitteet.length}`);
+
+  for (const lohko of eheysLohkot) {
+    const nimi = /'(Yhtaan[^']*)'/.exec(lohko);
+    assert.ok(lohko.includes('user_id'),
+      `eheystarkistus ei rajaa omistajalla: ${nimi ? nimi[1] : lohko.slice(0, 60)}`);
+    assert.ok(lohko.includes('is null'),
+      `eheystarkistus ei etsi orpoa: ${nimi ? nimi[1] : lohko.slice(0, 60)}`);
+  }
+
+  for (const { column } of viitteet) {
+    assert.ok(eheysLohkot.some(lohko => lohko.includes(column)),
+      `hyväksynnän varmistus ei tarkista viitettä ${column}`);
+  }
+
+  // Ja jokainen porttitaulu on mukana jäännöstarkistuksessa.
+  for (const taulu of eranObjektit().taulut) {
+    assert.ok(lahde.includes(`public.${taulu}`),
+      `hyväksynnän varmistus ei tarkista taulua ${taulu}`);
+  }
+});
+
+test('KRIITTINEN: hyväksynnän varmistus etsii jäännöstä kahdella tavalla', () => {
+  // Rivimäärä ja etuliite ovat eri väitteitä. Rivimäärä kertoo, onko
+  // taulussa mitään; etuliite kertoo, onko se nimenomaan tämän testin
+  // jäännös. Kumpikin tarvitaan: pelkkä rivimäärä ei erottaisi
+  // jäännöstä oikeasta datasta, ja pelkkä etuliite ei löytäisi
+  // muistutusasetuksia, joiden tunniste on käyttäjän uuid.
+  const lahde = read('supabase/acceptance/verify_0003_0008_acceptance.sql');
+
+  assert.ok(lahde.includes("like 'manifestival_rls_acceptance_%'"),
+    'etuliitteellä ei etsitä jäännöstä');
+  // KUUSI TAULUA, KUUSI HAKUA.
+  //
+  // Hyökkäyksiä kohdistui kuuteen tauluun. Yhden haun neutralointi
+  // jätti sanan tiedostoon, joten sisältyvyystesti meni läpi —
+  // mutaatiotesti paljasti sen. Siksi esiintymät lasketaan.
+  assert.equal(
+    lahde.split("like 'manifestival_rls_acceptance_%_attack_%'").length - 1, 6,
+    'hyökkäysrivejä ei etsitä jokaisesta kohdetaulusta');
+  assert.ok(/Muistutusasetusrivejä ei ole/.test(lahde),
+    'muistutusasetuksia ei tarkisteta tunnisteella');
+  assert.ok(lahde.includes('auth.users'),
+    'ei tarkisteta, että tili B on poistettu');
+});
+
 // ------------------------------------------ FREEZE: varmistuskyselyt
 
 test('varmistuskyselyt ovat vain lukevia', () => {
