@@ -144,7 +144,7 @@ test('jokainen uusi taulu saa RLS:n ja neljä politiikkaa', () => {
   // Taulu, joka luodaan mutta jää ilman RLS:ää, olisi kaikkien luettavissa.
   for (const name of migrationFiles()) {
     const source = sql(name);
-    const created = [...source.matchAll(/create table if not exists public\.(\w+)/g)]
+    const created = [...source.matchAll(/create table public\.(\w+)/g)]
       .map(match => match[1]);
 
     for (const table of created) {
@@ -167,7 +167,7 @@ test('uusien taulujen omistajuuden asettaa tietokanta', () => {
   // Jos client saisi valita user_id:n, RLS ei suojaisi mitään.
   for (const name of migrationFiles()) {
     const source = sql(name);
-    for (const match of source.matchAll(/create table if not exists public\.(\w+) \(([\s\S]*?)\n\);/g)) {
+    for (const match of source.matchAll(/create table public\.(\w+) \(([\s\S]*?)\n\);/g)) {
       const [, table, body] = match;
       const ownerColumn = /user_id\s+uuid not null default auth\.uid\(\)/.test(body)
         || /id\s+uuid primary key default auth\.uid\(\)/.test(body);
@@ -181,11 +181,275 @@ test('uudet taulut viittaavat auth.users-tauluun poistoketjulla', () => {
   // Käyttäjän poisto ei saa jättää orpoja rivejä henkilökohtaista dataa.
   for (const name of migrationFiles()) {
     const source = sql(name);
-    for (const match of source.matchAll(/create table if not exists public\.(\w+) \(([\s\S]*?)\n\);/g)) {
+    for (const match of source.matchAll(/create table public\.(\w+) \(([\s\S]*?)\n\);/g)) {
       const [, table, body] = match;
       assert.match(body, /references auth\.users\(id\) on delete cascade/,
         `${name}: taulusta ${table} puuttuu auth.users-viite`);
     }
+  }
+});
+
+
+// =====================================================================
+// FAIL-CLOSED -SÄÄNNÖT JA OMISTAJUUSINVARIANTTI (0003–0008)
+// =====================================================================
+//
+// LÖYTYNYT VIKA, JOTA NÄMÄ VARTIOIVAT
+//
+// Kaksi erillistä vikaa, jotka molemmat olivat näkymättömiä:
+//
+// 1. Migraatiot 0004–0007 liittivät rivin toiseen riviin tavallisella
+//    yhden sarakkeen vierasavaimella. Vierasavaimen tarkistus EI kulje
+//    RLS:n läpi, joten käyttäjä B pystyi luomaan oman rivinsä, joka
+//    viittasi käyttäjän A riviin. 0004 jopa dokumentoi tämän
+//    "hyväksytyksi riskiksi".
+//
+// 2. Migraatiot 0005–0007 sisälsivät `create or replace function
+//    public.touch_updated_at()` ILMAN määreitä `security invoker` ja
+//    `set search_path`. Ne olisivat hiljaa korvanneet migraation 0002
+//    kovennetun funktion kovettamattomalla — funktion, joka on
+//    liipaisimena myös tauluissa tasks, routines, goals ja projects.
+//
+// Kumpikaan ei olisi näkynyt virheenä missään. Molemmat olisivat
+// näkyneet vain siinä, mitä ei enää ollut.
+//
+// Lisäksi: kun migraatiot muutettiin fail-closed -muotoon, neljä
+// olemassa olevaa testiä muuttui TYHJÄKSI. Ne etsivät muotoa
+// `create table if not exists`, jota ei enää esiinny missään, joten ne
+// kävivät läpi nolla taulua ja menivät läpi. Siksi ensimmäinen testi
+// alla laskee, montako taulua säännöt oikeasti kattavat.
+
+/** Migraatiot, joita fail-closed -säännöt koskevat. */
+const KOVENNETUT = [
+  '0003_routines.sql', '0004_goals_projects.sql',
+  '0005_notification_preferences.sql', '0006_wellbeing.sql',
+  '0007_finance.sql', '0008_ai_audit.sql'
+];
+
+/** Migraation suorittava osa: kommenttirivit pois. */
+function code(name) {
+  return sql(name).split(NEWLINE)
+    .filter(line => !line.trim().startsWith('--'))
+    .join(NEWLINE);
+}
+
+/** Kaikkien migraatioiden suorittava osa yhtenä merkkijonona. */
+function allCode() {
+  return migrationFiles().map(code).join(NEWLINE);
+}
+
+test('KRIITTINEN: taulusäännöt eivät ole tyhjiä — ne kattavat kymmenen taulua', () => {
+  // Tämä testi on olemassa yhtä vikaa varten: yllä olevat säännöt
+  // etsivät tauluja hahmolla `create table public.X`. Jos hahmo ei
+  // vastaa migraatioiden muotoa, jokainen sääntö käy läpi nolla taulua
+  // ja menee läpi. Juuri niin kävi, kun `if not exists` poistettiin.
+  //
+  // Luku on käsin laskettu ja tarkoituksella: uuden taulun lisääminen
+  // kaataa tämän, ja se on oikea hetki tarkistaa, että taulu on myös
+  // hyväksyntätestissä, varmistuksessa ja porttien takana.
+  const taulut = [...allCode().matchAll(/create table public\.(\w+)/g)]
+    .map(m => m[1]).sort();
+
+  assert.deepEqual(taulut, [
+    'ai_action_audit', 'bills', 'goals', 'notification_preferences',
+    'projects', 'recurring_expenses', 'routine_exceptions', 'routines',
+    'savings_goals', 'wellbeing_entries'
+  ], 'migraatioiden luomat taulut eivät vastaa odotusta');
+});
+
+test('KRIITTINEN: migraatiot ovat fail-closed — ei idempotenttia DDL:ää', () => {
+  // `if not exists` tekee kolmesta eri tilasta saman näköisen: tuore
+  // ajo, toinen ajo ja kesken jäänyt ajo näyttävät kaikki
+  // onnistuneelta. Tila, jota ei voi erottaa, on tila jota ei voi
+  // korjata.
+  //
+  // Huom: `if not exists (select 1 ...)` plpgsql-esiehdoissa on eri asia
+  // ja sallittu. Siksi tämä osuu vain DDL-muotoihin.
+  const kielletyt = [
+    'create table if not exists', 'create index if not exists',
+    'create unique index if not exists', 'add column if not exists',
+    'drop constraint if exists', 'drop policy if exists',
+    'drop trigger if exists', 'drop table if exists'
+  ];
+
+  for (const name of KOVENNETUT) {
+    const source = code(name);
+    for (const kielletty of kielletyt) {
+      assert.equal(source.includes(kielletty), false,
+        `${name}: idempotentti DDL "${kielletty}" — migraatio ei enää havaitse kesken jäänyttä ajoa`);
+    }
+  }
+});
+
+test('KRIITTINEN: jokainen kovennettu migraatio havaitsee aiemman ajon', () => {
+  for (const name of KOVENNETUT) {
+    const source = code(name);
+
+    assert.ok(source.includes('lock_timeout'),
+      `${name}: ei aseta lock_timeoutia — pitkä transaktio jumittaisi kirjautumiset`);
+
+    assert.ok(source.includes('2cc00622-f927-4604-a518-361a4328481b'),
+      `${name}: ei tarkista, ollaanko oikeassa tietokannassa`);
+
+    assert.ok(/on jo ajettu/.test(source),
+      `${name}: ei tunnista jo ajettua migraatiota`);
+
+    assert.ok(/on kesken/.test(source),
+      `${name}: ei tunnista kesken jäänyttä ajoa`);
+  }
+});
+
+test('KRIITTINEN: touch_updated_at ei taannu kovettamattomaksi', () => {
+  // Funktio luodaan kerran migraatiossa 0002. Sen jälkeen migraatio joko
+  // määrittelee sen TÄSMÄLLEEN yhtä kovennettuna tai — mieluummin — vain
+  // tarkistaa sen. Kovettamaton `create or replace` olisi hiljainen
+  // taantuma, joka koskisi myös tasks-taulua.
+  for (const name of migrationFiles()) {
+    const source = code(name);
+
+    const maarittely = /create or replace function public\.touch_updated_at\(\)([\s\S]*?)as \$\$/
+      .exec(source);
+
+    if (maarittely) {
+      assert.ok(maarittely[1].includes('security invoker'),
+        `${name}: touch_updated_at ilman security invoker -määrettä`);
+      assert.ok(/set search_path *=/.test(maarittely[1]),
+        `${name}: touch_updated_at ilman kiinnitettyä search_pathia`);
+      continue;
+    }
+
+    // Ei määrittelyä. Jos migraatio silti käyttää funktiota
+    // liipaisimessa, sen on tarkistettava että funktio on kovennettu.
+    if (source.includes('execute function public.touch_updated_at')) {
+      assert.ok(source.includes('prosecdef'),
+        `${name}: käyttää touch_updated_at-funktiota mutta ei tarkista sen kovennusta`);
+      assert.ok(source.includes('proconfig'),
+        `${name}: ei tarkista touch_updated_at-funktion search_pathia`);
+    }
+  }
+});
+
+test('KRIITTINEN: jokainen viittaus sovellustauluun on yhdistelmävierasavain', () => {
+  // TÄMÄ ON KOKO PAKETIN TÄRKEIN TESTI.
+  //
+  // Tavallinen `references public.goals(id)` sallii ristiinkiinnityksen:
+  // B voi luoda oman rivinsä, joka viittaa A:n riviin. RLS ei estä sitä,
+  // koska B:n rivin omistaja on B — aivan kuten pitääkin. Vierasavaimen
+  // tarkistus ei kulje RLS:n läpi.
+  //
+  // Ainoa este on yhdistelmävierasavain (user_id, viite) -> (user_id, id).
+  const yhdistelma =
+    /foreign key \(user_id,\s*\w+\)\s*references public\.\w+\s*\(user_id,\s*id\)/g;
+
+  for (const name of migrationFiles()) {
+    const source = code(name);
+
+    const kaikki = (source.match(/references public\./g) || []).length;
+    const oikeat = (source.match(yhdistelma) || []).length;
+
+    assert.equal(kaikki, oikeat,
+      `${name}: ${kaikki - oikeat} viittausta sovellustauluun ei ole yhdistelmävierasavain`
+      + ' — ne sallisivat ristiinkiinnityksen toisen käyttäjän riviin');
+  }
+});
+
+test('KRIITTINEN: yhdistelmävierasavaimen kohteella on omistajan rivin avain', () => {
+  // PostgreSQL vaatii viitatuille sarakkeille yksikäsitteisyysrajoitteen.
+  // Jos se puuttuu, viitettä ei voi luoda lainkaan — ja migraatio
+  // kaatuisi vasta tuotannossa.
+  const kaikki = allCode();
+
+  const kohteet = new Set(
+    [...kaikki.matchAll(/references public\.(\w+)\s*\(user_id,\s*id\)/g)].map(m => m[1]));
+
+  assert.ok(kohteet.size >= 5,
+    `yhdistelmävierasavaimen kohteita löytyi vain ${kohteet.size} — hahmo ei osu`);
+
+  for (const taulu of kohteet) {
+    // Avain voidaan lisätä joko omana lauseenaan tai taulun sisällä.
+    // Migraatio 0003 tekee sen taulun sisällä, 0004 ja 0007 erikseen.
+    // Molemmat kelpaavat; puuttuminen ei.
+    const omanaLauseena = `add constraint ${taulu}_owner_row_key unique (user_id, id)`;
+    const taulunSisalla = `constraint ${taulu}_owner_row_key unique (user_id, id)`;
+
+    assert.ok(kaikki.includes(omanaLauseena) || kaikki.includes(taulunSisalla),
+      `taulu ${taulu} on viittauksen kohde mutta siltä puuttuu ${taulu}_owner_row_key`);
+  }
+});
+
+test('KRIITTINEN: yhdistelmävierasavain ei nollaa omistajaa poistossa', () => {
+  // `on delete set null` nollaa OLETUKSENA kaikki vierasavaimen
+  // sarakkeet — myös user_id:n, joka on NOT NULL. Silloin kohteen
+  // poistaminen kaatuisi joka kerta. Sarakelista suluissa rajaa
+  // nollauksen oikeaan sarakkeeseen, ja se vaatii PostgreSQL 15:n.
+  for (const name of KOVENNETUT) {
+    const source = code(name);
+
+    const viitteet = [...source.matchAll(
+      /foreign key \(user_id,\s*(\w+)\)\s*references public\.\w+\s*\(user_id,\s*id\)\s*([^;]*);/g)];
+
+    for (const [, sarake, jatko] of viitteet) {
+      // Sääntö koskee vain nollaavia viitteitä. `on delete cascade` on
+      // eri asia: se poistaa lapsirivin kokonaan eikä kirjoita
+      // yhteenkään sarakkeeseen, joten user_id ei ole vaarassa.
+      // Migraatio 0003 käyttää cascadea, koska poikkeus ilman rutiinia
+      // ei tarkoita mitään.
+      if (!jatko.includes('on delete set null')) continue;
+
+      assert.ok(jatko.includes(`set null (${sarake})`),
+        `${name}: viite ${sarake} nollaisi poistossa myös user_id:n — kohteen poisto kaatuisi aina`);
+    }
+
+    // Versiotarkistus vaaditaan vain migraatioilta, jotka oikeasti
+    // käyttävät PostgreSQL 15:n sarakelistaa. 0003 ei käytä.
+    if (/on delete set null \(/.test(source)) {
+      assert.ok(source.includes('server_version_num'),
+        `${name}: käyttää PostgreSQL 15:n sarakelistaa mutta ei tarkista palvelimen versiota`);
+    }
+  }
+});
+
+test('KRIITTINEN: oikeudet nollataan ennen myöntämistä — PUBLIC mukaan lukien', () => {
+  // PostgreSQL-rooli PUBLIC tarkoittaa "kaikki roolit", ja sille
+  // myönnetyn oikeuden perii jokainen rooli — myös anon. Perittyä
+  // oikeutta ei näy roolikohtaisissa listauksissa lainkaan, joten
+  // `revoke ... from anon` ei poista sitä eikä sen puuttumista huomaisi
+  // mistään.
+  for (const name of KOVENNETUT) {
+    const source = code(name);
+
+    const taulut = [...source.matchAll(/create table public\.(\w+)/g)].map(m => m[1]);
+
+    for (const taulu of taulut) {
+      for (const rooli of ['public', 'anon', 'authenticated']) {
+        assert.match(source,
+          new RegExp(`revoke all on public\\.${taulu}\\s+from ${rooli}`),
+          `${name}: taululta ${taulu} ei revokoida roolia ${rooli} ennen myöntämistä`);
+      }
+    }
+  }
+});
+
+test('KRIITTINEN: loppuvarmistus ajetaan ennen committia', () => {
+  // Viimeinen hetki, jolloin virheellinen tulos voidaan perua ilman
+  // jälkiä. Jos varmistus olisi commitin jälkeen, se raportoisi
+  // ongelman jota ei enää voi perua.
+  for (const name of KOVENNETUT) {
+    const source = code(name);
+    const commitKohta = source.lastIndexOf('commit;');
+
+    assert.ok(commitKohta > 0, `${name}: ei löydy committia`);
+
+    const ennen = source.slice(0, commitKohta);
+
+    // aclexplode on se tarkistus, joka näkee PUBLIC-roolille myönnetyn
+    // oikeuden. has_table_privilege yksin ei kerro, mistä oikeus tulee.
+    assert.ok(ennen.includes('aclexplode'),
+      `${name}: ei tarkista PUBLIC-roolin oikeuksia ennen committia`);
+    assert.ok(ennen.includes('has_table_privilege'),
+      `${name}: ei tarkista tehollisia oikeuksia ennen committia`);
+    assert.ok(ennen.includes('relrowsecurity'),
+      `${name}: ei varmista RLS:n tilaa ennen committia`);
   }
 });
 
@@ -379,7 +643,7 @@ test('rahasarakkeilla on valuutta ja se on validoitu', () => {
   const source = sql('0007_finance.sql');
   for (const table of ['bills', 'recurring_expenses', 'savings_goals']) {
     assert.match(source,
-      new RegExp('create table if not exists public\\.' + table + '[\\s\\S]*?currency'),
+      new RegExp('create table public\\.' + table + '[\\s\\S]*?currency'),
       `${table}: valuutta puuttuu`);
   }
   assert.equal((source.match(/currency ~ '\^\[a-z\]\{3\}\$'/g) || []).length, 3,
@@ -442,7 +706,7 @@ test('kirjausketjun kohde ei ole vierasavain', () => {
   // Kohde on voitu poistaa, ja kirjaus siitä on nimenomaan se, mitä
   // halutaan säilyttää. Vierasavain poistaisi historian kohteen mukana.
   const source = sql('0008_ai_audit.sql');
-  const createBlock = /create table if not exists public\.ai_action_audit \(([\s\S]*?)\n\);/
+  const createBlock = /create table public\.ai_action_audit \(([\s\S]*?)\n\);/
     .exec(source);
   assert.ok(createBlock);
   assert.equal(/target_id\s+text references/.test(createBlock[1]), false,
@@ -537,7 +801,7 @@ test('KRIITTINEN: jokainen vierasavain on varmistuskyselyn ulottuvilla', () => {
     }
 
     for (const table of source.matchAll(
-      /create table if not exists public\.(\w+) \(([\s\S]*?)\n\);/g)) {
+      /create table public\.(\w+) \(([\s\S]*?)\n\);/g)) {
       for (const column of table[2].matchAll(
         /^\s+(\w+)\s+\w+[^\n]*?references\s+public\./gm)) {
         add(table[1], `${table[1]}_${column[1]}_fkey`);
