@@ -19,6 +19,65 @@ Lippujen tila: [`PRODUCTION-ACTIVATION-GATE.md`](PRODUCTION-ACTIVATION-GATE.md).
  └─ 0008  AI-kirjaus
 ```
 
+## Omistajuusgraafi — lue tämä ennen muuta
+
+Yhdeksän viittausta kolmessa migraatiossa. Jokainen niistä on
+**yhdistelmävierasavain**, ei tavallinen viite:
+
+```sql
+foreign key (user_id, goal_id) references public.goals (user_id, id)
+```
+
+| Viite | Migraatio | Poisto |
+|-------|-----------|--------|
+| `routine_exceptions.routine_id → routines` | 0003 | cascade |
+| `goals.parent_goal_id → goals` | 0004 | set null |
+| `goals.project_id → projects` | 0004 | set null |
+| `projects.goal_id → goals` | 0004 | set null |
+| `tasks.goal_id → goals` | 0004 | set null |
+| `tasks.project_id → projects` | 0004 | set null |
+| `routines.goal_id → goals` | 0004 | set null |
+| `bills.task_id → tasks` | 0007 | set null |
+| `bills.recurring_expense_id → recurring_expenses` | 0007 | set null |
+
+### Miksi tavallinen vierasavain ei riitä
+
+> **RLS estää lukemisen, ei viittaamista.**
+
+Vierasavaimen tarkistus ei kulje RLS:n läpi. Kanta katsoo, onko rivi
+olemassa — ei sitä, saisiko viittaaja nähdä sen. Kun käyttäjä B lähettää
+rivin, jonka `goal_id` on käyttäjän A tavoitteen tunniste,
+INSERT-politiikan `WITH CHECK` vertaa vain omistajaa, ja omistaja on
+oikein: B.
+
+Tavallinen `references public.goals(id)` sallisi siis sen, että B:n rivi
+viittaa A:n riviin. Migraation 0004 aiempi versio dokumentoi tämän
+"hyväksyttynä riskinä" — se ei ollut hyväksyttävä, ja se on korjattu.
+
+### Omistajan rivin avaimet
+
+Yhdistelmävierasavain vaatii kohteelta yksikäsitteisyysrajoitteen
+`unique (user_id, id)`. Sellainen on viidessä taulussa:
+
+| Avain | Migraatio |
+|-------|-----------|
+| `routines_owner_row_key` | 0003 |
+| `goals_owner_row_key` | 0004 |
+| `projects_owner_row_key` | 0004 |
+| `tasks_owner_row_key` | **0007 — tuotannon tauluun** |
+| `recurring_expenses_owner_row_key` | 0007 |
+
+`id` on jo pääavain jokaisessa, joten avain ei lisää yhtään uutta
+rajoitusta riveille eikä voi kaatua dataan.
+
+### `on delete set null (sarake)` vaatii PostgreSQL 15:n
+
+Ilman sarakelistaa PostgreSQL nollaisi kaikki vierasavaimen sarakkeet,
+myös `user_id`, joka on `NOT NULL` — ja kohteen poisto kaatuisi joka
+kerta. Versio on tarkistettu esiehto migraatioissa 0004 ja 0007.
+
+---
+
 0002–0008 ovat **keskenään riippumattomia** yhtä poikkeusta lukuun
 ottamatta: 0004 luo `routines.goal_id`-viitteen ehdollisesti, vain jos
 `routines`-taulu on jo olemassa. Järjestys 0003 → 0004 on siksi
@@ -110,7 +169,7 @@ cascade on tarkoituksellinen käyttäjädatan välillä.
 
 ---
 
-## 0004 — `goals_projects` (364 riviä, 8 politiikkaa, 4 indeksiä, 24 tarkistetta)
+## 0004 — `goals_projects` (815 riviä, 8 politiikkaa, 4 indeksiä, 14 tarkistetta)
 
 | | |
 |---|---|
@@ -131,7 +190,7 @@ tietokannan on pakotettava se — sovellusvirhe ei saa hävittää dataa.
 
 ---
 
-## 0005 — `notification_preferences` (179 riviä, 4 politiikkaa, 8 tarkistetta)
+## 0005 — `notification_preferences` (465 riviä, 4 politiikkaa, 5 tarkistetta)
 
 | | |
 |---|---|
@@ -149,7 +208,7 @@ päälle jokaiselle käyttäjälle ilman että kukaan pyysi.
 
 ---
 
-## 0006 — `wellbeing` (159 riviä, 4 politiikkaa, 1 indeksi, 6 tarkistetta)
+## 0006 — `wellbeing` (444 riviä, 4 politiikkaa, 1 indeksiä, 4 tarkistetta)
 
 | | |
 |---|---|
@@ -168,7 +227,7 @@ ei saa koskaan sisältää näitä arvoja
 
 ---
 
-## 0007 — `finance` (366 riviä, 12 politiikkaa, 4 indeksiä, 32 tarkistetta)
+## 0007 — `finance` (879 riviä, 12 politiikkaa, 4 indeksiä, 19 tarkistetta)
 
 | | |
 |---|---|
@@ -190,7 +249,7 @@ sitä.
 
 ---
 
-## 0008 — `ai_audit` (166 riviä, 4 politiikkaa, 1 indeksi, 12 tarkistetta)
+## 0008 — `ai_audit` (445 riviä, 4 politiikkaa, 1 indeksiä, 8 tarkistetta)
 
 | | |
 |---|---|

@@ -1839,6 +1839,193 @@ test('varmistuskyselyt eivät lue käyttäjän sisältöä', () => {
   }
 });
 
+
+// =====================================================================
+// AJO-OHJE JA PALAUTUSDOKUMENTIT PITÄVÄT PAIKKANSA
+// =====================================================================
+//
+// Dokumentti, joka kertoo väärän objektimäärän tai puuttuvan tiedoston,
+// ohjaa operaattoria väärin juuri silloin kun tilanne on jo huono.
+// Nämä testit vertaavat dokumenttien luvut ja viittaukset siihen, mitä
+// repositoriossa oikeasti on.
+
+const RUNBOOK = 'docs/MIGRATIONS-0004-0008-PRODUCTION-RUNBOOK.md';
+
+test('KRIITTINEN: jokaisella erän migraatiolla on palautusdokumentti', () => {
+  // Migraation virheilmoitus ohjaa dokumenttiin nimeltä. Jos sitä ei
+  // ole, ohje päättyy umpikujaan kesken ajon.
+  for (const numero of ['0004', '0005', '0006', '0007', '0008']) {
+    const doc = `docs/MIGRATION-${numero}-RECOVERY.md`;
+    assert.ok(fs.existsSync(path.join(ROOT, doc)),
+      `palautusdokumentti puuttuu: ${doc}`);
+
+    // Ja migraatio viittaa siihen.
+    const migraatio = migrationFiles().find(n => n.startsWith(numero));
+    assert.ok(sql(migraatio).includes(`docs/migration-${numero}-recovery.md`),
+      `migraatio ${numero} ei ohjaa palautusdokumenttiin`);
+  }
+});
+
+test('KRIITTINEN: palautusdokumenttien objektimäärät vastaavat migraatioita', () => {
+  // Objektimäärä on se luku, jonka operaattori näkee virheilmoituksessa
+  // ("N objektia M:sta on jo olemassa"). Jos dokumentti kertoo eri M:n,
+  // operaattori ei tiedä onko tilanne odotettu.
+  for (const numero of ['0004', '0005', '0006', '0007', '0008']) {
+    const migraatio = migrationFiles().find(n => n.startsWith(numero));
+    const lahde = sql(migraatio).split(`${NEWLINE}commit;`)[0]
+      .split(NEWLINE)
+      .filter(line => !line.trim().startsWith('--'))
+      .join(NEWLINE);
+
+    const laske = hahmo => [...lahde.matchAll(hahmo)].length;
+    const maara = laske(/create table public\.\w+/g)
+      + laske(/add column \w+/g)
+      + laske(/add constraint \w+/g)
+      + laske(/^\s+constraint \w+/gm)
+      + laske(/create index \w+/g)
+      + laske(/create trigger \w+/g)
+      + laske(/create policy \w+/g);
+
+    const doc = read(`docs/MIGRATION-${numero}-RECOVERY.md`);
+    const ehdollinen = lahde.includes('routines_goal_id_fkey');
+    const odotettu = ehdollinen ? `${maara - 1} tai ${maara}` : String(maara);
+
+    assert.ok(doc.includes(`**${odotettu} objektia**`),
+      `MIGRATION-${numero}-RECOVERY.md ei kerro oikeaa objektimäärää`
+      + ` (migraatio luo ${odotettu})`);
+  }
+});
+
+test('KRIITTINEN: palautusdokumenttien rollback vastaa migraatiota', () => {
+  // Rollback-lauseet on kopioitu migraatiosta. Jos migraation
+  // rollbackia muutetaan eikä dokumenttia, dokumentti neuvoo ajamaan
+  // vanhentuneita lauseita.
+  for (const numero of ['0004', '0005', '0006', '0007', '0008']) {
+    const migraatio = migrationFiles().find(n => n.startsWith(numero));
+    const lahde = read(`${MIGRATION_DIR}/${migraatio}`);
+    const doc = read(`docs/MIGRATION-${numero}-RECOVERY.md`);
+
+    // Jokainen migraation rollback-lohkon drop-lause on dokumentissa.
+    const rollbackKohta = lahde.lastIndexOf('-- ROLLBACK');
+    assert.ok(rollbackKohta > 0, `${migraatio}: rollback-lohkoa ei ole`);
+
+    const lauseet = [...lahde.slice(rollbackKohta)
+      .matchAll(/--\s+(drop (?:table|index) if exists [^;]+;)/g)].map(m => m[1]);
+
+    assert.ok(lauseet.length > 0, `${migraatio}: rollbackissa ei ole drop-lauseita`);
+
+    for (const lause of lauseet) {
+      assert.ok(doc.includes(lause),
+        `MIGRATION-${numero}-RECOVERY.md ei sisällä lausetta: ${lause}`);
+    }
+  }
+});
+
+test('KRIITTINEN: ajo-ohje viittaa jokaiseen tiedostoon jonka se nimeää', () => {
+  // Ajo-ohje on operaattorin ainoa dokumentti ajon aikana. Jokaisen
+  // siinä nimetyn tiedoston on oltava olemassa — puuttuva tiedosto
+  // huomataan vasta kun sitä yritetään ajaa.
+  const runbook = read(RUNBOOK);
+
+  const polut = [...runbook.matchAll(
+    /`((?:supabase|docs|tools|src)\/[\w./-]+)`/g)].map(m => m[1]);
+
+  // Kynnys on olemassa vain tyhjentymisen varalta: jos hahmo lakkaisi
+  // osumasta, testi kävisi läpi nolla polkua ja menisi läpi. Luku ei
+  // ole tavoite vaan alaraja — ajo-ohje nimeää tiedostoja myös
+  // taulukoissa ja koodilohkoissa ilman polkua, ja ne tarkistetaan
+  // erikseen seuraavassa testissä.
+  assert.ok(polut.length >= 10,
+    `ajo-ohjeesta löytyi vain ${polut.length} tiedostoviittausta`);
+
+  for (const polku of new Set(polut)) {
+    assert.ok(fs.existsSync(path.join(ROOT, polku)),
+      `ajo-ohje viittaa tiedostoon jota ei ole: ${polku}`);
+  }
+});
+
+test('KRIITTINEN: ajo-ohje nimeää jokaisen erän migraation ja varmistuksen', () => {
+  const runbook = read(RUNBOOK);
+
+  for (const numero of ['0004', '0005', '0006', '0007', '0008']) {
+    const migraatio = migrationFiles().find(n => n.startsWith(numero));
+    assert.ok(runbook.includes(migraatio),
+      `ajo-ohje ei nimeä migraatiota ${migraatio}`);
+    assert.ok(runbook.includes(`preflight_${numero}.sql`),
+      `ajo-ohje ei nimeä preflightia ${numero}`);
+    assert.ok(runbook.includes(`verify_${numero}.sql`),
+      `ajo-ohje ei nimeä varmistusta ${numero}`);
+  }
+
+  for (const tiedosto of ['preflight_0004_0008_batch.sql',
+                          'recovery_snapshot_pre_0004_0008.sql',
+                          'verify_0004_0008_final.sql',
+                          'verify_0003_0008_acceptance.sql']) {
+    assert.ok(runbook.includes(tiedosto),
+      `ajo-ohje ei nimeä tiedostoa ${tiedosto}`);
+  }
+});
+
+test('KRIITTINEN: ajo-ohjeen viiteluettelo vastaa migraatioita', () => {
+  // Ajo-ohje luettelee yhdeksän omistajuusviitettä taulukkona. Jos
+  // migraatio saa uuden viitteen eikä taulukko päivity, operaattori
+  // tarkistaisi vääriä asioita.
+  const runbook = read(RUNBOOK);
+
+  const kannassa = [];
+  for (const name of migrationFiles().filter(n => /^000[3-8]/.test(n))) {
+    const lahde = sql(name).split(NEWLINE)
+      .filter(line => !line.trim().startsWith('--'))
+      .join(NEWLINE);
+    for (const m of lahde.matchAll(
+      /foreign key \(user_id,\s*(\w+)\)\s*references public\.(\w+)/g)) {
+      kannassa.push(m[1]);
+    }
+  }
+
+  assert.equal(kannassa.length, 9, 'viitteiden määrä muuttui');
+
+  for (const sarake of kannassa) {
+    assert.ok(runbook.toLowerCase().includes(sarake),
+      `ajo-ohje ei mainitse viitettä ${sarake}`);
+  }
+});
+
+test('KRIITTINEN: ajo-ohje sanoo, ettei porttia avata ennen hyväksyntätestiä', () => {
+  // Tämä on koko ohjeen tärkein sääntö. Varmistus todistaa rakenteen;
+  // se ei todista, että RLS toimii oikeiden käyttäjien välillä.
+  const runbook = read(RUNBOOK);
+
+  assert.match(runbook, /hyväksyntätesti/i,
+    'ajo-ohje ei mainitse hyväksyntätestiä');
+  assert.match(runbook, /tili B/i,
+    'ajo-ohje ei kerro väliaikaisesta tilistä B');
+  assert.match(runbook, /23503/,
+    'ajo-ohje ei kerro odotettua virhekoodia ristiinkiinnitykselle');
+  assert.match(runbook, /yksi kerrallaan/i,
+    'ajo-ohje ei kehota kääntämään portteja yksi kerrallaan');
+  assert.match(runbook, /CACHE_VERSION/,
+    'ajo-ohje ei muistuta välimuistiversion nostosta');
+});
+
+test('KRIITTINEN: dokumentit eivät lupaa enempää kuin paketti todistaa', () => {
+  // Dokumentti, joka väittää migraatioiden olevan testattuja, on
+  // väärässä tavalla joka huomataan vasta tuotannossa. Niitä ei ole
+  // ajettu missään.
+  const runbook = read(RUNBOOK);
+
+  assert.match(runbook, /EI AJETTU/,
+    'ajo-ohje ei kerro, ettei migraatioita ole ajettu');
+  assert.match(runbook, /Mitä tämä paketti EI todista/,
+    'ajo-ohjeesta puuttuu rajaukset-osuus');
+
+  for (const numero of ['0004', '0005', '0006', '0007', '0008']) {
+    const doc = read(`docs/MIGRATION-${numero}-RECOVERY.md`);
+    assert.match(doc, /EI AJETTU/,
+      `MIGRATION-${numero}-RECOVERY.md ei kerro, ettei migraatiota ole ajettu`);
+  }
+});
+
 // -------------------------------- FREEZE: dokumentaation totuudellisuus
 
 test('portin takainen ominaisuusdokumentti kertoo, ettei tieto vielä säily', () => {
