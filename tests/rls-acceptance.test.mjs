@@ -17,7 +17,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { runAcceptance, formatReport, idsFor, taskRow, profileRow, MARKER_PREFIX, STATUS }
+import { runAcceptance, formatReport, idsFor, taskRow, profileRow,
+         routineRow, exceptionRow, MARKER_PREFIX, STATUS }
   from '../tools/rls-acceptance/acceptance.js';
 import { read, readCode } from './helpers/sources.mjs';
 import { SUPABASE_ANON_KEY } from '../src/data/config.js';
@@ -40,6 +41,10 @@ function makeDb() {
       id: `oikea-${i}`, date: '2026-09-05', title: `tehtava ${i}`, user_id: OWNER_A
     })),
     profile: [{ id: OWNER_A, legacy_id: 'me', age: 40, weight_kg: null }],
+    // Migraation 0003 taulut. Tuotannossa ne ovat tyhjiä: portit ovat
+    // false, joten sovellus ei ole kirjoittanut niihin mitään.
+    routines: [],
+    routine_exceptions: [],
     users: [OWNER_A, USER_B]
   };
 }
@@ -115,7 +120,9 @@ function makeClient(db, uid, flaws = {}, ledger = null) {
         return { data: db[query.table].map(clone), error: null };
       }
 
-      const ownerColumn = query.table === 'tasks' ? 'user_id' : 'id';
+      // profile on ainoa taulu, jossa omistajuus on id-sarakkeessa.
+      // Kaikilla muilla se on user_id.
+      const ownerColumn = query.table === 'profile' ? 'id' : 'user_id';
       const owns = row => row[ownerColumn] === uid;
       const matches = row => query.filters.every(check => check(row));
       const rows = db[query.table];
@@ -133,6 +140,20 @@ function makeClient(db, uid, flaws = {}, ledger = null) {
         }
         // DEFAULT auth.uid(): kanta asettaa omistajan, ei asiakas.
         if (!(ownerColumn in row)) row[ownerColumn] = uid;
+
+        // YHDISTELMAVIERASAVAIN (user_id, routine_id) -> routines(user_id, id).
+        //
+        // Tarkistus EI kulje RLS:n lapi — se on kannan oma, ja juuri
+        // siksi se on ainoa este ristiinkiinnitykselle. Jos parina
+        // (omistaja, rutiini) ei loydy routines-taulusta, kanta hylkaa
+        // rivin koodilla 23503.
+        if (query.table === 'routine_exceptions' && !flaws.compositeFkOff) {
+          const kohde = db.routines.find(r =>
+            r.id === row.routine_id && r.user_id === row.user_id);
+          if (!kohde) {
+            return { data: null, error: { code: '23503', message: 'foreign key violation' } };
+          }
+        }
 
         const existing = rows.find(candidate => candidate.id === row.id);
         if (existing) {
@@ -261,8 +282,13 @@ test('testin luomat tunnisteet on erotettavissa oikeista riveistä', () => {
     assert.ok(value.startsWith(MARKER_PREFIX),
       `tunniste ${value} ei ole tunnistettavissa siivousta varten`);
   }
-  // Neljä eri riviä, ei törmäyksiä.
-  assert.equal(new Set(Object.values(ids)).size, 4);
+  // Yksitoista eri riviä, ei törmäyksiä. Neljä alkuperäistä
+  // (tasks/profile) ja seitsemän migraation 0003 tauluille.
+  assert.equal(new Set(Object.values(ids)).size, 11);
+  for (const avain of ['routineA', 'routineB', 'exceptionA', 'exceptionB',
+                       'attackExceptionB']) {
+    assert.ok(ids[avain], `tunniste ${avain} puuttuu`);
+  }
 });
 
 // ---------------------------------------------------------------------
@@ -557,9 +583,9 @@ test('MUTAATIO: siivous ei poista mitään — jäännös näkyy raportissa', as
   });
 
   assert.equal(summary.verdict, 'FAIL');
-  assert.equal(byNumber(rows, 'C5').status, STATUS.FAIL, 'A ei huomannut jäännöstä');
-  assert.equal(byNumber(rows, 'C6').status, STATUS.FAIL, 'B ei huomannut jäännöstä');
-  assert.equal(byNumber(rows, 'C4').status, STATUS.FAIL, 'rivimäärä ei palannut lähtöarvoon');
+  assert.equal(byNumber(rows, 'C9').status, STATUS.FAIL, 'A ei huomannut jäännöstä');
+  assert.equal(byNumber(rows, 'C10').status, STATUS.FAIL, 'B ei huomannut jäännöstä');
+  assert.equal(byNumber(rows, 'C8').status, STATUS.FAIL, 'rivimäärä ei palannut lähtöarvoon');
 
   // Ja jäännös on oikeasti kannassa — testi ei kaadu väärästä syystä.
   assert.ok(db.tasks.some(taskRow => taskRow.id.startsWith(MARKER_PREFIX)));
@@ -574,9 +600,9 @@ test('MUTAATIO: siivous onnistuu vain osittain — sekin näkyy', async () => {
   });
 
   assert.equal(summary.verdict, 'FAIL');
-  assert.equal(byNumber(rows, 'C6').status, STATUS.FAIL,
+  assert.equal(byNumber(rows, 'C10').status, STATUS.FAIL,
     'B:n jäljelle jäänyttä riviä ei huomattu');
-  assert.equal(byNumber(rows, 'C5').status, STATUS.PASS,
+  assert.equal(byNumber(rows, 'C9').status, STATUS.PASS,
     'A ei näe B:n riviä — juuri siksi kumpikin tili tarkistetaan erikseen');
 });
 
@@ -598,7 +624,7 @@ test('siivous poistaa myös rivin, jonka B väärensi tilin A nimiin', async () 
   assert.equal(byNumber(rows, 'T3d').status, STATUS.FAIL, 'väärennös ei edes huomattu');
   assert.equal(db.tasks.filter(taskRow => taskRow.id.startsWith(MARKER_PREFIX)).length, 0,
     'väärennetty rivi jäi kantaan');
-  assert.equal(byNumber(rows, 'C5').status, STATUS.PASS);
+  assert.equal(byNumber(rows, 'C9').status, STATUS.PASS);
 });
 
 // ---------------------------------------------------------------------
@@ -733,4 +759,180 @@ test('työkalun sivu ei sisällä inline-skriptejä', () => {
   const html = read('tools/rls-acceptance/index.html');
   const inline = [...html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>/g)];
   assert.deepEqual(inline.map(match => match[0]), []);
+});
+
+// =====================================================================
+// MIGRAATION 0003 TAULUT — rutiinit ja poikkeukset
+// =====================================================================
+
+test('ehjä RLS: rutiinien ja poikkeusten koko matriisi menee läpi', async () => {
+  const { rows } = await runAgainst();
+  const numerot = rows.map(e => e.test_no);
+
+  // R1-R5 ja E1-E6 ovat kaikki mukana.
+  for (const alku of ['R1', 'R2', 'R3', 'R4', 'R5',
+                      'E1', 'E2', 'E3', 'E4', 'E5', 'E6']) {
+    assert.ok(numerot.some(no => no.startsWith(alku)),
+      `tapausryhmä ${alku} puuttuu ajosta`);
+  }
+
+  for (const entry of rows.filter(e => /^[RE]\d/.test(e.test_no))) {
+    assert.equal(entry.status, STATUS.PASS,
+      `${entry.test_no} (${entry.test_name}): ${entry.status} — ${entry.actual}`);
+  }
+});
+
+test('KRIITTINEN: ristiinkiinnitys A:n rutiiniin torjutaan vierasavaimella', async () => {
+  // E4 on koko osuuden tärkein testi. RLS ei estä sitä: B:n rivin
+  // omistaja on oikein — B. Ainoa este on yhdistelmävierasavain.
+  const { rows } = await runAgainst();
+  const e4 = byNumber(rows, 'E4');
+
+  assert.ok(e4, 'E4 puuttuu kokonaan');
+  assert.equal(e4.status, STATUS.PASS, `E4: ${e4.actual}`);
+  assert.match(e4.actual, /23503/,
+    'E4 hyväksyttiin väärällä koodilla — vain vierasavainvirhe todistaa väitteen');
+});
+
+test('MUTAATIO: yhdistelmävierasavain pois — ristiinkiinnitys onnistuisi', async () => {
+  // Jos vierasavain olisi pelkkä routine_id, B voisi kiinnittää
+  // poikkeuksensa A:n rutiiniin. Rivi ei näkyisi A:lle, mutta se
+  // viittaisi toisen ihmisen dataan.
+  const { rows, summary } = await runAgainst({ compositeFkOff: true });
+
+  assert.equal(byNumber(rows, 'E4').status, STATUS.FAIL,
+    'ristiinkiinnitys meni läpi eikä testi huomannut');
+  assert.equal(summary.verdict, 'FAIL');
+});
+
+test('MUTAATIO: SELECT-politiikka auki — B näkee A:n rutiinit ja poikkeukset', async () => {
+  const { rows, summary } = await runAgainst({ selectUsingOff: true });
+
+  assert.equal(summary.verdict, 'FAIL');
+  for (const no of ['R2a', 'R2b', 'E2a', 'E2b']) {
+    assert.equal(byNumber(rows, no).status, STATUS.FAIL,
+      `${no} ei huomannut, että B näkee A:n datan`);
+  }
+});
+
+test('MUTAATIO: UPDATE-politiikka auki — vieras rutiini on muokattavissa', async () => {
+  const { rows, summary } = await runAgainst({ updateUsingOff: true });
+
+  assert.equal(summary.verdict, 'FAIL');
+  for (const no of ['R3a', 'R3d', 'R5b']) {
+    assert.equal(byNumber(rows, no).status, STATUS.FAIL, `${no} ei huomannut vuotoa`);
+  }
+
+  // POIKKEUSTASON TARKISTUKSET EIVÄT VÄLTTÄMÄTTÄ OLE FAIL — ja se on
+  // oikein. R3d onnistuu tässä vikatilassa, eli B siirtää A:n rutiinin
+  // omistajuuden itselleen. Sen jälkeen A ei voi enää luoda poikkeusta
+  // omaan rutiiniinsa: yhdistelmävierasavain ei löydä paria (A, rutiini).
+  // E-tason tarkistukset ohittuvat, koska niiden edellytys tuhoutui.
+  //
+  // Vaatimus on siis "ei PASS": läpimeno tarkoittaisi, että kielto
+  // näytti pitävän vaikka politiikka oli auki.
+  for (const no of ['E3a', 'E6b']) {
+    assert.notEqual(byNumber(rows, no).status, STATUS.PASS,
+      `${no} raportoi PASSin vaikka UPDATE-politiikka oli auki`);
+  }
+});
+
+test('MUTAATIO: DELETE-politiikka auki — vieras rutiini on poistettavissa', async () => {
+  const { rows, summary } = await runAgainst({ deleteUsingOff: true });
+
+  assert.equal(summary.verdict, 'FAIL');
+  for (const no of ['R3b', 'R5c']) {
+    assert.equal(byNumber(rows, no).status, STATUS.FAIL, `${no} ei huomannut vuotoa`);
+  }
+
+  // Sama kaskadi kuin yllä: R3b poistaa A:n rutiinin, jolloin A:n
+  // poikkeusta ei voi enää luoda eikä E-tason kieltoja päästä
+  // kokeilemaan. Ohitus on rehellinen tulos, läpimeno ei olisi.
+  for (const no of ['E3b', 'E6c']) {
+    assert.notEqual(byNumber(rows, no).status, STATUS.PASS,
+      `${no} raportoi PASSin vaikka DELETE-politiikka oli auki`);
+  }
+});
+
+test('MUTAATIO: WITH CHECK auki — B voi luoda rivin A:n nimiin', async () => {
+  const { rows, summary } = await runAgainst({ withCheckOff: true });
+
+  assert.equal(summary.verdict, 'FAIL');
+  assert.equal(byNumber(rows, 'R3c').status, STATUS.FAIL, 'rutiinin väärennös meni läpi');
+  assert.equal(byNumber(rows, 'E3c').status, STATUS.FAIL, 'poikkeuksen väärennös meni läpi');
+});
+
+test('MUTAATIO: anonilla on oikeuksia uusiin tauluihin', async () => {
+  const { rows, summary } = await runAgainst({ anonAllowed: true });
+
+  assert.equal(summary.verdict, 'FAIL');
+  for (const no of ['T6-r-select', 'T6-e-select']) {
+    assert.equal(byNumber(rows, no).status, STATUS.FAIL,
+      `${no}: kirjautumaton pääsi tauluun`);
+  }
+});
+
+test('KRIITTINEN: siivous tyhjentää molemmat uudet taulut', async () => {
+  const { db, rows } = await runAgainst();
+
+  assert.deepEqual(db.routines, [], 'rutiineja jäi kantaan');
+  assert.deepEqual(db.routine_exceptions, [], 'poikkeuksia jäi kantaan');
+
+  for (const no of ['C11-r', 'C11-e', 'C12-r', 'C12-e']) {
+    assert.equal(byNumber(rows, no).status, STATUS.PASS,
+      `${no}: jäännöstarkistus ei mennyt läpi`);
+  }
+});
+
+test('MUTAATIO: siivous jättää rutiinin — molemmat tilit tarkistavat erikseen', async () => {
+  // A:n puhdas näkymä ei kerro mitään siitä, jäikö B:lle jotain: RLS
+  // piilottaa toisen rivit. Siksi jäännös tarkistetaan kummallakin.
+  const { rows, summary } = await runAgainst({
+    deleteDrops: taulu => String(taulu.id).endsWith('_b_routine')
+  });
+
+  assert.equal(summary.verdict, 'FAIL');
+  assert.equal(byNumber(rows, 'C12-r').status, STATUS.FAIL,
+    'B:n jäljelle jäänyttä rutiinia ei huomattu');
+  assert.equal(byNumber(rows, 'C11-r').status, STATUS.PASS,
+    'A ei näe B:n rutiinia — juuri siksi molemmat tarkistetaan');
+});
+
+test('KRIITTINEN: rutiinien testirivit kirjoittavat vain sovelluksen sarakkeita', async () => {
+  // Työkalu puhuu kannalle suoraan, joten se voisi kirjoittaa
+  // sarakkeisiin joihin sovellus ei koskaan koske. Silloin se testaisi
+  // eri asiaa kuin mitä tuotannossa tapahtuu.
+  const { routinesRepo, routineExceptionsRepo } = await import('../src/data/collectionsRepo.js');
+  const { normalizeRoutine, normalizeException } = await import('../src/domain/routine.js');
+
+  const rutiini = routineRow('x', 'otsikko');
+  const sovelluksenRutiini = routinesRepo.mapping.toRow(normalizeRoutine({
+    id: 'x', title: 'otsikko', recurrence: { type: 'daily', weekdays: [] }
+  }));
+  assert.deepEqual(Object.keys(rutiini).sort(), Object.keys(sovelluksenRutiini).sort(),
+    'rutiinin testirivi ei vastaa sovelluksen kirjoittamia sarakkeita');
+
+  const poikkeus = exceptionRow('x', 'r', '2026-09-07');
+  const sovelluksenPoikkeus = routineExceptionsRepo.mapping.toRow(normalizeException({
+    id: 'x', routineId: 'r', date: '2026-09-07', type: 'skip'
+  }));
+  assert.deepEqual(Object.keys(poikkeus).sort(), Object.keys(sovelluksenPoikkeus).sort(),
+    'poikkeuksen testirivi ei vastaa sovelluksen kirjoittamia sarakkeita');
+
+  // Eikä kumpikaan lähetä palvelimen omistamia kenttiä.
+  for (const [nimi, rivi] of [['rutiini', rutiini], ['poikkeus', poikkeus]]) {
+    for (const kielletty of ['user_id', 'created_at', 'updated_at']) {
+      assert.equal(kielletty in rivi, false,
+        `${nimi}: testirivi lähettää palvelimen omistaman kentän ${kielletty}`);
+    }
+  }
+});
+
+test('KRIITTINEN: rutiiniportit pysyvät kiinni hyväksyntätestistä huolimatta', async () => {
+  // Työkalu puhuu kannalle suoraan eikä sovelluksen repositorion kautta,
+  // joten hyväksyntätesti EI vaadi porttien avaamista — eikä sitä saa
+  // tehdä ennen kuin testi on ajettu ja hyväksytty.
+  const { TABLES } = await import('../src/data/schema.js');
+  assert.equal(TABLES.routines, false, 'rutiiniportti on auki');
+  assert.equal(TABLES.routineExceptions, false, 'poikkeusportti on auki');
 });

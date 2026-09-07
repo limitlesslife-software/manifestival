@@ -64,6 +64,16 @@ export const STATUS = Object.freeze({
 /** PostgreSQL: insufficient_privilege. Sekä RLS-hylkäys että puuttuva GRANT. */
 const INSUFFICIENT_PRIVILEGE = '42501';
 
+/**
+ * PostgreSQL: foreign_key_violation.
+ *
+ * Tama on E4:n odotettu tulos eika 42501. Ero on olennainen: 42501
+ * tarkoittaisi, etta RLS hylkasi rivin, ja 23503 sita etta
+ * yhdistelmavierasavain hylkasi sen. Vain jalkimmainen todistaa, ettei
+ * poikkeusta voi kiinnittaa toisen kayttajan rutiiniin.
+ */
+const FOREIGN_KEY_VIOLATION = '23503';
+
 /** Testin luomien rivien tunnisteet yhdestä ajotunnuksesta. */
 export function idsFor(runId) {
   const base = `${MARKER_PREFIX}${runId}`;
@@ -71,7 +81,18 @@ export function idsFor(runId) {
     baitA: `${base}_a_bait`,      // A:n omistama syötti, jota B yrittää muuttaa
     keepB: `${base}_b_keep`,      // B:n rivi, joka elää T5:n yli
     tempB: `${base}_b_temp`,      // B:n rivi, jonka B poistaa itse
-    forgedB: `${base}_b_forged`   // B:n yritys kirjoittaa A:n nimiin
+    forgedB: `${base}_b_forged`,  // B:n yritys kirjoittaa A:n nimiin
+
+    // Migraation 0003 taulut. Rutiini on saanto ja poikkeus on yhden
+    // paivan muutos siihen; molemmat ovat kayttajakohtaisia ja RLS:n
+    // suojaamia, ja molemmat testataan samalla A/B-mallilla.
+    routineA: `${base}_a_routine`,
+    routineB: `${base}_b_routine`,
+    exceptionA: `${base}_a_exception`,
+    exceptionB: `${base}_b_exception`,
+    forgedRoutineB: `${base}_b_forged_routine`,
+    forgedExceptionB: `${base}_b_forged_exception`,
+    attackExceptionB: `${base}_b_attack_exception`
   });
 }
 
@@ -120,13 +141,20 @@ function expectDenied(result) {
   return { status: STATUS.FAIL, actual: `${result.rows.length} riviä LÄPI` };
 }
 
-/** Odotus: kanta hylkää lauseen oikeudettomana (42501). */
-function expectRejected(result) {
+/**
+ * Odotus: kanta hylkää lauseen NIMENOMAAN annetulla koodilla.
+ *
+ * Koodi on osa väitettä, ei yksityiskohta. 42501 tarkoittaa että RLS tai
+ * puuttuva GRANT hylkäsi, 23503 että vierasavain hylkäsi. Jos E4
+ * palauttaisi 42501:n, rivi olisi kyllä torjuttu — mutta ei siitä
+ * syystä, jonka piti todistaa. Siksi väärä koodi on ERROR eikä PASS.
+ */
+function expectRejected(result, code = INSUFFICIENT_PRIVILEGE) {
   if (!result.error) {
     return { status: STATUS.FAIL, actual: `hyväksyttiin, ${result.rows.length} riviä` };
   }
-  if (result.error.code === INSUFFICIENT_PRIVILEGE) {
-    return { status: STATUS.PASS, actual: `hylätty ${INSUFFICIENT_PRIVILEGE}` };
+  if (result.error.code === code) {
+    return { status: STATUS.PASS, actual: `hylätty ${code}` };
   }
   return { status: STATUS.ERROR, actual: describeError(result.error) };
 }
@@ -468,6 +496,302 @@ export async function runAcceptance(options) {
         'todiste ettei T5c/T5d onnistunut vain siksi että rivi katosi')
     : skipped('T5f', 'B:n rivi on tallella A:n yritysten jälkeen', '1 rivi', 'B:n riviä ei syntynyt'));
 
+  // =================================================================
+  // R1-R5: rutiinit
+  //
+  // Migraatio 0003 loi taulut routines ja routine_exceptions. Niiden
+  // RLS:stä ei ole samaa elävää todistetta kuin tasks- ja
+  // profile-tauluista, ja tämä osuus hankkii sen. Portit ovat yhä
+  // false, joten sovellus ei koske näihin tauluihin — tämä työkalu
+  // puhuu Supabaselle suoraan, samalla julkisella anon-avaimella ja
+  // samojen politiikkojen läpi kuin sovellus puhuisi.
+  // =================================================================
+
+  // --- R1: A luo ja hallitsee oman rutiininsa ------------------------
+  const routineA = await call(() =>
+    a.from('routines').insert(routineRow(id.routineA, 'A:n rutiini')).select());
+  const routineAOwner = routineA.rows[0] ? routineA.rows[0].user_id : null;
+  push(row('R1a', 'A luo rutiinin ja kanta asettaa omistajaksi A:n',
+    '1 rivi, user_id = A',
+    routineA.error
+      ? { status: STATUS.ERROR, actual: describeError(routineA.error) }
+      : { status: routineAOwner === ownerAId ? STATUS.PASS : STATUS.FAIL,
+          actual: `${routineA.rows.length} riviä, user_id=${routineAOwner || '-'}` },
+    'user_id:tä ei lähetetä — DEFAULT auth.uid() asettaa sen'));
+
+  const routineAExists = routineA.rows.length === 1;
+
+  push(routineAExists
+    ? row('R1b', 'A lukee oman rutiininsa', '1 rivi',
+        expectRows(await call(() =>
+          a.from('routines').select('id').eq('id', id.routineA)), 1), '')
+    : skipped('R1b', 'A lukee oman rutiininsa', '1 rivi', 'rutiinia ei syntynyt'));
+
+  push(routineAExists
+    ? row('R1c', 'A päivittää oman rutiininsa', '1 rivi',
+        expectRows(await call(() =>
+          a.from('routines').update({ title: 'A:n rutiini, muokattu' })
+            .eq('id', id.routineA).select()), 1), '')
+    : skipped('R1c', 'A päivittää oman rutiininsa', '1 rivi', 'rutiinia ei syntynyt'));
+
+  push(routineAExists
+    ? row('R1d', 'A näkee rutiinin listauksessa', 'vähintään 1 rivi',
+        await (async () => {
+          const lista = await call(() => a.from('routines').select('id,user_id'));
+          if (lista.error) return { status: STATUS.ERROR, actual: describeError(lista.error) };
+          const vieraat = lista.rows.filter(r => r.user_id !== ownerAId);
+          if (vieraat.length > 0) {
+            return { status: STATUS.FAIL, actual: `${vieraat.length} riviä vieraalla omistajalla` };
+          }
+          return { status: lista.rows.some(r => r.id === id.routineA) ? STATUS.PASS : STATUS.FAIL,
+                   actual: `${lista.rows.length} riviä, kaikki omistajalla A` };
+        })(),
+        'listaus ei myöskään paljasta toisen rivejä')
+    : skipped('R1d', 'A näkee rutiinin listauksessa', '1 rivi', 'rutiinia ei syntynyt'));
+
+  // --- R2: B ei näe A:n rutiinia -------------------------------------
+  push(row('R2a', 'B ei näe yhtään A:n rutiinia listauksessa', '0 riviä',
+    expectDenied(await call(() =>
+      b.from('routines').select('id').eq('user_id', ownerAId))), ''));
+
+  push(routineAExists
+    ? row('R2b', 'B ei näe A:n rutiinia, jonka tunnisteen se tietää', '0 riviä',
+        expectDenied(await call(() =>
+          b.from('routines').select('id').eq('id', id.routineA))),
+        'vahvin lukukielto: rivi on varmasti olemassa')
+    : skipped('R2b', 'B ei näe A:n rutiinia tunnisteella', '0 riviä', 'rutiinia ei syntynyt'));
+
+  // --- R3: B ei voi muuttaa A:n rutiinia -----------------------------
+  push(routineAExists
+    ? row('R3a', 'B:n UPDATE A:n rutiiniin osuu nollaan riviin', '0 riviä',
+        expectDenied(await call(() =>
+          b.from('routines').update({ title: 'kaapattu' }).eq('id', id.routineA).select())),
+        'UPDATE-politiikan USING')
+    : skipped('R3a', 'B:n UPDATE A:n rutiiniin', '0 riviä', 'rutiinia ei syntynyt'));
+
+  push(routineAExists
+    ? row('R3b', 'B:n DELETE A:n rutiiniin osuu nollaan riviin', '0 riviä',
+        expectDenied(await call(() =>
+          b.from('routines').delete().eq('id', id.routineA).select())),
+        'DELETE-politiikan USING')
+    : skipped('R3b', 'B:n DELETE A:n rutiiniin', '0 riviä', 'rutiinia ei syntynyt'));
+
+  push(row('R3c', 'B ei voi luoda rutiinia A:n nimiin',
+    `virhe ${INSUFFICIENT_PRIVILEGE}`,
+    expectRejected(await call(() =>
+      b.from('routines')
+        .insert({ ...routineRow(id.forgedRoutineB, 'ei saa onnistua'), user_id: ownerAId })
+        .select())),
+    'INSERT-politiikan WITH CHECK'));
+
+  push(routineAExists
+    ? row('R3d', 'B ei voi siirtää omistajuutta itselleen UPDATElla', '0 riviä',
+        expectDenied(await call(() =>
+          b.from('routines').update({ user_id: userBId }).eq('id', id.routineA).select())),
+        'USING estää rivin näkymisen, joten omistajan vaihto ei osu mihinkään')
+    : skipped('R3d', 'B ei voi siirtää omistajuutta', '0 riviä', 'rutiinia ei syntynyt'));
+
+  push(routineAExists
+    ? row('R3e', 'A:n rutiini on koskematon B:n yritysten jälkeen',
+        '1 rivi, otsikko ennallaan',
+        await (async () => {
+          const jalkeen = await call(() =>
+            a.from('routines').select('id,title,user_id').eq('id', id.routineA));
+          if (jalkeen.error) return { status: STATUS.ERROR, actual: describeError(jalkeen.error) };
+          const ok = jalkeen.rows.length === 1
+            && jalkeen.rows[0].title === 'A:n rutiini, muokattu'
+            && jalkeen.rows[0].user_id === ownerAId;
+          return { status: ok ? STATUS.PASS : STATUS.FAIL,
+                   actual: `${jalkeen.rows.length} riviä, omistaja=${jalkeen.rows[0] ? jalkeen.rows[0].user_id : '-'}` };
+        })(),
+        'todiste ettei kielto onnistunut vain siksi ettei rivi ollut olemassa')
+    : skipped('R3e', 'A:n rutiini on koskematon', '1 rivi', 'rutiinia ei syntynyt'));
+
+  // --- R4: B hallitsee omaa rutiiniaan -------------------------------
+  const routineB = await call(() =>
+    b.from('routines').insert(routineRow(id.routineB, 'B:n rutiini')).select());
+  const routineBOwner = routineB.rows[0] ? routineB.rows[0].user_id : null;
+  push(row('R4a', 'B luo rutiinin ja kanta asettaa omistajaksi B:n',
+    '1 rivi, user_id = B',
+    routineB.error
+      ? { status: STATUS.ERROR, actual: describeError(routineB.error) }
+      : { status: routineBOwner === userBId ? STATUS.PASS : STATUS.FAIL,
+          actual: `${routineB.rows.length} riviä, user_id=${routineBOwner || '-'}` },
+    'ilman tätä kieltotestit voisivat läpäistä koska mikään ei toimi'));
+
+  const routineBExists = routineB.rows.length === 1;
+
+  push(routineBExists
+    ? row('R4b', 'B lukee ja päivittää oman rutiininsa', '1 rivi',
+        expectRows(await call(() =>
+          b.from('routines').update({ title: 'B:n rutiini, muokattu' })
+            .eq('id', id.routineB).select()), 1), '')
+    : skipped('R4b', 'B lukee ja päivittää oman rutiininsa', '1 rivi', 'rutiinia ei syntynyt'));
+
+  // --- R5: A ei näe eikä muuta B:n rutiinia --------------------------
+  push(row('R5a', 'A ei näe B:n rutiineja', '0 riviä',
+    expectDenied(await call(() =>
+      a.from('routines').select('id').eq('user_id', userBId))), ''));
+
+  push(routineBExists
+    ? row('R5b', 'A:n UPDATE B:n rutiiniin osuu nollaan riviin', '0 riviä',
+        expectDenied(await call(() =>
+          a.from('routines').update({ title: 'A kaappaa' }).eq('id', id.routineB).select())), '')
+    : skipped('R5b', 'A:n UPDATE B:n rutiiniin', '0 riviä', 'rutiinia ei syntynyt'));
+
+  push(routineBExists
+    ? row('R5c', 'A:n DELETE B:n rutiiniin osuu nollaan riviin', '0 riviä',
+        expectDenied(await call(() =>
+          a.from('routines').delete().eq('id', id.routineB).select())), '')
+    : skipped('R5c', 'A:n DELETE B:n rutiiniin', '0 riviä', 'rutiinia ei syntynyt'));
+
+  // =================================================================
+  // E1-E6: rutiinien poikkeukset
+  // =================================================================
+
+  // --- E1: A luo ja hallitsee oman poikkeuksensa ---------------------
+  const exceptionA = routineAExists
+    ? await call(() => a.from('routine_exceptions')
+        .insert(exceptionRow(id.exceptionA, id.routineA, today)).select())
+    : null;
+  const exceptionAOwner = exceptionA && exceptionA.rows[0] ? exceptionA.rows[0].user_id : null;
+  push(exceptionA
+    ? row('E1a', 'A luo poikkeuksen omaan rutiiniinsa, kanta asettaa omistajan',
+        '1 rivi, user_id = A',
+        exceptionA.error
+          ? { status: STATUS.ERROR, actual: describeError(exceptionA.error) }
+          : { status: exceptionAOwner === ownerAId ? STATUS.PASS : STATUS.FAIL,
+              actual: `${exceptionA.rows.length} riviä, user_id=${exceptionAOwner || '-'}` },
+        '')
+    : skipped('E1a', 'A luo poikkeuksen omaan rutiiniinsa', '1 rivi', 'A:n rutiinia ei syntynyt'));
+
+  const exceptionAExists = Boolean(exceptionA && exceptionA.rows.length === 1);
+
+  push(exceptionAExists
+    ? row('E1b', 'A lukee ja päivittää oman poikkeuksensa', '1 rivi',
+        expectRows(await call(() =>
+          a.from('routine_exceptions').update({ type: 'reschedule' })
+            .eq('id', id.exceptionA).select()), 1), '')
+    : skipped('E1b', 'A lukee ja päivittää oman poikkeuksensa', '1 rivi', 'poikkeusta ei syntynyt'));
+
+  // --- E2: B ei näe A:n poikkeusta -----------------------------------
+  push(exceptionAExists
+    ? row('E2a', 'B ei näe A:n poikkeusta, jonka tunnisteen se tietää', '0 riviä',
+        expectDenied(await call(() =>
+          b.from('routine_exceptions').select('id').eq('id', id.exceptionA))), '')
+    : skipped('E2a', 'B ei näe A:n poikkeusta', '0 riviä', 'poikkeusta ei syntynyt'));
+
+  push(row('E2b', 'B ei näe yhtään A:n poikkeusta listauksessa', '0 riviä',
+    expectDenied(await call(() =>
+      b.from('routine_exceptions').select('id').eq('user_id', ownerAId))), ''));
+
+  // --- E3: B ei voi muuttaa A:n poikkeusta ---------------------------
+  push(exceptionAExists
+    ? row('E3a', 'B:n UPDATE A:n poikkeukseen osuu nollaan riviin', '0 riviä',
+        expectDenied(await call(() =>
+          b.from('routine_exceptions').update({ type: 'skip' })
+            .eq('id', id.exceptionA).select())), '')
+    : skipped('E3a', 'B:n UPDATE A:n poikkeukseen', '0 riviä', 'poikkeusta ei syntynyt'));
+
+  push(exceptionAExists
+    ? row('E3b', 'B:n DELETE A:n poikkeukseen osuu nollaan riviin', '0 riviä',
+        expectDenied(await call(() =>
+          b.from('routine_exceptions').delete().eq('id', id.exceptionA).select())), '')
+    : skipped('E3b', 'B:n DELETE A:n poikkeukseen', '0 riviä', 'poikkeusta ei syntynyt'));
+
+  push(routineAExists
+    ? row('E3c', 'B ei voi luoda poikkeusta A:n nimiin',
+        `virhe ${INSUFFICIENT_PRIVILEGE}`,
+        expectRejected(await call(() =>
+          b.from('routine_exceptions')
+            .insert({ ...exceptionRow(id.forgedExceptionB, id.routineA, today),
+                      user_id: ownerAId })
+            .select())),
+        'INSERT-politiikan WITH CHECK')
+    : skipped('E3c', 'B ei voi luoda poikkeusta A:n nimiin', 'virhe', 'A:n rutiinia ei syntynyt'));
+
+  // --- E4: RISTIINKIINNITYSHYÖKKÄYS ----------------------------------
+  //
+  // TÄMÄ ON KOKO OSUUDEN TÄRKEIN TESTI.
+  //
+  // B tuntee A:n rutiinin tunnisteen ja yrittää kiinnittää siihen OMAN
+  // poikkeuksensa: user_id jää B:ksi (kanta asettaa sen), mutta
+  // routine_id osoittaa A:n rutiiniin.
+  //
+  // RLS EI ESTÄ TÄTÄ. INSERT-politiikan WITH CHECK vertaa vain
+  // omistajaa, ja omistaja on oikein — B. Vierasavaimen tarkistus taas
+  // ei kulje RLS:n läpi lainkaan, joten pelkkä routine_id-viittaus
+  // menisi läpi vaikka rutiini kuuluu toiselle.
+  //
+  // Ainoa este on yhdistelmävierasavain
+  // routine_exceptions(user_id, routine_id) -> routines(user_id, id).
+  // Paria (B, A:n rutiini) ei ole olemassa, joten kanta hylkää rivin
+  // koodilla 23503 (foreign_key_violation).
+  //
+  // Jos tämä menisi läpi, B:n rivi viittaisi toisen ihmisen dataan.
+  push(routineAExists
+    ? row('E4', 'B ei voi kiinnittää omaa poikkeustaan A:n rutiiniin',
+        `virhe ${FOREIGN_KEY_VIOLATION}`,
+        expectRejected(await call(() =>
+          b.from('routine_exceptions')
+            .insert(exceptionRow(id.attackExceptionB, id.routineA, today))
+            .select()), FOREIGN_KEY_VIOLATION),
+        'yhdistelmävierasavain (user_id, routine_id) — RLS ei estäisi tätä')
+    : skipped('E4', 'B ei voi kiinnittää poikkeustaan A:n rutiiniin',
+        `virhe ${FOREIGN_KEY_VIOLATION}`, 'A:n rutiinia ei syntynyt'));
+
+  // --- E5: B hallitsee omaa poikkeustaan -----------------------------
+  const exceptionB = routineBExists
+    ? await call(() => b.from('routine_exceptions')
+        .insert(exceptionRow(id.exceptionB, id.routineB, today)).select())
+    : null;
+  push(exceptionB
+    ? row('E5a', 'B luo poikkeuksen omaan rutiiniinsa',
+        '1 rivi, user_id = B',
+        exceptionB.error
+          ? { status: STATUS.ERROR, actual: describeError(exceptionB.error) }
+          : { status: exceptionB.rows[0] && exceptionB.rows[0].user_id === userBId
+                ? STATUS.PASS : STATUS.FAIL,
+              actual: `${exceptionB.rows.length} riviä` },
+        'todiste ettei E4 epäonnistunut siksi että poikkeusten luonti on rikki')
+    : skipped('E5a', 'B luo poikkeuksen omaan rutiiniinsa', '1 rivi', 'B:n rutiinia ei syntynyt'));
+
+  const exceptionBExists = Boolean(exceptionB && exceptionB.rows.length === 1);
+
+  push(exceptionBExists
+    ? row('E5b', 'B päivittää oman poikkeuksensa', '1 rivi',
+        expectRows(await call(() =>
+          b.from('routine_exceptions').update({ type: 'override' })
+            .eq('id', id.exceptionB).select()), 1), '')
+    : skipped('E5b', 'B päivittää oman poikkeuksensa', '1 rivi', 'poikkeusta ei syntynyt'));
+
+  // --- E6: A ei näe eikä muuta B:n poikkeusta ------------------------
+  push(exceptionBExists
+    ? row('E6a', 'A ei näe B:n poikkeusta', '0 riviä',
+        expectDenied(await call(() =>
+          a.from('routine_exceptions').select('id').eq('id', id.exceptionB))), '')
+    : skipped('E6a', 'A ei näe B:n poikkeusta', '0 riviä', 'poikkeusta ei syntynyt'));
+
+  push(exceptionBExists
+    ? row('E6b', 'A:n UPDATE B:n poikkeukseen osuu nollaan riviin', '0 riviä',
+        expectDenied(await call(() =>
+          a.from('routine_exceptions').update({ type: 'skip' })
+            .eq('id', id.exceptionB).select())), '')
+    : skipped('E6b', 'A:n UPDATE B:n poikkeukseen', '0 riviä', 'poikkeusta ei syntynyt'));
+
+  push(exceptionBExists
+    ? row('E6c', 'A:n DELETE B:n poikkeukseen osuu nollaan riviin', '0 riviä',
+        expectDenied(await call(() =>
+          a.from('routine_exceptions').delete().eq('id', id.exceptionB).select())), '')
+    : skipped('E6c', 'A:n DELETE B:n poikkeukseen', '0 riviä', 'poikkeusta ei syntynyt'));
+
+  push(exceptionBExists
+    ? row('E6d', 'B:n poikkeus on tallella A:n yritysten jälkeen', '1 rivi',
+        expectRows(await call(() =>
+          b.from('routine_exceptions').select('id').eq('id', id.exceptionB)), 1),
+        'todiste ettei E6b/E6c onnistunut vain siksi että rivi katosi')
+    : skipped('E6d', 'B:n poikkeus on tallella', '1 rivi', 'poikkeusta ei syntynyt'));
+
   // --- T6: kirjautumaton ei saa mitään -------------------------------
   //
   // anon-roolilta on peruttu kaikki oikeudet, joten tämä ei edes yllä
@@ -481,6 +805,28 @@ export async function runAcceptance(options) {
     `virhe ${INSUFFICIENT_PRIVILEGE}`,
     expectRejected(await call(() => anon.from('profile').select('id'))),
     ''));
+
+  // Uudet taulut testataan kaikilla neljalla operaatiolla. Pelkka
+  // lukukielto ei riittaisi: GRANT on operaatiokohtainen, ja puuttuva
+  // revoke yhdelle operaatiolle jaisi nakymatta jos vain SELECT
+  // tarkistettaisiin.
+  for (const taulu of ['routines', 'routine_exceptions']) {
+    const yritykset = [
+      ['select', () => anon.from(taulu).select('id')],
+      ['insert', () => anon.from(taulu).insert({ id: `${MARKER_PREFIX}anon` }).select()],
+      ['update', () => anon.from(taulu).update({ id: `${MARKER_PREFIX}anon` })
+        .eq('id', `${MARKER_PREFIX}anon`).select()],
+      ['delete', () => anon.from(taulu).delete().eq('id', `${MARKER_PREFIX}anon`).select()]
+    ];
+
+    for (const [operaatio, kysely] of yritykset) {
+      push(row(`T6-${taulu === 'routines' ? 'r' : 'e'}-${operaatio}`,
+        `Kirjautumaton ei saa ${operaatio}-oikeutta tauluun ${taulu}`,
+        `virhe ${INSUFFICIENT_PRIVILEGE}`,
+        expectRejected(await call(kysely)),
+        'anon-roolilta on peruttu kaikki oikeudet — RLS ei ole ainoa este'));
+    }
+  }
 
   // --- Siivous -------------------------------------------------------
   //
@@ -517,19 +863,62 @@ export async function runAcceptance(options) {
     expectRows(cleanupBProfile, bProfileExists ? 1 : 0),
     ''));
 
+  // POIKKEUKSET ENNEN RUTIINEJA.
+  //
+  // Vierasavain on ON DELETE CASCADE, joten rutiinin poisto veisi
+  // poikkeukset mukanaan. Ne poistetaan silti ensin ja erikseen: jos
+  // luottaisimme cascadeen, siivouksen onnistuminen todistaisi
+  // cascaden toiminnan eikä sitä, että poikkeukset ovat oikeasti
+  // poistettavissa. Nyt molemmat tulevat todistetuiksi erikseen.
+  for (const [tunnus, client, kuka] of [['C4', a, 'A'], ['C5', b, 'B']]) {
+    const poikkeukset = await call(() =>
+      client.from('routine_exceptions').delete().like('id', `${MARKER_PREFIX}%`).select());
+    push(row(tunnus, `${kuka} poistaa omat testipoikkeuksensa`,
+      'ei virhettä',
+      poikkeukset.error
+        ? { status: STATUS.ERROR, actual: describeError(poikkeukset.error) }
+        : { status: STATUS.PASS, actual: `${poikkeukset.rows.length} riviä` },
+      'like-ehto on turvallinen vain koska RLS rajaa sen omiin riveihin'));
+  }
+
+  for (const [tunnus, client, kuka] of [['C6', a, 'A'], ['C7', b, 'B']]) {
+    const rutiinit = await call(() =>
+      client.from('routines').delete().like('id', `${MARKER_PREFIX}%`).select());
+    push(row(tunnus, `${kuka} poistaa omat testirutiininsa`,
+      'ei virhettä',
+      rutiinit.error
+        ? { status: STATUS.ERROR, actual: describeError(rutiinit.error) }
+        : { status: STATUS.PASS, actual: `${rutiinit.rows.length} riviä` },
+      ''));
+  }
+
   // --- Loppuvarmistus ------------------------------------------------
   const finalA = await call(() => a.from('tasks').select('id'));
-  push(row('C4', 'A:n tehtävämäärä on palannut lähtöarvoon',
+  push(row('C8', 'A:n tehtävämäärä on palannut lähtöarvoon',
     `${expectedTaskCount} riviä`, expectRows(finalA, expectedTaskCount),
     'sama luku kuin P1'));
 
   const markersA = await call(() => a.from('tasks').select('id').like('id', `${MARKER_PREFIX}%`));
-  push(row('C5', 'A ei näe yhtään testirivin jäännöstä',
+  push(row('C9', 'A ei näe yhtään testirivin jäännöstä tasks-taulussa',
     '0 riviä', expectRows(markersA, 0), markersA.rows.map(r => r.id).join(', ')));
 
   const markersB = await call(() => b.from('tasks').select('id').like('id', `${MARKER_PREFIX}%`));
-  push(row('C6', 'B ei näe yhtään testirivin jäännöstä',
+  push(row('C10', 'B ei näe yhtään testirivin jäännöstä tasks-taulussa',
     '0 riviä', expectRows(markersB, 0), markersB.rows.map(r => r.id).join(', ')));
+
+  // Molemmat tilit tarkistavat molemmat uudet taulut. Yksi tili ei riitä:
+  // RLS piilottaa toisen rivit, joten A:n puhdas näkymä ei kerro mitään
+  // siitä, jäikö B:lle jotain.
+  for (const [tunnus, client, kuka] of [['C11', a, 'A'], ['C12', b, 'B']]) {
+    for (const taulu of ['routines', 'routine_exceptions']) {
+      const jaannos = await call(() =>
+        client.from(taulu).select('id').like('id', `${MARKER_PREFIX}%`));
+      push(row(`${tunnus}-${taulu === 'routines' ? 'r' : 'e'}`,
+        `${kuka} ei näe jäännöstä taulussa ${taulu}`,
+        '0 riviä', expectRows(jaannos, 0),
+        jaannos.rows.map(r => r.id).join(', ')));
+    }
+  }
 
   return finish(rows, { runId, ids: id, aborted: null });
 }
@@ -545,6 +934,54 @@ export async function runAcceptance(options) {
  */
 export function taskRow(id, date, title) {
   return { id, date, title, completed: false, is_wake: false };
+}
+
+/**
+ * Testirivi routines-tauluun.
+ *
+ * Sarakkeet ovat samat, jotka sovellus kirjoittaa (collectionsRepo,
+ * routinesRepo.toRow). user_id, created_at ja updated_at EIVAT ole
+ * mukana: ne ovat kannan omaisuutta.
+ */
+export function routineRow(id, title) {
+  return {
+    id,
+    title,
+    description: null,
+    category: 'muu',
+    priority: 'normaali',
+    duration_minutes: 10,
+    recurrence_type: 'daily',
+    recurrence_weekdays: [],
+    preferred_time: null,
+    scheduling: 'fixed',
+    active: true,
+    goal_id: null,
+    start_date: null,
+    end_date: null
+  };
+}
+
+/**
+ * Testirivi routine_exceptions-tauluun.
+ *
+ * Sarakkeet ovat samat kahdeksan, jotka sovellus kirjoittaa
+ * (routineExceptionsRepo.toRow). user_id, created_at ja updated_at
+ * jaavat pois — juuri se tekee E4:sta mielekkaan: kun omistajaa ei
+ * laheteta, kanta asettaa sen, ja yhdistelmavierasavain joutuu
+ * ratkaisemaan kuuluuko rutiini samalle omistajalle.
+ */
+export function exceptionRow(id, routineId, date, type = 'skip') {
+  return {
+    id,
+    routine_id: routineId,
+    date,
+    type,
+    time: null,
+    duration_minutes: null,
+    title: null,
+    note: null
+  };
 }
 
 /**

@@ -12,9 +12,13 @@ jälkivarmistus. Runbook viittaa tänne eikä toista sisältöä.
 > koskee politiikkoja tai lisää uuden käyttäjäkohtaisen taulun, ja se on
 > ainoa paikka, jossa lukee miksi testi on rakennettu juuri näin.
 >
-> **Migraatio 0002 EI vaadi tämän toistamista:** se ei luo tauluja eikä
-> kosketa politiikkoihin. `verify_0002.sql` kohdat 19–24 todistavat, että
-> RLS, kahdeksan politiikkaa ja oikeudet ovat ennallaan.
+> **Migraatio 0002 EI vaatinut tämän toistamista:** se ei luonut tauluja
+> eikä koskenut politiikkoihin.
+>
+> **Migraatio 0003 VAATII.** Se loi kaksi uutta käyttäjäkohtaista taulua,
+> `routines` ja `routine_exceptions`, joiden RLS:stä ei ole elävää
+> todistetta. Työkalu kattaa ne nyt (osiot R1–R5 ja E1–E6), ja testi on
+> **ajettava uudelleen ennen kuin rutiiniportit avataan**.
 
 ## Työnkulku yhdellä silmäyksellä
 
@@ -80,6 +84,9 @@ läpi ja raportti kertoisi vain siitä.
 | **T4** | B luo, lukee, muuttaa ja poistaa oman datansa | politiikka ei ole `using (false)` |
 | **T5** | A ei näe eikä muuta B:n dataa | eristys on kaksisuuntainen |
 | **T6** | Kirjautumaton ei saa mitään | anon-roolilta on peruttu oikeudet |
+| **R1–R5** | Sama matriisi `routines`-taululle | 0003:n politiikat toimivat |
+| **E1–E6** | Sama matriisi `routine_exceptions`-taululle | 0003:n politiikat toimivat |
+| **E4** | **B ei voi kiinnittää poikkeustaan A:n rutiiniin** | yhdistelmävierasavain — **RLS ei estäisi tätä** |
 
 **T4 on yhtä tärkeä kuin kiellot.** Politiikka `using (false)` läpäisisi
 jokaisen kieltotestin ja rikkoisi sovelluksen täysin. Ilman T4:ää testi
@@ -134,6 +141,33 @@ Työkalu erottaa ne:
 | `SKIP` | edellytys puuttui — ei hyväksytty tulos |
 
 Kokonaistulos on `PASS` vain jos **jokainen** rivi on `PASS`.
+
+## E4 — ainoa kohta, jota RLS ei suojaa
+
+Kaikki muut kiellot nojaavat rivitason politiikkaan. E4 ei.
+
+Käyttäjä B tuntee A:n rutiinin tunnisteen ja yrittää kiinnittää siihen
+**oman** poikkeuksensa: `user_id` jää B:ksi, koska kanta asettaa sen,
+mutta `routine_id` osoittaa A:n rutiiniin.
+
+**RLS päästäisi tämän läpi.** INSERT-politiikan `WITH CHECK` vertaa vain
+omistajaa, ja omistaja on oikein — B. Vierasavaimen tarkistus taas ei
+kulje RLS:n läpi lainkaan, joten pelkkä `routine_id`-viittaus kelpaisi
+vaikka rutiini kuuluu toiselle. B ei näkisi riviään A:n rutiinissa, mutta
+rivi olisi olemassa ja viittaisi toisen ihmisen dataan.
+
+Ainoa este on yhdistelmävierasavain
+
+```
+routine_exceptions(user_id, routine_id) → routines(user_id, id)
+```
+
+Paria `(B, A:n rutiini)` ei ole olemassa, joten kanta hylkää rivin
+koodilla **`23503`** (`foreign_key_violation`).
+
+Testi hyväksyy **vain** koodin 23503. Jos vastaus olisi 42501, rivi olisi
+kyllä torjuttu — mutta RLS:n toimesta, ei siitä syystä jonka piti
+todistua. Väärä koodi on siksi `ERROR`, ei `PASS`.
 
 ---
 
@@ -191,7 +225,7 @@ erillisessä clientissä samalla sivulla (`persistSession: false` ja oma
 
 Paina **Kopioi raportti**. Se on yksi taulukko sarakkeilla
 `test_no`, `test_name`, `status`, `expected`, `actual`, `details` sekä
-loppurivi muodossa `TULOS: PASS — 34/34 PASS, 0 FAIL, 0 ERROR, 0 SKIP`.
+loppurivi muodossa `TULOS: PASS — 64/64 PASS, 0 FAIL, 0 ERROR, 0 SKIP`.
 
 Liitä se runbookin ajolokiin sellaisenaan.
 
@@ -209,8 +243,15 @@ omistaja olisi A eikä B näkisi sitä lainkaan.
 
 Siivous on onnistunut, kun:
 
-- `C4` — A:n tehtävämäärä on takaisin lähtöarvossa (36)
-- `C5` ja `C6` — kumpikaan tili ei näe yhtään `manifestival_rls_acceptance_`-riviä
+- `C8` — A:n tehtävämäärä on takaisin lähtöarvossa (36)
+- `C9` ja `C10` — kumpikaan tili ei näe jäännöstä `tasks`-taulussa
+- `C11-r`, `C11-e`, `C12-r`, `C12-e` — kumpikaan tili ei näe jäännöstä
+  `routines`- eikä `routine_exceptions`-taulussa
+
+Poikkeukset siivotaan ennen rutiineja, vaikka vierasavain on
+`ON DELETE CASCADE`. Jos cascadeen luotettaisiin, siivouksen onnistuminen
+todistaisi cascaden toiminnan eikä sitä, että poikkeukset ovat oikeasti
+poistettavissa. Nyt molemmat tulevat todistetuiksi erikseen.
 
 **Jos siivous ei ole PASS, älä poista tiliä B vielä.** Selvitä ensin,
 mikä rivi jäi ja miksi.
@@ -229,7 +270,12 @@ Aja SQL-editorissa:
 
 ```
 supabase/acceptance/verify_acceptance.sql
+supabase/acceptance/verify_acceptance_0003.sql
 ```
+
+Ensimmäinen todistaa `tasks`- ja `profile`-taulujen tilan (18 kohtaa),
+toinen migraation 0003 taulut ja sen, etteivät vanhat muuttuneet
+(22 kohtaa).
 
 Yksi lause, yksi taulukko, yksi kopiointi. **Odotus: jokaisen rivin
 `status` = `PASS` ja `poikkeavia_yhteensa` = 0.**

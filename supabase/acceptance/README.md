@@ -1,6 +1,14 @@
 # Hyvaksyntatestin jalkivarmistus
 
-Yksi tiedosto: `verify_acceptance.sql`.
+Kaksi tiedostoa:
+
+| Tiedosto | Todistaa |
+|---|---|
+| `verify_acceptance.sql` | tasks- ja profile-taulujen tila (18 kohtaa) |
+| `verify_acceptance_0003.sql` | routines- ja routine_exceptions-taulujen tila seka se etteivat vanhat muuttuneet (22 kohtaa) |
+
+Molemmat ajetaan kun hyvaksyntatesti on tehty ja vakinainen tili B
+poistettu.
 
 Tama ei ole migraatiokohtainen varmistus. Se ajetaan kerran, kahden tilin
 RLS-eristystestin jalkeen, ja se todistaa etta tuotanto palasi tasmalleen
