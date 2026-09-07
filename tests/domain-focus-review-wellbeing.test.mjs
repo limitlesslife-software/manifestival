@@ -10,6 +10,7 @@ import {
   normalizeWellbeingEntry, validateWellbeingEntry, entryForDate, averages,
   assessLoadState, planningLoadSuggestion, loadStateLabel, metricLabel
 } from '../src/domain/wellbeing.js';
+import { wellbeingRepo } from '../src/data/collectionsRepo.js';
 import { normalizeTask } from '../src/domain/task.js';
 import { normalizeGoal, GOAL_STATUS } from '../src/domain/goal.js';
 
@@ -368,4 +369,71 @@ test('mittareilla on suomenkieliset nimet', () => {
   assert.equal(metricLabel(METRIC.ENERGY), 'Energia');
   assert.equal(metricLabel(METRIC.STRESS), 'Kuormitus');
   assert.equal(metricLabel('tuntematon'), 'tuntematon');
+});
+
+// =====================================================================
+// TYHJÄ MITTARI EI SAA MUUTTUA VASTAUKSEKSI
+// =====================================================================
+//
+// LÖYTYNYT VIKA, JOTA NÄMÄ VARTIOIVAT
+//
+// clampScale kutsui suoraan Number(value). Number(null) ja Number('')
+// ovat molemmat 0, ja 0 kiristyi asteikon alarajaan 1. Vastaamatta
+// jättäminen muuttui siis vastaukseksi — ja nimenomaan asteikon
+// matalimmaksi arvoksi.
+//
+// Se ei jäänyt teoriaksi. Repositorion fromRow ajaa rivin
+// normalisoinnin läpi uudelleen, joten JOKAINEN lataus kannasta olisi
+// muuttanut tyhjän kentän arvoksi 1. Merkintä "en vastannut
+// kuormitukseen" olisi muuttunut merkinnäksi "kuormitus oli pienin
+// mahdollinen", eikä siitä olisi jäänyt jälkeä mihinkään.
+//
+// Vika näkyi vain kannan kautta: undefined toimi oikein
+// (Number(undefined) on NaN), ja muistivarastossa arvo oli undefined.
+// Se olisi siis ilmestynyt vasta kun wellbeing-portti käännetään.
+
+test('tyhjä mittari pysyy tyhjänä riippumatta siitä miten se on tyhjä', () => {
+  for (const tyhja of [undefined, null, '']) {
+    const entry = normalizeWellbeingEntry({ date: TODAY, stress: tyhja });
+    assert.equal(entry.stress, null,
+      `arvo ${JSON.stringify(tyhja)} muuttui arvoksi ${entry.stress}`);
+  }
+});
+
+test('KRIITTINEN: normalisointi on idempotentti', () => {
+  // Tämä on se ominaisuus, jonka rikkoutuminen aiheutti vian: rivi
+  // kulkee normalisoinnin läpi kahdesti, kerran tallennettaessa ja
+  // kerran ladattaessa. Jos toinen kierros muuttaa arvoa, data ajautuu
+  // joka latauksella kauemmas siitä mitä käyttäjä kirjoitti.
+  const alkuperainen = normalizeWellbeingEntry({
+    date: TODAY, energy: 3, sleepHours: 7.25
+  });
+  const toinenKierros = normalizeWellbeingEntry(alkuperainen);
+  const kolmasKierros = normalizeWellbeingEntry(toinenKierros);
+
+  assert.deepEqual(toinenKierros, alkuperainen,
+    'toinen normalisointikierros muutti merkintää');
+  assert.deepEqual(kolmasKierros, alkuperainen,
+    'kolmas normalisointikierros muutti merkintää');
+});
+
+test('osittainen merkintä säilyy osittaisena kannan kautta', () => {
+  // Sama polku kuin tuotannossa: normalize -> toRow -> fromRow.
+  // Käyttäjä vastasi vain energiaan; muiden on pysyttävä tyhjinä.
+  const entry = normalizeWellbeingEntry({ id: 'w1', date: TODAY, energy: 4 });
+  const kannanKautta = wellbeingRepo.mapping.fromRow(
+    wellbeingRepo.mapping.toRow(entry));
+
+  assert.equal(kannanKautta.energy, 4, 'vastattu arvo katosi');
+  assert.equal(kannanKautta.mood, null, 'mieliala keksittiin tyhjästä');
+  assert.equal(kannanKautta.stress, null, 'kuormitus keksittiin tyhjästä');
+  assert.equal(kannanKautta.sleepHours, null, 'unen määrä keksittiin tyhjästä');
+});
+
+test('annettu asteikon ulkopuolinen luku kiristetään, ei tyhjennetä', () => {
+  // Tyhjä ja rajan ulkopuolinen ovat eri asioita. Luku on vastaus,
+  // vaikka se olisi väärässä yksikössä; puuttuva ei ole.
+  assert.equal(normalizeWellbeingEntry({ date: TODAY, stress: 0 }).stress, 1);
+  assert.equal(normalizeWellbeingEntry({ date: TODAY, stress: 99 }).stress, 5);
+  assert.equal(normalizeWellbeingEntry({ date: TODAY, stress: 'roska' }).stress, null);
 });

@@ -1088,6 +1088,288 @@ test('KRIITTINEN: preflightit tarkistavat sen mitä migraatio vaatii', () => {
   }
 });
 
+
+// =====================================================================
+// SOVELLUKSEN JA KANNAN SARAKESOPIMUS (kaikki kahdeksan porttia)
+// =====================================================================
+//
+// MITÄ TÄMÄ VARTIOI
+//
+// Repositorion `toRow` päättää, mitä sarakkeita selain lähettää. Kanta
+// päättää, mitä sarakkeita on olemassa. Näiden kahden välissä ei ole
+// mitään, joka huomaisi eron ennen ajoa:
+//
+//   * Sarake, jota migraatio luo mutta repositorio ei kirjoita, jää
+//     hiljaa oletusarvoonsa. Käyttäjä täyttää kentän, kenttä katoaa.
+//   * Sarake, jota repositorio kirjoittaa mutta migraatio ei luo,
+//     kaataa jokaisen tallennuksen virheeseen PGRST204 — mutta vasta
+//     kun lippu on käännetty tuotannossa.
+//
+// Kolmas ja pahin: palvelimen omistama sarake, jonka selain lähettää.
+// `user_id` asiakkaan valitsemana tekisi RLS:stä koristeen. Sitä vastaan
+// on ajonaikainen vahti (assertClientSafe), mutta se on halvempi huomata
+// tässä.
+//
+// Nämä testit eivät ota yhteyttä tietokantaan. Ne lukevat migraation
+// tekstinä ja kutsuvat repositorion muunnosta.
+
+/** Palvelimen omistamat sarakkeet: kanta asettaa, selain ei koskaan. */
+const PALVELIMEN_OMAT = ['user_id', 'created_at', 'updated_at'];
+
+/**
+ * Portti -> repositorio, migraatio, taulu ja kelvollinen esimerkkirivi.
+ *
+ * Esimerkki on domain-muotoinen ja se ajetaan repositorion oman
+ * normalisoinnin läpi. Se ei siis testaa sitä, mitä minä luulen
+ * kentiksi, vaan sitä mitä sovellus oikeasti kirjoittaa.
+ */
+const SOPIMUKSET = [
+  ['routines', 'routines', '0003_routines.sql', {
+    id: 'r1', title: 'Aamulenkki', recurrence: { type: 'daily', weekdays: [] }
+  }],
+  ['routineExceptions', 'routine_exceptions', '0003_routines.sql', {
+    id: 'e1', routineId: 'r1', date: '2026-09-07', type: 'skip'
+  }],
+  ['goals', 'goals', '0004_goals_projects.sql', {
+    id: 'g1', title: 'Opettele kitaransoittoa'
+  }],
+  ['projects', 'projects', '0004_goals_projects.sql', {
+    id: 'p1', name: 'Kotisivut'
+  }],
+  ['wellbeing', 'wellbeing_entries', '0006_wellbeing.sql', {
+    id: 'w1', date: '2026-09-07', energy: 3, mood: 4
+  }],
+  ['bills', 'bills', '0007_finance.sql', {
+    id: 'b1', name: 'Vuokra', amountMinor: 95000, dueDate: '2026-10-01'
+  }],
+  ['recurringExpenses', 'recurring_expenses', '0007_finance.sql', {
+    id: 'x1', name: 'Netti', amountMinor: 3990, nextDueDate: '2026-10-01'
+  }],
+  ['savingsGoals', 'savings_goals', '0007_finance.sql', {
+    id: 's1', name: 'Puskuri', targetMinor: 300000
+  }],
+  ['aiAudit', 'ai_action_audit', '0008_ai_audit.sql', {
+    id: 'a1', intent: 'create_task', risk: 'medium'
+  }]
+];
+
+/** Repositorio portin nimellä. */
+async function repositorio(portti) {
+  const moduuli = await import('../src/data/collectionsRepo.js');
+  const nimet = {
+    routines: 'routinesRepo', routineExceptions: 'routineExceptionsRepo',
+    goals: 'goalsRepo', projects: 'projectsRepo', wellbeing: 'wellbeingRepo',
+    bills: 'billsRepo', recurringExpenses: 'recurringExpensesRepo',
+    savingsGoals: 'savingsGoalsRepo', aiAudit: 'aiAuditRepo'
+  };
+  const repo = moduuli[nimet[portti]];
+  assert.ok(repo, `repositoriota ${nimet[portti]} ei ole`);
+  return repo;
+}
+
+/** Migraation luoman taulun sarakkeet. */
+function taulunSarakkeet(migraatio, taulu) {
+  const luonti = new RegExp(`create table public\\.${taulu} \\(([\\s\\S]*?)\\n\\);`)
+    .exec(read(`${MIGRATION_DIR}/${migraatio}`));
+  assert.ok(luonti, `${taulu}: create table ei löytynyt tiedostosta ${migraatio}`);
+
+  return luonti[1].split(NEWLINE)
+    .map(line => /^ {2}(\w+)\s+\S/.exec(line))
+    .filter(Boolean)
+    .map(m => m[1])
+    .filter(nimi => nimi !== 'constraint' && nimi !== 'foreign');
+}
+
+test('KRIITTINEN: repositorio ei kirjoita saraketta jota kanta ei luo', async () => {
+  // Tämä olisi PGRST204 jokaisessa tallennuksessa — mutta vasta kun
+  // lippu on käännetty tuotannossa, eli juuri silloin kun sitä ei enää
+  // haluta huomata.
+  for (const [portti, taulu, migraatio, esimerkki] of SOPIMUKSET) {
+    const repo = await repositorio(portti);
+    const kirjoitetut = Object.keys(repo.mapping.toRow(repo.mapping.normalize(esimerkki)));
+    const kannassa = taulunSarakkeet(migraatio, taulu);
+
+    for (const sarake of kirjoitetut) {
+      assert.ok(kannassa.includes(sarake),
+        `${portti}: repositorio kirjoittaa sarakkeeseen ${sarake},`
+        + ` jota ${migraatio} ei luo tauluun ${taulu}`);
+    }
+  }
+});
+
+test('KRIITTINEN: repositorio ei lähetä palvelimen omistamia sarakkeita', async () => {
+  // user_id asiakkaan valitsemana tekisi RLS:stä koristeen: rivin
+  // omistajan päättäisi se, joka rivin lähettää.
+  for (const [portti, , , esimerkki] of SOPIMUKSET) {
+    const repo = await repositorio(portti);
+    const kirjoitetut = Object.keys(repo.mapping.toRow(repo.mapping.normalize(esimerkki)));
+
+    for (const kielletty of PALVELIMEN_OMAT) {
+      assert.equal(kirjoitetut.includes(kielletty), false,
+        `${portti}: repositorio lähettää palvelimen omistaman sarakkeen ${kielletty}`);
+    }
+  }
+});
+
+test('KRIITTINEN: kannan sarakkeet = kirjoitetut + palvelimen omat', async () => {
+  // Riippumaton tapa laskea sama luku. Jos migraatio saisi uuden
+  // sarakkeen jota sovellus ei kirjoita eikä palvelin omista, tämä
+  // kaatuu — ja se on oikea hetki huomata, ettei kenttää ole kytketty
+  // mihinkään. Sarake, jota kukaan ei kirjoita, on kenttä jonka käyttäjä
+  // täyttää turhaan.
+  //
+  // notification_preferences ei ole listassa: sen omistaja on pääavain
+  // itse, joten sillä ei ole user_id-saraketta eikä sama laskenta päde.
+  // Se testataan erikseen alla.
+  for (const [portti, taulu, migraatio, esimerkki] of SOPIMUKSET) {
+    const repo = await repositorio(portti);
+    const kirjoitetut = Object.keys(repo.mapping.toRow(repo.mapping.normalize(esimerkki)));
+    const kannassa = taulunSarakkeet(migraatio, taulu);
+
+    const kytkematta = kannassa
+      .filter(s => !kirjoitetut.includes(s) && !PALVELIMEN_OMAT.includes(s));
+
+    assert.deepEqual(kytkematta, [],
+      `${portti}: taulussa ${taulu} on sarakkeita joita kukaan ei kirjoita:`
+      + ` ${kytkematta.join(', ')}`);
+  }
+});
+
+test('KRIITTINEN: paluumuunnos lukee jokaisen kirjoitetun sarakkeen', async () => {
+  // Kirjoitettu mutta lukematon sarake on hiljainen tiedonhukka:
+  // tallennus onnistuu, lataus palauttaa tyhjän, eikä mikään kaadu.
+  // Käyttäjälle se näyttää siltä että kenttä ei tallennu.
+  for (const [portti, taulu, migraatio, esimerkki] of SOPIMUKSET) {
+    const repo = await repositorio(portti);
+    const kirjoitetut = Object.keys(repo.mapping.toRow(repo.mapping.normalize(esimerkki)));
+
+    // Rakennetaan kannan rivi ja katsotaan, mitkä kentät fromRow lukee.
+    const luetut = new Set();
+    const vakoiltuRivi = new Proxy({}, {
+      get(_, avain) {
+        if (typeof avain === 'string') luetut.add(avain);
+        return undefined;
+      },
+      has: () => true
+    });
+    repo.mapping.fromRow(vakoiltuRivi);
+
+    for (const sarake of kirjoitetut) {
+      assert.ok(luetut.has(sarake),
+        `${portti}: sarake ${sarake} kirjoitetaan mutta fromRow ei lue sitä`
+        + ' — tallennus onnistuisi ja lataus palauttaisi tyhjän');
+    }
+  }
+});
+
+test('KRIITTINEN: muistivarasto ja kanta normalisoivat saman tavalla', async () => {
+  // Portin takana data on muistissa. Kun portti avataan, sama data
+  // kulkee kannan kautta. Jos normalisointi eroaa, käyttäjän rivit
+  // muuttuvat sinä hetkenä kun lippu käännetään — eikä siitä jää
+  // jälkeä mihinkään.
+  for (const [portti, , , esimerkki] of SOPIMUKSET) {
+    const repo = await repositorio(portti);
+    const suora = repo.mapping.normalize(esimerkki);
+    const kannanKautta = repo.mapping.fromRow(repo.mapping.toRow(suora));
+
+    // Palvelimen omistamat kentät eivät kulje mukana, joten niitä ei
+    // verrata: kanta täyttää ne.
+    for (const avain of Object.keys(suora)) {
+      if (['createdAt', 'updatedAt', 'userId'].includes(avain)) continue;
+      assert.deepEqual(kannanKautta[avain], suora[avain],
+        `${portti}: kenttä ${avain} muuttuu kannan kautta kulkiessaan`);
+    }
+  }
+});
+
+test('KRIITTINEN: muistutusasetusten sopimus (paaavain on omistaja)', async () => {
+  // notification_preferences on ainoa taulu, jonka omistaja on paaavain
+  // itse. Siksi sen sopimus on ERI kuin muiden, ja tama testi kirjoitti
+  // sen aluksi vaarin: se vaati, ettei `id` kulje selaimesta.
+  //
+  // Se vaatimus oli vaara. Muissa tauluissa omistajan asettaa kanta
+  // (`user_id ... default auth.uid()`), koska rivilla on erillinen
+  // paaavain johon upsert kohdistuu. Tassa taulussa niita ei ole kahta:
+  // upsert TARVITSEE kohteen, ja kohde on omistaja.
+  //
+  // Se ei ole aukko. Politiikka `with check (auth.uid() = id)` hylkaa
+  // jokaisen rivin, jonka id ei ole kirjoittaja itse — eli selain saa
+  // kertoa kuka se on, muttei valehdella siita. Tama testi todistaa,
+  // etta ainoa selaimesta tuleva omistajuuskentta on juuri se ja etta
+  // se tulee istunnosta, ei syotteesta.
+  const { preferencesToRow, preferencesFromRow } =
+    await import('../src/data/notificationPrefsRepo.js');
+  const { DEFAULT_PREFERENCES } = await import('../src/domain/notification.js');
+
+  const istunnonKayttaja = '2cc00622-f927-4604-a518-361a4328481b';
+  const rivi = preferencesToRow(DEFAULT_PREFERENCES, istunnonKayttaja);
+  const kirjoitetut = Object.keys(rivi);
+  const kannassa = taulunSarakkeet('0005_notification_preferences.sql',
+                                   'notification_preferences');
+
+  // 1. Jokainen kirjoitettu sarake on olemassa kannassa.
+  for (const sarake of kirjoitetut) {
+    assert.ok(kannassa.includes(sarake),
+      `muistutusasetukset: kirjoitetaan saraketta ${sarake}, jota migraatio ei luo`);
+  }
+
+  // 2. Palvelimen aikaleimoja ei laheteta koskaan.
+  for (const kielletty of ['created_at', 'updated_at']) {
+    assert.equal(kirjoitetut.includes(kielletty), false,
+      `muistutusasetukset: lahetetaan palvelimen omistama sarake ${kielletty}`);
+  }
+
+  // 3. Omistajuuskenttia on TASAN YKSI ja se on istunnon kayttaja.
+  //    Jos taulussa olisi myos user_id, kannassa olisi kaksi
+  //    omistajakasitetta ja politiikat rajaisivat vain toista.
+  assert.equal(rivi.id, istunnonKayttaja,
+    'muistutusasetukset: id ei tule istunnosta');
+  assert.equal(kirjoitetut.includes('user_id'), false,
+    'muistutusasetukset: lahetetaan user_id, jota taulussa ei ole');
+
+  // 4. Omistajuus ei tule syotteesta. Jos kayttaja lahettaisi oman
+  //    id:n asetusoliossa, sen ei saa paatya riville.
+  const vaarennos = preferencesToRow(
+    { ...DEFAULT_PREFERENCES, id: 'toisen-kayttajan-id' }, istunnonKayttaja);
+  assert.equal(vaarennos.id, istunnonKayttaja,
+    'muistutusasetukset: syotteen id ohittaa istunnon — omistajuuden voisi vaarentaa');
+
+  // 5. Yhtaan saraketta ei jaa kytkematta.
+  const kytkematta = kannassa.filter(
+    s => !kirjoitetut.includes(s) && !['created_at', 'updated_at'].includes(s));
+  assert.deepEqual(kytkematta, [],
+    `muistutusasetukset: kytkemattomia sarakkeita: ${kytkematta.join(', ')}`);
+
+  // 6. Paluumuunnos lukee jokaisen kirjoitetun sarakkeen. Kirjoitettu
+  //    mutta lukematon sarake on hiljainen tiedonhukka: tallennus
+  //    onnistuu, lataus palauttaa oletuksen.
+  const luetut = new Set();
+  preferencesFromRow(new Proxy({}, {
+    get(_, avain) { if (typeof avain === 'string') luetut.add(avain); return undefined; },
+    has: () => true
+  }));
+  for (const sarake of kirjoitetut) {
+    if (sarake === 'id') continue;  // id on kohde, ei ladattava arvo
+    assert.ok(luetut.has(sarake),
+      `muistutusasetukset: sarake ${sarake} kirjoitetaan mutta fromRow ei lue sita`);
+  }
+});
+
+test('KRIITTINEN: kaikki kahdeksan porttia ovat yhä kiinni', async () => {
+  // Tämä paketti valmistelee migraatiot, preflightit, varmistukset ja
+  // hyväksyntätestin. Se EI avaa yhtään porttia. Portti avataan vasta
+  // kun migraatio on ajettu, varmistus on vihreä ja hyväksyntätesti on
+  // ajettu oikealla käyttäjällä B.
+  const { TABLES } = await import('../src/data/schema.js');
+
+  for (const portti of ['routines', 'routineExceptions', 'goals', 'projects',
+                        'notificationPreferences', 'wellbeing', 'bills',
+                        'recurringExpenses', 'savingsGoals', 'aiAudit']) {
+    assert.equal(TABLES[portti], false,
+      `portti ${portti} on auki — tämä paketti ei saa avata yhtään porttia`);
+  }
+});
+
 // ------------------------------------------ FREEZE: varmistuskyselyt
 
 test('varmistuskyselyt ovat vain lukevia', () => {

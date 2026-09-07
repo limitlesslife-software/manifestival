@@ -39,8 +39,27 @@ export function metricLabel(metric) {
 }
 
 function clampScale(value) {
+  // TYHJÄ EI OLE NOLLA.
+  //
+  // Number(null) ja Number('') ovat molemmat 0, ja 0 kiristyy asteikon
+  // alarajaan 1. Ilman tätä ehtoa vastaamatta jättäminen muuttuisi
+  // vastaukseksi — ja nimenomaan asteikon matalimmaksi.
+  //
+  // Se ei ollut teoreettinen: fromRow ajaa rivin normalisoinnin läpi
+  // uudelleen, joten jokainen lataus kannasta olisi muuttanut tyhjän
+  // kentän arvoksi 1. Merkintä "en vastannut kuormitukseen" olisi
+  // muuttunut merkinnäksi "kuormitus oli pienin mahdollinen", eikä
+  // siitä olisi jäänyt jälkeä mihinkään.
+  //
+  // undefined toimi jo oikein (Number(undefined) on NaN), joten vika
+  // näkyi vain kannan kautta kulkeneessa datassa.
+  if (value == null || value === '') return null;
+
   const n = Number(value);
   if (!Number.isFinite(n)) return null;
+
+  // Luku on annettu. Asteikon ulkopuolinen luku kiristetään rajalle:
+  // se on arvo, ei arvon puuttuminen.
   return Math.max(SCALE_MIN, Math.min(SCALE_MAX, Math.round(n)));
 }
 
