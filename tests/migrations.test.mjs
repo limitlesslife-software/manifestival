@@ -924,6 +924,170 @@ test('KRIITTINEN: varmistukset todistavat PUBLIC-roolin kahdella menetelmällä'
   }
 });
 
+
+// =====================================================================
+// PREFLIGHTIEN OBJEKTILISTAT VASTAAVAT MIGRAATIOITA
+// =====================================================================
+//
+// Preflight vastaa kysymykseen "onko tämä migraatio jo ajettu tai jäänyt
+// kesken" laskemalla sen objektit. Jos lista on vajaa, preflight
+// raportoi PASSin puolittain ajetusta migraatiosta — ja se on pahempi
+// kuin ei preflightia lainkaan, koska se antaa väärän varmuuden.
+//
+// Sama vika oli jo kerran: kahdeksan tiedostoa tarkisti nimillä
+// `ai_audit` ja `wellbeing`, kun oikeat nimet ovat `ai_action_audit` ja
+// `wellbeing_entries`. Tarkistukset olisivat menneet läpi vaikka
+// migraatio olisi ajettu.
+//
+// Nämä testit lukevat odotetut nimet migraatiosta, joten objektin
+// lisääminen tai uudelleennimeäminen kaataa preflightin samassa
+// commitissa jossa muutos tehdään.
+
+/** Yhden migraation luomat objektit ryhmiteltyinä. */
+function migraationObjektit(tiedosto) {
+  const koodi = sql(tiedosto).split(`${NEWLINE}commit;`)[0]
+    .split(NEWLINE)
+    .filter(line => !line.trim().startsWith('--'))
+    .join(NEWLINE);
+
+  const kaikki = hahmo => [...koodi.matchAll(hahmo)].map(m => m[1]);
+
+  return {
+    tablename:  kaikki(/create table public\.(\w+)/g),
+    column_name: kaikki(/add column (\w+)/g),
+    conname: [...kaikki(/add constraint (\w+)/g),
+              ...kaikki(/^\s+constraint (\w+)/gm)],
+    indexname:  kaikki(/create index (\w+)/g),
+    tgname:     kaikki(/create trigger (\w+)/g),
+    policyname: kaikki(/create policy (\w+)/g)
+  };
+}
+
+/**
+ * Preflightin nimilista annetulle katalogisarakkeelle.
+ *
+ * Haku ANKKUROIDAAN migraation omaan tarkistukseen. Ilman ankkuria haku
+ * osui ensimmäiseen `tablename in (...)` -kohtaan, joka on migraation
+ * 0001 politiikkatarkistus ('tasks', 'profile') — ja testi väitti
+ * preflightin listan olevan väärä, vaikka se luki eri tarkistusta.
+ *
+ * Ankkuri on se, mitä tarkistus VÄITTÄÄ, ei se mitä sarakenimeä se
+ * sattuu käyttämään.
+ */
+function preflightinLista(preflight, sarake) {
+  const rivit = read(`supabase/preflight/${preflight}`).split(NEWLINE);
+
+  for (let i = 0; i < rivit.length; i += 1) {
+    if (!/Migraation \w+ ei ole viela/.test(rivit[i])) continue;
+
+    // Tarkistus jatkuu seuraavaan tyhjään riviin asti.
+    let lohko = '';
+    for (let j = i + 1; j < rivit.length && rivit[j].trim() !== ''; j += 1) {
+      lohko += rivit[j] + NEWLINE;
+    }
+    if (!lohko.includes(`${sarake} in (`)) continue;
+
+    // Vain listan sisältö, ei sitä edeltävä `schemaname = 'public'`.
+    const listasta = lohko.slice(lohko.indexOf(`${sarake} in (`));
+    return [...listasta.matchAll(/'(\w+)'/g)].map(m => m[1]);
+  }
+  return null;
+}
+
+test('KRIITTINEN: preflightien objektilistat vastaavat migraatioita', () => {
+  const parit = [
+    ['0004_goals_projects.sql',           'preflight_0004.sql'],
+    ['0005_notification_preferences.sql', 'preflight_0005.sql'],
+    ['0006_wellbeing.sql',                'preflight_0006.sql'],
+    ['0007_finance.sql',                  'preflight_0007.sql'],
+    ['0008_ai_audit.sql',                 'preflight_0008.sql']
+  ];
+
+  for (const [migraatio, preflight] of parit) {
+    const objektit = migraationObjektit(migraatio);
+
+    for (const [sarake, odotetut] of Object.entries(objektit)) {
+      if (odotetut.length === 0) continue;
+
+      const listassa = preflightinLista(preflight, sarake);
+      assert.ok(listassa,
+        `${preflight}: sarakkeelle ${sarake} ei ole nimilistaa,`
+        + ` vaikka migraatio luo ${odotetut.length} objektia`);
+
+      const puuttuu = odotetut.filter(n => !listassa.includes(n));
+      assert.deepEqual(puuttuu, [],
+        `${preflight}: ${sarake}-listasta puuttuu ${puuttuu.join(', ')}`
+        + ' — preflight raportoisi PASSin puolittain ajetusta migraatiosta');
+
+      const yli = listassa.filter(n => !odotetut.includes(n));
+      assert.deepEqual(yli, [],
+        `${preflight}: ${sarake}-lista sisältää nimiä joita migraatio ei luo:`
+        + ` ${yli.join(', ')}`);
+    }
+  }
+});
+
+test('KRIITTINEN: eräpreflight kattaa kaikkien viiden migraation objektit', () => {
+  // Eräpreflight ajetaan kerran ennen koko erää. Sen on nähtävä jokainen
+  // objekti, jonka erä luo — muuten se ilmoittaisi puhtaan lähtötilan
+  // vaikka jokin migraatio olisi jo ajettu.
+  const batch = read('supabase/preflight/preflight_0004_0008_batch.sql');
+
+  const kaikki = { conname: [], indexname: [], tgname: [] };
+  for (const name of migrationFiles().filter(n => /^000[4-8]/.test(n))) {
+    const objektit = migraationObjektit(name);
+    kaikki.conname.push(...objektit.conname);
+    kaikki.indexname.push(...objektit.indexname);
+    kaikki.tgname.push(...objektit.tgname);
+  }
+
+  // Erä luo 46 rajoitetta, 10 indeksiä ja 7 liipaisinta. Luvut ovat
+  // tässä siksi, että lista voisi olla oikea ja silti tyhjä, jos hahmo
+  // ei osuisi mihinkään.
+  assert.equal(kaikki.conname.length, 46, 'rajoitteiden määrä muuttui');
+  assert.equal(kaikki.indexname.length, 10, 'indeksien määrä muuttui');
+  assert.equal(kaikki.tgname.length, 7, 'liipaisinten määrä muuttui');
+
+  for (const [sarake, nimet] of Object.entries(kaikki)) {
+    for (const nimi of nimet) {
+      assert.ok(batch.includes(`'${nimi}'`),
+        `eräpreflightista puuttuu ${sarake} ${nimi}`);
+    }
+  }
+});
+
+test('KRIITTINEN: preflightit tarkistavat sen mitä migraatio vaatii', () => {
+  // Migraatiot 0004 ja 0007 käyttävät PostgreSQL 15:n sarakekohtaista
+  // ON DELETE SET NULL -muotoa ja koskevat tuotannon tasks-tauluun.
+  // Preflightin pitää kertoa se ENNEN ajoa, ei migraation kesken ajon.
+  for (const numero of ['0004', '0007']) {
+    const lahde = read(`supabase/preflight/preflight_${numero}.sql`);
+
+    assert.ok(lahde.includes('server_version_num'),
+      `preflight_${numero}.sql: ei tarkista palvelimen versiota,`
+      + ' vaikka migraatio vaatii PostgreSQL 15:n');
+    assert.ok(lahde.includes("column_name = 'user_id' and is_nullable = 'NO'"),
+      `preflight_${numero}.sql: ei tarkista, että tasks.user_id on NOT NULL`
+      + ' — MATCH SIMPLE ohittaisi yhdistelmävierasavaimen tarkistuksen');
+  }
+
+  // 0007 lisää rajoitteen unique (user_id, id) tuotannon tasks-tauluun.
+  // Se ei voi kaatua dataan, mutta oletus on todistettava eikä uskottava.
+  assert.ok(read('supabase/preflight/preflight_0007.sql')
+    .includes('group by user_id, id having count(*) > 1'),
+    'preflight_0007.sql: ei todista, että tasks_owner_row_key voi syntyä');
+
+  // Jokaisen preflightin on nähtävä lukkoesteet: migraatiot ottavat
+  // lukkoja tauluihin, joita jokainen kirjautuminen koskee.
+  for (const numero of ['0004', '0005', '0006', '0007', '0008']) {
+    const lahde = read(`supabase/preflight/preflight_${numero}.sql`);
+    assert.ok(lahde.includes('idle in transaction'),
+      `preflight_${numero}.sql: ei havaitse avointa transaktiota`);
+    assert.ok(lahde.includes('pg_locks'),
+      `preflight_${numero}.sql: ei havaitse odottavia lukkoja`);
+  }
+});
+
 // ------------------------------------------ FREEZE: varmistuskyselyt
 
 test('varmistuskyselyt ovat vain lukevia', () => {
