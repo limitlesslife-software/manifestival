@@ -418,7 +418,21 @@ export const aiAuditRepo = createRepository({
   normalize: normalizeAuditEntry,
   toRow: entry => ({
     id: entry.id,
-    occurred_at: entry.timestamp,
+    // AIKALEIMA JÄTETÄÄN POIS, EI LÄHETETÄ NULLINA.
+    //
+    // Sarake on `occurred_at timestamptz not null default now()`.
+    // Oletusarvo ei pelasta nimenomaista NULLia: PostgreSQL käyttää
+    // oletusta vain kun sarake jätetään pois lauseesta, ja lähetetty
+    // NULL on arvo, joka hylätään koodilla 23502.
+    //
+    // Aiemmin tässä luki `occurred_at: entry.timestamp`, ja kun
+    // domainin timestamp oli tyhjä, jokainen kirjaus olisi kaatunut
+    // heti kun aiAudit-portti avataan. Muistivarasto ei välitä
+    // NOT NULLista, joten vika olisi näkynyt vasta tuotannossa.
+    //
+    // Kun aikaleimaa ei ole, oikea arvo on kannan `now()`: kirjaus
+    // tapahtui silloin kun se kirjattiin.
+    ...(entry.timestamp != null ? { occurred_at: entry.timestamp } : {}),
     input_summary: entry.inputSummary,
     intent: entry.intent,
     risk: entry.risk,

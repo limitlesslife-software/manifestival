@@ -1153,6 +1153,34 @@ const SOPIMUKSET = [
   }]
 ];
 
+/**
+ * Taydet esimerkit kattavuustestia varten.
+ *
+ * SOPIMUKSET-taulukon esimerkit ovat MINIMEJA: vain pakolliset kentat.
+ * Ne sopivat sen todistamiseen, ettei tyhja kentta paady kantaan
+ * nullina.
+ *
+ * Kattavuutta ("kirjoittaako joku jokaista saraketta") ei voi mitata
+ * minimilla: valinnainen kentta jaa pois, ja sarake nayttaisi
+ * kytkemattomalta vaikka se on kytketty. Siksi naissa on jokainen
+ * kentta taytettyna.
+ *
+ * Portit, joita ei mainita, kayttavat minimiaan sellaisenaan.
+ */
+const TAYDET = {
+  aiAudit: {
+    id: 'a1', timestamp: '2026-09-07T12:00:00.000Z', intent: 'create_task',
+    risk: 'medium', inputSummary: 'tiivistelma', targetType: 'task',
+    targetId: 't1', proposal: 'ehdotus', confirmed: true, executed: true,
+    result: 'executed', errorCode: null
+  }
+};
+
+/** Portin taysi esimerkki, tai minimi jos taytta ei ole maaritelty. */
+function taysiEsimerkki(portti, minimi) {
+  return TAYDET[portti] ?? minimi;
+}
+
 /** Repositorio portin nimellä. */
 async function repositorio(portti) {
   const moduuli = await import('../src/data/collectionsRepo.js');
@@ -1221,8 +1249,9 @@ test('KRIITTINEN: kannan sarakkeet = kirjoitetut + palvelimen omat', async () =>
   // notification_preferences ei ole listassa: sen omistaja on pääavain
   // itse, joten sillä ei ole user_id-saraketta eikä sama laskenta päde.
   // Se testataan erikseen alla.
-  for (const [portti, taulu, migraatio, esimerkki] of SOPIMUKSET) {
+  for (const [portti, taulu, migraatio, minimi] of SOPIMUKSET) {
     const repo = await repositorio(portti);
+    const esimerkki = taysiEsimerkki(portti, minimi);
     const kirjoitetut = Object.keys(repo.mapping.toRow(repo.mapping.normalize(esimerkki)));
     const kannassa = taulunSarakkeet(migraatio, taulu);
 
@@ -1235,13 +1264,55 @@ test('KRIITTINEN: kannan sarakkeet = kirjoitetut + palvelimen omat', async () =>
   }
 });
 
+/** Taulun NOT NULL -sarakkeet migraation create table -lauseesta. */
+function pakollisetSarakkeet(migraatio, taulu) {
+  const luonti = new RegExp(`create table public\\.${taulu} \\(([\\s\\S]*?)\\n\\);`)
+    .exec(read(`${MIGRATION_DIR}/${migraatio}`));
+  assert.ok(luonti, `${taulu}: create table ei löytynyt tiedostosta ${migraatio}`);
+
+  return luonti[1].split(NEWLINE)
+    .map(line => /^ {2}(\w+)\s+.*not null/.exec(line))
+    .filter(Boolean)
+    .map(m => m[1]);
+}
+
+test('KRIITTINEN: repositorio ei lähetä nullia NOT NULL -sarakkeeseen', async () => {
+  // LÖYTYNYT VIKA, JOTA TÄMÄ VARTIOI
+  //
+  // aiAuditRepo lähetti `occurred_at: null`, kun domainin timestamp oli
+  // tyhjä. Sarake on `not null default now()`.
+  //
+  // Oletusarvo EI pelasta tätä. PostgreSQL käyttää oletusta vain kun
+  // sarake JÄTETÄÄN POIS lauseesta; nimenomainen NULL on arvo, ja se
+  // hylätään koodilla 23502. Jokainen kirjaus olisi siis kaatunut heti
+  // kun aiAudit-portti avataan — eikä sitä olisi huomannut ennen sitä,
+  // koska muistivarasto ei välitä NOT NULLista.
+  //
+  // Sama vika voi syntyä uudelleen missä tahansa taulussa, jossa on
+  // NOT NULL -sarake ja oletus. Siksi sääntö on yleinen: jos kenttä on
+  // tyhjä, se jätetään pois — ei lähetetä nullina.
+  for (const [portti, taulu, migraatio, esimerkki] of SOPIMUKSET) {
+    const repo = await repositorio(portti);
+    const rivi = repo.mapping.toRow(repo.mapping.normalize(esimerkki));
+    const pakolliset = pakollisetSarakkeet(migraatio, taulu);
+
+    for (const [sarake, arvo] of Object.entries(rivi)) {
+      if (arvo !== null) continue;
+      assert.equal(pakolliset.includes(sarake), false,
+        `${portti}: lähettää nullin NOT NULL -sarakkeeseen ${sarake}`
+        + ' — kanta hylkäisi rivin koodilla 23502, eikä oletusarvo pelasta');
+    }
+  }
+});
+
 test('KRIITTINEN: paluumuunnos lukee jokaisen kirjoitetun sarakkeen', async () => {
   // Kirjoitettu mutta lukematon sarake on hiljainen tiedonhukka:
   // tallennus onnistuu, lataus palauttaa tyhjän, eikä mikään kaadu.
   // Käyttäjälle se näyttää siltä että kenttä ei tallennu.
-  for (const [portti, taulu, migraatio, esimerkki] of SOPIMUKSET) {
+  for (const [portti, , , minimi] of SOPIMUKSET) {
     const repo = await repositorio(portti);
-    const kirjoitetut = Object.keys(repo.mapping.toRow(repo.mapping.normalize(esimerkki)));
+    const kirjoitetut = Object.keys(
+      repo.mapping.toRow(repo.mapping.normalize(taysiEsimerkki(portti, minimi))));
 
     // Rakennetaan kannan rivi ja katsotaan, mitkä kentät fromRow lukee.
     const luetut = new Set();
