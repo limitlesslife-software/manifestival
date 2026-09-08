@@ -83,6 +83,58 @@ function timed(fn) {
   return { ms: Number(process.hrtime.bigint() - started) / 1e6, value };
 }
 
+/**
+ * Laskuriin kääriminen: kuinka monta kertaa algoritmi lukee syötettä?
+ *
+ * MIKSI TÄMÄ EIKÄ KELLO
+ *
+ * Kasvun MUOTOA mitattiin ennen seinäkellolla, ja se osoittautui
+ * mittavälineeksi joka ei kestä rinnakkaista testiajoa. Mitatut luvut
+ * samalla koneella:
+ *
+ *   yksin ajettuna          suhde 9.6x, otosvaihtelu 4.0x-19.3x
+ *   `node --test` -ajossa   suhde 9.7x-20.1x, satunnaisesti yli 30x
+ *
+ * Syy ei ollut kohina vaan VINOUMA. Pieni pää (500 tehtävää) kestää
+ * ~2.5 ms ja ehtii usein kokonaan yhteen aikaviipaleeseen. Suuri pää
+ * (5000 tehtävää) kestää kymmenkertaisesti, joten se ehtii AINA
+ * keskeytyä useasti ja allokoi enemmän. Pidempi operaatio kerää siis
+ * järjestelmällisesti enemmän häiriötä kuin lyhyt, eikä minimin
+ * ottaminen korjaa sitä: kaikki suuren pään otokset ovat likaisia.
+ *
+ * Siksi aikaa ei mitata lainkaan. Tehtäväoliot kääritään getteriin,
+ * joka laskee jokaisen kentän luvun. Luku on TÄYSIN DETERMINISTINEN:
+ * sama syöte antaa saman luvun joka ajolla, riippumatta koneen
+ * kuormasta, kellotaajuudesta tai rinnakkaisista prosesseista.
+ *
+ * Mitatut arvot:
+ *
+ *   lineaarinen toteutus   41 894 -> 449 090 lukua   suhde 10.7x
+ *   neliöllinen mutaatio  541 894 -> 50 449 090      suhde 93.1x
+ *
+ * Raja 30x on ENNALLAAN ja on nyt paljon vahvempi kuin ennen: se ei
+ * enää riipu siitä, mitä muuta koneella sattuu tapahtumaan.
+ *
+ * MITÄ TÄMÄ EI NÄE
+ *
+ * Neliöllisen silmukan, joka ei koske syötteeseen lainkaan. Sellainen
+ * on aikataulumoottorissa kuviteltavissa mutta ei realistinen:
+ * tehtävien vertailu on juuri se mitä neliöllinen silmukka tekee.
+ * Absoluuttinen kattotesti alla vahtii senkin tapauksen.
+ */
+function countingReads(task) {
+  const store = { ...task };
+  const wrapped = {};
+  for (const key of Object.keys(store)) {
+    Object.defineProperty(wrapped, key, {
+      enumerable: true,
+      get() { countingReads.total += 1; return store[key]; }
+    });
+  }
+  return wrapped;
+}
+countingReads.total = 0;
+
 const DATA = fixtures();
 
 test('päiväsuunnitelma tuhannella tehtävällä', () => {
@@ -142,31 +194,67 @@ test('talousyhteenveto tuhannella laskulla', () => {
 
 test('KRIITTINEN: kasvu on lineaarista, ei neliöllistä', () => {
   // Neliöllinen silmukka on helppo kirjoittaa vahingossa ja näkyy vasta
-  // oikealla aineistolla. Tämä testi ei mittaa nopeutta vaan MUOTOA:
+  // oikealla aineistolla. Tämä testi ei mittaa NOPEUTTA vaan MUOTOA:
   // kymmenkertainen syöte ei saa maksaa satakertaisesti.
+  //
+  // Mittayksikkö on syötteen lukukertojen määrä, ei aika. Ks.
+  // countingReads yllä.
   const mk = n => {
     const tasks = [];
     for (let i = 0; i < n; i++) {
-      tasks.push(normalizeTask({
+      tasks.push(countingReads(normalizeTask({
         id: 't' + i, title: 'Tehtävä ' + i, date: '2026-09-10',
         time: pad(7 + (i % 12)) + ':00', durationMinutes: 30
-      }));
+      })));
     }
     return tasks;
   };
 
-  const run = tasks => timed(() =>
-    proposeSchedule({ tasks, profile: {}, dateIso: '2026-09-10' })).ms;
+  const lukuja = tasks => {
+    countingReads.total = 0;
+    proposeSchedule({ tasks, profile: {}, dateIso: '2026-09-10' });
+    return countingReads.total;
+  };
 
-  run(mk(500));            // lämmittely: ensimmäinen ajo sisältää JIT-kustannuksen
-  const pieni = run(mk(500));
-  const suuri = run(mk(5000));
+  const pienet = mk(500);
+  const suuret = mk(5000);
 
-  // Kymmenkertainen syöte. Lineaarinen olisi ~10x, neliöllinen ~100x.
-  // Raja 30x jättää tilaa mittausvaihtelulle mutta kaataa neliöllisen.
-  const suhde = suuri / Math.max(pieni, 0.05);
+  const pieni = lukuja(pienet);
+  const suuri = lukuja(suuret);
+
+  assert.ok(pieni > 0, 'aikataulumoottori ei lukenut syötettä lainkaan');
+
+  // Mittaus on deterministinen: toisto antaa saman luvun. Jos ei anna,
+  // moottorissa on tilaa jota ei pitäisi olla, eikä suhde tarkoita
+  // mitään.
+  assert.equal(lukuja(pienet), pieni,
+    'sama syöte tuotti eri määrän lukuja — moottori ei ole puhdas');
+
+  // Kymmenkertainen syöte. Lineaarinen on ~10x, neliöllinen ~93x.
+  const suhde = suuri / pieni;
   assert.ok(suhde < 30,
-    `kymmenkertainen syöte maksoi ${suhde.toFixed(1)}x — kasvu ei ole lineaarista`);
+    `kymmenkertainen syöte luki syötettä ${suhde.toFixed(1)}x`
+    + ` (${pieni} -> ${suuri}) — kasvu ei ole lineaarista`);
+});
+
+test('KRIITTINEN: viisituhatta tehtävää ei jumita sovellusta', () => {
+  // Kattotesti neliölliselle silmukalle, joka ei koske syötteeseen.
+  // Raja on TARKOITUKSELLA järjetön: mitattu aika on rinnakkaisen
+  // testiajon alla 25-65 ms, joten marginaali on yli neljäkymmen-
+  // kertainen eikä tämä voi kaatua kuormituksesta. Neliöllinen
+  // mutaatio kesti samalla koneella yli 15 sekuntia.
+  const tasks = [];
+  for (let i = 0; i < 5000; i++) {
+    tasks.push(normalizeTask({
+      id: 't' + i, title: 'Tehtävä ' + i, date: '2026-09-10',
+      time: pad(7 + (i % 12)) + ':00', durationMinutes: 30
+    }));
+  }
+
+  const { ms } = timed(() =>
+    proposeSchedule({ tasks, profile: {}, dateIso: '2026-09-10' }));
+
+  assert.ok(ms < 3000, `viisituhatta tehtävää kesti ${ms.toFixed(0)} ms`);
 });
 
 test('suuri aineisto ei tuota epädeterministä tulosta', () => {
