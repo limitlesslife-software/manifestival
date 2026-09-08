@@ -83,19 +83,31 @@ beforeEach(() => {
 // TILA A — portti on kiinni
 // =====================================================================
 
-test('TILA A: portit routines ja routineExceptions ovat kiinni', () => {
-  assert.equal(TABLES.routines, false);
-  assert.equal(TABLES.routineExceptions, false);
-  assert.equal(hasTable('routines'), false);
-  assert.equal(hasTable('routineExceptions'), false);
-  assert.equal(routinesRepo.isPersistent(), false);
-  assert.equal(routineExceptionsRepo.isPersistent(), false);
+// Rutiiniportit avataan aallossa C. Tata ennen ne ovat kiinni, ja
+// TILA A -testit kuvaavat sita puolta. Aallon C jalkeen sama koodi
+// ajetaan tietokantapolulla, ja se todistetaan tiedostossa
+// tests/wave-activation.test.mjs oikealla ajolla valeasiakasta vasten.
+const RUTIINIPORTIT_AUKI = TABLES.routines === true;
+
+test('TILA A: rutiiniporttien tila on yhtenainen', () => {
+  // Kumpikin portti kuuluu SAMAAN aaltoon, koska routine_exceptions
+  // viittaa routines-tauluun. Jos ne olisivat eri tilassa, poikkeuksen
+  // tallennus tuottaisi vierasavainvirheen -- tai poikkeus jaisi
+  // muistiin vaikka rutiini sailyy.
+  assert.equal(TABLES.routineExceptions, TABLES.routines,
+    'rutiinit ja poikkeukset ovat eri porttitilassa');
+
+  assert.equal(hasTable('routines'), RUTIINIPORTIT_AUKI);
+  assert.equal(hasTable('routineExceptions'), RUTIINIPORTIT_AUKI);
+  assert.equal(routinesRepo.isPersistent(), RUTIINIPORTIT_AUKI);
+  assert.equal(routineExceptionsRepo.isPersistent(), RUTIINIPORTIT_AUKI);
 });
 
 test('KRIITTINEN: portin ollessa kiinni kantaan ei oteta yhteyttä lainkaan', async () => {
   // Jos repositorio kutsuisi Supabasea ilman taulua, jokainen operaatio
   // epäonnistuisi tuotannossa — ja epäonnistuisi juuri siinä kohdassa,
   // jossa käyttäjä luulee tallentaneensa rutiinin.
+  if (RUTIINIPORTIT_AUKI) return;
   setUser(USER);
   const client = recordingClient();
   setClient(client);
@@ -114,17 +126,19 @@ test('KRIITTINEN: portin ollessa kiinni kantaan ei oteta yhteyttä lainkaan', as
 });
 
 test('TILA A: muistivarasto toimii mutta kertoo, ettei tieto säily', async () => {
-  const lisays = await routinesRepo.insert(rutiini());
+  // Muistivarasto testataan SUORAAN, jotta testi kertoo varastosta
+  // eika porttitilasta. Sama varasto on olemassa jokaisessa aallossa,
+  // ja portin ollessa kiinni juuri se on tallennuspaikka.
+  const lisays = await routinesRepo.memory.insert(rutiini());
   assert.equal(lisays.ok, true);
 
-  const lista = await routinesRepo.list();
+  const lista = await routinesRepo.memory.list();
   assert.equal(lista.ok, true);
   assert.equal(lista.value.length, 1);
   assert.equal(lista.value[0].title, 'Aamulaakkeet');
 
-  // Mutta se ei säily: isPersistent kertoo totuuden, ja käyttöliittymä
-  // käyttää sitä kertoakseen sen käyttäjälle.
-  assert.equal(routinesRepo.isPersistent(), false);
+  // Ja sailyvyysvaite vastaa porttia.
+  assert.equal(routinesRepo.isPersistent(), RUTIINIPORTIT_AUKI);
 });
 
 // =====================================================================
@@ -229,20 +243,24 @@ test('KRIITTINEN: rutiinit eivät säily istunnosta toiseen', async () => {
   // Tämä on se vikaluokka, joka tässä projektissa on jo kerran vuotanut:
   // muistivarasto on moduulitasoinen ja säilyi uloskirjautumisen yli,
   // jolloin seuraava käyttäjä näki edellisen rutiinit.
+  //
+  // Vuoto koskee ASIAKASPUOLEN muistivarastoa, joten se todennetaan
+  // varastoa vasten suoraan -- ei portin lapi, joka aallon C jalkeen
+  // ohjaisi kutsut kantaan eika kertoisi varastosta mitaan.
   setUser(USER);
-  await routinesRepo.insert(rutiini({ title: 'Kayttajan A salainen rutiini' }));
-  await routineExceptionsRepo.insert(normalizeException({
+  await routinesRepo.memory.insert(rutiini({ title: 'Kayttajan A salainen rutiini' }));
+  await routineExceptionsRepo.memory.insert(normalizeException({
     id: 'x-1', routineId: 'r-1', date: '2026-09-06', type: EXCEPTION.SKIP
   }));
 
-  assert.equal((await routinesRepo.list()).value.length, 1);
+  assert.equal((await routinesRepo.memory.list()).value.length, 1);
 
   clearAllCollections();
   clearUser();
 
-  assert.deepEqual((await routinesRepo.list()).value, [],
+  assert.deepEqual((await routinesRepo.memory.list()).value, [],
     'rutiinit jäivät uloskirjautumisen yli');
-  assert.deepEqual((await routineExceptionsRepo.list()).value, [],
+  assert.deepEqual((await routineExceptionsRepo.memory.list()).value, [],
     'poikkeukset jäivät uloskirjautumisen yli');
 });
 

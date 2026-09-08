@@ -24,6 +24,8 @@ import {
 import { loadPreferences, savePreferences } from '../src/data/notificationPrefsRepo.js';
 import { resetState, getState, setTasks } from '../src/app/state.js';
 import { read } from './helpers/sources.mjs';
+import { OPEN_GATES, fakeClient } from './helpers/gates.mjs';
+import { setClient } from '../src/data/client.js';
 
 const USER_A = { id: 'aaaaaaaa-0000-0000-0000-000000000001', email: 'a@example.com' };
 const USER_B = { id: 'bbbbbbbb-0000-0000-0000-000000000002', email: 'b@example.com' };
@@ -124,20 +126,32 @@ test('uloskirjautuminen tyhjentää istunnon', () => {
 // ------------------------------------------- A -> logout -> B, ei vuotoa
 
 /** Kirjoita jokaiseen muistivarastoon rivi, kuten käyttäjä tekisi. */
+// KIRJOITUS JA LUKU TEHDAAN MUISTIVARASTOON SUORAAN.
+//
+// Nama testit vartioivat ASIAKASPUOLEN vuotoa: moduulitasoinen
+// muistivarasto elaa koko sivun elinajan, joten ilman tyhjennysta
+// seuraava kirjautuja nakisi edellisen rivit. Portin auettua
+// `repo.insert()` ohjautuisi kantaan eika enaa kirjoittaisi muistiin,
+// jolloin testi ei enaa todistaisi sita mita se on olemassa
+// todistamaan. `repo.memory` on sama varasto joka aallossa.
+//
+// Siivous kutsutaan silti OIKEASTA sovelluspolusta
+// (`clearLocalUserData`) -- sen kutsumatta jattaminen oli bugi.
+
 async function seedAs(label) {
-  await routinesRepo.insert({
+  await routinesRepo.memory.insert({
     id: 'r-' + label, title: label + ':n rutiini', active: true,
     recurrence: { type: 'daily', weekdays: [] }
   });
-  await goalsRepo.insert({ id: 'g-' + label, title: label + ':n tavoite' });
-  await projectsRepo.insert({ id: 'p-' + label, name: label + ':n projekti' });
-  await wellbeingRepo.insert({ id: 'w-' + label, date: '2026-09-02', energy: 2 });
+  await goalsRepo.memory.insert({ id: 'g-' + label, title: label + ':n tavoite' });
+  await projectsRepo.memory.insert({ id: 'p-' + label, name: label + ':n projekti' });
+  await wellbeingRepo.memory.insert({ id: 'w-' + label, date: '2026-09-02', energy: 2 });
   await savePreferences({ enabled: true, maxPerDay: 5 });
 }
 
 /** Kaikki mitä seuraava käyttäjä näkisi. */
 async function visibleRows() {
-  const results = await Promise.all(ALL_REPOSITORIES.map(repo => repo.list()));
+  const results = await Promise.all(ALL_REPOSITORIES.map(repo => repo.memory.list()));
   return results.flatMap(result => (result.ok ? result.value : []));
 }
 
@@ -162,8 +176,18 @@ test('KRIITTINEN: A -> uloskirjautuminen -> B ei näytä A:n dataa', async () =>
     'B näkisi A:n tiedot:\n' + JSON.stringify(visible, null, 2));
   assert.deepEqual(getState().tasks, []);
 
+  // Muistutusasetukset ovat oma moduulinsa. Portin ollessa auki ne
+  // tulevat kannasta, ja silloin sama invariantti todistetaan
+  // valeasiakkaalla, joka palauttaa uudelle kayttajalle tyhjan
+  // tuloksen: B:lla ei ole riviae, joten han saa oletukset -- ei A:n
+  // asetuksia.
+  if (OPEN_GATES.includes('notificationPreferences')) {
+    setClient(fakeClient({ data: null, error: null }));
+  }
   const preferences = await loadPreferences();
+  assert.equal(preferences.ok, true, 'muistutusasetusten lataus epäonnistui');
   assert.equal(preferences.value.enabled, false, 'B perisi A:n muistutusasetukset');
+  setClient(null);
 });
 
 test('KRIITTINEN: tilinvaihto ilman uloskirjautumista ei vuoda dataa', async () => {
@@ -296,14 +320,25 @@ test('KRIITTINEN: tilinvaihto kesken latauksen hylkää edellisen vastauksen', a
 
 test('normaali lataus ei hylkää vastausta', async () => {
   // Vartija ei saa estää tavallista käyttöä.
+  //
+  // Lataus kulkee repositorion JULKISEN rajapinnan lapi, joten se
+  // ohjautuu portin mukaan. Kiinni olevalle portille lahde on
+  // muistivarasto; auki olevalle se on kanta, ja silloin vastaus
+  // annetaan valeasiakkaalla. Vaite on kummassakin sama: tavallinen
+  // lataus ei paady hylatyksi ja rivit paatyvat nakymaan.
   setUser(USER_A);
   await seedAs('A');
+
+  const avoimia = OPEN_GATES.length > 0;
+  if (avoimia) setClient(fakeClient({ data: [{ id: 'x-1' }], error: null }));
 
   const result = await loadUserData();
 
   assert.equal(result.discarded, false);
   assert.equal(getState().routines.length, 1, 'A näkee omat rivinsä');
   assert.equal(getState().goals.length, 1);
+
+  if (avoimia) setClient(null);
 });
 
 test('istunnon vanheneminen kulkee saman siivouspolun kautta kuin uloskirjautuminen', () => {

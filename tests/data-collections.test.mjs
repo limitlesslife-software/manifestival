@@ -13,6 +13,8 @@ import {
   ALL_REPOSITORIES, clearAllCollections, volatileCollections, createRepository
 } from '../src/data/collectionsRepo.js';
 import { TABLES, hasTable, pendingTables, isPersistent } from '../src/data/schema.js';
+import { CLOSED_GATES, OPEN_GATES, repoForGate } from './helpers/gates.mjs';
+import { resolveWave, describeMatrix } from '../tools/release/waves.mjs';
 import { normalizeRoutine, RECURRENCE } from '../src/domain/routine.js';
 import { normalizeGoal } from '../src/domain/goal.js';
 import { normalizeWellbeingEntry } from '../src/domain/wellbeing.js';
@@ -116,23 +118,56 @@ test('clear tyhjentää varaston', async () => {
 
 // ---------------------------------------------------- skeemaportti
 
-test('PRODUCTION GATE: uudet taulut odottavat migraatiota', () => {
-  for (const [name, ready] of Object.entries(TABLES)) {
-    assert.equal(ready, false, 'taulu ' + name + ' on merkitty valmiiksi — onko migraatio oikeasti ajettu?');
+test('PRODUCTION GATE: porttitila on tasan yksi sallittu aalto', () => {
+  // Portteja avataan viidessa aallossa, joten "kaikki kiinni" ei ole
+  // enaa oikea vaatimus. Vaatimus on tiukempi: matriisin on vastattava
+  // TASMALLEEN yhta sallittua aaltoa. Kymmenen porttia tuottaisi 1024
+  // yhdistelmaa, joista vain kuusi on suunniteltuja.
+  const wave = resolveWave(TABLES);
+  assert.ok(wave !== null,
+    'porttimatriisi ei vastaa yhtakaan aaltoa: ' + describeMatrix(TABLES));
+
+  // Ja kiinni oleva portti on kiinni joka mittarilla.
+  for (const gate of CLOSED_GATES) {
+    assert.equal(hasTable(gate), false, gate + ': hasTable vaittaa taulun olevan kaytossa');
+    assert.equal(isPersistent(gate), false, gate + ': isPersistent vaittaa sailyvyytta');
+    assert.ok(pendingTables().includes(gate), gate + ' puuttuu pendingTables-listalta');
   }
-  assert.equal(hasTable('routines'), false);
-  assert.equal(isPersistent('goals'), false);
-  assert.ok(pendingTables().length >= 6);
+
+  // Auki oleva portti on auki joka mittarilla.
+  for (const gate of OPEN_GATES) {
+    assert.equal(hasTable(gate), true, gate + ': portti on auki mutta hasTable sanoo muuta');
+    assert.equal(pendingTables().includes(gate), false,
+      gate + ' on yha pendingTables-listalla vaikka portti on auki');
+  }
+
+  assert.deepEqual(pendingTables().sort(), [...CLOSED_GATES].sort());
 });
 
-test('repositoriot kertovat rehellisesti, ettei tieto säily', () => {
+test('repositoriot kertovat sailyvyydesta totuuden', () => {
+  // Kumpikin suunta on yhta tarkea. Vaite sailyvyydesta portin ollessa
+  // kiinni tarkoittaisi, etta kayttaja menettaa tyonsa sivun
+  // latauksessa saamatta siita tietoa. Vaite haihtuvuudesta portin
+  // ollessa auki taas nayttaisi varoituksen turhaan.
   for (const repo of ALL_REPOSITORIES) {
-    assert.equal(repo.isPersistent(), false,
-      repo.table + ' väittää säilyvänsä, vaikka migraatiota ei ole ajettu');
+    const expected = OPEN_GATES.includes(repo.schemaKey);
+    assert.equal(repo.isPersistent(), expected,
+      repo.table + ': isPersistent sanoo ' + repo.isPersistent()
+      + ', portti on ' + (expected ? 'auki' : 'kiinni'));
   }
+
   const volatile = volatileCollections();
-  assert.ok(volatile.includes('routines'));
-  assert.ok(volatile.includes('goals'));
+  for (const gate of CLOSED_GATES) {
+    const repo = repoForGate(gate);
+    if (repo) assert.ok(volatile.includes(repo.table), repo.table + ' puuttuu haihtuvista');
+  }
+  for (const gate of OPEN_GATES) {
+    const repo = repoForGate(gate);
+    if (repo) {
+      assert.equal(volatile.includes(repo.table), false,
+        repo.table + ' on haihtuvien listalla vaikka portti on auki');
+    }
+  }
 });
 
 test('tuntematon taulu ei ole koskaan käytettävissä', () => {
@@ -141,8 +176,21 @@ test('tuntematon taulu ei ole koskaan käytettävissä', () => {
 });
 
 // ------------------------------------------- repositoriot ilman verkkoa
+//
+// NAMA AJETAAN MUISTIVARASTOA VASTEN SUORAAN (`repo.memory`).
+//
+// Aiemmin ne kutsuivat repositorion julkista rajapintaa ja luottivat
+// siihen, etta portti on kiinni ja kutsu ohjautuu muistiin. Se sitoi
+// muistivaraston testauksen porttitilaan: aallossa, jossa portti
+// avataan, samat testit olisivat yrittaneet tietokantaa eivatka olisi
+// enaa kertoneet muistivarastosta mitaan.
+//
+// `repo.memory` on sama olio, johon portti-kiinni-polku kirjoittaa, ja
+// se normalisoi rivit samalla funktiolla. Testit todistavat siis
+// tasmalleen saman asian kuin ennen -- mutta jokaisessa aallossa.
 
 test('rutiinirepositorio toimii ilman Supabasea', async () => {
+  const routinesMemory = routinesRepo.memory;
   routinesRepo.clear();
 
   const routine = normalizeRoutine({
@@ -150,24 +198,24 @@ test('rutiinirepositorio toimii ilman Supabasea', async () => {
     recurrence: { type: RECURRENCE.WEEKDAYS }
   });
 
-  assert.equal((await routinesRepo.insert(routine)).ok, true);
-  const list = (await routinesRepo.list()).value;
+  assert.equal((await routinesMemory.insert(routine)).ok, true);
+  const list = (await routinesMemory.list()).value;
   assert.equal(list.length, 1);
   assert.equal(list[0].title, 'Lääkkeet');
   assert.equal(list[0].recurrence.type, RECURRENCE.WEEKDAYS);
 
-  await routinesRepo.update({ ...routine, title: 'Iltalääkkeet' });
-  assert.equal((await routinesRepo.list()).value[0].title, 'Iltalääkkeet');
+  await routinesMemory.update({ ...routine, title: 'Iltalääkkeet' });
+  assert.equal((await routinesMemory.list()).value[0].title, 'Iltalääkkeet');
 
-  await routinesRepo.remove('r1');
-  assert.equal((await routinesRepo.list()).value.length, 0);
+  await routinesMemory.remove('r1');
+  assert.equal((await routinesMemory.list()).value.length, 0);
 });
 
 test('tavoiterepositorio säilyttää domain-muodon', async () => {
   goalsRepo.clear();
-  await goalsRepo.insert(normalizeGoal({ id: 'g1', title: 'Julkaise', targetDate: '2026-11-30' }));
+  await goalsRepo.memory.insert(normalizeGoal({ id: 'g1', title: 'Julkaise', targetDate: '2026-11-30' }));
 
-  const [goal] = (await goalsRepo.list()).value;
+  const [goal] = (await goalsRepo.memory.list()).value;
   assert.equal(goal.title, 'Julkaise');
   assert.equal(goal.targetDate, '2026-11-30');
   assert.equal(goal.status, 'active');
@@ -176,8 +224,8 @@ test('tavoiterepositorio säilyttää domain-muodon', async () => {
 
 test('hyvinvointirepositorio normalisoi asteikon', async () => {
   wellbeingRepo.clear();
-  await wellbeingRepo.insert(normalizeWellbeingEntry({ id: 'w1', date: '2026-09-01', energy: 9 }));
-  const [entry] = (await wellbeingRepo.list()).value;
+  await wellbeingRepo.memory.insert(normalizeWellbeingEntry({ id: 'w1', date: '2026-09-01', energy: 9 }));
+  const [entry] = (await wellbeingRepo.memory.list()).value;
   assert.equal(entry.energy, 5, 'asteikko rajataan');
   wellbeingRepo.clear();
 });
@@ -186,24 +234,24 @@ test('projektirepositorio ja poikkeusrepositorio ovat käytettävissä', async (
   projectsRepo.clear();
   routineExceptionsRepo.clear();
 
-  await projectsRepo.insert({ id: 'p1', name: 'Taloremontti' });
-  await routineExceptionsRepo.insert({ id: 'e1', routineId: 'r1', date: '2026-09-01', type: 'skip' });
+  await projectsRepo.memory.insert({ id: 'p1', name: 'Taloremontti' });
+  await routineExceptionsRepo.memory.insert({ id: 'e1', routineId: 'r1', date: '2026-09-01', type: 'skip' });
 
-  assert.equal((await projectsRepo.list()).value.length, 1);
-  assert.equal((await routineExceptionsRepo.list()).value.length, 1);
+  assert.equal((await projectsRepo.memory.list()).value.length, 1);
+  assert.equal((await routineExceptionsRepo.memory.list()).value.length, 1);
 
   projectsRepo.clear();
   routineExceptionsRepo.clear();
 });
 
 test('clearAllCollections tyhjentää kaikki kokoelmat', async () => {
-  await routinesRepo.insert(normalizeRoutine({ id: 'r9', title: 'X' }));
-  await goalsRepo.insert(normalizeGoal({ id: 'g9', title: 'Y' }));
+  await routinesRepo.memory.insert(normalizeRoutine({ id: 'r9', title: 'X' }));
+  await goalsRepo.memory.insert(normalizeGoal({ id: 'g9', title: 'Y' }));
 
   clearAllCollections();
 
-  assert.equal((await routinesRepo.list()).value.length, 0);
-  assert.equal((await goalsRepo.list()).value.length, 0);
+  assert.equal((await routinesRepo.memory.list()).value.length, 0);
+  assert.equal((await goalsRepo.memory.list()).value.length, 0);
 });
 
 // ------------------------------------------------------- turvallisuus

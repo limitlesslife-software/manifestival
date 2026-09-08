@@ -1,0 +1,232 @@
+{
+  "schemaVersion": 1,
+  "package": "activation-0003-0008",
+  "productionUrl": "https://manifestival-ten.vercel.app",
+  "baseSha": "63a96c5ab90b10a73369cd66e348f4a3774367e2",
+  "baseCacheVersion": "v12",
+  "gateDependencies": {
+    "routines": [
+      "goals"
+    ],
+    "routineExceptions": [
+      "routines"
+    ],
+    "goals": [
+      "projects"
+    ],
+    "projects": [
+      "goals"
+    ],
+    "notificationPreferences": [],
+    "wellbeing": [],
+    "bills": [
+      "recurringExpenses"
+    ],
+    "recurringExpenses": [],
+    "savingsGoals": [],
+    "aiAudit": []
+  },
+  "waves": [
+    {
+      "id": "A",
+      "title": "Muistutusasetukset ja hyvinvointi",
+      "commitSha": null,
+      "cacheVersion": "v13",
+      "gatesEnabled": [
+        "notificationPreferences",
+        "wellbeing"
+      ],
+      "gatesCumulative": [
+        "notificationPreferences",
+        "wellbeing"
+      ],
+      "gatesDisabled": [
+        "routines",
+        "routineExceptions",
+        "goals",
+        "projects",
+        "bills",
+        "recurringExpenses",
+        "savingsGoals",
+        "aiAudit"
+      ],
+      "tables": [
+        "notification_preferences",
+        "wellbeing_entries"
+      ],
+      "dependencies": [],
+      "rollbackTarget": "BASE",
+      "rollbackSha": "63a96c5ab90b10a73369cd66e348f4a3774367e2",
+      "acceptancePack": "docs/acceptance/WAVE-A.md",
+      "requiredAcceptance": [
+        "npm run activation:verify-wave -- A",
+        "npm run activation:preflight -- --wave=A",
+        "npm run production:verify-assets -- --wave=A",
+        "selainhyväksyntä: luonti, muokkaus, poisto, säilyvyys sivun latauksen yli",
+        "supabase/acceptance/verify_0003_0008_post_activation.sql"
+      ],
+      "rationale": "Ei viittauksia mihinkään. Pienin pinta-ala. notification_preferences on lisäksi eri omistajuusmalli (pääavain on omistaja), joten se on syytä todentaa yksin."
+    },
+    {
+      "id": "B",
+      "title": "Tavoitteet ja projektit",
+      "commitSha": null,
+      "cacheVersion": "v14",
+      "gatesEnabled": [
+        "goals",
+        "projects"
+      ],
+      "gatesCumulative": [
+        "notificationPreferences",
+        "wellbeing",
+        "goals",
+        "projects"
+      ],
+      "gatesDisabled": [
+        "routines",
+        "routineExceptions",
+        "bills",
+        "recurringExpenses",
+        "savingsGoals",
+        "aiAudit"
+      ],
+      "tables": [
+        "goals",
+        "projects"
+      ],
+      "dependencies": [],
+      "rollbackTarget": "A",
+      "rollbackSha": null,
+      "acceptancePack": "docs/acceptance/WAVE-B.md",
+      "requiredAcceptance": [
+        "npm run activation:verify-wave -- B",
+        "npm run activation:preflight -- --wave=B",
+        "npm run production:verify-assets -- --wave=B",
+        "selainhyväksyntä: luonti, muokkaus, poisto, säilyvyys sivun latauksen yli",
+        "supabase/acceptance/verify_0003_0008_post_activation.sql"
+      ],
+      "rationale": "Viittaavat toisiinsa mutta eivät mihinkään ulkopuoliseen. Ovat viittauskohteita aalloille C ja D, joten ne on avattava ennen niitä."
+    },
+    {
+      "id": "C",
+      "title": "Rutiinit ja poikkeukset",
+      "commitSha": null,
+      "cacheVersion": "v15",
+      "gatesEnabled": [
+        "routines",
+        "routineExceptions"
+      ],
+      "gatesCumulative": [
+        "notificationPreferences",
+        "wellbeing",
+        "goals",
+        "projects",
+        "routines",
+        "routineExceptions"
+      ],
+      "gatesDisabled": [
+        "bills",
+        "recurringExpenses",
+        "savingsGoals",
+        "aiAudit"
+      ],
+      "tables": [
+        "routines",
+        "routine_exceptions"
+      ],
+      "dependencies": [
+        "goals"
+      ],
+      "rollbackTarget": "B",
+      "rollbackSha": null,
+      "acceptancePack": "docs/acceptance/WAVE-C.md",
+      "requiredAcceptance": [
+        "npm run activation:verify-wave -- C",
+        "npm run activation:preflight -- --wave=C",
+        "npm run production:verify-assets -- --wave=C",
+        "selainhyväksyntä: luonti, muokkaus, poisto, säilyvyys sivun latauksen yli",
+        "supabase/acceptance/verify_0003_0008_post_activation.sql"
+      ],
+      "rationale": "routines.goal_id viittaa goals-tauluun, joten B on oltava ensin. Poikkeus viittaa rutiiniin, joten ne kuuluvat samaan aaltoon."
+    },
+    {
+      "id": "D",
+      "title": "Talous",
+      "commitSha": null,
+      "cacheVersion": "v16",
+      "gatesEnabled": [
+        "recurringExpenses",
+        "savingsGoals",
+        "bills"
+      ],
+      "gatesCumulative": [
+        "notificationPreferences",
+        "wellbeing",
+        "goals",
+        "projects",
+        "routines",
+        "routineExceptions",
+        "recurringExpenses",
+        "savingsGoals",
+        "bills"
+      ],
+      "gatesDisabled": [
+        "aiAudit"
+      ],
+      "tables": [
+        "recurring_expenses",
+        "savings_goals",
+        "bills"
+      ],
+      "dependencies": [],
+      "rollbackTarget": "C",
+      "rollbackSha": null,
+      "acceptancePack": "docs/acceptance/WAVE-D.md",
+      "requiredAcceptance": [
+        "npm run activation:verify-wave -- D",
+        "npm run activation:preflight -- --wave=D",
+        "npm run production:verify-assets -- --wave=D",
+        "selainhyväksyntä: luonti, muokkaus, poisto, säilyvyys sivun latauksen yli",
+        "supabase/acceptance/verify_0003_0008_post_activation.sql"
+      ],
+      "rationale": "bills.recurring_expense_id viittaa recurring_expenses-tauluun ja bills.task_id tasks-tauluun. Toistuvat kulut on siksi avattava viimeistään samassa aallossa kuin laskut."
+    },
+    {
+      "id": "E",
+      "title": "AI-toimintojen kirjausketju",
+      "commitSha": null,
+      "cacheVersion": "v17",
+      "gatesEnabled": [
+        "aiAudit"
+      ],
+      "gatesCumulative": [
+        "notificationPreferences",
+        "wellbeing",
+        "goals",
+        "projects",
+        "routines",
+        "routineExceptions",
+        "recurringExpenses",
+        "savingsGoals",
+        "bills",
+        "aiAudit"
+      ],
+      "gatesDisabled": [],
+      "tables": [
+        "ai_action_audit"
+      ],
+      "dependencies": [],
+      "rollbackTarget": "D",
+      "rollbackSha": null,
+      "acceptancePack": "docs/acceptance/WAVE-E.md",
+      "requiredAcceptance": [
+        "npm run activation:verify-wave -- E",
+        "npm run activation:preflight -- --wave=E",
+        "npm run production:verify-assets -- --wave=E",
+        "selainhyväksyntä: luonti, muokkaus, poisto, säilyvyys sivun latauksen yli",
+        "supabase/acceptance/verify_0003_0008_post_activation.sql"
+      ],
+      "rationale": "Ei vierasavaimia. Viimeisenä, koska se kirjaa muiden toimintaa — sen kannattaa olla käytössä vasta kun kirjattavaa on."
+    }
+  ]
+}

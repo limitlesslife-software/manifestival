@@ -11,7 +11,10 @@
     "build:web": "node scripts/build-web.mjs",
     "sync:android": "npm run build:web && npx cap sync android",
     "build:android": "npm run sync:android && cd android && gradlew.bat assembleDebug",
-    "activation:preflight": "node scripts/activation-preflight.mjs"
+    "activation:preflight": "node scripts/activation-preflight.mjs",
+    "activation:verify-wave": "node scripts/verify-wave.mjs",
+    "production:verify-assets": "node scripts/production-verify-assets.mjs",
+    "release:manifest": "node scripts/release-manifest.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.5.0",

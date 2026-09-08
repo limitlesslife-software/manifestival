@@ -1,5 +1,14 @@
 # Aktivointi 0003–0008 — tuotannon ajo-ohje
 
+> **Tämä on taustadokumentti.** Varsinainen ajo tapahtuu
+> julkaisujunan mukaan: `docs/RELEASE-TRAIN-0003-0008.md` ja sen
+> aaltokohtaiset hyväksyntäpaketit `docs/acceptance/WAVE-A.md` …
+> `WAVE-E.md`.
+>
+> Tämä dokumentti selittää **miksi** aallot ovat siinä järjestyksessä
+> kuin ovat ja mitä portin kääntäminen tarkoittaa. Juna kertoo
+> **miten** se tehdään.
+
 **Tila:** valmisteltu, EI AKTIVOITU. Kaikki kymmenen porttia ovat `false`.
 
 Migraatiot on ajettu ja todennettu. Jäljellä on **vain porttien

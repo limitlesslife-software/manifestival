@@ -115,10 +115,103 @@ jolloin vierasavain torjuu sen ensin, ja vastaus on aina `23503`.
 
 ---
 
+## Migraationumero
+
+Repositoriossa on migraatiot **0001–0008**. Seuraava vapaa numero on
+siis **0009**. Numero on johdettu hakemiston sisällöstä, ei oletettu:
+
+```
+ls supabase/migrations/
+```
+
+## Miksi tiedostoa EI ole vielä luotu
+
+Ajamaton migraatiotiedosto `supabase/migrations/`-hakemistossa on
+riski juuri aktivointijunan aikana. Hakemisto on se paikka, josta
+operaattori hakee ajettavat tiedostot, ja junassa avataan SQL-editori
+kymmenen kertaa. Yhdeksäs tiedosto kahdeksan ajetun joukossa on
+tarpeeton mahdollisuus erehtyä.
+
+Lisäksi se rikkoisi kaksi automaattitestiä, jotka laskevat migraatiot
+kahdeksaksi — ja niiden löysentäminen tämän takia poistaisi vahdin,
+joka on olemassa toisesta syystä.
+
+Tämä ehdotus on siis **täysin tarkistettu mutta ajamaton**, ja tiedosto
+luodaan silloin kun korjaus tehdään omana pakettinaan. Silloin
+migraationumero tarkistetaan uudelleen: junan jälkeen voi olla muita
+migraatioita.
+
+## Peruutus
+
+Rajoitteen vaihto on peruttavissa täsmälleen käänteisenä:
+
+```sql
+-- PERUUTUS. Palauttaa alkuperäisen rajoitteen.
+begin;
+set local lock_timeout = '5s';
+
+alter table public.routine_exceptions
+  drop constraint routine_exceptions_unique_day;
+
+alter table public.routine_exceptions
+  add constraint routine_exceptions_unique_day
+  unique (routine_id, date);
+
+commit;
+```
+
+**Peruutus voi kaatua, korjaus ei.** Korjaus vaihtaa rajoitteen
+väljemmäksi — `(user_id, routine_id, date)` hyväksyy kaiken minkä
+`(routine_id, date)` hyväksyy ja enemmän — joten se ei voi kaatua
+olemassa olevaan dataan.
+
+Peruutus vaihtaa sen tiukemmaksi. Jos välissä on syntynyt kaksi
+poikkeusta samalle `(routine_id, date)` -parille eri omistajilla,
+peruutus kaatuu koodilla `23505`. Yhden käyttäjän tuotannossa se on
+mahdotonta, mutta se on tiedettävä ennen kuin peruutusta yritetään.
+
+Tarkista ennen peruutusta:
+
+```sql
+select routine_id, date, count(*)
+  from public.routine_exceptions
+ group by routine_id, date
+having count(*) > 1;
+```
+
+Tyhjä tulos tarkoittaa, että peruutus menee läpi.
+
+## Live-hyväksyntätestit korjauksen jälkeen
+
+Korjaus muuttaa yhden havaittavan asian: **virhekoodin**. Siksi
+`tools/rls-acceptance`-harnessia on ajettava kahdella tilillä uudelleen,
+ja näiden on muututtava tai pysyttävä ennallaan täsmälleen näin:
+
+| Tapaus | Ennen | Jälkeen | Miksi |
+|---|---|---|---|
+| **E4** — B yrittää poikkeusta A:n rutiinille päivälle, joka on varattu | `23505` | **`23503`** | rivi ei enää osu B:n indeksiin, joten vierasavain torjuu sen ensin |
+| **E4** — sama, päivä vapaa | `23503` | `23503` | ennallaan |
+| **E3c** — B merkitsee omistajaksi A:n | `42501` | `42501` | RLS torjuu ennen indeksiä, ennallaan |
+| **E1, E5** — omat poikkeukset | onnistuu | onnistuu | ennallaan |
+| **E2** — oma poikkeus samalle päivälle kahdesti | `23505` | `23505` | omalle riville rajoite pätee yhä |
+
+Harnessin `exceptionDates`-päiväjärjestely (`tools/rls-acceptance/acceptance.js`)
+on olemassa juuri siksi, että E4 sai `23505`:n eikä `23503`:a. Korjauksen
+jälkeen järjestely on **tarpeeton mutta ei haitallinen** — älä poista
+sitä samassa paketissa, jotta yksi muutos tuottaa yhden havainnon.
+
+Lisäksi:
+
+- `supabase/acceptance/verify_0003_0008_post_activation.sql` → `failures_total = 0`
+- tarkistus **32** (orpoja tai ristiinkiinnitettyjä rivejä ei ole) → PASS
+- rajoitteen nimi pysyy samana, joten mikään nimeen nojaava tarkistus ei muutu
+
+---
+
 ## Suositus
 
 **Aktivoi rutiinit normaalisti.** Tee tämä korjaus omana pakettinaan
-sen jälkeen, kun aktivointi on todennettu.
+sen jälkeen, kun koko juna A–E on todennettu.
 
 Jos tuotantoon tulee toinen käyttäjä ennen korjausta, nosta prioriteettia
 — vuoto edellyttää kahta käyttäjää ollakseen mielekäs.

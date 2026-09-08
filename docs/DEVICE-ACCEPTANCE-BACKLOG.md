@@ -111,3 +111,67 @@ Jos vika löytyy:
 
 **Älä merkitse laiteriippuvaista hyväksyntää suljetuksi ilman fyysistä
 todistetta.**
+
+---
+
+## APK on jäädytetty perustilaan (havainto 2026-09-08)
+
+APK:n web-assetit ovat **oma kopionsa** repositoriossa:
+
+```
+android/app/src/main/assets/public/src/data/schema.js
+```
+
+Tiedosto on **seurattu gitissä** ja siinä on tällä hetkellä kaikki
+kymmenen porttia `false`.
+
+> `android/.gitignore` listaa `app/src/main/assets/public`, mutta git
+> ohittaa vain seuraamattomia tiedostoja. Nämä on kerran lisätty, joten
+> ne ovat seurattuja ja niiden muutokset näkyvät `git status`issa.
+
+### Mitä tämä tarkoittaa
+
+**Web-deploy ei muuta APK:ta.** Aallot A–E avaavat portit selaimessa,
+mutta laitteella asennettu sovellus jää perustilaan kunnes assetit
+synkronoidaan ja APK käännetään uudelleen.
+
+Se on hyvä asia junan aikana: mobiili ei voi rikkoutua web-aktivoinnin
+takia, eikä kaksi julkaisukanavaa mene sekaisin.
+
+### Androidia EI synkronoida junan aikana
+
+`npx cap sync android` tuottaisi diffin `android/`-hakemistoon ja
+rikkoisi aaltocommitin diffisäännön
+(`docs/RELEASE-TRAIN-0003-0008.md`, kohta "Diffin turvallisuus").
+
+**Aallot A–E eivät kosketa `android/`-hakemistoa lainkaan.**
+
+### Synkronointijärjestys aallon E jälkeen
+
+```
+1. npm run build:web            # kokoaa dist/, ei muunna eikä minifioi
+2. npx cap sync android         # kopioi dist/ APK:n assetteihin
+3. git diff --stat android/     # VAIN assets/public/ saa muuttua
+4. commit omana committinaan
+5. cd android && gradlew.bat assembleDebug
+6. laitehyväksyntä tämän dokumentin mukaan
+```
+
+Vaihe 3 on olennainen. Jos `cap sync` muuttaa muutakin kuin
+`assets/public/`-sisältöä — gradle-tiedostoja, Capacitor-versioita,
+manifestia — se on eri muutos ja kuuluu omaan pakettiinsa. Älä niputa
+sitä porttien aktivointiin.
+
+### Mitä laitteella pitää erikseen tarkistaa junan jälkeen
+
+Nämä ovat asioita, joita selainhyväksyntä ei kata:
+
+- [ ] Portit ovat APK:ssa oikeassa tilassa (asetusnäkymä ei enää sano,
+      ettei tieto säily)
+- [ ] Tallennus toimii mobiiliverkossa, ei vain WiFissä
+- [ ] Sovelluksen taustalle siirtyminen ja palaaminen ei kadota
+      tallentamatonta syötettä
+- [ ] Istunto säilyy sovelluksen uudelleenkäynnistyksen yli
+- [ ] Paikalliset ilmoitukset toimivat aallon A asetuksilla
+      (`@capacitor/local-notifications`)
+- [ ] Offline: sovellus avautuu ja kertoo rehellisesti ettei verkkoa ole

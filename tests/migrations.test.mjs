@@ -28,6 +28,7 @@ import { PRIORITIES } from '../src/domain/priority.js';
 import { SCALE_MIN, SCALE_MAX } from '../src/domain/wellbeing.js';
 import { DEFAULT_PREFERENCES } from '../src/domain/notification.js';
 import { TABLES, TASK_EXTENDED_FIELDS } from '../src/data/schema.js';
+import { parseStatusDoc } from '../tools/release/state.mjs';
 import { routineExceptionsRepo } from '../src/data/collectionsRepo.js';
 import { normalizeException } from '../src/domain/routine.js';
 import { normalizeTask } from '../src/domain/task.js';
@@ -602,15 +603,22 @@ test('collectionsRepo kirjoittaa vain sarakkeisiin jotka migraatio luo', () => {
 
 // ------------------------------------------------ liput ovat yhä pois päältä
 
-test('yksikään taululippu ei ole päällä ennen migraation ajoa', () => {
-  // Tämä testi on tarkoituksellisesti hauras: se KAATUU, kun lippu
-  // käännetään. Silloin on pakko todeta ääneen, että migraatio on oikeasti
-  // ajettu tuotannossa — eikä lippua ole käännetty vahingossa.
-  for (const [name, enabled] of Object.entries(TABLES)) {
-    assert.equal(enabled, false,
-      `TABLES.${name} on true. Onko migraatio todella ajettu tuotannossa?`
-      + ' Jos on, päivitä tämä testi samassa committissa.');
-  }
+test('taululiput vastaavat suunniteltua aaltoa', async () => {
+  // Tama testi oli tarkoituksella hauras: se kaatui kun lippu
+  // kaannettiin, jotta joku joutuisi toteamaan aaneen etta migraatio
+  // on oikeasti ajettu.
+  //
+  // Aktivointijuna tekee lipun kaantamisesta suunniteltua tyota, joten
+  // haurauden kohde siirtyy: enaa ei vaadita etta kaikki ovat kiinni,
+  // vaan etta matriisi vastaa TASMALLEEN yhta suunniteltua aaltoa.
+  // Suunnittelematon yhdistelma kaataa taman yha -- ja niita on 1018
+  // kappaletta kuutta sallittua vastaan.
+  const { resolveWave, describeMatrix } = await import('../tools/release/waves.mjs');
+
+  const aalto = resolveWave(TABLES);
+  assert.ok(aalto !== null,
+    `porttimatriisi ei vastaa yhtakaan suunniteltua aaltoa: ${describeMatrix(TABLES)}.`
+    + ' Jos lippu kaannettiin tarkoituksella, se kuuluu aaltocommittiin.');
 });
 
 // ------------------------------------ WP13-WP20: raha ja kirjausketju
@@ -1426,18 +1434,24 @@ test('KRIITTINEN: muistutusasetusten sopimus (paaavain on omistaja)', async () =
   }
 });
 
-test('KRIITTINEN: kaikki kahdeksan porttia ovat yhä kiinni', async () => {
-  // Tämä paketti valmistelee migraatiot, preflightit, varmistukset ja
-  // hyväksyntätestin. Se EI avaa yhtään porttia. Portti avataan vasta
-  // kun migraatio on ajettu, varmistus on vihreä ja hyväksyntätesti on
-  // ajettu oikealla käyttäjällä B.
+test('KRIITTINEN: yksikaan portti ei ole auki ilman aaltoa', async () => {
+  // Portti avataan vasta kun migraatio on ajettu, varmistus on vihrea
+  // ja hyvaksyntatesti on ajettu oikealla kayttajalla B. Aallon
+  // ulkopuolella avattu portti tarkoittaa, ettei mikaan noista ehdoista
+  // ole todennettu tuon portin osalta.
   const { TABLES } = await import('../src/data/schema.js');
+  const { resolveWave, cumulativeGates, ALL_GATES } =
+    await import('../tools/release/waves.mjs');
 
-  for (const portti of ['routines', 'routineExceptions', 'goals', 'projects',
-                        'notificationPreferences', 'wellbeing', 'bills',
-                        'recurringExpenses', 'savingsGoals', 'aiAudit']) {
-    assert.equal(TABLES[portti], false,
-      `portti ${portti} on auki — tämä paketti ei saa avata yhtään porttia`);
+  const aalto = resolveWave(TABLES);
+  assert.ok(aalto !== null, 'porttimatriisi ei vastaa yhtakaan aaltoa');
+
+  const sallitut = new Set(aalto === 'BASE' ? [] : cumulativeGates(aalto));
+  for (const portti of ALL_GATES) {
+    if (TABLES[portti] === true) {
+      assert.ok(sallitut.has(portti),
+        `portti ${portti} on auki, mutta se ei kuulu aaltoon ${aalto}`);
+    }
   }
 });
 
@@ -4415,10 +4429,36 @@ test('KRIITTINEN: yksikään portti ei ole auki ilman ajettua migraatiota', () =
     aiAudit: '0008'
   };
 
+  // KAKSI HYVAKSYTTYA LAHDETTA SILLE, ETTA MIGRAATIO ON AJETTU.
+  //
+  // Migraatio 0002 kertoo sen omassa otsikkorivissaan. Migraatiot
+  // 0003-0008 EIVAT: niissa lukee yha "TILA: EI AJETTU TUOTANTOON",
+  // ja rivi on jatetty tahallaan koskematta. Perustelu on
+  // docs/PRODUCTION-STATUS.md: ajettu migraatio on tietue siita mita
+  // tuotannossa ajettiin, ja jalkikateen muokattuna repositorio
+  // kertoisi mita joku myohemmin ajatteli ajetun.
+  //
+  // Ajantasainen tieto on siksi PRODUCTION-STATUS.md:ssa, joka on
+  // julistettu auktoritatiiviseksi ja jonka ajantasaisuutta vartioi
+  // oma testinsa. Ilman tata haaraa aalto C kaatuisi tahan: portti
+  // routines olisi auki, mutta 0003:n otsikkorivi vaittaisi yha
+  // etta migraatiota ei ole ajettu.
+  //
+  // Vaite ei loysty: portin saa yha avata vain jos JOKIN
+  // auktoritatiivinen lahde kertoo migraation olevan ajettu.
   const ajettu = numero => {
     const tiedosto = migrationFiles().find(name => name.startsWith(numero));
     assert.ok(tiedosto, `migraatiota ${numero} ei löytynyt`);
-    return /TILA: AJETTU JA HYVÄKSYTTY TUOTANNOSSA/.test(read(`${MIGRATION_DIR}/${tiedosto}`));
+
+    const otsikossa =
+      /TILA: AJETTU JA HYVÄKSYTTY TUOTANNOSSA/.test(read(`${MIGRATION_DIR}/${tiedosto}`));
+
+    const tilarivi = read('docs/PRODUCTION-STATUS.md')
+      .split(String.fromCharCode(10))
+      .find(rivi => rivi.includes('|') && rivi.includes(tiedosto));
+    const dokumentissa = Boolean(tilarivi && /\*\*AJETTU\*\*/.test(tilarivi));
+
+    return otsikossa || dokumentissa;
   };
 
   const portit = { TASK_EXTENDED_FIELDS, ...TABLES };
@@ -4434,15 +4474,30 @@ test('KRIITTINEN: yksikään portti ei ole auki ilman ajettua migraatiota', () =
       `portti ${portti} on auki, mutta migraatiota ${PORTIN_MIGRAATIO[portti]} ei ole merkitty ajetuksi`);
   }
 
-  // Nykytila on kirjoitettu auki, jotta muutos näkyy diffissä eikä vain
-  // testin läpimenossa: yksitoista porttia, joista TASAN YKSI on auki.
+  // AUKI OLEVAT PORTIT TODENNETAAN RIIPPUMATTOMASTA LAHTEESTA.
   //
-  // TASK_EXTENDED_FIELDS avattiin, kun 0002 oli ajettu ja todennettu.
-  // Kaikki muut odottavat omaa migraatiotaan. Jos tämä luku muuttuu,
-  // muutos on tarkoituksellinen ja sen näkee diffistä.
+  // Aiemmin tassa oli kasin kirjoitettu lista ['TASK_EXTENDED_FIELDS'],
+  // jotta muutos nakyisi diffissa eika vain testin lapimenossa. Sama
+  // tarkoitus sailyy, mutta lista luetaan nyt
+  // docs/PRODUCTION-STATUS.md:sta -- eli operaattorin on yha
+  // kirjoitettava tila auki jonnekin, ja se jokin on dokumentti jota
+  // han oikeasti lukee aktivoinnin hetkella.
+  //
+  // Tama EI ole keha: vertailun toinen puoli on schema.js ja toinen
+  // markdown-taulukko. Vaarennos vaatisi molempien muuttamista
+  // johdonmukaisesti -- eli tasmalleen sen mita kelvollinen
+  // aaltocommitti tekee.
   const auki = Object.entries(portit).filter(([, v]) => v === true).map(([k]) => k);
-  assert.deepEqual(auki, ['TASK_EXTENDED_FIELDS'],
-    `auki olevat portit: ${auki.join(', ') || 'ei yhtään'}`);
+
+  const dokumentinPortit = parseStatusDoc(read('docs/PRODUCTION-STATUS.md'));
+  assert.ok(dokumentinPortit, 'PRODUCTION-STATUS.md:n porttitaulukkoa ei voitu lukea');
+
+  const dokumentinAuki = ['TASK_EXTENDED_FIELDS',
+    ...Object.entries(dokumentinPortit).filter(([, v]) => v).map(([k]) => k)];
+
+  assert.deepEqual(auki.sort(), dokumentinAuki.sort(),
+    `schema.js sanoo auki: ${auki.join(', ') || 'ei yhtaan'};`
+    + ` PRODUCTION-STATUS.md sanoo: ${dokumentinAuki.join(', ')}`);
   assert.equal(Object.keys(portit).length, 11);
 
   // Ja avatun portin migraatio on todella ajettu — sama sääntö kuin yllä,

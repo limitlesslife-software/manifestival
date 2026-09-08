@@ -30,30 +30,52 @@ import { loadPreferences, savePreferences, clearPreferences }
   from '../src/data/notificationPrefsRepo.js';
 import { clearLocalUserData } from '../src/app/actions.js';
 import { read } from './helpers/sources.mjs';
+import { isGateOpen, fakeClient } from './helpers/gates.mjs';
+import { setClient } from '../src/data/client.js';
+import { setUser, clearUser } from '../src/data/session.js';
 
 beforeEach(() => {
   clearAllCollections();
   clearPreferences();
 });
 
+// MIKSI NAMA KIRJOITTAVAT MUISTIVARASTOON SUORAAN
+//
+// Vuoto, jota tama tiedosto vartioi, on nimenomaan ASIAKASPUOLEN
+// muistivaraston vuoto: varasto on moduulitasoinen ja elaa koko sivun
+// elinajan, joten ilman tyhjennysta seuraava kirjautuja nakisi
+// edellisen rivit. RLS ei voi estaa sita, koska palvelimelta ei haeta
+// mitaan.
+//
+// Portin auettua sama repositorio ohjaa kutsut kantaan, jolloin
+// `repo.insert()` ei enaa kirjoittaisi muistiin -- eika testi enaa
+// todistaisi mitaan siita, mita se on olemassa todistamaan. Siksi
+// kirjoitus ja luku tehdaan `repo.memory`-olion kautta: se on sama
+// varasto, johon portti-kiinni-polku kirjoittaa, ja se on olemassa
+// jokaisessa aallossa.
+//
+// Tyhjennys sen sijaan kutsutaan OIKEASTA sovelluspolusta
+// (`clearLocalUserData`), koska juuri sen kutsumatta jattaminen oli
+// alkuperainen bugi.
+
 /** Kirjoita jokaiseen kokoelmaan yksi rivi, kuten käyttäjä A tekisi. */
 async function seedAsUserA() {
-  await routinesRepo.insert({
+  await routinesRepo.memory.insert({
     id: 'r-a', title: 'Käyttäjä A:n aamurutiini', active: true,
     recurrence: { type: 'daily', weekdays: [] }
   });
-  await routineExceptionsRepo.insert({
+  await routineExceptionsRepo.memory.insert({
     id: 'x-a', routineId: 'r-a', date: '2026-03-15', type: 'skip'
   });
-  await goalsRepo.insert({ id: 'g-a', title: 'Käyttäjä A:n salainen tavoite' });
-  await projectsRepo.insert({ id: 'p-a', name: 'A:n projekti' });
-  await wellbeingRepo.insert({ id: 'w-a', date: '2026-03-15', energy: 2, mood: 2 });
+  await goalsRepo.memory.insert({ id: 'g-a', title: 'Käyttäjä A:n salainen tavoite' });
+  await projectsRepo.memory.insert({ id: 'p-a', name: 'A:n projekti' });
+  await wellbeingRepo.memory.insert({ id: 'w-a', date: '2026-03-15', energy: 2, mood: 2 });
   await savePreferences({ enabled: true, maxPerDay: 7 });
 }
 
 /** Mitä uusi käyttäjä näkisi, jos hän kirjautuisi nyt sisään. */
 async function whatNextUserSees() {
-  const results = await Promise.all(ALL_REPOSITORIES.map(repo => repo.list()));
+  const results = await Promise.all(ALL_REPOSITORIES.map(repo => repo.memory.list()));
   return results.flatMap(result => (result.ok ? result.value : []));
 }
 
@@ -79,6 +101,37 @@ test('REGRESSIO: uloskirjautuminen tyhjentää kaikki kokoelmat', async () => {
 });
 
 test('REGRESSIO: uloskirjautuminen palauttaa muistutusasetukset oletukseen', async () => {
+  // Muistutusasetukset ovat oma moduulinsa eivatka ALL_REPOSITORIES-
+  // listassa, joten ne on tarkistettava erikseen -- juuri sellainen
+  // erillisyys jaa muuten huomaamatta.
+  //
+  // Portin ollessa AUKI asetukset tulevat kannasta. Silloin sama
+  // invariantti -- "seuraava kayttaja ei peri edellisen asetuksia" --
+  // todistetaan valeasiakkaalla, joka palauttaa uudelle kayttajalle
+  // tyhjan tuloksen. Vaite on sama, todistuskeino eri.
+  if (isGateOpen('notificationPreferences')) {
+    setUser({ id: 'aaaaaaaa-0000-0000-0000-000000000001', email: 'a@example.com' });
+    setClient(fakeClient({ data: { id: 'a', enabled: true, daily_plan_time: '05:00' },
+                           error: null }));
+    const before = await loadPreferences();
+    assert.equal(before.value.enabled, true, 'A:n asetuksia ei saatu ladattua');
+
+    clearLocalUserData();
+
+    // Uusi kayttaja, ei riviae kannassa.
+    setUser({ id: 'bbbbbbbb-0000-0000-0000-000000000002', email: 'b@example.com' });
+    setClient(fakeClient({ data: null, error: null }));
+    const after = await loadPreferences();
+
+    assert.equal(after.value.enabled, false,
+      'seuraava käyttäjä perisi edellisen muistutusasetukset');
+    assert.equal(after.value.dailyPlanTime, '07:30', 'oletusaika ei palautunut');
+
+    clearUser();
+    setClient(null);
+    return;
+  }
+
   await savePreferences({ enabled: true, maxPerDay: 3, dailyPlanTime: '05:00' });
 
   const before = await loadPreferences();
@@ -99,7 +152,7 @@ test('jokainen kokoelma tyhjenee, ei vain osa', async () => {
   clearLocalUserData();
 
   for (const repo of ALL_REPOSITORIES) {
-    const result = await repo.list();
+    const result = await repo.memory.list();
     assert.ok(result.ok, repo.table + ': listaus epäonnistui');
     assert.deepEqual(result.value, [], repo.table + ' ei tyhjentynyt');
   }

@@ -1,6 +1,6 @@
 # Manifestival — tuotannon tila
 
-**Päivitetty:** 2026-09-08
+**Päivitetty:** 2026-09-08 (julkaisujuna valmisteltu)
 **Lähde:** ajetut migraatiot, varmistusten tulokset ja live-hyväksyntätesti
 
 Tämä on repositorion **auktoritatiivinen** tieto siitä, mikä on ajettu
@@ -120,8 +120,44 @@ vertaa niihin.
 Lähde: `src/data/schema.js`. Portit ovat käännösaikaisia vakioita —
 niiden muuttaminen vaatii deployn.
 
-Kymmenen porttia odottaa aktivointia. Ks.
-`docs/ACTIVATION-0003-0008-RUNBOOK.md`.
+**Tämä taulukko on yksi kolmesta lähteestä**, joiden on oltava
+keskenään yhtäpitäviä: `src/data/schema.js`, `sw.js` ja tämä. Jokainen
+aaltocommitti muuttaa kaikkia kolmea, ja
+`npm run activation:verify-wave` kaatuu jos ne erkanevat.
+
+---
+
+## Julkaisujuna 0003–0008
+
+Kymmenen porttia avataan viidessä aallossa. Ohje ja aaltokohtaiset
+hyväksyntäpaketit: `docs/RELEASE-TRAIN-0003-0008.md`.
+
+| Aalto | Portit | Cache | Suunniteltu | Deployattu | Selain | Kanta | Turva | Peruutus |
+|---|---|---|---|---|---|---|---|---|
+| — | perustila | `v12` | `63a96c5` | **2026-09-08** | ODOTTAA | ODOTTAA | ODOTTAA | ei |
+| **A** | `notificationPreferences`, `wellbeing` | `v13` | ks. manifesti | — | — | — | — | — |
+| **B** | `goals`, `projects` | `v14` | ks. manifesti | — | — | — | — | — |
+| **C** | `routines`, `routineExceptions` | `v15` | ks. manifesti | — | — | — | — | — |
+| **D** | `recurringExpenses`, `savingsGoals`, `bills` | `v16` | ks. manifesti | — | — | — | — | — |
+| **E** | `aiAudit` | `v17` | ks. manifesti | — | — | — | — | — |
+
+Aaltojen commit-SHA:t: `docs/activation-0003-0008-release-manifest.json`.
+
+> **Yhtäkään saraketta ei merkitä PASSiksi ennen kuin todiste on
+> olemassa.** Perustilan selain-, kanta- ja turvasarakkeet odottavat
+> yhä käyttäjän hyväksyntää: koneellinen todennus kattoi vain sen mitä
+> tuotanto tarjoilee, ei sitä miten sovellus käyttäytyy selaimessa.
+
+### Perustilan koneellinen todennus
+
+| Mitta | Tulos |
+|---|---|
+| HTTP | 200 |
+| `CACHE_VERSION` tuotannossa | `v12` |
+| Porttimatriisi tuotannossa | 0/10 auki |
+| `TASK_EXTENDED_FIELDS` tuotannossa | `true` |
+| Turvaotsakkeet | ennallaan |
+| `npm run production:verify-assets` | **21 / 21 PASS** |
 
 ---
 
@@ -129,9 +165,11 @@ Kymmenen porttia odottaa aktivointia. Ks.
 
 | | |
 |---|---|
-| Tuotannon sovellus (`main`) | `81b85e3678ba9f8a6375fa42db0fbbda6851ea8f` |
+| Tuotannon sovellus (`main`) | `63a96c5ab90b10a73369cd66e348f4a3774367e2` |
 | Julkaisutagi | `manifestival-prod-v1` |
+| Tagiehdotus junan jälkeen | `manifestival-prod-v2` (ei luotu) |
 | Työhaara | `feature/wp-13-20-ultra-product` |
+| Julkaisuhaara | `release/activation-0003-0008` |
 
 ---
 

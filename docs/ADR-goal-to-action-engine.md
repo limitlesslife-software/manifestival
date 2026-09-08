@@ -134,3 +134,64 @@ Kumpikin on additiivinen. Kumpikaan ei estä aktivointia.
 Nämä ovat suunnittelukysymyksiä, ja ne ratkaistaan kun moottori
 rakennetaan. Tämän dokumentin tehtävä oli varmistaa, ettei niitä ole
 tehty mahdottomiksi.
+
+---
+
+## Aktivointitarkastus 2026-09-08 (julkaisujuna, aalto B)
+
+Tämä ADR kirjoitettiin ennen kuin aktivointijuna oli olemassa. Juna tuo
+yhden uuden, konkreettisen asian: **aalto B luo ensimmäiset oikeat
+tavoiterivit tuotantoon.** Siksi ADR:n havainnot tarkistettiin
+uudelleen sitä vasten.
+
+### Ei estettä. Aallot B ja C voidaan aktivoida sellaisenaan.
+
+Kaikki moottorin tarvitsemat liitokset ovat kannassa, validoituina
+yhdistelmävierasavaimina, ja aktivointi on niiden käyttöönotto — ei
+niiden muuttaminen. Purkuketju
+
+```
+tavoite -> (alatavoite) -> projekti -> tehtävä / rutiini -> mittari
+```
+
+on kokonaan olemassa. Aktivointi ei sulje yhtäkään suuntaa.
+
+### Yksi asia, jonka aikaikkuna kapenee
+
+`maintenance`-tila puuttuu, ja **tilajoukko on kannan
+CHECK-rajoitteessa** (`goals_status_check`), ei pelkästään koodissa.
+Sen lisääminen on siis migraatio, ei koodimuutos.
+
+Ennen aaltoa B se olisi ollut tyhjän taulun muutos. Aallon B jälkeen
+tavoiterivejä alkaa kertyä, ja jos käyttäjä merkitsee ylläpidettävän
+tavoitteen `completed`-tilaan sen puutteen takia, tieto siitä että kyse
+oli ylläpidosta **katoaa** — eikä myöhempi migraatio voi päätellä sitä
+takaisin.
+
+**Tätä ei silti tehdä nyt.** Syyt:
+
+1. Tämä paketti ei aja SQL:ää tuotantoon. Se on koko junan ehto.
+2. Statuksen lisääminen ilman käyttöliittymää ja ilman moottoria olisi
+   spekulatiivista infrastruktuuria — sarake-arvo jota mikään ei aseta.
+3. Riski on pieni ja peruttavissa käsin: yksi käyttäjä, muutama
+   tavoite, ja väärin merkityn tilan voi korjata itse kun tila on
+   olemassa.
+
+**Toimenpide sen sijaan:** jos merkitset aallon B hyväksynnässä
+tavoitteen valmiiksi tarkoittaen "saavutettu ja pidetään yllä", kirjaa
+se muistiin. Se on ainoa tieto, jota migraatio ei voi myöhemmin
+päätellä.
+
+### Automaatiotasot
+
+Tavoitetilan automaatiotasoille (`suggestion-only`, `same-day`,
+`within-week`, `automatic under rules`) ei ole saraketta eikä taulua.
+Se on **additiivinen** muutos eikä liity aktivoitaviin portteihin
+mitenkään: mikään nykyinen sarake ei ole väärässä paikassa sen takia.
+
+### Ei muutoksia koodiin tässä paketissa
+
+Tarkastus ei löytänyt tyyppi- tai rajapintasiivousta, joka olisi
+tarpeen ennen aktivointia. `goal.js` ja `project.js` ovat
+normalisoituja, validoituja ja rivimuunnokset vastaavat migraatiota
+0004 — se on testattu erikseen.

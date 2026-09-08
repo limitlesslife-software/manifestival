@@ -33,6 +33,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { ROOT, read } from './helpers/sources.mjs';
+import { CLOSED_GATES, OPEN_GATES, repoForGate } from './helpers/gates.mjs';
+import { WAVES, describeMatrix, resolveWave } from '../tools/release/waves.mjs';
 import { TABLES, hasTable, pendingTables, isPersistent } from '../src/data/schema.js';
 import { ALL_REPOSITORIES, volatileCollections } from '../src/data/collectionsRepo.js';
 import * as prefsRepo from '../src/data/notificationPrefsRepo.js';
@@ -48,14 +50,23 @@ const PORTIT = ['routines', 'routineExceptions', 'goals', 'projects',
 // PORTTIEN LÄHTÖTILA
 // =====================================================================
 
-test('KRIITTINEN: jokainen portti on yhä kiinni', () => {
-  // Tämä paketti valmistelee aktivoinnin. Se EI aktivoi mitään.
-  // Portin kääntäminen on tuotantotoimenpide, ja se tehdään omassa
-  // paketissaan aalto kerrallaan.
-  for (const portti of PORTIT) {
-    assert.equal(TABLES[portti], false,
-      `portti ${portti} on auki — tämä paketti ei saa avata yhtään porttia`);
-  }
+test('KRIITTINEN: porttimatriisi on tasan yksi suunniteltu aalto', () => {
+  // Aiemmin tassa vaadittiin, ettei yksikaan portti ole auki. Se oli
+  // oikea vaatimus niin kauan kuin junaa ei ollut aloitettu, mutta
+  // aallossa A se olisi kaatunut TARKOITETUSTA muutoksesta -- ja
+  // testi, joka kaatuu oikeasta tyosta, poistetaan ennen pitkaa
+  // kokonaan.
+  //
+  // Korvaava vaatimus on TIUKEMPI, ei loysempi. Kymmenen porttia
+  // tuottaa 1024 yhdistelmaa; niista tasan kuusi on suunniteltuja.
+  // Kaikki muut ovat virheita: portti on avattu liian aikaisin,
+  // jaanyt avaamatta tai sulkeutunut vahingossa. Yksikaan niista ei
+  // mene tasta lapi.
+  const aalto = resolveWave(TABLES);
+  assert.ok(aalto !== null,
+    `porttimatriisi ei vastaa yhtakaan aaltoa: ${describeMatrix(TABLES)}`);
+
+  assert.equal(OPEN_GATES.length + CLOSED_GATES.length, PORTIT.length);
 });
 
 test('KRIITTINEN: porttien joukko vastaa migraatioiden tauluja', () => {
@@ -81,8 +92,9 @@ test('KRIITTINEN: porttien joukko vastaa migraatioiden tauluja', () => {
 test('KRIITTINEN: pendingTables kertoo jokaisen kiinni olevan portin', () => {
   // Käyttöliittymä kertoo tämän listan perusteella, mikä tieto ei vielä
   // säily. Vajaa lista tarkoittaisi, että sovellus lupaa tallentaa
-  // jotain mitä se ei tallenna.
-  assert.deepEqual(pendingTables().sort(), [...PORTIT].sort());
+  // jotain mitä se ei tallenna. Ylimaarainen merkinta taas varoittaisi
+  // turhaan tiedosta, joka jo sailyy.
+  assert.deepEqual(pendingTables().sort(), [...CLOSED_GATES].sort());
 });
 
 // =====================================================================
@@ -95,19 +107,23 @@ test('KRIITTINEN: portti kiinni tarkoittaa muistivarastoa, ei hiljaista hukkaa',
   // Jos repositorio väittäisi säilyvänsä, käyttäjä menettäisi työnsä
   // sivun latauksessa saamatta siitä tietoa.
   for (const repo of ALL_REPOSITORIES) {
-    assert.equal(repo.isPersistent(), false,
-      `${repo.table}: väittää säilyvänsä vaikka portti on kiinni`);
+    const auki = OPEN_GATES.includes(repo.schemaKey);
+    assert.equal(repo.isPersistent(), auki,
+      `${repo.table}: isPersistent sanoo ${repo.isPersistent()}, portti on `
+      + (auki ? 'auki' : 'kiinni'));
   }
 
   const haihtuvat = volatileCollections();
-  assert.equal(haihtuvat.length, ALL_REPOSITORIES.length,
-    'osa kokoelmista puuttuu haihtuvien listalta');
+  const kiinniTaulut = CLOSED_GATES.map(repoForGate).filter(Boolean).map(r => r.table);
+  assert.deepEqual([...haihtuvat].sort(), [...kiinniTaulut].sort(),
+    'haihtuvien lista ei vastaa kiinni olevia portteja');
 
   // Ja muistutusasetukset samoin. Ne ovat oma moduulinsa eivätkä ole
   // ALL_REPOSITORIES-listassa — juuri siksi ne on tarkistettava
   // erikseen.
-  assert.equal(prefsRepo.isPersistent(), false,
-    'muistutusasetukset väittävät säilyvänsä vaikka portti on kiinni');
+  assert.equal(prefsRepo.isPersistent(),
+    OPEN_GATES.includes('notificationPreferences'),
+    'muistutusasetusten sailyvyysvaite ei vastaa porttia');
 });
 
 test('KRIITTINEN: portti kiinni ei kirjoita tietokantaan', async () => {
@@ -131,6 +147,12 @@ test('KRIITTINEN: portti kiinni ei kirjoita tietokantaan', async () => {
     const repo = ALL_REPOSITORIES.find(r => r.table === taulu);
     assert.ok(repo, `repositoriota ${taulu} ei löytynyt`);
 
+    // Avoin portti kuuluu tietokantapolulle, ja se todistetaan
+    // erikseen tiedostossa tests/wave-activation.test.mjs oikealla
+    // ajolla valeasiakasta vasten. Tama testi koskee kiinni olevaa
+    // porttia.
+    if (repo.isPersistent()) continue;
+
     const tulos = await repo.insert(entity);
     assert.equal(tulos.ok, true,
       `${taulu}: muistivarastoon kirjoitus epäonnistui`);
@@ -148,11 +170,19 @@ test('KRIITTINEN: portti kiinni ei väitä tallennuksen onnistuneen pysyvästi',
   // isPersisted on se funktio, jolla käyttöliittymä päättää mitä se
   // kertoo käyttäjälle. Jos se valehtelisi, käyttäjä luulisi tietonsa
   // säilyvän.
-  for (const portti of PORTIT) {
+  for (const portti of CLOSED_GATES) {
     assert.equal(isPersistent(portti), false,
       `${portti}: isPersistent väittää säilyvyyttä portin ollessa kiinni`);
     assert.equal(hasTable(portti), false,
       `${portti}: hasTable väittää taulun olevan käytettävissä`);
+  }
+
+  // Ja auki oleva portti kertoo saman totuuden toisin pain.
+  for (const portti of OPEN_GATES) {
+    assert.equal(isPersistent(portti), true,
+      `${portti}: portti on auki mutta isPersistent sanoo muuta`);
+    assert.equal(hasTable(portti), true,
+      `${portti}: portti on auki mutta hasTable sanoo muuta`);
   }
 
   // Tuntematon nimi on aina epätosi, ei poikkeus. Kirjoitusvirhe
@@ -294,6 +324,11 @@ test('KRIITTINEN: oletusasetukset eivät synny kantaan itsestään', async () =>
   // loisi rivin notification_preferences-tauluun, ja hyväksynnän
   // jälkeinen varmistus alkaisi kaatua ilman että kukaan on säätänyt
   // asetuksiaan.
+  // Portin auettua sama vaite todistetaan valeasiakkaalla
+  // tiedostossa tests/wave-activation.test.mjs. Tassa se todistetaan
+  // muistipolulla, joka on kaytossa portin ollessa kiinni.
+  if (OPEN_GATES.includes('notificationPreferences')) return;
+
   const tulos = await prefsRepo.loadPreferences();
   assert.equal(tulos.ok, true, 'oletusasetusten lataus epäonnistui');
   assert.equal(tulos.value.enabled, false,
@@ -343,16 +378,12 @@ test('KRIITTINEN: aktivointijärjestys kunnioittaa vierasavainriippuvuuksia', ()
   assert.ok(riippuvuudet.size >= 2,
     `porttien välisiä riippuvuuksia löytyi vain ${riippuvuudet.size}`);
 
-  // Dokumentoitu järjestys aalloittain.
-  const AALLOT = [
-    ['notificationPreferences', 'wellbeing'],
-    ['goals', 'projects'],
-    ['routines', 'routineExceptions'],
-    ['recurringExpenses', 'savingsGoals', 'bills'],
-    ['aiAudit']
-  ];
+  // Jarjestys luetaan KANONISESTA maarittelysta, ei kirjoiteta tahan
+  // toistamiseen. Kaksi kopiota samasta jarjestyksesta erkanisi
+  // ennemmin tai myohemmin, ja silloin toinen niista olisi vaara
+  // ilman etta mikaan huomaa.
   const aalto = new Map();
-  AALLOT.forEach((portit, i) => portit.forEach(p => aalto.set(p, i)));
+  WAVES.forEach((w, i) => w.gates.forEach(p => aalto.set(p, i)));
 
   for (const portti of PORTIT) {
     assert.ok(aalto.has(portti), `portti ${portti} ei ole missään aallossa`);
@@ -453,13 +484,7 @@ test('KRIITTINEN: ajo-ohjeen aallot vastaavat testattua järjestystä', () => {
   // vihreä ja ohje silti väärä.
   const runbook = read(RUNBOOK);
 
-  const AALLOT = [
-    ['A', ['notificationPreferences', 'wellbeing']],
-    ['B', ['goals', 'projects']],
-    ['C', ['routines', 'routineExceptions']],
-    ['D', ['recurringExpenses', 'savingsGoals', 'bills']],
-    ['E', ['aiAudit']]
-  ];
+  const AALLOT = WAVES.map(w => [w.id, w.gates]);
 
   for (const [kirjain, portit] of AALLOT) {
     const rivi = runbook.split(NEWLINE)

@@ -1,6 +1,19 @@
 // Aktivoinnin esitarkistus: yksi komento ennen tuotantoaktivointia.
 //
-//   npm run activation:preflight
+//   npm run activation:preflight              perustila, kaikki portit kiinni
+//   npm run activation:preflight -- --wave=A  aalto A deployvalmiina
+//
+// AALTOPARAMETRI
+//
+// Ilman parametria esitarkistus vaatii PERUSTILAN: yksikään kymmenestä
+// portista ei ole auki. Se on tarkoituksellinen oletus — se on
+// vahtikoira sille, ettei portti pääse auki vahingossa.
+//
+// Aaltocommitissa portit ovat auki tarkoituksella, ja silloin
+// odotettu tila kerrotaan parametrilla. Esitarkistus vaatii TÄSMÄLLEEN
+// sen aallon matriisin: yksikin ylimääräinen tai puuttuva portti on
+// virhe. Se ei siis hyväksy mitä tahansa lähdekoodin tilaa, vaan
+// nimenomaan sitä, jonka operaattori sanoo deployaavansa.
 //
 // MITÄ TÄMÄ ON
 //
@@ -28,8 +41,32 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 
+import {
+  ALL_GATES, WAVE_IDS, cacheVersionOf, cumulativeGates, describeMatrix
+} from '../tools/release/waves.mjs';
+import { matrixDifferences, parseCacheVersion, parseStatusDoc } from '../tools/release/state.mjs';
+
 const ROOT = path.resolve(import.meta.dirname, '..');
 const NEWLINE = String.fromCharCode(10);
+
+// ---------------------------------------------------------------------
+// AALTOPARAMETRI
+// ---------------------------------------------------------------------
+
+const aaltoArgumentti = process.argv.slice(2)
+  .map(arg => /^--wave=(.+)$/.exec(arg))
+  .filter(Boolean)
+  .map(match => match[1].trim().toUpperCase())
+  .pop();
+
+const ODOTETTU_AALTO = aaltoArgumentti || 'BASE';
+
+if (ODOTETTU_AALTO !== 'BASE' && !WAVE_IDS.includes(ODOTETTU_AALTO)) {
+  process.stdout.write(
+    `  Tuntematon aalto: ${ODOTETTU_AALTO}${NEWLINE}`
+    + `  Sallitut: BASE, ${WAVE_IDS.join(', ')}${NEWLINE}`);
+  process.exit(1);
+}
 
 const tulokset = [];
 
@@ -74,28 +111,84 @@ tarkista('haara', 'Haara on tiedossa', haara.length > 0, haara);
 // =====================================================================
 //
 // TÄRKEIN OSUUS. Portin saa avata vasta tuotantoaktivoinnissa aalto
-// kerrallaan. Jos lähdekoodissa on jo auki oleva portti, deploy
-// aktivoisi sen vahingossa — ilman aaltoa, ilman varmistusta ja ilman
-// mahdollisuutta perua yhtä porttia kerrallaan.
+// kerrallaan. Jos lähdekoodissa olisi portti auki ilman että operaattori
+// tietää siitä, deploy aktivoisi sen vahingossa — ilman aaltoa, ilman
+// varmistusta ja ilman mahdollisuutta perua yhtä porttia kerrallaan.
+//
+// Tarkistus on KAKSISUUNTAINEN. Se ei kysy vain "onko jokin auki
+// liikaa", vaan "onko matriisi täsmälleen se, jonka operaattori sanoo
+// deployaavansa". Puuttuva portti on yhtä lailla virhe: aalto, joka
+// deployataan vajaana, näyttää onnistuneelta mutta jättää puolet
+// ominaisuudesta muistivarastoon.
 
 const schemaLähde = lue('src/data/schema.js');
-const PORTIT = ['routines', 'routineExceptions', 'goals', 'projects',
-                'notificationPreferences', 'wellbeing',
-                'bills', 'recurringExpenses', 'savingsGoals', 'aiAudit'];
+const PORTIT = [...ALL_GATES];
 
 const tablesLohko = schemaLähde.slice(schemaLähde.indexOf('export const TABLES'),
                                      schemaLähde.indexOf('export function hasTable'));
 
-const auki = PORTIT.filter(portti =>
-  new RegExp(`\\b${portti}:\\s*true`).test(tablesLohko));
+const kaikkiMääritelty = PORTIT.every(p =>
+  new RegExp(`\\b${p}:\\s*(true|false)`).test(tablesLohko));
 
-tarkista('portit', 'Yksikään aktivointiportti ei ole auki lähdekoodissa',
-  auki.length === 0,
-  auki.length ? `AUKI: ${auki.join(', ')}` : 'kaikki kymmenen kiinni');
+tarkista('portit', 'Kaikki kymmenen porttia ovat määriteltyjä', kaikkiMääritelty, '');
 
-tarkista('portit', 'Kaikki kymmenen porttia ovat määriteltyjä',
-  PORTIT.every(p => new RegExp(`\\b${p}:\\s*(true|false)`).test(tablesLohko)),
-  '');
+const portit = {};
+for (const portti of PORTIT) {
+  portit[portti] = new RegExp(`\\b${portti}:\\s*true`).test(tablesLohko);
+}
+
+const auki = PORTIT.filter(p => portit[p]);
+const erot = kaikkiMääritelty ? matrixDifferences(portit, ODOTETTU_AALTO) : ['porttilohkoa ei voitu lukea'];
+
+tarkista('portit', `Porttimatriisi vastaa aaltoa ${ODOTETTU_AALTO}`,
+  erot.length === 0,
+  erot.length ? erot.join('; ') : describeMatrix(portit));
+
+// Aallon OMAT portit erikseen. Kumulatiivinen matriisi menisi läpi
+// myös silloin, kun tämän aallon portit ovat auki mutta jokin aiempi
+// on sulkeutunut ja jokin myöhempi avautunut vahingossa — summa
+// täsmäisi mutta joukko ei. Siksi molemmat tarkistetaan.
+if (ODOTETTU_AALTO !== 'BASE') {
+  const kumulatiivinen = cumulativeGates(ODOTETTU_AALTO);
+  tarkista('portit', `Aallon ${ODOTETTU_AALTO} portit ovat auki`,
+    kumulatiivinen.every(p => portit[p] === true),
+    kumulatiivinen.filter(p => !portit[p]).join(', ') || `${kumulatiivinen.length} porttia auki`);
+
+  tarkista('portit', 'Myöhempien aaltojen portit ovat yhä kiinni',
+    PORTIT.filter(p => !kumulatiivinen.includes(p)).every(p => portit[p] === false),
+    PORTIT.filter(p => !kumulatiivinen.includes(p) && portit[p]).join(', ')
+      || 'ei ennenaikaisia portteja');
+} else {
+  tarkista('portit', 'Yksikään aktivointiportti ei ole auki lähdekoodissa',
+    auki.length === 0,
+    auki.length ? `AUKI: ${auki.join(', ')}` : 'kaikki kymmenen kiinni');
+}
+
+// -----------------------------------------------------------------
+// VÄLIMUISTIVERSIO JA TILANNEDOKUMENTTI
+// -----------------------------------------------------------------
+//
+// Portti ei ole ainoa asia, jonka aaltocommit muuttaa. Ilman
+// välimuistiversion nostoa selain ei koskaan huomaa uutta service
+// workeria eikä hae `schema.js`:ää uudelleen — deploy menisi läpi,
+// mutta osa käyttäjistä jäisi vanhaan porttitilaan ilman että kukaan
+// huomaa. Ja tilannedokumentti on se, jonka varassa operaattori tekee
+// päätöksiä; väärä tila siinä on vaarallisempi kuin puuttuva.
+
+const swVersio = parseCacheVersion(lue('sw.js'));
+tarkista('portit', `CACHE_VERSION vastaa aaltoa ${ODOTETTU_AALTO}`,
+  swVersio === cacheVersionOf(ODOTETTU_AALTO),
+  swVersio === cacheVersionOf(ODOTETTU_AALTO)
+    ? swVersio
+    : `sw.js on ${swVersio || 'lukematon'}, odotettiin ${cacheVersionOf(ODOTETTU_AALTO)}`);
+
+const dokumentinPortit = parseStatusDoc(lue('docs/PRODUCTION-STATUS.md'));
+const dokumenttiErot = dokumentinPortit
+  ? PORTIT.filter(p => dokumentinPortit[p] !== portit[p])
+  : ['porttitaulukkoa ei voitu lukea'];
+tarkista('portit', 'PRODUCTION-STATUS.md vastaa lähdekoodia',
+  dokumenttiErot.length === 0,
+  dokumenttiErot.length ? `eroavat: ${dokumenttiErot.join(', ')}` : '');
 
 // TASK_EXTENDED_FIELDS on jo tuotannossa aktivoitu. Sen on pysyttävä
 // totena: takaisin epätodeksi vaihtaminen lopettaisi kuvauksen,
@@ -259,14 +352,16 @@ process.stdout.write(NEWLINE);
 
 if (esteet.length === 0) {
   process.stdout.write(
-    `  AKTIVOINNIN ESITARKISTUS: PASS (${tulokset.length} tarkistusta)${NEWLINE}${NEWLINE}`
-    + `  Repositorio on siina tilassa, josta aktivointi voidaan aloittaa.${NEWLINE}`
+    `  AKTIVOINNIN ESITARKISTUS (${ODOTETTU_AALTO}): PASS`
+    + ` (${tulokset.length} tarkistusta)${NEWLINE}${NEWLINE}`
+    + `  Repositorio on siina tilassa, josta aalto ${ODOTETTU_AALTO} voidaan deployata.${NEWLINE}`
     + `  Kannan tila todistetaan erikseen: ks. docs/ACTIVATION-0003-0008-RUNBOOK.md${NEWLINE}`);
   process.exit(0);
 }
 
 process.stdout.write(
-  `  AKTIVOINNIN ESITARKISTUS: FAIL (${esteet.length}/${tulokset.length} estetta)${NEWLINE}${NEWLINE}`);
+  `  AKTIVOINNIN ESITARKISTUS (${ODOTETTU_AALTO}): FAIL`
+  + ` (${esteet.length}/${tulokset.length} estetta)${NEWLINE}${NEWLINE}`);
 for (const este of esteet) {
   process.stdout.write(`    ${este.osuus}: ${este.nimi}${este.selite ? ` — ${este.selite}` : ''}${NEWLINE}`);
 }

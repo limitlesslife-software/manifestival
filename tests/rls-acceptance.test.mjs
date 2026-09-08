@@ -1166,13 +1166,22 @@ test('KRIITTINEN: rutiinien testirivit kirjoittavat vain sovelluksen sarakkeita'
   }
 });
 
-test('KRIITTINEN: rutiiniportit pysyvät kiinni hyväksyntätestistä huolimatta', async () => {
-  // Työkalu puhuu kannalle suoraan eikä sovelluksen repositorion kautta,
-  // joten hyväksyntätesti EI vaadi porttien avaamista — eikä sitä saa
-  // tehdä ennen kuin testi on ajettu ja hyväksytty.
-  const { TABLES } = await import('../src/data/schema.js');
-  assert.equal(TABLES.routines, false, 'rutiiniportti on auki');
-  assert.equal(TABLES.routineExceptions, false, 'poikkeusportti on auki');
+test('KRIITTINEN: hyvaksyntatesti ei vaadi yhdenkaan portin avaamista', async () => {
+  // Tyokalu puhuu kannalle suoraan eika sovelluksen repositorion
+  // kautta. Se on koko harnessin suunnitteluperiaate: hyvaksyntatesti
+  // todentaa KANNAN, ei sovelluksen porttitilaa, ja siksi sen tulos on
+  // riippumaton siita mika portti sattuu olemaan auki.
+  //
+  // Aiemmin tassa vaadittiin porttien olevan kiinni. Se oli tosi mutta
+  // vaara vaite: se sitoi harnessin porttitilaan, jota se ei kayta.
+  // Oikea vaite on riippumattomuus, ja se todistetaan lukemalla ettei
+  // harness tuo schema.js:aa lainkaan.
+  const harness = read('tools/rls-acceptance/acceptance.js');
+
+  assert.equal(/from\s+['"][^'"]*schema\.js['"]/.test(harness), false,
+    'hyvaksyntatestin harness lukee sovelluksen porttitilaa');
+  assert.equal(/hasTable|TABLES/.test(harness), false,
+    'hyvaksyntatestin harness viittaa porttilippuihin');
 });
 
 // =====================================================================
@@ -1544,17 +1553,15 @@ test('KRIITTINEN: uusien taulujen testirivit vastaavat sovelluksen sarakkeita', 
   }
 });
 
-test('KRIITTINEN: kaikki kahdeksan porttia pysyvät kiinni', async () => {
-  // Työkalu puhuu kannalle suoraan eikä sovelluksen repositorion
-  // kautta, joten hyväksyntätesti EI vaadi porttien avaamista — eikä
-  // sitä saa tehdä ennen kuin testi on ajettu ja hyväksytty.
+test('KRIITTINEN: porttitila on suunniteltu aalto, ei sattuma', async () => {
+  // Hyvaksyntatesti ei vaadi mitaan tiettya porttitilaa (ks. yllä),
+  // mutta se ei tarkoita etta mika tahansa tila kelpaisi. Portti, joka
+  // on auki ilman aaltoa, on avattu ilman hyvaksyntaa.
   const { TABLES } = await import('../src/data/schema.js');
+  const { resolveWave, describeMatrix } = await import('../tools/release/waves.mjs');
 
-  for (const portti of ['routines', 'routineExceptions', 'goals', 'projects',
-                        'notificationPreferences', 'wellbeing', 'bills',
-                        'recurringExpenses', 'savingsGoals', 'aiAudit']) {
-    assert.equal(TABLES[portti], false, `portti ${portti} on auki`);
-  }
+  assert.ok(resolveWave(TABLES) !== null,
+    `porttimatriisi ei vastaa yhtakaan aaltoa: ${describeMatrix(TABLES)}`);
 });
 
 // =====================================================================
