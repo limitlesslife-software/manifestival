@@ -366,3 +366,142 @@ test('KRIITTINEN: aktivointijärjestys kunnioittaa vierasavainriippuvuuksia', ()
     }
   }
 });
+
+// =====================================================================
+// DOKUMENTAATIO VASTAA KOODIA
+// =====================================================================
+//
+// Migraatiotiedostoissa lukee yhä "TILA: EI AJETTU TUOTANTOON", vaikka
+// kaikki kahdeksan on ajettu. Rivejä ei korjattu tiedostoihin, koska
+// migraatio on tietue siitä mitä tuotannossa ajettiin -- jälkikäteen
+// muokattuna repositorio kertoisi mitä joku myöhemmin ajatteli ajetun.
+//
+// Ajantasainen tieto on siksi yhdessä paikassa, ja nämä testit pitävät
+// sen ajan tasalla. Dokumentti, joka kertoo väärän tilan, on pahempi
+// kuin dokumentti jota ei ole.
+
+const STATUS_DOC = 'docs/PRODUCTION-STATUS.md';
+const RUNBOOK = 'docs/ACTIVATION-0003-0008-RUNBOOK.md';
+
+test('KRIITTINEN: tilannedokumentti luettelee jokaisen migraation ajetuksi', () => {
+  const doc = read(STATUS_DOC);
+
+  const migraatiot = fs.readdirSync(path.join(ROOT, 'supabase/migrations'))
+    .filter(n => n.endsWith('.sql')).sort();
+  assert.equal(migraatiot.length, 8, `migraatioita on ${migraatiot.length}`);
+
+  for (const nimi of migraatiot) {
+    assert.ok(doc.includes(nimi),
+      `tilannedokumentti ei mainitse migraatiota ${nimi}`);
+  }
+
+  // Ja jokainen on merkitty ajetuksi. Kahdeksan riviä, kahdeksan
+  // AJETTU-merkintää.
+  assert.equal((doc.match(/\*\*AJETTU\*\*/g) || []).length, 8,
+    'tilannedokumentti ei merkitse kaikkia kahdeksaa ajetuksi');
+});
+
+test('KRIITTINEN: tilannedokumentin porttitaulukko vastaa koodia', () => {
+  // Jos dokumentti väittäisi portin olevan auki kun se on kiinni --
+  // tai päinvastoin -- operaattori tekisi päätöksiä väärän tiedon
+  // varassa juuri aktivoinnin hetkellä.
+  const doc = read(STATUS_DOC);
+
+  for (const [portti, auki] of Object.entries(TABLES)) {
+    const rivi = doc.split(NEWLINE).find(r => r.includes(`\`${portti}\``));
+    assert.ok(rivi, `tilannedokumentti ei mainitse porttia ${portti}`);
+
+    const dokumentoituAuki = /AKTIVOITU/.test(rivi);
+    assert.equal(dokumentoituAuki, auki,
+      `${portti}: dokumentti sanoo ${dokumentoituAuki ? 'auki' : 'kiinni'},`
+      + ` koodi sanoo ${auki ? 'auki' : 'kiinni'}`);
+  }
+
+  // TASK_EXTENDED_FIELDS on erikseen, koska se on jo aktivoitu.
+  const teRivi = doc.split(NEWLINE).find(r => r.includes('TASK_EXTENDED_FIELDS'));
+  assert.ok(teRivi && /AKTIVOITU/.test(teRivi),
+    'tilannedokumentti ei kerro TASK_EXTENDED_FIELDS-lipun olevan aktivoitu');
+});
+
+test('KRIITTINEN: tilannedokumentti selittää vanhentuneen TILA-rivin', () => {
+  // Migraatioissa lukee yhä "EI AJETTU TUOTANTOON". Jos sitä ei
+  // selitetä, seuraava lukija joko uskoo sitä tai muokkaa
+  // migraatiotiedostoja jälkikäteen. Kumpikin on huono.
+  const doc = read(STATUS_DOC);
+
+  assert.ok(doc.includes('EI AJETTU TUOTANTOON'),
+    'tilannedokumentti ei mainitse vanhentunutta TILA-riviä');
+  assert.match(doc, /historia|tietue/i,
+    'tilannedokumentti ei perustele, miksi migraatioita ei muokata jälkikäteen');
+
+  // Ja rivit ovat yhä migraatioissa -- eli päätöstä on noudatettu.
+  let vanhentuneita = 0;
+  for (const nimi of fs.readdirSync(path.join(ROOT, 'supabase/migrations'))
+                       .filter(n => /^000[3-8]/.test(n))) {
+    if (read(`supabase/migrations/${nimi}`).includes('TILA: EI AJETTU TUOTANTOON')) {
+      vanhentuneita += 1;
+    }
+  }
+  assert.equal(vanhentuneita, 6,
+    `migraatioissa on ${vanhentuneita} vanhentunutta TILA-riviä, odotettiin 6`
+    + ' -- jos niitä on muokattu, päivitä myös tilannedokumentin perustelu');
+});
+
+test('KRIITTINEN: ajo-ohjeen aallot vastaavat testattua järjestystä', () => {
+  // Ajo-ohje on se dokumentti, jota operaattori seuraa. Jos sen aallot
+  // eroaisivat testatusta järjestyksestä, riippuvuustesti olisi
+  // vihreä ja ohje silti väärä.
+  const runbook = read(RUNBOOK);
+
+  const AALLOT = [
+    ['A', ['notificationPreferences', 'wellbeing']],
+    ['B', ['goals', 'projects']],
+    ['C', ['routines', 'routineExceptions']],
+    ['D', ['recurringExpenses', 'savingsGoals', 'bills']],
+    ['E', ['aiAudit']]
+  ];
+
+  for (const [kirjain, portit] of AALLOT) {
+    const rivi = runbook.split(NEWLINE)
+      .find(r => r.includes(`**${kirjain}**`) && r.includes('|'));
+    assert.ok(rivi, `ajo-ohjeesta puuttuu aalto ${kirjain}`);
+    for (const portti of portit) {
+      assert.ok(rivi.includes(portti),
+        `aallosta ${kirjain} puuttuu portti ${portti}`);
+    }
+  }
+
+  // Jokainen portti on tasan yhdessä aallossa.
+  const kaikki = AALLOT.flatMap(([, p]) => p);
+  assert.equal(new Set(kaikki).size, kaikki.length, 'portti on useassa aallossa');
+  assert.equal(kaikki.length, Object.keys(TABLES).length,
+    'aalloissa on eri määrä portteja kuin koodissa');
+});
+
+test('KRIITTINEN: ajo-ohje viittaa olemassa oleviin tiedostoihin', () => {
+  const runbook = read(RUNBOOK);
+  const polut = [...runbook.matchAll(/`((?:supabase|docs|src|tests|scripts)\/[\w./-]+)`/g)]
+    .map(m => m[1]);
+
+  assert.ok(polut.length >= 6,
+    `ajo-ohjeesta löytyi vain ${polut.length} tiedostoviittausta`);
+
+  for (const polku of new Set(polut)) {
+    assert.ok(fs.existsSync(path.join(ROOT, polku)),
+      `ajo-ohje viittaa tiedostoon jota ei ole: ${polku}`);
+  }
+});
+
+test('KRIITTINEN: ajo-ohje ei ehdota kannan palautusta rollbackiksi', () => {
+  // Portin sulkeminen on peruutus. Kannan palauttaminen ei ole:
+  // vanha main (bd652fa) on auth-tätä-edeltävä prototyyppi, joka ei
+  // toimi nykyistä kantaa vasten lainkaan.
+  const runbook = read(RUNBOOK);
+
+  assert.match(runbook, /portin sulkeminen|portti `false`/i,
+    'ajo-ohje ei kerro, että peruutus on portin sulkeminen');
+  assert.ok(runbook.includes('bd652fa'),
+    'ajo-ohje ei varoita vanhasta main-committista palautuskohteena');
+  assert.match(runbook, /EI ole turvallinen palautuskohde/i,
+    'ajo-ohje ei sano suoraan, ettei vanha main kelpaa palautukseen');
+});
