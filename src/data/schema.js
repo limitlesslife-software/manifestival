@@ -54,9 +54,9 @@ export const TABLES = Object.freeze({
   goals: false,
   projects: false,
   /** Migraatio 0005 */
-  notificationPreferences: false,
+  notificationPreferences: true,
   /** Migraatio 0006 */
-  wellbeing: false,
+  wellbeing: true,
   /** Migraatio 0007 */
   bills: false,
   recurringExpenses: false,

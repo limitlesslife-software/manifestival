@@ -110,8 +110,8 @@ vertaa niihin.
 | `routineExceptions` | 0003 | kiinni |
 | `goals` | 0004 | kiinni |
 | `projects` | 0004 | kiinni |
-| `notificationPreferences` | 0005 | kiinni |
-| `wellbeing` | 0006 | kiinni |
+| `notificationPreferences` | 0005 | **AKTIVOITU** |
+| `wellbeing` | 0006 | **AKTIVOITU** |
 | `bills` | 0007 | kiinni |
 | `recurringExpenses` | 0007 | kiinni |
 | `savingsGoals` | 0007 | kiinni |
