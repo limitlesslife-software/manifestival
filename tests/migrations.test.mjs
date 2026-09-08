@@ -1991,6 +1991,338 @@ test('KRIITTINEN: rls_auto_enable ei ole Manifestivalin funktio', () => {
     'migraatiot luovat muitakin funktioita kuin touch_updated_at');
 });
 
+
+
+// =====================================================================
+// LOPULLINEN HYVÄKSYNNÄN JÄLKEINEN VARMISTUS
+// =====================================================================
+//
+// TAUSTA: "Success. No rows returned"
+//
+// Tuotannossa ajettiin verify_0003_0008_acceptance.sql ja SQL Editor
+// ilmoitti "Success. No rows returned". Ensimmäinen epäilys kohdistui
+// kommenttiteksteissä oleviin puolipisteisiin — ajatuksena, että
+// editori pilkkoisi liitetyn tekstin lauseiksi asiakaspäässä.
+//
+// SE OSOITTAUTUI VÄÄRÄKSI. verify_0004_0008_final.sql sisältää yhdeksän
+// puolipistettä kommenteissa, ja se ajettiin samassa editorissa
+// kokonaan läpi: 38 riviä, yksi FAIL. Editori siis käsittelee
+// kommentit oikein.
+//
+// Vanha tiedosto on myös rakenteellisesti moitteeton: yksi lause,
+// 28 tarkistusta, jokainen `select <vakio>` ilman from-lausetta. Sen
+// suorittaminen EI VOI tuottaa nollaa riviä.
+//
+// Jäljelle jää yksi selitys: ajettu syöte ei ollut koko tiedosto.
+// Supabasen SQL Editor ajaa VALINNAN, jos editorissa on tekstiä
+// valittuna. Pelkistä kommenteista koostuva syöte ei tuota
+// tulosjoukkoa lainkaan, ja editori näyttää siitä juuri tuon
+// ilmoituksen.
+//
+// Se on vaarallisin mahdollinen lopputulos, koska se ei näytä
+// virheeltä. Operaattori voisi lukea sen niin, että tarkistukset
+// menivät läpi — vaikka yhtäkään ei ajettu.
+//
+// NÄMÄ TESTIT eivät siis vahdi puolipisteitä. Ne varmistavat, että
+// verifierin RAKENNE takaa rivejä aina kun se suoritetaan, ja että
+// tiedosto on yksi yksiselitteinen lause.
+
+const LOPULLINEN = 'supabase/acceptance/verify_0003_0008_post_acceptance_final.sql';
+
+/** Tiedoston koodi ilman kommentteja JA ilman merkkijonovakioita. */
+function pelkkaKoodi(polku) {
+  return read(polku)
+    .split(NEWLINE)
+    .filter(line => !line.trim().startsWith('--'))
+    .join(NEWLINE)
+    // Merkkijonovakiot pois. Ilman tätä oikeuslista
+    // array['select', 'insert', 'update', 'delete'] näyttäisi
+    // muuttavilta lauseilta, ja SECURITY DEFINER -rungon kieltolista
+    // '\m(grant|revoke)\M' samoin. Kumpikaan ei ole suoritettava lause.
+    .replace(/'[^']*'/g, "''");
+}
+
+test('KRIITTINEN: lopullinen varmistus on tasan yksi lause', () => {
+  // Yksi puolipiste, aivan viimeisenä merkkinä.
+  //
+  // Tämä ei ole korjaus editorin lausejakoon — se toimii oikein. Tämä
+  // poistaa epäselvyyden siitä, MINKÄ lauseen tulos näytetään: kun
+  // lauseita on yksi, näytetty tulos on aina tarkistustaulukko.
+  const lahde = read(LOPULLINEN);
+
+  assert.equal((lahde.match(/;/g) || []).length, 1,
+    'lopullisessa varmistuksessa on muitakin puolipisteitä kuin viimeinen');
+  assert.match(lahde.trimEnd(), /;$/,
+    'lopullinen varmistus ei pääty puolipisteeseen');
+});
+
+test('KRIITTINEN: lopullinen varmistus on vain lukeva', () => {
+  // Tämä ajetaan tuotantokantaa vasten käsin, postgres-roolilla.
+  // Yksikään muuttava lause ei saa päätyä tänne.
+  //
+  // Tarkistus tehdään koodista, josta kommentit JA merkkijonovakiot on
+  // riisuttu. Kumpikin tuottaisi muuten vääriä hälytyksiä: kommentit
+  // selittävät muuttavia lauseita, ja SECURITY DEFINER -tarkistuksen
+  // kieltolista sisältää sanat grant ja revoke merkkijonona.
+  const koodi = pelkkaKoodi(LOPULLINEN);
+
+  for (const kielletty of ['insert', 'update', 'delete', 'alter', 'drop',
+                           'create', 'grant', 'revoke', 'truncate',
+                           'merge', 'commit', 'rollback', 'vacuum']) {
+    assert.equal(new RegExp(`\\b${kielletty}\\b`, 'i').test(koodi), false,
+      `lopullinen varmistus sisältää sanan "${kielletty}" suoritettavassa koodissa`);
+  }
+
+  // SET ROLE erikseen: se vaihtaisi istunnon roolin, ja koko
+  // varmistuksen edellytys on postgres-rooli.
+  assert.equal(/\bset\s+role\b/i.test(koodi), false,
+    'lopullinen varmistus vaihtaa istunnon roolia');
+
+  // Ja se alkaa with-lauseella, jonka jokainen CTE on select.
+  assert.match(koodi.trimStart(), /^with\b/i,
+    'lopullinen varmistus ei ala with-lauseella');
+
+  const rungot = [...koodi.matchAll(/\bas\s*\(\s*(\w+)/gi)].map(m => m[1].toLowerCase());
+  assert.ok(rungot.length >= 4, `CTE-runkoja löytyi vain ${rungot.length}`);
+  for (const runko of rungot) {
+    assert.equal(runko, 'select', `CTE alkaa sanalla "${runko}"`);
+  }
+});
+
+test('KRIITTINEN: staattinen turvatesti erottaa lauseet merkkijonoista', () => {
+  // Tämän testin oma mutaatiotesti. Jos riisunta lakkaisi toimimasta,
+  // edellinen testi menisi läpi väärästä syystä — tai kaatuisi
+  // väärästä syystä.
+  //
+  // 1. Merkkijonossa oleva avainsana EI ole lause.
+  const merkkijonossa = "select '' as x, array['insert', 'update'] as y";
+  assert.equal(/\binsert\b/i.test(merkkijonossa.replace(/'[^']*'/g, "''")), false,
+    'riisunta ei poista merkkijonovakioita');
+
+  // 2. Kommentissa oleva avainsana EI ole lause.
+  const kommentissa = `-- taalla puhutaan insert-lauseesta${NEWLINE}select 1`;
+  const riisuttu = kommentissa.split(NEWLINE)
+    .filter(line => !line.trim().startsWith('--')).join(NEWLINE);
+  assert.equal(/\binsert\b/i.test(riisuttu), false,
+    'riisunta ei poista kommentteja');
+
+  // 3. Oikea lause LÖYTYY yhä.
+  const oikeasti = "select 1;\ninsert into public.tasks values ('x')";
+  const riisuttu3 = oikeasti.split(NEWLINE)
+    .filter(line => !line.trim().startsWith('--')).join(NEWLINE)
+    .replace(/'[^']*'/g, "''");
+  assert.ok(/\binsert\b/i.test(riisuttu3),
+    'riisunta piilottaa oikeankin insert-lauseen');
+});
+
+test('KRIITTINEN: lopullinen varmistus palauttaa aina rivejä', () => {
+  // TÄMÄ ON KOKO TIEDOSTON TÄRKEIN OMINAISUUS.
+  //
+  // "Success. No rows returned" ei saa olla mahdollinen tulos
+  // suoritetusta lauseesta. Rakenne takaa sen: jokainen tarkistus on
+  // `select <vakio>` ilman from-lausetta, joten se tuottaa
+  // väistämättä tasan yhden rivin riippumatta siitä, mitä kannassa on.
+  //
+  // Jos tarkistukset olisi kirjoitettu taulusta suodattaen, tyhjä
+  // taulu tuottaisi tyhjän tuloksen — ja tyhjä tulos näyttäisi siltä
+  // kuin mitään ei olisi vialla.
+  const koodi = pelkkaKoodi(LOPULLINEN);
+
+  const tarkistuksia = (koodi.match(/union all/gi) || []).length + 1;
+  assert.equal(tarkistuksia, 41,
+    `tarkistuksia on ${tarkistuksia}, odotettiin 41`);
+
+  // Jokainen tarkistus alkaa vakiolla, ei taulukyselyllä.
+  // Ensimmainen tarkistus on `tarkistukset as ( select ...`, muut
+  // `union all select ...`. Molemmat muodot kelpaavat.
+  const vakiolla = [...koodi.matchAll(/(?:union all|as \()\s*select\s+''/gi)].length;
+  assert.equal(vakiolla, tarkistuksia,
+    `vain ${vakiolla}/${tarkistuksia} tarkistusta alkaa vakiolla`
+    + ' — loput voisivat tuottaa nolla riviä');
+
+  // Uloin select lukee CTE:stä eikä suodata mitään pois.
+  const uloin = koodi.slice(koodi.lastIndexOf('select t.check_no'));
+  assert.ok(uloin.includes('from tarkistukset t'),
+    'uloin select ei lue tarkistukset-CTE:stä');
+
+  // Rivejä suodattava where. `filter (where ...)` on eri asia: se
+  // rajaa ikkunafunktion laskentaa, ei tulosjoukkoa. Se riisutaan
+  // ennen tarkistusta.
+  const ilmanFilteria = uloin.replace(/filter\s*\([^)]*\)/gi, '');
+  assert.equal(/\bwhere\b/i.test(ilmanFilteria), false,
+    'uloimmassa selectissä on where-ehto — se voisi suodattaa rivejä pois');
+});
+
+test('KRIITTINEN: lopullinen varmistus tuottaa vaaditut sarakkeet', () => {
+  const koodi = pelkkaKoodi(LOPULLINEN);
+
+  // Sarakkeet luetaan ULOIMMAN SELECTIN PROJEKTIOLISTASTA, ei koko
+  // tiedostosta. Koko tiedostoon kohdistuva haku meni lapi
+  // mutaatiosta, jossa sarake t.expected poistettiin projektiosta:
+  // nimi jai yha filter-lausekkeeseen, joten sisaltyvyystesti ei
+  // huomannut mitaan.
+  const projektio = koodi
+    .slice(koodi.lastIndexOf('select t.check_no'),
+           koodi.lastIndexOf('from tarkistukset'))
+    // filter-lausekkeen sisalla oleva viittaus ei ole projektiossa.
+    .replace(/filter\s*\([^)]*\)/gi, '');
+
+  assert.ok(projektio.length > 50, 'uloimman selectin projektiota ei loytynyt');
+
+  for (const sarake of ['check_no', 'section', 'check_name',
+                        'expected', 'actual', 'status', 'failures_total']) {
+    assert.ok(new RegExp(`\\bas ${sarake}\\b|\\bt\\.${sarake}\\s*[,\\n]`)
+      .test(projektio),
+      `uloimman selectin projektiosta puuttuu sarake ${sarake}`);
+  }
+
+  // status on PASS tai FAIL, ei mitään muuta. INFO-rivi ei kasvattaisi
+  // failures_total-lukua eikä pysäyttäisi ketään.
+  assert.ok(read(LOPULLINEN).includes("then 'PASS' else 'FAIL' end as status"),
+    'status ei ole yksinomaan PASS tai FAIL');
+
+  // failures_total lasketaan KOKO tulosjoukon FAIL-riveistä ja on sama
+  // jokaisella rivillä. Operaattorin ei tarvitse laskea rivejä itse.
+  assert.ok(/count\(\*\)\s*filter\s*\(where[^)]*\)\s*over\s*\(\)\s*as failures_total/i
+    .test(koodi),
+    'failures_total ei ole koko joukon yli laskettu ikkunafunktio');
+});
+
+test('KRIITTINEN: lopullisen varmistuksen odotusarvot vastaavat migraatioita', () => {
+  // Odotusarvot eivät ole arvattuja. Käsin laskettu odotus vanhenee
+  // ensimmäisessä muutoksessa, ja vanhentunut odotus pysäyttää
+  // tuotannon varmistuksen vaikka kanta olisi oikein.
+  const lahde = read(LOPULLINEN);
+
+  /** Yhden tarkistuksen odotusarvo. */
+  const odotus = osuma => {
+    const lohko = lahde.split('union all').find(osa => osa.includes(osuma));
+    assert.ok(lohko, `tarkistusta ei löytynyt: ${osuma}`);
+    const m = /',\s*'(\d+)',/.exec(lohko);
+    assert.ok(m, `odotusarvoa ei löytynyt: ${osuma}`);
+    return Number(m[1]);
+  };
+
+  // Johda luvut migraatioista 0003-0008.
+  const era = migrationFiles().filter(n => /^000[3-8]/.test(n));
+  const laske = hahmo => era.reduce((summa, nimi) => {
+    const koodi = sql(nimi).split(`${NEWLINE}commit;`)[0]
+      .split(NEWLINE).filter(l => !l.trim().startsWith('--')).join(NEWLINE);
+    return summa + [...koodi.matchAll(hahmo)].length;
+  }, 0);
+
+  const taulut = laske(/create table public\.(\w+)/g);
+  const politiikat = laske(/create policy (\w+)/g);
+  const viitteet = laske(/foreign key \(user_id,\s*\w+\)\s*references public\./g);
+
+  assert.equal(taulut, 10, `migraatiot luovat ${taulut} porttitaulua`);
+  assert.equal(politiikat, 40, `migraatiot luovat ${politiikat} politiikkaa`);
+  assert.equal(viitteet, 9, `migraatiot luovat ${viitteet} omistajuusviitettä`);
+
+  assert.equal(odotus('Kaikki kymmenen porttitaulua ovat olemassa'), taulut);
+  assert.equal(odotus('RLS on paalla kaikissa kymmenessa taulussa'), taulut);
+  assert.equal(odotus('omistajuuspolitiikkaa on tallella'), politiikat);
+  assert.equal(odotus('Jokainen politiikka on vain authenticated-roolille'), politiikat);
+  assert.equal(odotus('Jokainen politiikka rajaa omistajuuden molemmilta puolilta'), politiikat);
+  assert.equal(odotus('omistajuuden yhdistelmavierasavainta'), viitteet);
+
+  // Nollaavat viitteet ja kaskadoiva viite yhteensä = kaikki viitteet.
+  const nollaavat = odotus('nollaavaa viitetta rajaa nollauksen sarakkeeseen');
+  const kaskadi = odotus('Poikkeuksen viite rutiiniin on CASCADE');
+  assert.equal(nollaavat + kaskadi, viitteet,
+    `${nollaavat} nollaavaa + ${kaskadi} kaskadoivaa <> ${viitteet} viitettä`);
+
+  // authenticated: yksitoista taulua kertaa CRUD.
+  assert.equal(odotus('authenticated-roolilla on tasan CRUD yhdessatoista taulussa'),
+    11 * 4);
+
+  // Omistajan rivin avaimet: viisi, ja ne johdetaan migraatioista.
+  const avaimet = new Set();
+  for (const nimi of migrationFiles()) {
+    for (const m of sql(nimi).matchAll(/constraint (\w+_owner_row_key) unique/g)) {
+      avaimet.add(m[1]);
+    }
+    for (const m of sql(nimi).matchAll(/add constraint (\w+_owner_row_key) unique/g)) {
+      avaimet.add(m[1]);
+    }
+  }
+  assert.equal(avaimet.size, 5, `omistajan rivin avaimia on ${avaimet.size}`);
+  assert.equal(odotus('omistajan rivin avainta'), avaimet.size);
+
+  // Liipaisimet: yhdeksän erässä plus tasks migraatiosta 0002.
+  const liipaisimet = laske(/create trigger (\w+)/g);
+  assert.equal(liipaisimet, 9, `erässä on ${liipaisimet} liipaisinta`);
+  assert.equal(odotus('updated_at-liipaisinta on tallella'), liipaisimet + 1);
+});
+
+test('KRIITTINEN: lopullinen varmistus todistaa vaaditut osa-alueet', () => {
+  const lahde = read(LOPULLINEN);
+
+  // Puuttuva osa-alue ei näy mitenkään: varmistus antaisi PASSin sille
+  // mitä se sattuu katsomaan.
+  const vaatimukset = [
+    ['auth.users', 'auth-käyttäjien määrä'],
+    ['1acdb7371be22cfa457b4dae0d0aa800', 'tehtävien tunnisteiden tiiviste'],
+    ['_attack_', 'ristiinkiinnitysyritysten jäännös'],
+    ['notification_preferences', 'muistutusasetusten jäännös'],
+    ['confdelsetcols', 'nollattavien sarakkeiden rajaus'],
+    ['confdeltype', 'poistosäännöt'],
+    ['owner_row_key', 'omistajan rivin avaimet'],
+    ['aclexplode', 'PUBLIC-roolin oikeuslista'],
+    ['has_table_privilege', 'tehollisten oikeuksien tarkistus'],
+    ['prosecdef', 'SECURITY DEFINER -tilanne'],
+    ['rls_auto_enable', 'ympäristön infrastruktuurifunktio'],
+    ['touch_updated_at', 'liipaisinfunktion kovennus'],
+    ['relrowsecurity', 'RLS:n tila'],
+    ['is_nullable', 'user_id NOT NULL'],
+    ['auth.uid()', 'omistajan oletusarvo'],
+    ['2cc00622-f927-4604-a518-361a4328481b', 'hyväksytty omistaja']
+  ];
+
+  for (const [needle, mika] of vaatimukset) {
+    assert.ok(lahde.includes(needle),
+      `lopullinen varmistus ei todista: ${mika} (puuttuu "${needle}")`);
+  }
+
+  // SECURITY DEFINER -lohko ei saa olla tyhja.
+  //
+  // Mutaatiotesti paljasti taman: kun definer_funktiot-CTE:n ehto
+  // `and p.prosecdef` vaihdettiin muotoon `and false`, lohko jai
+  // tyhjaksi ja tarkistukset 37-39 menivat lapi ilman etta yhtaan
+  // funktiota katsottiin. Sana prosecdef esiintyi yha muualla
+  // tiedostossa, joten sisaltyvyystesti ei huomannut mitaan.
+  const definerLohko = lahde.slice(lahde.indexOf('definer_funktiot as ('),
+                                   lahde.indexOf('tunniste as ('));
+  assert.ok(definerLohko.length > 100, 'definer_funktiot-lohkoa ei loytynyt');
+  assert.match(definerLohko, /and p\.prosecdef\s*$/m,
+    'definer_funktiot ei rajaa SECURITY DEFINER -funktioihin');
+  assert.equal(/and\s+false/i.test(definerLohko), false,
+    'definer_funktiot on neutraloitu aina tyhjaksi');
+
+  // Ja se ei lue käyttäjän sisältöä. Tiiviste lasketaan tunnisteista,
+  // ei otsikoista.
+  const koodi = pelkkaKoodi(LOPULLINEN);
+  for (const sarake of ['title', 'note', 'proposal', 'input_summary']) {
+    assert.equal(new RegExp(`\\b${sarake}\\b`).test(koodi), false,
+      `lopullinen varmistus lukee sisältösaraketta ${sarake}`);
+  }
+});
+
+test('KRIITTINEN: lopullinen varmistus neuvoo tyhjän tuloksen varalta', () => {
+  // Jos operaattori näkee "Success. No rows returned", syy ei ole
+  // kannassa vaan siinä, ettei koko tiedosto tullut ajetuksi. Sen on
+  // luettavissa tiedostosta itsestään — muuten sama tunti kuluu
+  // uudelleen.
+  const lahde = read(LOPULLINEN);
+
+  assert.ok(lahde.includes('No rows returned'),
+    'lopullinen varmistus ei kerro, mitä tyhjä tulos tarkoittaa');
+  assert.ok(/valitse/i.test(lahde) || /valinta/i.test(lahde),
+    'lopullinen varmistus ei kerro, että editori ajaa valinnan');
+  assert.match(lahde, /41/,
+    'lopullinen varmistus ei kerro montako riviä odotetaan');
+});
+
 // ------------------------------------------ FREEZE: varmistuskyselyt
 
 test('varmistuskyselyt ovat vain lukevia', () => {
