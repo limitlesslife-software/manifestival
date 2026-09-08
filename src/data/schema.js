@@ -51,8 +51,8 @@ export const TABLES = Object.freeze({
   routines: false,
   routineExceptions: false,
   /** Migraatio 0004 */
-  goals: false,
-  projects: false,
+  goals: true,
+  projects: true,
   /** Migraatio 0005 */
   notificationPreferences: true,
   /** Migraatio 0006 */

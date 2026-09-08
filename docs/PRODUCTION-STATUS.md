@@ -108,8 +108,8 @@ vertaa niihin.
 | `TASK_EXTENDED_FIELDS` | 0002 | **AKTIVOITU** |
 | `routines` | 0003 | kiinni |
 | `routineExceptions` | 0003 | kiinni |
-| `goals` | 0004 | kiinni |
-| `projects` | 0004 | kiinni |
+| `goals` | 0004 | **AKTIVOITU** |
+| `projects` | 0004 | **AKTIVOITU** |
 | `notificationPreferences` | 0005 | **AKTIVOITU** |
 | `wellbeing` | 0006 | **AKTIVOITU** |
 | `bills` | 0007 | kiinni |
