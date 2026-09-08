@@ -2133,9 +2133,12 @@ test('KRIITTINEN: lopullinen varmistus palauttaa aina rivejä', () => {
   // kuin mitään ei olisi vialla.
   const koodi = pelkkaKoodi(LOPULLINEN);
 
+  // 40, ei enaa 41. Kaksi tarkistusta poistui auth.users-riippuvuuden
+  // mukana (kayttajamaara ja orpojen LEFT JOIN) ja yksi lisattiin
+  // (profiilin omistaja). Kayttajamaara on nyt precheckissa.
   const tarkistuksia = (koodi.match(/union all/gi) || []).length + 1;
-  assert.equal(tarkistuksia, 41,
-    `tarkistuksia on ${tarkistuksia}, odotettiin 41`);
+  assert.equal(tarkistuksia, 40,
+    `tarkistuksia on ${tarkistuksia}, odotettiin 40`);
 
   // Jokainen tarkistus alkaa vakiolla, ei taulukyselyllä.
   // Ensimmainen tarkistus on `tarkistukset as ( select ...`, muut
@@ -2270,7 +2273,6 @@ test('KRIITTINEN: lopullinen varmistus todistaa vaaditut osa-alueet', () => {
   // Puuttuva osa-alue ei näy mitenkään: varmistus antaisi PASSin sille
   // mitä se sattuu katsomaan.
   const vaatimukset = [
-    ['auth.users', 'auth-käyttäjien määrä'],
     ['1acdb7371be22cfa457b4dae0d0aa800', 'tehtävien tunnisteiden tiiviste'],
     ['_attack_', 'ristiinkiinnitysyritysten jäännös'],
     ['notification_preferences', 'muistutusasetusten jäännös'],
@@ -2292,6 +2294,15 @@ test('KRIITTINEN: lopullinen varmistus todistaa vaaditut osa-alueet', () => {
     assert.ok(lahde.includes(needle),
       `lopullinen varmistus ei todista: ${mika} (puuttuu "${needle}")`);
   }
+
+  // HYOKKAYSJAANNOS: KUUSI KOHDETAULUA, EI YKSI.
+  //
+  // Sisaltyvyystesti meni lapi mutaatiosta, jossa yksi kuudesta
+  // alikyselysta poistettiin -- sana `_attack_` jai yha jaljelle.
+  // Hyokkayksia kohdistui kuuteen tauluun, ja jokainen on
+  // tarkistettava.
+  assert.equal((lahde.match(/_attack_/g) || []).length, 6,
+    'ristiinkiinnitysyrityksia ei etsita jokaisesta kuudesta kohdetaulusta');
 
   // SECURITY DEFINER -lohko ei saa olla tyhja.
   //
@@ -2328,7 +2339,7 @@ test('KRIITTINEN: lopullinen varmistus neuvoo tyhjän tuloksen varalta', () => {
     'lopullinen varmistus ei kerro, mitä tyhjä tulos tarkoittaa');
   assert.ok(/valitse/i.test(lahde) || /valinta/i.test(lahde),
     'lopullinen varmistus ei kerro, että editori ajaa valinnan');
-  assert.match(lahde, /41/,
+  assert.match(lahde, /40 rivia/,
     'lopullinen varmistus ei kerro montako riviä odotetaan');
 });
 
@@ -2518,6 +2529,220 @@ test('KRIITTINEN: jäsenyystestit lukevat rivijoukkoa, eivät taulukkoa', () => 
   const castatut = (koodi.match(/(?:tablename|relname)::text in \(select/g) || []).length;
   assert.equal(castatut, jasenyydet,
     `vain ${castatut}/${jasenyydet} jäsenyystestiä castaa nimen tekstiksi`);
+});
+
+
+// =====================================================================
+// AUTH-RIIPPUVUUDEN EROTTAMINEN PÄÄVERIFIERISTÄ
+// =====================================================================
+//
+// LÖYTYNYT VIKA, JOTA NÄMÄ VARTIOIVAT
+//
+// Lopullinen varmistus luki auth.users-taulua kahdessa kohdassa:
+// käyttäjämäärän tarkistuksessa ja kymmenessä orpojen rivien
+// LEFT JOINissa. Taulu ei ole authenticated-roolin luettavissa, joten
+// koko varmistus kaatui tuotannossa koodiin 42501 — eikä yksikään
+// tarkistus kertonut mitään.
+//
+// Se oli huono jako. Varmistuksen SISÄLTÖ ei riipu istunnon roolista,
+// vain sen ajettavuus. Rooliriippuvat tarkistukset ovat nyt omassa
+// precheckissään, ja pääverifieri lukee pelkkää public-skeemaa ja
+// järjestelmäkatalogeja.
+//
+// Orpojen rivien invariantti EI heikentynyt: se todistetaan nyt
+// rakenteesta (validoitu ON DELETE CASCADE -vierasavain tekee orvosta
+// rivistä mahdottoman) yhdessä tyhjien taulujen ja tunnetun omistajan
+// kanssa. Ainoa osa, joka siirtyi privileged-ajoon, on väite
+// "tunnettu omistaja on kannan ainoa käyttäjä".
+
+const PRECHECK = 'supabase/acceptance/precheck_0003_0008_auth_final.sql';
+
+test('KRIITTINEN: pääverifieri ei lue auth-skeemaa lainkaan', () => {
+  // Tämä on koko muutoksen ydin. Yksikin auth.*-luku palauttaisi
+  // rooliriippuvuuden, ja varmistus kaatuisi taas kokonaan sen sijaan
+  // että kertoisi mitä kannassa on.
+  const koodi = pelkkaKoodi(LOPULLINEN);
+
+  assert.equal(/(?:from|join)\s+auth\./i.test(koodi), false,
+    'pääverifieri lukee auth-skeeman taulua — se kaatuu 42501:een'
+    + ' väärässä istunnon roolissa');
+
+  assert.equal(/\bauth\.users\b/i.test(koodi), false,
+    'pääverifieri viittaa auth.users-tauluun suoritettavassa koodissa');
+
+  // `auth.uid()` merkkijonovakiona on eri asia: sitä verrataan
+  // pg_policies.qual- ja column_default-teksteihin, eikä se lue
+  // mitään. Ne saavat jäädä, ja niiden pitääkin jäädä — muuten
+  // omistajuusrajauksen tarkistus katoaisi.
+  const lahde = read(LOPULLINEN);
+  assert.ok(lahde.includes("'auth.uid()=user_id'"),
+    'omistajuusrajauksen tarkistus katosi');
+  assert.ok(lahde.includes("column_default like '%auth.uid()%'"),
+    'omistajan oletusarvon tarkistus katosi');
+});
+
+test('KRIITTINEN: orpojen rivien invariantti todistetaan rakenteesta', () => {
+  // Kun auth.users-liitokset poistettiin, sama takuu on todistettava
+  // toisin. Se ei saa olla heikompi.
+  //
+  // Validoitu vierasavain tekee orvosta rivistä MAHDOTTOMAN: kanta
+  // valvoo sitä jokaisessa kirjoituksessa, ja `convalidated` tarkoittaa
+  // että myös olemassa olleet rivit tarkistettiin rajoitetta lisättäessä.
+  // NOT VALID -rajoite koskisi vain uusia rivejä, ja silloin vanhat
+  // orvot jäisivät näkymättä.
+  const lahde = read(LOPULLINEN);
+
+  const cascadeLohko = lahde.split('union all')
+    .find(osa => osa.includes('cascade on olemassa ja validoitu'));
+  assert.ok(cascadeLohko, 'validoidun cascade-viitteen tarkistusta ei löytynyt');
+
+  assert.ok(cascadeLohko.includes('con.convalidated'),
+    'cascade-tarkistus ei vaadi rajoitteen validointia'
+    + ' — NOT VALID -rajoite päästäisi vanhat orvot läpi');
+  assert.ok(cascadeLohko.includes("fn.nspname = 'auth'")
+    && cascadeLohko.includes("ft.relname = 'users'"),
+    'cascade-tarkistus ei kohdistu auth.users-tauluun');
+  assert.ok(cascadeLohko.includes("confdeltype = 'c'"),
+    'cascade-tarkistus ei vaadi ON DELETE CASCADEa');
+
+  // Ja todistuksen muut osat ovat tallella.
+  for (const [osuma, mika] of [
+    ['Kaikki kymmenen porttitaulua ovat tyhjia', 'tyhjät porttitaulut'],
+    ['Yhtaan tehtavaa ei omista odottamaton kayttaja', 'tehtävien omistaja'],
+    ['Profiilirivi kuuluu tunnetulle omistajalle', 'profiilin omistaja'],
+    ['Omistajattomia tehtavia ei ole', 'omistajattomat tehtävät'],
+    ['Omistajattomia riveja ei ole yhdessakaan porttitaulussa', 'omistajattomat rivit']
+  ]) {
+    assert.ok(lahde.includes(osuma),
+      `orpojen todistuksesta puuttuu osa: ${mika}`);
+  }
+});
+
+test('KRIITTINEN: precheck lukee auth.users ja on siihen tarkoitettu', () => {
+  // Rooliriippuvuus ei katosi, se siirtyi. Precheckin PITÄÄ lukea
+  // auth.users — se on sen koko tehtävä.
+  const lahde = read(PRECHECK);
+  const koodi = pelkkaKoodi(PRECHECK);
+
+  // KOLME LUKUA, EI YKSI.
+  //
+  // Sisaltyvyystesti meni lapi mutaatiosta, jossa kayttajamaaran
+  // laskenta korvattiin vakiolla: kaksi muuta lukua jai jaljelle ja
+  // sana `from auth.users` esiintyi yha. Precheck lukee taulun
+  // kolmesti -- maara, tunnettu omistaja, tuntemattomat -- ja
+  // jokainen niista on oma vaitteensa.
+  assert.equal((koodi.match(/from auth\.users/gi) || []).length, 3,
+    'precheck ei lue auth.users-taulua kolmesti'
+    + ' — jokainen kolmesta väitteestä tarvitsee oman lukunsa');
+
+  // Ja se sanoo lukijalle, että postgres-rooli vaaditaan.
+  assert.match(lahde, /POSTGRES-ROOLILLA/,
+    'precheck ei kerro, että se vaatii postgres-roolin');
+
+  // Istunnon rooli tarkistetaan ENNEN auth-lukua, jotta väärä rooli
+  // näkyy selkeänä FAILina eikä pelkkänä 42501-kaatumisena.
+  // RAAKALAHTEESTA, ei riisutusta koodista: pelkkaKoodi poistaa
+  // merkkijonovakiot, jolloin current_setting('role', true) muuttuu
+  // muotoon current_setting('', true) eika osu.
+  for (const funktio of ['current_user', 'session_user', "current_setting('role', true)"]) {
+    assert.ok(lahde.includes(funktio),
+      `precheck ei tarkista istunnon tilaa: ${funktio}`);
+  }
+});
+
+test('KRIITTINEN: precheck todistaa omistajan, ei vain käyttäjämäärää', () => {
+  // Pelkkä lukumäärä ei riitä: yksi käyttäjä voisi olla väärä
+  // käyttäjä. Pääverifieri luottaa siihen, että jäljellä oleva
+  // käyttäjä on juuri se, jonka se olettaa omistavan kaiken datan.
+  const lahde = read(PRECHECK);
+
+  assert.ok(lahde.includes('2cc00622-f927-4604-a518-361a4328481b'),
+    'precheck ei tunne odotettua omistajaa');
+  assert.ok(lahde.includes('Jaljella oleva kayttaja on tunnettu omistaja'),
+    'precheck ei tarkista, että jäljellä oleva käyttäjä on oikea');
+  assert.ok(lahde.includes('Yhtaan tuntematonta kayttajaa ei ole'),
+    'precheck ei sulje pois tuntemattomia käyttäjiä');
+});
+
+test('KRIITTINEN: precheck on read-only eikä muuta oikeuksia', () => {
+  // Tuotannon virheilmoitus ehdotti ratkaisuksi
+  //   GRANT SELECT ON auth.users TO authenticated
+  // Sitä ei saa tehdä: se avaisi jokaiselle kirjautuneelle käyttäjälle
+  // pääsyn kaikkien tilien sähköpostiosoitteisiin. Kumpikaan tiedosto
+  // ei saa sisältää sellaista.
+  for (const polku of [PRECHECK, LOPULLINEN]) {
+    const koodi = pelkkaKoodi(polku);
+    const nimi = polku.split('/').pop();
+
+    for (const kielletty of ['insert', 'update', 'delete', 'alter', 'drop',
+                             'create', 'grant', 'revoke', 'truncate',
+                             'merge', 'commit', 'rollback']) {
+      assert.equal(new RegExp(`\\b${kielletty}\\b`, 'i').test(koodi), false,
+        `${nimi}: sisältää sanan "${kielletty}" suoritettavassa koodissa`);
+    }
+    assert.equal(/\bset\s+role\b/i.test(koodi), false,
+      `${nimi}: vaihtaa istunnon roolia`);
+  }
+});
+
+test('KRIITTINEN: precheck on yksi lause ja palauttaa aina rivejä', () => {
+  const lahde = read(PRECHECK);
+  const koodi = pelkkaKoodi(PRECHECK);
+
+  assert.equal((lahde.match(/;/g) || []).length, 1,
+    'precheckissä on muitakin puolipisteitä kuin viimeinen');
+  assert.match(lahde.trimEnd(), /;$/, 'precheck ei pääty puolipisteeseen');
+
+  const tarkistuksia = (koodi.match(/union all/gi) || []).length + 1;
+  assert.equal(tarkistuksia, 6, `precheckissä on ${tarkistuksia} tarkistusta, odotettiin 6`);
+
+  // Jokainen tarkistus alkaa vakiolla, joten tulos ei voi olla tyhjä.
+  const tarkistusLohko = koodi.slice(koodi.indexOf('tarkistukset as ('));
+  const vakiolla = [...tarkistusLohko.matchAll(/(?:union all|as \()\s*select\s+''/gi)].length;
+  assert.equal(vakiolla, tarkistuksia,
+    `vain ${vakiolla}/${tarkistuksia} precheck-tarkistusta alkaa vakiolla`);
+});
+
+test('KRIITTINEN: precheck tuottaa saman tulostaulukon kuin pääverifieri', () => {
+  // Sama muoto molemmissa: operaattorin ei tarvitse opetella kahta
+  // tapaa lukea tulosta.
+  const koodi = pelkkaKoodi(PRECHECK);
+
+  const projektio = koodi
+    .slice(koodi.lastIndexOf('select t.check_no'), koodi.lastIndexOf('from tarkistukset'))
+    .replace(/filter\s*\([^)]*\)/gi, '');
+
+  for (const sarake of ['check_no', 'section', 'check_name',
+                        'expected', 'actual', 'status', 'failures_total']) {
+    assert.ok(new RegExp(`\\bas ${sarake}\\b|\\bt\\.${sarake}\\s*[,\\n]`).test(projektio),
+      `precheckin projektiosta puuttuu sarake ${sarake}`);
+  }
+
+  assert.ok(read(PRECHECK).includes("then 'PASS' else 'FAIL' end as status"),
+    'precheckin status ei ole yksinomaan PASS tai FAIL');
+  assert.ok(koodi.includes('over () as failures_total'),
+    'precheckin failures_total ei ole ikkunafunktio');
+});
+
+test('KRIITTINEN: tiedostot ohjaavat toisiinsa oikeassa järjestyksessä', () => {
+  // Operaattorin on tiedettävä, kumpi ajetaan ensin — ja miksi
+  // pääverifieri ei enää vaadi postgres-roolia.
+  const paa = read(LOPULLINEN);
+  const pre = read(PRECHECK);
+
+  assert.ok(paa.includes('precheck_0003_0008_auth_final.sql'),
+    'pääverifieri ei ohjaa precheckiin');
+  assert.ok(pre.includes('verify_0003_0008_post_acceptance_final.sql'),
+    'precheck ei ohjaa pääverifieriin');
+
+  // Ja kumpikaan ei ehdota GRANTia ratkaisuksi.
+  // KOODISTA, ei kommenteista. Precheckin otsikko mainitsee GRANTin
+  // nimenomaan kertoakseen, ettei sita saa tehda -- se on ohje, ei
+  // ehdotus. Kommenttien lukeminen tekisi varoituksesta virheen.
+  for (const [nimi, polku] of [['pääverifieri', LOPULLINEN], ['precheck', PRECHECK]]) {
+    assert.equal(/grant/i.test(pelkkaKoodi(polku)), false,
+      `${nimi} sisältää GRANTin suoritettavassa koodissa`);
+  }
 });
 
 // ------------------------------------------ FREEZE: varmistuskyselyt
