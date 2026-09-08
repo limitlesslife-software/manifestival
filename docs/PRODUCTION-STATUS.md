@@ -135,12 +135,12 @@ hyväksyntäpaketit: `docs/RELEASE-TRAIN-0003-0008.md`.
 | Vaihe | Portit | Cache | Valmius | Suunniteltu | Deployattu | Selain | Kanta | Turva |
 |---|---|---|---|---|---|---|---|---|
 | — | tuotanto nyt | `v12` | — | `63a96c5` | **2026-09-08** | **PASS** | **PASS** | **PASS** |
-| **Korjaus** | ei yhtään | `v13` | VALMIS | `beac82e` | — | — | — | — |
-| **A** | `notificationPreferences`, `wellbeing` | `v14` | VALMIS | `1c2a6d1` | — | — | — | — |
-| **B** | `goals`, `projects` | `v15` | OSITTAINEN | `47cfda8` | — | — | — | — |
-| **C** | `routines`, `routineExceptions` | `v16` | VALMIS | `78dc6f8` | — | — | — | — |
-| **D** | `recurringExpenses`, `savingsGoals`, `bills` | `v17` | **ESTETTY** | `76ba75d` | — | — | — | — |
-| **E** | `aiAudit` | `v18` | VALMIS | `edd9b33` | — | — | — | — |
+| **Perustila** | ei yhtään | `v13` | VALMIS | `f78f60a` | — | — | — | — |
+| **A** | `notificationPreferences`, `wellbeing` | `v14` | VALMIS | `703c28f` | — | — | — | — |
+| **B** | `goals`, `projects` | `v15` | VALMIS | `ddfc356` | — | — | — | — |
+| **C** | `routines`, `routineExceptions` | `v16` | VALMIS | `cf259d0` | — | — | — | — |
+| **D** | `recurringExpenses`, `savingsGoals`, `bills` | `v17` | VALMIS | `091e73c` | — | — | — | — |
+| **E** | `aiAudit` | `v18` | VALMIS | `2b947cc` | — | — | — | — |
 
 Aaltojen commit-SHA:t: `docs/activation-0003-0008-release-manifest.json`.
 

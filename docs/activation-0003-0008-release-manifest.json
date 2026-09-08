@@ -4,7 +4,7 @@
   "productionUrl": "https://manifestival-ten.vercel.app",
   "productionSha": "63a96c5ab90b10a73369cd66e348f4a3774367e2",
   "productionCacheVersion": "v12",
-  "baseSha": null,
+  "baseSha": "f78f60a3186b677e401f4499e38f85987d2a6c0c",
   "baseCacheVersion": "v13",
   "gateDependencies": {
     "routines": [
@@ -32,7 +32,7 @@
     {
       "id": "A",
       "title": "Muistutusasetukset ja hyvinvointi",
-      "commitSha": null,
+      "commitSha": "703c28f365e62595db4150c6bb319f41c1743d1d",
       "cacheVersion": "v14",
       "readiness": "READY",
       "gatesEnabled": [
@@ -59,7 +59,7 @@
       ],
       "dependencies": [],
       "rollbackTarget": "BASE",
-      "rollbackSha": null,
+      "rollbackSha": "f78f60a3186b677e401f4499e38f85987d2a6c0c",
       "acceptancePack": "docs/acceptance/WAVE-A.md",
       "requiredAcceptance": [
         "npm run activation:verify-wave -- A",
@@ -73,7 +73,7 @@
     {
       "id": "B",
       "title": "Tavoitteet ja projektit",
-      "commitSha": null,
+      "commitSha": "ddfc356d7d0d055b3923cdbfefbcb0bb6d92ec9c",
       "cacheVersion": "v15",
       "readiness": "READY",
       "gatesEnabled": [
@@ -100,7 +100,7 @@
       ],
       "dependencies": [],
       "rollbackTarget": "A",
-      "rollbackSha": null,
+      "rollbackSha": "703c28f365e62595db4150c6bb319f41c1743d1d",
       "acceptancePack": "docs/acceptance/WAVE-B.md",
       "requiredAcceptance": [
         "npm run activation:verify-wave -- B",
@@ -114,7 +114,7 @@
     {
       "id": "C",
       "title": "Rutiinit ja poikkeukset",
-      "commitSha": null,
+      "commitSha": "cf259d0ef755f7e875cc9cd9c15405eba632e408",
       "cacheVersion": "v16",
       "readiness": "READY",
       "gatesEnabled": [
@@ -143,7 +143,7 @@
         "goals"
       ],
       "rollbackTarget": "B",
-      "rollbackSha": null,
+      "rollbackSha": "ddfc356d7d0d055b3923cdbfefbcb0bb6d92ec9c",
       "acceptancePack": "docs/acceptance/WAVE-C.md",
       "requiredAcceptance": [
         "npm run activation:verify-wave -- C",
@@ -157,7 +157,7 @@
     {
       "id": "D",
       "title": "Talous",
-      "commitSha": null,
+      "commitSha": "091e73c0091e8f135641e3501742b998dbac8461",
       "cacheVersion": "v17",
       "readiness": "READY",
       "gatesEnabled": [
@@ -186,7 +186,7 @@
       ],
       "dependencies": [],
       "rollbackTarget": "C",
-      "rollbackSha": null,
+      "rollbackSha": "cf259d0ef755f7e875cc9cd9c15405eba632e408",
       "acceptancePack": "docs/acceptance/WAVE-D.md",
       "requiredAcceptance": [
         "npm run activation:verify-wave -- D",
@@ -200,7 +200,7 @@
     {
       "id": "E",
       "title": "AI-toimintojen kirjausketju",
-      "commitSha": null,
+      "commitSha": "2b947cc1e6b7438b8f8388ac9818ec8468553fd2",
       "cacheVersion": "v18",
       "readiness": "READY",
       "gatesEnabled": [
@@ -224,7 +224,7 @@
       ],
       "dependencies": [],
       "rollbackTarget": "D",
-      "rollbackSha": null,
+      "rollbackSha": "091e73c0091e8f135641e3501742b998dbac8461",
       "acceptancePack": "docs/acceptance/WAVE-E.md",
       "requiredAcceptance": [
         "npm run activation:verify-wave -- E",
