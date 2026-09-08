@@ -62,7 +62,7 @@ export const TABLES = Object.freeze({
   recurringExpenses: true,
   savingsGoals: true,
   /** Migraatio 0008 */
-  aiAudit: false
+  aiAudit: true
 });
 
 /** Onko taulu käytettävissä tietokannassa? */

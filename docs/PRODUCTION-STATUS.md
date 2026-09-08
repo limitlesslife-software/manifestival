@@ -115,7 +115,7 @@ vertaa niihin.
 | `bills` | 0007 | **AKTIVOITU** |
 | `recurringExpenses` | 0007 | **AKTIVOITU** |
 | `savingsGoals` | 0007 | **AKTIVOITU** |
-| `aiAudit` | 0008 | kiinni |
+| `aiAudit` | 0008 | **AKTIVOITU** |
 
 Lähde: `src/data/schema.js`. Portit ovat käännösaikaisia vakioita —
 niiden muuttaminen vaatii deployn.
