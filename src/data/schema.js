@@ -58,9 +58,9 @@ export const TABLES = Object.freeze({
   /** Migraatio 0006 */
   wellbeing: true,
   /** Migraatio 0007 */
-  bills: false,
-  recurringExpenses: false,
-  savingsGoals: false,
+  bills: true,
+  recurringExpenses: true,
+  savingsGoals: true,
   /** Migraatio 0008 */
   aiAudit: false
 });

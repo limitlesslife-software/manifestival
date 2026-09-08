@@ -112,9 +112,9 @@ vertaa niihin.
 | `projects` | 0004 | **AKTIVOITU** |
 | `notificationPreferences` | 0005 | **AKTIVOITU** |
 | `wellbeing` | 0006 | **AKTIVOITU** |
-| `bills` | 0007 | kiinni |
-| `recurringExpenses` | 0007 | kiinni |
-| `savingsGoals` | 0007 | kiinni |
+| `bills` | 0007 | **AKTIVOITU** |
+| `recurringExpenses` | 0007 | **AKTIVOITU** |
+| `savingsGoals` | 0007 | **AKTIVOITU** |
 | `aiAudit` | 0008 | kiinni |
 
 Lähde: `src/data/schema.js`. Portit ovat käännösaikaisia vakioita —
