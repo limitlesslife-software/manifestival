@@ -48,8 +48,8 @@ export function taskColumns() {
  */
 export const TABLES = Object.freeze({
   /** Migraatio 0003 */
-  routines: false,
-  routineExceptions: false,
+  routines: true,
+  routineExceptions: true,
   /** Migraatio 0004 */
   goals: true,
   projects: true,

@@ -106,8 +106,8 @@ vertaa niihin.
 | Portti | Migraatio | Tuotannon tila |
 |---|---|---|
 | `TASK_EXTENDED_FIELDS` | 0002 | **AKTIVOITU** |
-| `routines` | 0003 | kiinni |
-| `routineExceptions` | 0003 | kiinni |
+| `routines` | 0003 | **AKTIVOITU** |
+| `routineExceptions` | 0003 | **AKTIVOITU** |
 | `goals` | 0004 | **AKTIVOITU** |
 | `projects` | 0004 | **AKTIVOITU** |
 | `notificationPreferences` | 0005 | **AKTIVOITU** |
