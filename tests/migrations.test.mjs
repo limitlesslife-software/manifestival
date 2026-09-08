@@ -2082,10 +2082,15 @@ test('KRIITTINEN: lopullinen varmistus on vain lukeva', () => {
   assert.match(koodi.trimStart(), /^with\b/i,
     'lopullinen varmistus ei ala with-lauseella');
 
+  // `values` on sallittu selectin rinnalla: se on rivien muodostin,
+  // ei lause joka koskee tauluun. Luettelot (portit, crud_taulut,
+  // oikeudet) ovat rivijoukkoja juuri siksi, ettei jasenyystestissa
+  // olisi tulkinnanvaraa.
   const rungot = [...koodi.matchAll(/\bas\s*\(\s*(\w+)/gi)].map(m => m[1].toLowerCase());
   assert.ok(rungot.length >= 4, `CTE-runkoja löytyi vain ${rungot.length}`);
   for (const runko of rungot) {
-    assert.equal(runko, 'select', `CTE alkaa sanalla "${runko}"`);
+    assert.ok(['select', 'values'].includes(runko),
+      `CTE alkaa sanalla "${runko}" — vain select ja values ovat sallittuja`);
   }
 });
 
@@ -2135,7 +2140,11 @@ test('KRIITTINEN: lopullinen varmistus palauttaa aina rivejä', () => {
   // Jokainen tarkistus alkaa vakiolla, ei taulukyselyllä.
   // Ensimmainen tarkistus on `tarkistukset as ( select ...`, muut
   // `union all select ...`. Molemmat muodot kelpaavat.
-  const vakiolla = [...koodi.matchAll(/(?:union all|as \()\s*select\s+''/gi)].length;
+  // Lasketaan VAIN tarkistukset-CTE:n sisalta. Muut CTE:t (vakiot)
+  // alkavat myos vakiolla, ja koko tiedostoon kohdistuva laskenta
+  // antoi siksi 42/41 -- luku joka ei tarkoita mitaan.
+  const tarkistusLohko = koodi.slice(koodi.indexOf('tarkistukset as ('));
+  const vakiolla = [...tarkistusLohko.matchAll(/(?:union all|as \()\s*select\s+''/gi)].length;
   assert.equal(vakiolla, tarkistuksia,
     `vain ${vakiolla}/${tarkistuksia} tarkistusta alkaa vakiolla`
     + ' — loput voisivat tuottaa nolla riviä');
@@ -2323,6 +2332,194 @@ test('KRIITTINEN: lopullinen varmistus neuvoo tyhjän tuloksen varalta', () => {
     'lopullinen varmistus ei kerro montako riviä odotetaan');
 });
 
+
+// =====================================================================
+// SKALAARI vs. TAULUKKO: `= ANY (SELECT ...)` -ANSA
+// =====================================================================
+//
+// LÖYTYNYT VIKA, JOTA NÄMÄ VARTIOIVAT
+//
+// Tuotannossa verify_0003_0008_post_acceptance_final.sql kaatui:
+//
+//   ERROR 42883: operator does not exist: name = text[]
+//   LINE 267: and tablename = any (select portit from odotukset)
+//
+// PostgreSQL tuntee ANYlle KAKSI eri muotoa, ja ne kirjoitetaan lähes
+// samannäköisesti:
+//
+//   expr = ANY (array_expression)   -- TAULUKKOMUOTO
+//                                      oikea puoli on taulukko, ja
+//                                      expr verrataan sen ALKIOIHIN
+//
+//   expr = ANY (subquery)           -- ALIKYSELYMUOTO
+//                                      alikysely palauttaa RIVEJÄ, ja
+//                                      expr verrataan jokaisen rivin
+//                                      arvoon
+//
+// `(select portit from odotukset)` on alikysely. Se palautti yhden
+// rivin, jonka ainoa sarake oli `text[]`. PostgreSQL yritti siis
+// operaatiota `name = text[]`, jollaista ei ole.
+//
+// Vika ei näy lukemalla, koska sama kirjoitusasu on täysin oikein
+// silloin kun oikea puoli on taulukkoLAUSEKE:
+//
+//   cl.oid = any (array['public.goals'::regclass, ...])   -- oikein
+//
+// Sitä muotoa käytetään tässä repossa kuudessa muussa varmistuksessa,
+// eikä sitä saa kieltää.
+//
+// TÄMÄN TESTIN RAJOITE, REHELLISESTI
+//
+// Repossa ei ole PostgreSQL-jäsentäjää eikä tietokantaa, eikä sellaista
+// asenneta tämän takia. Nämä testit eivät siis suorita SQL:ää. Ne
+// rakentavat CTE:istä pienen tyyppimallin ja hylkäävät rakenteet,
+// joissa alikyselymuotoa käytetään taulukkosarakkeeseen — eli
+// täsmälleen sen virheen, joka tuotannossa nähtiin.
+//
+// Ne eivät todista, että SQL on kokonaisuudessaan tyyppioikeaa. Ne
+// todistavat, ettei tämä nimenomainen ansa ole tiedostossa.
+
+/** SQL-tiedoston koodi ilman kommentteja. */
+function sqlKoodi(polku) {
+  return read(polku).split(NEWLINE)
+    .filter(line => !line.trim().startsWith('--'))
+    .join(NEWLINE);
+}
+
+/**
+ * CTE:iden tuottamat sarakkeet ja tieto siitä, ovatko ne taulukoita.
+ *
+ * Tunnistaa kaksi muotoa:
+ *   nimi as ( select array[...]::text[] as sarake, ... )  -> taulukko
+ *   nimi(sarake) as ( values ... )                        -> skalaari
+ *   nimi as ( select <muu> as sarake, ... )               -> skalaari
+ */
+function cteSarakkeet(koodi) {
+  const kartta = new Map();
+
+  // nimi(sarake) as ( values ... )
+  for (const m of koodi.matchAll(/(\w+)\s*\(\s*(\w+)\s*\)\s+as\s*\(\s*values/gi)) {
+    kartta.set(`${m[1]}.${m[2]}`, 'skalaari');
+  }
+
+  // nimi as ( select ... )
+  for (const m of koodi.matchAll(/(\w+)\s+as\s*\(\s*select([\s\S]*?)\n\)/gi)) {
+    const [, cte, runko] = m;
+    for (const sarake of runko.matchAll(/(\S[^,]*?)\s+as\s+(\w+)\s*(?:,|$)/gm)) {
+      const [, lauseke, nimi] = sarake;
+      const taulukko = /\barray\s*\[/i.test(lauseke) || /::\s*\w+\s*\[\s*\]/.test(lauseke);
+      kartta.set(`${cte}.${nimi}`, taulukko ? 'taulukko' : 'skalaari');
+    }
+  }
+  return kartta;
+}
+
+test('KRIITTINEN: ANY-alikyselymuotoa ei käytetä taulukkosarakkeeseen', () => {
+  // Tämä on se vika. `x = any (select <taulukkosarake> from cte)`
+  // vertaa skalaaria taulukkoARVOON, ei sen alkioihin.
+  const hakemistot = ['supabase/acceptance', 'supabase/verify', 'supabase/preflight'];
+
+  let tarkastettuja = 0;
+  for (const hakemisto of hakemistot) {
+    for (const nimi of fs.readdirSync(path.join(ROOT, hakemisto))
+                        .filter(n => n.endsWith('.sql'))) {
+      const polku = `${hakemisto}/${nimi}`;
+      const koodi = sqlKoodi(polku);
+      const tyypit = cteSarakkeet(koodi);
+
+      for (const m of koodi.matchAll(
+        /(?:=\s*any|<>\s*all)\s*\(\s*select\s+(\w+)\s+from\s+(\w+)\s*\)/gi)) {
+        tarkastettuja += 1;
+        const [, sarake, cte] = m;
+        const tyyppi = tyypit.get(`${cte}.${sarake}`);
+
+        assert.notEqual(tyyppi, 'taulukko',
+          `${nimi}: "any (select ${sarake} from ${cte})" on ALIKYSELYMUOTO,`
+          + ` mutta ${cte}.${sarake} on taulukko`
+          + ' — PostgreSQL vertaisi skalaaria taulukkoarvoon (42883).'
+          + ' Käytä muotoa `in (select ... )` rivijoukkoon.');
+      }
+    }
+  }
+
+  // Tyhjentymissuoja: jos hahmo lakkaisi osumasta, silmukka kävisi läpi
+  // nolla rakennetta ja menisi läpi. Tässä on tarkoituksella nolla
+  // osumaa, joten suoja on erillinen — ks. seuraava testi.
+  assert.equal(tarkastettuja, 0,
+    `ANY-alikyselymuotoja löytyi ${tarkastettuja} kappaletta`
+    + ' — jokainen niistä on tarkistettava käsin');
+});
+
+test('KRIITTINEN: tyyppimalli tunnistaa taulukkosarakkeen', () => {
+  // Edellinen testi on tyhjentymisaltis: se käy läpi nolla rakennetta,
+  // koska niitä ei enää ole. Tämä todistaa, että malli OSAA tunnistaa
+  // vian, jos se palaa.
+  const rikkinainen = [
+    'odotukset as (',
+    "  select array['a', 'b']::text[] as portit,",
+    "         'x'::text as etuliite",
+    '),',
+    'muu as (',
+    '  select 1',
+    ')'
+  ].join(NEWLINE);
+
+  const tyypit = cteSarakkeet(rikkinainen);
+  assert.equal(tyypit.get('odotukset.portit'), 'taulukko',
+    'malli ei tunnista array[...]::text[] -saraketta taulukoksi');
+  assert.equal(tyypit.get('odotukset.etuliite'), 'skalaari',
+    'malli pitää tekstivakiota taulukkona');
+
+  // Ja rivijoukkomuoto tunnistetaan skalaariksi.
+  const korjattu = "portit(taulu) as (\n  values ('a'::text), ('b')\n)";
+  assert.equal(cteSarakkeet(korjattu).get('portit.taulu'), 'skalaari',
+    'malli ei tunnista values-CTE:n saraketta skalaariksi');
+});
+
+test('KRIITTINEN: taulukkomuotoinen ANY on yhä sallittu', () => {
+  // `= any (array[...])` on oikea ja käytössä kuudessa varmistuksessa.
+  // Jos sääntö kieltäisi sen, se rikkoisi toimivaa SQL:ää.
+  let taulukkomuotoja = 0;
+  for (const hakemisto of ['supabase/acceptance', 'supabase/verify']) {
+    for (const nimi of fs.readdirSync(path.join(ROOT, hakemisto))
+                        .filter(n => n.endsWith('.sql'))) {
+      taulukkomuotoja += (sqlKoodi(`${hakemisto}/${nimi}`)
+        .match(/=\s*any\s*\(\s*array\s*\[/gi) || []).length;
+    }
+  }
+  assert.ok(taulukkomuotoja >= 5,
+    `taulukkomuotoisia ANY-rakenteita löytyi vain ${taulukkomuotoja}`);
+});
+
+test('KRIITTINEN: jäsenyystestit lukevat rivijoukkoa, eivät taulukkoa', () => {
+  // Lopullisessa varmistuksessa jäsenyys kirjoitetaan muotoon
+  // `in (select taulu from portit)`. Se on yksiselitteinen: molemmat
+  // puolet ovat skalaareja, eikä ANYn kahta muotoa voi sekoittaa.
+  const koodi = sqlKoodi('supabase/acceptance/verify_0003_0008_post_acceptance_final.sql');
+
+  const jasenyydet = (koodi.match(/in \(select taulu from portit\)/g) || []).length;
+  assert.equal(jasenyydet, 7,
+    `jäsenyystestejä on ${jasenyydet}, odotettiin 7`);
+
+  // Ja luettelo-CTE:t ovat rivijoukkoja.
+  for (const cte of ['portit(taulu)', 'crud_taulut(taulu)', 'oikeudet(oikeus)']) {
+    assert.ok(new RegExp(`${cte.replace('(', '\\(').replace(')', '\\)')}\\s+as\\s*\\(\\s*values`)
+      .test(koodi),
+      `${cte} ei ole values-rivijoukko`);
+  }
+
+  // Eikä tiedostossa ole enää yhtään text[]-taulukkoa CTE:ssä.
+  assert.equal(/::text\[\]\s+as\s+\w+/.test(koodi), false,
+    'CTE palauttaa yhä text[]-sarakkeen — jäsenyystesti voi mennä väärin');
+
+  // Nimityyppinen sarake castataan tekstiksi ennen vertailua. Se ei ole
+  // pakollista (name -> text on implisiittinen), mutta se tekee
+  // vertailun tyypin näkyväksi lukijalle.
+  const castatut = (koodi.match(/(?:tablename|relname)::text in \(select/g) || []).length;
+  assert.equal(castatut, jasenyydet,
+    `vain ${castatut}/${jasenyydet} jäsenyystestiä castaa nimen tekstiksi`);
+});
+
 // ------------------------------------------ FREEZE: varmistuskyselyt
 
 test('varmistuskyselyt ovat vain lukevia', () => {
@@ -2393,9 +2590,14 @@ test('varmistuskyselyt ovat vain lukevia', () => {
       //    dataa muuttava CTE kirjoitettaisiin.
       const rungot = [...statement.matchAll(/\bas\s*\(\s*(\w+)/gi)].map(m => m[1].toLowerCase());
       assert.ok(rungot.length > 0, `${name}: with-lauseessa ei ole yhtään CTE:tä`);
+      // `values` on sallittu selectin rinnalla. Se on rivien
+      // muodostin, ei lause joka koskee tauluun: `values ('a'), ('b')`
+      // ei lue eika kirjoita mitaan. Vaara jota tama vahtii on dataa
+      // muuttava CTE (insert/update/delete/merge), eika `values` ole
+      // sellainen.
       for (const runko of rungot) {
-        assert.equal(runko, 'select',
-          `${name}: CTE alkaa sanalla "${runko}" — vain select on sallittu`);
+        assert.ok(['select', 'values'].includes(runko),
+          `${name}: CTE alkaa sanalla "${runko}" — vain select ja values ovat sallittuja`);
       }
 
       // 2. Uloimmalla tasolla ei ole yhtään muuttavaa avainsanaa.

@@ -66,26 +66,56 @@ with
 -- hyvaksytysta tiedostosta verify_0004_0008_final.sql. Ne eivat ole
 -- arvattuja. Automaattinen testi vertaa ne migraatioihin joka ajolla.
 -- ---------------------------------------------------------------------
-odotukset as (
-  select
-    -- Kymmenen porttitaulua: kaksi migraatiosta 0003, kahdeksan
-    -- migraatioista 0004-0008.
-    array['routines', 'routine_exceptions', 'goals', 'projects',
-          'notification_preferences', 'wellbeing_entries',
-          'recurring_expenses', 'bills', 'savings_goals',
-          'ai_action_audit']::text[] as portit,
-    -- Nama yksitoista saavat authenticated-roolilta tasan CRUDin.
-    array['public.tasks', 'public.routines', 'public.routine_exceptions',
-          'public.goals', 'public.projects', 'public.notification_preferences',
-          'public.wellbeing_entries', 'public.recurring_expenses',
-          'public.bills', 'public.savings_goals',
-          'public.ai_action_audit']::text[] as crud_taulut,
-    array['select', 'insert', 'update', 'delete',
-          'truncate', 'references', 'trigger']::text[] as oikeudet,
-    'manifestival_rls_acceptance_'::text as etuliite,
-    '2cc00622-f927-4604-a518-361a4328481b'::uuid as omistaja,
-    36::bigint as tehtavia,
-    '1acdb7371be22cfa457b4dae0d0aa800'::text as tehtavien_tiiviste
+-- LUETTELOT OVAT RIVEJA, EIVAT TAULUKOITA.
+--
+-- Tama on tietoinen valinta, ei tyylikysymys. Aiempi versio piti
+-- luettelot text[]-taulukkoina yhdessa rivissa, ja jasenyys
+-- kirjoitettiin muotoon
+--
+--   tablename = any (select portit from odotukset)
+--
+-- Se on ANYn SUBQUERY-muoto: alikyselyn pitaisi palauttaa rivejae
+-- ALKION tyyppia. Se palautti yhden rivin, jonka sarake oli text[],
+-- joten PostgreSQL yritti operaatiota
+--
+--   name = text[]
+--
+-- ja kaatui koodiin 42883. Vika ei nakynyt lukemalla, koska sama
+-- kirjoitusasu on oikein silloin kun oikea puoli on taulukkoLAUSEKE
+-- (= any (array[...])) eika alikysely.
+--
+-- Kun luettelo on rivijoukko, jasenyys kirjoitetaan muotoon
+-- `in (select ...)`. Silloin ei ole mitaan tulkinnanvaraa: molemmat
+-- puolet ovat skalaareja. Samalla katoaa unnest-kierros
+-- ristiinliitoksista.
+portit(taulu) as (
+  -- Kymmenen porttitaulua: kaksi migraatiosta 0003, kahdeksan
+  -- migraatioista 0004-0008.
+  values ('routines'::text), ('routine_exceptions'), ('goals'), ('projects'),
+         ('notification_preferences'), ('wellbeing_entries'),
+         ('recurring_expenses'), ('bills'), ('savings_goals'),
+         ('ai_action_audit')
+),
+
+crud_taulut(taulu) as (
+  -- Nama yksitoista saavat authenticated-roolilta tasan CRUDin.
+  values ('public.tasks'::text), ('public.routines'),
+         ('public.routine_exceptions'), ('public.goals'), ('public.projects'),
+         ('public.notification_preferences'), ('public.wellbeing_entries'),
+         ('public.recurring_expenses'), ('public.bills'),
+         ('public.savings_goals'), ('public.ai_action_audit')
+),
+
+oikeudet(oikeus) as (
+  values ('select'::text), ('insert'), ('update'), ('delete'),
+         ('truncate'), ('references'), ('trigger')
+),
+
+vakiot as (
+  select 'manifestival_rls_acceptance_'::text as etuliite,
+         '2cc00622-f927-4604-a518-361a4328481b'::uuid as omistaja,
+         36::bigint as tehtavia,
+         '1acdb7371be22cfa457b4dae0d0aa800'::text as tehtavien_tiiviste
 ),
 
 -- ---------------------------------------------------------------------
@@ -148,13 +178,13 @@ tarkistukset as (
 
   union all
   select '02', 'A siivous', 'Tehtavien lukumaara on lahtoarvossa',
-         (select tehtavia::text from odotukset),
+         (select tehtavia::text from vakiot),
          (select count(*)::text from public.tasks)
 
   union all
   select '03', 'A siivous', 'Hyvaksyntatestin tehtavajaannoksia ei ole', '0',
          (select count(*)::text from public.tasks
-           where id like (select etuliite from odotukset) || '%')
+           where id like (select etuliite from vakiot) || '%')
 
   union all
   -- Yhdeksan tekstiavaimellista porttitaulua. Muistutusasetukset
@@ -162,23 +192,23 @@ tarkistukset as (
   -- kayttajan uuid eika testin etuliite.
   select '04', 'A siivous', 'Hyvaksyntatestin jaannoksia ei ole porttitauluissa', '0',
          ((select count(*) from public.routines
-            where id like (select etuliite from odotukset) || '%')
+            where id like (select etuliite from vakiot) || '%')
         + (select count(*) from public.routine_exceptions
-            where id like (select etuliite from odotukset) || '%')
+            where id like (select etuliite from vakiot) || '%')
         + (select count(*) from public.goals
-            where id like (select etuliite from odotukset) || '%')
+            where id like (select etuliite from vakiot) || '%')
         + (select count(*) from public.projects
-            where id like (select etuliite from odotukset) || '%')
+            where id like (select etuliite from vakiot) || '%')
         + (select count(*) from public.wellbeing_entries
-            where id like (select etuliite from odotukset) || '%')
+            where id like (select etuliite from vakiot) || '%')
         + (select count(*) from public.recurring_expenses
-            where id like (select etuliite from odotukset) || '%')
+            where id like (select etuliite from vakiot) || '%')
         + (select count(*) from public.bills
-            where id like (select etuliite from odotukset) || '%')
+            where id like (select etuliite from vakiot) || '%')
         + (select count(*) from public.savings_goals
-            where id like (select etuliite from odotukset) || '%')
+            where id like (select etuliite from vakiot) || '%')
         + (select count(*) from public.ai_action_audit
-            where id like (select etuliite from odotukset) || '%'))::text
+            where id like (select etuliite from vakiot) || '%'))::text
 
   union all
   select '05', 'A siivous', 'Muistutusasetusrivia ei ole', '0',
@@ -231,17 +261,17 @@ tarkistukset as (
   -- syntynyt, eika sita nakisi rivimaarista.
   select '08', 'A siivous', 'Ristiinkiinnitysyrityksia ei ole kannassa', '0',
          ((select count(*) from public.tasks
-            where id like (select etuliite from odotukset) || '%_attack_%')
+            where id like (select etuliite from vakiot) || '%_attack_%')
         + (select count(*) from public.routines
-            where id like (select etuliite from odotukset) || '%_attack_%')
+            where id like (select etuliite from vakiot) || '%_attack_%')
         + (select count(*) from public.routine_exceptions
-            where id like (select etuliite from odotukset) || '%_attack_%')
+            where id like (select etuliite from vakiot) || '%_attack_%')
         + (select count(*) from public.goals
-            where id like (select etuliite from odotukset) || '%_attack_%')
+            where id like (select etuliite from vakiot) || '%_attack_%')
         + (select count(*) from public.projects
-            where id like (select etuliite from odotukset) || '%_attack_%')
+            where id like (select etuliite from vakiot) || '%_attack_%')
         + (select count(*) from public.bills
-            where id like (select etuliite from odotukset) || '%_attack_%'))::text
+            where id like (select etuliite from vakiot) || '%_attack_%'))::text
 
   -- =================================================================
   -- B. TAULUT
@@ -251,7 +281,7 @@ tarkistukset as (
   select '09', 'B taulut', 'Kaikki kymmenen porttitaulua ovat olemassa', '10',
          (select count(*)::text from pg_tables
            where schemaname = 'public'
-             and tablename = any (select portit from odotukset))
+             and tablename::text in (select taulu from portit))
 
   -- =================================================================
   -- C. RLS JA OIKEUDET
@@ -261,20 +291,20 @@ tarkistukset as (
   select '10', 'C rls', 'RLS on paalla kaikissa kymmenessa taulussa', '10',
          (select count(*)::text from pg_class
            where relnamespace = 'public'::regnamespace
-             and relname = any (select portit from odotukset)
+             and relname::text in (select taulu from portit)
              and relrowsecurity)
 
   union all
   select '11', 'C rls', 'Neljakymmenta omistajuuspolitiikkaa on tallella', '40',
          (select count(*)::text from pg_policies
            where schemaname = 'public'
-             and tablename = any (select portit from odotukset))
+             and tablename::text in (select taulu from portit))
 
   union all
   select '12', 'C rls', 'Jokainen politiikka on vain authenticated-roolille', '40',
          (select count(*)::text from pg_policies
            where schemaname = 'public'
-             and tablename = any (select portit from odotukset)
+             and tablename::text in (select taulu from portit)
              and roles = '{authenticated}'::name[])
 
   union all
@@ -288,7 +318,7 @@ tarkistukset as (
   select '13', 'C rls', 'Jokainen politiikka rajaa omistajuuden molemmilta puolilta', '40',
          (select count(*)::text from pg_policies p
            where p.schemaname = 'public'
-             and p.tablename = any (select portit from odotukset)
+             and p.tablename::text in (select taulu from portit)
              and coalesce(btrim(replace(p.qual, ' ', ''), '()'),
                           case when p.tablename = 'notification_preferences'
                                then 'auth.uid()=id' else 'auth.uid()=user_id' end)
@@ -303,8 +333,8 @@ tarkistukset as (
   union all
   select '14', 'C oikeudet', 'anon-roolilla ei ole tehollista oikeutta porttitauluihin', '0',
          (select count(*)::text
-            from unnest((select portit from odotukset)) as t(taulu)
-            cross join unnest((select oikeudet from odotukset)) as o(oikeus)
+            from portit t
+            cross join oikeudet o
            where has_table_privilege('anon', format('public.%I', t.taulu), o.oikeus))
 
   union all
@@ -314,14 +344,14 @@ tarkistukset as (
          (select count(*)::text
             from pg_class cl, aclexplode(cl.relacl) acl
            where cl.relnamespace = 'public'::regnamespace
-             and cl.relname = any (select portit from odotukset)
+             and cl.relname::text in (select taulu from portit)
              and acl.grantee = 0)
 
   union all
   select '16', 'C oikeudet', 'authenticated-roolilla on tasan CRUD yhdessatoista taulussa', '44',
          (select count(*)::text
-            from unnest((select crud_taulut from odotukset)) as t(taulu)
-            cross join unnest((select oikeudet from odotukset)) as o(oikeus)
+            from crud_taulut t
+            cross join oikeudet o
            where has_table_privilege('authenticated', t.taulu, o.oikeus))
 
   -- =================================================================
@@ -363,7 +393,7 @@ tarkistukset as (
            where con.contype = 'f'
              and fn.nspname = 'auth' and ft.relname = 'users'
              and con.confdeltype = 'c'
-             and t.relname = any (select portit from odotukset))
+             and t.relname::text in (select taulu from portit))
 
   union all
   -- YHDEKSAN OMISTAJUUSVIITETTA kolmessa migraatiossa. Rakenne
@@ -509,14 +539,14 @@ tarkistukset as (
   union all
   select '28', 'E vanha data', 'Yhtaan tehtavaa ei omista odottamaton kayttaja', '0',
          (select count(*)::text from public.tasks
-           where user_id is distinct from (select omistaja from odotukset))
+           where user_id is distinct from (select omistaja from vakiot))
 
   union all
   -- Tehtavien tunnisteiden tiiviste. Rivimaara voi tasmata, vaikka
   -- rivit olisivat eri. Tama kertoo onko joukko sama, eika paljasta
   -- yhdenkaan rivin sisaltoa.
   select '29', 'E vanha data', 'Tehtavien tunnisteiden tiiviste on ennallaan',
-         (select tehtavien_tiiviste from odotukset),
+         (select tehtavien_tiiviste from vakiot),
          (select coalesce(md5(string_agg(id, ',' order by id)), 'ei riveja')
             from public.tasks)
 
@@ -564,7 +594,7 @@ tarkistukset as (
   select '36', 'F turva', 'anon-roolilla ei ole tehollista oikeutta yhteenkaan tauluun', '0',
          (select count(*)::text
             from pg_tables t
-            cross join unnest((select oikeudet from odotukset)) as o(oikeus)
+            cross join oikeudet o
            where t.schemaname = 'public'
              and has_table_privilege('anon', format('%I.%I', t.schemaname, t.tablename),
                                      o.oikeus))
