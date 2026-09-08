@@ -27,7 +27,7 @@ import { analyzeVerifier, outputColumns, REQUIRED_COLUMNS, withoutStrings }
   from './helpers/sql.mjs';
 
 import {
-  ALL_GATES, BASE, WAVES, WAVE_IDS, cacheVersionOf, cumulativeGates,
+  ALL_GATES, BASE, PRODUCTION, WAVES, WAVE_IDS, cacheVersionOf, cumulativeGates,
   describeMatrix, expectedMatrix, resolveWave, rollbackTargetOf, waveById, waveIndex
 } from '../tools/release/waves.mjs';
 import {
@@ -94,7 +94,8 @@ test('KRIITTINEN: välimuistiversiot ovat yksilöllisiä ja kasvavia', () => {
   // jälkimmäistä lainkaan: sw.js olisi tavulleen sama, eikä uutta
   // service workeria asennettaisi. Portti avautuisi tuotannossa,
   // mutta osa käyttäjistä jäisi vanhaan kuoreen.
-  const versiot = [BASE.cacheVersion, ...WAVE_IDS.map(cacheVersionOf)];
+  const versiot = [PRODUCTION.cacheVersion, BASE.cacheVersion,
+                   ...WAVE_IDS.map(cacheVersionOf)];
   assert.equal(new Set(versiot).size, versiot.length,
     `välimuistiversio toistuu: ${versiot.join(', ')}`);
 
@@ -423,8 +424,13 @@ test('KRIITTINEN: manifesti vastaa levyllä sitä mitä generaattori tuottaa', (
   const levyllä = readManifest();
   assert.ok(levyllä);
 
-  const shat = Object.fromEntries(
-    levyllä.waves.map(w => [w.id, w.commitSha]));
+  // Perustilan SHA on mukana: se on oma vaiheensa eikä aalto, mutta
+  // generaattori tarvitsee sen samalla tavalla. Ilman sitä vertailu
+  // väittäisi manifestia vääräksi joka kerta kun perustila on
+  // commitoitu.
+  const shat = Object.assign(
+    { BASE: levyllä.baseSha },
+    Object.fromEntries(levyllä.waves.map(w => [w.id, w.commitSha])));
   const tuotettu = buildManifest(shat);
 
   assert.deepEqual(
@@ -787,7 +793,8 @@ test('KRIITTINEN: junan yleisohje on olemassa ja vastaa aaltoja', () => {
       `yleisohje ei mainitse välimuistiversiota ${wave.cacheVersion}`);
   }
 
-  assert.ok(ohje.includes(BASE.sha), 'yleisohje ei mainitse perustilan SHA:ta');
+  assert.ok(ohje.includes(PRODUCTION.sha),
+    'yleisohje ei mainitse tuotannon nykyistä SHA:ta');
   assert.ok(ohje.includes('manifestival-prod-v2'), 'tagiehdotus puuttuu');
   assert.match(ohje, /cap sync android/, 'Android-järjestys puuttuu');
 

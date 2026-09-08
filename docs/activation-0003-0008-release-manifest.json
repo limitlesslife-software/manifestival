@@ -1,9 +1,11 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "package": "activation-0003-0008",
   "productionUrl": "https://manifestival-ten.vercel.app",
-  "baseSha": "63a96c5ab90b10a73369cd66e348f4a3774367e2",
-  "baseCacheVersion": "v12",
+  "productionSha": "63a96c5ab90b10a73369cd66e348f4a3774367e2",
+  "productionCacheVersion": "v12",
+  "baseSha": null,
+  "baseCacheVersion": "v13",
   "gateDependencies": {
     "routines": [
       "goals"
@@ -31,7 +33,8 @@
       "id": "A",
       "title": "Muistutusasetukset ja hyvinvointi",
       "commitSha": null,
-      "cacheVersion": "v13",
+      "cacheVersion": "v14",
+      "readiness": "READY",
       "gatesEnabled": [
         "notificationPreferences",
         "wellbeing"
@@ -56,7 +59,7 @@
       ],
       "dependencies": [],
       "rollbackTarget": "BASE",
-      "rollbackSha": "63a96c5ab90b10a73369cd66e348f4a3774367e2",
+      "rollbackSha": null,
       "acceptancePack": "docs/acceptance/WAVE-A.md",
       "requiredAcceptance": [
         "npm run activation:verify-wave -- A",
@@ -71,7 +74,8 @@
       "id": "B",
       "title": "Tavoitteet ja projektit",
       "commitSha": null,
-      "cacheVersion": "v14",
+      "cacheVersion": "v15",
+      "readiness": "READY",
       "gatesEnabled": [
         "goals",
         "projects"
@@ -111,7 +115,8 @@
       "id": "C",
       "title": "Rutiinit ja poikkeukset",
       "commitSha": null,
-      "cacheVersion": "v15",
+      "cacheVersion": "v16",
+      "readiness": "READY",
       "gatesEnabled": [
         "routines",
         "routineExceptions"
@@ -153,7 +158,8 @@
       "id": "D",
       "title": "Talous",
       "commitSha": null,
-      "cacheVersion": "v16",
+      "cacheVersion": "v17",
+      "readiness": "READY",
       "gatesEnabled": [
         "recurringExpenses",
         "savingsGoals",
@@ -195,7 +201,8 @@
       "id": "E",
       "title": "AI-toimintojen kirjausketju",
       "commitSha": null,
-      "cacheVersion": "v17",
+      "cacheVersion": "v18",
+      "readiness": "READY",
       "gatesEnabled": [
         "aiAudit"
       ],

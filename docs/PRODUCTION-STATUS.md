@@ -132,21 +132,40 @@ aaltocommitti muuttaa kaikkia kolmea, ja
 Kymmenen porttia avataan viidessä aallossa. Ohje ja aaltokohtaiset
 hyväksyntäpaketit: `docs/RELEASE-TRAIN-0003-0008.md`.
 
-| Aalto | Portit | Cache | Suunniteltu | Deployattu | Selain | Kanta | Turva | Peruutus |
+| Vaihe | Portit | Cache | Valmius | Suunniteltu | Deployattu | Selain | Kanta | Turva |
 |---|---|---|---|---|---|---|---|---|
-| — | perustila | `v12` | `63a96c5` | **2026-09-08** | ODOTTAA | ODOTTAA | ODOTTAA | ei |
-| **A** | `notificationPreferences`, `wellbeing` | `v13` | ks. manifesti | — | — | — | — | — |
-| **B** | `goals`, `projects` | `v14` | ks. manifesti | — | — | — | — | — |
-| **C** | `routines`, `routineExceptions` | `v15` | ks. manifesti | — | — | — | — | — |
-| **D** | `recurringExpenses`, `savingsGoals`, `bills` | `v16` | ks. manifesti | — | — | — | — | — |
-| **E** | `aiAudit` | `v17` | ks. manifesti | — | — | — | — | — |
+| — | tuotanto nyt | `v12` | — | `63a96c5` | **2026-09-08** | **PASS** | **PASS** | **PASS** |
+| **Korjaus** | ei yhtään | `v13` | VALMIS | `beac82e` | — | — | — | — |
+| **A** | `notificationPreferences`, `wellbeing` | `v14` | VALMIS | `1c2a6d1` | — | — | — | — |
+| **B** | `goals`, `projects` | `v15` | OSITTAINEN | `47cfda8` | — | — | — | — |
+| **C** | `routines`, `routineExceptions` | `v16` | VALMIS | `78dc6f8` | — | — | — | — |
+| **D** | `recurringExpenses`, `savingsGoals`, `bills` | `v17` | **ESTETTY** | `76ba75d` | — | — | — | — |
+| **E** | `aiAudit` | `v18` | VALMIS | `edd9b33` | — | — | — | — |
 
 Aaltojen commit-SHA:t: `docs/activation-0003-0008-release-manifest.json`.
 
 > **Yhtäkään saraketta ei merkitä PASSiksi ennen kuin todiste on
-> olemassa.** Perustilan selain-, kanta- ja turvasarakkeet odottavat
-> yhä käyttäjän hyväksyntää: koneellinen todennus kattoi vain sen mitä
-> tuotanto tarjoilee, ei sitä miten sovellus käyttäytyy selaimessa.
+> olemassa.**
+>
+> Tuotannon rivi on nyt PASS: käyttäjä hyväksyi kirjautumisen, istunnon
+> palautumisen, tehtävät ja konsolin, precheck antoi 6/6 ja varmistus
+> 40/40.
+>
+> **Sama hyväksyntä löysi kolme vikaa**, joita mikään koneellinen
+> tarkistus ei nähnyt: kesto 01:00–02:00 näkyi kolmenakymmenenä,
+> hyvinvointia ei löytynyt ja talousosiota ei ole olemassa. Kaksi
+> ensimmäistä on korjattu perustilan korjauksessa; kolmas estää aallon
+> D. Ks. `docs/UI-REACHABILITY.md`.
+
+### Valmius: pääseekö käyttäjä ominaisuuteen?
+
+| Vaihe | Este |
+|---|---|
+| **B OSITTAINEN** | `projects`-taululle ei ole käyttöliittymää. `goals` on täysin käytettävissä |
+| **D ESTETTY** | Taloudelle ei ole käyttöliittymää lainkaan. **Ei deployata** ennen kuin se on rakennettu |
+
+Portti avaa tallennuksen, ei käyttöliittymää. Taulu voi olla valmis
+samalla kun käyttäjä ei pääse siihen käsiksi.
 
 ### Perustilan koneellinen todennus
 

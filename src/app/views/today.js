@@ -387,6 +387,17 @@ function renderCompleted(container, plan) {
 }
 
 // ---------------------------------------------------------- hyvinvointi
+//
+// OTSIKKO ON "HYVINVOINTI", EI "MITEN MENEE?".
+//
+// Osio oli olemassa ja toimi, mutta käyttäjä ei löytänyt sitä. Syy ei
+// ollut puuttuva näkymä vaan nimi: koko käyttöliittymässä ei esiintynyt
+// sanaa "hyvinvointi" kertaakaan, joten sitä etsivä ei voinut osua
+// siihen. Osio on lisäksi suljettu <details>, eli sen otsikko on ainoa
+// asia joka näkyy ennen avaamista.
+//
+// Ystävällinen kysymys ei kadonnut -- se siirtyi sisälle vihjeeksi.
+// Otsikon tehtävä on löytyä, vihjeen tehtävä on selittää.
 
 function renderWellbeing(container, state, dateIso, plan) {
   const entry = entryForDate(state.wellbeing, dateIso);
@@ -407,7 +418,7 @@ function renderWellbeing(container, state, dateIso, plan) {
 
   container.innerHTML = `
     <details class="wellbeing-block">
-      <summary class="section-title">Miten menee?
+      <summary class="section-title">Hyvinvointi
         ${entry ? `<span class="count-badge">${escapeHtml(stateLabel)}</span>` : ''}
       </summary>
       <div class="section-body">
@@ -417,7 +428,8 @@ function renderWellbeing(container, state, dateIso, plan) {
         ${suggestion.suggestion
           ? `<div class="wb-suggestion ${suggestion.actionable ? 'actionable' : ''}">${escapeHtml(suggestion.suggestion)}</div>`
           : ''}
-        <div class="hint">Merkintä on vain sinulle. Se ei muuta suunnitelmaasi itsestään.</div>
+        <div class="hint">Miten menee? Merkintä on vain sinulle.
+             Se ei muuta suunnitelmaasi itsestään.</div>
       </div>
     </details>`;
 }

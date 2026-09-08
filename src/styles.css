@@ -271,6 +271,15 @@ body.is-offline .offline-banner { display:block; }
 .segment-btn { flex:1; appearance:none; -webkit-appearance:none; border:none; background:none; padding:9px; border-radius:9px; font-family:'Manrope',sans-serif; font-size:13px; font-weight:700; color:var(--text-2); cursor:pointer; }
 .segment-btn.active { background:var(--cream-card); color:var(--forest); }
 .segment-btn:focus-visible { outline:2px solid var(--gold); outline-offset:2px; }
+/* Kolmen osion segmentti (Talous). Nimet ovat pitkia suomeksi --
+ * "Saastotavoitteet" ei mahdu puhelimen leveydelle samalla koolla kuin
+ * kaksi lyhytta nimea. Pienempi kirjasin pitaa ne yhdella rivilla
+ * lyhentamatta niita: lyhennetty nimi ei enaa loydy etsimalla. */
+.segment-3 .segment-btn { font-size:11.5px; padding:9px 4px; letter-spacing:-.1px; }
+
+/* Alapalkissa on kuusi valilehtea. Tiiviimpi vaakatayte pitaa ne
+ * yhdella rivilla myos kapealla puhelimella. */
+.tab-btn { padding:6px 9px; }
 
 /* ---- Jaettu osiorunko ----
  * Näkymät koostuvat otsikosta ja rungosta. Runko antaa osioille yhteisen

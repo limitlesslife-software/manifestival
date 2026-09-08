@@ -2,8 +2,8 @@
 
 **Portit:** `routines`, `routineExceptions`
 **Taulut:** `routines`, `routine_exceptions`
-**Välimuistiversio:** `v15`
-**Edellinen tuotanto:** aallon B commit (v14)
+**Välimuistiversio:** `v16`
+**Edellinen tuotanto:** aallon B commit (v15)
 **Peruutuskohde:** aalto B
 
 Aallon commit-SHA: ks. `docs/activation-0003-0008-release-manifest.json`.
@@ -34,7 +34,7 @@ npm test && npm run check && npm run smoke && npm run build:web
 
 - [ ] Auki: aallot A + B + `routines`, `routineExceptions` (kuusi porttia)
 - [ ] Kiinni: neljä
-- [ ] `CACHE_VERSION` on `v15`
+- [ ] `CACHE_VERSION` on `v16`
 
 ### Diffin tarkistus
 
@@ -60,7 +60,7 @@ git push origin <WAVE-C-SHA>:main
 npm run production:verify-assets -- --wave=C
 ```
 
-- [ ] HTTP 200, `CACHE_VERSION` `v15`, kuusi porttia auki
+- [ ] HTTP 200, `CACHE_VERSION` `v16`, kuusi porttia auki
 
 ---
 
@@ -163,7 +163,7 @@ Jos tuotantoon lisätään toinen oikea käyttäjä, nosta prioriteettia.
 
 ```
 git revert --no-edit <WAVE-C-SHA>
-# revert-commitissa: nosta CACHE_VERSION v15 -> v16
+# revert-commitissa: nosta CACHE_VERSION v16 -> v17
 git push origin HEAD:main
 ```
 

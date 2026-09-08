@@ -40,6 +40,8 @@ import {
 } from '../domain/audit.js';
 import { formatMoney } from '../domain/money.js';
 import { getState, setAiAudit } from './state.js';
+import { aiAuditRepo } from '../data/collectionsRepo.js';
+import { logError } from '../lib/result.js';
 import { newTaskId } from '../lib/rows.js';
 import { logWarn } from '../lib/logger.js';
 
@@ -241,17 +243,60 @@ export function buildProposal(raw, options = {}) {
 
 // -------------------------------------------------------------- kirjaus
 
+/**
+ * Kirjaa kirjausketju myös kantaan -- taustalla, tulosta odottamatta.
+ *
+ * KIRJAUKSEN EPÄONNISTUMINEN EI SAA MUUTTAA PÄÄTOIMINNON LOPPUTULOSTA.
+ *
+ * Kirjausketju kertoo mitä AI teki. Se on tärkeä, mutta se on
+ * SIVUVAIKUTUS: jos sen tallennus epäonnistuu, käyttäjän komento on
+ * silti joko onnistunut tai epäonnistunut omilla ehdoillaan. Jos
+ * kirjaus saisi kaataa komennon, verkkokatko kirjausta tallennettaessa
+ * peruisi käyttäjältä toiminnon joka jo tehtiin -- ja jos se saisi
+ * muuttaa onnistumisen epäonnistumiseksi, käyttöliittymä valehtelisi
+ * toiseen suuntaan.
+ *
+ * Siksi tämä ei heitä, ei palauta mitään eikä odota. Virhe menee
+ * lokiin, jossa se on nähtävissä, eikä mihinkään muualle.
+ *
+ * Portin ollessa kiinni repositorio kirjoittaa muistivarastoon, joten
+ * tämä on turvallinen jo ennen aallon E aktivointia.
+ */
+function persistAudit(operation) {
+  let pending;
+  try {
+    pending = operation();
+  } catch (cause) {
+    logError(cause);
+    return;
+  }
+  if (!pending || typeof pending.then !== 'function') return;
+
+  pending.then(
+    result => { if (result && result.ok === false) logError(result.error); },
+    cause => logError(cause));
+}
+
 /** Lisää kirjaus tilaan. Kirjaus tehdään ENNEN käyttäjän vastausta. */
 export function recordProposal(proposal) {
   if (!proposal || !proposal.audit) return null;
   setAiAudit(appendAuditEntry(getState().aiAudit, proposal.audit));
+  persistAudit(() => aiAuditRepo.insert(proposal.audit));
   return proposal.audit.id;
 }
 
 /** Täydennä kirjaus lopputuloksella. Ei luo uutta riviä. */
 export function completeAudit(auditId, changes) {
   if (!auditId) return;
-  setAiAudit(completeAuditEntry(getState().aiAudit, auditId, changes));
+
+  const entries = completeAuditEntry(getState().aiAudit, auditId, changes);
+  setAiAudit(entries);
+
+  // Päivitetään SE rivi joka tilaan jäi, ei annettuja muutoksia:
+  // completeAuditEntry normalisoi tuloksen, ja kantaan kuuluu mennä
+  // sama rivi jonka käyttöliittymä näyttää.
+  const updated = entries.find(entry => String(entry.id) === String(auditId));
+  if (updated) persistAudit(() => aiAuditRepo.update(updated));
 }
 
 // ------------------------------------------------------------ suoritus

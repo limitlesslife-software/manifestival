@@ -12,6 +12,7 @@ import { normalizeTask } from '../domain/task.js';
 import { normalizeRoutine, normalizeException } from '../domain/routine.js';
 import { normalizeGoal } from '../domain/goal.js';
 import { normalizeWellbeingEntry } from '../domain/wellbeing.js';
+import { normalizeProject } from '../domain/project.js';
 import { normalizePreferences } from '../domain/notification.js';
 import {
   normalizeBill, normalizeRecurringExpense, normalizeSavingsGoal
@@ -53,6 +54,14 @@ function initialState() {
     /** Muokattavan rutiinin tai tavoitteen tunniste. */
     editingRoutineId: null,
     editingGoalId: null,
+    editingProjectId: null,
+    editingBillId: null,
+    editingExpenseId: null,
+    editingSavingsId: null,
+    /** Tavoitenäkymän osio: 'goals' tai 'projects'. */
+    goalsSegment: 'goals',
+    /** Talousnäkymän osio: 'bills', 'expenses' tai 'savings'. */
+    financeSegment: 'bills',
     /** Tehtävänäkymän osio: 'tasks' tai 'routines'. */
     tasksSegment: 'tasks',
     /** Näkymä, joka on auki. */
@@ -211,7 +220,39 @@ export function findGoal(id) {
 }
 
 export function setProjects(projects) {
-  commit({ projects: projects || [] });
+  commit({ projects: (projects || []).map(normalizeProject) });
+}
+
+export function addProjectToState(project) {
+  commit({ projects: [...state.projects, normalizeProject(project)] });
+}
+
+export function replaceProjectInState(id, project) {
+  commit({
+    projects: state.projects.map(p => (p.id === id ? normalizeProject(project) : p))
+  });
+}
+
+/**
+ * Poista projekti tilasta.
+ *
+ * Tehtäviä EI poisteta projektin mukana — niiden yhteys vain katkeaa.
+ * Sama sääntö kuin tavoitteilla, ja sama kuin kannassa: viite on
+ * `on delete set null (project_id)`, ei cascade. Tehty työ ei katoa
+ * siksi, että sen kehys poistuu.
+ *
+ * Tavoitteen yhteys projektiin katkeaa samasta syystä.
+ */
+export function removeProjectFromState(id) {
+  commit({
+    projects: state.projects.filter(p => p.id !== id),
+    tasks: state.tasks.map(t => (t.projectId === id ? { ...t, projectId: null } : t)),
+    goals: state.goals.map(g => (g.projectId === id ? { ...g, projectId: null } : g))
+  });
+}
+
+export function findProject(id) {
+  return state.projects.find(p => p.id === id) || null;
 }
 
 export function setWellbeing(entries) {
@@ -231,6 +272,80 @@ export function setRecurringExpenses(expenses) {
 /** Aseta säästötavoitteet. */
 export function setSavingsGoals(goals) {
   commit({ savingsGoals: (goals || []).map(normalizeSavingsGoal) });
+}
+
+// ------------------------------------------------------------- talous
+//
+// Kolme kokoelmaa, sama muoto kuin tavoitteilla: lisäys, korvaus,
+// poisto ja haku. Toiminnot (`actions.js`) tekevät optimistisen
+// muutoksen tilaan ja peruvat sen, jos tallennus epäonnistuu.
+
+export function addBillToState(bill) {
+  commit({ bills: [...state.bills, normalizeBill(bill)] });
+}
+
+export function replaceBillInState(id, bill) {
+  commit({ bills: state.bills.map(b => (b.id === id ? normalizeBill(bill) : b)) });
+}
+
+export function removeBillFromState(id) {
+  commit({ bills: state.bills.filter(b => b.id !== id) });
+}
+
+export function findBill(id) {
+  return state.bills.find(b => b.id === id) || null;
+}
+
+export function addRecurringExpenseToState(expense) {
+  commit({
+    recurringExpenses: [...state.recurringExpenses, normalizeRecurringExpense(expense)]
+  });
+}
+
+export function replaceRecurringExpenseInState(id, expense) {
+  commit({
+    recurringExpenses: state.recurringExpenses.map(
+      e => (e.id === id ? normalizeRecurringExpense(expense) : e))
+  });
+}
+
+/**
+ * Poista toistuva kulu tilasta.
+ *
+ * Laskut EIVÄT poistu mukana. Lasku on historiaa: se on jo erääntynyt ja
+ * mahdollisesti maksettu, eikä säännön poistaminen tee sitä
+ * tapahtumattomaksi. Kannassa sama sääntö on
+ * `on delete set null (recurring_expense_id)`.
+ */
+export function removeRecurringExpenseFromState(id) {
+  commit({
+    recurringExpenses: state.recurringExpenses.filter(e => e.id !== id),
+    bills: state.bills.map(
+      b => (b.recurringExpenseId === id ? { ...b, recurringExpenseId: null } : b))
+  });
+}
+
+export function findRecurringExpense(id) {
+  return state.recurringExpenses.find(e => e.id === id) || null;
+}
+
+export function addSavingsGoalToState(goal) {
+  commit({ savingsGoals: [...state.savingsGoals, normalizeSavingsGoal(goal)] });
+}
+
+export function replaceSavingsGoalInState(id, goal) {
+  commit({
+    savingsGoals: state.savingsGoals.map(
+      g => (g.id === id ? normalizeSavingsGoal(goal) : g))
+  });
+}
+
+export function removeSavingsGoalFromState(id) {
+  commit({ savingsGoals: state.savingsGoals.filter(g => g.id !== id) });
+}
+
+export function findSavingsGoal(id) {
+  return state.savingsGoals.find(g => g.id === id) || null;
 }
 
 /** Aseta AI-kirjausketju. */
@@ -257,8 +372,35 @@ export function setEditingGoalId(id) {
   commit({ editingGoalId: id });
 }
 
+export function setEditingProjectId(id) {
+  commit({ editingProjectId: id });
+}
+
+export function setEditingBillId(id) {
+  commit({ editingBillId: id });
+}
+
+export function setEditingExpenseId(id) {
+  commit({ editingExpenseId: id });
+}
+
+export function setEditingSavingsId(id) {
+  commit({ editingSavingsId: id });
+}
+
 export function setTasksSegment(segment) {
   commit({ tasksSegment: segment === 'routines' ? 'routines' : 'tasks' });
+}
+
+/** Tavoitenäkymän osio: 'goals' tai 'projects'. */
+export function setGoalsSegment(segment) {
+  commit({ goalsSegment: segment === 'projects' ? 'projects' : 'goals' });
+}
+
+/** Talousnäkymän osio: 'bills', 'expenses' tai 'savings'. */
+export function setFinanceSegment(segment) {
+  const allowed = ['bills', 'expenses', 'savings'];
+  commit({ financeSegment: allowed.includes(segment) ? segment : 'bills' });
 }
 
 // ------------------------------------------------------------------ näkymä

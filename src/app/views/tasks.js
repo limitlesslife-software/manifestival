@@ -189,6 +189,41 @@ function readForm() {
   };
 }
 
+/**
+ * Pidä kestokenttä ja aikaväli yhtä mieltä.
+ *
+ * MITÄ TÄSSÄ OLI VIKANA
+ *
+ * Kenttä HIMMENNETTIIN kun alku- ja loppuaika olivat molemmat annettu,
+ * ja työkaluvihje lupasi että "kesto lasketaan alku- ja loppuajasta".
+ * Laskettua arvoa ei kuitenkaan koskaan kirjoitettu kenttään, joten
+ * himmennettyyn kenttään jäi näkyviin sen paikkamerkki — luku 30.
+ *
+ * Käyttäjä antoi 01:00 ja 02:00, ja kenttä näytti 30. Lupaus ja
+ * näkymä olivat eri mieltä, ja väärässä oli se joka näkyi.
+ *
+ * Nyt kenttä saa laskettuja arvon. Himmennys ja vihje kertovat MIKSI
+ * sitä ei voi muokata, ja luku kertoo mikä se on.
+ */
+function syncDurationField() {
+  const time = el('afTime').value;
+  const endTime = el('afEndTime').value;
+  const input = el('afDuration');
+  const hasRange = Boolean(time && endTime);
+
+  input.disabled = hasRange;
+  input.title = hasRange
+    ? 'Kesto lasketaan alku- ja loppuajasta'
+    : 'Kesto minuutteina, jos tarkkaa kellonaikaa ei ole';
+
+  // Väli on tosiasia, kestokenttä on arvio. Kun väli on olemassa,
+  // kenttä näyttää välin — ei omaa vanhaa arvoaan.
+  if (hasRange) {
+    const derived = durationOf({ time, endTime });
+    input.value = derived ? String(derived) : '';
+  }
+}
+
 function fillForm(task) {
   el('afTitle').value = task ? task.title : '';
   el('afDescription').value = task && task.description ? task.description : '';
@@ -200,6 +235,11 @@ function fillForm(task) {
   el('afCategory').value = task ? task.category : 'muu';
   el('afPriority').value = task ? task.priority : 'normaali';
   el('afIsWake').checked = Boolean(task && task.isWake);
+
+  // Kestokenttä johdetaan väleistä VASTA kun molemmat ajat on asetettu
+  // yllä. Ilman tätä kutsua avattu lomake näyttäisi vanhan arvon tai
+  // paikkamerkin, vaikka väli kertoisi muuta.
+  syncDurationField();
 
   selectGoal(task && task.goalId ? task.goalId : null);
 }
@@ -328,16 +368,17 @@ export function initTaskForm() {
     if (event.key === 'Escape') { event.preventDefault(); closeForm(); }
   });
 
-  // Alkuaika tekee kestokentästä tarpeettoman ja päinvastoin: kerrotaan se
-  // käyttäjälle himmentämällä se, jota ei juuri nyt käytetä.
-  const syncDurationState = () => {
-    const hasRange = Boolean(el('afTime').value && el('afEndTime').value);
-    el('afDuration').disabled = hasRange;
-    el('afDuration').title = hasRange
-      ? 'Kesto lasketaan alku- ja loppuajasta'
-      : 'Kesto minuutteina, jos tarkkaa kellonaikaa ei ole';
-  };
-  el('afTime').addEventListener('change', syncDurationState);
-  el('afEndTime').addEventListener('change', syncDurationState);
-  syncDurationState();
+  // Alkuaika tekee kestokentästä tarpeettoman ja päinvastoin. Kenttä
+  // himmennetään JA sen arvo johdetaan välistä; ks. syncDurationField.
+  //
+  // `input` eikä pelkkä `change`: aikakentän arvo muuttuu myös
+  // nuolinäppäimillä ja kelloikkunasta, eikä change laukea kaikissa
+  // selaimissa ennen kuin kenttä menettää kohdistuksen. Käyttäjä ehtisi
+  // siis nähdä vanhan luvun juuri siinä hetkessä, jossa hän tarkistaa
+  // sen.
+  for (const id of ['afTime', 'afEndTime']) {
+    el(id).addEventListener('change', syncDurationField);
+    el(id).addEventListener('input', syncDurationField);
+  }
+  syncDurationField();
 }

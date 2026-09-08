@@ -41,6 +41,7 @@
     <symbol id="i-chevron-left" viewBox="0 0 24 24"><path d="M15 5L8 12L15 19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-chevron-right" viewBox="0 0 24 24"><path d="M9 5L16 12L9 19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-trash" viewBox="0 0 24 24"><path d="M5 7H19" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M9 7V4.5C9 4 9.4 3.5 10 3.5H14C14.6 3.5 15 4 15 4.5V7" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M7 7L7.6 19C7.6 19.8 8.3 20.5 9.1 20.5H14.9C15.7 20.5 16.4 19.8 16.4 19L17 7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></symbol>
+    <symbol id="i-wallet" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2"/><rect x="3" y="7" width="18" height="12" rx="2"/><path d="M16 13h2"/></symbol>
     <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8.3" r="3.6" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M4.5 20C5.3 15.8 8.3 13.5 12 13.5C15.7 13.5 18.7 15.8 19.5 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
     <symbol id="i-moon" viewBox="0 0 24 24"><path d="M19.8 14.3A8.4 8.4 0 1 1 9.7 4.2A6.9 6.9 0 0 0 19.8 14.3Z" fill="currentColor"/></symbol>
   </defs>
@@ -197,7 +198,7 @@
             </div>
             <div>
               <label class="field-label" for="afDuration">Kesto (min)</label>
-              <input type="number" id="afDuration" min="1" max="1440" step="5" placeholder="30">
+              <input type="number" id="afDuration" min="1" max="1440" step="5" placeholder="esim. 45">
               <div class="field-error" id="afDurationError"></div>
             </div>
           </div>
@@ -315,6 +316,13 @@
       <div class="eyebrow">TAVOITTEET</div>
       <h1 class="title" style="margin-bottom:14px;">Miksi teet sitä mitä teet</h1>
 
+      <div class="segment" role="tablist" aria-label="Tavoitteet tai projektit">
+        <button class="segment-btn active" id="segmentGoals" type="button" role="tab" aria-selected="true">Tavoitteet</button>
+        <button class="segment-btn" id="segmentProjects" type="button" role="tab" aria-selected="false">Projektit</button>
+      </div>
+
+      <!-- ---- Tavoitteet ---- -->
+      <div id="goalsSection">
       <button class="add-row" id="addGoalBtn" type="button"><svg aria-hidden="true"><use href="#i-plus"/></svg>Lisää tavoite</button>
 
       <div class="add-form" id="goalForm" style="display:none;" role="group" aria-labelledby="goalFormTitle">
@@ -375,6 +383,248 @@
       </div>
 
       <div id="goalsListContainer"></div>
+      </div>
+
+      <!-- ---- Projektit ---- -->
+      <div id="projectsSection" style="display:none;">
+        <button class="add-row" id="addProjectBtn" type="button"><svg aria-hidden="true"><use href="#i-plus"/></svg>Lisää projekti</button>
+
+        <div class="add-form" id="projectForm" style="display:none;" role="group" aria-labelledby="projectFormTitle">
+          <div class="add-form-title" id="projectFormTitle">Uusi projekti</div>
+
+          <div>
+            <label class="field-label" for="prfName">Mikä projekti?</label>
+            <input type="text" id="prfName" placeholder="esim. Keittiöremontti" autocomplete="off">
+            <div class="field-error" id="prfNameError"></div>
+          </div>
+
+          <div>
+            <label class="field-label" for="prfDescription">Kuvaus (valinnainen)</label>
+            <textarea id="prfDescription" rows="2" placeholder="Mitä tähän kuuluu ja mitä ei"></textarea>
+          </div>
+
+          <div>
+            <label class="field-label" for="prfGoal">Liittyy tavoitteeseen</label>
+            <select id="prfGoal"></select>
+          </div>
+
+          <div class="form-row">
+            <div>
+              <label class="field-label" for="prfStartDate">Alkaa</label>
+              <input type="date" id="prfStartDate">
+              <div class="field-error" id="prfStartDateError"></div>
+            </div>
+            <div>
+              <label class="field-label" for="prfDeadline">Määräaika</label>
+              <input type="date" id="prfDeadline">
+              <div class="field-error" id="prfDeadlineError"></div>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div>
+              <label class="field-label" for="prfStatus">Tila</label>
+              <select id="prfStatus"></select>
+              <div class="field-error" id="prfStatusError"></div>
+            </div>
+            <div>
+              <label class="field-label" for="prfPriority">Prioriteetti</label>
+              <select id="prfPriority"></select>
+            </div>
+          </div>
+
+          <div>
+            <label class="field-label" for="prfCategory">Elämänalue</label>
+            <select id="prfCategory"></select>
+          </div>
+
+          <div class="form-actions">
+            <button class="form-btn danger" id="prfDelete" type="button" style="display:none;">Poista</button>
+            <button class="form-btn secondary" id="prfCancel" type="button">Peruuta</button>
+            <button class="form-btn primary" id="prfSave" type="button">Tallenna</button>
+          </div>
+        </div>
+
+        <div id="projectsListContainer"></div>
+      </div>
+    </section>
+
+    <!-- ============ TALOUS ============ -->
+    <section class="screen" id="screen-finance" role="tabpanel" aria-label="Talous" aria-hidden="true" inert>
+      <div class="eyebrow">TALOUS</div>
+      <h1 class="title" style="margin-bottom:14px;">Mihin raha menee</h1>
+
+      <div id="financeOverview"></div>
+
+      <div class="segment segment-3" role="tablist" aria-label="Talouden osiot">
+        <button class="segment-btn active" id="segmentBills" type="button" role="tab" aria-selected="true">Laskut</button>
+        <button class="segment-btn" id="segmentExpenses" type="button" role="tab" aria-selected="false">Toistuvat menot</button>
+        <button class="segment-btn" id="segmentSavings" type="button" role="tab" aria-selected="false">Säästötavoitteet</button>
+      </div>
+
+      <!-- ---- Laskut ---- -->
+      <div id="billsSection">
+        <button class="add-row" id="addBillBtn" type="button"><svg aria-hidden="true"><use href="#i-plus"/></svg>Lisää lasku</button>
+
+        <div class="add-form" id="billForm" style="display:none;" role="group" aria-labelledby="billFormTitle">
+          <div class="add-form-title" id="billFormTitle">Uusi lasku</div>
+
+          <div>
+            <label class="field-label" for="bfName">Mikä lasku?</label>
+            <input type="text" id="bfName" placeholder="esim. Sähkölasku" autocomplete="off">
+            <div class="field-error" id="bfNameError"></div>
+          </div>
+
+          <div class="form-row">
+            <div>
+              <label class="field-label" for="bfAmount">Summa</label>
+              <input type="text" id="bfAmount" inputmode="decimal" placeholder="esim. 45,50" autocomplete="off">
+              <div class="field-error" id="bfAmountMinorError"></div>
+            </div>
+            <div>
+              <label class="field-label" for="bfCurrency">Valuutta</label>
+              <select id="bfCurrency"></select>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div>
+              <label class="field-label" for="bfDueDate">Eräpäivä</label>
+              <input type="date" id="bfDueDate">
+              <div class="field-error" id="bfDueDateError"></div>
+            </div>
+            <div>
+              <label class="field-label" for="bfPaidDate">Maksettu</label>
+              <input type="date" id="bfPaidDate">
+              <div class="field-error" id="bfPaidDateError"></div>
+            </div>
+          </div>
+
+          <div>
+            <label class="field-label" for="bfExpense">Syntyi toistuvasta menosta</label>
+            <select id="bfExpense"></select>
+          </div>
+
+          <div>
+            <label class="field-label" for="bfNote">Muistiinpano (valinnainen)</label>
+            <input type="text" id="bfNote" placeholder="esim. viitenumero" autocomplete="off">
+          </div>
+
+          <div class="form-actions">
+            <button class="form-btn danger" id="bfDelete" type="button" style="display:none;">Poista</button>
+            <button class="form-btn secondary" id="bfCancel" type="button">Peruuta</button>
+            <button class="form-btn primary" id="bfSave" type="button">Tallenna</button>
+          </div>
+        </div>
+
+        <div id="billsListContainer"></div>
+      </div>
+
+      <!-- ---- Toistuvat menot ---- -->
+      <div id="expensesSection" style="display:none;">
+        <button class="add-row" id="addExpenseBtn" type="button"><svg aria-hidden="true"><use href="#i-plus"/></svg>Lisää toistuva meno</button>
+
+        <div class="add-form" id="expenseForm" style="display:none;" role="group" aria-labelledby="expenseFormTitle">
+          <div class="add-form-title" id="expenseFormTitle">Uusi toistuva meno</div>
+
+          <div>
+            <label class="field-label" for="efName">Mikä meno?</label>
+            <input type="text" id="efName" placeholder="esim. Vuokra" autocomplete="off">
+            <div class="field-error" id="efNameError"></div>
+          </div>
+
+          <div class="form-row">
+            <div>
+              <label class="field-label" for="efAmount">Summa</label>
+              <input type="text" id="efAmount" inputmode="decimal" placeholder="esim. 950,00" autocomplete="off">
+              <div class="field-error" id="efAmountMinorError"></div>
+            </div>
+            <div>
+              <label class="field-label" for="efCurrency">Valuutta</label>
+              <select id="efCurrency"></select>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div>
+              <label class="field-label" for="efCadence">Kuinka usein</label>
+              <select id="efCadence"></select>
+              <div class="field-error" id="efCadenceError"></div>
+            </div>
+            <div>
+              <label class="field-label" for="efNextDueDate">Seuraava eräpäivä</label>
+              <input type="date" id="efNextDueDate">
+              <div class="field-error" id="efNextDueDateError"></div>
+            </div>
+          </div>
+
+          <div>
+            <label class="field-label" for="efDayOfMonth">Kuukauden päivä (valinnainen)</label>
+            <input type="number" id="efDayOfMonth" min="1" max="31" step="1" placeholder="esim. 15">
+            <div class="field-error" id="efDayOfMonthError"></div>
+          </div>
+
+          <label class="checkbox-row" for="efActive">
+            <input type="checkbox" id="efActive" checked> Käytössä
+          </label>
+
+          <div class="form-actions">
+            <button class="form-btn danger" id="efDelete" type="button" style="display:none;">Poista</button>
+            <button class="form-btn secondary" id="efCancel" type="button">Peruuta</button>
+            <button class="form-btn primary" id="efSave" type="button">Tallenna</button>
+          </div>
+        </div>
+
+        <div id="expensesListContainer"></div>
+      </div>
+
+      <!-- ---- Säästötavoitteet ---- -->
+      <div id="savingsSection" style="display:none;">
+        <button class="add-row" id="addSavingsBtn" type="button"><svg aria-hidden="true"><use href="#i-plus"/></svg>Lisää säästötavoite</button>
+
+        <div class="add-form" id="savingsForm" style="display:none;" role="group" aria-labelledby="savingsFormTitle">
+          <div class="add-form-title" id="savingsFormTitle">Uusi säästötavoite</div>
+
+          <div>
+            <label class="field-label" for="sfName">Mitä varten säästät?</label>
+            <input type="text" id="sfName" placeholder="esim. Puskurirahasto" autocomplete="off">
+            <div class="field-error" id="sfNameError"></div>
+          </div>
+
+          <div class="form-row">
+            <div>
+              <label class="field-label" for="sfTarget">Tavoite</label>
+              <input type="text" id="sfTarget" inputmode="decimal" placeholder="esim. 3000" autocomplete="off">
+              <div class="field-error" id="sfTargetMinorError"></div>
+            </div>
+            <div>
+              <label class="field-label" for="sfCurrent">Kertynyt</label>
+              <input type="text" id="sfCurrent" inputmode="decimal" placeholder="esim. 250" autocomplete="off">
+              <div class="field-error" id="sfCurrentMinorError"></div>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div>
+              <label class="field-label" for="sfCurrency">Valuutta</label>
+              <select id="sfCurrency"></select>
+            </div>
+            <div>
+              <label class="field-label" for="sfTargetDate">Tavoitepäivä</label>
+              <input type="date" id="sfTargetDate">
+              <div class="field-error" id="sfTargetDateError"></div>
+            </div>
+          </div>
+
+          <div class="form-actions">
+            <button class="form-btn danger" id="sfDelete" type="button" style="display:none;">Poista</button>
+            <button class="form-btn secondary" id="sfCancel" type="button">Peruuta</button>
+            <button class="form-btn primary" id="sfSave" type="button">Tallenna</button>
+          </div>
+        </div>
+
+        <div id="savingsListContainer"></div>
+      </div>
     </section>
 
     <!-- ============ PROFIILI ============ -->
@@ -458,6 +708,7 @@
     <button class="tab-btn" type="button" role="tab" aria-selected="false" tabindex="-1" data-screen="screen-week"><svg class="icon" aria-hidden="true"><use href="#i-cal"/></svg>Viikko</button>
     <button class="tab-btn" type="button" role="tab" aria-selected="false" tabindex="-1" data-screen="screen-tasks"><svg class="icon" aria-hidden="true"><use href="#i-list"/></svg>Tekeminen</button>
     <button class="tab-btn" type="button" role="tab" aria-selected="false" tabindex="-1" data-screen="screen-goals"><svg class="icon" aria-hidden="true"><use href="#i-target"/></svg>Tavoitteet</button>
+    <button class="tab-btn" type="button" role="tab" aria-selected="false" tabindex="-1" data-screen="screen-finance"><svg class="icon" aria-hidden="true"><use href="#i-wallet"/></svg>Talous</button>
     <button class="tab-btn" type="button" role="tab" aria-selected="false" tabindex="-1" data-screen="screen-profile"><svg class="icon" aria-hidden="true"><use href="#i-user"/></svg>Profiili</button>
   </nav>
 

@@ -71,9 +71,26 @@ test('normalizeTask johtaa aikataulutuksen tilan ajasta', () => {
 });
 
 test('normalizeTask hylkää epäkelvon keston', () => {
-  assert.equal(normalizeTask({ ...base, durationMinutes: -5 }).durationMinutes, null);
-  assert.equal(normalizeTask({ ...base, durationMinutes: 'roska' }).durationMinutes, null);
-  assert.equal(normalizeTask({ ...base, durationMinutes: 45.4 }).durationMinutes, 45);
+  // ARVIOPOLKU: ilman loppuaikaa kestokenttä on käyttäjän oma arvio, ja
+  // vain silloin sen arvolla on merkitystä.
+  //
+  // `base` sisältää välin 09:00-10:00, joten sitä ei voi käyttää tähän:
+  // väli on kestolle ensisijainen lähde ja se ylikirjoittaisi arvion.
+  // Ks. tests/task-duration.test.mjs.
+  const arvio = { ...base, endTime: null };
+
+  assert.equal(normalizeTask({ ...arvio, durationMinutes: -5 }).durationMinutes, null);
+  assert.equal(normalizeTask({ ...arvio, durationMinutes: 'roska' }).durationMinutes, null);
+  assert.equal(normalizeTask({ ...arvio, durationMinutes: 45.4 }).durationMinutes, 45);
+});
+
+test('normalizeTask johtaa keston välistä, ei annetusta arvosta', () => {
+  // Sama tarkistus toisin päin: kun väli on olemassa, annettu kesto ei
+  // vaikuta mihinkään -- ei kelvollisena eikä kelvottomana.
+  for (const annettu of [30, -5, 'roska', null, 999]) {
+    assert.equal(normalizeTask({ ...base, durationMinutes: annettu }).durationMinutes, 60,
+      `annettu kesto ${String(annettu)} vaikutti väliin 09:00-10:00`);
+  }
 });
 
 // ------------------------------------------------------------- validointi

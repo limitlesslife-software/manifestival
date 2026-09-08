@@ -23,6 +23,11 @@ import { renderWeek, initWeekNavigation } from './views/week.js';
 import { renderTasks, initTaskForm, closeForm } from './views/tasks.js';
 import { initRoutineForm, closeRoutineForm } from './views/routines.js';
 import { renderGoals, initGoalForm, closeGoalForm } from './views/goals.js';
+import { renderProjects, initProjectForm, closeProjectForm } from './views/projects.js';
+import {
+  renderFinance, initFinanceForms,
+  closeBillForm, closeExpenseForm, closeSavingsForm
+} from './views/finance.js';
 import { renderProfile, initProfileForm, fillProfileForm } from './views/profile.js';
 import { renderNotificationSettings } from './views/notificationSettings.js';
 import { refreshNotificationPermission, syncNotifications } from './notifications.js';
@@ -59,6 +64,8 @@ function renderAll() {
   renderWeek();
   renderTasks();
   renderGoals();
+  renderProjects();
+  renderFinance();
   renderProfile();
   renderNotificationSettings();
 }
@@ -104,6 +111,10 @@ function onSignedOut() {
   closeForm();
   closeRoutineForm();
   closeGoalForm();
+  closeProjectForm();
+  closeBillForm();
+  closeExpenseForm();
+  closeSavingsForm();
   clearToasts();
 
   // Tyhjentää myös repositorioiden muistivarastot. Ilman tätä seuraava
@@ -123,6 +134,8 @@ async function start() {
   initTaskForm();
   initRoutineForm();
   initGoalForm();
+  initProjectForm();
+  initFinanceForms();
   initProfileForm();
   initVoice();
   initOnboarding();

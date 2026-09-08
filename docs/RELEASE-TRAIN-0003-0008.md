@@ -4,15 +4,30 @@
 
 Tämä on junan yleisohje. Aaltokohtaiset tarkistuslistat ovat erikseen:
 
-| Aalto | Portit | Cache | Pack |
-|---|---|---|---|
-| **A** | `notificationPreferences`, `wellbeing` | `v13` | [WAVE-A.md](acceptance/WAVE-A.md) |
-| **B** | `goals`, `projects` | `v14` | [WAVE-B.md](acceptance/WAVE-B.md) |
-| **C** | `routines`, `routineExceptions` | `v15` | [WAVE-C.md](acceptance/WAVE-C.md) |
-| **D** | `recurringExpenses`, `savingsGoals`, `bills` | `v16` | [WAVE-D.md](acceptance/WAVE-D.md) |
-| **E** | `aiAudit` | `v17` | [WAVE-E.md](acceptance/WAVE-E.md) |
+| Vaihe | Portit | Cache | Valmius | Pack |
+|---|---|---|---|---|
+| **Perustila** | ei yhtään | `v13` | **VALMIS** | [BASE-FIX.md](acceptance/BASE-FIX.md) |
+| **A** | `notificationPreferences`, `wellbeing` | `v14` | **VALMIS** | [WAVE-A.md](acceptance/WAVE-A.md) |
+| **B** | `goals`, `projects` | `v15` | **VALMIS** | [WAVE-B.md](acceptance/WAVE-B.md) |
+| **C** | `routines`, `routineExceptions` | `v16` | **VALMIS** | [WAVE-C.md](acceptance/WAVE-C.md) |
+| **D** | `recurringExpenses`, `savingsGoals`, `bills` | `v17` | **VALMIS** | [WAVE-D.md](acceptance/WAVE-D.md) |
+| **E** | `aiAudit` | `v18` | **VALMIS** | [WAVE-E.md](acceptance/WAVE-E.md) |
 
-Perustila: `63a96c5ab90b10a73369cd66e348f4a3774367e2`, `v12`, kaikki portit kiinni.
+Tuotannossa juuri nyt: `63a96c5ab90b10a73369cd66e348f4a3774367e2`, `v12`,
+kaikki portit kiinni.
+
+### Valmius johdetaan, ei kirjoiteta
+
+Aallon valmiustila lasketaan sen domainien käyttöliittymän
+tavoitettavuudesta (`tests/ui-reachability.test.mjs`). Aalto, jonka
+domainilta puuttuu käyttöliittymä, **ei voi** olla merkitty valmiiksi
+— testi kaatuu.
+
+Aiemmin B oli osittainen ja D estetty, koska projekteille ja
+taloudelle ei ollut näkymää lainkaan. Ne rakennettiin perustilaan, ja
+kaikki kymmenen domainia ovat nyt tavoitettavissa.
+
+Ks. `docs/UI-REACHABILITY.md`.
 
 Aaltojen commit-SHA:t: `activation-0003-0008-release-manifest.json`.
 
@@ -21,18 +36,30 @@ Aaltojen commit-SHA:t: `activation-0003-0008-release-manifest.json`.
 ## Juna on lineaarinen, ei yksi iso commit
 
 ```
-63a96c5  perustila, v12, 0/10 porttia
+63a96c5  tuotanto nyt, v12, 0/10 porttia
    |
-   +-- aalto A   v13   2/10
+   +-- PERUSTILAN KORJAUS   v13   0/10   <- kolme käyttäjän löytämää vikaa
    |
-   +-- aalto B   v14   4/10
+   +-- aalto A              v14   2/10
    |
-   +-- aalto C   v15   6/10
+   +-- aalto B              v15   4/10
    |
-   +-- aalto D   v16   9/10
+   +-- aalto C              v16   6/10
    |
-   +-- aalto E   v17   10/10
+   +-- aalto D              v17   9/10
+   |
+   +-- aalto E              v18   10/10
 ```
+
+**Perustila deployataan ensin, kaikki portit kiinni.** Se korjaa kolme
+vikaa, jotka käyttäjä löysi tuotannosta, ja tuo kaksi kokonaan uutta
+osiota — **Projektit** ja **Talous** — joille ei aiemmin ollut
+käyttöliittymää lainkaan.
+
+Uudet näkymät toimivat jo portit kiinni: tieto elää istunnon muistissa
+ja käyttöliittymä kertoo sen. Koko käyttöliittymä voidaan siis
+hyväksyä ennen kuin mitään aletaan tallentaa pysyvästi.
+Ks. `docs/acceptance/BASE-FIX.md`.
 
 Jokainen aalto on **itsenäisesti deployattava commit**. Ei squashia, ei
 merge-committeja, ei yhtä committia jossa kaikki portit ovat auki.
@@ -109,7 +136,8 @@ tuotannossa on uusi versio ilman uutta sisältöä tai päinvastoin.
 
 | Epäonnistuu | Palataan | SHA |
 |---|---|---|
-| A | perustila | `63a96c5` |
+| Perustilan korjaus | tuotannon nykyinen | `63a96c5` |
+| A | perustilan korjaus | ks. manifesti, `baseSha` |
 | B | aalto A | aallon A commit |
 | C | aalto B | aallon B commit |
 | D | aalto C | aallon C commit |
@@ -160,8 +188,8 @@ selain asentaa uudelleen ja hakee `SHELL`-listan `cache: 'reload'`
 Versionumerot ovat siis **monotonisia myös peruutuksessa**:
 
 ```
-v13 (A)  ->  peruutus  ->  v14
-v14 (B)  ->  peruutus  ->  v15
+v13 (perustilan korjaus)  ->  peruutus  ->  v14
+v14 (aalto A)             ->  peruutus  ->  v15
 ```
 
 Jos aalto B deployataan peruutuksen jälkeen uudelleen, se saa taas
@@ -245,20 +273,21 @@ APK:n web-assetit ovat **oma kopionsa** repositoriossa:
 android/app/src/main/assets/public/src/data/schema.js
 ```
 
-Tiedosto on **seurattu gitissä**, ja siinä on tällä hetkellä kaikki
-kymmenen porttia `false`. APK on siis jäädytetty perustilaan.
+Kopio **ei ole gitin seurannassa** (`android/.gitignore` listaa
+`app/src/main/assets/public`, eikä hakemistossa ole yhtään seurattua
+tiedostoa). Se on työpuun paikallinen tulos komennosta
+`npx cap sync android`.
 
-> Huom. `android/.gitignore` listaa `app/src/main/assets/public`, mutta
-> git ohittaa vain seuraamattomia tiedostoja. Nämä on kerran lisätty,
-> joten ne ovat seurattuja ja niiden muutokset **näkyvät** `git
-> status`issa ja diffeissä.
+APK on jäädytetty siihen tilaan, jossa se viimeksi rakennettiin: web-
+deploy ei muuta sitä.
 
 ### Androidia EI synkronoida junan aikana
 
-`npx cap sync android` kopioisi uuden `schema.js`:n APK:n assetteihin ja
-tuottaisi diffin `android/`-hakemistoon. Se rikkoisi aaltocommitin
-diffisäännön (yllä) ja sekoittaisi kaksi eri asiaa: web-aktivoinnin ja
-mobiilijulkaisun.
+Synkronointi ei tuota commitoitavaa muutosta — assetit ovat
+seuraamattomia — mutta se ei hyödytä mitään junan aikana: APK
+rakennetaan erikseen. `cap sync` kirjoittaa lisäksi kaksi
+gradle-tiedostoa uudelleen LF-rivinvaihdoin; sisältö ei muutu, ja ne
+palautetaan komennolla `git checkout -- android/`.
 
 **Aallot A–E eivät kosketa `android/`-hakemistoa lainkaan.**
 
@@ -293,8 +322,8 @@ Määrä pidetään pienimpänä mahdollisena.
 | A | 1 asetustallennus, 1 hyvinvointimerkintä |
 | B | 1 tavoite, 1 siihen liitetty projekti |
 | C | 1 rutiini, 1 poikkeus |
-| D | 1 toistuva kulu, 1 säästötavoite, 1 lasku |
-| E | ei mitään — kirjoituspolkua ei ole (ks. WAVE-E.md) |
+| D | 1 toistuva meno, 1 lasku, 1 säästötavoite |
+| E | ei mitään käsin — rivi syntyy AI-komennosta |
 
 ### Jäävätkö ne kantaan?
 
@@ -315,11 +344,12 @@ varmistuksen tarkistukset 01–03 vartioivat ettei niitä ole.
 
 | Komento | Odotus |
 |---|---|
-| `npm test` | 1498 läpi, 0 hylättyä |
+| `npm test` | 1596 läpi, 0 hylättyä |
 | `npm run check` | PASS |
 | `npm run smoke` | PASS (77) |
 | `npm run build:web` | PASS |
-| `npm run activation:preflight -- --wave=<X>` | PASS (30 tarkistusta) |
+| `npm run activation:preflight` | PASS — perustila, ilman parametria |
+| `npm run activation:preflight -- --wave=<X>` | PASS |
 
 Jokainen aaltocommitti ajaa kaikki nämä ennen committia.
 

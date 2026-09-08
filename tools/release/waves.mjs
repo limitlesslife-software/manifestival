@@ -45,13 +45,39 @@ export const ALL_GATES = Object.freeze([
 ]);
 
 /**
- * Perustila: tuotannon julkaisu, jossa kaikki kymmenen porttia ovat
- * kiinni. Tämä on koko junan lähtökohta ja aallon A peruutuskohde.
+ * Tuotannossa JUURI NYT oleva julkaisu.
+ *
+ * Kaikki kymmenen porttia kiinni. Tämä on se, mihin perustilan korjaus
+ * deployataan — ja se on korjauksen peruutuskohde, ei aaltojen.
+ */
+export const PRODUCTION = Object.freeze({
+  sha: '63a96c5ab90b10a73369cd66e348f4a3774367e2',
+  cacheVersion: 'v12'
+});
+
+/**
+ * Perustila: KORJATTU pohja, jolta juna lähtee.
+ *
+ * Tämä ei ole sama kuin tuotannossa juuri nyt oleva commit. Tuotannon
+ * `63a96c5` sisältää kolme käyttäjän löytämää vikaa:
+ *
+ *   1. kesto 01:00-02:00 näkyi lomakkeessa kolmenakymmenenä
+ *   2. hyvinvointiosio oli otsikon "Miten menee?" takana, eikä sanaa
+ *      hyvinvointi esiintynyt käyttöliittymässä lainkaan
+ *   3. AI-kirjausketjulla ei ollut kirjoituspolkua
+ *
+ * Perustilan korjaus deployataan ENSIN, kaikki kymmenen porttia yhä
+ * kiinni. Vasta sen jälkeen aallot. Näin porttien avaaminen ei sekoitu
+ * korjausten todentamiseen.
+ *
+ * `sha` on null: tämä tiedosto on osa sitä committia, joten se ei voi
+ * sisältää omaa tunnistettaan. Manifesti löytää sen
+ * `Release-Wave: BASE` -merkinnästä.
  */
 export const BASE = Object.freeze({
   id: 'BASE',
-  sha: '63a96c5ab90b10a73369cd66e348f4a3774367e2',
-  cacheVersion: 'v12',
+  sha: null,
+  cacheVersion: 'v13',
   gates: Object.freeze([])
 });
 
@@ -70,7 +96,8 @@ export const BASE = Object.freeze({
 export const WAVES = Object.freeze([
   Object.freeze({
     id: 'A',
-    cacheVersion: 'v13',
+    cacheVersion: 'v14',
+    readiness: 'READY',
     gates: Object.freeze(['notificationPreferences', 'wellbeing']),
     title: 'Muistutusasetukset ja hyvinvointi',
     rationale:
@@ -81,7 +108,8 @@ export const WAVES = Object.freeze([
   }),
   Object.freeze({
     id: 'B',
-    cacheVersion: 'v14',
+    cacheVersion: 'v15',
+    readiness: 'READY',
     gates: Object.freeze(['goals', 'projects']),
     title: 'Tavoitteet ja projektit',
     rationale:
@@ -91,7 +119,8 @@ export const WAVES = Object.freeze([
   }),
   Object.freeze({
     id: 'C',
-    cacheVersion: 'v15',
+    cacheVersion: 'v16',
+    readiness: 'READY',
     gates: Object.freeze(['routines', 'routineExceptions']),
     title: 'Rutiinit ja poikkeukset',
     rationale:
@@ -101,7 +130,8 @@ export const WAVES = Object.freeze([
   }),
   Object.freeze({
     id: 'D',
-    cacheVersion: 'v16',
+    cacheVersion: 'v17',
+    readiness: 'READY',
     gates: Object.freeze(['recurringExpenses', 'savingsGoals', 'bills']),
     title: 'Talous',
     rationale:
@@ -112,7 +142,8 @@ export const WAVES = Object.freeze([
   }),
   Object.freeze({
     id: 'E',
-    cacheVersion: 'v17',
+    cacheVersion: 'v18',
+    readiness: 'READY',
     gates: Object.freeze(['aiAudit']),
     title: 'AI-toimintojen kirjausketju',
     rationale:

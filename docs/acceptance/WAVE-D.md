@@ -2,8 +2,8 @@
 
 **Portit:** `recurringExpenses`, `savingsGoals`, `bills`
 **Taulut:** `recurring_expenses`, `savings_goals`, `bills`
-**Välimuistiversio:** `v16`
-**Edellinen tuotanto:** aallon C commit (v15)
+**Välimuistiversio:** `v17`
+**Edellinen tuotanto:** aallon C commit (v16)
 **Peruutuskohde:** aalto C
 
 Aallon commit-SHA: ks. `docs/activation-0003-0008-release-manifest.json`.
@@ -55,7 +55,7 @@ npm test && npm run check && npm run smoke && npm run build:web
 
 - [ ] Auki: aallot A + B + C + kolme talousporttia (yhdeksän)
 - [ ] Kiinni: `aiAudit`
-- [ ] `CACHE_VERSION` on `v16`
+- [ ] `CACHE_VERSION` on `v17`
 
 ### Diffin tarkistus
 
@@ -81,58 +81,82 @@ git push origin <WAVE-D-SHA>:main
 npm run production:verify-assets -- --wave=D
 ```
 
-- [ ] HTTP 200, `CACHE_VERSION` `v16`, yhdeksän porttia auki, `aiAudit` kiinni
+- [ ] HTTP 200, `CACHE_VERSION` `v17`, yhdeksän porttia auki, `aiAudit` kiinni
 
 ---
 
 ## 4. Selainhyväksyntä
 
-### Toistuvat kulut
+Polku: **Talous** (alapalkin välilehti) → kolme segmenttiä.
+
+- [ ] **Talous** löytyy alapalkista ilman ohjeita
+- [ ] Yleiskuva näkyy ylhäällä ja kertoo avoimet laskut, myöhässä olevat,
+      toistuvien menojen kuukausisumman ja säästötavoitteiden määrän
+- [ ] Tyhjä talous näyttää järkevän tyhjän tilan
+
+### Toistuvat menot
 
 - [ ] Luonti säilyy sivun latauksen yli
-- [ ] Summa tallentuu **senttiylleen** — syötä `12,34 €` ja tarkista että
+- [ ] Summa tallentuu **senttiylleen** — syötä `12,34` ja tarkista että
       kannassa on `1234`
-- [ ] Valuutta on `EUR`
-- [ ] Toistuvuus (kuukausittain / muu) tallentuu
+- [ ] **Pilkku ja piste** toimivat molemmat: `950,00` ja `950.00`
+- [ ] Kolmen desimaalin syöte (`12,345`) **hylätään näkyvästi**, ei
+      pyöristy hiljaa
+- [ ] Valuutta valitaan valikosta ja tallentuu
+- [ ] Jakso (kuukausittain / muu) tallentuu
 - [ ] Seuraava eräpäivä tallentuu
-- [ ] Aktiivisuuden kytkeminen pois ja takaisin säilyy
-- [ ] Poisto poistaa
+- [ ] Kuukauden päivä tallentuu ja tyhjä pysyy tyhjänä
+- [ ] **Käytöstä poisto** ja takaisin kytkeminen säilyvät
+- [ ] Poisto kysyy vahvistuksen ja poistaa
 
 ### Säästötavoitteet
 
 - [ ] Luonti säilyy
-- [ ] Tavoitesumma ja nykysumma tallentuvat sentteinä
-- [ ] Eteneminen näkyy oikein (nykysumma / tavoitesumma)
-- [ ] **Nykysumma nolla** — eteneminen on 0 %, ei virhe eikä NaN
-- [ ] **Nykysumma yli tavoitteen** — sovellus käsittelee sen hallitusti
-      (100 % tai yli, ei negatiivista eikä kaatumista)
+- [ ] Tavoitesumma ja kertynyt summa tallentuvat sentteinä
+- [ ] Edistymispalkki näkyy ja vastaa lukuja
+- [ ] **Kertynyt nolla** — edistyminen 0 %, ei virhe eikä NaN
+- [ ] **Kertynyt yli tavoitteen** — näkyy täytenä (100 %), ei yli
+- [ ] **Tavoitesumma nolla tai tyhjä** hylätään näkyvästi
 - [ ] Tavoitepäivä tallentuu, tyhjä pysyy tyhjänä
 
 ### Laskut
 
 - [ ] Luonti säilyy
-- [ ] Summa sentteinä, valuutta `EUR`
+- [ ] Summa sentteinä, valuutta valikosta
 - [ ] Eräpäivä tallentuu
-- [ ] **Merkitse maksetuksi** → tila `paid` ja maksupäivä täyttyy
+- [ ] **Merkitse maksetuksi** ruksista → tila `paid` ja maksupäivä täyttyy
 - [ ] **Peru maksumerkintä** → tila ei ole `paid` ja maksupäivä tyhjenee
-- [ ] Laskun liittäminen **toistuvaan kuluun** toimii ja säilyy
-- [ ] Laskun liittäminen **tehtävään** toimii ja säilyy
+- [ ] Myöhässä oleva avoin lasku näkyy erottuvasti
+- [ ] Laskun liittäminen **toistuvaan menoon** toimii ja säilyy
+- [ ] Liitoksen purku toimii
 
 ### SET NULL -tarkistukset — aallon D ydin
 
-- [ ] Luo toistuva kulu, luo siitä lasku, **poista toistuva kulu**
-      → **lasku jää olemaan**, sen kululiitos tyhjenee
-- [ ] Luo lasku ja liitä se tehtävään, **poista tehtävä**
-      → **lasku jää olemaan**, sen tehtäväliitos tyhjenee
+- [ ] Luo toistuva meno, luo lasku ja liitä se siihen,
+      **poista toistuva meno**
+      → **lasku jää olemaan**, sen menoliitos tyhjenee
+- [ ] Vahvistusikkuna kertoo montako laskua säilyy
 
 > Lasku on historiaa. Säännön poisto ei saa poistaa jo syntyneitä
 > laskuja — se hävittäisi maksutietoa.
 
 ### Ei odottamatonta generointia
 
-- [ ] Toistuvan kulun luonti **ei** luo laskuja itsestään
+- [ ] Toistuvan menon luonti **ei** luo laskuja itsestään
 - [ ] Sivun lataus **ei** luo laskuja
 - [ ] Tarkista tarkistus **49**: rivimäärä kasvaa vain sen verran kuin loit
+
+> Laskujen automaattinen generointi toistuvasta menosta **ei ole**
+> mallissa eikä sitä ole toteutettu. Jos sellainen joskus rakennetaan,
+> se on oma pakettinsa ja oma hyväksyntänsä.
+
+### Vähimmäisdata
+
+Luo hyväksynnässä **yksi toistuva meno, yksi lasku ja yksi
+säästötavoite** normaalin käyttöliittymän kautta. Ei SQL-lisäyksiä.
+
+Oikeaa dataa (oma vuokra, oikea lasku) ei tarvitse poistaa.
+Keinotekoinen poistetaan **käyttöliittymästä**, ei SQL:llä.
 
 ### Yleinen
 
@@ -187,7 +211,7 @@ Jokaisen on oltava `bigint`. Jos jokin on `numeric`, `real` tai
 
 ```
 git revert --no-edit <WAVE-D-SHA>
-# revert-commitissa: nosta CACHE_VERSION v16 -> v17
+# revert-commitissa: nosta CACHE_VERSION v17 -> v18
 git push origin HEAD:main
 ```
 

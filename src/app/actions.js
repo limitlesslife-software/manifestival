@@ -23,9 +23,16 @@ import {
   volatileCollections, clearAllCollections
 } from '../data/collectionsRepo.js';
 import { newTaskId } from '../lib/rows.js';
+import { fmtISO, todayMidnight } from '../lib/datetime.js';
 import { normalizeTask, validateTask, SCHEDULING } from '../domain/task.js';
 import { normalizeRoutine, validateRoutine, normalizeException, EXCEPTION } from '../domain/routine.js';
 import { normalizeGoal, validateGoal } from '../domain/goal.js';
+import { normalizeProject, validateProject } from '../domain/project.js';
+import {
+  normalizeBill, validateBill, normalizeRecurringExpense,
+  validateRecurringExpense, normalizeSavingsGoal, validateSavingsGoal,
+  BILL_STATUS
+} from '../domain/finance.js';
 import { normalizeWellbeingEntry, validateWellbeingEntry } from '../domain/wellbeing.js';
 import { volatileFields } from '../data/schema.js';
 import {
@@ -35,8 +42,15 @@ import {
   setRoutines, addRoutineToState, replaceRoutineInState, removeRoutineFromState, findRoutine,
   setRoutineExceptions, addRoutineExceptionToState, removeRoutineExceptionFromState,
   setGoals, addGoalToState, replaceGoalInState, removeGoalFromState, findGoal,
-  setProjects, setWellbeing, upsertWellbeingEntry, setNotificationPreferences,
-  setBills, setRecurringExpenses, setSavingsGoals, setAiAudit
+  setProjects, addProjectToState, replaceProjectInState, removeProjectFromState,
+  findProject,
+  setWellbeing, upsertWellbeingEntry, setNotificationPreferences,
+  setBills, addBillToState, replaceBillInState, removeBillFromState, findBill,
+  setRecurringExpenses, addRecurringExpenseToState, replaceRecurringExpenseInState,
+  removeRecurringExpenseFromState, findRecurringExpense,
+  setSavingsGoals, addSavingsGoalToState, replaceSavingsGoalInState,
+  removeSavingsGoalFromState, findSavingsGoal,
+  setAiAudit
 } from './state.js';
 import {
   loadPreferences as loadNotificationPreferences,
@@ -478,6 +492,323 @@ export async function deleteGoal(id) {
   }
 
   success('Tavoite poistettu.');
+  return true;
+}
+
+
+// --------------------------------------------------------------- projektit
+//
+// Sama kaava kuin tavoitteilla: optimistinen muutos tilaan, sitten
+// tallennus, ja EPÄONNISTUMISESSA tilan peruutus. Käyttöliittymä ei saa
+// jäädä näyttämään riviä, jota ei tallennettu.
+
+/** Luo projekti. */
+export async function createProject(input) {
+  const project = normalizeProject({ ...input, id: newTaskId() });
+
+  const { valid, errors } = validateProject(project);
+  if (!valid) return { ok: false, errors };
+
+  addProjectToState(project);
+  warnAboutVolatileCollections();
+
+  const result = await projectsRepo.insert(project);
+  if (!result.ok) {
+    removeProjectFromState(project.id); // peruutus
+    showError(result.error);
+    return { ok: false };
+  }
+  return { ok: true, project };
+}
+
+/** Muokkaa projektia. */
+export async function editProject(id, changes) {
+  const previous = findProject(id);
+  if (!previous) return { ok: false };
+
+  const updated = normalizeProject({ ...previous, ...changes, id });
+  const { valid, errors } = validateProject(updated);
+  if (!valid) return { ok: false, errors };
+
+  replaceProjectInState(id, updated);
+
+  const result = await projectsRepo.update(updated);
+  if (!result.ok) {
+    replaceProjectInState(id, previous); // peruutus
+    showError(result.error);
+    return { ok: false };
+  }
+  return { ok: true };
+}
+
+/**
+ * Poista projekti.
+ *
+ * Tehtäviä EI poisteta projektin mukana — niiden yhteys vain katkeaa.
+ * Sama sääntö kuin tavoitteilla ja sama kuin kannassa: viite on
+ * `on delete set null (project_id)`, ei cascade.
+ */
+export async function deleteProject(id) {
+  const project = findProject(id);
+  if (!project) return false;
+
+  const linked = getState().tasks.filter(task => task.projectId === id);
+  const confirmed = await confirmAction({
+    title: 'Poistetaanko projekti?',
+    message: linked.length
+      ? `"${project.name}" poistetaan. ${linked.length} tehtävää säilyy, mutta niiden yhteys projektiin katkeaa.`
+      : `"${project.name}" poistetaan pysyvästi.`,
+    confirmLabel: 'Poista',
+    cancelLabel: 'Peruuta',
+    destructive: true
+  });
+  if (!confirmed) return false;
+
+  removeProjectFromState(id);
+
+  const result = await projectsRepo.remove(id);
+  if (!result.ok) {
+    addProjectToState(project); // peruutus
+    showError(result.error);
+    return false;
+  }
+
+  success('Projekti poistettu.');
+  return true;
+}
+
+// ------------------------------------------------------------------ talous
+//
+// Kolme kokoelmaa, sama kaava. Raha kulkee SENTTEINÄ läpi koko ketjun:
+// lomake jäsentää syötteen `parseMoneyToMinor`-funktiolla, domain
+// normalisoi kokonaisluvuksi ja repositorio kirjoittaa
+// bigint-sarakkeeseen. Liukulukua ei ole missään vaiheessa.
+
+/** Luo toistuva meno. */
+export async function createRecurringExpense(input) {
+  const expense = normalizeRecurringExpense({ ...input, id: newTaskId() });
+
+  const { valid, errors } = validateRecurringExpense(expense);
+  if (!valid) return { ok: false, errors };
+
+  addRecurringExpenseToState(expense);
+  warnAboutVolatileCollections();
+
+  const result = await recurringExpensesRepo.insert(expense);
+  if (!result.ok) {
+    removeRecurringExpenseFromState(expense.id);
+    showError(result.error);
+    return { ok: false };
+  }
+  return { ok: true, expense };
+}
+
+/** Muokkaa toistuvaa menoa. */
+export async function editRecurringExpense(id, changes) {
+  const previous = findRecurringExpense(id);
+  if (!previous) return { ok: false };
+
+  const updated = normalizeRecurringExpense({ ...previous, ...changes, id });
+  const { valid, errors } = validateRecurringExpense(updated);
+  if (!valid) return { ok: false, errors };
+
+  replaceRecurringExpenseInState(id, updated);
+
+  const result = await recurringExpensesRepo.update(updated);
+  if (!result.ok) {
+    replaceRecurringExpenseInState(id, previous);
+    showError(result.error);
+    return { ok: false };
+  }
+  return { ok: true };
+}
+
+/**
+ * Poista toistuva meno.
+ *
+ * Laskut EIVÄT poistu mukana. Lasku on historiaa: se on jo erääntynyt ja
+ * mahdollisesti maksettu, eikä säännön poistaminen tee sitä
+ * tapahtumattomaksi. Kannassa sama sääntö on
+ * `on delete set null (recurring_expense_id)`.
+ */
+export async function deleteRecurringExpense(id) {
+  const expense = findRecurringExpense(id);
+  if (!expense) return false;
+
+  const linked = getState().bills.filter(bill => bill.recurringExpenseId === id);
+  const confirmed = await confirmAction({
+    title: 'Poistetaanko toistuva meno?',
+    message: linked.length
+      ? `"${expense.name}" poistetaan. ${linked.length} laskua säilyy, mutta niiden yhteys menoon katkeaa.`
+      : `"${expense.name}" poistetaan pysyvästi.`,
+    confirmLabel: 'Poista',
+    cancelLabel: 'Peruuta',
+    destructive: true
+  });
+  if (!confirmed) return false;
+
+  removeRecurringExpenseFromState(id);
+
+  const result = await recurringExpensesRepo.remove(id);
+  if (!result.ok) {
+    addRecurringExpenseToState(expense);
+    showError(result.error);
+    return false;
+  }
+
+  success('Toistuva meno poistettu.');
+  return true;
+}
+
+/** Luo lasku. */
+export async function createBill(input) {
+  const bill = normalizeBill({ ...input, id: newTaskId() });
+
+  const { valid, errors } = validateBill(bill);
+  if (!valid) return { ok: false, errors };
+
+  addBillToState(bill);
+  warnAboutVolatileCollections();
+
+  const result = await billsRepo.insert(bill);
+  if (!result.ok) {
+    removeBillFromState(bill.id);
+    showError(result.error);
+    return { ok: false };
+  }
+  return { ok: true, bill };
+}
+
+/** Muokkaa laskua. */
+export async function editBill(id, changes) {
+  const previous = findBill(id);
+  if (!previous) return { ok: false };
+
+  const updated = normalizeBill({ ...previous, ...changes, id });
+  const { valid, errors } = validateBill(updated);
+  if (!valid) return { ok: false, errors };
+
+  replaceBillInState(id, updated);
+
+  const result = await billsRepo.update(updated);
+  if (!result.ok) {
+    replaceBillInState(id, previous);
+    showError(result.error);
+    return { ok: false };
+  }
+  return { ok: true };
+}
+
+/**
+ * Merkitse lasku maksetuksi tai takaisin avoimeksi.
+ *
+ * Tila ja maksupäivä kulkevat YHDESSÄ. Kanta vaatii sen
+ * (`bills_paid_date_check`), ja `validateBill` vaatii saman — maksettu
+ * lasku ilman maksupäivää olisi tieto, joka ei kerro milloin.
+ */
+export async function setBillPaid(id, paid, paidDate = null) {
+  const bill = findBill(id);
+  if (!bill) return { ok: false };
+
+  if (!paid) {
+    return editBill(id, { status: BILL_STATUS.OPEN, paidDate: null });
+  }
+  return editBill(id, {
+    status: BILL_STATUS.PAID,
+    paidDate: paidDate || fmtISO(todayMidnight())
+  });
+}
+
+/** Poista lasku. */
+export async function deleteBill(id) {
+  const bill = findBill(id);
+  if (!bill) return false;
+
+  const confirmed = await confirmAction({
+    title: 'Poistetaanko lasku?',
+    message: `"${bill.name}" poistetaan pysyvästi.`,
+    confirmLabel: 'Poista',
+    cancelLabel: 'Peruuta',
+    destructive: true
+  });
+  if (!confirmed) return false;
+
+  removeBillFromState(id);
+
+  const result = await billsRepo.remove(id);
+  if (!result.ok) {
+    addBillToState(bill);
+    showError(result.error);
+    return false;
+  }
+
+  success('Lasku poistettu.');
+  return true;
+}
+
+/** Luo säästötavoite. */
+export async function createSavingsGoal(input) {
+  const goal = normalizeSavingsGoal({ ...input, id: newTaskId() });
+
+  const { valid, errors } = validateSavingsGoal(goal);
+  if (!valid) return { ok: false, errors };
+
+  addSavingsGoalToState(goal);
+  warnAboutVolatileCollections();
+
+  const result = await savingsGoalsRepo.insert(goal);
+  if (!result.ok) {
+    removeSavingsGoalFromState(goal.id);
+    showError(result.error);
+    return { ok: false };
+  }
+  return { ok: true, goal };
+}
+
+/** Muokkaa säästötavoitetta. */
+export async function editSavingsGoal(id, changes) {
+  const previous = findSavingsGoal(id);
+  if (!previous) return { ok: false };
+
+  const updated = normalizeSavingsGoal({ ...previous, ...changes, id });
+  const { valid, errors } = validateSavingsGoal(updated);
+  if (!valid) return { ok: false, errors };
+
+  replaceSavingsGoalInState(id, updated);
+
+  const result = await savingsGoalsRepo.update(updated);
+  if (!result.ok) {
+    replaceSavingsGoalInState(id, previous);
+    showError(result.error);
+    return { ok: false };
+  }
+  return { ok: true };
+}
+
+/** Poista säästötavoite. */
+export async function deleteSavingsGoal(id) {
+  const goal = findSavingsGoal(id);
+  if (!goal) return false;
+
+  const confirmed = await confirmAction({
+    title: 'Poistetaanko säästötavoite?',
+    message: `"${goal.name}" poistetaan pysyvästi.`,
+    confirmLabel: 'Poista',
+    cancelLabel: 'Peruuta',
+    destructive: true
+  });
+  if (!confirmed) return false;
+
+  removeSavingsGoalFromState(id);
+
+  const result = await savingsGoalsRepo.remove(id);
+  if (!result.ok) {
+    addSavingsGoalToState(goal);
+    showError(result.error);
+    return false;
+  }
+
+  success('Säästötavoite poistettu.');
   return true;
 }
 

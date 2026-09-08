@@ -60,8 +60,23 @@ export function durationOf(task) {
   if (task.time && task.endTime) {
     const start = toMinutes(task.time);
     const end = toMinutes(task.endTime);
-    const span = end > start ? end - start : (1440 - start) + end;
-    return span === 0 ? null : span;
+
+    // NOLLAN MITTAINEN VÄLI EI OLE KESTO.
+    //
+    // Tässä oli kuollut haara: `span === 0 ? null : span`. Se ei voinut
+    // koskaan toteutua, koska yhtä suurilla ajoilla `end > start` on
+    // epätosi ja kierto laski (1440 - start) + end = 1440. Sama alku- ja
+    // loppuaika tuotti siis vuorokauden mittaisen tehtävän — ja
+    // aikataulumoottorissa se olisi varannut koko päivän.
+    //
+    // `validateTask` hylkää yhtä suuret ajat, joten tila on kelvoton
+    // syöte eikä sitä pitäisi päästä tallentamaan. Se ei kuitenkaan ole
+    // syy tuottaa siitä väärää lukua: normalisointi ajetaan ennen
+    // validointia, ja kelvoton rivi voi tulla myös kannasta tai
+    // tuonnista.
+    if (start === end) return null;
+
+    return end > start ? end - start : (1440 - start) + end;
   }
   if (Number.isFinite(task.durationMinutes) && task.durationMinutes > 0) {
     return task.durationMinutes;
@@ -122,9 +137,36 @@ export function normalizeTask(input = {}) {
   const endTime = isTimeOfDay(input.endTime) ? input.endTime : null;
 
   const rawDuration = Number(input.durationMinutes);
-  const durationMinutes = Number.isFinite(rawDuration) && rawDuration > 0
+  const manualDuration = Number.isFinite(rawDuration) && rawDuration > 0
     ? Math.round(rawDuration)
     : null;
+
+  /**
+   * KESTOLLA ON YKSI TOTUUDEN LÄHDE.
+   *
+   * Alku- ja loppuaika ovat yhdessä VÄLI, ja väli on tosiasia: 01:00–02:00
+   * on kuusikymmentä minuuttia riippumatta siitä, mitä kestokenttään on
+   * joskus kirjoitettu. Erillinen kestokenttä on ARVIO, ja arviota
+   * tarvitaan vain silloin kun väliä ei ole.
+   *
+   * Aiemmin nämä kaksi elivät rinnakkain ilman sääntöä. `durationOf()`
+   * osasi valita välin, mutta tallennettu `durationMinutes` jäi
+   * koskemattomaksi — joten tehtävällä saattoi olla väli 01:00–02:00 ja
+   * kesto 30, eikä `validateTask` pitänyt sitä virheenä. Kumpi luku
+   * näkyi, riippui siitä kuka kysyi:
+   *
+   *   durationOf(task)        -> 60   (aikajanan pituus, ajoittaja)
+   *   task.durationMinutes    -> 30   (lomake, rutiiniesiintymät)
+   *
+   * Käyttäjä näki lomakkeessa 30 ja aikajanalla tunnin mittaisen lohkon.
+   * Kaksi näkymää samasta tehtävästä, eri luku kummassakin.
+   *
+   * Nyt johdos tehdään tässä, jolloin ristiriitaa ei voi enää syntyä:
+   * kentässä ja välissä on aina sama luku. Manuaalinen arvio säilyy
+   * sellaisenaan silloin — ja vain silloin — kun väliä ei ole.
+   */
+  const derivedDuration = (time && endTime) ? durationOf({ time, endTime }) : null;
+  const durationMinutes = derivedDuration ?? manualDuration;
 
   return {
     id: input.id != null ? String(input.id) : null,

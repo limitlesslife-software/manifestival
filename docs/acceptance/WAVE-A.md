@@ -2,9 +2,13 @@
 
 **Portit:** `notificationPreferences`, `wellbeing`
 **Taulut:** `notification_preferences`, `wellbeing_entries`
-**Välimuistiversio:** `v13`
-**Edellinen tuotanto:** `63a96c5ab90b10a73369cd66e348f4a3774367e2` (perustila, v12)
-**Peruutuskohde:** perustila `63a96c5`
+**Välimuistiversio:** `v14`
+**Edellinen tuotanto:** perustilan korjaus (v13)
+**Peruutuskohde:** perustilan korjaus
+
+> Aalto A ei lähde tuotannon nykyisestä commitista `63a96c5` vaan
+> **perustilan korjauksesta**, joka deployataan ensin kaikki portit
+> kiinni. Ks. `docs/acceptance/BASE-FIX.md`.
 
 Aallon commit-SHA: ks. `docs/activation-0003-0008-release-manifest.json`.
 
@@ -27,7 +31,7 @@ yksin — ennen kuin sen rinnalla on yhdeksän muuta muuttujaa.
 ## 1. Ennen deployta
 
 ```
-git rev-parse origin/main          # oltava perustila 63a96c5...
+git rev-parse origin/main          # oltava PERUSTILAN KORJAUKSEN SHA
 npm run activation:verify-wave -- A
 npm run activation:preflight -- --wave=A
 npm test
@@ -38,9 +42,9 @@ npm run build:web
 
 Odotus:
 
-- [ ] `origin/main` on `63a96c5ab90b10a73369cd66e348f4a3774367e2`
+- [ ] `origin/main` on perustilan korjauksen SHA (ks. manifesti)
 - [ ] Aallon todennus PASS: `notificationPreferences` ja `wellbeing` auki, **kahdeksan muuta kiinni**
-- [ ] `CACHE_VERSION` on `v13`
+- [ ] `CACHE_VERSION` on `v14`
 - [ ] Esitarkistus PASS
 - [ ] Testit 0 hylättyä
 - [ ] Työpuu puhdas
@@ -48,7 +52,7 @@ Odotus:
 ### Diffin tarkistus
 
 ```
-git diff 63a96c5..<WAVE-A-SHA> --stat
+git diff <BASE-FIX-SHA>..<WAVE-A-SHA> --stat
 ```
 
 Diffissä saa olla **vain**:
@@ -82,7 +86,7 @@ npm run production:verify-assets -- --wave=A
 Odotus:
 
 - [ ] HTTP 200
-- [ ] `CACHE_VERSION` on `v13`
+- [ ] `CACHE_VERSION` on `v14`
 - [ ] `notificationPreferences = true`, `wellbeing = true`
 - [ ] Kahdeksan muuta porttia `false`
 - [ ] `TASK_EXTENDED_FIELDS = true`
@@ -179,7 +183,7 @@ Supabasen SQL Editorissa **postgres-roolilla**, tässä järjestyksessä:
 
 ```
 git revert --no-edit <WAVE-A-SHA>
-# revert-commitissa: nosta CACHE_VERSION v13 -> v14
+# revert-commitissa: nosta CACHE_VERSION v14 -> v15
 git push origin HEAD:main
 ```
 

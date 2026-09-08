@@ -7,7 +7,8 @@ import { setScreen } from './state.js';
 import { setDevicePreference } from '../data/preferences.js';
 
 export const SCREENS = Object.freeze([
-  'screen-today', 'screen-week', 'screen-tasks', 'screen-goals', 'screen-profile'
+  'screen-today', 'screen-week', 'screen-tasks', 'screen-goals',
+  'screen-finance', 'screen-profile'
 ]);
 
 /**

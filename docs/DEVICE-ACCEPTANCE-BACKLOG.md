@@ -122,12 +122,18 @@ APK:n web-assetit ovat **oma kopionsa** repositoriossa:
 android/app/src/main/assets/public/src/data/schema.js
 ```
 
-Tiedosto on **seurattu gitissä** ja siinä on tällä hetkellä kaikki
-kymmenen porttia `false`.
+Tiedosto **ei ole gitin seurannassa**: `android/.gitignore` listaa
+`app/src/main/assets/public`, eikä hakemistossa ole yhtään seurattua
+tiedostoa (`git ls-files android/app/src/main/assets/` on tyhjä).
 
-> `android/.gitignore` listaa `app/src/main/assets/public`, mutta git
-> ohittaa vain seuraamattomia tiedostoja. Nämä on kerran lisätty, joten
-> ne ovat seurattuja ja niiden muutokset näkyvät `git status`issa.
+Se on työpuun paikallinen kopio, jonka `npx cap sync android` kirjoittaa
+`dist/`-hakemistosta. Tuoreessa kloonissa sitä ei ole lainkaan, ja
+`tests/android.test.mjs` ohittaa vertailunsa silloin.
+
+> Aiempi versio tästä dokumentista väitti tiedostojen olevan seurattuja.
+> Se oli väärin. Tarkistus tehtiin komennolla
+> `git ls-files ... && echo TRACKED`, ja `git ls-files` palauttaa nollan
+> myös silloin kun se ei tulosta mitään -- ehto oli siis aina tosi.
 
 ### Mitä tämä tarkoittaa
 
@@ -138,20 +144,26 @@ synkronoidaan ja APK käännetään uudelleen.
 Se on hyvä asia junan aikana: mobiili ei voi rikkoutua web-aktivoinnin
 takia, eikä kaksi julkaisukanavaa mene sekaisin.
 
-### Androidia EI synkronoida junan aikana
+### Androidia ei synkronoida junan aikana
 
-`npx cap sync android` tuottaisi diffin `android/`-hakemistoon ja
-rikkoisi aaltocommitin diffisäännön
-(`docs/RELEASE-TRAIN-0003-0008.md`, kohta "Diffin turvallisuus").
+Synkronointi ei tuota commitoitavaa muutosta -- assetit ovat
+seuraamattomia -- mutta se ei hyödytä mitään junan aikana: APK
+rakennetaan erikseen, ja välivaiheen synkronointi korvautuisi
+seuraavassa.
 
-**Aallot A–E eivät kosketa `android/`-hakemistoa lainkaan.**
+`npx cap sync android` kirjoittaa lisäksi kaksi gradle-tiedostoa
+uudelleen. Sisältö ei muutu, mutta rivinvaihdot vaihtuvat LF-muotoon ja
+ne näkyvät hetken `git status`issa. Palauta ne komennolla
+`git checkout -- android/`, jos et ole rakentamassa APK:ta.
+
+**Aallot A–E eivät kosketa `android/`-hakemistoa.**
 
 ### Synkronointijärjestys aallon E jälkeen
 
 ```
 1. npm run build:web            # kokoaa dist/, ei muunna eikä minifioi
 2. npx cap sync android         # kopioi dist/ APK:n assetteihin
-3. git diff --stat android/     # VAIN assets/public/ saa muuttua
+3. git status --porcelain android/   # vain gradle-rivinvaihdot, ei muuta
 4. commit omana committinaan
 5. cd android && gradlew.bat assembleDebug
 6. laitehyväksyntä tämän dokumentin mukaan

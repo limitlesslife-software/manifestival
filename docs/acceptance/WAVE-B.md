@@ -2,8 +2,8 @@
 
 **Portit:** `goals`, `projects`
 **Taulut:** `goals`, `projects`
-**Välimuistiversio:** `v14`
-**Edellinen tuotanto:** aallon A commit (v13)
+**Välimuistiversio:** `v15`
+**Edellinen tuotanto:** aallon A commit (v14)
 **Peruutuskohde:** aalto A
 
 Aallon commit-SHA: ks. `docs/activation-0003-0008-release-manifest.json`.
@@ -45,7 +45,7 @@ Odotus:
 - [ ] `origin/main` on aallon A commit
 - [ ] Auki: `notificationPreferences`, `wellbeing`, `goals`, `projects`
 - [ ] Kiinni: kuusi muuta
-- [ ] `CACHE_VERSION` on `v14`
+- [ ] `CACHE_VERSION` on `v15`
 - [ ] **Aallon A portit ovat yhä auki** — tämä on erillinen tarkistus, ei oletus
 
 ### Diffin tarkistus
@@ -72,7 +72,7 @@ git push origin <WAVE-B-SHA>:main
 npm run production:verify-assets -- --wave=B
 ```
 
-- [ ] HTTP 200, `CACHE_VERSION` `v14`
+- [ ] HTTP 200, `CACHE_VERSION` `v15`
 - [ ] Neljä porttia auki, kuusi kiinni
 - [ ] `TASK_EXTENDED_FIELDS = true`
 
@@ -92,20 +92,31 @@ npm run production:verify-assets -- --wave=B
 
 ### Projektit
 
-- [ ] Projektin luonti säilyy latauksen yli
+Polku: **Tavoitteet → Projektit** (segmentti tavoitteiden vieressä).
+
+- [ ] Segmentti **Projektit** löytyy Tavoitteet-välilehdeltä
+- [ ] Tyhjä tila näkyy järkevänä, ei rikkinäisenä paneelina
+- [ ] Projektin luonti onnistuu ja **säilyy sivun latauksen yli**
+- [ ] Nimen ja kuvauksen muokkaus säilyy
+- [ ] Tila (aktiivinen / valmis / …) vaihtuu ja säilyy
+- [ ] Prioriteetti ja elämänalue tallentuvat
+- [ ] Aloitus- ja määräaikapäivä tallentuvat, tyhjä pysyy tyhjänä
+- [ ] **Itsenäinen projekti** ilman tavoitetta onnistuu
 - [ ] Projektin liittäminen tavoitteeseen toimii
-- [ ] **Liitoksen purku** toimii — projekti jää olemaan, tavoite jää olemaan
+- [ ] **Liitoksen purku** toimii — projekti jää, tavoite jää
+- [ ] Tavoitevalikossa näkyy **vain omat avoimet tavoitteet**
+- [ ] Projektin poisto kysyy vahvistuksen
 - [ ] Projektin poisto **ei poista** siihen liitettyä tavoitetta
 - [ ] Tavoitteen poisto **ei poista** siihen liitettyä projektia
-- [ ] Aloitus- ja päättymispäivä tallentuvat
+- [ ] Projektin edistyminen näkyy liitettyjen tehtävien mukaan
 
 ### Liitokset tehtäviin
 
 - [ ] Tehtävän liittäminen tavoitteeseen toimii ja säilyy
-- [ ] Tehtävän liittäminen projektiin toimii ja säilyy
 - [ ] **Poista tavoite, johon on liitetty tehtävä** → tehtävä jää olemaan,
       sen tavoiteliitos tyhjenee. Tehtävä **ei saa kadota**
-- [ ] Sama projektille
+- [ ] **Poista projekti, johon on liitetty tehtävä** → sama: tehtävä jää,
+      liitos katkeaa
 
 > Tämä on aallon B tärkein yksittäinen tarkistus. Vierasavain on
 > `on delete set null (goal_id)` — sarakelistalla. Ilman sarakelistaa
@@ -134,6 +145,15 @@ npm run production:verify-assets -- --wave=B
 | 24 — viisi omistajan rivin avainta | PASS |
 | 50 — aallot rivimäärinä | INFO, muotoa `2 / 2 / 0 / 0 / 0` |
 
+### Vähimmäisdata
+
+Luo hyväksynnässä **yksi tavoite ja yksi siihen liitetty projekti**
+normaalin käyttöliittymän kautta. Ei SQL-lisäyksiä.
+
+Jos ne ovat oikeaa dataa — tavoite jota oikeasti tavoittelet — jätä ne
+paikoilleen. Jos ne ovat keinotekoisia, poista ne **sovelluksen
+käyttöliittymästä**, älä SQL:llä.
+
 Jos tarkistus **32** epäonnistuu, jokin rivi on kiinnitetty toisen
 käyttäjän riviin tai riviin jota ei ole. **Peruuta heti.**
 
@@ -153,7 +173,7 @@ käyttäjän riviin tai riviin jota ei ole. **Peruuta heti.**
 
 ```
 git revert --no-edit <WAVE-B-SHA>
-# revert-commitissa: nosta CACHE_VERSION v14 -> v15
+# revert-commitissa: nosta CACHE_VERSION v15 -> v16
 git push origin HEAD:main
 ```
 

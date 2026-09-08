@@ -31,8 +31,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import {
-  ALL_GATES, BASE, WAVES, cacheVersionOf, cumulativeGates, expectedMatrix,
-  rollbackTargetOf
+  ALL_GATES, BASE, PRODUCTION, WAVES, cacheVersionOf, cumulativeGates,
+  expectedMatrix, rollbackTargetOf
 } from './waves.mjs';
 import { gateDependencyMap } from './dependencies.mjs';
 import { parseCacheVersion, parseGates, parseTaskExtendedFields } from './state.mjs';
@@ -71,7 +71,7 @@ export function fileAtCommit(sha, relativePath) {
  *
  * @returns {object} aaltotunniste -> SHA
  */
-export function discoverWaveCommits(from = BASE.sha, to = 'HEAD') {
+export function discoverWaveCommits(from = PRODUCTION.sha, to = 'HEAD') {
   const shas = {};
   if (!gitAvailable()) return shas;
 
@@ -84,7 +84,7 @@ export function discoverWaveCommits(from = BASE.sha, to = 'HEAD') {
   for (const commit of commits) {
     const [sha, body] = commit.split(String.fromCharCode(31));
     if (!sha || !body) continue;
-    const match = /^Release-Wave:\s*([A-E])\s*$/m.exec(body);
+    const match = /^Release-Wave:\s*(BASE|[A-E])\s*$/m.exec(body);
     if (match) shas[match[1]] = sha.trim();
   }
   return shas;
@@ -115,13 +115,14 @@ export function buildManifest(shas = discoverWaveCommits()) {
       title: wave.title,
       commitSha: shas[wave.id] || null,
       cacheVersion: wave.cacheVersion,
+      readiness: wave.readiness,
       gatesEnabled: [...wave.gates],
       gatesCumulative: cumulative,
       gatesDisabled: ALL_GATES.filter(g => !cumulative.includes(g)),
       tables: [...wave.tables],
       dependencies: [...inherited].sort(),
       rollbackTarget,
-      rollbackSha: rollbackTarget === 'BASE' ? BASE.sha : (shas[rollbackTarget] || null),
+      rollbackSha: shas[rollbackTarget] || null,
       acceptancePack: `docs/acceptance/WAVE-${wave.id}.md`,
       requiredAcceptance: [
         `npm run activation:verify-wave -- ${wave.id}`,
@@ -135,10 +136,14 @@ export function buildManifest(shas = discoverWaveCommits()) {
   });
 
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     package: 'activation-0003-0008',
     productionUrl: PRODUCTION_URL,
-    baseSha: BASE.sha,
+    /** Tuotannossa juuri nyt. Perustilan korjauksen peruutuskohde. */
+    productionSha: PRODUCTION.sha,
+    productionCacheVersion: PRODUCTION.cacheVersion,
+    /** Korjattu pohja, jolta juna lähtee. Kaikki kymmenen porttia kiinni. */
+    baseSha: shas.BASE || null,
     baseCacheVersion: BASE.cacheVersion,
     gateDependencies: dependencies,
     waves
@@ -178,14 +183,21 @@ export function validateManifest(manifest, { checkGit = true } = {}) {
   const problems = [];
   if (!manifest || typeof manifest !== 'object') return ['manifestia ei voitu lukea'];
 
-  const expected = buildManifest(
+  const expected = buildManifest(Object.assign(
+    { BASE: manifest.baseSha || null },
     Object.fromEntries(WAVES.map(w => {
       const wave = (manifest.waves || []).find(x => x && x.id === w.id);
       return [w.id, wave ? wave.commitSha : null];
-    })));
+    }))));
 
-  if (manifest.baseSha !== BASE.sha) {
-    problems.push(`baseSha on ${manifest.baseSha}, odotettiin ${BASE.sha}`);
+  if (manifest.productionSha !== PRODUCTION.sha) {
+    problems.push(`productionSha on ${manifest.productionSha}, odotettiin ${PRODUCTION.sha}`);
+  }
+  if (manifest.productionCacheVersion !== PRODUCTION.cacheVersion) {
+    problems.push('productionCacheVersion ei vastaa tuotannon versiota');
+  }
+  if (manifest.baseSha !== null && !/^[0-9a-f]{40}$/.test(String(manifest.baseSha || ''))) {
+    problems.push(`baseSha ei ole 40 merkin SHA: ${manifest.baseSha}`);
   }
   if (manifest.baseCacheVersion !== BASE.cacheVersion) {
     problems.push(
@@ -193,6 +205,36 @@ export function validateManifest(manifest, { checkGit = true } = {}) {
   }
   if (manifest.productionUrl !== PRODUCTION_URL) {
     problems.push(`productionUrl on ${manifest.productionUrl}, odotettiin ${PRODUCTION_URL}`);
+  }
+
+  // PERUSTILAN KORJAUS TODENNETAAN SAMALLA TAVALLA KUIN AALLOT.
+  //
+  // Se on junan ensimmäinen deploy ja aallon A peruutuskohde, joten sen
+  // on oltava täsmälleen se mitä manifesti väittää: kaikki kymmenen
+  // porttia kiinni ja välimuistiversio v13.
+  if (checkGit && manifest.baseSha && gitAvailable()) {
+    const schema = fileAtCommit(manifest.baseSha, 'src/data/schema.js');
+    if (schema === null) {
+      problems.push(`perustilan committia ${manifest.baseSha} ei löydy historiasta`);
+    } else {
+      const gates = parseGates(schema);
+      if (!gates) problems.push('perustilan schema.js:n porttilohkoa ei voitu lukea');
+      else {
+        const auki = ALL_GATES.filter(gate => gates[gate]);
+        if (auki.length > 0) {
+          problems.push(`perustilassa on auki olevia portteja: ${auki.join(', ')}`);
+        }
+      }
+      if (!parseTaskExtendedFields(schema)) {
+        problems.push('perustilassa TASK_EXTENDED_FIELDS ei ole true');
+      }
+      const versio = parseCacheVersion(fileAtCommit(manifest.baseSha, 'sw.js') || '');
+      if (versio !== BASE.cacheVersion) {
+        problems.push(
+          `perustilan CACHE_VERSION on ${versio || 'lukematon'},`
+          + ` odotettiin ${BASE.cacheVersion}`);
+      }
+    }
   }
 
   const waves = Array.isArray(manifest.waves) ? manifest.waves : [];
@@ -210,7 +252,8 @@ export function validateManifest(manifest, { checkGit = true } = {}) {
       continue;
     }
 
-    for (const kentta of ['cacheVersion', 'rollbackTarget', 'acceptancePack', 'title']) {
+    for (const kentta of ['cacheVersion', 'rollbackTarget', 'acceptancePack',
+                          'title', 'readiness']) {
       if (wave[kentta] !== odotettu[kentta]) {
         problems.push(
           `${wave.id}.${kentta}: on ${JSON.stringify(wave[kentta])}, `
@@ -241,8 +284,8 @@ export function validateManifest(manifest, { checkGit = true } = {}) {
 
     // Peruutuskohteen SHA:n on vastattava sitä aaltoa, johon perutaan.
     if (wave.rollbackTarget === 'BASE') {
-      if (wave.rollbackSha !== BASE.sha) {
-        problems.push(`${wave.id}.rollbackSha ei ole perustilan SHA`);
+      if (wave.rollbackSha !== manifest.baseSha) {
+        problems.push(`${wave.id}.rollbackSha ei ole perustilan korjauksen SHA`);
       }
     } else {
       const kohde = waves.find(w => w.id === wave.rollbackTarget);

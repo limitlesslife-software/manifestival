@@ -2,8 +2,8 @@
 
 **Portti:** `aiAudit`
 **Taulu:** `ai_action_audit`
-**Välimuistiversio:** `v17`
-**Edellinen tuotanto:** aallon D commit (v16)
+**Välimuistiversio:** `v18`
+**Edellinen tuotanto:** aallon D commit (v17)
 **Peruutuskohde:** aalto D
 
 Aallon commit-SHA: ks. `docs/activation-0003-0008-release-manifest.json`.
@@ -60,7 +60,7 @@ npm test && npm run check && npm run smoke && npm run build:web
 
 - [ ] **Kaikki kymmenen porttia auki**
 - [ ] `TASK_EXTENDED_FIELDS` yhä `true`
-- [ ] `CACHE_VERSION` on `v17`
+- [ ] `CACHE_VERSION` on `v18`
 
 ### Diffin tarkistus
 
@@ -86,7 +86,7 @@ git push origin <WAVE-E-SHA>:main
 npm run production:verify-assets -- --wave=E
 ```
 
-- [ ] HTTP 200, `CACHE_VERSION` `v17`
+- [ ] HTTP 200, `CACHE_VERSION` `v18`
 - [ ] Kaikki kymmenen porttia `true`
 - [ ] `TASK_EXTENDED_FIELDS = true`
 
@@ -160,7 +160,7 @@ Nämä ovat voimassa jo nyt kannan CHECK-rajoitteina, ja
 
 ```
 git revert --no-edit <WAVE-E-SHA>
-# revert-commitissa: nosta CACHE_VERSION v17 -> v18
+# revert-commitissa: nosta CACHE_VERSION v18 -> v19
 git push origin HEAD:main
 ```
 
