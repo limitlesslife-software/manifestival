@@ -456,14 +456,113 @@
 
       <div id="financeOverview"></div>
 
-      <div class="segment segment-3" role="tablist" aria-label="Talouden osiot">
-        <button class="segment-btn active" id="segmentBills" type="button" role="tab" aria-selected="true">Laskut</button>
+      <div class="segment segment-scroll" role="tablist" aria-label="Talouden osiot">
+        <button class="segment-btn active" id="segmentOverview" type="button" role="tab" aria-selected="true">Yleiskuva</button>
+        <button class="segment-btn" id="segmentTransactions" type="button" role="tab" aria-selected="false">Tapahtumat</button>
+        <button class="segment-btn" id="segmentBudget" type="button" role="tab" aria-selected="false">Budjetti</button>
+        <button class="segment-btn" id="segmentBills" type="button" role="tab" aria-selected="false">Laskut</button>
         <button class="segment-btn" id="segmentExpenses" type="button" role="tab" aria-selected="false">Toistuvat menot</button>
         <button class="segment-btn" id="segmentSavings" type="button" role="tab" aria-selected="false">Säästötavoitteet</button>
+        <button class="segment-btn" id="segmentInvestments" type="button" role="tab" aria-selected="false">Sijoitukset</button>
+      </div>
+
+      <!-- ---- Yleiskuva ---- -->
+      <div id="overviewSection">
+        <div id="overviewContainer"></div>
+      </div>
+
+      <!-- ---- Tapahtumat ---- -->
+      <div id="transactionsSection" style="display:none;">
+        <div class="segment" role="tablist" aria-label="Kirjaustapa">
+          <button class="segment-btn active" id="txModeManual" type="button" role="tab" aria-selected="true">Kirjaa itse</button>
+          <button class="segment-btn" id="txModeScan" type="button" role="tab" aria-selected="false">Kuvasta</button>
+        </div>
+
+        <div id="txManualMode">
+          <button class="add-row" id="addExpenseTxBtn" type="button"><svg aria-hidden="true"><use href="#i-plus"/></svg>Kirjaa meno</button>
+          <button class="add-row" id="addIncomeTxBtn" type="button"><svg aria-hidden="true"><use href="#i-plus"/></svg>Kirjaa tulo</button>
+
+          <div class="add-form" id="transactionForm" style="display:none;" role="group" aria-labelledby="transactionFormTitle">
+            <div class="add-form-title" id="transactionFormTitle">Uusi meno</div>
+
+            <div class="form-row">
+              <div>
+                <label class="field-label" for="txAmount">Summa</label>
+                <input type="text" id="txAmount" inputmode="decimal" placeholder="esim. 24,90" autocomplete="off">
+                <div class="field-error" id="txAmountMinorError"></div>
+              </div>
+              <div>
+                <label class="field-label" for="txCurrency">Valuutta</label>
+                <select id="txCurrency"></select>
+              </div>
+            </div>
+
+            <div class="form-row">
+              <div>
+                <label class="field-label" for="txDate">Päivä</label>
+                <input type="date" id="txDate">
+                <div class="field-error" id="txDateError"></div>
+              </div>
+              <div>
+                <label class="field-label" for="txCategory">Luokka</label>
+                <select id="txCategory"></select>
+                <div class="field-error" id="txCategoryError"></div>
+              </div>
+            </div>
+
+            <div>
+              <label class="field-label" for="txDescription">Mistä oli kyse?</label>
+              <input type="text" id="txDescription" placeholder="esim. Ruokakauppa" autocomplete="off">
+            </div>
+
+            <div>
+              <label class="field-label" for="txNote">Muistiinpano (valinnainen)</label>
+              <input type="text" id="txNote" placeholder="esim. viikon ostokset" autocomplete="off">
+            </div>
+
+            <div class="form-actions">
+              <button class="form-btn danger" id="txDelete" type="button" style="display:none;">Poista</button>
+              <button class="form-btn secondary" id="txCancel" type="button">Peruuta</button>
+              <button class="form-btn primary" id="txSave" type="button">Tallenna</button>
+            </div>
+          </div>
+
+          <div id="transactionsListContainer"></div>
+        </div>
+
+        <div id="txScanMode" style="display:none;">
+          <div class="hint" id="receiptPrivacyNote">
+            Kuva luetaan kerran eikä sitä tallenneta minnekään. Luenta on
+            <strong>ehdotus</strong>: mitään ei kirjata ennen kuin
+            hyväksyt sen.
+          </div>
+
+          <div class="segment" role="tablist" aria-label="Mitä kuvassa on">
+            <button class="segment-btn active" id="scanKindReceipt" type="button" role="tab" aria-selected="true">Kuitti</button>
+            <button class="segment-btn" id="scanKindBill" type="button" role="tab" aria-selected="false">Lasku</button>
+          </div>
+
+          <button class="add-row" id="captureReceiptBtn" type="button"><svg aria-hidden="true"><use href="#i-plus"/></svg>Valitse tai ota kuva</button>
+
+          <!-- Tiedostovalitsin on piilotettu mutta EI display:none:lla:
+               osa selaimista ei avaa piilotettua valitsinta lainkaan.
+               capture-attribuutti avaa kameran puhelimessa; tietokoneella
+               se jää huomiotta ja valitsin toimii normaalisti. -->
+          <input type="file" id="receiptFileInput" accept="image/*" capture="environment"
+                 style="position:absolute; width:1px; height:1px; opacity:0; pointer-events:none;"
+                 aria-label="Kuitin tai laskun kuva">
+
+          <div id="receiptCaptureContainer"></div>
+        </div>
+      </div>
+
+      <!-- ---- Budjetti ---- -->
+      <div id="budgetSection" style="display:none;">
+        <div id="budgetContainer"></div>
       </div>
 
       <!-- ---- Laskut ---- -->
-      <div id="billsSection">
+      <div id="billsSection" style="display:none;">
         <button class="add-row" id="addBillBtn" type="button"><svg aria-hidden="true"><use href="#i-plus"/></svg>Lisää lasku</button>
 
         <div class="add-form" id="billForm" style="display:none;" role="group" aria-labelledby="billFormTitle">
@@ -505,9 +604,31 @@
             <select id="bfExpense"></select>
           </div>
 
+          <div class="add-form-title" style="margin-top:10px;">Maksutiedot</div>
+          <div class="hint" id="bfPaymentHint">
+            Nämä ovat tietoa, jota voit kopioida omaan pankkiisi.
+            Manifestival ei maksa laskuja eikä siirrä rahaa.
+          </div>
+
+          <div>
+            <label class="field-label" for="bfPayee">Saaja</label>
+            <input type="text" id="bfPayee" placeholder="esim. Sähköyhtiö Oy" autocomplete="off">
+          </div>
+
+          <div class="form-row">
+            <div>
+              <label class="field-label" for="bfIban">Tilinumero</label>
+              <input type="text" id="bfIban" placeholder="FI21 1234 5600 0007 85" autocomplete="off">
+            </div>
+            <div>
+              <label class="field-label" for="bfReference">Viite</label>
+              <input type="text" id="bfReference" placeholder="esim. 1234 56789" autocomplete="off">
+            </div>
+          </div>
+
           <div>
             <label class="field-label" for="bfNote">Muistiinpano (valinnainen)</label>
-            <input type="text" id="bfNote" placeholder="esim. viitenumero" autocomplete="off">
+            <input type="text" id="bfNote" placeholder="esim. mitä lasku koski" autocomplete="off">
           </div>
 
           <div class="form-actions">
@@ -623,7 +744,109 @@
           </div>
         </div>
 
+        <div class="add-form" id="savingsTransferForm" style="display:none;"
+             role="group" aria-labelledby="savingsTransferTitle">
+          <div class="add-form-title" id="savingsTransferTitle">Kirjaa siirto</div>
+
+          <div class="hint">
+            Tämä <strong>kirjaa</strong> siirron, jonka olet jo tehnyt omassa
+            pankissasi. Manifestival ei siirrä rahaa puolestasi.
+          </div>
+
+          <div>
+            <label class="field-label" for="stAmount">Paljonko siirsit?</label>
+            <input type="text" id="stAmount" inputmode="decimal" placeholder="esim. 50,00" autocomplete="off">
+            <div class="field-error" id="stAmountMinorError"></div>
+          </div>
+
+          <div>
+            <label class="field-label" for="stDate">Milloin</label>
+            <input type="date" id="stDate">
+          </div>
+
+          <div class="form-actions">
+            <button class="form-btn secondary" id="stCancel" type="button">Peruuta</button>
+            <button class="form-btn primary" id="stSave" type="button">Kirjaa siirto</button>
+          </div>
+        </div>
+
         <div id="savingsListContainer"></div>
+      </div>
+
+      <!-- ---- Sijoitukset ---- -->
+      <div id="investmentsSection" style="display:none;">
+        <div class="hint" id="investmentsDisclaimer">
+          Manifestival ei hae kursseja mistään eikä ole yhteydessä
+          välittäjään. Arvo on se, jonka kirjaat itse — ja jos arvoa ei
+          ole, se näkyy tuntemattomana eikä nollana.
+        </div>
+
+        <button class="add-row" id="addInvestmentBtn" type="button"><svg aria-hidden="true"><use href="#i-plus"/></svg>Lisää sijoitus</button>
+
+        <div class="add-form" id="investmentForm" style="display:none;" role="group" aria-labelledby="investmentFormTitle">
+          <div class="add-form-title" id="investmentFormTitle">Uusi sijoitus</div>
+
+          <div>
+            <label class="field-label" for="ifName">Mikä sijoitus?</label>
+            <input type="text" id="ifName" placeholder="esim. Maailma-indeksirahasto" autocomplete="off">
+            <div class="field-error" id="ifNameError"></div>
+          </div>
+
+          <div class="form-row">
+            <div>
+              <label class="field-label" for="ifKind">Laji</label>
+              <select id="ifKind"></select>
+              <div class="field-error" id="ifKindError"></div>
+            </div>
+            <div>
+              <label class="field-label" for="ifSymbol">Tunnus (valinnainen)</label>
+              <input type="text" id="ifSymbol" placeholder="esim. IWDA" autocomplete="off">
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div>
+              <label class="field-label" for="ifQuantity">Määrä (valinnainen)</label>
+              <input type="text" id="ifQuantity" inputmode="decimal" placeholder="esim. 12,5" autocomplete="off">
+              <div class="field-error" id="ifQuantityError"></div>
+            </div>
+            <div>
+              <label class="field-label" for="ifCurrency">Valuutta</label>
+              <select id="ifCurrency"></select>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div>
+              <label class="field-label" for="ifCostBasis">Hankintahinta</label>
+              <input type="text" id="ifCostBasis" inputmode="decimal" placeholder="esim. 2500" autocomplete="off">
+              <div class="field-error" id="ifCostBasisMinorError"></div>
+            </div>
+            <div>
+              <label class="field-label" for="ifCurrentValue">Arvo nyt</label>
+              <input type="text" id="ifCurrentValue" inputmode="decimal" placeholder="jätä tyhjäksi jos et tiedä" autocomplete="off">
+              <div class="field-error" id="ifCurrentValueMinorError"></div>
+            </div>
+          </div>
+
+          <div>
+            <label class="field-label" for="ifValuedOn">Milloin arvo on kirjattu</label>
+            <input type="date" id="ifValuedOn">
+          </div>
+
+          <div>
+            <label class="field-label" for="ifNote">Muistiinpano (valinnainen)</label>
+            <input type="text" id="ifNote" placeholder="esim. kuukausisäästö" autocomplete="off">
+          </div>
+
+          <div class="form-actions">
+            <button class="form-btn danger" id="ifDelete" type="button" style="display:none;">Poista</button>
+            <button class="form-btn secondary" id="ifCancel" type="button">Peruuta</button>
+            <button class="form-btn primary" id="ifSave" type="button">Tallenna</button>
+          </div>
+        </div>
+
+        <div id="investmentsListContainer"></div>
       </div>
     </section>
 

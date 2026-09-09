@@ -54,7 +54,16 @@ export const EXPORTED_COLLECTIONS = Object.freeze([
   'wellbeing',
   'notificationPreferences',
   'profile',
-  'aiAudit'
+  'aiAudit',
+
+  // Talous 2.0. Nämä ovat käyttäjän omaa taloushistoriaa, ja vienti
+  // ilman niitä menettäisi sen hiljaa.
+  //
+  // KUITIN KUVAA EI OLE MISSÄÄN NÄISTÄ. Luenta on väliaikainen eikä se
+  // ole kokoelma lainkaan; hyväksytystä luennasta jää vain tapahtuma,
+  // jonka mallissa ei ole kuvakenttää. Ks. src/domain/receipts.js.
+  'transactions',
+  'investments'
 ]);
 
 /**

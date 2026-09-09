@@ -18,6 +18,9 @@ import {
   normalizeBill, normalizeRecurringExpense, normalizeSavingsGoal
 } from '../domain/finance.js';
 import { normalizeAuditEntry } from '../domain/audit.js';
+import { normalizeTransaction } from '../domain/transactions.js';
+import { normalizeHolding } from '../domain/investments.js';
+import { monthKey } from '../domain/budget.js';
 
 function initialState() {
   const today = todayMidnight();
@@ -44,6 +47,21 @@ function initialState() {
     bills: [],
     recurringExpenses: [],
     savingsGoals: [],
+    /**
+     * Tapahtumat: menot, tulot ja siirrot (Talous 2.0).
+     * Ei säily ennen migraatiota 0009.
+     */
+    transactions: [],
+    /** Sijoitukset (Talous 2.0). Ei säily ennen migraatiota 0009. */
+    investments: [],
+    /**
+     * Kuittiluenta, jota käyttäjä parhaillaan tarkistaa.
+     *
+     * TÄMÄ ON TARKOITUKSELLA VAIN TILASSA, EI KOSKAAN KANNASSA. Luenta
+     * elää siihen asti että se hyväksytään tai hylätään; hyväksynnästä
+     * syntyy tapahtuma, ja luenta katoaa. Kuvaa ei ole tässä lainkaan.
+     */
+    pendingExtraction: null,
     /** AI-toimintojen kirjausketju (WP13). Ei säily ennen migraatiota 0008. */
     aiAudit: [],
     viewDate: today,
@@ -58,10 +76,19 @@ function initialState() {
     editingBillId: null,
     editingExpenseId: null,
     editingSavingsId: null,
+    editingTransactionId: null,
+    editingInvestmentId: null,
     /** Tavoitenäkymän osio: 'goals' tai 'projects'. */
     goalsSegment: 'goals',
-    /** Talousnäkymän osio: 'bills', 'expenses' tai 'savings'. */
-    financeSegment: 'bills',
+    /** Talousnäkymän osio. Ks. FINANCE_SEGMENTS alla. */
+    financeSegment: 'overview',
+    /**
+     * Budjettinäkymän kuukausi 'YYYY-MM'.
+     *
+     * Oletus on kuluva kuukausi. Tämä on VALINTA, ei suodatin: kaikki
+     * tieto on tallessa, näkymä vain katsoo yhtä kuukautta kerrallaan.
+     */
+    budgetMonth: fmtISO(today).slice(0, 7),
     /** Tehtävänäkymän osio: 'tasks' tai 'routines'. */
     tasksSegment: 'tasks',
     /** Näkymä, joka on auki. */
@@ -348,6 +375,83 @@ export function findSavingsGoal(id) {
   return state.savingsGoals.find(g => g.id === id) || null;
 }
 
+// -------------------------------------------------------- tapahtumat
+//
+// Tapahtuma on yksi rahaliike: meno, tulo tai siirto. Sama muoto kuin
+// muillakin kokoelmilla.
+//
+// SUUNTA ON `kind`, EI ETUMERKKI. Summa on aina positiivinen.
+
+/** Aseta tapahtumat. */
+export function setTransactions(transactions) {
+  commit({ transactions: (transactions || []).map(normalizeTransaction) });
+}
+
+export function addTransactionToState(transaction) {
+  commit({ transactions: [...state.transactions, normalizeTransaction(transaction)] });
+}
+
+export function replaceTransactionInState(id, transaction) {
+  commit({
+    transactions: state.transactions.map(
+      t => (t.id === id ? normalizeTransaction(transaction) : t))
+  });
+}
+
+export function removeTransactionFromState(id) {
+  commit({ transactions: state.transactions.filter(t => t.id !== id) });
+}
+
+export function findTransaction(id) {
+  return state.transactions.find(t => t.id === id) || null;
+}
+
+// -------------------------------------------------------- sijoitukset
+
+/** Aseta sijoitukset. */
+export function setInvestments(holdings) {
+  commit({ investments: (holdings || []).map(normalizeHolding) });
+}
+
+export function addInvestmentToState(holding) {
+  commit({ investments: [...state.investments, normalizeHolding(holding)] });
+}
+
+export function replaceInvestmentInState(id, holding) {
+  commit({
+    investments: state.investments.map(
+      h => (h.id === id ? normalizeHolding(holding) : h))
+  });
+}
+
+export function removeInvestmentFromState(id) {
+  commit({ investments: state.investments.filter(h => h.id !== id) });
+}
+
+export function findInvestment(id) {
+  return state.investments.find(h => h.id === id) || null;
+}
+
+// ------------------------------------------------------- kuittiluenta
+//
+// TÄMÄ EI OLE KOKOELMA VAAN YKSI KESKEN OLEVA LUENTA.
+//
+// Luenta on väliaikainen: se odottaa käyttäjän tarkistusta. Sitä ei
+// tallenneta mihinkään eikä se säily sivun latauksen yli. Kun käyttäjä
+// hyväksyy sen, siitä syntyy tapahtuma tai lasku — ja luenta katoaa.
+//
+// Tässä ei ole eikä saa olla kuvaa. Ks. src/domain/receipts.js.
+
+/** Aseta tarkistusta odottava luenta. */
+export function setPendingExtraction(extraction) {
+  commit({ pendingExtraction: extraction || null });
+}
+
+/** Unohda kesken oleva luenta. Kutsutaan hyväksynnän ja hylkäyksen jälkeen. */
+export function clearPendingExtraction() {
+  commit({ pendingExtraction: null });
+}
+
 /** Aseta AI-kirjausketju. */
 export function setAiAudit(entries) {
   commit({ aiAudit: (entries || []).map(normalizeAuditEntry) });
@@ -388,6 +492,14 @@ export function setEditingSavingsId(id) {
   commit({ editingSavingsId: id });
 }
 
+export function setEditingTransactionId(id) {
+  commit({ editingTransactionId: id });
+}
+
+export function setEditingInvestmentId(id) {
+  commit({ editingInvestmentId: id });
+}
+
 export function setTasksSegment(segment) {
   commit({ tasksSegment: segment === 'routines' ? 'routines' : 'tasks' });
 }
@@ -397,11 +509,55 @@ export function setGoalsSegment(segment) {
   commit({ goalsSegment: segment === 'projects' ? 'projects' : 'goals' });
 }
 
-/** Talousnäkymän osio: 'bills', 'expenses' tai 'savings'. */
+/**
+ * Talousnäkymän osiot.
+ *
+ * Seitsemän osiota on paljon yhdelle riville puhelimessa, joten
+ * käyttöliittymä kelaa niitä vaakasuunnassa. Jaottelu on tekemisen
+ * mukaan eikä tietomallin: käyttäjä ei etsi "tapahtumataulua" vaan
+ * kysyy "mihin rahani meni".
+ */
+export const FINANCE_SEGMENTS = Object.freeze([
+  { key: 'overview', label: 'Yleiskuva' },
+  { key: 'transactions', label: 'Tapahtumat' },
+  { key: 'budget', label: 'Budjetti' },
+  { key: 'bills', label: 'Laskut' },
+  { key: 'expenses', label: 'Toistuvat' },
+  { key: 'savings', label: 'Säästöt' },
+  { key: 'investments', label: 'Sijoitukset' }
+]);
+
+const FINANCE_SEGMENT_KEYS = Object.freeze(FINANCE_SEGMENTS.map(s => s.key));
+
+/** Talousnäkymän osio. Tuntematon arvo palautuu yleiskuvaan. */
 export function setFinanceSegment(segment) {
-  const allowed = ['bills', 'expenses', 'savings'];
-  commit({ financeSegment: allowed.includes(segment) ? segment : 'bills' });
+  commit({
+    financeSegment: FINANCE_SEGMENT_KEYS.includes(segment) ? segment : 'overview'
+  });
 }
+
+/**
+ * Budjettinäkymän kuukausi.
+ *
+ * Kelvoton arvo jätetään huomiotta: väärä kuukausi näyttäisi tyhjää
+ * budjettia, ja tyhjä budjetti näyttää siltä kuin rahaa ei olisi
+ * liikkunut.
+ */
+export function setBudgetMonth(month) {
+  const valid = typeof month === 'string' && /^\d{4}-\d{2}$/.test(month);
+  if (!valid) return;
+  commit({ budgetMonth: month });
+}
+
+/** Siirry kuukausi eteen tai taakse. */
+export function shiftBudgetMonth(delta) {
+  const [year, month] = state.budgetMonth.split('-').map(Number);
+  const date = new Date(Date.UTC(year, month - 1 + delta, 1));
+  commit({ budgetMonth: date.toISOString().slice(0, 7) });
+}
+
+/** Kuukausitunniste päivästä. Sama toteutus kuin budjetissa. */
+export { monthKey };
 
 // ------------------------------------------------------------------ näkymä
 

@@ -35,16 +35,19 @@ import path from 'node:path';
 import { ROOT, read } from './helpers/sources.mjs';
 import { CLOSED_GATES, OPEN_GATES, repoForGate } from './helpers/gates.mjs';
 import { WAVES, describeMatrix, resolveWave } from '../tools/release/waves.mjs';
-import { TABLES, hasTable, pendingTables, isPersistent } from '../src/data/schema.js';
+import {
+  TABLES, hasTable, pendingTables, isPersistent, BILL_PAYMENT_FIELDS
+} from '../src/data/schema.js';
 import { ALL_REPOSITORIES, volatileCollections } from '../src/data/collectionsRepo.js';
 import * as prefsRepo from '../src/data/notificationPrefsRepo.js';
 
 const NEWLINE = String.fromCharCode(10);
 
-/** Kaikki kymmenen porttia, jotka odottavat aktivointia. */
+/** Kaikki kaksitoista porttia, jotka odottavat aktivointia. */
 const PORTIT = ['routines', 'routineExceptions', 'goals', 'projects',
                 'notificationPreferences', 'wellbeing',
-                'bills', 'recurringExpenses', 'savingsGoals', 'aiAudit'];
+                'bills', 'recurringExpenses', 'savingsGoals', 'aiAudit',
+                'transactions', 'investments'];
 
 // =====================================================================
 // PORTTIEN LÄHTÖTILA
@@ -57,8 +60,8 @@ test('KRIITTINEN: porttimatriisi on tasan yksi suunniteltu aalto', () => {
   // testi, joka kaatuu oikeasta tyosta, poistetaan ennen pitkaa
   // kokonaan.
   //
-  // Korvaava vaatimus on TIUKEMPI, ei loysempi. Kymmenen porttia
-  // tuottaa 1024 yhdistelmaa; niista tasan kuusi on suunniteltuja.
+  // Korvaava vaatimus on TIUKEMPI, ei loysempi. Kaksitoista porttia
+  // tuottaa 4096 yhdistelmaa; niista tasan seitseman on suunniteltuja.
   // Kaikki muut ovat virheita: portti on avattu liian aikaisin,
   // jaanyt avaamatta tai sulkeutunut vahingossa. Yksikaan niista ei
   // mene tasta lapi.
@@ -75,16 +78,16 @@ test('KRIITTINEN: porttien joukko vastaa migraatioiden tauluja', () => {
   // taulua, kaataisi jokaisen tallennuksen aktivoinnin jälkeen.
   const taulut = new Set();
   for (const nimi of fs.readdirSync(path.join(ROOT, 'supabase/migrations'))
-                       .filter(n => /^000[3-8]/.test(n))) {
+                       .filter(n => /^000[3-9]/.test(n))) {
     for (const m of read(`supabase/migrations/${nimi}`)
       .matchAll(/create table public\.(\w+)/g)) {
       taulut.add(m[1]);
     }
   }
 
-  assert.equal(taulut.size, 10,
-    `migraatiot 0003-0008 luovat ${taulut.size} taulua, portteja on ${PORTIT.length}`);
-  assert.equal(Object.keys(TABLES).length, 10,
+  assert.equal(taulut.size, 12,
+    `migraatiot 0003-0009 luovat ${taulut.size} taulua, portteja on ${PORTIT.length}`);
+  assert.equal(Object.keys(TABLES).length, 12,
     'porttien määrä ei vastaa migraatioiden taulujen määrää');
   assert.deepEqual(Object.keys(TABLES).sort(), [...PORTIT].sort());
 });
@@ -414,22 +417,32 @@ test('KRIITTINEN: aktivointijärjestys kunnioittaa vierasavainriippuvuuksia', ()
 const STATUS_DOC = 'docs/PRODUCTION-STATUS.md';
 const RUNBOOK = 'docs/ACTIVATION-0003-0008-RUNBOOK.md';
 
-test('KRIITTINEN: tilannedokumentti luettelee jokaisen migraation ajetuksi', () => {
+test('KRIITTINEN: tilannedokumentti luettelee jokaisen migraation', () => {
   const doc = read(STATUS_DOC);
 
   const migraatiot = fs.readdirSync(path.join(ROOT, 'supabase/migrations'))
     .filter(n => n.endsWith('.sql')).sort();
-  assert.equal(migraatiot.length, 8, `migraatioita on ${migraatiot.length}`);
+  assert.equal(migraatiot.length, 9, `migraatioita on ${migraatiot.length}`);
 
   for (const nimi of migraatiot) {
     assert.ok(doc.includes(nimi),
       `tilannedokumentti ei mainitse migraatiota ${nimi}`);
   }
 
-  // Ja jokainen on merkitty ajetuksi. Kahdeksan riviä, kahdeksan
-  // AJETTU-merkintää.
+  // KAHDEKSAN AJETTUA, YKSI AJAMATON.
+  //
+  // Migraatio 0009 (Talous 2.0) on suunniteltu mutta EI AJETTU. Jos
+  // tämä luku nousisi yhdeksään ilman että migraatio on todella
+  // ajettu, dokumentti väittäisi tuotannosta jotain mitä siellä ei
+  // ole -- ja porttien avaaminen sen perusteella kaataisi jokaisen
+  // kirjoituksen.
   assert.equal((doc.match(/\*\*AJETTU\*\*/g) || []).length, 8,
-    'tilannedokumentti ei merkitse kaikkia kahdeksaa ajetuksi');
+    'tilannedokumentti ei merkitse kahdeksaa ajetuksi');
+
+  const rivi0009 = doc.split(NEWLINE).find(r => r.includes('0009_finance_2.sql'));
+  assert.ok(rivi0009, 'tilannedokumentti ei mainitse migraatiota 0009');
+  assert.match(rivi0009, /EI AJETTU/,
+    'migraatio 0009 ei ole merkitty ajamattomaksi');
 });
 
 test('KRIITTINEN: tilannedokumentin porttitaulukko vastaa koodia', () => {
@@ -452,6 +465,14 @@ test('KRIITTINEN: tilannedokumentin porttitaulukko vastaa koodia', () => {
   const teRivi = doc.split(NEWLINE).find(r => r.includes('TASK_EXTENDED_FIELDS'));
   assert.ok(teRivi && /AKTIVOITU/.test(teRivi),
     'tilannedokumentti ei kerro TASK_EXTENDED_FIELDS-lipun olevan aktivoitu');
+
+  // BILL_PAYMENT_FIELDS on sarakeportti, ei taulu, joten se ei ole
+  // TABLES-oliossa. Se on silti portti, ja portti jota dokumentti ei
+  // mainitse on portti jonka tilaa kukaan ei tarkista.
+  const bpRivi = doc.split(NEWLINE).find(r => r.includes('BILL_PAYMENT_FIELDS'));
+  assert.ok(bpRivi, 'tilannedokumentti ei mainitse porttia BILL_PAYMENT_FIELDS');
+  assert.equal(/AKTIVOITU/.test(bpRivi), BILL_PAYMENT_FIELDS,
+    'BILL_PAYMENT_FIELDS: dokumentti ja koodi eivät ole yhtä mieltä');
 });
 
 test('KRIITTINEN: tilannedokumentti selittää vanhentuneen TILA-rivin', () => {

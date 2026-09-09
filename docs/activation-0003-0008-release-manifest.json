@@ -4,7 +4,7 @@
   "productionUrl": "https://manifestival-ten.vercel.app",
   "productionSha": "63a96c5ab90b10a73369cd66e348f4a3774367e2",
   "productionCacheVersion": "v12",
-  "baseSha": null,
+  "baseSha": "f78f60a3186b677e401f4499e38f85987d2a6c0c",
   "baseCacheVersion": "v13",
   "gateDependencies": {
     "routines": [
@@ -26,7 +26,9 @@
     ],
     "recurringExpenses": [],
     "savingsGoals": [],
-    "aiAudit": []
+    "aiAudit": [],
+    "transactions": [],
+    "investments": []
   },
   "waves": [
     {
@@ -51,7 +53,9 @@
         "bills",
         "recurringExpenses",
         "savingsGoals",
-        "aiAudit"
+        "aiAudit",
+        "transactions",
+        "investments"
       ],
       "tables": [
         "notification_preferences",
@@ -59,7 +63,7 @@
       ],
       "dependencies": [],
       "rollbackTarget": "BASE",
-      "rollbackSha": null,
+      "rollbackSha": "f78f60a3186b677e401f4499e38f85987d2a6c0c",
       "acceptancePack": "docs/acceptance/WAVE-A.md",
       "requiredAcceptance": [
         "npm run activation:verify-wave -- A",
@@ -92,7 +96,9 @@
         "bills",
         "recurringExpenses",
         "savingsGoals",
-        "aiAudit"
+        "aiAudit",
+        "transactions",
+        "investments"
       ],
       "tables": [
         "goals",
@@ -133,7 +139,9 @@
         "bills",
         "recurringExpenses",
         "savingsGoals",
-        "aiAudit"
+        "aiAudit",
+        "transactions",
+        "investments"
       ],
       "tables": [
         "routines",
@@ -177,7 +185,9 @@
         "bills"
       ],
       "gatesDisabled": [
-        "aiAudit"
+        "aiAudit",
+        "transactions",
+        "investments"
       ],
       "tables": [
         "recurring_expenses",
@@ -218,7 +228,10 @@
         "bills",
         "aiAudit"
       ],
-      "gatesDisabled": [],
+      "gatesDisabled": [
+        "transactions",
+        "investments"
+      ],
       "tables": [
         "ai_action_audit"
       ],
@@ -234,6 +247,48 @@
         "supabase/acceptance/verify_0003_0008_post_activation.sql"
       ],
       "rationale": "Ei vierasavaimia. Viimeisenä, koska se kirjaa muiden toimintaa — sen kannattaa olla käytössä vasta kun kirjattavaa on."
+    },
+    {
+      "id": "F",
+      "title": "Talous 2.0: tapahtumat ja sijoitukset",
+      "commitSha": null,
+      "cacheVersion": "v19",
+      "readiness": "READY",
+      "gatesEnabled": [
+        "transactions",
+        "investments"
+      ],
+      "gatesCumulative": [
+        "notificationPreferences",
+        "wellbeing",
+        "goals",
+        "projects",
+        "routines",
+        "routineExceptions",
+        "recurringExpenses",
+        "savingsGoals",
+        "bills",
+        "aiAudit",
+        "transactions",
+        "investments"
+      ],
+      "gatesDisabled": [],
+      "tables": [
+        "transactions",
+        "investments"
+      ],
+      "dependencies": [],
+      "rollbackTarget": "E",
+      "rollbackSha": null,
+      "acceptancePack": "docs/acceptance/WAVE-F.md",
+      "requiredAcceptance": [
+        "npm run activation:verify-wave -- F",
+        "npm run activation:preflight -- --wave=F",
+        "npm run production:verify-assets -- --wave=F",
+        "selainhyväksyntä: luonti, muokkaus, poisto, säilyvyys sivun latauksen yli",
+        "supabase/acceptance/verify_0003_0008_post_activation.sql"
+      ],
+      "rationale": "Kumpikaan taulu ei viittaa mihinkään sovellustauluun, joten riippuvuusjärjestys ei pakota tätä mihinkään kohtaan. Viimeisenä siksi, että se on ainoa aalto, jonka migraatiota ei ole ajettu — ja aalto jonka kanta puuttuu ei saa olla minkään toisen edellä."
     }
   ]
 }

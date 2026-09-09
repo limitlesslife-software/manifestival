@@ -105,8 +105,8 @@ function valeasiakas(vastaus = { data: [], error: null }) {
 // FIXTUURIT
 // =====================================================================
 //
-// Yksi kelvollinen domain-olio jokaiselle kymmenelle portille. Nämä
-// ovat se syöte, jolla tietokantapolku ajetaan portin auettua.
+// Yksi kelvollinen domain-olio jokaiselle kahdelletoista portille.
+// Nämä ovat se syöte, jolla tietokantapolku ajetaan portin auettua.
 
 const FIXTUURIT = Object.freeze({
   routines: {
@@ -125,7 +125,15 @@ const FIXTUURIT = Object.freeze({
     id: 'w-e-1', name: 'Vuokra', amountMinor: 95000, nextDueDate: '2026-10-01'
   },
   savingsGoals: { id: 'w-s-1', name: 'Puskuri', targetMinor: 300000 },
-  aiAudit: { id: 'w-a-1', intent: 'create_task', risk: 'medium' }
+  aiAudit: { id: 'w-a-1', intent: 'create_task', risk: 'medium' },
+  transactions: {
+    id: 'w-t-1', kind: 'expense', amountMinor: 1250, date: '2026-09-10',
+    category: 'ruoka', description: 'Ruokakauppa'
+  },
+  investments: {
+    id: 'w-i-1', name: 'Indeksirahasto', kind: 'fund', quantity: 12.5,
+    costBasisMinor: 250000
+  }
 });
 
 /** Repositorio porttiavaimella. */

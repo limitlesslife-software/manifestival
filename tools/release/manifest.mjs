@@ -217,7 +217,7 @@ export function validateManifest(manifest, { checkGit = true } = {}) {
     if (schema === null) {
       problems.push(`perustilan committia ${manifest.baseSha} ei löydy historiasta`);
     } else {
-      const gates = parseGates(schema);
+      const gates = parseGates(schema, { allowMissing: true });
       if (!gates) problems.push('perustilan schema.js:n porttilohkoa ei voitu lukea');
       else {
         const auki = ALL_GATES.filter(gate => gates[gate]);
@@ -306,7 +306,7 @@ export function validateManifest(manifest, { checkGit = true } = {}) {
       continue;
     }
 
-    const gates = parseGates(schema);
+    const gates = parseGates(schema, { allowMissing: true });
     if (!gates) {
       problems.push(`${wave.id}: commitin schema.js:n porttilohkoa ei voitu lukea`);
     } else {

@@ -27,7 +27,7 @@ import { PROJECT_STATUS } from '../src/domain/project.js';
 import { PRIORITIES } from '../src/domain/priority.js';
 import { SCALE_MIN, SCALE_MAX } from '../src/domain/wellbeing.js';
 import { DEFAULT_PREFERENCES } from '../src/domain/notification.js';
-import { TABLES, TASK_EXTENDED_FIELDS } from '../src/data/schema.js';
+import { TABLES, TASK_EXTENDED_FIELDS, BILL_PAYMENT_FIELDS } from '../src/data/schema.js';
 import { parseStatusDoc } from '../tools/release/state.mjs';
 import { routineExceptionsRepo } from '../src/data/collectionsRepo.js';
 import { normalizeException } from '../src/domain/routine.js';
@@ -224,7 +224,7 @@ test('uudet taulut viittaavat auth.users-tauluun poistoketjulla', () => {
 const KOVENNETUT = [
   '0003_routines.sql', '0004_goals_projects.sql',
   '0005_notification_preferences.sql', '0006_wellbeing.sql',
-  '0007_finance.sql', '0008_ai_audit.sql'
+  '0007_finance.sql', '0008_ai_audit.sql', '0009_finance_2.sql'
 ];
 
 /** Migraation suorittava osa: kommenttirivit pois. */
@@ -239,7 +239,7 @@ function allCode() {
   return migrationFiles().map(code).join(NEWLINE);
 }
 
-test('KRIITTINEN: taulusäännöt eivät ole tyhjiä — ne kattavat kymmenen taulua', () => {
+test('KRIITTINEN: taulusäännöt eivät ole tyhjiä — ne kattavat kaksitoista taulua', () => {
   // Tämä testi on olemassa yhtä vikaa varten: yllä olevat säännöt
   // etsivät tauluja hahmolla `create table public.X`. Jos hahmo ei
   // vastaa migraatioiden muotoa, jokainen sääntö käy läpi nolla taulua
@@ -252,9 +252,10 @@ test('KRIITTINEN: taulusäännöt eivät ole tyhjiä — ne kattavat kymmenen ta
     .map(m => m[1]).sort();
 
   assert.deepEqual(taulut, [
-    'ai_action_audit', 'bills', 'goals', 'notification_preferences',
-    'projects', 'recurring_expenses', 'routine_exceptions', 'routines',
-    'savings_goals', 'wellbeing_entries'
+    'ai_action_audit', 'bills', 'goals', 'investments',
+    'notification_preferences', 'projects', 'recurring_expenses',
+    'routine_exceptions', 'routines', 'savings_goals', 'transactions',
+    'wellbeing_entries'
   ], 'migraatioiden luomat taulut eivät vastaa odotusta');
 });
 
@@ -1549,10 +1550,14 @@ test('KRIITTINEN: loppuvarmistuksen luvut lasketaan migraatioista', () => {
   assert.equal(kaskadi.length, 1, 'kaskadoivien viitteiden määrä muuttui');
   assert.equal(loppuOdotus('nollaavaa viitetta rajaa nollauksen sarakkeeseen'), 8);
 
-  // Viisi omistajan rivin avainta. Osa on omana lauseenaan, osa taulun
-  // sisällä, joten molemmat muodot lasketaan.
+  // Viisi omistajan rivin avainta ERÄSSÄ 0003-0008. Osa on omana
+  // lauseenaan, osa taulun sisällä, joten molemmat muodot lasketaan.
+  //
+  // Rajaus on pakollinen: loppuvarmistus verify_0004_0008_final.sql
+  // kattaa nimenomaan tämän erän, ja myöhempi migraatio voi tuoda
+  // lisää avaimia rikkomatta mitään erässä.
   const avaimet = new Set(objektit.omistajaAvaimet);
-  for (const name of migrationFiles()) {
+  for (const name of migrationFiles().filter(nimi => /^000[3-8]/.test(nimi))) {
     for (const m of sql(name).matchAll(/add constraint (\w+_owner_row_key)/g)) {
       avaimet.add(m[1]);
     }
@@ -1560,6 +1565,22 @@ test('KRIITTINEN: loppuvarmistuksen luvut lasketaan migraatioista', () => {
   assert.equal(avaimet.size, 5,
     `omistajan rivin avaimia on ${avaimet.size}, odotettiin 5: ${[...avaimet].join(', ')}`);
   assert.equal(loppuOdotus('Viisi omistajan rivin avainta'), 5);
+
+  // ERÄN ULKOPUOLISET AVAIMET LUETELLAAN NIMELTÄ.
+  //
+  // Rajaus yllä poistaisi muuten kanarialinnun: uusi omistajan rivin
+  // avain missä tahansa migraatiossa menisi läpi huomaamatta. Tämä
+  // pitää hälytyksen voimassa — uusi avain kaataa tämän, ja se on
+  // oikea hetki tarkistaa, että myös sen oma varmistus kattaa sen.
+  const eranUlkopuoliset = new Set();
+  for (const name of migrationFiles().filter(nimi => !/^000[3-8]/.test(nimi))) {
+    for (const m of sql(name).matchAll(/add constraint (\w+_owner_row_key)/g)) {
+      eranUlkopuoliset.add(m[1]);
+    }
+  }
+  assert.deepEqual([...eranUlkopuoliset].sort(),
+    ['investments_owner_row_key', 'transactions_owner_row_key'],
+    'erän ulkopuolisten omistajan rivin avainten joukko muuttui');
 
   // Yhdeksän liipaisinta erässä: jokaiselle taululle jolla on
   // updated_at. Pois jää ai_action_audit — kirjaus ei muutu
@@ -2262,9 +2283,13 @@ test('KRIITTINEN: lopullisen varmistuksen odotusarvot vastaavat migraatioita', (
   assert.equal(odotus('authenticated-roolilla on tasan CRUD yhdessatoista taulussa'),
     11 * 4);
 
-  // Omistajan rivin avaimet: viisi, ja ne johdetaan migraatioista.
+  // Omistajan rivin avaimet: viisi ERÄSSÄ, ja ne johdetaan
+  // migraatioista. Rajaus on sama kuin muillakin luvuilla tässä
+  // testissä -- loppuvarmistus kattaa erän 0004-0008, ei myöhempiä
+  // migraatioita. Erän ulkopuoliset avaimet on lueteltu nimeltä
+  // testissä "loppuvarmistuksen luvut lasketaan migraatioista".
   const avaimet = new Set();
-  for (const nimi of migrationFiles()) {
+  for (const nimi of era) {
     for (const m of sql(nimi).matchAll(/constraint (\w+_owner_row_key) unique/g)) {
       avaimet.add(m[1]);
     }
@@ -2775,7 +2800,7 @@ test('varmistuskyselyt ovat vain lukevia', () => {
   // tiedostomäärä, jolloin uusi varmistus näytti puuttuvalta
   // migraatiolta.
   const migraatiokohtaiset = files.filter(name => /^verify_\d{4}\.sql$/.test(name));
-  assert.equal(migraatiokohtaiset.length, 8, 'yksi varmistustiedosto migraatiota kohti');
+  assert.equal(migraatiokohtaiset.length, 9, 'yksi varmistustiedosto migraatiota kohti');
 
   // supabase/acceptance elaa saman saannon alla. Se ei ole
   // migraatiokohtainen varmistus, joten se on eri hakemistossa, mutta se
@@ -4426,7 +4451,12 @@ test('KRIITTINEN: yksikään portti ei ole auki ilman ajettua migraatiota', () =
     notificationPreferences: '0005',
     wellbeing: '0006',
     bills: '0007', recurringExpenses: '0007', savingsGoals: '0007',
-    aiAudit: '0008'
+    aiAudit: '0008',
+    // Migraatio 0009 tuo kaksi taulua JA kolme saraketta bills-tauluun.
+    // Sarakeportti on erillinen, koska bills-taulu on olemassa jo
+    // 0007:sta: taulun portin avaaminen ei kerro mitään sarakkeista.
+    transactions: '0009', investments: '0009',
+    BILL_PAYMENT_FIELDS: '0009'
   };
 
   // KAKSI HYVAKSYTTYA LAHDETTA SILLE, ETTA MIGRAATIO ON AJETTU.
@@ -4461,7 +4491,7 @@ test('KRIITTINEN: yksikään portti ei ole auki ilman ajettua migraatiota', () =
     return otsikossa || dokumentissa;
   };
 
-  const portit = { TASK_EXTENDED_FIELDS, ...TABLES };
+  const portit = { TASK_EXTENDED_FIELDS, BILL_PAYMENT_FIELDS, ...TABLES };
 
   // Jokaisella portilla on migraatio, ja jokaisella migraatiolla 0002-0008
   // on vähintään yksi portti. Kumpikaan suunta ei saa jäädä auki.
@@ -4498,7 +4528,12 @@ test('KRIITTINEN: yksikään portti ei ole auki ilman ajettua migraatiota', () =
   assert.deepEqual(auki.sort(), dokumentinAuki.sort(),
     `schema.js sanoo auki: ${auki.join(', ') || 'ei yhtaan'};`
     + ` PRODUCTION-STATUS.md sanoo: ${dokumentinAuki.join(', ')}`);
-  assert.equal(Object.keys(portit).length, 11);
+  // Kaksitoista taulua + kaksi sarakeporttia (TASK_EXTENDED_FIELDS ja
+  // BILL_PAYMENT_FIELDS). Luku on käsin laskettu ja tarkoituksella:
+  // uuden portin lisääminen kaataa tämän, ja se on oikea hetki
+  // tarkistaa, että portti on myös tilannedokumentissa ja
+  // migraatiokartassa.
+  assert.equal(Object.keys(portit).length, 14);
 
   // Ja avatun portin migraatio on todella ajettu — sama sääntö kuin yllä,
   // mutta nimenomaisesti sille portille joka on auki.

@@ -112,6 +112,21 @@ function cleanText(value, maxLength) {
 // ------------------------------------------------------------------ lasku
 
 /**
+ * Siisti IBAN esitysmuotoon.
+ *
+ * Isoiksi kirjaimiksi, sallitut merkit vain kirjaimia, numeroita ja
+ * välejä. TARKISTUSSUMMAA EI LASKETA: väärä IBAN ei aiheuta täällä
+ * mitään vahinkoa, koska sovellus ei maksa mitään, ja liian tiukka
+ * tarkistus estäisi käyttäjää kirjaamasta ulkomaista tiliä jonka
+ * muotoa emme tunne.
+ */
+function normalizeIban(value) {
+  if (value === null || value === undefined) return null;
+  const cleaned = String(value).toUpperCase().replace(/[^A-Z0-9 ]/g, '').trim();
+  return cleaned ? cleaned.slice(0, 42) : null;
+}
+
+/**
  * Normalisoi lasku.
  *
  * Lasku on kertaluonteinen maksu, jolla on eräpäivä. Toistuva lasku on
@@ -135,6 +150,26 @@ export function normalizeBill(input = {}) {
     /** Mistä toistuvasta kulusta tämä syntyi, jos syntyi. */
     recurringExpenseId: input.recurringExpenseId != null
       ? String(input.recurringExpenseId) : null,
+
+    // --------------------------------------------------------------
+    // MAKSUTIEDOT
+    //
+    // Nämä ovat TIETOA, EIVÄT MAKSUKÄSKY. Manifestivalilla ei ole
+    // pankkiyhteyttä eikä valtuutta siirtää rahaa. IBAN ja viite ovat
+    // olemassa siksi, että käyttäjä voi kopioida ne omaan pankkiinsa —
+    // ei siksi, että sovellus tekisi maksun.
+    //
+    // Sarakkeet syntyvät migraatiossa 0009, jota ei ole ajettu.
+    // Ks. BILL_PAYMENT_FIELDS src/data/schema.js.
+    // --------------------------------------------------------------
+
+    /** Saaja. */
+    payee: cleanText(input.payee, 200),
+    /** Tilinumero. Isot kirjaimet, välit säilytetään luettavuuden vuoksi. */
+    iban: normalizeIban(input.iban),
+    /** Viitenumero tai viestikenttä. */
+    reference: cleanText(input.reference, 40),
+
     note: cleanText(input.note, 500),
     createdAt: input.createdAt ?? null,
     updatedAt: input.updatedAt ?? null
@@ -404,6 +439,93 @@ export function summarizeSavingsGoal(goal) {
     remainingMinor: remainingMinor(goal.currentMinor, goal.targetMinor),
     reached: goal.targetMinor !== null && goal.currentMinor >= goal.targetMinor
   };
+}
+
+// ------------------------------------------------------ saastosuunnittelu
+
+/**
+ * Kuukausierä, jolla tavoite saavutetaan määräpäivään mennessä.
+ *
+ * Palauttaa `null` kun laskeminen ei ole mielekästä:
+ *   - tavoitepäivää ei ole
+ *   - tavoite on jo täynnä
+ *   - määräpäivä on menneisyydessä
+ *
+ * `null` on rehellisempi kuin luku. Mennyt määräpäivä ei tarkoita
+ * ääretöntä kuukausierää vaan sitä, ettei kysymys ole enää voimassa.
+ */
+export function monthlyContributionMinor(goal, todayIso) {
+  if (!goal || !goal.targetDate || !isIsoDate(todayIso)) return null;
+
+  const remaining = remainingMinor(goal.currentMinor, goal.targetMinor);
+  if (remaining <= 0) return null;
+
+  const months = monthsBetween(todayIso, goal.targetDate);
+  if (months === null || months <= 0) return null;
+
+  return Math.ceil(remaining / months);
+}
+
+/**
+ * Kokonaisia kuukausia kahden paivan valilla, alaspain pyoristaen.
+ * Palauttaa negatiivisen jos loppu on ennen alkua.
+ */
+function monthsBetween(fromIso, toIso) {
+  if (!isIsoDate(fromIso) || !isIsoDate(toIso)) return null;
+  const [fy, fm, fd] = fromIso.split('-').map(Number);
+  const [ty, tm, td] = toIso.split('-').map(Number);
+  let months = (ty - fy) * 12 + (tm - fm);
+  if (td < fd) months -= 1;
+  return months;
+}
+
+/**
+ * Milloin tavoite tayttyy annetulla kuukausierälla?
+ *
+ * Palauttaa kuukausien maaran, tai `null` jos era on nolla tai
+ * negatiivinen -- silloin tavoite ei tayty koskaan, eika "ei koskaan"
+ * ole luku.
+ */
+export function monthsToReach(goal, monthlyMinor) {
+  if (!goal) return null;
+  const monthly = normalizeMinor(monthlyMinor);
+  if (monthly === null || monthly <= 0) return null;
+
+  const remaining = remainingMinor(goal.currentMinor, goal.targetMinor);
+  if (remaining <= 0) return 0;
+
+  return Math.ceil(remaining / monthly);
+}
+
+/**
+ * Onko tavoitepaiva jo mennyt ilman etta tavoite tayttyi?
+ *
+ * Tama ei ole virhe vaan tilanne, ja kayttoliittyman on sanottava se
+ * -- hiljaa ohitettu myohastyminen jattaa kayttajan luulemaan etta
+ * suunnitelma on yha voimassa.
+ */
+export function isSavingsGoalOverdue(goal, todayIso) {
+  if (!goal || !goal.targetDate || !isIsoDate(todayIso)) return false;
+  if (remainingMinor(goal.currentMinor, goal.targetMinor) <= 0) return false;
+  return goal.targetDate < todayIso;
+}
+
+/**
+ * Saastoehdotus ylijaamasta.
+ *
+ * TAMA ON EHDOTUS, EI SIIRTO. Manifestivalilla ei ole pankkiyhteytta
+ * eika se voi siirtaa rahaa. Se voi laskea, paljonko kuukaudesta jai
+ * yli, ja ehdottaa osaa siita saastoon -- siirron tekee kayttaja
+ * omassa pankissaan, ja kirjaa sen tanne itse.
+ *
+ * Osuus on maltillinen tarkoituksella: koko ylijaaman ehdottaminen
+ * jattaisi puskurin nollaan.
+ */
+export function suggestSavingsMinor(surplusMinorAmount, share = 0.5) {
+  const surplus = normalizeMinor(surplusMinorAmount);
+  if (surplus === null || surplus <= 0) return 0;
+  const ratio = Number.isFinite(share) && share > 0 && share <= 1 ? share : 0.5;
+  return Math.floor(surplus * ratio);
 }
 
 // -------------------------------------------------------- muistutukset

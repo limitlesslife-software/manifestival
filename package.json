@@ -5,7 +5,7 @@
   "description": "Manifestival - suunnittele elama, jota haluat elaa.",
   "scripts": {
     "test": "node --test",
-    "check": "node --check api/parse.js && node --check api/_validate.js",
+    "check": "node --check api/parse.js && node --check api/_validate.js && node --check api/extract.js && node --check api/_validateExtract.js",
     "serve": "node scripts/serve.mjs",
     "smoke": "node scripts/smoke.mjs",
     "build:web": "node scripts/build-web.mjs",

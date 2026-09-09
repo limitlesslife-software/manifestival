@@ -20,6 +20,7 @@ import * as profileRepo from '../data/profileRepo.js';
 import {
   routinesRepo, routineExceptionsRepo, goalsRepo, projectsRepo, wellbeingRepo,
   billsRepo, recurringExpensesRepo, savingsGoalsRepo, aiAuditRepo,
+  transactionsRepo, investmentsRepo,
   volatileCollections, clearAllCollections
 } from '../data/collectionsRepo.js';
 import { newTaskId } from '../lib/rows.js';
@@ -34,6 +35,17 @@ import {
   BILL_STATUS
 } from '../domain/finance.js';
 import { normalizeWellbeingEntry, validateWellbeingEntry } from '../domain/wellbeing.js';
+import {
+  normalizeTransaction, validateTransaction, transactionFromBill,
+  transactionFromSavings, hasTransactionFor, TRANSACTION_KIND,
+  TRANSACTION_ORIGIN, SOURCE_KIND
+} from '../domain/transactions.js';
+import { normalizeHolding, validateHolding } from '../domain/investments.js';
+import {
+  EXTRACTION_SUBJECT, validateExtraction, approveExtraction,
+  toTransaction as extractionToTransaction, toBill as extractionToBill
+} from '../domain/receipts.js';
+import { extractFromImage } from './receiptCapture.js';
 import { volatileFields } from '../data/schema.js';
 import {
   getState, findTask, addTaskToState, removeTaskFromState,
@@ -50,6 +62,11 @@ import {
   removeRecurringExpenseFromState, findRecurringExpense,
   setSavingsGoals, addSavingsGoalToState, replaceSavingsGoalInState,
   removeSavingsGoalFromState, findSavingsGoal,
+  setTransactions, addTransactionToState, replaceTransactionInState,
+  removeTransactionFromState, findTransaction,
+  setInvestments, addInvestmentToState, replaceInvestmentInState,
+  removeInvestmentFromState, findInvestment,
+  clearPendingExtraction, setPendingExtraction,
   setAiAudit
 } from './state.js';
 import {
@@ -110,7 +127,8 @@ export async function loadUserData() {
 
   const [tasksResult, profileResult, routinesResult, exceptionsResult,
     goalsResult, projectsResult, wellbeingResult, preferencesResult,
-    billsResult, expensesResult, savingsResult, auditResult] = await Promise.all([
+    billsResult, expensesResult, savingsResult, transactionsResult,
+    investmentsResult, auditResult] = await Promise.all([
     tasksRepo.listTasks(),
     profileRepo.loadProfile(),
     routinesRepo.list(),
@@ -122,6 +140,8 @@ export async function loadUserData() {
     billsRepo.list(),
     recurringExpensesRepo.list(),
     savingsGoalsRepo.list(),
+    transactionsRepo.list(),
+    investmentsRepo.list(),
     aiAuditRepo.list()
   ]);
 
@@ -153,6 +173,8 @@ export async function loadUserData() {
   setBills(billsResult.ok ? billsResult.value : []);
   setRecurringExpenses(expensesResult.ok ? expensesResult.value : []);
   setSavingsGoals(savingsResult.ok ? savingsResult.value : []);
+  setTransactions(transactionsResult.ok ? transactionsResult.value : []);
+  setInvestments(investmentsResult.ok ? investmentsResult.value : []);
   setAiAudit(auditResult.ok ? auditResult.value : []);
 
   return { tasksOk: tasksResult.ok, profileOk: profileResult.ok, discarded: false };
@@ -810,6 +832,355 @@ export async function deleteSavingsGoal(id) {
 
   success('Säästötavoite poistettu.');
   return true;
+}
+
+// ------------------------------------------------------------ tapahtumat
+//
+// Tapahtuma on kirjaus siitä, että raha liikkui. Se ei siirrä rahaa.
+//
+// MANIFESTIVALILLA EI OLE PANKKIYHTEYTTÄ. Yksikään tämän osion
+// toiminnoista ei maksa laskua, tee tilisiirtoa eikä osta mitään.
+// Ne kirjaavat, mitä käyttäjä kertoo tapahtuneen.
+
+/** Luo tapahtuma: meno, tulo tai siirto. */
+export async function createTransaction(input) {
+  const transaction = normalizeTransaction({ ...input, id: newTaskId() });
+
+  const { valid, errors } = validateTransaction(transaction);
+  if (!valid) return { ok: false, errors };
+
+  addTransactionToState(transaction);
+  warnAboutVolatileCollections();
+
+  const result = await transactionsRepo.insert(transaction);
+  if (!result.ok) {
+    removeTransactionFromState(transaction.id);
+    showError(result.error);
+    return { ok: false };
+  }
+  return { ok: true, transaction };
+}
+
+/**
+ * Kirjaa tulo.
+ *
+ * Sama taulu ja sama toiminto kuin menolla — vain `kind` eroaa. Erillinen
+ * tulotaulu tarkoittaisi kahta paikkaa laskea rahaa, ja kahdesta
+ * paikasta seuraa ennemmin tai myöhemmin kaksi eri vastausta samaan
+ * kysymykseen.
+ */
+export async function createIncome(input) {
+  return createTransaction({ ...input, kind: TRANSACTION_KIND.INCOME });
+}
+
+/** Muokkaa tapahtumaa. */
+export async function editTransaction(id, changes) {
+  const previous = findTransaction(id);
+  if (!previous) return { ok: false };
+
+  const updated = normalizeTransaction({ ...previous, ...changes, id });
+  const { valid, errors } = validateTransaction(updated);
+  if (!valid) return { ok: false, errors };
+
+  replaceTransactionInState(id, updated);
+
+  const result = await transactionsRepo.update(updated);
+  if (!result.ok) {
+    replaceTransactionInState(id, previous);
+    showError(result.error);
+    return { ok: false };
+  }
+  return { ok: true };
+}
+
+/**
+ * Poista tapahtuma.
+ *
+ * LÄHDETTÄ EI KOSKETA. Jos tapahtuma syntyi laskusta, laskun tila ei
+ * muutu takaisin avoimeksi: käyttäjä on saattanut maksaa laskun ja
+ * poistaa vain virheellisen kirjauksen. Laskun tilan päättää käyttäjä,
+ * ei tämän toiminnon sivuvaikutus.
+ */
+export async function deleteTransaction(id) {
+  const transaction = findTransaction(id);
+  if (!transaction) return false;
+
+  const confirmed = await confirmAction({
+    title: 'Poistetaanko tapahtuma?',
+    message: `"${transaction.description || 'Nimetön tapahtuma'}" poistetaan pysyvästi.`,
+    confirmLabel: 'Poista',
+    cancelLabel: 'Peruuta',
+    destructive: true
+  });
+  if (!confirmed) return false;
+
+  removeTransactionFromState(id);
+
+  const result = await transactionsRepo.remove(id);
+  if (!result.ok) {
+    addTransactionToState(transaction);
+    showError(result.error);
+    return false;
+  }
+
+  success('Tapahtuma poistettu.');
+  return true;
+}
+
+/**
+ * Merkitse lasku maksetuksi JA kirjaa siitä tapahtuma.
+ *
+ * KAKSOISLASKENNAN ESTO: jos laskusta on jo tapahtuma, uutta ei luoda.
+ * Muuten sama meno näkyisi budjetissa kahdesti — kerran laskuna ja
+ * kerran tapahtumana.
+ *
+ * Ehto on tarkistettava täällä eikä vasta kannassa: tapahtumataulussa
+ * ei ole eikä voi olla uniikkirajoitetta lähteelle, koska sama lasku
+ * voidaan perustellusti maksaa kahdessa erässä.
+ *
+ * Jos tapahtuman kirjaus epäonnistuu, LASKU JÄÄ MAKSETUKSI. Se on
+ * oikea järjestys: lasku on tosiasiassa maksettu, ja puuttuva kirjaus
+ * on pienempi virhe kuin väärä tieto laskun tilasta.
+ */
+export async function payBillWithTransaction(id, paidDate = null) {
+  const bill = findBill(id);
+  if (!bill) return { ok: false };
+
+  const date = paidDate || fmtISO(todayMidnight());
+
+  const paidResult = await setBillPaid(id, true, date);
+  if (!paidResult.ok) return paidResult;
+
+  const already = hasTransactionFor(getState().transactions, SOURCE_KIND.BILL, id);
+  if (already) return { ok: true, transaction: null, duplicate: true };
+
+  const transaction = transactionFromBill({ ...bill, paidDate: date }, newTaskId());
+  if (!transaction) return { ok: true, transaction: null };
+
+  const created = await createTransaction(transaction);
+  return { ok: true, transaction: created.transaction || null };
+}
+
+/**
+ * Kirjaa siirto säästötavoitteeseen.
+ *
+ * SIIRTO EI OLE MENO. Säästöön siirretty raha on yhä omaa, joten se ei
+ * pienennä kuukauden tulosta — `kind` on TRANSFER ja budjetti jättää
+ * sen laskuista pois.
+ *
+ * TÄMÄ EI SIIRRÄ RAHAA MISSÄÄN PANKISSA. Se kirjaa, että käyttäjä on
+ * siirtänyt sen itse, ja päivittää säästötavoitteen kertymän.
+ */
+export async function recordSavingsTransfer(goalId, amountMinor, dateIso = null) {
+  const goal = findSavingsGoal(goalId);
+  if (!goal) return { ok: false };
+
+  const date = dateIso || fmtISO(todayMidnight());
+  const transaction = transactionFromSavings(goal, amountMinor, date, newTaskId());
+  if (!transaction) return { ok: false, errors: { amountMinor: 'Anna siirrettävä summa.' } };
+
+  const created = await createTransaction(transaction);
+  if (!created.ok) return created;
+
+  // Kertymä kasvaa vasta kun kirjaus onnistui. Toisin päin näyttö
+  // väittäisi säästöä, josta ei ole merkintää.
+  const updated = await editSavingsGoal(goalId, {
+    currentMinor: (goal.currentMinor || 0) + transaction.amountMinor
+  });
+  if (!updated.ok) {
+    // Kertymän päivitys epäonnistui, joten kirjaus perutaan: kaksi
+    // lukua, jotka eivät täsmää, on pahempi kuin ei kirjausta.
+    removeTransactionFromState(created.transaction.id);
+    await transactionsRepo.remove(created.transaction.id);
+    return { ok: false };
+  }
+
+  return { ok: true, transaction: created.transaction };
+}
+
+// ----------------------------------------------------------- sijoitukset
+
+/** Luo sijoitus. */
+export async function createInvestment(input) {
+  const holding = normalizeHolding({ ...input, id: newTaskId() });
+
+  const { valid, errors } = validateHolding(holding);
+  if (!valid) return { ok: false, errors };
+
+  addInvestmentToState(holding);
+  warnAboutVolatileCollections();
+
+  const result = await investmentsRepo.insert(holding);
+  if (!result.ok) {
+    removeInvestmentFromState(holding.id);
+    showError(result.error);
+    return { ok: false };
+  }
+  return { ok: true, holding };
+}
+
+/** Muokkaa sijoitusta. */
+export async function editInvestment(id, changes) {
+  const previous = findInvestment(id);
+  if (!previous) return { ok: false };
+
+  const updated = normalizeHolding({ ...previous, ...changes, id });
+  const { valid, errors } = validateHolding(updated);
+  if (!valid) return { ok: false, errors };
+
+  replaceInvestmentInState(id, updated);
+
+  const result = await investmentsRepo.update(updated);
+  if (!result.ok) {
+    replaceInvestmentInState(id, previous);
+    showError(result.error);
+    return { ok: false };
+  }
+  return { ok: true };
+}
+
+/**
+ * Päivitä sijoituksen nykyarvo käsin.
+ *
+ * ARVO ON AINA KÄYTTÄJÄN KIRJAAMA. Manifestivalilla ei ole markkinadatan
+ * toimittajaa eikä se hae kursseja mistään. `valuedOn` merkitään, jotta
+ * käyttöliittymä voi kertoa milloin luku on kirjattu — vanha arvo ei ole
+ * väärä, mutta se on vanha.
+ */
+export async function updateInvestmentValue(id, currentValueMinor, valuedOn = null) {
+  return editInvestment(id, {
+    currentValueMinor,
+    valuedOn: valuedOn || fmtISO(todayMidnight()),
+    valueSource: 'manual'
+  });
+}
+
+/** Poista sijoitus. */
+export async function deleteInvestment(id) {
+  const holding = findInvestment(id);
+  if (!holding) return false;
+
+  const confirmed = await confirmAction({
+    title: 'Poistetaanko sijoitus?',
+    message: `"${holding.name}" poistetaan pysyvästi.`,
+    confirmLabel: 'Poista',
+    cancelLabel: 'Peruuta',
+    destructive: true
+  });
+  if (!confirmed) return false;
+
+  removeInvestmentFromState(id);
+
+  const result = await investmentsRepo.remove(id);
+  if (!result.ok) {
+    addInvestmentToState(holding);
+    showError(result.error);
+    return false;
+  }
+
+  success('Sijoitus poistettu.');
+  return true;
+}
+
+// --------------------------------------------------- kuitin hyväksyntä
+//
+// TEKOÄLYN LUENTA ON EHDOTUS. AINA.
+//
+// Yksikään näistä toiminnoista ei tallenna mitään ilman että käyttäjä
+// on nimenomaisesti hyväksynyt luennan. Automaattista hyväksyntää ei
+// ole eikä siihen ole polkua: `approveExtraction` on ainoa tapa saada
+// luenta tilaan APPROVED, ja `toTransaction` kieltäytyy kaikesta
+// muusta.
+//
+// KUVA EI TULE TÄNNE ASTI. Luennassa ei ole kuvakenttää, joten sitä ei
+// voi vahingossakaan tallentaa. Ks. src/domain/receipts.js.
+
+/**
+ * Lue kuva ja palauta luenta EHDOTUKSENA.
+ *
+ * TUNNISTE LUODAAN TÄÄLLÄ, EI NÄKYMÄSSÄ. Tunnisteen luonti on
+ * sivuvaikutus, ja sivuvaikutukset kuuluvat tälle kerrokselle —
+ * `tests/architecture.test.mjs` valvoo sitä.
+ *
+ * TÄMÄ EI TALLENNA MITÄÄN. Palautettu luenta menee tilaan
+ * tarkistettavaksi, ja vasta `approveReceipt` tai `approveScannedBill`
+ * kirjoittaa mitään. Kuva vapautetaan `extractFromImage`-funktiossa
+ * riippumatta lopputuloksesta.
+ */
+export async function scanImage({ file, subject }) {
+  const result = await extractFromImage({
+    file,
+    subject,
+    todayIso: fmtISO(todayMidnight()),
+    id: newTaskId()
+  });
+
+  if (result.ok) setPendingExtraction(result.extraction);
+  return result;
+}
+
+/**
+ * Hyväksy kuittiluenta ja kirjaa siitä tapahtuma.
+ *
+ * @param {object} extraction  Käyttäjän tarkistama luenta
+ */
+export async function approveReceipt(extraction) {
+  const { valid, errors } = validateExtraction(extraction);
+  if (!valid) return { ok: false, errors };
+
+  const approved = approveExtraction(extraction);
+  if (!approved) return { ok: false };
+
+  const transaction = extractionToTransaction(approved, newTaskId());
+  if (!transaction) return { ok: false };
+
+  const created = await createTransaction({
+    ...transaction,
+    origin: TRANSACTION_ORIGIN.RECEIPT
+  });
+  if (!created.ok) return created;
+
+  // Luenta on tehnyt tehtävänsä. Se ei jää mihinkään.
+  clearPendingExtraction();
+  success('Kuitti kirjattu.');
+  return { ok: true, transaction: created.transaction };
+}
+
+/**
+ * Hyväksy laskuluenta ja luo siitä lasku.
+ *
+ * SKANNATTU LASKU EI OLE MAKSETTU. Se syntyy tilaan `open`, ja
+ * maksaminen on erillinen, käyttäjän tekemä toimenpide.
+ * `toBill` pakottaa tilan riippumatta siitä, mitä luennassa luki.
+ *
+ * TÄMÄ EI KÄYNNISTÄ MAKSUA. Manifestivalilla ei ole valtuutta siirtää
+ * rahaa. IBAN ja viite kirjataan, jotta käyttäjä voi kopioida ne omaan
+ * pankkiinsa itse.
+ */
+export async function approveScannedBill(extraction) {
+  const { valid, errors } = validateExtraction(extraction);
+  if (!valid) return { ok: false, errors };
+
+  if (extraction.subject !== EXTRACTION_SUBJECT.BILL) return { ok: false };
+
+  const approved = approveExtraction(extraction);
+  if (!approved) return { ok: false };
+
+  const bill = extractionToBill(approved, newTaskId());
+  if (!bill) return { ok: false };
+
+  const created = await createBill(bill);
+  if (!created.ok) return created;
+
+  clearPendingExtraction();
+  success('Lasku tallennettu avoimena. Maksa se pankissasi.');
+  return { ok: true, bill: created.bill };
+}
+
+/** Hylkää luenta. Mitään ei tallenneta. */
+export function rejectExtractionAction() {
+  clearPendingExtraction();
+  return { ok: true };
 }
 
 

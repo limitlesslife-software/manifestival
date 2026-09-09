@@ -134,7 +134,7 @@ test('KRIITTINEN: peruutuskohde on aina edellinen aalto', () => {
 // SALLITUT TILAT — MUTAATIOTESTI
 // =====================================================================
 
-test('KRIITTINEN: resolveWave tunnistaa kuusi sallittua tilaa', () => {
+test('KRIITTINEN: resolveWave tunnistaa seitsemän sallittua tilaa', () => {
   for (const id of ['BASE', ...WAVE_IDS]) {
     assert.equal(resolveWave(expectedMatrix(id)), id,
       `aallon ${id} matriisia ei tunnistettu`);
@@ -142,13 +142,13 @@ test('KRIITTINEN: resolveWave tunnistaa kuusi sallittua tilaa', () => {
 });
 
 test('KRIITTINEN: yhdenkin portin poikkeama muuttaa tai mitätöi tilan', () => {
-  // TÄMÄ ON KOKO TYÖKALUN YDIN. Jos jokin muu kuin kuusi sallittua
+  // TÄMÄ ON KOKO TYÖKALUN YDIN. Jos jokin muu kuin seitsemän sallittua
   // matriisia menisi läpi, esitarkistus hyväksyisi tilan jota kukaan
   // ei suunnitellut — ja juuri sellainen tila on se, jossa portti on
   // avautunut vahingossa.
   //
   // Käydään läpi JOKAINEN sallittu tila ja JOKAINEN yhden portin
-  // käännös: 6 × 10 = 60 mutaatiota.
+  // käännös: 7 × 12 = 84 mutaatiota.
   //
   // HUOM. YKSI KÄÄNNÖS EI AINA TUOTA MITÄTÖNTÄ TILAA.
   //
@@ -187,7 +187,7 @@ test('KRIITTINEN: yhdenkin portin poikkeama muuttaa tai mitätöi tilan', () => 
     }
   }
 
-  assert.equal(mutaatioita, 60, `mutaatioita ajettiin ${mutaatioita}, odotettiin 60`);
+  assert.equal(mutaatioita, 84, `mutaatioita ajettiin ${mutaatioita}, odotettiin 84`);
 
   // Ainoat sallitut siirtymät ovat niiden aaltojen välillä, jotka
   // eroavat tasan yhdellä portilla. Jos tähän ilmestyisi uusi pari,
@@ -196,7 +196,10 @@ test('KRIITTINEN: yhdenkin portin poikkeama muuttaa tai mitätöi tilan', () => 
   assert.deepEqual(siirtymät.sort(),
     ['D->E (aiAudit)', 'E->D (aiAudit)'],
     `odottamattomia siirtymiä sallittujen tilojen välillä: ${siirtymät.join(', ')}`);
-  assert.equal(mitättömiä, 58);
+  // 84 mutaatiota, joista kaksi tuottaa toisen kelvollisen aallon
+  // (D<->E, jotka eroavat tasan yhdellä portilla). Aalto F avaa kaksi
+  // porttia, joten se ei tuota uutta yhden käännöksen siirtymää.
+  assert.equal(mitättömiä, 82);
 });
 
 test('KRIITTINEN: puuttuva tai ylimääräinen portti hylätään', () => {
@@ -312,7 +315,8 @@ test('KRIITTINEN: aallon taulut vastaavat sen portteja', () => {
     notification_preferences: 'notificationPreferences',
     wellbeing_entries: 'wellbeing', bills: 'bills',
     recurring_expenses: 'recurringExpenses', savings_goals: 'savingsGoals',
-    ai_action_audit: 'aiAudit'
+    ai_action_audit: 'aiAudit',
+    transactions: 'transactions', investments: 'investments'
   };
 
   for (const wave of WAVES) {

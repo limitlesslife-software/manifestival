@@ -35,7 +35,7 @@ export const REACH = Object.freeze({
 });
 
 /**
- * Kymmenen domainia ja se, miten käyttäjä pääsee niihin.
+ * Kaksitoista domainia ja se, miten käyttäjä pääsee niihin.
  *
  * `evidence` on koneellisesti tarkistettava todiste:
  *   html      id, jonka on oltava index.html:ssä
@@ -152,6 +152,29 @@ export const REACHABILITY = Object.freeze([
         + 'Kirjoituspolku puuttui kokonaan ja lisättiin: '
         + 'aiCommands.recordProposal ja completeAudit kirjoittavat nyt '
         + 'myös repositorioon. Selainta kirjausten lukemiseen ei ole.'
+  }),
+  Object.freeze({
+    gate: 'transactions',
+    reach: REACH.REACHABLE,
+    label: 'Tapahtumat',
+    nav: 'Talous -> Tapahtumat (segmentti)',
+    evidence: { html: 'transactionsListContainer', view: 'src/app/views/transactions.js' },
+    crud: 'luonti (meno, tulo, kuitista), luku, muokkaus, poisto',
+    note: 'Suunta tulee lajista eikä etumerkistä: summa on aina '
+        + 'positiivinen ja lomake avataan eri painikkeesta menolle ja '
+        + 'tulolle. Kuitista luettu tapahtuma vaatii käyttäjän '
+        + 'hyväksynnän eikä tallennu ilman sitä.'
+  }),
+  Object.freeze({
+    gate: 'investments',
+    reach: REACH.REACHABLE,
+    label: 'Sijoitukset',
+    nav: 'Talous -> Sijoitukset (segmentti)',
+    evidence: { html: 'investmentsListContainer', view: 'src/app/views/investments.js' },
+    crud: 'luonti, luku, muokkaus, poisto, arvon käsin päivitys',
+    note: 'Kursseja ei haeta mistään. Arvo on käyttäjän kirjaama tai '
+        + 'tuntematon, ja tuntematon näytetään tuntemattomana eikä '
+        + 'nollana. Vanhentunut arvo merkitään vanhaksi.'
   })
 ]);
 

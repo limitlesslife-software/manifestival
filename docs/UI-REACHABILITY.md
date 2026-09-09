@@ -35,6 +35,8 @@ taloutta eikä löytänyt kumpaakaan.
 | `savingsGoals` | **ON** | **Talous** → Säästötavoitteet | Säästötavoitteet | täysi | D |
 | `bills` | **ON** | **Talous** → Laskut | Laskut | täysi + maksumerkintä | D |
 | `aiAudit` | tausta | — | — | kirjoitus AI-komennoista | E |
+| `transactions` | **ON** | **Talous** → Tapahtumat | Tapahtumat | täysi + kuitista luenta | F |
+| `investments` | **ON** | **Talous** → Sijoitukset | Sijoitukset | täysi + arvon käsin päivitys | F |
 
 **Portti ei vaikuta näkyvyyteen.** Kaikki näkymät ovat käytettävissä
 myös portin ollessa kiinni — silloin tieto elää istunnon muistissa ja
