@@ -86,35 +86,16 @@ export const INTENT = Object.freeze({
 export const INTENTS = Object.freeze(Object.values(INTENT));
 
 /**
- * Intentit, joita EI ole eikä tule ilman erillistä suunnittelua.
- * Lista on dokumentaatiota ja testattava invariantti.
+ * Riskitasot ja kielletyt toimenpiteet asuvat DOMAINISSA.
  *
- * Huomaa ero yksittäisen rivin poistoon: `delete_task` on olemassa ja
- * suojattu, mutta `delete_all` ei ole olemassa lainkaan. Massapoistoa ei
- * voi vahvistaa mielekkäästi yhdellä dialogilla.
- */
-export const FORBIDDEN_INTENTS = Object.freeze([
-  'delete_all', 'delete_account', 'delete_everything',
-  'drop_table', 'truncate', 'execute_sql', 'run_query',
-  'change_owner', 'transfer_data',
-  'disable_security', 'grant_access', 'read_secrets', 'export_all'
-]);
-
-/**
- * Riskitasot.
+ * Ne olivat aiemmin täällä, koska tekoäly oli ensimmäinen joka niitä
+ * tarvitsi. Universaali kirjaus tarvitsee ne myös, eikä domain saa
+ * riippua AI-kerroksesta — riippuvuussuunta on domain <- ai.
  *
- *   LOW     ei muuta mitään. Vahvistusta ei kysytä — se olisi pelkkää kitkaa.
- *   MEDIUM  luo tai muuttaa. Vahvistus kysytään.
- *   HIGH    poistaa tai on muuten peruuttamaton. Eksplisiittinen vahvistus,
- *           jota EI voi kytkeä pois asetuksista.
+ * Uudelleenvienti pitää olemassa olevat kutsupaikat ennallaan: yksi
+ * lähde, ei kahta luetteloa jotka erkanevat.
  */
-export const RISK = Object.freeze({
-  LOW: 'low',
-  MEDIUM: 'medium',
-  HIGH: 'high'
-});
-
-export const RISK_LEVELS = Object.freeze(Object.values(RISK));
+export { RISK, RISK_LEVELS, FORBIDDEN_INTENTS } from '../domain/risk.js';
 
 export const MAX_NOTE_LENGTH = 300;
 
