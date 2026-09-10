@@ -95,7 +95,12 @@ export const INTENTS = Object.freeze(Object.values(INTENT));
  * Uudelleenvienti pitää olemassa olevat kutsupaikat ennallaan: yksi
  * lähde, ei kahta luetteloa jotka erkanevat.
  */
-export { RISK, RISK_LEVELS, FORBIDDEN_INTENTS } from '../domain/risk.js';
+// HUOM. `export ... from` EI luo paikallista sidosta, ja tämä tiedosto
+// käyttää `RISK`-vakiota itse alempana. Siksi tuonti ja vienti ovat
+// erikseen.
+import { RISK, RISK_LEVELS, FORBIDDEN_INTENTS } from '../domain/risk.js';
+
+export { RISK, RISK_LEVELS, FORBIDDEN_INTENTS };
 
 export const MAX_NOTE_LENGTH = 300;
 
