@@ -27,6 +27,22 @@ export const GOAL_STATUS = Object.freeze({
   ACTIVE: 'active',
   /** Tauolla. Ei poistettu, mutta ei myöskään vaadi huomiota nyt. */
   PAUSED: 'paused',
+  /**
+   * Ylläpito.
+   *
+   * Tavoite on saavutettu tarpeeksi, ja huomio siirtyy tuloksen
+   * SÄILYTTÄMISEEN. Eri asia kuin saavutettu: saavutettu on ohi,
+   * ylläpito jatkuu.
+   *
+   * Käytännön ero: ylläpitotavoite ei kilpaile ajasta samalla painolla
+   * kuin aktiivinen, mutta sen rutiinit pysyvät voimassa. "Pudotin 10
+   * kg" on saavutettu; "pidän painon" on ylläpitoa.
+   *
+   * PRODUCTION GATE: tuotannon `goals_status_check` ei vielä salli
+   * tätä arvoa. Ks. GOAL_MAINTENANCE_MODE src/data/schema.js ja
+   * migraatio 0010.
+   */
+  MAINTENANCE: 'maintenance',
   /** Saavutettu. */
   COMPLETED: 'completed',
   /**
@@ -44,7 +60,19 @@ export const GOAL_STATUS = Object.freeze({
 export const GOAL_STATUSES = Object.freeze(Object.values(GOAL_STATUS));
 
 /** Tilat, jotka vaativat käyttäjän huomiota. */
-export const OPEN_STATUSES = Object.freeze([GOAL_STATUS.ACTIVE, GOAL_STATUS.PAUSED]);
+export const OPEN_STATUSES = Object.freeze([
+  GOAL_STATUS.ACTIVE, GOAL_STATUS.PAUSED, GOAL_STATUS.MAINTENANCE
+]);
+
+/**
+ * Tilat, joiden työ kilpailee kalenteriajasta.
+ *
+ * Ylläpito EI ole mukana: sen rutiinit pysyvät, mutta uutta työtä ei
+ * suunnitella. Tauko ei myöskään — tauko on päätös olla tekemättä nyt,
+ * ja jos aikatauluttaja sijoittaisi tauolla olevan tavoitteen työtä,
+ * tauko ei tarkoittaisi mitään.
+ */
+export const SCHEDULING_STATUSES = Object.freeze([GOAL_STATUS.ACTIVE]);
 
 /**
  * Miten edistyminen lasketaan.
@@ -71,6 +99,7 @@ export const PROGRESS_MODES = Object.freeze(Object.values(PROGRESS_MODE));
 const STATUS_LABELS = Object.freeze({
   [GOAL_STATUS.ACTIVE]: 'Työn alla',
   [GOAL_STATUS.PAUSED]: 'Tauolla',
+  [GOAL_STATUS.MAINTENANCE]: 'Ylläpidossa',
   [GOAL_STATUS.COMPLETED]: 'Saavutettu',
   [GOAL_STATUS.ABANDONED]: 'Luovutettu',
   [GOAL_STATUS.ARCHIVED]: 'Arkistoitu'
@@ -116,9 +145,49 @@ export function normalizeGoal(input = {}) {
     /** Ylätavoite. Yksi taso riittää tässä vaiheessa. */
     parentGoalId: input.parentGoalId != null ? String(input.parentGoalId) : null,
     projectId: input.projectId != null ? String(input.projectId) : null,
+
+    // --------------------------------------------------------------
+    // MITATTAVA KOHDE (migraatio 0010, EI AJETTU)
+    //
+    // Kolme lukua eikä yhtä: suunta johdetaan lähtö- ja tavoitearvosta,
+    // eikä sitä kysytä erikseen. Ks. src/domain/goalTarget.js.
+    //
+    // Portin ollessa kiinni nämä elävät istunnon muistissa.
+    // Ks. GOAL_PLANNING_FIELDS src/data/schema.js.
+    // --------------------------------------------------------------
+    metric: cleanGoalText(input.metric, 60),
+    unit: cleanGoalText(input.unit, 20),
+    baselineValue: goalNumber(input.baselineValue),
+    currentValue: goalNumber(input.currentValue),
+    targetValue: goalNumber(input.targetValue),
+    measuredOn: isIsoDate(input.measuredOn) ? input.measuredOn : null,
+
+    /**
+     * Kytkentä säästötavoitteeseen.
+     *
+     * RAHATAVOITE LASKETAAN TALOUDESSA, EI TÄÄLLÄ. Kytketty tavoite ei
+     * saa kantaa omaa mittariaan: kaksi lukua samasta asiasta erkanisi
+     * heti kun toista päivitetään. Ks. src/domain/goalTarget.js.
+     */
+    savingsGoalId: input.savingsGoalId != null ? String(input.savingsGoalId) : null,
+
     createdAt: input.createdAt ?? null,
     updatedAt: input.updatedAt ?? null
   };
+}
+
+/** Trimmattu teksti tai null. Tyhjä merkkijono ei ole arvo. */
+function cleanGoalText(value, maxLength) {
+  if (value == null) return null;
+  const trimmed = String(value).trim().slice(0, maxLength);
+  return trimmed === '' ? null : trimmed;
+}
+
+/** Luku tai null. Mittari ei ole rahaa eikä sitä pidetä sentteinä. */
+function goalNumber(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number(String(value).replace(',', '.'));
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 /** Validoi tavoite. */
@@ -145,6 +214,21 @@ export function validateGoal(goal) {
     if (!Number.isFinite(n) || n < 0 || n > 100) {
       errors.manualProgress = 'Edistymisen pitää olla 0–100.';
     }
+  }
+
+  // KAKSI LUKUA SAMASTA ASIASTA ERKANEE.
+  //
+  // Säästötavoitteeseen kytketty tavoite saa lukunsa Taloudesta. Oma
+  // mittari sen rinnalla tarkoittaisi kahta totuutta, joista toinen
+  // vanhenee ensimmäisessä päivityksessä.
+  if (goal.savingsGoalId && goal.targetValue !== null) {
+    errors.targetValue = 'Säästötavoitteeseen kytketty tavoite saa lukunsa Taloudesta. '
+      + 'Poista oma mittari tai kytkentä.';
+  }
+
+  // Mittari ilman nimeä on luku ilman merkitystä.
+  if (goal.targetValue !== null && !goal.metric) {
+    errors.metric = 'Kerro mitä mitataan.';
   }
 
   return { valid: Object.keys(errors).length === 0, errors };

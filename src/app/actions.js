@@ -20,7 +20,7 @@ import * as profileRepo from '../data/profileRepo.js';
 import {
   routinesRepo, routineExceptionsRepo, goalsRepo, projectsRepo, wellbeingRepo,
   billsRepo, recurringExpensesRepo, savingsGoalsRepo, aiAuditRepo,
-  transactionsRepo, investmentsRepo,
+  transactionsRepo, investmentsRepo, milestonesRepo,
   volatileCollections, clearAllCollections
 } from '../data/collectionsRepo.js';
 import { newTaskId } from '../lib/rows.js';
@@ -41,6 +41,11 @@ import {
   TRANSACTION_ORIGIN, SOURCE_KIND
 } from '../domain/transactions.js';
 import { normalizeHolding, validateHolding } from '../domain/investments.js';
+import {
+  normalizeMilestone, validateMilestone, nextOrderIndex, reorderMilestone,
+  markReached, markOpen, markSkipped
+} from '../domain/milestone.js';
+import { buildReplanProposal } from '../domain/replan.js';
 import {
   EXTRACTION_SUBJECT, validateExtraction, approveExtraction,
   toTransaction as extractionToTransaction, toBill as extractionToBill
@@ -67,6 +72,9 @@ import {
   setInvestments, addInvestmentToState, replaceInvestmentInState,
   removeInvestmentFromState, findInvestment,
   clearPendingExtraction, setPendingExtraction,
+  setMilestones, addMilestoneToState, replaceMilestoneInState,
+  removeMilestoneFromState, findMilestone, replaceMilestonesInState,
+  setPendingReplan, clearPendingReplan,
   setAiAudit
 } from './state.js';
 import {
@@ -128,7 +136,7 @@ export async function loadUserData() {
   const [tasksResult, profileResult, routinesResult, exceptionsResult,
     goalsResult, projectsResult, wellbeingResult, preferencesResult,
     billsResult, expensesResult, savingsResult, transactionsResult,
-    investmentsResult, auditResult] = await Promise.all([
+    investmentsResult, milestonesResult, auditResult] = await Promise.all([
     tasksRepo.listTasks(),
     profileRepo.loadProfile(),
     routinesRepo.list(),
@@ -142,6 +150,7 @@ export async function loadUserData() {
     savingsGoalsRepo.list(),
     transactionsRepo.list(),
     investmentsRepo.list(),
+    milestonesRepo.list(),
     aiAuditRepo.list()
   ]);
 
@@ -175,6 +184,7 @@ export async function loadUserData() {
   setSavingsGoals(savingsResult.ok ? savingsResult.value : []);
   setTransactions(transactionsResult.ok ? transactionsResult.value : []);
   setInvestments(investmentsResult.ok ? investmentsResult.value : []);
+  setMilestones(milestonesResult.ok ? milestonesResult.value : []);
   setAiAudit(auditResult.ok ? auditResult.value : []);
 
   return { tasksOk: tasksResult.ok, profileOk: profileResult.ok, discarded: false };
@@ -1259,4 +1269,243 @@ export async function saveProfile(profile) {
 export function clearLocalUserData() {
   clearAllCollections();
   clearNotificationPreferences();
+}
+
+// ----------------------------------------------------- välitavoitteet
+//
+// Välitavoite on TILA, ei työsäiliö. Sillä ei ole tehtäviä eikä kestoa
+// — sillä on päivä ja tulos, joka joko on saavutettu tai ei.
+//
+// VÄLITAVOITE EI ELÄ ILMAN TAVOITETTA. `goalId` on pakollinen, ja
+// kannassa yhdistelmävierasavain estää kiinnittämisen toisen käyttäjän
+// tavoitteeseen.
+
+/** Luo välitavoite. */
+export async function createMilestone(input) {
+  const goal = findGoal(input && input.goalId);
+  if (!goal) return { ok: false, errors: { goalId: 'Tavoitetta ei löytynyt.' } };
+
+  const milestone = normalizeMilestone({
+    ...input,
+    id: newTaskId(),
+    // Paikka jonossa johdetaan, ei kysytä. Suurin käytössä oleva plus
+    // yksi — EI määrä, koska poisto jättää aukon ja uusi rivi saisi jo
+    // varatun paikan.
+    orderIndex: input.orderIndex ?? nextOrderIndex(getState().milestones, input.goalId)
+  });
+
+  const { valid, errors } = validateMilestone(milestone);
+  if (!valid) return { ok: false, errors };
+
+  addMilestoneToState(milestone);
+  warnAboutVolatileCollections();
+
+  const result = await milestonesRepo.insert(milestone);
+  if (!result.ok) {
+    removeMilestoneFromState(milestone.id);
+    showError(result.error);
+    return { ok: false };
+  }
+  return { ok: true, milestone };
+}
+
+/** Muokkaa välitavoitetta. */
+export async function editMilestone(id, changes) {
+  const previous = findMilestone(id);
+  if (!previous) return { ok: false };
+
+  const updated = normalizeMilestone({ ...previous, ...changes, id });
+  const { valid, errors } = validateMilestone(updated);
+  if (!valid) return { ok: false, errors };
+
+  replaceMilestoneInState(id, updated);
+
+  const result = await milestonesRepo.update(updated);
+  if (!result.ok) {
+    replaceMilestoneInState(id, previous);
+    showError(result.error);
+    return { ok: false };
+  }
+  return { ok: true };
+}
+
+/**
+ * Merkitse välitavoite saavutetuksi tai takaisin avoimeksi.
+ *
+ * TILA JA PÄIVÄ KULKEVAT YHDESSÄ. Kanta vaatii sen
+ * (`milestones_reached_date_check`), ja `validateMilestone` vaatii
+ * saman — saavutettu välitavoite ilman päivää olisi tieto, joka ei
+ * kerro milloin.
+ */
+export async function setMilestoneReached(id, reached, dateIso = null) {
+  const milestone = findMilestone(id);
+  if (!milestone) return { ok: false };
+
+  const updated = reached
+    ? markReached(milestone, dateIso || fmtISO(todayMidnight()))
+    : markOpen(milestone);
+
+  return editMilestone(id, updated);
+}
+
+/** Ohita välitavoite. Päätös, ei laiminlyönti. */
+export async function skipMilestone(id) {
+  const milestone = findMilestone(id);
+  if (!milestone) return { ok: false };
+  return editMilestone(id, markSkipped(milestone));
+}
+
+/**
+ * Siirrä välitavoite jonossa.
+ *
+ * Kirjoittaa KAIKKI muuttuneet rivit, ei vain siirrettyä: paikan
+ * vaihto koskee aina kahta riviä, ja vain toisen kirjoittaminen
+ * jättäisi jonon epäjärjestykseen.
+ */
+export async function moveMilestone(id, direction) {
+  const milestone = findMilestone(id);
+  if (!milestone) return { ok: false };
+
+  const previous = getState().milestones;
+  const reordered = reorderMilestone(previous, milestone.goalId, id, direction);
+  if (reordered.length === 0) return { ok: false };
+
+  replaceMilestonesInState(reordered);
+
+  for (const updated of reordered) {
+    const result = await milestonesRepo.update(updated);
+    if (!result.ok) {
+      // Palauta koko jono: puolittain kirjoitettu järjestys on
+      // pahempi kuin ei muutosta lainkaan.
+      replaceMilestonesInState(previous);
+      showError(result.error);
+      return { ok: false };
+    }
+  }
+  return { ok: true };
+}
+
+/**
+ * Poista välitavoite.
+ *
+ * TEHTÄVÄT JA PROJEKTIT SÄILYVÄT. Niiden liitos katkeaa, mutta työ ei
+ * katoa: tehtävä on tehty tai tekemättä riippumatta siitä, onko sen
+ * tarkistuspiste yhä olemassa. Kannassa sama sääntö on
+ * `on delete set null (milestone_id)`.
+ */
+export async function deleteMilestone(id) {
+  const milestone = findMilestone(id);
+  if (!milestone) return false;
+
+  const linkedTasks = getState().tasks.filter(task => task.milestoneId === id).length;
+
+  const confirmed = await confirmAction({
+    title: 'Poistetaanko välitavoite?',
+    message: linkedTasks > 0
+      ? `"${milestone.title}" poistetaan. ${linkedTasks} tehtävää säilyy, `
+        + 'mutta niiden liitos tähän välitavoitteeseen katkeaa.'
+      : `"${milestone.title}" poistetaan pysyvästi.`,
+    confirmLabel: 'Poista',
+    cancelLabel: 'Peruuta',
+    destructive: true
+  });
+  if (!confirmed) return false;
+
+  const previousTasks = getState().tasks;
+  const previousProjects = getState().projects;
+  removeMilestoneFromState(id);
+
+  const result = await milestonesRepo.remove(id);
+  if (!result.ok) {
+    addMilestoneToState(milestone);
+    setTasks(previousTasks);
+    setProjects(previousProjects);
+    showError(result.error);
+    return false;
+  }
+
+  success('Välitavoite poistettu.');
+  return true;
+}
+
+// ------------------------------------------ mukautuva uudelleensuunnittelu
+
+/**
+ * Rakenna muutosehdotus.
+ *
+ * TÄMÄ EI SIIRRÄ MITÄÄN. Se laskee, mitä siirtoja tarvittaisiin.
+ * Varsinainen kirjoitus tapahtuu `applyReplan`-funktiossa ja vain
+ * niille siirroille, jotka automaatiotaso sallii tai käyttäjä
+ * hyväksyy.
+ */
+export function proposeReplan(trigger = 'manual', options = {}) {
+  const state = getState();
+
+  const proposal = buildReplanProposal({
+    trigger,
+    tasks: state.tasks,
+    goals: state.goals,
+    routines: state.routines,
+    exceptions: state.routineExceptions,
+    profile: state.profile,
+    todayIso: fmtISO(todayMidnight()),
+    automationLevel: state.automationLevel,
+    ...options
+  });
+
+  setPendingReplan(proposal);
+  return proposal;
+}
+
+/**
+ * Toteuta muutosehdotus.
+ *
+ * VAIN NIMENOMAISESTI ANNETUT SIIRROT. Kutsuja päättää, mitkä
+ * muutokset toteutetaan — tämä ei valitse puolesta.
+ *
+ * Jos yksikin siirto epäonnistuu, jo tehdyt PERUUTETAAN. Puolittain
+ * siirretty suunnitelma on pahempi kuin siirtämätön: käyttäjä ei
+ * tietäisi kumpi puolisko on voimassa.
+ */
+export async function applyReplan(changes = []) {
+  if (!Array.isArray(changes) || changes.length === 0) {
+    return { ok: true, applied: 0 };
+  }
+
+  const undo = [];
+
+  for (const change of changes) {
+    const task = findTask(change.taskId);
+    if (!task) continue;
+
+    const previousDate = task.date;
+
+    // SIIRTO EI KIINNITÄ AIKAA. Päivä muuttuu, kellonaika ei — ja
+    // aikataulutuksen tila pysyy joustavana, jottei siirto tekisi
+    // tehtävästä koskematonta.
+    const result = await editTask(change.taskId, { date: change.toDateIso });
+
+    if (!result || !result.ok) {
+      for (const entry of undo) {
+        await editTask(entry.taskId, { date: entry.dateIso });
+      }
+      showError('Siirto epäonnistui. Muutokset peruttiin.');
+      return { ok: false, applied: 0 };
+    }
+
+    undo.unshift({ taskId: change.taskId, dateIso: previousDate });
+  }
+
+  clearPendingReplan();
+  success(changes.length === 1
+    ? 'Tehtävä siirretty.'
+    : `${changes.length} tehtävää siirretty.`);
+
+  return { ok: true, applied: changes.length };
+}
+
+/** Hylkää muutosehdotus. Mitään ei siirretä. */
+export function rejectReplan() {
+  clearPendingReplan();
+  return { ok: true };
 }

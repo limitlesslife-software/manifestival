@@ -63,7 +63,16 @@ export const EXPORTED_COLLECTIONS = Object.freeze([
   // ole kokoelma lainkaan; hyväksytystä luennasta jää vain tapahtuma,
   // jonka mallissa ei ole kuvakenttää. Ks. src/domain/receipts.js.
   'transactions',
-  'investments'
+  'investments',
+
+  // Välitavoitteet. Käyttäjän omaa pysyvää dataa, ja vienti ilman
+  // niitä menettäisi tavoitteiden rakenteen hiljaa.
+  //
+  // SUUNNITELMAEHDOTUKSET EIVÄT OLE TÄSSÄ eivätkä tule. Ne ovat
+  // väliaikaisia: hyväksytystä ehdotuksesta jää tavoite,
+  // välitavoitteet, projektit ja tehtävät, ja ehdotus itse katoaa.
+  // Hylätty ehdotus on roskaa, joka ei koskaan katoaisi viennistä.
+  'milestones'
 ]);
 
 /**

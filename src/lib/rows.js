@@ -29,6 +29,20 @@ export const TASK_COLUMNS_EXTENDED = Object.freeze([
   'description', 'duration_minutes', 'priority', 'scheduling_state'
 ]);
 
+/**
+ * Sarakkeet migraation 0010 jälkeen.
+ *
+ * EI AJETTU. Ks. GOAL_PLANNING_FIELDS src/data/schema.js.
+ *
+ * `tasks` on TUOTANNOSSA AUKI ja siinä on käyttäjän dataa. Näiden
+ * lähettäminen ennen migraatiota kaataisi jokaisen tehtävän
+ * tallennuksen koodilla 42703 — myös niiden jotka toimivat tänään.
+ */
+export const TASK_COLUMNS_PLANNING = Object.freeze([
+  ...TASK_COLUMNS_EXTENDED,
+  'milestone_id', 'depends_on'
+]);
+
 /** Domain-kenttä -> kannan sarake. Yksi lähde molemmille sarakejoukoille. */
 function columnValues(task) {
   return {
@@ -36,6 +50,8 @@ function columnValues(task) {
     date: task.date,
     time: task.time,
     end_time: task.endTime,
+    milestone_id: task.milestoneId,
+    depends_on: task.dependsOn,
     title: task.title,
     category: task.category,
     note: task.note,

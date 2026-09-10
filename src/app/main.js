@@ -32,6 +32,9 @@ import {
   initTransactionForms, resetTransactionViews
 } from './views/transactions.js';
 import { initInvestmentForms, closeInvestmentForm } from './views/investments.js';
+import { initGoalDetail, closeMilestoneForm } from './views/goalDetail.js';
+import { initPlanning, resetPlanning } from './views/planning.js';
+import { clearIdempotencyKeys } from './planning.js';
 import { renderProfile, initProfileForm, fillProfileForm } from './views/profile.js';
 import { renderNotificationSettings } from './views/notificationSettings.js';
 import { refreshNotificationPermission, syncNotifications } from './notifications.js';
@@ -121,11 +124,18 @@ function onSignedOut() {
   closeSavingsForm();
   closeSavingsTransferForm();
   closeInvestmentForm();
+  closeMilestoneForm();
 
   // Nollaa myös kesken olevan kuvan luennan ja tyhjentää
   // tiedostovalitsimen. Seuraava käyttäjä samalla selaimella ei saa
   // löytää edellisen kuittia mistään.
   resetTransactionViews();
+
+  // Suunnittelu: tyhjentää tavoitetekstin ja idempotenssiavaimet.
+  // Avain viittaa ehdotukseen, joka ei sekään elä uloskirjautumisen
+  // yli — jäänyt avain estäisi seuraavaa käyttäjää tallentamasta.
+  resetPlanning();
+  clearIdempotencyKeys();
   clearToasts();
 
   // Tyhjentää myös repositorioiden muistivarastot. Ilman tätä seuraava
@@ -149,6 +159,8 @@ async function start() {
   initFinanceForms();
   initTransactionForms();
   initInvestmentForms();
+  initGoalDetail();
+  initPlanning();
   initProfileForm();
   initVoice();
   initOnboarding();

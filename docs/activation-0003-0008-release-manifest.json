@@ -28,7 +28,8 @@
     "savingsGoals": [],
     "aiAudit": [],
     "transactions": [],
-    "investments": []
+    "investments": [],
+    "milestones": []
   },
   "waves": [
     {
@@ -55,7 +56,8 @@
         "savingsGoals",
         "aiAudit",
         "transactions",
-        "investments"
+        "investments",
+        "milestones"
       ],
       "tables": [
         "notification_preferences",
@@ -98,7 +100,8 @@
         "savingsGoals",
         "aiAudit",
         "transactions",
-        "investments"
+        "investments",
+        "milestones"
       ],
       "tables": [
         "goals",
@@ -141,7 +144,8 @@
         "savingsGoals",
         "aiAudit",
         "transactions",
-        "investments"
+        "investments",
+        "milestones"
       ],
       "tables": [
         "routines",
@@ -187,7 +191,8 @@
       "gatesDisabled": [
         "aiAudit",
         "transactions",
-        "investments"
+        "investments",
+        "milestones"
       ],
       "tables": [
         "recurring_expenses",
@@ -230,7 +235,8 @@
       ],
       "gatesDisabled": [
         "transactions",
-        "investments"
+        "investments",
+        "milestones"
       ],
       "tables": [
         "ai_action_audit"
@@ -272,7 +278,9 @@
         "transactions",
         "investments"
       ],
-      "gatesDisabled": [],
+      "gatesDisabled": [
+        "milestones"
+      ],
       "tables": [
         "transactions",
         "investments"
@@ -289,6 +297,47 @@
         "supabase/acceptance/verify_0003_0008_post_activation.sql"
       ],
       "rationale": "Kumpikaan taulu ei viittaa mihinkään sovellustauluun, joten riippuvuusjärjestys ei pakota tätä mihinkään kohtaan. Viimeisenä siksi, että se on ainoa aalto, jonka migraatiota ei ole ajettu — ja aalto jonka kanta puuttuu ei saa olla minkään toisen edellä."
+    },
+    {
+      "id": "G",
+      "title": "Tavoitteesta tekemiseksi: välitavoitteet",
+      "commitSha": null,
+      "cacheVersion": "v20",
+      "readiness": "READY",
+      "gatesEnabled": [
+        "milestones"
+      ],
+      "gatesCumulative": [
+        "notificationPreferences",
+        "wellbeing",
+        "goals",
+        "projects",
+        "routines",
+        "routineExceptions",
+        "recurringExpenses",
+        "savingsGoals",
+        "bills",
+        "aiAudit",
+        "transactions",
+        "investments",
+        "milestones"
+      ],
+      "gatesDisabled": [],
+      "tables": [
+        "milestones"
+      ],
+      "dependencies": [],
+      "rollbackTarget": "F",
+      "rollbackSha": null,
+      "acceptancePack": "docs/acceptance/WAVE-G.md",
+      "requiredAcceptance": [
+        "npm run activation:verify-wave -- G",
+        "npm run activation:preflight -- --wave=G",
+        "npm run production:verify-assets -- --wave=G",
+        "selainhyväksyntä: luonti, muokkaus, poisto, säilyvyys sivun latauksen yli",
+        "supabase/acceptance/verify_0003_0008_post_activation.sql"
+      ],
+      "rationale": "Välitavoite viittaa tavoitteeseen yhdistelmävierasavaimella, joten aallon B (goals) on oltava ensin — ja se on tuotannossa. MIGRAATIO 0010 ON VAARALLISEMPI KUIN AIEMMAT: se ei vain luo uutta taulua vaan MUUTTAA goals-, tasks- ja projects-tauluja, joissa on käyttäjän oikeaa dataa ja joiden portit ovat auki tuotannossa."
     }
   ]
 }

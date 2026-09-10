@@ -187,3 +187,59 @@ Nämä ovat asioita, joita selainhyväksyntä ei kata:
 - [ ] Paikalliset ilmoitukset toimivat aallon A asetuksilla
       (`@capacitor/local-notifications`)
 - [ ] Offline: sovellus avautuu ja kertoo rehellisesti ettei verkkoa ole
+
+---
+
+## Tavoitesuunnittelu (Goal-to-Action)
+
+**Tila: RAKENNETTU PAIKALLISESTI. EI DEPLOYATTU. EI MIGROITU.**
+
+Nämä vaativat oikean laitteen eikä niitä voi todentaa paikallisesti.
+
+### Puhesyöte suunnitteluun
+
+Puhe muuttuu tekstiksi `src/app/voice.js`:ssä ja tulee samaan
+`requestPlan`-funktioon. Polku on sama kuin tekstillä, mutta
+**litterointi laitteella on todentamatta**:
+
+- [ ] Puhu tavoite ääneen → litterointi päätyy suunnittelukenttään
+- [ ] Pitkä puhe (yli 30 s) ei katkea kesken
+- [ ] Suomenkieliset numerot ("kymmenentuhatta") tulkitaan oikein
+
+### Mobiilirakenne
+
+- [ ] Kolme osiota (Tavoitteet / Projektit / Suunnittelu) mahtuvat
+      yhdelle riville kapealla puhelimella
+- [ ] Tavoitteen yksityiskohdat korvaavat listan, eivät avaudu sen
+      viereen
+- [ ] "Takaisin tavoitteisiin" on tavoitettavissa peukalolla
+- [ ] Ehdotuksen tarkistuslista on selattavissa ilman vaakavieritystä
+- [ ] Välitavoitteen siirtonuolet (↑ ↓) ovat tarpeeksi suuria
+      kosketukselle
+
+### Suunnittelun kesto
+
+Palvelinpuolen aikakatkaisu on 45 s. Se on pidempi kuin muilla
+päätepisteillä, koska suunnittelu tuottaa rakenteen eikä yhtä oliota.
+
+- [ ] Suunnittelu valmistuu mobiiliverkossa ennen aikakatkaisua
+- [ ] "Suunnitellaan…" näkyy koko odotuksen ajan
+- [ ] Verkkokatkos kesken suunnittelun ei jätä painiketta jumiin
+
+### Automaatiotaso
+
+Taso on **laitekohtainen** kunnes migraatio 0010 on ajettu.
+
+- [ ] Tason valinta säilyy sovelluksen uudelleenkäynnistyksen yli
+- [ ] Uusi laite alkaa tasolta 1
+- [ ] Tason 4 varoitusteksti näkyy kokonaan puhelimen leveydellä
+
+### Ilmoitukset ja tausta
+
+- [ ] Suunnitelman muutosehdotus ei tuota ilmoitusta ilman käyttäjän
+      pyyntöä
+- [ ] Sovelluksen taustalle siirtyminen kesken ehdotuksen tarkistuksen
+      ei hukkaa ehdotusta istunnon sisällä
+- [ ] Sovelluksen sulkeminen **hukkaa** ehdotuksen — ja se on
+      tarkoitus. Tarkista että käyttäjälle ei jää vaikutelmaa, että se
+      olisi tallessa.

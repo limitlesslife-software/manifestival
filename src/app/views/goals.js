@@ -15,7 +15,14 @@ import {
 import { compareForDay } from '../../domain/task.js';
 import { dayGroupLabel } from '../../domain/week.js';
 import { el, maybe, setText, toggle, setBusy, singleFlight, focus } from '../../ui/dom.js';
-import { getState, findGoal, setEditingGoalId } from '../state.js';
+import {
+  getState, findGoal, setEditingGoalId, setOpenGoalId, setGoalsSegment,
+  GOALS_SEGMENTS
+} from '../state.js';
+import { volatileGoalFields } from '../../data/schema.js';
+import { formatNumber as formatMetricNumber } from '../../domain/goalTarget.js';
+import { renderGoalDetail } from './goalDetail.js';
+import { renderPlanning } from './planning.js';
 import { createGoal, editGoal, deleteGoal, setGoalStatus, toggleComplete } from '../actions.js';
 import { openEditForm } from './tasks.js';
 
@@ -153,10 +160,14 @@ function renderGoalCard(entry) {
     ${goal.description ? `<div class="t-sub">${escapeHtml(goal.description)}</div>` : ''}
     ${taskList}
     ${completedTasks.length ? `<div class="hint">${completedTasks.length} tehtävää valmiina</div>` : ''}
-    ${goal.status === GOAL_STATUS.ACTIVE || goal.status === GOAL_STATUS.PAUSED
-      ? `<button class="ghost-btn small goal-complete" data-complete-goal="${escapeHtml(goal.id)}">
-           Merkitse saavutetuksi</button>`
-      : ''}
+    <div class="goal-actions">
+      <button class="ghost-btn small" data-open-goal="${escapeHtml(goal.id)}">
+        Suunnitelma ja välitavoitteet →</button>
+      ${goal.status === GOAL_STATUS.ACTIVE || goal.status === GOAL_STATUS.PAUSED
+        ? `<button class="ghost-btn small goal-complete" data-complete-goal="${escapeHtml(goal.id)}">
+             Merkitse saavutetuksi</button>`
+        : ''}
+    </div>
   </div>`;
 }
 
@@ -204,15 +215,56 @@ function renderList(container, state) {
     node.addEventListener('click', () => openEditForm(node.dataset.edit)));
   container.querySelectorAll('[data-complete-goal]').forEach(node =>
     node.addEventListener('click', () => completeGoal(node.dataset.completeGoal)));
+  container.querySelectorAll('[data-open-goal]').forEach(node =>
+    node.addEventListener('click', () => setOpenGoalId(node.dataset.openGoal)));
 }
 
 /** Renderöi tavoitenäkymä. */
 export function renderGoals() {
   const container = maybe('goalsListContainer');
   if (!container) return;
-  renderList(container, getState());
+
+  const state = getState();
+  renderList(container, state);
   refreshGoalPicker();
   syncProgressMode();
+  renderGoalDetail();
+  renderPlanning();
+  syncGoalsSegment(state);
+}
+
+/**
+ * Näkyvä osio.
+ *
+ * TAVOITTEEN YKSITYISKOHDAT KORVAAVAT LISTAN, eivät avaudu sen
+ * viereen. Puhelimessa ei ole tilaa kahdelle tasolle, ja
+ * "takaisin"-painike on ymmärrettävämpi kuin kaksi vierekkäistä
+ * listaa joista toinen on tyhjä.
+ */
+function syncGoalsSegment(state) {
+  const segment = state.goalsSegment || 'goals';
+  const detailOpen = segment === 'goals' && Boolean(state.openGoalId);
+
+  const sections = {
+    goals: maybe('goalsSection'),
+    projects: maybe('projectsSection'),
+    plan: maybe('planSection')
+  };
+
+  for (const [key, node] of Object.entries(sections)) {
+    if (!node) continue;
+    node.style.display = key === segment && !detailOpen ? 'block' : 'none';
+  }
+
+  const detail = maybe('goalDetailSection');
+  if (detail) detail.style.display = detailOpen ? 'block' : 'none';
+
+  for (const { key } of GOALS_SEGMENTS) {
+    const tab = maybe('segment' + key.charAt(0).toUpperCase() + key.slice(1));
+    if (!tab) continue;
+    tab.classList.toggle('active', key === segment);
+    tab.setAttribute('aria-selected', String(key === segment));
+  }
 }
 
 // ----------------------------------------------------------------- lomake
@@ -275,7 +327,18 @@ function readForm() {
     status: el('gfStatus').value,
     targetDate: el('gfTargetDate').value || null,
     progressMode: el('gfProgressMode').value,
-    manualProgress: manual ? Number(manual) : 0
+    manualProgress: manual ? Number(manual) : 0,
+
+    // MITATTAVA TAVOITE.
+    //
+    // Kolme lukua eikä yhtä: suunta johdetaan lähtö- ja tavoitearvosta
+    // eikä sitä kysytä erikseen. Erikseen kysytty suunta voisi olla
+    // ristiriidassa lukujen kanssa. Ks. src/domain/goalTarget.js.
+    metric: el('gfMetric').value.trim() || null,
+    unit: el('gfUnit').value.trim() || null,
+    baselineValue: el('gfBaselineValue').value.trim() || null,
+    currentValue: el('gfCurrentValue').value.trim() || null,
+    targetValue: el('gfTargetValue').value.trim() || null
   };
 }
 
@@ -288,7 +351,40 @@ function fillForm(goal) {
   el('gfTargetDate').value = goal && goal.targetDate ? goal.targetDate : '';
   el('gfProgressMode').value = goal ? goal.progressMode : PROGRESS_MODE.TASK_BASED;
   el('gfManualProgress').value = goal ? String(goal.manualProgress) : '0';
+  el('gfMetric').value = goal && goal.metric ? goal.metric : '';
+  el('gfUnit').value = goal && goal.unit ? goal.unit : '';
+  el('gfBaselineValue').value = goal && goal.baselineValue !== null
+    ? formatMetricNumber(goal.baselineValue) : '';
+  el('gfCurrentValue').value = goal && goal.currentValue !== null
+    ? formatMetricNumber(goal.currentValue) : '';
+  el('gfTargetValue').value = goal && goal.targetValue !== null
+    ? formatMetricNumber(goal.targetValue) : '';
   syncProgressMode();
+  syncMetricNotice();
+}
+
+/**
+ * Kerro rehellisesti, jos mittari ei vielä säily.
+ *
+ * Sarakkeet syntyvät migraatiossa 0010, jota ei ole ajettu. Portin
+ * ollessa kiinni mittari elää istunnon muistissa.
+ *
+ * Vaihtoehto — jättää kertomatta — olisi lupaus, jota sovellus ei
+ * pidä: käyttäjä kirjoittaisi lähtöpainonsa ja löytäisi kentän tyhjänä
+ * seuraavalla latauksella.
+ */
+function syncMetricNotice() {
+  const hint = maybe('gfMetricHint');
+  if (!hint) return;
+
+  const perusteksti = 'Kolme lukua eikä yhtä: suunta johdetaan lähtö- ja '
+    + 'tavoitearvosta. Ilman lähtöarvoa edistymistä ei lasketa — tuntematon '
+    + 'on rehellisempi kuin nolla.';
+
+  hint.innerHTML = volatileGoalFields().length === 0
+    ? perusteksti
+    : perusteksti + ' <strong>Huom: mittari ei vielä säily sivun latauksen '
+      + 'yli.</strong>';
 }
 
 export function openNewGoalForm() {
@@ -365,6 +461,18 @@ const removeCurrentGoal = singleFlight(async () => {
 /** Kytke tavoitelomakkeen tapahtumat. */
 export function initGoalForm() {
   populateGoalSelects();
+
+  // Osiot. Osion vaihto sulkee avatun tavoitteen: yksityiskohdat
+  // kuuluvat tavoitelistaan, ja niiden jättäminen auki toiseen osioon
+  // siirryttäessä olisi tila, jota käyttäjä ei näe.
+  for (const { key } of GOALS_SEGMENTS) {
+    const tab = maybe('segment' + key.charAt(0).toUpperCase() + key.slice(1));
+    if (!tab) continue;
+    tab.addEventListener('click', () => {
+      setOpenGoalId(null);
+      setGoalsSegment(key);
+    });
+  }
 
   el('addGoalBtn').addEventListener('click', openNewGoalForm);
   el('gfCancel').addEventListener('click', closeGoalForm);

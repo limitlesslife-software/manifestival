@@ -167,26 +167,14 @@ export function renderProjects() {
 
   fillSelectOptions();
   renderList(container, getState());
-  syncSegment();
-}
-
-/** Näytä oikea osio tavoitenäkymässä. */
-function syncSegment() {
-  const segment = getState().goalsSegment === 'projects' ? 'projects' : 'goals';
-
-  toggle('goalsSection', segment === 'goals');
-  toggle('projectsSection', segment === 'projects');
-
-  const goalTab = maybe('segmentGoals');
-  const projectTab = maybe('segmentProjects');
-  if (goalTab) {
-    goalTab.classList.toggle('active', segment === 'goals');
-    goalTab.setAttribute('aria-selected', String(segment === 'goals'));
-  }
-  if (projectTab) {
-    projectTab.classList.toggle('active', segment === 'projects');
-    projectTab.setAttribute('aria-selected', String(segment === 'projects'));
-  }
+  // OSION NÄYTTÄMINEN EI OLE TÄMÄN MODUULIN ASIA.
+  //
+  // Se oli aiemmin täällä, kun osioita oli kaksi. Kolmas osio
+  // (Suunnittelu) teki kahdesta toteutuksesta ristiriitaisia: tämä
+  // näytti tavoitelistan aina kun osio ei ollut "projects", myös
+  // silloin kun se oli "plan".
+  //
+  // Nyt osiot omistaa `goals.js` yhdessä paikassa. Ks. syncGoalsSegment.
 }
 
 // ------------------------------------------------------------- lomake
@@ -327,11 +315,8 @@ async function removeCurrent() {
 
 /** Kytke projektilomakkeen tapahtumat. Kutsutaan kerran. */
 export function initProjectForm() {
-  const goalTab = maybe('segmentGoals');
-  const projectTab = maybe('segmentProjects');
-  if (goalTab) goalTab.addEventListener('click', () => setGoalsSegment('goals'));
-  if (projectTab) projectTab.addEventListener('click', () => setGoalsSegment('projects'));
-
+  // Osiovälilehtien kytkennät ovat `goals.js`:ssä — yksi paikka, jotta
+  // kaksi kuuntelijaa ei taistele samasta painikkeesta.
   const addButton = maybe('addProjectBtn');
   if (!addButton) return;
 

@@ -21,6 +21,9 @@ import { normalizeAuditEntry } from '../domain/audit.js';
 import { normalizeTransaction } from '../domain/transactions.js';
 import { normalizeHolding } from '../domain/investments.js';
 import { monthKey } from '../domain/budget.js';
+import { normalizeMilestone } from '../domain/milestone.js';
+import { normalizeAutomationLevel } from '../domain/automation.js';
+import { getDevicePreference, setDevicePreference } from '../data/preferences.js';
 
 function initialState() {
   const today = todayMidnight();
@@ -34,6 +37,8 @@ function initialState() {
     goals: [],
     /** Projektit (WP9). */
     projects: [],
+    /** Välitavoitteet. Ei säily ennen migraatiota 0010. */
+    milestones: [],
     /** Hyvinvointimerkinnät (WP12). */
     wellbeing: [],
     /**
@@ -62,6 +67,32 @@ function initialState() {
      * syntyy tapahtuma, ja luenta katoaa. Kuvaa ei ole tässä lainkaan.
      */
     pendingExtraction: null,
+
+    /**
+     * Suunnitelmaehdotus, jota käyttäjä parhaillaan tarkistaa.
+     *
+     * TÄMÄ ON TARKOITUKSELLA VAIN TILASSA, EI KOSKAAN KANNASSA.
+     * Ehdotus elää siihen asti että se hyväksytään tai hylätään;
+     * hyväksynnästä syntyy tavallisia rivejä, ja ehdotus katoaa.
+     * Hylätty ehdotus on roskaa, joka ei koskaan katoaisi itsestään.
+     *
+     * Sama päätös kuin kuittiluennalla. Ks. migraatio 0010.
+     */
+    pendingPlan: null,
+
+    /** Muutosehdotus, jota käyttäjä parhaillaan tarkistaa. */
+    pendingReplan: null,
+
+    /**
+     * Automaatiotaso.
+     *
+     * Luetaan laitekohtaisesta asetuksesta ja EPÄONNISTUU
+     * TURVALLISESTI: tuntematon tai puuttuva arvo putoaa tasolle 1.
+     */
+    automationLevel: normalizeAutomationLevel(getDevicePreference('automationLevel')),
+
+    /** Tavoite, jonka yksityiskohtia katsotaan. Null = lista. */
+    openGoalId: null,
     /** AI-toimintojen kirjausketju (WP13). Ei säily ennen migraatiota 0008. */
     aiAudit: [],
     viewDate: today,
@@ -78,7 +109,8 @@ function initialState() {
     editingSavingsId: null,
     editingTransactionId: null,
     editingInvestmentId: null,
-    /** Tavoitenäkymän osio: 'goals' tai 'projects'. */
+    editingMilestoneId: null,
+    /** Tavoitenäkymän osio: 'goals', 'projects' tai 'plan'. */
     goalsSegment: 'goals',
     /** Talousnäkymän osio. Ks. FINANCE_SEGMENTS alla. */
     financeSegment: 'overview',
@@ -282,6 +314,51 @@ export function findProject(id) {
   return state.projects.find(p => p.id === id) || null;
 }
 
+// ----------------------------------------------------- välitavoitteet
+
+/** Aseta välitavoitteet. */
+export function setMilestones(milestones) {
+  commit({ milestones: (milestones || []).map(normalizeMilestone) });
+}
+
+export function addMilestoneToState(milestone) {
+  commit({ milestones: [...state.milestones, normalizeMilestone(milestone)] });
+}
+
+export function replaceMilestoneInState(id, milestone) {
+  commit({
+    milestones: state.milestones.map(
+      m => (m.id === id ? normalizeMilestone(milestone) : m))
+  });
+}
+
+/**
+ * Poista välitavoite tilasta.
+ *
+ * TEHTÄVÄT JA PROJEKTIT EIVÄT POISTU MUKANA — niiden liitos katkeaa.
+ * Tehtävä on tehty tai tekemättä riippumatta siitä, onko sen
+ * tarkistuspiste yhä olemassa. Kannassa sama sääntö on
+ * `on delete set null (milestone_id)`.
+ */
+export function removeMilestoneFromState(id) {
+  commit({
+    milestones: state.milestones.filter(m => m.id !== id),
+    tasks: state.tasks.map(t => (t.milestoneId === id ? { ...t, milestoneId: null } : t)),
+    projects: state.projects.map(
+      p => (p.milestoneId === id ? { ...p, milestoneId: null } : p))
+  });
+}
+
+export function findMilestone(id) {
+  return state.milestones.find(m => m.id === id) || null;
+}
+
+/** Korvaa useita välitavoitteita kerralla. Käytetään järjestyksen muutoksessa. */
+export function replaceMilestonesInState(updated = []) {
+  const byId = new Map(updated.map(m => [m.id, normalizeMilestone(m)]));
+  commit({ milestones: state.milestones.map(m => byId.get(m.id) || m) });
+}
+
 export function setWellbeing(entries) {
   commit({ wellbeing: (entries || []).map(normalizeWellbeingEntry) });
 }
@@ -452,6 +529,55 @@ export function clearPendingExtraction() {
   commit({ pendingExtraction: null });
 }
 
+// --------------------------------------------------- suunnitelmaehdotus
+//
+// EHDOTUS EI OLE KOKOELMA VAAN YKSI KESKEN OLEVA ASIA.
+//
+// Se odottaa käyttäjän tarkistusta eikä sitä tallenneta mihinkään.
+// Hyväksynnästä syntyy tavallisia rivejä, ja ehdotus katoaa.
+
+/** Aseta tarkistusta odottava suunnitelmaehdotus. */
+export function setPendingPlan(plan) {
+  commit({ pendingPlan: plan || null });
+}
+
+/** Unohda ehdotus. Kutsutaan hyväksynnän ja hylkäyksen jälkeen. */
+export function clearPendingPlan() {
+  commit({ pendingPlan: null });
+}
+
+/** Aseta tarkistusta odottava muutosehdotus. */
+export function setPendingReplan(proposal) {
+  commit({ pendingReplan: proposal || null });
+}
+
+export function clearPendingReplan() {
+  commit({ pendingReplan: null });
+}
+
+/**
+ * Automaatiotaso.
+ *
+ * Kirjoitetaan myös laitekohtaiseen asetukseen, jotta valinta säilyy
+ * sivun latauksen yli. Kirjoituksen epäonnistuminen (yksityinen ikkuna,
+ * estetty tallennus) ei ole virhe: tila pysyy silti oikeana istunnon
+ * ajan, ja seuraava lataus palaa varovaisimpaan tasoon.
+ */
+export function setAutomationLevel(level) {
+  const normalized = normalizeAutomationLevel(level);
+  setDevicePreference('automationLevel', normalized);
+  commit({ automationLevel: normalized });
+}
+
+/** Avaa tavoitteen yksityiskohdat. Null palaa listaan. */
+export function setOpenGoalId(id) {
+  commit({ openGoalId: id != null ? String(id) : null });
+}
+
+export function setEditingMilestoneId(id) {
+  commit({ editingMilestoneId: id });
+}
+
 /** Aseta AI-kirjausketju. */
 export function setAiAudit(entries) {
   commit({ aiAudit: (entries || []).map(normalizeAuditEntry) });
@@ -504,9 +630,20 @@ export function setTasksSegment(segment) {
   commit({ tasksSegment: segment === 'routines' ? 'routines' : 'tasks' });
 }
 
-/** Tavoitenäkymän osio: 'goals' tai 'projects'. */
+/** Tavoitenäkymän osiot. */
+export const GOALS_SEGMENTS = Object.freeze([
+  { key: 'goals', label: 'Tavoitteet' },
+  { key: 'projects', label: 'Projektit' },
+  { key: 'plan', label: 'Suunnittelu' }
+]);
+
+const GOALS_SEGMENT_KEYS = Object.freeze(GOALS_SEGMENTS.map(s => s.key));
+
+/** Tavoitenäkymän osio. Tuntematon arvo palautuu tavoitteisiin. */
 export function setGoalsSegment(segment) {
-  commit({ goalsSegment: segment === 'projects' ? 'projects' : 'goals' });
+  commit({
+    goalsSegment: GOALS_SEGMENT_KEYS.includes(segment) ? segment : 'goals'
+  });
 }
 
 /**

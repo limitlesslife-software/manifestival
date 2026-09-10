@@ -35,7 +35,7 @@ export const REACH = Object.freeze({
 });
 
 /**
- * Kaksitoista domainia ja se, miten käyttäjä pääsee niihin.
+ * Kolmetoista domainia ja se, miten käyttäjä pääsee niihin.
  *
  * `evidence` on koneellisesti tarkistettava todiste:
  *   html      id, jonka on oltava index.html:ssä
@@ -175,6 +175,18 @@ export const REACHABILITY = Object.freeze([
     note: 'Kursseja ei haeta mistään. Arvo on käyttäjän kirjaama tai '
         + 'tuntematon, ja tuntematon näytetään tuntemattomana eikä '
         + 'nollana. Vanhentunut arvo merkitään vanhaksi.'
+  }),
+  Object.freeze({
+    gate: 'milestones',
+    reach: REACH.REACHABLE,
+    label: 'Välitavoitteet',
+    nav: 'Tavoitteet -> tavoitteen "Suunnitelma ja välitavoitteet"',
+    evidence: { html: 'goalDetailContainer', view: 'src/app/views/goalDetail.js' },
+    crud: 'luonti, luku, muokkaus, poisto, järjestys, saavutetuksi merkintä',
+    note: 'Välitavoite on tila eikä työsäiliö: se joko on saavutettu tai '
+        + 'ei. Poisto ei vie liitettyjä tehtäviä mukanaan, vaan katkaisee '
+        + 'liitoksen — työ on tehty tai tekemättä riippumatta siitä, onko '
+        + 'sen tarkistuspiste yhä olemassa.'
   })
 ]);
 
