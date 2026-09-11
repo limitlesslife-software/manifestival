@@ -385,15 +385,49 @@ export function isExpired(reminder, { todayIso, nowMinutes }) {
  *
  * Orpo muistutus on tietue asiasta, jota ei enää ole. Sitä ei
  * hävitetä hiljaa, vaan sovellus peruu sen näkyvästi.
+ *
+ * `lookup` on kohdelaji -> kokoelma. Kokoelma saa olla taulukko tai
+ * VALMIS TUNNISTEJOUKKO (`Set`): jälkimmäinen tekee hausta vakioaikaisen,
+ * ja `evaluateReminders` rakentaa sen kerran kierrosta kohti.
+ *
+ * PUUTTUVA KOKOELMA EI TEE ORVOKSI. Kokoelmaa ei ole ladattu on eri
+ * asia kuin että kohde on poistettu, ja väärä orpous peruisi
+ * muistutuksen turhaan.
  */
 export function isOrphaned(reminder, lookup = {}) {
   if (!reminder || reminder.targetType === REMINDER_TARGET.STANDALONE) return false;
-  if (!reminder.targetId) return false;
+
+  // Luetaan KERRAN. Alla oleva haku kulkee koko kokoelman läpi, ja
+  // kentän lukeminen silmukan sisällä tekisi siitä n kertaa kalliimman
+  // kuin se on — mikä näkyy 30 sekunnin välein ajettavassa
+  // hälytyskierroksessa. Ks. tests/assistant-performance.test.mjs.
+  const targetId = reminder.targetId;
+  if (!targetId) return false;
 
   const collection = lookup[reminder.targetType];
+
+  if (collection instanceof Set) return !collection.has(targetId);
   if (!Array.isArray(collection)) return false;
 
-  return !collection.some(row => row && String(row.id) === reminder.targetId);
+  return !collection.some(row => row && String(row.id) === targetId);
+}
+
+/**
+ * Kohdekokoelmista tunnistejoukot.
+ *
+ * Rakennetaan KERRAN kierrosta kohti. Ilman tätä jokainen muistutus
+ * kävisi kohdekokoelman läpi erikseen, ja hälytyskierros olisi
+ * tehtävien ja muistutusten tulo — ei summa.
+ */
+function idLookup(lookup = {}) {
+  const out = {};
+  for (const [kind, collection] of Object.entries(lookup)) {
+    if (collection instanceof Set) { out[kind] = collection; continue; }
+    if (!Array.isArray(collection)) continue;
+    out[kind] = new Set(
+      collection.filter(Boolean).map(row => String(row.id)));
+  }
+  return out;
 }
 
 // =====================================================================
@@ -610,10 +644,13 @@ export function evaluateReminders({
   const expired = [];
   const orphaned = [];
 
+  // TUNNISTEJOUKOT RAKENNETAAN KERRAN. Ks. `idLookup`.
+  const ids = idLookup(lookup);
+
   for (const reminder of reminders) {
     if (!reminder) continue;
 
-    if (isOrphaned(reminder, lookup)) {
+    if (isOrphaned(reminder, ids)) {
       orphaned.push(reminder);
       continue;
     }
