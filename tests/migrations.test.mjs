@@ -228,7 +228,7 @@ const KOVENNETUT = [
   '0003_routines.sql', '0004_goals_projects.sql',
   '0005_notification_preferences.sql', '0006_wellbeing.sql',
   '0007_finance.sql', '0008_ai_audit.sql', '0009_finance_2.sql',
-  '0010_goal_to_action.sql'
+  '0010_goal_to_action.sql', '0011_personal_assistant.sql'
 ];
 
 /** Migraation suorittava osa: kommenttirivit pois. */
@@ -243,7 +243,7 @@ function allCode() {
   return migrationFiles().map(code).join(NEWLINE);
 }
 
-test('KRIITTINEN: taulusäännöt eivät ole tyhjiä — ne kattavat 13 taulua', () => {
+test('KRIITTINEN: taulusäännöt eivät ole tyhjiä — ne kattavat 18 taulua', () => {
   // Tämä testi on olemassa yhtä vikaa varten: yllä olevat säännöt
   // etsivät tauluja hahmolla `create table public.X`. Jos hahmo ei
   // vastaa migraatioiden muotoa, jokainen sääntö käy läpi nolla taulua
@@ -256,10 +256,11 @@ test('KRIITTINEN: taulusäännöt eivät ole tyhjiä — ne kattavat 13 taulua',
     .map(m => m[1]).sort();
 
   assert.deepEqual(taulut, [
-    'ai_action_audit', 'bills', 'goals', 'investments', 'milestones',
-    'notification_preferences', 'projects', 'recurring_expenses',
+    'ai_action_audit', 'bills', 'goals', 'inbox_items', 'investments',
+    'location_rules', 'milestones', 'notices', 'notification_preferences',
+    'projects', 'recurring_expenses', 'reminders',
     'routine_exceptions', 'routines', 'savings_goals', 'transactions',
-    'wellbeing_entries'
+    'travel_plans', 'wellbeing_entries'
   ], 'migraatioiden luomat taulut eivät vastaa odotusta');
 });
 
@@ -1613,8 +1614,10 @@ test('KRIITTINEN: loppuvarmistuksen luvut lasketaan migraatioista', () => {
     }
   }
   assert.deepEqual([...eranUlkopuoliset].sort(),
-    ['investments_owner_row_key', 'milestones_owner_row_key',
-     'transactions_owner_row_key'],
+    ['inbox_items_owner_row_key', 'investments_owner_row_key',
+     'location_rules_owner_row_key', 'milestones_owner_row_key',
+     'notices_owner_row_key', 'reminders_owner_row_key',
+     'transactions_owner_row_key', 'travel_plans_owner_row_key'],
     'erän ulkopuolisten omistajan rivin avainten joukko muuttui');
 
   // Yhdeksän liipaisinta erässä: jokaiselle taululle jolla on
@@ -2835,7 +2838,7 @@ test('varmistuskyselyt ovat vain lukevia', () => {
   // tiedostomäärä, jolloin uusi varmistus näytti puuttuvalta
   // migraatiolta.
   const migraatiokohtaiset = files.filter(name => /^verify_\d{4}\.sql$/.test(name));
-  assert.equal(migraatiokohtaiset.length, 10, 'yksi varmistustiedosto migraatiota kohti');
+  assert.equal(migraatiokohtaiset.length, 11, 'yksi varmistustiedosto migraatiota kohti');
 
   // supabase/acceptance elaa saman saannon alla. Se ei ole
   // migraatiokohtainen varmistus, joten se on eri hakemistossa, mutta se
@@ -4498,7 +4501,12 @@ test('KRIITTINEN: yksikään portti ei ole auki ilman ajettua migraatiota', () =
     // kieltäminen (23514) ovat eri vikoja eri oireella.
     milestones: '0010',
     GOAL_PLANNING_FIELDS: '0010',
-    GOAL_MAINTENANCE_MODE: '0010'
+    GOAL_MAINTENANCE_MODE: '0010',
+    // Migraatio 0011 tuo VIISI taulua eika yhtaan saraketta olemassa
+    // olevaan tauluun. Siksi tassa ei ole yhtaan sarakeporttia: mitaan
+    // ei lisatty tauluun, jonka portti on jo auki.
+    inboxItems: '0011', reminders: '0011', notices: '0011',
+    travelPlans: '0011', locationRules: '0011'
   };
 
   // KAKSI HYVAKSYTTYA LAHDETTA SILLE, ETTA MIGRAATIO ON AJETTU.
@@ -4578,8 +4586,8 @@ test('KRIITTINEN: yksikään portti ei ole auki ilman ajettua migraatiota', () =
   // uuden portin lisääminen kaataa tämän, ja se on oikea hetki
   // tarkistaa, että portti on myös tilannedokumentissa ja
   // migraatiokartassa.
-  // Kolmetoista taulua + neljä sarake-/arvoporttia.
-  assert.equal(Object.keys(portit).length, 17);
+  // Kahdeksantoista taulua + neljä sarake-/arvoporttia.
+  assert.equal(Object.keys(portit).length, 22);
 
   // Ja avatun portin migraatio on todella ajettu — sama sääntö kuin yllä,
   // mutta nimenomaisesti sille portille joka on auki.

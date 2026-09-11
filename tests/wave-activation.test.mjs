@@ -105,7 +105,7 @@ function valeasiakas(vastaus = { data: [], error: null }) {
 // FIXTUURIT
 // =====================================================================
 //
-// Yksi kelvollinen domain-olio jokaiselle kolmelletoista portille.
+// Yksi kelvollinen domain-olio jokaiselle kahdeksalletoista portille.
 // Nämä ovat se syöte, jolla tietokantapolku ajetaan portin auettua.
 
 const FIXTUURIT = Object.freeze({
@@ -137,6 +137,27 @@ const FIXTUURIT = Object.freeze({
   milestones: {
     id: 'w-m-1', goalId: 'w-g-1', title: 'Ominaisuusvalmis',
     targetDate: '2026-11-01', orderIndex: 0
+  },
+  inboxItems: {
+    id: 'w-in-1', text: 'Soita hammaslaakarille', status: 'unprocessed',
+    source: 'text'
+  },
+  reminders: {
+    id: 'w-mu-1', title: 'Soita hammaslaakarille', targetType: 'standalone',
+    trigger: 'at_time', dueDate: '2026-09-12', dueTime: '09:00'
+  },
+  notices: {
+    id: 'w-il-1', key: 'reminder:w-mu-1:2026-09-12:540', kind: 'reminder',
+    level: 'info', title: 'Soita hammaslaakarille', createdDate: '2026-09-12'
+  },
+  travelPlans: {
+    id: 'w-ma-1', title: 'Hammaslaakari', origin: 'Koti',
+    destination: 'Keskusta', arrivalDate: '2026-09-12', arrivalTime: '10:00',
+    mode: 'transit'
+  },
+  locationRules: {
+    id: 'w-si-1', place: 'Kauppa', trigger: 'arriving',
+    message: 'Osta maitoa', active: false
   }
 });
 

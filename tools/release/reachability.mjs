@@ -35,7 +35,7 @@ export const REACH = Object.freeze({
 });
 
 /**
- * Kolmetoista domainia ja se, miten käyttäjä pääsee niihin.
+ * Kahdeksantoista domainia ja se, miten käyttäjä pääsee niihin.
  *
  * `evidence` on koneellisesti tarkistettava todiste:
  *   html      id, jonka on oltava index.html:ssä
@@ -187,6 +187,66 @@ export const REACHABILITY = Object.freeze([
         + 'ei. Poisto ei vie liitettyjä tehtäviä mukanaan, vaan katkaisee '
         + 'liitoksen — työ on tehty tai tekemättä riippumatta siitä, onko '
         + 'sen tarkistuspiste yhä olemassa.'
+  }),
+  Object.freeze({
+    gate: 'inboxItems',
+    reach: REACH.NO_UI,
+    label: null,
+    nav: null,
+    evidence: null,
+    crud: 'ei mitään -- näkymää ei ole',
+    note: 'Saapuvat-domain on olemassa (src/domain/inbox.js) ja '
+        + 'repositorio on kytketty, mutta käyttäjällä ei ole tapaa '
+        + 'kirjata riviä eikä nähdä kirjattua. Portti EI SAA avautua '
+        + 'ennen näkymää: kirjaus ilman lukemista on tiedon nielu.'
+  }),
+  Object.freeze({
+    gate: 'reminders',
+    reach: REACH.NO_UI,
+    label: null,
+    nav: null,
+    evidence: null,
+    crud: 'ei mitään -- näkymää ei ole',
+    note: 'Muistutusdomain ja sen tilakone ovat valmiit '
+        + '(src/domain/reminder.js), mutta lomaketta ei ole eikä '
+        + 'hälytystä näytetä missään. Tallennettu muistutus, jota ei '
+        + 'näytetä, on lupaus jota ei pidetä.'
+  }),
+  Object.freeze({
+    gate: 'notices',
+    reach: REACH.NO_UI,
+    label: null,
+    nav: null,
+    evidence: null,
+    crud: 'ei mitään -- näkymää ei ole',
+    note: 'Ilmoituskeskus on domainina olemassa '
+        + '(src/domain/notificationCenter.js). Tämä EI ole '
+        + 'tausta-aineistoa kuten aiAudit: ilmoitus on kirjoitettu '
+        + 'nimenomaan käyttäjän luettavaksi, joten näkymän puuttuminen '
+        + 'on puute eikä valinta.'
+  }),
+  Object.freeze({
+    gate: 'travelPlans',
+    reach: REACH.NO_UI,
+    label: null,
+    nav: null,
+    evidence: null,
+    crud: 'ei mitään -- näkymää ei ole',
+    note: 'Lähtöajan laskenta on valmis (src/domain/travel.js) ja se '
+        + 'palauttaa tuntemattoman tuntemattomana. Käyttäjällä ei ole '
+        + 'tapaa kirjata matkaa eikä nähdä laskettua lähtöaikaa.'
+  }),
+  Object.freeze({
+    gate: 'locationRules',
+    reach: REACH.NO_UI,
+    label: null,
+    nav: null,
+    evidence: null,
+    crud: 'ei mitään -- näkymää ei ole',
+    note: 'Sääntö on dataa, ei toteutus: geoaitaa ei ole eikä sitä voi '
+        + 'luvata ilman laitehyväksyntää. Näkymän lisäksi tämä vaatii '
+        + 'sijaintiluvan kysymisen, eikä lupaa oleteta -- sääntö on '
+        + 'oletuksena pois päältä.'
   })
 ]);
 

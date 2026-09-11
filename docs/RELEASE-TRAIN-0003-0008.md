@@ -1,4 +1,4 @@
-# Julkaisujuna 0003–0010 — aallot A–G
+# Julkaisujuna 0003–0011 — aallot A–H
 
 **Tila:** valmisteltu paikallisesti. **Mitään ei ole deployattu.**
 
@@ -14,6 +14,7 @@ Tämä on junan yleisohje. Aaltokohtaiset tarkistuslistat ovat erikseen:
 | **E** | `aiAudit` | `v18` | **VALMIS** | [WAVE-E.md](acceptance/WAVE-E.md) |
 | **F** | `transactions`, `investments` | `v19` | **ESTETTY** | [WAVE-F.md](acceptance/WAVE-F.md) |
 | **G** | `milestones` | `v20` | **ESTETTY** | [WAVE-G.md](acceptance/WAVE-G.md) |
+| **H** | `inboxItems`, `reminders`, `notices`, `travelPlans`, `locationRules` | `v21` | **ESTETTY** | [WAVE-H.md](acceptance/WAVE-H.md) |
 
 **Aalto F on estetty yhdestä nimetystä syystä:** migraatiota
 `0009_finance_2.sql` ei ole ajettu tuotantoon. Sen sovelluskoodi on
@@ -32,7 +33,13 @@ domainilta puuttuu käyttöliittymä, **ei voi** olla merkitty valmiiksi
 
 Aiemmin B oli osittainen ja D estetty, koska projekteille ja
 taloudelle ei ollut näkymää lainkaan. Ne rakennettiin perustilaan, ja
-kaikki kymmenen domainia ovat nyt tavoitettavissa.
+junan ensimmäisen kolmentoista domainin osalta tavoitettavuus on
+kunnossa.
+
+**Aalto H on estetty molemmista syistä yhtä aikaa**: migraatiota `0011`
+ei ole ajettu EIKÄ yhdelläkään sen viidestä domainista ole näkymää.
+Se on ainoa aalto, jolla on tämä kaksoiseste, ja siksi se on junan
+viimeisenä.
 
 Ks. `docs/UI-REACHABILITY.md`.
 
@@ -59,7 +66,9 @@ Aaltojen commit-SHA:t: `activation-0003-0008-release-manifest.json`.
    |
    +-- aalto F              v19   12/13   <- ESTETTY: migraatio 0009 ajamatta
    |
-   +-- aalto G              v20   13/13   <- ESTETTY: migraatio 0010 ajamatta
+   +-- aalto G              v20   13/18   <- ESTETTY: migraatio 0010 ajamatta
+   |
+   +-- aalto H              v21   18/18   <- ESTETTY: 0011 ajamatta JA näkymät puuttuvat
 ```
 
 **Perustila deployataan ensin, kaikki portit kiinni.** Se korjaa kolme

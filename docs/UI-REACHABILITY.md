@@ -1,6 +1,9 @@
-# Käyttöliittymän tavoitettavuus — kymmenen domainia
+# Käyttöliittymän tavoitettavuus — kahdeksantoista domainia
 
-**Tila:** kaikki kymmenen tavoitettavissa. Auditoitu ja korjattu.
+**Tila:** kolmetoista tavoitettavissa, **viisi ei**. Aallon H domainit
+(saapuvat, muistutukset, ilmoitukset, matka, sijaintisäännöt) ovat
+domainina ja kannassa valmiita mutta ilman näkymää — ja siksi aalto H
+on merkitty **ESTETYKSI**.
 **Lähde:** `tools/release/reachability.mjs`, testattu
 `tests/ui-reachability.test.mjs`.
 
@@ -38,6 +41,30 @@ taloutta eikä löytänyt kumpaakaan.
 | `transactions` | **ON** | **Talous** → Tapahtumat | Tapahtumat | täysi + kuitista luenta | F |
 | `investments` | **ON** | **Talous** → Sijoitukset | Sijoitukset | täysi + arvon käsin päivitys | F |
 | `milestones` | **ON** | **Tavoitteet** → tavoite → Suunnitelma | Välitavoitteet | täysi + järjestys + saavutus | G |
+| `inboxItems` | **EI** | — | — | ei mitään | H |
+| `reminders` | **EI** | — | — | ei mitään | H |
+| `notices` | **EI** | — | — | ei mitään | H |
+| `travelPlans` | **EI** | — | — | ei mitään | H |
+| `locationRules` | **EI** | — | — | ei mitään | H |
+
+### Aallon H viisi puuttuvaa näkymää
+
+Nämä eivät ole taantuma vaan **rehellinen välitila**. Domain-moduulit
+(`src/domain/inbox.js`, `reminder.js`, `travel.js`,
+`notificationCenter.js`), repositoriot ja migraatio `0011` ovat
+olemassa; käyttäjälle näkyvää polkua ei ole.
+
+Portti pysyy kiinni juuri siksi. Kirjaus ilman lukemista on tiedon
+nielu, ja tallennettu muistutus jota ei näytetä on lupaus jota ei
+pidetä.
+
+Huomaa ero `aiAudit`-riviin: kirjausketju on **tausta-aineistoa**, eikä
+sille ole tarkoituskaan rakentaa selainta. Ilmoitus sen sijaan
+kirjoitetaan nimenomaan käyttäjän luettavaksi, joten näkymän
+puuttuminen on **puute eikä valinta**.
+
+`locationRules` vaatii näkymän lisäksi sijaintiluvan kysymisen. Lupaa
+ei oleteta: sääntö on kannassa oletuksena pois päältä.
 
 **Portti ei vaikuta näkyvyyteen.** Kaikki näkymät ovat käytettävissä
 myös portin ollessa kiinni — silloin tieto elää istunnon muistissa ja

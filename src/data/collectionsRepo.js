@@ -32,6 +32,10 @@ import { normalizeAuditEntry } from '../domain/audit.js';
 import { normalizeTransaction } from '../domain/transactions.js';
 import { normalizeHolding } from '../domain/investments.js';
 import { normalizeMilestone } from '../domain/milestone.js';
+import { normalizeInboxItem } from '../domain/inbox.js';
+import { normalizeReminder } from '../domain/reminder.js';
+import { normalizeNotice } from '../domain/notificationCenter.js';
+import { normalizeTravelPlan, normalizeLocationRule } from '../domain/travel.js';
 
 /** Kentät, joita client ei saa koskaan lähettää. */
 const SERVER_OWNED = Object.freeze(['user_id', 'created_at', 'updated_at']);
@@ -596,6 +600,226 @@ export const milestonesRepo = createRepository({
   })
 });
 
+
+// -------------------------------------------------------- saapuvat
+
+/**
+ * Saapuvat: kirjaa nyt, järjestä myöhemmin.
+ *
+ * `proposal` on tekoälyn tuottamaa tietoa ja se tallennetaan `jsonb`-
+ * sarakkeeseen. Se on tietoinen poikkeus siihen sääntöön, ettei mallin
+ * tuotosta säilytetä: ehdotus on osa rivin tilaa siihen asti että
+ * käyttäjä käsittelee sen, ja ilman sitä käyttäjä näkisi tulkinnan vain
+ * kerran.
+ *
+ * Ehdotus katoaa, kun rivi muunnetaan tai hylätään — ks. migraatio 0011.
+ */
+export const inboxRepo = createRepository({
+  table: 'inbox_items',
+  schemaKey: 'inboxItems',
+  normalize: normalizeInboxItem,
+  toRow: item => ({
+    id: item.id,
+    text: item.text,
+    status: item.status,
+    source: item.source,
+    proposal: item.proposal,
+    converted_kind: item.convertedKind,
+    converted_id: item.convertedId,
+    captured_at: item.capturedAt
+  }),
+  fromRow: row => normalizeInboxItem({
+    id: row.id,
+    text: row.text,
+    status: row.status,
+    source: row.source,
+    proposal: row.proposal,
+    convertedKind: row.converted_kind,
+    convertedId: row.converted_id,
+    capturedAt: row.captured_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  })
+});
+
+// ----------------------------------------------------- muistutukset
+
+/**
+ * Muistutukset.
+ *
+ * `target_id` EI OLE VIERASAVAIN. Kohde voidaan poistaa, ja muistutus
+ * on silti tietue siitä että muistuttaminen oli tarkoitus. Orpo
+ * muistutus tunnistetaan sovelluksessa (`isOrphaned`) ja perutaan
+ * näkyvästi — hiljaisen katoamisen sijaan.
+ *
+ * Sama perustelu kuin `transactions.source_id` (0009) ja
+ * `ai_action_audit.target_id` (0008).
+ */
+export const remindersRepo = createRepository({
+  table: 'reminders',
+  schemaKey: 'reminders',
+  normalize: normalizeReminder,
+  toRow: reminder => ({
+    id: reminder.id,
+    title: reminder.title,
+    target_type: reminder.targetType,
+    target_id: reminder.targetId,
+    trigger_type: reminder.trigger,
+    due_date: reminder.dueDate,
+    due_time: reminder.dueTime,
+    lead_minutes: reminder.leadMinutes,
+    status: reminder.status,
+    escalate: reminder.escalate,
+    alert_count: reminder.alertCount,
+    snooze_count: reminder.snoozeCount,
+    until_time: reminder.untilTime,
+    note: reminder.note
+  }),
+  fromRow: row => normalizeReminder({
+    id: row.id,
+    title: row.title,
+    targetType: row.target_type,
+    targetId: row.target_id,
+    trigger: row.trigger_type,
+    dueDate: row.due_date,
+    dueTime: row.due_time,
+    leadMinutes: row.lead_minutes,
+    status: row.status,
+    escalate: row.escalate,
+    alertCount: row.alert_count,
+    snoozeCount: row.snooze_count,
+    untilTime: row.until_time,
+    note: row.note,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  })
+});
+
+// --------------------------------------------------- ilmoituskeskus
+
+/**
+ * Ilmoitushistoria.
+ *
+ * `key` on UNIIKKI KÄYTTÄJÄÄ KOHTI. Se on kaksoiskappaleiden esto
+ * kannassa asti: sama hälytys tuottaa saman avaimen, ja toistuvasti
+ * ajettu taustatarkistus ei voi luoda toista riviä edes silloin kun
+ * sovelluksen oma tarkistus pettäisi.
+ */
+export const noticesRepo = createRepository({
+  table: 'notices',
+  schemaKey: 'notices',
+  normalize: normalizeNotice,
+  toRow: notice => ({
+    id: notice.id,
+    notice_key: notice.key,
+    kind: notice.kind,
+    level: notice.level,
+    status: notice.status,
+    title: notice.title,
+    reason: notice.reason,
+    target_type: notice.targetType,
+    target_id: notice.targetId,
+    created_date: notice.createdDate
+  }),
+  fromRow: row => normalizeNotice({
+    id: row.id,
+    key: row.notice_key,
+    kind: row.kind,
+    level: row.level,
+    status: row.status,
+    title: row.title,
+    reason: row.reason,
+    targetType: row.target_type,
+    targetId: row.target_id,
+    createdDate: row.created_date,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  })
+});
+
+// ------------------------------------------------------------- matka
+
+/**
+ * Matkasuunnitelmat.
+ *
+ * TÄSSÄ EI OLE KOORDINAATTEJA. `origin` ja `destination` ovat
+ * käyttäjän kirjoittamia nimiä. Koordinaattien tallentaminen tekisi
+ * niistä osan vientiä, varmuuskopiota ja mahdollista vuotoa — ja
+ * lähtöajan laskentaan riittää kesto.
+ */
+export const travelPlansRepo = createRepository({
+  table: 'travel_plans',
+  schemaKey: 'travelPlans',
+  normalize: normalizeTravelPlan,
+  toRow: plan => ({
+    id: plan.id,
+    title: plan.title,
+    origin: plan.origin,
+    destination: plan.destination,
+    arrival_date: plan.arrivalDate,
+    arrival_time: plan.arrivalTime,
+    mode: plan.mode,
+    travel_minutes: plan.travelMinutes,
+    travel_source: plan.travelSource,
+    estimated_at: plan.estimatedAt,
+    preparation_minutes: plan.preparationMinutes,
+    arrival_buffer_minutes: plan.arrivalBufferMinutes,
+    task_id: plan.taskId,
+    note: plan.note
+  }),
+  fromRow: row => normalizeTravelPlan({
+    id: row.id,
+    title: row.title,
+    origin: row.origin,
+    destination: row.destination,
+    arrivalDate: row.arrival_date,
+    arrivalTime: row.arrival_time,
+    mode: row.mode,
+    travelMinutes: row.travel_minutes,
+    travelSource: row.travel_source,
+    estimatedAt: row.estimated_at,
+    preparationMinutes: row.preparation_minutes,
+    arrivalBufferMinutes: row.arrival_buffer_minutes,
+    taskId: row.task_id,
+    note: row.note,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  })
+});
+
+/**
+ * Sijaintisäännöt.
+ *
+ * SÄÄNTÖ EI OLE TOTEUTUS. Geoaitaa ei ole eikä sitä voi luvata ilman
+ * laitehyväksyntää. Sääntö on data, jota voidaan mallintaa ja testata
+ * simuloiduilla sijainneilla — ja kytkeä myöhemmin oikeaan
+ * sovittimeen.
+ *
+ * `active` on oletuksena EPÄTOSI: sijainti vaatii luvan, eikä lupaa
+ * oleteta.
+ */
+export const locationRulesRepo = createRepository({
+  table: 'location_rules',
+  schemaKey: 'locationRules',
+  normalize: normalizeLocationRule,
+  toRow: rule => ({
+    id: rule.id,
+    place: rule.place,
+    trigger_type: rule.trigger,
+    message: rule.message,
+    active: rule.active,
+    task_id: rule.taskId
+  }),
+  fromRow: row => normalizeLocationRule({
+    id: row.id,
+    place: row.place,
+    trigger: row.trigger_type,
+    message: row.message,
+    active: row.active,
+    taskId: row.task_id
+  })
+});
+
 // ------------------------------------------------------- AI-kirjausketju
 
 export const aiAuditRepo = createRepository({
@@ -650,7 +874,9 @@ export const aiAuditRepo = createRepository({
 export const ALL_REPOSITORIES = Object.freeze([
   routinesRepo, routineExceptionsRepo, goalsRepo, projectsRepo, wellbeingRepo,
   billsRepo, recurringExpensesRepo, savingsGoalsRepo,
-  transactionsRepo, investmentsRepo, milestonesRepo, aiAuditRepo
+  transactionsRepo, investmentsRepo, milestonesRepo,
+  inboxRepo, remindersRepo, noticesRepo, travelPlansRepo, locationRulesRepo,
+  aiAuditRepo
 ]);
 
 /** Tyhjennä kaikki muistivarastot. Kutsutaan uloskirjautumisessa. */

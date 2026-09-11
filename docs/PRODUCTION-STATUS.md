@@ -48,6 +48,7 @@ Automaattinen testi vartioi, että tämä dokumentti pysyy ajan tasalla.
 | 0008 | `0008_ai_audit.sql` | **AJETTU** | PASS |
 | 0009 | `0009_finance_2.sql` | **EI AJETTU** | — |
 | 0010 | `0010_goal_to_action.sql` | **EI AJETTU** | — |
+| 0011 | `0011_personal_assistant.sql` | **EI AJETTU** | — |
 
 > **⚠ Migraatio 0010 on suunniteltu, ei ajettu — ja se on
 > vaarallisempi kuin aiemmat.** Se on ensimmäinen migraatio, joka
@@ -137,6 +138,11 @@ vertaa niihin.
 | `milestones` | 0010 | kiinni |
 | `GOAL_PLANNING_FIELDS` | 0010 | kiinni |
 | `GOAL_MAINTENANCE_MODE` | 0010 | kiinni |
+| `inboxItems` | 0011 | kiinni |
+| `reminders` | 0011 | kiinni |
+| `notices` | 0011 | kiinni |
+| `travelPlans` | 0011 | kiinni |
+| `locationRules` | 0011 | kiinni |
 
 `GOAL_PLANNING_FIELDS` on **sarakeportti** ja `GOAL_MAINTENANCE_MODE`
 **arvoportti**. Ne ovat erillisiä, koska niiden viat ovat erilaisia:
@@ -179,6 +185,7 @@ hyväksyntäpaketit: `docs/RELEASE-TRAIN-0003-0008.md`.
 | **E** | `aiAudit` | `v18` | VALMIS | `edd9b33` | — | — | — | — |
 | **F** | `transactions`, `investments` | `v19` | **ESTETTY** | — | — | — | — | — |
 | **G** | `milestones` | `v20` | **ESTETTY** | — | — | — | — | — |
+| **H** | `inboxItems`, `reminders`, `notices`, `travelPlans`, `locationRules` | `v21` | **ESTETTY** | — | — | — | — | — |
 
 **Aalto F on estetty, ei kesken.** Sen sovelluskoodi on valmis ja
 testattu porttien ollessa kiinni. Este on yksi ja nimetty: migraatiota

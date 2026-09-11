@@ -44,11 +44,13 @@ import * as prefsRepo from '../src/data/notificationPrefsRepo.js';
 
 const NEWLINE = String.fromCharCode(10);
 
-/** Kaikki kolmetoista porttia, jotka odottavat aktivointia. */
+/** Kaikki kahdeksantoista porttia, jotka odottavat aktivointia. */
 const PORTIT = ['routines', 'routineExceptions', 'goals', 'projects',
                 'notificationPreferences', 'wellbeing',
                 'bills', 'recurringExpenses', 'savingsGoals', 'aiAudit',
-                'transactions', 'investments', 'milestones'];
+                'transactions', 'investments', 'milestones',
+                'inboxItems', 'reminders', 'notices',
+                'travelPlans', 'locationRules'];
 
 // =====================================================================
 // PORTTIEN LÄHTÖTILA
@@ -61,8 +63,9 @@ test('KRIITTINEN: porttimatriisi on tasan yksi suunniteltu aalto', () => {
   // testi, joka kaatuu oikeasta tyosta, poistetaan ennen pitkaa
   // kokonaan.
   //
-  // Korvaava vaatimus on TIUKEMPI, ei loysempi. Kolmetoista porttia
-  // tuottaa 8192 yhdistelmaa; niista tasan kahdeksan on suunniteltuja.
+  // Korvaava vaatimus on TIUKEMPI, ei loysempi. Kahdeksantoista
+  // porttia tuottaa 262144 yhdistelmaa; niista tasan yhdeksan on
+  // suunniteltuja.
   // Kaikki muut ovat virheita: portti on avattu liian aikaisin,
   // jaanyt avaamatta tai sulkeutunut vahingossa. Yksikaan niista ei
   // mene tasta lapi.
@@ -79,16 +82,16 @@ test('KRIITTINEN: porttien joukko vastaa migraatioiden tauluja', () => {
   // taulua, kaataisi jokaisen tallennuksen aktivoinnin jälkeen.
   const taulut = new Set();
   for (const nimi of fs.readdirSync(path.join(ROOT, 'supabase/migrations'))
-                       .filter(n => /^00(0[3-9]|10)/.test(n))) {
+                       .filter(n => /^00(0[3-9]|1[01])/.test(n))) {
     for (const m of read(`supabase/migrations/${nimi}`)
       .matchAll(/create table public\.(\w+)/g)) {
       taulut.add(m[1]);
     }
   }
 
-  assert.equal(taulut.size, 13,
-    `migraatiot 0003-0010 luovat ${taulut.size} taulua, portteja on ${PORTIT.length}`);
-  assert.equal(Object.keys(TABLES).length, 13,
+  assert.equal(taulut.size, 18,
+    `migraatiot 0003-0011 luovat ${taulut.size} taulua, portteja on ${PORTIT.length}`);
+  assert.equal(Object.keys(TABLES).length, 18,
     'porttien määrä ei vastaa migraatioiden taulujen määrää');
   assert.deepEqual(Object.keys(TABLES).sort(), [...PORTIT].sort());
 });
@@ -423,7 +426,7 @@ test('KRIITTINEN: tilannedokumentti luettelee jokaisen migraation', () => {
 
   const migraatiot = fs.readdirSync(path.join(ROOT, 'supabase/migrations'))
     .filter(n => n.endsWith('.sql')).sort();
-  assert.equal(migraatiot.length, 10, `migraatioita on ${migraatiot.length}`);
+  assert.equal(migraatiot.length, 11, `migraatioita on ${migraatiot.length}`);
 
   for (const nimi of migraatiot) {
     assert.ok(doc.includes(nimi),

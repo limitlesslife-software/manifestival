@@ -44,7 +44,7 @@ function uiSource() {
 // MATRIISI KATTAA KAIKEN
 // =====================================================================
 
-test('KRIITTINEN: jokaisella kymmenellä portilla on tavoitettavuusrivi', () => {
+test('KRIITTINEN: jokaisella portilla on tavoitettavuusrivi', () => {
   assert.equal(REACHABILITY.length, ALL_GATES.length);
   for (const gate of ALL_GATES) {
     const row = reachabilityOf(gate);
@@ -145,13 +145,22 @@ test('KRIITTINEN: puuttuvaksi merkittyä domainia ei ole käyttöliittymässä',
     }
   }
 
-  // JOKAINEN KYMMENESTÄ DOMAINISTA ON NYT TAVOITETTAVISSA.
+  // PUUTTUVIEN JOUKKO LUETELLAAN NIMELTÄ.
   //
-  // Aiemmin tässä oli neljä puuttuvaa: projektit ja talouden kolme.
-  // Ne rakennettiin olemassa olevan domain-mallin päälle. Jos joukko
-  // muuttuu kumpaan tahansa suuntaan, tämä kaatuu ja pakottaa
-  // päivittämään aaltojen valmiustilan ja dokumentaation.
-  assert.deepEqual([...unreachableGates()].sort(), [],
+  // Aiemmin tässä oli neljä puuttuvaa: projektit ja talouden kolme. Ne
+  // rakennettiin olemassa olevan domain-mallin päälle, ja joukko oli
+  // hetken tyhjä.
+  //
+  // Aallon H viisi domainia toivat sen takaisin. Se EI OLE taantuma
+  // vaan rehellinen tila: domain, repositorio ja migraatio ovat
+  // olemassa, näkymä ei ole. Portti pysyy kiinni juuri siksi, ja
+  // aallon H valmiustila on ESTETTY.
+  //
+  // Joukko luetellaan nimeltä eikä sen kokoa lasketa: näkymän
+  // rakentaminen POISTAA rivin täältä ja kaataa tämän, mikä on oikea
+  // hetki päivittää matriisi, valmiustila ja dokumentaatio yhdessä.
+  assert.deepEqual([...unreachableGates()].sort(),
+    ['inboxItems', 'locationRules', 'notices', 'reminders', 'travelPlans'],
     'puuttuvien joukko muuttui — päivitä dokumentaatio ja aaltojen valmius');
 });
 
