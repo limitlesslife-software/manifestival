@@ -42,8 +42,9 @@ import { initReminderForm, closeReminderForm } from './views/reminders.js';
 import { initTravelForms, closeTravelForm, closeLocationRuleForm }
   from './views/travel.js';
 import { renderNotices, initNotices, closeNoticeCenter } from './views/notices.js';
-import { runReminderSweep, runDepartureSweep, pruneNoticeHistory }
-  from './assistantActions.js';
+import {
+  runReminderSweep, runDepartureSweep, pruneNoticeHistory, runReplanCheck
+} from './assistantActions.js';
 import { refreshNotificationPermission, syncNotifications } from './notifications.js';
 import { clearToasts } from '../ui/toast.js';
 import { maybe } from '../ui/dom.js';
@@ -96,6 +97,7 @@ function runAssistantSweeps() {
   Promise.all([
     runReminderSweep(),
     runDepartureSweep(),
+    runReplanCheck(),
     pruneNoticeHistory()
   ]).catch(error => {
     console.warn('Manifestival: halytyskierros ei onnistunut', error);

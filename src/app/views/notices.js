@@ -29,16 +29,16 @@ import { el, maybe } from '../../ui/dom.js';
 import { escapeHtml } from '../../lib/format.js';
 import { getState } from '../state.js';
 import {
-  NOTICE_STATUS, NOTICE_LEVEL, NOTICE_ACTION, noticeKindLabel,
+  NOTICE_KIND, NOTICE_STATUS, NOTICE_LEVEL, NOTICE_ACTION, noticeKindLabel,
   compareNotices, summarizeNotices, actionsFor
 } from '../../domain/notificationCenter.js';
 import { TABLES } from '../../data/schema.js';
 import {
-  readNotice, actOnNotice, dismissNotice, deleteNotice
+  readNotice, actOnNotice, dismissNotice, deleteNotice,
+  snoozeReminderBy, completeReminder, acknowledgeReminder
 } from '../assistantActions.js';
-import { snoozeReminderBy, completeReminder, acknowledgeReminder }
-  from '../assistantActions.js';
-import { setTasksSegment } from '../state.js';
+import { setTasksSegment, setGoalsSegment } from '../state.js';
+import { proposeReplan } from '../actions.js';
 import { switchTab } from '../navigation.js';
 
 /** Onko keskus auki? Näkymän oma tila — ei kuulu sovelluksen tilaan. */
@@ -142,7 +142,19 @@ export function renderNotices() {
  * näyttää missä asia on.
  */
 function openTarget(notice) {
-  if (!notice || !notice.targetType) return;
+  if (!notice) return;
+
+  // MUUTOSEHDOTUS EI OLE KOHDE VAAN LASKELMA. Se rakennetaan vasta
+  // kun käyttäjä pyytää -- ilmoituksessa ei ole eikä saa olla
+  // valmista ehdotusta, koska se olisi mallin tuotosta kannassa.
+  if (notice.kind === NOTICE_KIND.REPLAN) {
+    proposeReplan('missed_task');
+    switchTab('screen-goals');
+    setGoalsSegment('plan');
+    return;
+  }
+
+  if (!notice.targetType) return;
 
   if (notice.targetType === 'travel') {
     switchTab('screen-tasks');

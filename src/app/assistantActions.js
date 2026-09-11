@@ -55,6 +55,8 @@ import {
   applyEstimate, manualEstimate, shouldAlertDeparture, describeDeparture,
   leaveStatus
 } from '../domain/travel.js';
+import { buildReplanProposal, REPLAN_TRIGGER } from '../domain/replan.js';
+import { NOTICE_KIND, NOTICE_LEVEL } from '../domain/notificationCenter.js';
 import {
   getState, findTask,
   addReminderToState, replaceReminderInState, removeReminderFromState,
@@ -627,6 +629,99 @@ export async function runDepartureSweep({ now = new Date() } = {}) {
 
   await Promise.all(created.map(n => noticesRepo.insert(n)));
   return created.length;
+}
+
+// =====================================================================
+// MUKAUTUVA UUDELLEENSUUNNITTELU -- ILMOITUKSENA, EI TOIMENPITEENÄ
+// =====================================================================
+//
+// =====================================================================
+// TÄMÄ EI SIIRRÄ MITÄÄN
+// =====================================================================
+//
+// Kierros laskee, ONKO siirroille tarvetta, ja jos on, se tekee siitä
+// YHDEN ILMOITUKSEN. Ilmoituksen "Tarkista" avaa ehdotuksen, ja
+// käyttäjä päättää siirroista yksi kerrallaan.
+//
+// Hiljainen uudelleensuunnittelu olisi juuri se asia, jota tämä tuote
+// ei tee: käyttäjä avaisi sovelluksen ja löytäisi eri suunnitelman
+// kuin jätti, eikä mikään kertoisi miksi.
+//
+// =====================================================================
+// YKSI ILMOITUS PÄIVÄSSÄ
+// =====================================================================
+//
+// Avain sisältää päivän ja laukaisimen. Sama tarve samana päivänä on
+// yksi ilmoitus, vaikka kierros ajettaisiin minuutin välein.
+//
+// Kynnys on myös olemassa: yhden tehtävän siirrosta ei ilmoiteta.
+// Ilmoitus, joka tulee joka kerta kun jokin on myöhässä, opettaa
+// käyttäjän ohittamaan ilmoitukset.
+
+/** Montako siirtoa tarvitaan, ennen kuin siitä kannattaa ilmoittaa. */
+export const REPLAN_NOTICE_THRESHOLD = 2;
+
+/**
+ * Tarkista, kannattaisiko suunnitelmaa mukauttaa.
+ *
+ * @returns {Promise<{proposed: boolean, changes: number}>}
+ */
+export async function runReplanCheck({ now = new Date() } = {}) {
+  const state = getState();
+  const today = todayIso();
+
+  // MYÖHÄSSÄ OLEVA TYÖ ON AINOA LAUKAISIN TÄSSÄ KIERROKSESSA.
+  //
+  // Muut laukaisimet (uusi kiireellinen, ristiriita, määräpäivän
+  // muutos) syntyvät käyttäjän teosta, ja niistä ilmoittaminen
+  // erikseen olisi saman asian kertomista kahdesti.
+  const myohassa = state.tasks.filter(task =>
+    task && !task.completed && task.date && task.date < today);
+
+  if (myohassa.length < REPLAN_NOTICE_THRESHOLD) {
+    return { proposed: false, changes: 0 };
+  }
+
+  const proposal = buildReplanProposal({
+    trigger: REPLAN_TRIGGER.MISSED_TASK,
+    tasks: state.tasks,
+    goals: state.goals,
+    routines: state.routines,
+    exceptions: state.routineExceptions,
+    profile: state.profile,
+    todayIso: today,
+    automationLevel: state.automationLevel
+  });
+
+  const changes = (proposal && proposal.changes) ? proposal.changes.length : 0;
+  if (changes < REPLAN_NOTICE_THRESHOLD) {
+    return { proposed: false, changes };
+  }
+
+  const notice = normalizeNotice({
+    id: newTaskId(),
+    key: `replan|${REPLAN_TRIGGER.MISSED_TASK}|${today}`,
+    kind: NOTICE_KIND.REPLAN,
+    level: NOTICE_LEVEL.INFO,
+    title: myohassa.length === 1
+      ? '1 tehtävä on myöhässä'
+      : `${myohassa.length} tehtävää on myöhässä`,
+    // PERUSTELU LASKETAAN TODELLISISTA LUVUISTA.
+    reason: `Voisin siirtää ${changes} tehtävää uudelle päivälle. `
+      + 'Mitään ei siirretä ennen kuin hyväksyt sen.',
+    createdDate: today
+  });
+
+  if (!validateNotice(notice).valid) return { proposed: false, changes };
+  if (!addNoticeToState(notice)) return { proposed: false, changes };
+
+  const saved = await noticesRepo.insert(notice);
+  if (!saved.ok) {
+    removeNoticeFromState(notice.id);
+    return { proposed: false, changes };
+  }
+
+  return { proposed: true, changes };
 }
 
 // =====================================================================
