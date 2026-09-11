@@ -23,6 +23,10 @@ import { normalizeHolding } from '../domain/investments.js';
 import { monthKey } from '../domain/budget.js';
 import { normalizeMilestone } from '../domain/milestone.js';
 import { normalizeAutomationLevel } from '../domain/automation.js';
+import { normalizeInboxItem } from '../domain/inbox.js';
+import { normalizeReminder } from '../domain/reminder.js';
+import { normalizeNotice } from '../domain/notificationCenter.js';
+import { normalizeTravelPlan, normalizeLocationRule } from '../domain/travel.js';
 import { getDevicePreference, setDevicePreference } from '../data/preferences.js';
 
 function initialState() {
@@ -82,6 +86,51 @@ function initialState() {
 
     /** Muutosehdotus, jota käyttäjä parhaillaan tarkistaa. */
     pendingReplan: null,
+
+    /**
+     * Saapuvat: kirjaa nyt, järjestä myöhemmin.
+     * Ei säily ennen migraatiota 0011.
+     */
+    inboxItems: [],
+
+    /** Muistutukset. Ei säily ennen migraatiota 0011. */
+    reminders: [],
+
+    /** Ilmoitushistoria. Ei säily ennen migraatiota 0011. */
+    notices: [],
+
+    /** Matkasuunnitelmat. Ei säily ennen migraatiota 0011. */
+    travelPlans: [],
+
+    /** Sijaintisäännöt. Ei säily ennen migraatiota 0011. */
+    locationRules: [],
+
+    /**
+     * Kirjaus, jonka tulkintaa käyttäjä parhaillaan tarkistaa.
+     *
+     * TÄMÄ ON TARKOITUKSELLA VAIN TILASSA. Sama päätös kuin
+     * kuittiluennalla ja suunnitelmaehdotuksella: tulkinta elää siihen
+     * asti että se hyväksytään tai hylätään.
+     *
+     * HUOM. `inbox_items.proposal` on eri asia ja tietoinen poikkeus:
+     * saapuva RIVI säilyttää ehdotuksensa, koska ilman sitä käyttäjä
+     * näkisi tulkinnan vain kerran. Tämä kenttä on se tulkinta, jota
+     * hän katsoo juuri nyt.
+     */
+    pendingCapture: null,
+
+    /**
+     * Puhesyötteen hetkellinen tila: null | 'listening' | 'processing'.
+     *
+     * EI KOSKAAN KANNASSA EIKÄ LEVYLLÄ. Ääntä ei tallenneta; tämä
+     * kertoo vain, näytetäänkö mikrofoni aktiivisena.
+     */
+    voiceState: null,
+
+    /** Muokattavan muistutuksen, matkan tai säännön tunniste. */
+    editingReminderId: null,
+    editingTravelPlanId: null,
+    editingLocationRuleId: null,
 
     /**
      * Automaatiotaso.
@@ -187,9 +236,26 @@ export function patchTaskInState(id, changes) {
   });
 }
 
-/** Poista tehtävä muistista. */
+/**
+ * Poista tehtävä muistista.
+ *
+ * MATKASUUNNITELMA JA SIJAINTISÄÄNTÖ EIVÄT POISTU MUKANA — niiden
+ * liitos katkeaa. Kannassa sama sääntö on
+ * `on delete set null (task_id)`, ja tämä on sen peilikuva muistissa.
+ *
+ * Muistutukset EIVÄT ole täällä. Ne eivät ole vierasavaimella
+ * kiinnitettyjä, eikä orpoa muistutusta saa poistaa hiljaa: se
+ * perutaan näkyvästi toimintokerroksessa, jotta peruutus myös
+ * tallentuu. Ks. `cancelOrphanedReminders` tiedostossa actions.js.
+ */
 export function removeTaskFromState(id) {
-  commit({ tasks: state.tasks.filter(t => t.id !== id) });
+  commit({
+    tasks: state.tasks.filter(t => t.id !== id),
+    travelPlans: state.travelPlans.map(
+      p => (p.taskId === id ? { ...p, taskId: null } : p)),
+    locationRules: state.locationRules.map(
+      r => (r.taskId === id ? { ...r, taskId: null } : r))
+  });
 }
 
 /** Hae tehtävä tunnisteella. */
@@ -695,6 +761,195 @@ export function shiftBudgetMonth(delta) {
 
 /** Kuukausitunniste päivästä. Sama toteutus kuin budjetissa. */
 export { monthKey };
+
+// =====================================================================
+// HENKILÖKOHTAINEN AVUSTAJA
+// =====================================================================
+//
+// Viisi kokoelmaa, joilla on kaikilla sama muoto kuin muillakin.
+// Poikkeukset ovat KOHDELIITOKSISSA, ja ne on kirjoitettu auki alla:
+// muistutus ja ilmoitus eivät katoa kohteen mukana, matkasuunnitelma
+// ei katoa tehtävän mukana.
+
+// ------------------------------------------------------------- saapuvat
+
+export function setInboxItems(items) {
+  commit({ inboxItems: (items || []).map(normalizeInboxItem) });
+}
+
+export function addInboxItemToState(item) {
+  commit({ inboxItems: [...state.inboxItems, normalizeInboxItem(item)] });
+}
+
+export function replaceInboxItemInState(id, item) {
+  commit({
+    inboxItems: state.inboxItems.map(
+      i => (i.id === id ? normalizeInboxItem(item) : i))
+  });
+}
+
+export function removeInboxItemFromState(id) {
+  commit({ inboxItems: state.inboxItems.filter(i => i.id !== id) });
+}
+
+export function findInboxItem(id) {
+  return state.inboxItems.find(i => i.id === id) || null;
+}
+
+/**
+ * Kirjaus, jonka tulkintaa käyttäjä tarkistaa.
+ *
+ * Null tyhjentää. Tämä EI kirjoita mihinkään pysyvään.
+ */
+export function setPendingCapture(capture) {
+  commit({ pendingCapture: capture || null });
+}
+
+/**
+ * Puhesyötteen hetkellinen tila.
+ *
+ * Tuntematon arvo tyhjentää sen sijaan että se jäisi roikkumaan:
+ * mikrofoni, joka näyttää kuuntelevan vaikkei kuuntele, on pahempi
+ * kuin mikrofoni joka ei näytä mitään.
+ */
+export function setVoiceState(voiceState) {
+  const valid = voiceState === 'listening' || voiceState === 'processing';
+  commit({ voiceState: valid ? voiceState : null });
+}
+
+// --------------------------------------------------------- muistutukset
+
+export function setReminders(reminders) {
+  commit({ reminders: (reminders || []).map(normalizeReminder) });
+}
+
+export function addReminderToState(reminder) {
+  commit({ reminders: [...state.reminders, normalizeReminder(reminder)] });
+}
+
+export function replaceReminderInState(id, reminder) {
+  commit({
+    reminders: state.reminders.map(
+      r => (r.id === id ? normalizeReminder(reminder) : r))
+  });
+}
+
+export function removeReminderFromState(id) {
+  commit({ reminders: state.reminders.filter(r => r.id !== id) });
+}
+
+export function findReminder(id) {
+  return state.reminders.find(r => r.id === id) || null;
+}
+
+/** Korvaa useita muistutuksia kerralla. Käytetään hälytyskierroksessa. */
+export function replaceRemindersInState(updated = []) {
+  const byId = new Map(updated.map(r => [r.id, normalizeReminder(r)]));
+  commit({ reminders: state.reminders.map(r => byId.get(r.id) || r) });
+}
+
+// ------------------------------------------------------------ ilmoitukset
+
+export function setNotices(notices) {
+  commit({ notices: (notices || []).map(normalizeNotice) });
+}
+
+/**
+ * Lisää ilmoitus — TAI ÄLÄ, jos sama avain on jo olemassa.
+ *
+ * Kaksoiskappaleiden esto on tässä ensimmäinen este ja kannan
+ * `notices_key_unique` toinen. Palauttaa `true`, jos rivi syntyi.
+ */
+export function addNoticeToState(notice) {
+  const normalized = normalizeNotice(notice);
+  if (!normalized.key) return false;
+  if (state.notices.some(n => n.key === normalized.key)) return false;
+  commit({ notices: [...state.notices, normalized] });
+  return true;
+}
+
+export function replaceNoticeInState(id, notice) {
+  commit({
+    notices: state.notices.map(n => (n.id === id ? normalizeNotice(notice) : n))
+  });
+}
+
+export function removeNoticeFromState(id) {
+  commit({ notices: state.notices.filter(n => n.id !== id) });
+}
+
+export function findNotice(id) {
+  return state.notices.find(n => n.id === id) || null;
+}
+
+/** Korvaa koko ilmoituslista. Käytetään karsinnassa. */
+export function replaceNoticesInState(notices = []) {
+  commit({ notices: notices.map(normalizeNotice) });
+}
+
+// ------------------------------------------------------------------ matka
+
+export function setTravelPlans(plans) {
+  commit({ travelPlans: (plans || []).map(normalizeTravelPlan) });
+}
+
+export function addTravelPlanToState(plan) {
+  commit({ travelPlans: [...state.travelPlans, normalizeTravelPlan(plan)] });
+}
+
+export function replaceTravelPlanInState(id, plan) {
+  commit({
+    travelPlans: state.travelPlans.map(
+      p => (p.id === id ? normalizeTravelPlan(plan) : p))
+  });
+}
+
+export function removeTravelPlanFromState(id) {
+  commit({ travelPlans: state.travelPlans.filter(p => p.id !== id) });
+}
+
+export function findTravelPlan(id) {
+  return state.travelPlans.find(p => p.id === id) || null;
+}
+
+// --------------------------------------------------- sijaintisäännöt
+
+export function setLocationRules(rules) {
+  commit({ locationRules: (rules || []).map(normalizeLocationRule) });
+}
+
+export function addLocationRuleToState(rule) {
+  commit({ locationRules: [...state.locationRules, normalizeLocationRule(rule)] });
+}
+
+export function replaceLocationRuleInState(id, rule) {
+  commit({
+    locationRules: state.locationRules.map(
+      r => (r.id === id ? normalizeLocationRule(rule) : r))
+  });
+}
+
+export function removeLocationRuleFromState(id) {
+  commit({ locationRules: state.locationRules.filter(r => r.id !== id) });
+}
+
+export function findLocationRule(id) {
+  return state.locationRules.find(r => r.id === id) || null;
+}
+
+// ----------------------------------------------------------- muokkaus
+
+export function setEditingReminderId(id) {
+  commit({ editingReminderId: id });
+}
+
+export function setEditingTravelPlanId(id) {
+  commit({ editingTravelPlanId: id });
+}
+
+export function setEditingLocationRuleId(id) {
+  commit({ editingLocationRuleId: id });
+}
 
 // ------------------------------------------------------------------ näkymä
 

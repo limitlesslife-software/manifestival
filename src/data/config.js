@@ -29,5 +29,13 @@ export const API = Object.freeze({
    * PALAUTTAA EHDOTUKSEN, EI KIRJOITA MITÄÄN. Hyväksyntä on
    * domain-sääntö (src/domain/plan.js). Ks. api/plan.js.
    */
-  plan: '/api/plan'
+  plan: '/api/plan',
+  /**
+   * Vapaan kirjauksen tulkinta.
+   *
+   * PALAUTTAA TULKINNAN, EI RIVIÄ. Reitti lasketaan domainissa
+   * (src/domain/capture.js) eikä mitään synny ilman käyttäjän
+   * hyväksyntää. Ks. api/capture.js.
+   */
+  capture: '/api/capture'
 });

@@ -21,6 +21,7 @@ import {
   routinesRepo, routineExceptionsRepo, goalsRepo, projectsRepo, wellbeingRepo,
   billsRepo, recurringExpensesRepo, savingsGoalsRepo, aiAuditRepo,
   transactionsRepo, investmentsRepo, milestonesRepo,
+  inboxRepo, remindersRepo, noticesRepo, travelPlansRepo, locationRulesRepo,
   volatileCollections, clearAllCollections
 } from '../data/collectionsRepo.js';
 import { newTaskId } from '../lib/rows.js';
@@ -75,6 +76,7 @@ import {
   setMilestones, addMilestoneToState, replaceMilestoneInState,
   removeMilestoneFromState, findMilestone, replaceMilestonesInState,
   setPendingReplan, clearPendingReplan,
+  setInboxItems, setReminders, setNotices, setTravelPlans, setLocationRules,
   setAiAudit
 } from './state.js';
 import {
@@ -120,7 +122,7 @@ function warnAboutVolatileCollections() {
 /**
  * Lataa kirjautuneen käyttäjän kaikki tiedot.
  *
- * VANHENTUNUT VASTAUS HYLÄTÄÄN. Lataus on kaksitoista rinnakkaista
+ * VANHENTUNUT VASTAUS HYLÄTÄÄN. Lataus on parikymmentä rinnakkaista
  * verkkokutsua, ja käyttäjä ehtii kirjautua ulos niiden aikana. Ilman
  * tarkistusta vastaus kirjoittaisi edellisen käyttäjän rivit tilaan
  * uloskirjautumisen JÄLKEEN — ja jos seuraava käyttäjä ehti jo kirjautua
@@ -136,7 +138,9 @@ export async function loadUserData() {
   const [tasksResult, profileResult, routinesResult, exceptionsResult,
     goalsResult, projectsResult, wellbeingResult, preferencesResult,
     billsResult, expensesResult, savingsResult, transactionsResult,
-    investmentsResult, milestonesResult, auditResult] = await Promise.all([
+    investmentsResult, milestonesResult, auditResult,
+    inboxResult, remindersResult, noticesResult, travelResult,
+    locationResult] = await Promise.all([
     tasksRepo.listTasks(),
     profileRepo.loadProfile(),
     routinesRepo.list(),
@@ -151,7 +155,12 @@ export async function loadUserData() {
     transactionsRepo.list(),
     investmentsRepo.list(),
     milestonesRepo.list(),
-    aiAuditRepo.list()
+    aiAuditRepo.list(),
+    inboxRepo.list(),
+    remindersRepo.list(),
+    noticesRepo.list(),
+    travelPlansRepo.list(),
+    locationRulesRepo.list()
   ]);
 
   // Istunto on voinut vaihtua odotuksen aikana.
@@ -186,6 +195,15 @@ export async function loadUserData() {
   setInvestments(investmentsResult.ok ? investmentsResult.value : []);
   setMilestones(milestonesResult.ok ? milestonesResult.value : []);
   setAiAudit(auditResult.ok ? auditResult.value : []);
+
+  // Avustajan kokoelmat. Sama periaate: virhe ei estä sovelluksen
+  // käyttöä. Nämä ladataan VAIKKA käyttöliittymää ei vielä olisi —
+  // muuten tieto katoaisi sinä hetkenä kun näkymä rakennetaan.
+  setInboxItems(inboxResult.ok ? inboxResult.value : []);
+  setReminders(remindersResult.ok ? remindersResult.value : []);
+  setNotices(noticesResult.ok ? noticesResult.value : []);
+  setTravelPlans(travelResult.ok ? travelResult.value : []);
+  setLocationRules(locationResult.ok ? locationResult.value : []);
 
   return { tasksOk: tasksResult.ok, profileOk: profileResult.ok, discarded: false };
 }

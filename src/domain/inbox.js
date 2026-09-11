@@ -261,13 +261,29 @@ export function markConverted(item, kind, id) {
   if (!item || !kind) return null;
   return transition(item, INBOX_STATUS.CONVERTED, {
     convertedKind: kind,
-    convertedId: id ?? null
+    convertedId: id ?? null,
+    // EHDOTUS KATOAA, KUN RIVI ON KÄSITELTY.
+    //
+    // Ehdotus säilytetään vain siihen asti että käyttäjä käsittelee
+    // rivin. Sen jälkeen se on mallin tuotosta ilman käyttöä: se ei
+    // kerro mitä syntyi (`convertedId` kertoo), eikä sitä voi enää
+    // hyväksyä. Säilytettynä se päätyisi vientiin ja varmuuskopioon.
+    //
+    // `verify_0011.sql` tarkistus 47 havaitsee, jos tämä lakkaa
+    // pitämästä paikkansa.
+    proposal: null
   });
 }
 
-/** Hylkää. Rivi säilyy, jottei sama asia palaa uudelleen. */
+/**
+ * Hylkää. Rivi säilyy, jottei sama asia palaa uudelleen.
+ *
+ * EHDOTUS KATOAA. Sama perustelu kuin muunnoksessa — ja jos käyttäjä
+ * palauttaa rivin, tulkinta pyydetään uudelleen tuoreena sen sijaan
+ * että hänelle näytettäisiin se sama ehdotus jonka hän jo hylkäsi.
+ */
 export function dismissItem(item) {
-  return transition(item, INBOX_STATUS.DISMISSED);
+  return transition(item, INBOX_STATUS.DISMISSED, { proposal: null });
 }
 
 /** Palauta hylätty käsittelyyn. */

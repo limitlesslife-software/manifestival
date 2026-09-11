@@ -267,7 +267,7 @@ test('tokenin uusiutuminen ei lataa dataa uudelleen', () => {
 // ------------------------------------ FREEZE: puuttuneet elinkaaritakuut
 
 test('KRIITTINEN: uloskirjautuminen kesken latauksen hylkää vastauksen', async () => {
-  // Lataus on kaksitoista rinnakkaista verkkokutsua, ja käyttäjä ehtii
+  // Lataus on parikymmentä rinnakkaista verkkokutsua, ja käyttäjä ehtii
   // kirjautua ulos niiden aikana. Ilman tarkistusta vastaus kirjoittaisi
   // edellisen käyttäjän rivit tilaan uloskirjautumisen JÄLKEEN.
   //
