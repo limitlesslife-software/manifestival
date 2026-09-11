@@ -246,7 +246,7 @@ export function renderTravel() {
 // MATKALOMAKE
 // =====================================================================
 
-function clearErrors(formId, prefix) {
+function clearErrors(formId) {
   document.querySelectorAll(`#${formId} .field-error`).forEach(node => {
     node.textContent = '';
     node.style.display = 'none';

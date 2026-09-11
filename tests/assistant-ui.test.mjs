@@ -168,9 +168,10 @@ test('KRIITTINEN: hyväksyntä tarkistaa päätetilan ennen kirjoitusta', () => 
 
   // JA UUDELLEEN VAHVISTUKSEN JÄLKEEN. Vahvistus on odotus, ja rivi
   // voi muuttua sen aikana.
-  const toinenTarkistus = body.indexOf('INBOX_STATUS.CONVERTED', kutsu - 400);
-  assert.ok(body.slice(0, kutsu).split('INBOX_STATUS.CONVERTED').length - 1 >= 2,
-    'päätetilaa ei tarkisteta uudelleen vahvistuksen jälkeen');
+  const tarkistuksia = body.slice(0, kutsu).split('INBOX_STATUS.CONVERTED').length - 1;
+  assert.ok(tarkistuksia >= 2,
+    `päätetila tarkistettiin ${tarkistuksia} kertaa ennen kirjoitusta, `
+    + 'odotettiin vähintään kaksi (ennen vahvistusta ja sen jälkeen)');
 });
 
 test('KRIITTINEN: jokainen reitti vaatii vahvistuksen ennen kutsua', () => {
