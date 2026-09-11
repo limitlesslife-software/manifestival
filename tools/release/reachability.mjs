@@ -190,63 +190,63 @@ export const REACHABILITY = Object.freeze([
   }),
   Object.freeze({
     gate: 'inboxItems',
-    reach: REACH.NO_UI,
-    label: null,
-    nav: null,
-    evidence: null,
-    crud: 'ei mitään -- näkymää ei ole',
-    note: 'Saapuvat-domain on olemassa (src/domain/inbox.js) ja '
-        + 'repositorio on kytketty, mutta käyttäjällä ei ole tapaa '
-        + 'kirjata riviä eikä nähdä kirjattua. Portti EI SAA avautua '
-        + 'ennen näkymää: kirjaus ilman lukemista on tiedon nielu.'
+    reach: REACH.REACHABLE,
+    label: 'Saapuvat',
+    nav: 'Tänään -> kirjauspalkki; Tekeminen -> Saapuvat',
+    evidence: { html: 'inboxListContainer', view: 'src/app/views/inbox.js' },
+    crud: 'kirjaus, tulkinta, hyväksyntä, hylkäys, palautus, poisto',
+    note: 'Kirjauspalkki on päivänäkymän yläreunassa, koska kirjaus on '
+        + 'se teko joka tapahtuu useimmin. RIVI SYNTYY ENNEN TULKINTAA: '
+        + 'verkkokatko ei syö käyttäjän ajatusta. Tulkinta on ehdotus, '
+        + 'ja mitään ei synny ilman hyväksyntää.'
   }),
   Object.freeze({
     gate: 'reminders',
-    reach: REACH.NO_UI,
-    label: null,
-    nav: null,
-    evidence: null,
-    crud: 'ei mitään -- näkymää ei ole',
-    note: 'Muistutusdomain ja sen tilakone ovat valmiit '
-        + '(src/domain/reminder.js), mutta lomaketta ei ole eikä '
-        + 'hälytystä näytetä missään. Tallennettu muistutus, jota ei '
-        + 'näytetä, on lupaus jota ei pidetä.'
+    reach: REACH.REACHABLE,
+    label: 'Muistutukset',
+    nav: 'Tekeminen -> Muistutukset',
+    evidence: { html: 'remindersListContainer', view: 'src/app/views/reminders.js' },
+    crud: 'luonti, luku, muokkaus, torkutus, kuittaus, peruutus, poisto',
+    note: 'Näkymä sanoo ääneen, että muistutukset lasketaan kun '
+        + 'sovellus on auki: taustaherätystä ei ole eikä sitä luvata. '
+        + 'Torkutus siirtää muistutusta EIKÄ kohteen määräaikaa. '
+        + 'Orpo muistutus perutaan näkyvästi, ei poisteta hiljaa.'
   }),
   Object.freeze({
     gate: 'notices',
-    reach: REACH.NO_UI,
-    label: null,
-    nav: null,
-    evidence: null,
-    crud: 'ei mitään -- näkymää ei ole',
-    note: 'Ilmoituskeskus on domainina olemassa '
-        + '(src/domain/notificationCenter.js). Tämä EI ole '
-        + 'tausta-aineistoa kuten aiAudit: ilmoitus on kirjoitettu '
-        + 'nimenomaan käyttäjän luettavaksi, joten näkymän puuttuminen '
-        + 'on puute eikä valinta.'
+    reach: REACH.REACHABLE,
+    label: 'Ilmoitukset',
+    nav: 'Tänään -> Ilmoitukset (avattava lohko)',
+    evidence: { html: 'noticeCenterContainer', view: 'src/app/views/notices.js' },
+    crud: 'luku, kuittaus, torkutus, hylkäys, poisto',
+    note: 'Tämä EI ole tausta-aineistoa kuten aiAudit: ilmoitus '
+        + 'kirjoitetaan nimenomaan käyttäjän luettavaksi, ja ilmoitus '
+        + 'jota ei näytetä ei ole ilmoitus. Toimintolista tulee '
+        + 'domainista, joten ristiriidalle ei tarjota torkutusta.'
   }),
   Object.freeze({
     gate: 'travelPlans',
-    reach: REACH.NO_UI,
-    label: null,
-    nav: null,
-    evidence: null,
-    crud: 'ei mitään -- näkymää ei ole',
-    note: 'Lähtöajan laskenta on valmis (src/domain/travel.js) ja se '
-        + 'palauttaa tuntemattoman tuntemattomana. Käyttäjällä ei ole '
-        + 'tapaa kirjata matkaa eikä nähdä laskettua lähtöaikaa.'
+    reach: REACH.REACHABLE,
+    label: 'Matkat',
+    nav: 'Tekeminen -> Matka',
+    evidence: { html: 'travelListContainer', view: 'src/app/views/travel.js' },
+    crud: 'luonti, luku, muokkaus, matka-ajan käsin kirjaus, poisto',
+    note: 'TUNTEMATON NÄYTETÄÄN TUNTEMATTOMANA. Jos matka-aikaa ei '
+        + 'tiedetä, lähtöaikaa ei näytetä kellonaikana vaan syy '
+        + 'kerrotaan ja kesto voi kirjata itse. Reittipalvelua ei ole, '
+        + 'eikä koordinaatteja tallenneta missään vaiheessa.'
   }),
   Object.freeze({
     gate: 'locationRules',
-    reach: REACH.NO_UI,
-    label: null,
-    nav: null,
-    evidence: null,
-    crud: 'ei mitään -- näkymää ei ole',
-    note: 'Sääntö on dataa, ei toteutus: geoaitaa ei ole eikä sitä voi '
-        + 'luvata ilman laitehyväksyntää. Näkymän lisäksi tämä vaatii '
-        + 'sijaintiluvan kysymisen, eikä lupaa oleteta -- sääntö on '
-        + 'oletuksena pois päältä.'
+    reach: REACH.REACHABLE,
+    label: 'Paikkamuistutukset',
+    nav: 'Tekeminen -> Matka -> Paikkamuistutukset',
+    evidence: { html: 'locationRulesContainer', view: 'src/app/views/travel.js' },
+    crud: 'luonti, luku, muokkaus, päälle/pois, poisto',
+    note: 'SÄÄNTÖ ON DATAA, EI TOTEUTUS. Geoaitaa ei ole eikä sitä voi '
+        + 'luvata ilman laitehyväksyntää; säännön voi kirjata, nähdä '
+        + 'ja testata. Uusi sääntö on oletuksena POIS PÄÄLTÄ, ja '
+        + 'päälle kytkeminen kysyy vahvistuksen.'
   })
 ]);
 

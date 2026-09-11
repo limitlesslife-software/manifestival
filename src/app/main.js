@@ -37,6 +37,13 @@ import { initPlanning, resetPlanning } from './views/planning.js';
 import { clearIdempotencyKeys } from './planning.js';
 import { renderProfile, initProfileForm, fillProfileForm } from './views/profile.js';
 import { renderNotificationSettings } from './views/notificationSettings.js';
+import { initInbox, closeCaptureReview } from './views/inbox.js';
+import { initReminderForm, closeReminderForm } from './views/reminders.js';
+import { initTravelForms, closeTravelForm, closeLocationRuleForm }
+  from './views/travel.js';
+import { renderNotices, initNotices, closeNoticeCenter } from './views/notices.js';
+import { runReminderSweep, runDepartureSweep, pruneNoticeHistory }
+  from './assistantActions.js';
 import { refreshNotificationPermission, syncNotifications } from './notifications.js';
 import { clearToasts } from '../ui/toast.js';
 import { maybe } from '../ui/dom.js';
@@ -75,6 +82,24 @@ function renderAll() {
   renderFinance();
   renderProfile();
   renderNotificationSettings();
+  renderNotices();
+}
+
+/**
+ * Muistutus-, lahto- ja karsintakierros.
+ *
+ * EI KAADA MITAAN. Verkkovirhe halytyskierroksella ei saa estaa
+ * sovelluksen kayttoa: kierros yritetaan uudelleen kolmenkymmenen
+ * sekunnin paasta, ja siihen asti kayttoliittyma toimii normaalisti.
+ */
+function runAssistantSweeps() {
+  Promise.all([
+    runReminderSweep(),
+    runDepartureSweep(),
+    pruneNoticeHistory()
+  ]).catch(error => {
+    console.warn('Manifestival: halytyskierros ei onnistunut', error);
+  });
 }
 
 async function onSignedIn() {
@@ -110,6 +135,17 @@ async function onSignedIn() {
     console.warn('Manifestival: muistutusten synkronointi ei onnistunut', error);
   });
 
+  // HALYTYSKIERROS AJETAAN KUN SOVELLUS ON AUKI.
+  //
+  // Tama EI OLE AJASTIN suljetulle sovellukselle. Taustaheratysta ei
+  // ole eika sita voi luvata ilman laitehyvaksyntaa. Kierros on siksi
+  // tassa: kirjautumisen jalkeen ja `NOW_REFRESH_MS` valein.
+  //
+  // Kaksoiskappaleiden esto on kolminkertainen (istunnon avaimet,
+  // tilan avaintarkistus, kannan `notices_key_unique`), joten kierros
+  // voidaan ajaa niin usein kuin halutaan.
+  runAssistantSweeps();
+
   maybeShowOnboarding();
 }
 
@@ -125,6 +161,15 @@ function onSignedOut() {
   closeSavingsTransferForm();
   closeInvestmentForm();
   closeMilestoneForm();
+  closeReminderForm();
+  closeTravelForm();
+  closeLocationRuleForm();
+
+  // Kesken oleva kirjaus ja ilmoituskeskuksen tila eivat saa vuotaa
+  // seuraavalle kayttajalle samalla selaimella. Kirjauskentta voi
+  // sisaltaa mita tahansa, mita edellinen kayttaja oli kirjoittamassa.
+  closeCaptureReview();
+  closeNoticeCenter();
 
   // Nollaa myös kesken olevan kuvan luennan ja tyhjentää
   // tiedostovalitsimen. Seuraava käyttäjä samalla selaimella ei saa
@@ -162,6 +207,10 @@ async function start() {
   initGoalDetail();
   initPlanning();
   initProfileForm();
+  initInbox();
+  initReminderForm();
+  initTravelForms();
+  initNotices();
   initVoice();
   initOnboarding();
 
@@ -177,7 +226,11 @@ async function start() {
   if (!session || !session.user) showAuthGate();
 
   // 4. NYT/MYÖHÄSSÄ/ETUAJASSA pysyy ajan tasalla ilman sivun päivitystä.
-  setInterval(() => { if (signedIn) renderToday(); }, NOW_REFRESH_MS);
+  setInterval(() => {
+    if (!signedIn) return;
+    renderToday();
+    runAssistantSweeps();
+  }, NOW_REFRESH_MS);
 
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden && signedIn) renderToday();

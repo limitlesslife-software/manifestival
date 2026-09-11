@@ -385,7 +385,7 @@
       "title": "Henkilökohtainen avustaja: kirjaus, muistutukset ja matka",
       "commitSha": null,
       "cacheVersion": "v21",
-      "readiness": "BLOCKED",
+      "readiness": "READY",
       "gatesEnabled": [
         "inboxItems",
         "reminders",

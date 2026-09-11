@@ -110,6 +110,25 @@
         <div class="load-chip" id="todayCompletionChip" style="display:none;"></div>
       </div>
 
+      <!-- ============ UNIVERSAALI KIRJAUS ============
+           Kirjaa nyt, jarjesta myohemmin. Rivi syntyy ENNEN tulkintaa:
+           verkkokatko ei saa syoda kayttajan ajatusta. -->
+      <div class="capture-bar" id="captureBar">
+        <label class="visually-hidden" for="captureInput">Kirjaa jotain</label>
+        <input type="text" id="captureInput" autocomplete="off"
+               maxlength="1000" placeholder="Kirjaa jotain — järjestä myöhemmin">
+        <button class="capture-mic" id="captureMicBtn" type="button" aria-label="Sanele">
+          <svg class="icon" aria-hidden="true"><use href="#i-mic"/></svg>
+        </button>
+        <button class="capture-send" id="captureSendBtn" type="button">Kirjaa</button>
+      </div>
+      <div class="field-error" id="captureError" role="alert"></div>
+      <div id="captureStatus" role="status" class="capture-status"></div>
+      <div id="capturePending"></div>
+
+      <div id="noticeCenterContainer"></div>
+      <div id="todayNowNext"></div>
+
       <div id="todayFocus"></div>
       <div id="todayOverdue"></div>
       <div id="todayTimelineContainer"></div>
@@ -144,9 +163,12 @@
       <div class="eyebrow">TEKEMINEN</div>
       <h1 class="title" style="margin-bottom:14px;">Kertaluonteiset ja toistuvat</h1>
 
-      <div class="segment" role="tablist" aria-label="Tehtävät tai rutiinit">
+      <div class="segment segment-scroll" role="tablist" aria-label="Tekemisen osiot">
         <button class="segment-btn active" id="segmentTasks" type="button" role="tab" aria-selected="true">Tehtävät</button>
         <button class="segment-btn" id="segmentRoutines" type="button" role="tab" aria-selected="false">Rutiinit</button>
+        <button class="segment-btn" id="segmentInbox" type="button" role="tab" aria-selected="false">Saapuvat</button>
+        <button class="segment-btn" id="segmentReminders" type="button" role="tab" aria-selected="false">Muistutukset</button>
+        <button class="segment-btn" id="segmentTravel" type="button" role="tab" aria-selected="false">Matka</button>
       </div>
 
       <!-- ---- Tehtävät ---- -->
@@ -308,6 +330,189 @@
         </div>
 
         <div id="routinesListContainer"></div>
+      </div>
+
+      <!-- ---- Saapuvat ---- -->
+      <div id="inboxSection" style="display:none;">
+        <p class="hint" id="inboxIntro">
+          Kirjaa asiat sitä mukaa kuin ne tulevat mieleen. Tulkinta on
+          <strong>ehdotus</strong>: mitään ei synny ennen kuin hyväksyt sen.
+        </p>
+        <div id="inboxListContainer"></div>
+      </div>
+
+      <!-- ---- Muistutukset ---- -->
+      <div id="remindersSection" style="display:none;">
+        <button class="add-row" id="addReminderBtn" type="button"><svg aria-hidden="true"><use href="#i-plus"/></svg>Lisää muistutus</button>
+
+        <div class="add-form" id="reminderForm" style="display:none;" role="group" aria-labelledby="reminderFormTitle">
+          <div class="add-form-title" id="reminderFormTitle">Uusi muistutus</div>
+
+          <div>
+            <label class="field-label" for="rmTitle">Mistä muistutan?</label>
+            <input type="text" id="rmTitle" placeholder="esim. Soita hammaslääkärille" autocomplete="off">
+            <div class="field-error" id="rmTitleError"></div>
+          </div>
+
+          <div class="form-row">
+            <div>
+              <label class="field-label" for="rmDate">Päivä</label>
+              <input type="date" id="rmDate">
+              <div class="field-error" id="rmDueDateError"></div>
+            </div>
+            <div>
+              <label class="field-label" for="rmTime">Kello</label>
+              <input type="time" id="rmTime">
+              <div class="field-error" id="rmDueTimeError"></div>
+            </div>
+            <div>
+              <label class="field-label" for="rmUntil">Muistuta enintään klo</label>
+              <input type="time" id="rmUntil">
+              <div class="field-error" id="rmUntilTimeError"></div>
+            </div>
+          </div>
+
+          <div>
+            <label class="field-label" for="rmTask">Liity tehtävään (valinnainen)</label>
+            <select id="rmTask"></select>
+            <div class="field-error" id="rmTargetIdError"></div>
+          </div>
+
+          <label class="check-row" for="rmEscalate">
+            <input type="checkbox" id="rmEscalate">
+            <span>Porrastettu muistutus — hienovarainen, painokkaampi, sitten myöhässä</span>
+          </label>
+
+          <div>
+            <label class="field-label" for="rmNote">Tarkennus (valinnainen)</label>
+            <textarea id="rmNote" rows="2"></textarea>
+          </div>
+
+          <div class="form-actions">
+            <button class="form-btn danger" id="rmDelete" type="button" style="display:none;">Poista</button>
+            <button class="form-btn secondary" id="rmCancel" type="button">Peruuta</button>
+            <button class="form-btn primary" id="rmSave" type="button">Tallenna</button>
+          </div>
+        </div>
+
+        <div id="remindersListContainer"></div>
+      </div>
+
+      <!-- ---- Matka ja paikkamuistutukset ---- -->
+      <div id="travelSection" style="display:none;">
+        <button class="add-row" id="addTravelBtn" type="button"><svg aria-hidden="true"><use href="#i-plus"/></svg>Lisää matka</button>
+
+        <div class="add-form" id="travelForm" style="display:none;" role="group" aria-labelledby="travelFormTitle">
+          <div class="add-form-title" id="travelFormTitle">Uusi matka</div>
+
+          <div>
+            <label class="field-label" for="tvTitle">Mikä matka?</label>
+            <input type="text" id="tvTitle" placeholder="esim. Hammaslääkäri" autocomplete="off">
+            <div class="field-error" id="tvTitleError"></div>
+          </div>
+
+          <div class="form-row">
+            <div>
+              <label class="field-label" for="tvOrigin">Mistä</label>
+              <input type="text" id="tvOrigin" placeholder="Koti" autocomplete="off">
+            </div>
+            <div>
+              <label class="field-label" for="tvDestination">Minne</label>
+              <input type="text" id="tvDestination" placeholder="Keskusta" autocomplete="off">
+              <div class="field-error" id="tvDestinationError"></div>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div>
+              <label class="field-label" for="tvDate">Perillä päivänä</label>
+              <input type="date" id="tvDate">
+              <div class="field-error" id="tvArrivalDateError"></div>
+            </div>
+            <div>
+              <label class="field-label" for="tvTime">Perillä klo</label>
+              <input type="time" id="tvTime">
+              <div class="field-error" id="tvArrivalTimeError"></div>
+            </div>
+            <div>
+              <label class="field-label" for="tvMode">Miten</label>
+              <select id="tvMode"></select>
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div>
+              <label class="field-label" for="tvMinutes">Matka-aika (min)</label>
+              <input type="number" id="tvMinutes" min="1" max="1440" step="1" placeholder="tuntematon">
+              <div class="field-error" id="tvTravelMinutesError"></div>
+            </div>
+            <div>
+              <label class="field-label" for="tvPrep">Valmistautuminen (min)</label>
+              <input type="number" id="tvPrep" min="0" max="480" step="1">
+            </div>
+            <div>
+              <label class="field-label" for="tvBuffer">Pysäköinti ja kävely (min)</label>
+              <input type="number" id="tvBuffer" min="0" max="480" step="1">
+            </div>
+          </div>
+
+          <p class="hint" id="tvUnknownHint">
+            Matka-aikaa ei haeta mistään. Jos jätät sen tyhjäksi, lähtöaikaa
+            <strong>ei lasketa</strong> — tuntematon näytetään tuntemattomana.
+          </p>
+
+          <div>
+            <label class="field-label" for="tvTask">Liity tehtävään (valinnainen)</label>
+            <select id="tvTask"></select>
+            <div class="field-error" id="tvTaskIdError"></div>
+          </div>
+
+          <div class="form-actions">
+            <button class="form-btn danger" id="tvDelete" type="button" style="display:none;">Poista</button>
+            <button class="form-btn secondary" id="tvCancel" type="button">Peruuta</button>
+            <button class="form-btn primary" id="tvSave" type="button">Tallenna</button>
+          </div>
+        </div>
+
+        <div id="travelListContainer"></div>
+
+        <h2 class="section-title" id="locationRulesTitle">Paikkamuistutukset</h2>
+        <p class="hint">
+          Sijaintia ei tallenneta eikä lähetetä mihinkään. Sääntö on
+          oletuksena <strong>pois päältä</strong>: paikkatieto vaatii luvan,
+          eikä lupaa oleteta.
+        </p>
+
+        <button class="add-row" id="addLocationRuleBtn" type="button"><svg aria-hidden="true"><use href="#i-plus"/></svg>Lisää paikkamuistutus</button>
+
+        <div class="add-form" id="locationRuleForm" style="display:none;" role="group" aria-labelledby="locationRuleFormTitle">
+          <div class="add-form-title" id="locationRuleFormTitle">Uusi paikkamuistutus</div>
+
+          <div class="form-row">
+            <div>
+              <label class="field-label" for="lrPlace">Paikan nimi</label>
+              <input type="text" id="lrPlace" placeholder="esim. Kauppa" autocomplete="off">
+              <div class="field-error" id="lrPlaceError"></div>
+            </div>
+            <div>
+              <label class="field-label" for="lrTrigger">Milloin</label>
+              <select id="lrTrigger"></select>
+            </div>
+          </div>
+
+          <div>
+            <label class="field-label" for="lrMessage">Mitä muistutan?</label>
+            <input type="text" id="lrMessage" placeholder="esim. Osta maitoa" autocomplete="off">
+          </div>
+
+          <div class="form-actions">
+            <button class="form-btn danger" id="lrDelete" type="button" style="display:none;">Poista</button>
+            <button class="form-btn secondary" id="lrCancel" type="button">Peruuta</button>
+            <button class="form-btn primary" id="lrSave" type="button">Tallenna</button>
+          </div>
+        </div>
+
+        <div id="locationRulesContainer"></div>
       </div>
     </section>
 

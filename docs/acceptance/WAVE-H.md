@@ -10,54 +10,47 @@ Aallon commit-SHA: ks. `docs/activation-0003-0008-release-manifest.json`.
 
 ---
 
-## VALMIUS: ESTETTY
+## LÄHTÖTILANNE: kaksinkertainen este, joista toinen on purettu
 
-**Tätä aaltoa ei saa deployata.** Este on kaksinkertainen, ja molemmat
-puolet on purettava erikseen.
+Tätä aaltoa **ei saa vielä deployata**, mutta este on enää yksi.
 
-### Este 1 — kantaa ei ole
+### Este 1 — kantaa ei ole (VOIMASSA)
 
 Migraatiota `0011_personal_assistant.sql` ei ole ajettu tuotantoon.
 Portin avaaminen tauluun jota ei ole kaataa jokaisen kirjoituksen
 virheeseen `42P01`.
 
-### Este 2 — käyttöliittymää ei ole
+### Este 2 — käyttöliittymää ei ollut (PURETTU)
 
-Tämä on se puoli, joka erottaa aallon H kaikista aiemmista.
+Tämä oli se puoli, joka erotti aallon H kaikista aiemmista: portti
+avaa **tallennuksen**, ei näkymää. Viiden portin avaaminen ilman
+käyttöliittymää olisi tehnyt kannasta paikan, johon kirjoitetaan eikä
+kukaan lue.
 
-| Portti | Domain | Repositorio | Näkymä |
-|---|---|---|---|
-| `inboxItems` | `src/domain/inbox.js` | on | **ei** |
-| `reminders` | `src/domain/reminder.js` | on | **ei** |
-| `notices` | `src/domain/notificationCenter.js` | on | **ei** |
-| `travelPlans` | `src/domain/travel.js` | on | **ei** |
-| `locationRules` | `src/domain/travel.js` | on | **ei** |
-
-Portti avaa **tallennuksen**. Se ei luo näkymää. Viiden portin
-avaaminen ilman käyttöliittymää tekisi kannasta paikan, johon ei
-kirjoita kukaan — tai pahempaa, johon kirjoitetaan eikä kukaan lue.
-
-Kirjaus ilman lukemista on tiedon nielu. Tallennettu muistutus, jota ei
-näytetä, on lupaus jota ei pidetä.
+| Portti | Näkymä | Polku |
+|---|---|---|
+| `inboxItems` | `src/app/views/inbox.js` | Tänään → kirjauspalkki; Tekeminen → Saapuvat |
+| `reminders` | `src/app/views/reminders.js` | Tekeminen → Muistutukset |
+| `notices` | `src/app/views/notices.js` | Tänään → Ilmoitukset |
+| `travelPlans` | `src/app/views/travel.js` | Tekeminen → Matka |
+| `locationRules` | `src/app/views/travel.js` | Tekeminen → Matka → Paikkamuistutukset |
 
 Valmiustilaa **ei kirjoiteta käsin**: `tests/ui-reachability.test.mjs`
-johtaa sen `tools/release/reachability.mjs` -matriisista. Kun näkymät
-rakennetaan, tämä tiedosto, matriisi ja `tools/release/waves.mjs`
-muuttuvat samassa committissa — tai testi kaatuu.
+johtaa sen `tools/release/reachability.mjs` -matriisista, ja matriisin
+jokainen väite todennetaan lähdekoodista.
 
 ---
 
-## Mitä esteen purkaminen vaatii
+## Mitä jäljellä olevan esteen purkaminen vaatii
 
-1. **Viisi näkymää**, jokainen tavoitettavuusmatriisissa todistettuna
-2. Panun kirjallinen hyväksyntä migraatiolle `0011`
-3. **Varmuuskopio**
-4. Migraation esitarkistus (vain lukeva, tiedoston lopussa) — erityisesti:
+1. Panun kirjallinen hyväksyntä migraatiolle `0011`
+2. **Varmuuskopio**
+3. Migraation esitarkistus (vain lukeva, tiedoston lopussa) — erityisesti:
    - `uudet_taulut` = **0**
    - `tasks_omistajan_avain` = **1**
    - `pg15_tai_uudempi` = **true**
-5. Migraation ajo `postgres`-roolilla Supabasen SQL-editorissa
-6. `supabase/verify/verify_0011.sql` → **poikkeavia_yhteensa = 0**
+4. Migraation ajo `postgres`-roolilla Supabasen SQL-editorissa
+5. `supabase/verify/verify_0011.sql` → **poikkeavia_yhteensa = 0**
 
 ---
 
@@ -135,7 +128,6 @@ npm run activation:preflight -- --wave=H
 npm test && npm run check && npm run smoke && npm run build:web
 ```
 
-- [ ] **Viisi näkymää on rakennettu ja tavoitettavuusmatriisi päivitetty**
 - [ ] **Migraatio 0011 on ajettu ja `verify_0011.sql` antoi 0 poikkeavaa**
 - [ ] **Varmuuskopio on otettu ennen migraatiota**
 - [ ] Kaikki kahdeksantoista porttia auki
@@ -210,7 +202,7 @@ tapa erottaa tallennus muistista.
 - [ ] Ilmoituksesta pääsee sen kohteeseen
 - [ ] Ilmoituksen kuittaus säilyy latauksen yli
 
-### Matka ja lähtöaika
+### Matkat ja lähtöaika
 
 - [ ] Luo matkasuunnitelma ilman kestoa → lähtöaika näkyy
       **tuntemattomana**, ei kellonaikana
@@ -218,7 +210,7 @@ tapa erottaa tallennus muistista.
 - [ ] Valmistautumis- ja puskuriminuutit vaikuttavat lähtöaikaan
 - [ ] Liitä matka tehtävään, poista tehtävä → **matka säilyy**, liitos katkeaa
 
-### Sijaintisäännöt
+### Paikkamuistutukset
 
 - [ ] Uusi sääntö on oletuksena **pois päältä**
 - [ ] Säännön kytkeminen päälle kysyy sijaintiluvan
@@ -298,7 +290,6 @@ Palauttaa **aallon G** tilan.
 
 - [ ] `docs/PRODUCTION-STATUS.md` päivitetty: aalto H ja viisi porttia
 - [ ] `docs/PERSONAL-ASSISTANT-CORE.md` päivitetty: tila ESTETTY → tuotannossa
-- [ ] `docs/UI-REACHABILITY.md` päivitetty: viisi riviä **EI** → **ON**
 - [ ] Peruutusta ei ole voimassa
 
 ### Jäljelle jäävät asiat

@@ -12,6 +12,24 @@ import { getState, findTask, findGoal, setEditingId, setTasksSegment } from '../
 import { createTask, editTask, toggleComplete, deleteTask } from '../actions.js';
 import { switchTab } from '../navigation.js';
 import { renderRoutines } from './routines.js';
+import { renderInbox } from './inbox.js';
+import { renderReminders } from './reminders.js';
+import { renderTravel } from './travel.js';
+
+/**
+ * Osion painike ja lohko.
+ *
+ * TAULUKKO ON NIMENOMAINEN eika johdettu. Jokainen osio on paatos, ja
+ * paatos nakyy tassa yhtena rivina -- ei ehtolauseiden verkostona.
+ */
+const SEGMENT_NODES = Object.freeze([
+  { key: 'tasks', tab: 'segmentTasks', section: 'tasksSection' },
+  { key: 'routines', tab: 'segmentRoutines', section: 'routinesSection' },
+  { key: 'inbox', tab: 'segmentInbox', section: 'inboxSection' },
+  { key: 'reminders', tab: 'segmentReminders', section: 'remindersSection' },
+  { key: 'travel', tab: 'segmentTravel', section: 'travelSection' }
+]);
+
 
 /** Täytä valikot domainista, jottei listoja tarvitse ylläpitää kahdessa paikassa. */
 export function populateSelects() {
@@ -103,26 +121,26 @@ function renderList(container, tasks) {
  */
 export function renderTasks() {
   const state = getState();
-  const showRoutines = state.tasksSegment === 'routines';
+  const segment = state.tasksSegment;
 
-  // Osiovalitsimen tila
-  const taskTab = maybe('segmentTasks');
-  const routineTab = maybe('segmentRoutines');
-  if (taskTab && routineTab) {
-    taskTab.classList.toggle('active', !showRoutines);
-    routineTab.classList.toggle('active', showRoutines);
-    taskTab.setAttribute('aria-selected', String(!showRoutines));
-    routineTab.setAttribute('aria-selected', String(showRoutines));
+  // Osiovalitsimen tila. Kartta on nimenomainen: osio, jolta puuttuu
+  // painike tai lohko, ei nayttaisi mitaan eika kertoisi miksi.
+  for (const { key, tab, section } of SEGMENT_NODES) {
+    const active = segment === key;
+
+    const button = maybe(tab);
+    if (button) {
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-selected', String(active));
+    }
+    toggle(section, active);
   }
 
-  toggle('tasksSection', !showRoutines);
-  toggle('routinesSection', showRoutines);
-
-  if (showRoutines) {
-    renderRoutines();
-  } else {
-    renderList(el('tasksListContainer'), state.tasks);
-  }
+  if (segment === 'routines') renderRoutines();
+  else if (segment === 'inbox') renderInbox();
+  else if (segment === 'reminders') renderReminders();
+  else if (segment === 'travel') renderTravel();
+  else renderList(el('tasksListContainer'), state.tasks);
 }
 
 // ----------------------------------------------------------------- lomake
@@ -350,10 +368,10 @@ const removeCurrent = singleFlight(async () => {
 export function initTaskForm() {
   populateSelects();
 
-  const taskTab = maybe('segmentTasks');
-  const routineTab = maybe('segmentRoutines');
-  if (taskTab) taskTab.addEventListener('click', () => setTasksSegment('tasks'));
-  if (routineTab) routineTab.addEventListener('click', () => setTasksSegment('routines'));
+  for (const { key, tab } of SEGMENT_NODES) {
+    const button = maybe(tab);
+    if (button) button.addEventListener('click', () => setTasksSegment(key));
+  }
 
   el('addRowBtn').addEventListener('click', openAddForm);
   el('afCancel').addEventListener('click', closeForm);

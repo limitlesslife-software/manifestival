@@ -1,9 +1,6 @@
 # Käyttöliittymän tavoitettavuus — kahdeksantoista domainia
 
-**Tila:** kolmetoista tavoitettavissa, **viisi ei**. Aallon H domainit
-(saapuvat, muistutukset, ilmoitukset, matka, sijaintisäännöt) ovat
-domainina ja kannassa valmiita mutta ilman näkymää — ja siksi aalto H
-on merkitty **ESTETYKSI**.
+**Tila:** kaikki kahdeksantoista tavoitettavissa. Auditoitu ja korjattu.
 **Lähde:** `tools/release/reachability.mjs`, testattu
 `tests/ui-reachability.test.mjs`.
 
@@ -41,30 +38,29 @@ taloutta eikä löytänyt kumpaakaan.
 | `transactions` | **ON** | **Talous** → Tapahtumat | Tapahtumat | täysi + kuitista luenta | F |
 | `investments` | **ON** | **Talous** → Sijoitukset | Sijoitukset | täysi + arvon käsin päivitys | F |
 | `milestones` | **ON** | **Tavoitteet** → tavoite → Suunnitelma | Välitavoitteet | täysi + järjestys + saavutus | G |
-| `inboxItems` | **EI** | — | — | ei mitään | H |
-| `reminders` | **EI** | — | — | ei mitään | H |
-| `notices` | **EI** | — | — | ei mitään | H |
-| `travelPlans` | **EI** | — | — | ei mitään | H |
-| `locationRules` | **EI** | — | — | ei mitään | H |
+| `inboxItems` | **ON** | **Tänään** → kirjauspalkki; Tekeminen → Saapuvat | Saapuvat | kirjaus, tulkinta, hyväksyntä, hylkäys | H |
+| `reminders` | **ON** | **Tekeminen** → Muistutukset | Muistutukset | täysi + torkutus ja kuittaus | H |
+| `notices` | **ON** | **Tänään** → Ilmoitukset | Ilmoitukset | luku, kuittaus, hylkäys | H |
+| `travelPlans` | **ON** | **Tekeminen** → Matka | Matkat | täysi + matka-ajan käsin kirjaus | H |
+| `locationRules` | **ON** | **Tekeminen** → Matka → Paikkamuistutukset | Paikkamuistutukset | täysi + päälle/pois | H |
 
-### Aallon H viisi puuttuvaa näkymää
+### Aallon H viisi näkymää
 
-Nämä eivät ole taantuma vaan **rehellinen välitila**. Domain-moduulit
-(`src/domain/inbox.js`, `reminder.js`, `travel.js`,
-`notificationCenter.js`), repositoriot ja migraatio `0011` ovat
-olemassa; käyttäjälle näkyvää polkua ei ole.
+Nämä olivat hetken **EI** — domain, repositorio ja migraatio olivat
+olemassa, käyttäjälle näkyvää polkua ei. Se oli rehellinen välitila,
+ei taantuma, ja se näkyi aallon H valmiustilassa ESTETTYNÄ.
 
-Portti pysyy kiinni juuri siksi. Kirjaus ilman lukemista on tiedon
-nielu, ja tallennettu muistutus jota ei näytetä on lupaus jota ei
-pidetä.
+Näkymät on nyt rakennettu. Aalto H on yhä estetty, mutta enää **vain
+kannan takia**: migraatiota `0011` ei ole ajettu.
 
 Huomaa ero `aiAudit`-riviin: kirjausketju on **tausta-aineistoa**, eikä
 sille ole tarkoituskaan rakentaa selainta. Ilmoitus sen sijaan
-kirjoitetaan nimenomaan käyttäjän luettavaksi, joten näkymän
-puuttuminen on **puute eikä valinta**.
+kirjoitetaan nimenomaan käyttäjän luettavaksi — ilmoitus jota ei
+näytetä ei ole ilmoitus.
 
 `locationRules` vaatii näkymän lisäksi sijaintiluvan kysymisen. Lupaa
-ei oleteta: sääntö on kannassa oletuksena pois päältä.
+ei oleteta: sääntö on kannassa oletuksena pois päältä, ja päälle
+kytkeminen kysyy vahvistuksen.
 
 **Portti ei vaikuta näkyvyyteen.** Kaikki näkymät ovat käytettävissä
 myös portin ollessa kiinni — silloin tieto elää istunnon muistissa ja

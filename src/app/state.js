@@ -692,8 +692,28 @@ export function setEditingInvestmentId(id) {
   commit({ editingInvestmentId: id });
 }
 
+/**
+ * Tekemisen osiot.
+ *
+ * Kaikki viisi ovat "asioita jotka pitaa tehda tai muistaa", joten ne
+ * kuuluvat samaan nakymaan. Ne ovat silti ERI KASITTEITA, joten ne
+ * eivat sekoitu yhteen listaan.
+ */
+export const TASKS_SEGMENTS = Object.freeze([
+  { key: 'tasks', label: 'Tehtavat' },
+  { key: 'routines', label: 'Rutiinit' },
+  { key: 'inbox', label: 'Saapuvat' },
+  { key: 'reminders', label: 'Muistutukset' },
+  { key: 'travel', label: 'Matka' }
+]);
+
+const TASKS_SEGMENT_KEYS = Object.freeze(TASKS_SEGMENTS.map(s => s.key));
+
+/** Tekemisnakyman osio. Tuntematon arvo palautuu tehtaviin. */
 export function setTasksSegment(segment) {
-  commit({ tasksSegment: segment === 'routines' ? 'routines' : 'tasks' });
+  commit({
+    tasksSegment: TASKS_SEGMENT_KEYS.includes(segment) ? segment : 'tasks'
+  });
 }
 
 /** Tavoitenäkymän osiot. */

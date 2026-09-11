@@ -206,14 +206,15 @@ export const WAVES = Object.freeze([
 
     // READY koskee käyttöliittymää, `blockedBy` kantaa. Ks. aalto F.
     //
-    // Tämä aalto on ESTETTY MOLEMMISTA SYISTÄ, ja se on rehellisin
-    // tila jonka tälle voi juuri nyt antaa: migraatiota 0011 ei ole
-    // ajettu, eikä yhdelläkään viidestä domainista ole vielä näkymää.
+    // Aalto oli hetken ESTETTY MOLEMMISTA SYISTÄ: migraatio oli
+    // ajamatta JA näkymät rakentamatta. Näkymät on nyt rakennettu, ja
+    // valmiustila muuttui samassa committissa kuin tavoitettavuusmatriisi.
+    //
     // Valmiustilaa ei kirjoiteta käsin — `tests/ui-reachability.test.mjs`
-    // johtaa sen tavoitettavuusmatriisista ja kaataa tämän, jos arvo ei
-    // vastaa. Kun näkymät rakennetaan, tämä rivi muuttuu samassa
-    // committissa kuin matriisi.
-    readiness: 'BLOCKED',
+    // johtaa sen matriisista ja kaataa tämän, jos arvo ei vastaa.
+    //
+    // `blockedBy` on yhä voimassa: käyttöliittymä on olemassa, kantaa ei.
+    readiness: 'READY',
     blockedBy: 'supabase/migrations/0011_personal_assistant.sql — EI AJETTU',
     gates: Object.freeze(['inboxItems', 'reminders', 'notices',
                           'travelPlans', 'locationRules']),
