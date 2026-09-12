@@ -452,8 +452,18 @@ test('KRIITTINEN: tilannedokumentin porttitaulukko vastaa koodia', () => {
   const doc = read(STATUS_DOC);
 
   for (const [portti, auki] of Object.entries(TABLES)) {
-    const rivi = doc.split(NEWLINE).find(r => r.includes(`\`${portti}\``));
-    assert.ok(rivi, `tilannedokumentti ei mainitse porttia ${portti}`);
+    // Rivin ON oltava porttitaulukon oma rivi (`| \`portti\` | ... |`),
+    // ei mikä tahansa rivi joka mainitsee portin nimen taannepäin --
+    // esim. migraation 0010 varoituslaatikko mainitsee "(`goals`,
+    // `projects`, `tasks`)" ennen taulukkoa, ja pelkkä `.includes()`
+    // olisi napannut sen sen sijaan että lukisi todellista tilaa. Tämä
+    // ei kaatunut tällä haaralla koskaan, koska kaikki portit ovat
+    // täällä kiinni molemmissa kohdissa -- vika oli piilossa kunnes
+    // haara yhdistettiin origin/mainin todelliseen (avoimeen) tilaan
+    // harjoitteluhaarassa rehearsal/wave-g-candidate.
+    const rivi = doc.split(NEWLINE)
+      .find(r => new RegExp('^\\|\\s*`' + portti + '`\\s*\\|').test(r));
+    assert.ok(rivi, `tilannedokumentti ei mainitse porttia ${portti} sen omalla taulukkorivillä`);
 
     const dokumentoituAuki = /AKTIVOITU/.test(rivi);
     assert.equal(dokumentoituAuki, auki,
@@ -469,8 +479,9 @@ test('KRIITTINEN: tilannedokumentin porttitaulukko vastaa koodia', () => {
   // BILL_PAYMENT_FIELDS on sarakeportti, ei taulu, joten se ei ole
   // TABLES-oliossa. Se on silti portti, ja portti jota dokumentti ei
   // mainitse on portti jonka tilaa kukaan ei tarkista.
-  const bpRivi = doc.split(NEWLINE).find(r => r.includes('BILL_PAYMENT_FIELDS'));
-  assert.ok(bpRivi, 'tilannedokumentti ei mainitse porttia BILL_PAYMENT_FIELDS');
+  const bpRivi = doc.split(NEWLINE)
+    .find(r => new RegExp('^\\|\\s*`BILL_PAYMENT_FIELDS`\\s*\\|').test(r));
+  assert.ok(bpRivi, 'tilannedokumentti ei mainitse porttia BILL_PAYMENT_FIELDS sen omalla taulukkorivillä');
   assert.equal(/AKTIVOITU/.test(bpRivi), BILL_PAYMENT_FIELDS,
     'BILL_PAYMENT_FIELDS: dokumentti ja koodi eivät ole yhtä mieltä');
 });
