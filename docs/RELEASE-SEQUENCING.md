@@ -360,6 +360,64 @@ merkittyinä ei-tuotannoksi, pushaamatta mihinkään.
 
 ---
 
+## Harjoittelu (rehearsal) — todistettu, ei tuotantoa
+
+Kolme paikallista haaraa, EI pushattu minnekaan, EI deployattu, EI
+lisätty `origin`iin. Jokainen on `origin/main`in (`ddfc356`, v15, Aalto
+B) päälle rakennettu `git merge --no-ff`, ei rebase -- historia näkyy
+todisteena.
+
+| Haara | Yhdistää | Tulos |
+|---|---|---|
+| `rehearsal/wave-f-candidate` | `origin/main` + `feature/finance-2.0` | 1688/1689 PASS (1 odotettu: android-assetit synkkaamatta) |
+| `rehearsal/wave-g-candidate` | edellinen + `feature/goal-to-action` | 1867/1868 PASS (sama odotettu FAIL) |
+| `rehearsal/wave-h-candidate` | edellinen + `feature/personal-assistant-core` | **2206/2206** (2205 PASS, 1 odotettu SKIP), `check`/`smoke`/`build:web` PASS |
+
+**Tekstikonflikteja: nolla.** Kaikki kolme merge-askelta menivät läpi
+ilman manuaalista ratkaisua. Kolmen tiedoston (`schema.js`, `sw.js`,
+`docs/PRODUCTION-STATUS.md`) 3-way-yhdistely resolvoitui oikein
+automaattisesti jokaisessa vaiheessa, koska `origin/main` ja
+feature-haarat eivät koskaan muuttaneet samoja rivejä: `origin/main`
+avasi olemassa olevia portteja (goals, projects) ja nosti cache-
+versiota, feature-haarat lisäsivät UUSIA rivejä (uudet portit,
+kiinni). Ei-päällekkäiset lisäykset yhdistyvät aina puhtaasti.
+
+**Yksi todellinen löydös, ei rehearsal-artefakti:**
+`tests/activation-gates.test.mjs` haki porttitaulukon rivin naiivilla
+`.includes()`-haulla, joka nappasi migraation 0010 varoituslaatikon
+("`goals`, `projects`, `tasks`") porttitaulukon oman rivin sijaan.
+Feature-haaroilla tämä ei koskaan kaatunut -- goals on niissä kiinni
+molemmissa kohdissa, joten ne "sopivat yhteen" vahingossa. Vasta kun
+`origin/main`in todellinen (avoin) tila yhdistettiin mukaan `rehearsal/
+wave-g-candidate`:ssa, kaksi mainintaa alkoivat olla eri mieltä ja testi
+paljasti aiemmin piilossa olleen haurauden. **Korjattu myös oikealla
+`feature/personal-assistant-core`-haaralla**, ei vain rehearsal-
+haarassa -- ks. commit `c6ada82`.
+
+**Ei menetettyä toiminnallisuutta.** `git diff origin/main
+rehearsal/wave-h-candidate --stat` (118 tiedostoa, +35237/-243) sisältää
+Talous 2.0:n, Tavoitteesta tekemiseksi -moottorin ja Henkilökohtaisen
+avustajan koko tuotekoodin sekä tämän kovennustyön dokumentit ja
+`tools/release/lineage.mjs`:n -- ei mitään kadonnutta merge-askeleiden
+välissä.
+
+**Ei migraationumerointitörmäystä.** 0009, 0010 ja 0011 pysyivät
+erillisinä koko harjoittelun ajan; mikään merge ei yrittänyt yhdistää
+niitä samaksi tiedostoksi tai numeroksi.
+
+**Porttitila ja cache-versio pysyivät todellisina.** Yksikään
+harjoitteluhaara ei avannut yhtäkään uutta porttia eikä nostanut
+`CACHE_VERSION`ia yli `v15`:n -- se ei ole tämän harjoittelun päätös,
+ks. "Päätös: integrointijärjestys on lukittu" yllä. Harjoittelu
+todistaa että integrointi ON MAHDOLLINEN, ei että se on TEHTY.
+
+Nämä haarat ovat säilytettävissä paikallisena todisteena, mutta EIVÄT
+korvaa oikeaa deploy-hetken integrointihaaraa: ne on rakennettu
+`origin/main`in SEN HETKISEN tilan päälle, joka voi olla vanhentunut
+siihen mennessä kun F oikeasti valmistellaan.
+
+---
+
 ## Se, mitä ei saa tehdä
 
 > **ÄLÄ deployaa pelkästään numeroinnin ratkaisemiseksi.**
