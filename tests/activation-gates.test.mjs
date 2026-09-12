@@ -461,8 +461,18 @@ test('KRIITTINEN: tilannedokumentin porttitaulukko vastaa koodia', () => {
   const doc = read(STATUS_DOC);
 
   for (const [portti, auki] of Object.entries(TABLES)) {
-    const rivi = doc.split(NEWLINE).find(r => r.includes(`\`${portti}\``));
-    assert.ok(rivi, `tilannedokumentti ei mainitse porttia ${portti}`);
+    // Rivin ON oltava porttitaulukon oma rivi (`| \`portti\` | ... |`),
+    // ei mikä tahansa rivi joka mainitsee portin nimen taannepäin --
+    // esim. migraation 0010 varoituslaatikko mainitsee "(`goals`,
+    // `projects`, `tasks`)" ennen taulukkoa, ja pelkkä `.includes()`
+    // olisi napannut sen sen sijaan että lukisi todellista tilaa. Tämä
+    // ei kaatunut tällä haaralla koskaan, koska kaikki portit ovat
+    // täällä kiinni molemmissa kohdissa -- vika oli piilossa kunnes
+    // haara yhdistettiin origin/mainin todelliseen (avoimeen) tilaan
+    // harjoitteluhaarassa rehearsal/wave-g-candidate.
+    const rivi = doc.split(NEWLINE)
+      .find(r => new RegExp('^\\|\\s*`' + portti + '`\\s*\\|').test(r));
+    assert.ok(rivi, `tilannedokumentti ei mainitse porttia ${portti} sen omalla taulukkorivillä`);
 
     const dokumentoituAuki = /AKTIVOITU/.test(rivi);
     assert.equal(dokumentoituAuki, auki,
@@ -483,8 +493,9 @@ test('KRIITTINEN: tilannedokumentin porttitaulukko vastaa koodia', () => {
     ['GOAL_PLANNING_FIELDS', GOAL_PLANNING_FIELDS],
     ['GOAL_MAINTENANCE_MODE', GOAL_MAINTENANCE_MODE]
   ]) {
-    const rivi = doc.split(NEWLINE).find(r => r.includes(nimi));
-    assert.ok(rivi, `tilannedokumentti ei mainitse porttia ${nimi}`);
+    const rivi = doc.split(NEWLINE)
+      .find(r => new RegExp('^\\|\\s*`' + nimi + '`\\s*\\|').test(r));
+    assert.ok(rivi, `tilannedokumentti ei mainitse porttia ${nimi} sen omalla taulukkorivillä`);
     assert.equal(/AKTIVOITU/.test(rivi), arvo,
       `${nimi}: dokumentti ja koodi eivät ole yhtä mieltä`);
   }
