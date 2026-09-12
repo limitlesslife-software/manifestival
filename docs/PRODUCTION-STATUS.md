@@ -3,9 +3,18 @@
 **Päivitetty:** 2026-09-08 (julkaisujuna valmisteltu)
 **Lähde:** ajetut migraatiot, varmistusten tulokset ja live-hyväksyntätesti
 
-Tämä on repositorion **auktoritatiivinen** tieto siitä, mikä on ajettu
-tuotantoon ja mikä ei. Jos jokin muu tiedosto on ristiriidassa tämän
-kanssa, tämä on oikeassa.
+> **⚠ TÄMÄ ON TÄMÄN HAARAN KEHITYSNÄKYMÄ, EI VARMISTETUSTI AJANTASAINEN
+> TUOTANNON TILA.** Tämä haara erkani junasta ennen aaltoja A ja B.
+> `origin/main` on saattanut edetä sen jälkeen ilman että tämä tiedosto
+> on seurannut mukana — katso `docs/RELEASE-SEQUENCING.md`, kohta
+> "ACTUAL PRODUCTION STATE", elävä totuus luetaan sieltä suoraan
+> gitistä, ei tästä dokumentista.
+
+Tämä on **tämän haaran** auktoritatiivinen tieto siitä, mikä oli ajettu
+tuotantoon haaran erkaantumishetkellä ja mikä ei. Jos jokin muu tiedosto
+**tässä puussa** on ristiriidassa tämän kanssa, tämä on oikeassa —
+mutta tämä dokumentti EI itsessään todista mitään siitä, mikä
+`origin/main`issa on juuri nyt. Sen todistaa vain git.
 
 ---
 

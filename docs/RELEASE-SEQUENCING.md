@@ -84,17 +84,77 @@ ollut julkaisupäätös.
 
 ### Julkaisujunan varaamat numerot
 
+<!-- LINEAGE-CHECK: origin/main sha=ddfc356d7d0d055b3923cdbfefbcb0bb6d92ec9c cache=v15 -->
+
+`tests/production-lineage.test.mjs` lukee edellisen rivin ja vertaa sitä
+siihen, mitä `origin/main` PAIKALLISESTI (ei verkosta) on juuri nyt.
+Jos rivi jää jälkeen todellisuudesta, testi kaatuu -- tämä dokumentti ei
+siis voi mennä vanhaksi huomaamatta, toisin kuin `PRODUCTION-STATUS.md`
+saattoi ennen tätä työtä.
+
 | Aalto | Cache | Tila |
 |---|---|---|
 | Perustila | `v13` | valmis, ei deployattu |
 | A | `v14` | **deployattu** (`703c28f`) |
 | B | `v15` | **deployattu** (`ddfc356`) — tuotannon nykytila |
-| C | `v16` | valmis, ei deployattu |
-| D | `v17` | valmis, ei deployattu |
-| E | `v18` | valmis, ei deployattu |
+| C | `v16` | valmis, ei deployattu — commitoitu `release/activation-0003-0008`-haaraan (`cf259d0`), EI origin/mainiin |
+| D | `v17` | valmis, ei deployattu — sama haara (`091e73c`) |
+| E | `v18` | valmis, ei deployattu — sama haara (`2b947cc`), haaran kärki `86c4325` |
 | F | `v19` | estetty (migraatio 0009 ajamatta) |
 | G | `v20` | estetty (migraatio 0010 ajamatta) |
 | H | `v21` | estetty (migraatio 0011 ajamatta) |
+
+`release/activation-0003-0008` on ERI asia kuin tuotepakettihaarat.
+Se on juna itse: aallot C, D ja E on siellä rakennettu, testattu ja
+committoitu omilla `Release-Wave:`-trailereillaan, mutta HAARAA ei ole
+yhdistetty `origin/main`iin eikä mitään ole deployattu. Se on
+todistettavissa paikallisesti:
+
+```
+git merge-base --is-ancestor origin/main release/activation-0003-0008
+  -> tosi   (juna sisältää kaiken mitä tuotannossa on)
+git branch --contains release/activation-0003-0008 -r
+  -> (tyhjä -- origin ei tunne tätä haaraa)
+```
+
+Juna on siis VALMIS mutta ei DEPLOYATTU. Se on eri asia kuin
+tuotepakettihaarat, jotka ovat DEPLOYAAMATTOMIA JA erkaantuneita
+ennen aaltoja A/B.
+
+---
+
+## Kolme tilaa, joita ei saa sekoittaa
+
+Tämän koko dokumentin ongelma tiivistyy siihen, että kolmea eri asiaa
+on historiallisesti kutsuttu samalla nimellä ("tuotannon tila").
+Jatkossa niillä on kolme eri nimeä, ja jokaisella on yksi ainoa
+lähde:
+
+| Tila | Mitä se tarkoittaa | Lähde | Voiko mennä vanhaksi huomaamatta? |
+|---|---|---|---|
+| **ACTUAL PRODUCTION STATE** | Mitä `origin/main` JUURI NYT sisältää | `git show origin/main:...` -- luettu suoraan, ei dokumentista | Ei: se ON git, se ei voi olla "vanhentunut" versio itsestään |
+| **DEVELOPMENT FEATURE STATE** | Mitä tämä haara uskoi tuotannosta sillä hetkellä kun se erkani junasta | `docs/PRODUCTION-STATUS.md` TÄSSÄ haarassa | Kyllä -- ja `production-lineage.test.mjs` vartioi, että se TUNNUSTAA sen sen sijaan että väittäisi olevansa ajantasainen |
+| **PLANNED RELEASE STATE** | Mihin junaa on tarkoitus viedä: varatut aallot, cache-versiot, migraatiojärjestys | `tools/release/waves.mjs`, tämä dokumentti | Kyllä samalla tavalla -- `release-sequencing.test.mjs` ja `release-waves.test.mjs` vartioivat sen sisäistä yhtäpitävyyttä |
+
+**Kukin tila vastaa eri kysymykseen:**
+
+- "Mitä käyttäjä näkee tuotannossa juuri nyt?" -> ACTUAL. Kysy gitiltä,
+  älä dokumentilta.
+- "Mitä tämä haara rakennettiin olettaen?" -> DEVELOPMENT. Hyödyllinen
+  historiallisena kontekstina, EI ajantasaisena totuutena.
+- "Mihin seuraavaksi ollaan menossa, jos/kun deployataan?" -> PLANNED.
+  Suunnitelma, ei tapahtuma -- kukaan portti ei ole auki ennen kuin se
+  on oikeasti deployattu.
+
+**Miksi kehityshaaran tila ei voi koskaan olla luotettava ACTUAL-lähde:**
+kehitystyö erkanee junasta jonain hetkenä ja elää sen jälkeen omaa
+elämäänsä. Jokainen committi joka menee junaan sen JÄLKEEN on
+kehityshaaralle näkymätön, ellei sitä erikseen yhdistetä takaisin. Se
+ei ole korjattavissa tekemällä dokumentista tarkempi -- se on
+rakenteellinen ominaisuus siinä missä haarautunut kehitys ylipäätään
+toimii. Ainoa kestävä korjaus on se, ettei kehityshaaran dokumentti
+enää TEESKENTELE olevansa ajantasainen: se kertoo mitä se tiesi, ja
+ohjaa ajantasaisen tiedon luo.
 
 ---
 
@@ -207,6 +267,99 @@ mahdotonta lukea rivi riviltä. Toisaalta testi lukee sen puolestasi.
 
 ---
 
+## Päätös: integrointijärjestys on lukittu
+
+Yllä olevista vaihtoehdoista lukittu järjestys ei ole puhtaasti A, B
+eikä C: se on täsmälleen se, jonka `tools/release/waves.mjs` on jo
+kirjoittanut auki aalloille F, G ja H -- kukin tuotepaketti JA sen
+migraatio JA sen portit deployataan SAMASSA aallossa, ei erikseen.
+Tämä oli auki oleva kysymys; se ei ole enää.
+
+### Kaksi erillistä linjaa
+
+**TUOTEKEHITYSLINJA** (feature-haarat, ei aaltoja eikä cache-versioita
+ennen pakkausta):
+
+```
+feature/finance-2.0
+  -> feature/goal-to-action
+    -> feature/personal-assistant-core
+      -> tuleva tuotekehitys
+```
+
+Todennettu esi-isyys (`git merge-base --is-ancestor`): jokainen nuoli
+yllä on TOSI. Linja on lineaarinen, ei haarautunut.
+
+**TUOTANTOJULKAISULINJA** (junan aallot, cache-versiot varattu):
+
+```
+Aalto B  v15  (tuotannon nykytila, origin/main)
+  -> C  v16   routines + routineExceptions          (rakennettu, ei deployattu)
+    -> D  v17   recurringExpenses + savingsGoals + bills  (rakennettu, ei deployattu)
+      -> E  v18   aiAudit                            (rakennettu, ei deployattu)
+        -> F  v19   Talous 2.0 -- migraatio 0009
+          -> G  v20   Tavoitteesta tekemiseksi -- migraatio 0010
+            -> H  v21   Henkilökohtainen avustaja -- migraatio 0011
+```
+
+**Feature-haarat EIVÄT ole tuotantojulkaisulinjan luotettava kuva.**
+Ne kertovat mitä tuotekoodia on olemassa ja testattu, eivät mitä
+tuotannossa on tai milloin se sinne menee. Aallon numero ja cache-
+versio EIVÄT siirry feature-haaraan ennen kuin tuote todella pakataan
+osaksi ao. aaltoa -- ks. "Tuotepaketeilla ei ole omaa numeroa" yllä.
+
+### Miksi tämä ei riko "tuotepaketeilla ei ole omaa numeroa" -havaintoa
+
+Havainto oli oikea: Talous 2.0:lla ei ole OMAA cache-versiotaan siksi,
+ettei se ole junan aalto sinänsä. Lukittu järjestys ei anna sille
+omaa numeroa -- se antaa sille AALLON numeron, samalla perusteella
+kuin migraatiokin: F ei ole "avaa kaksi porttia", F ON "Talous 2.0 +
+migraatio 0009 + niiden portit", yhtenä hyväksyntätapahtumana. Tämä on
+jo kirjoitettu `waves.mjs`:ään (`blockedBy` viittaa migraatioon,
+`tables` viittaa tuotteen tauluihin) -- tämä dokumentti vain nimeää
+sen ääneen päätökseksi sen sijaan että jättäisi sen auki.
+
+### Migraatioiden julkaisujärjestys ja hyväksyntä
+
+Migraatioita EI koskaan pakata samaan tuotantoikkunaan/transaktioon:
+
+1. **0009** (Talous 2.0) ensin, omalla hyväksynnällään.
+2. **0010** (Tavoitteesta tekemiseksi) VASTA sen jälkeen, omalla
+   ERILLISELLÄ hyväksynnällään -- se on vaarallisempi kuin mikään
+   aiempi, koska se MUUTTAA tauluja (`goals`, `projects`, `tasks`),
+   joissa on jo oikeaa käyttäjädataa ja joiden portit ovat auki
+   tuotannossa. Ks. `docs/GOAL-TO-ACTION.md`.
+3. **0011** (Henkilökohtainen avustaja) pysyy ERISTETTYNÄ 0010:n
+   elävän taulun muutoksista: se vain LUO viisi uutta taulua eikä
+   koske yhteenkään olemassa olevaan sarakkeeseen tai rajoitteeseen.
+   Se voi siksi olla oma hyväksyntätapahtumansa riippumatta siitä,
+   missä järjestyksessä 0009/0010 lopulta hyväksytään -- se ei riipu
+   niistä.
+
+Kukaan ei saa niputtaa 0009+0010+0011 yhteen tuotantoajoon. Jokainen
+saa oman `supabase/verify/verify_00XX.sql`-todennuksensa ja oman
+`docs/acceptance/WAVE-*.md`-hyväksyntäpakettinsa.
+
+### Miten tuleva julkaisun integrointihaara syntyy
+
+Kun aalto F on vuorossa: integrointihaara haarautuu SIITÄ SAMASTA
+commitista, joka on silloin hyväksytty aallon E tuotantotila (ei
+`origin/main`ista sellaisenaan, jos E on sitä myöhempänä -- vaan siitä
+tarkasta SHA:sta, jonka manifesti nimeää E:n deploykohteeksi).
+Feature-haaran (`feature/finance-2.0`) tuotekommitit rebasetaan tai
+mergetään sen päälle, `tools/release/waves.mjs`:n aallon F
+`cacheVersion` (`v19`) kirjoitetaan `sw.js`:ään, portit pysyvät
+kiinni (migraatio 0009 hyväksytään ja ajetaan ERIKSEEN, ei samassa
+committissa), ja `npm run release:manifest -- --write` päivittää
+manifestin. Sama toistuu G:lle E:n sijaan F:n hyväksytystä
+tuotantotilasta, ja H:lle G:n hyväksytystä tilasta.
+
+Tätä EI tehdä tässä työssä tuotantoon asti: ks. harjoitteluhaarat
+alempana ("Harjoittelu"), jotka todistavat saman ketjun paikallisesti,
+merkittyinä ei-tuotannoksi, pushaamatta mihinkään.
+
+---
+
 ## Se, mitä ei saa tehdä
 
 > **ÄLÄ deployaa pelkästään numeroinnin ratkaisemiseksi.**
@@ -231,6 +384,9 @@ mahdotonta lukea rivi riviltä. Toisaalta testi lukee sen puolestasi.
 | `release-waves.test.mjs` — "paketti kertoo oikeat portit, välimuistin ja peruutuksen" | hyväksyntäpaketti, joka ohjaa väärään versioon |
 | `release-waves.test.mjs` — "paketti nostaa välimuistiversion myös peruutuksessa" | peruutus, joka palauttaisi vanhan numeron |
 | `migrations.test.mjs` — "tilannedokumentin porttitaulukko vastaa lähdekoodia" | dokumentti, joka kertoo väärän tilan |
+| `production-lineage.test.mjs` — "haara joka ei ole origin/mainin jälkeläinen ei väitä itseään ehdoitta ajantasaiseksi" | `PRODUCTION-STATUS.md`, joka väittää olevansa ajantasainen ilman että origin/main todistaa sen |
+| `production-lineage.test.mjs` — "tämä haara ei väitä origin/mainia korkeampaa välimuistiversiota ilman jälkeläisyyttä" | keksitty, todentamaton cache-versio joka ohittaisi todellisen tuotannon |
+| `production-lineage.test.mjs` — "RELEASE-SEQUENCING.md:n merkitsemä origin/main-tila täsmää todelliseen" | tämä dokumentti itse vanhenee huomaamatta |
 
 Kolme riippumatonta lähdettä — `src/data/schema.js`, `sw.js`,
 `docs/PRODUCTION-STATUS.md` — on pidettävä yhtäpitävinä. Väärennös
@@ -262,3 +418,14 @@ muuttaa:
 - `docs/activation-0003-0008-release-manifest.json` — `npm run release:manifest -- --write`
 
 ja ajaa `npm test`. Testit kaatuvat, jos jokin näistä jää jälkeen.
+
+**Päivitys (arkkitehtuurin kovennus):** OSA tästä päätöksestä on nyt
+tehty -- ks. "Päätös: integrointijärjestys on lukittu" yllä. Se, MISSÄ
+JÄRJESTYKSESSÄ ja MILLÄ RAJAUKSELLA F/G/H deployataan, ei ole enää
+auki: kukin tuotepaketti + sen migraatio + sen portit yhtenä aaltona,
+0009 -> 0010 -> 0011, kukin omalla hyväksynnällään. Se mikä on YHÄ
+auki, ja YHÄ tämän kohdan mukainen Panun päätös deploy-hetkellä, on
+TARKKA AJOITUS: milloin C/D/E/F/G/H oikeasti deployataan ja missä
+täsmällisessä committissa `sw.js`:n `CACHE_VERSION` nousee. Sitä ei ole
+tehty tässä työssä eikä pidä tehdä ominaisuustyönä -- ks. yllä oleva
+perustelu, joka pätee sellaisenaan yhä.

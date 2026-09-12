@@ -1,8 +1,13 @@
 # Migraatiokartta 0001–0008
 
-**Yhtäkään näistä ei ole ajettu tuotannossa.** Kaikki kahdeksan ovat
-luonnoksia. Ajojärjestys ja pysäytyspisteet:
-[`PRODUCTION-ACTIVATION-RUNBOOK.md`](PRODUCTION-ACTIVATION-RUNBOOK.md).
+**Ajotila luetaan `docs/PRODUCTION-STATUS.md`:stä, ei tästä
+tiedostosta.** Tämä sivu kuvaa riippuvuusgraafin — mikä migraatio
+vaatii minkäkin toisen ensin — eikä sitä ole tarkoitettu ajotilan
+lähteeksi. Se on aiemmin sanonut tässä "yhtäkään ei ole ajettu
+tuotannossa", mikä jäi vanhentumaan kun migraatiot 0001–0008 ajettiin:
+kaksi eri asiaa (riippuvuusjärjestys ja ajotila) elivät samassa
+tiedostossa, ja vain toinen niistä pysyi ajan tasalla. Ajojärjestys ja
+pysäytyspisteet: [`PRODUCTION-ACTIVATION-RUNBOOK.md`](PRODUCTION-ACTIVATION-RUNBOOK.md).
 
 Lippujen tila: [`PRODUCTION-ACTIVATION-GATE.md`](PRODUCTION-ACTIVATION-GATE.md).
 
