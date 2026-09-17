@@ -112,6 +112,7 @@ vertaa niihin.
 
 | Portti | Migraatio | Tuotannon tila |
 |---|---|---|
+| `TASK_EXTENDED_FIELDS` | 0002 | **AKTIVOITU** |
 | `routines` | 0003 | **AKTIVOITU** |
 | `routineExceptions` | 0003 | **AKTIVOITU** |
 | `goals` | 0004 | **AKTIVOITU** |
