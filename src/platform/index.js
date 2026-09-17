@@ -18,6 +18,7 @@ import {
   isNativeShell, platformName
 } from './capabilities.js';
 import * as notificationPlatform from './notifications.js';
+import { bindLifecycle, isNativeLifecycleAvailable } from './lifecycle.js';
 
 export {
   CAPABILITY, CAPABILITIES, PERMISSION, NATIVE_REQUIRED,
@@ -80,7 +81,9 @@ export const notifications = Object.freeze({
   showNow: notificationPlatform.showNow,
   schedule: notificationPlatform.schedule,
   cancel: notificationPlatform.cancelAll,
-  describeSupport: notificationPlatform.describeSupport
+  describeSupport: notificationPlatform.describeSupport,
+  /** Montako ilmoitusta on tällä hetkellä ajastettuna laitteelle. */
+  pendingCount: notificationPlatform.pendingCount
 });
 
 // ------------------------------------------------------------- sijainti
@@ -118,6 +121,22 @@ export const background = Object.freeze({
   async register() {
     return { ok: false, ...NOT_IMPLEMENTED };
   }
+});
+
+// -------------------------------------------------------- elinkaari
+
+/**
+ * Sovelluksen etu-/taustatilan kuuntelu.
+ *
+ * Ei ole oma kyvykkyys `capabilities()`-mielessä — tämä on sisäistä
+ * putkitusta, ei käyttäjän lupaa vaativa ominaisuus. Natiivissa
+ * Capacitorin App-liitännäinen antaa oikean tapahtuman; selaimessa
+ * ainoa vastine on `visibilitychange`, joka kytketään aina mukaan.
+ */
+export const lifecycle = Object.freeze({
+  isNativeAvailable: isNativeLifecycleAvailable,
+  /** Kytke kerran käynnistyksessä. Toinen kutsu ei tee mitään. */
+  bind: bindLifecycle
 });
 
 // ---------------------------------------------------------- yhteenveto

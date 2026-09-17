@@ -130,6 +130,7 @@ const SHELL = [
   '/src/lib/rows.js',
   '/src/platform/capabilities.js',
   '/src/platform/index.js',
+  '/src/platform/lifecycle.js',
   '/src/platform/nativeNotifications.js',
   '/src/platform/notifications.js',
   '/src/styles.css',

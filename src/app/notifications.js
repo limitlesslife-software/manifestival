@@ -232,6 +232,45 @@ export async function updatePreferences(changes) {
 }
 
 /**
+ * Kuinka kauan odotetaan ennen synkronointia, kun tila muuttuu.
+ *
+ * Tehtävän tai rutiinin muokkaus laukaisee useita peräkkäisiä
+ * tilamuutoksia (optimistinen päivitys, sitten palvelimen vastaus).
+ * Ilman viivettä jokainen niistä ajastaisi laitteelle oman pyyntönsä.
+ * Viive kokoaa ne yhdeksi kierrokseksi.
+ */
+export const RESYNC_DEBOUNCE_MS = 2000;
+
+let resyncTimer = null;
+
+/**
+ * Pyydä synkronointi viiveellä.
+ *
+ * KUTSUTAAN KUN AJASTUKSEEN VAIKUTTAVA TILA MUUTTUU: tehtävä tai rutiini
+ * luodaan, muokataan, valmistuu tai poistetaan. Ilman tätä laitteelle
+ * ajastetut ilmoitukset synkronoitaisiin vain kirjautuessa, ja väliin
+ * jäänyt muokkaus jättäisi vanhentuneen ilmoituksen elämään laitteelle
+ * seuraavaan kirjautumiseen asti.
+ */
+export function scheduleNotificationResync() {
+  if (resyncTimer) clearTimeout(resyncTimer);
+  resyncTimer = setTimeout(() => {
+    resyncTimer = null;
+    syncNotifications().catch(error => {
+      console.warn('Manifestival: muistutusten synkronointi ei onnistunut', error);
+    });
+  }, RESYNC_DEBOUNCE_MS);
+}
+
+/** Peruuta odottava viivästetty synkronointi. Uloskirjautuminen. */
+export function cancelScheduledResync() {
+  if (resyncTimer) {
+    clearTimeout(resyncTimer);
+    resyncTimer = null;
+  }
+}
+
+/**
  * Lue lupatila laitteelta käynnistyksessä.
  *
  * EI pyydä lupaa — natiivikuoressa lupatila on luettavissa vain

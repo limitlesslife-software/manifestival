@@ -12,7 +12,7 @@
 
 import { todayMidnight, startOfWeek } from '../lib/datetime.js';
 import { getDevicePreference, clearDevicePreferences } from '../data/preferences.js';
-import { subscribe, resetState, setViewDate, setWeekStart } from './state.js';
+import { subscribe, resetState, setViewDate, setWeekStart, getState } from './state.js';
 import { loadUserData, clearLocalUserData } from './actions.js';
 import { initAuth, showAuthGate, hideAuthGate } from './auth.js';
 import { initNavigation, restoreLastScreen } from './navigation.js';
@@ -45,7 +45,11 @@ import { renderNotices, initNotices, closeNoticeCenter } from './views/notices.j
 import {
   runReminderSweep, runDepartureSweep, pruneNoticeHistory, runReplanCheck
 } from './assistantActions.js';
-import { refreshNotificationPermission, syncNotifications } from './notifications.js';
+import {
+  refreshNotificationPermission, syncNotifications,
+  scheduleNotificationResync, cancelScheduledResync
+} from './notifications.js';
+import { lifecycle } from '../platform/index.js';
 import { clearToasts } from '../ui/toast.js';
 import { maybe } from '../ui/dom.js';
 
@@ -84,6 +88,41 @@ function renderAll() {
   renderProfile();
   renderNotificationSettings();
   renderNotices();
+}
+
+/**
+ * Viimeksi nähdyt viittaukset ajastukseen vaikuttaviin kokoelmiin.
+ *
+ * Viittausvertailu (ei syväkopiointi) riittää: jokainen tilaa muuttava
+ * toiminto (src/app/actions.js) korvaa taulukon uudella, koskaan ei
+ * mutatoida paikallaan. Sama viittaus tarkoittaa siis varmasti samaa
+ * sisältöä.
+ */
+let lastNotifiableRefs = { tasks: null, routines: null, routineExceptions: null };
+
+/**
+ * Pyydä muistutusten uudelleensynkronointi, kun ajastukseen vaikuttava
+ * tila muuttuu.
+ *
+ * TÄMÄ ON AINOA PAIKKA JOKA VAHTII SITÄ. Ilman tätä laitteelle ajastetut
+ * ilmoitukset synkronoituisivat vain kirjautuessa, ja tehtävän muokkaus
+ * tai poisto kesken istunnon jättäisi vanhentuneen ilmoituksen elämään
+ * laitteelle seuraavaan kirjautumiseen asti.
+ */
+function watchNotifiableChanges() {
+  if (!signedIn) return;
+  const state = getState();
+  const changed = state.tasks !== lastNotifiableRefs.tasks
+    || state.routines !== lastNotifiableRefs.routines
+    || state.routineExceptions !== lastNotifiableRefs.routineExceptions;
+
+  lastNotifiableRefs = {
+    tasks: state.tasks,
+    routines: state.routines,
+    routineExceptions: state.routineExceptions
+  };
+
+  if (changed) scheduleNotificationResync();
 }
 
 /**
@@ -153,6 +192,8 @@ async function onSignedIn() {
 
 function onSignedOut() {
   signedIn = false;
+  cancelScheduledResync();
+  lastNotifiableRefs = { tasks: null, routines: null, routineExceptions: null };
   closeForm();
   closeRoutineForm();
   closeGoalForm();
@@ -218,6 +259,7 @@ async function start() {
 
   // 2. Näkymät seuraavat tilaa.
   subscribe(renderAll);
+  subscribe(watchNotifiableChanges);
 
   // 3. Istunnon palautus.
   const session = await initAuth({ onSignedIn, onSignedOut });
@@ -234,8 +276,25 @@ async function start() {
     runAssistantSweeps();
   }, NOW_REFRESH_MS);
 
-  document.addEventListener('visibilitychange', () => {
-    if (!document.hidden && signedIn) renderToday();
+  // Paluu etualalle: sama kolmikko kuin ajastimessa, mutta heti eikä
+  // vasta seuraavassa NOW_REFRESH_MS-kierroksessa. Sovellus on voinut
+  // olla taustalla kauemmin kuin yksi kierros, ja käyttäjä odottaa
+  // ajantasaista tilaa heti kun hän palaa.
+  //
+  // KÄYTTÄÄ platform/lifecycle.js:ÄÄ EIKÄ OMAA visibilitychange-KUUNTELIJAA.
+  // Natiivikuoressa `document.visibilitychange` ei ole luotettava korvike
+  // käyttöjärjestelmän omalle resume/pause-tapahtumalle (ks. lifecycle.js:n
+  // kommentti); web-kuori saa silti visibilitychange-varajärjestelmän, koska
+  // bindLifecycle kytkee molemmat.
+  lifecycle.bind({
+    onResume: () => {
+      if (!signedIn) return;
+      renderToday();
+      runAssistantSweeps();
+      syncNotifications().catch(error => {
+        console.warn('Manifestival: muistutusten synkronointi paluulla ei onnistunut', error);
+      });
+    }
   });
 
   // 5. Service worker: sovelluskuori toimii offline.

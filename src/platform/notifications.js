@@ -155,6 +155,17 @@ export async function refreshPermission() {
 }
 
 /**
+ * Montako ilmoitusta on tällä hetkellä ajastettuna laitteelle.
+ *
+ * Vain natiivikuoressa tarkoittaa jotain: selaimessa ei ole laiteajastusta,
+ * joten vastaus on aina 0 — se ei ole virhe, vaan totuus.
+ */
+export async function pendingCount() {
+  if (isNativeShell() && native.isAvailable()) return native.pendingCount();
+  return 0;
+}
+
+/**
  * Yhteenveto käyttöliittymälle.
  * Kertoo mitä ilmoituksista voi juuri nyt odottaa — ei lupaa liikoja.
  */

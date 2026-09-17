@@ -13,7 +13,7 @@ import { getState, viewDateIso } from '../state.js';
 import { saveProfile } from '../actions.js';
 import { userEmail } from '../../data/session.js';
 import { volatileFields } from '../../data/schema.js';
-import { capabilities } from '../../platform/index.js';
+import { capabilities, notifications as platformNotifications } from '../../platform/index.js';
 import { buildUserDataExport, serializeExport } from '../../domain/dataExport.js';
 
 function numberOrNull(value) {
@@ -117,12 +117,20 @@ function renderPrivacyCenter() {
   const caps = capabilities();
   const rows = Object.values(caps.registry).map(capabilityRow).join('');
 
+  // Ajastettujen ilmoitusten määrä on hyödyllinen vain natiivikuoressa,
+  // jossa laite todella pitää kirjaa. Selaimessa se olisi aina nolla eikä
+  // kertoisi mitään — jätetään siksi kokonaan pois sieltä.
+  const showPendingCount = caps.native && caps.registry.notifications.available;
+
   container.innerHTML = `
     <h2 class="section-title">Tietosuoja ja oikeudet</h2>
     <div class="hint" style="margin-bottom:8px;">
       Alusta: ${escapeHtml(caps.platform)}${caps.native ? ' (natiivisovellus)' : ' (selain)'}
     </div>
     ${rows}
+    ${showPendingCount
+      ? '<div class="hint" id="pfPendingNotices">Ajastettuja ilmoituksia laitteella: …</div>'
+      : ''}
     <div class="form-actions" style="margin-top:10px;">
       <button class="form-btn" id="pfExportBtn" type="button">Lataa oma data (JSON)</button>
     </div>
@@ -134,6 +142,16 @@ function renderPrivacyCenter() {
 
   const exportBtn = maybe('pfExportBtn');
   if (exportBtn) exportBtn.addEventListener('click', runExport);
+
+  if (showPendingCount) {
+    // Kysytään laitteelta erikseen: pendingCount on asynkroninen eikä sitä
+    // odoteta ennen renderöintiä, jottei koko profiilinäkymä jäisi kiinni
+    // yhteen liitännäiskutsuun.
+    platformNotifications.pendingCount().then(count => {
+      const node = maybe('pfPendingNotices');
+      if (node) node.textContent = `Ajastettuja ilmoituksia laitteella: ${count}`;
+    }).catch(() => { /* laskuri on mukavuus, ei kriittinen tieto */ });
+  }
 }
 
 /** Kokoa vientiin annettava data nykyisestä tilasta. */
