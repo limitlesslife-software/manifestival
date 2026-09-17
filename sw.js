@@ -94,6 +94,7 @@ const SHELL = [
   '/src/domain/capture.js',
   '/src/domain/categories.js',
   '/src/domain/conflicts.js',
+  '/src/domain/dataExport.js',
   '/src/domain/finance.js',
   '/src/domain/financeCategories.js',
   '/src/domain/focus.js',

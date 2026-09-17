@@ -6,12 +6,15 @@
 // mihin kukin arvo vaikuttaa.
 
 import { escapeHtml } from '../../lib/format.js';
+import { fmtISO } from '../../lib/datetime.js';
 import { computeWakeTime, computeBedtime } from '../../domain/scheduler.js';
 import { el, maybe, setText, toggle, setBusy, singleFlight } from '../../ui/dom.js';
 import { getState, viewDateIso } from '../state.js';
 import { saveProfile } from '../actions.js';
 import { userEmail } from '../../data/session.js';
 import { volatileFields } from '../../data/schema.js';
+import { capabilities } from '../../platform/index.js';
+import { buildUserDataExport, serializeExport } from '../../domain/dataExport.js';
 
 function numberOrNull(value) {
   if (value === '' || value === null || value === undefined) return null;
@@ -86,11 +89,127 @@ function renderSchemaNotice() {
   </div>`;
 }
 
+/**
+ * Yhden kyvykkyyden rivi tietosuojanäkymässä.
+ *
+ * Kolme väriä kertovat kolme eri tilaa: käytössä nyt, ei vielä toteutettu
+ * tällä alustalla, tai lupa evätty/kysymättä. Teksti ei koskaan lupaa
+ * enempää kuin `capabilities()` todella kertoo.
+ */
+function capabilityRow(item) {
+  const tone = !item.supported ? 'clay' : item.available ? 'sage' : 'gold';
+  const status = !item.supported
+    ? 'Ei tuettu tällä alustalla'
+    : !item.implemented
+      ? (item.plannedNote || 'Ei vielä toteutettu')
+      : item.permission === 'granted' ? 'Lupa myönnetty'
+        : item.permission === 'denied' ? 'Lupa evätty'
+          : item.permission === 'not_required' ? 'Ei vaadi lupaa'
+            : 'Lupaa ei ole vielä kysytty';
+  return `<div class="notice tone-${tone}"><strong>${escapeHtml(item.label)}</strong> — ${escapeHtml(status)}</div>`;
+}
+
+/** Renderöi tietosuoja- ja kyvykkyysosio. */
+function renderPrivacyCenter() {
+  const container = maybe('pfCapabilities');
+  if (!container) return;
+
+  const caps = capabilities();
+  const rows = Object.values(caps.registry).map(capabilityRow).join('');
+
+  container.innerHTML = `
+    <h2 class="section-title">Tietosuoja ja oikeudet</h2>
+    <div class="hint" style="margin-bottom:8px;">
+      Alusta: ${escapeHtml(caps.platform)}${caps.native ? ' (natiivisovellus)' : ' (selain)'}
+    </div>
+    ${rows}
+    <div class="form-actions" style="margin-top:10px;">
+      <button class="form-btn" id="pfExportBtn" type="button">Lataa oma data (JSON)</button>
+    </div>
+    <div class="hint" style="margin-top:4px;">
+      Vienti sisältää kaiken oman tietosi — ei koskaan tunnuksia, tokeneita
+      eikä muiden käyttäjien tietoja.
+    </div>
+    <div id="pfExportMsg" style="display:none; font-size:12px; margin-top:6px;" role="status"></div>`;
+
+  const exportBtn = maybe('pfExportBtn');
+  if (exportBtn) exportBtn.addEventListener('click', runExport);
+}
+
+/** Kokoa vientiin annettava data nykyisestä tilasta. */
+function collectExportData(state) {
+  return {
+    tasks: state.tasks,
+    routines: state.routines,
+    routineExceptions: state.routineExceptions,
+    goals: state.goals,
+    projects: state.projects,
+    bills: state.bills,
+    recurringExpenses: state.recurringExpenses,
+    savingsGoals: state.savingsGoals,
+    wellbeing: state.wellbeing,
+    notificationPreferences: state.notificationPreferences,
+    profile: state.profile,
+    aiAudit: state.aiAudit,
+    transactions: state.transactions,
+    investments: state.investments,
+    milestones: state.milestones,
+    inboxItems: state.inboxItems,
+    reminders: state.reminders,
+    notices: state.notices,
+    travelPlans: state.travelPlans,
+    locationRules: state.locationRules
+  };
+}
+
+/** Käynnistä tiedoston lataus selaimessa. */
+function triggerDownload(filename, text) {
+  const blob = new Blob([text], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+const runExport = singleFlight(async () => {
+  const button = maybe('pfExportBtn');
+  const msg = maybe('pfExportMsg');
+  setBusy(button, true, 'Kootaan…');
+  try {
+    const state = getState();
+    const exported = buildUserDataExport(collectExportData(state), {
+      exportedAt: new Date().toISOString(),
+      appVersion: null
+    });
+    triggerDownload(
+      `manifestival-vienti-${fmtISO(new Date())}.json`,
+      serializeExport(exported)
+    );
+    if (msg) {
+      msg.textContent = 'Tiedosto ladattu.';
+      msg.style.display = 'block';
+    }
+  } catch {
+    if (msg) {
+      msg.textContent = 'Viennin luonti epäonnistui. Yritä uudelleen.';
+      msg.style.display = 'block';
+    }
+  } finally {
+    setBusy(button, false);
+    if (msg) setTimeout(() => { msg.style.display = 'none'; }, 3000);
+  }
+});
+
 /** Renderöi profiilinäkymä. */
 export function renderProfile() {
   setText('signoutEmail', userEmail());
   renderPreview();
   renderSchemaNotice();
+  renderPrivacyCenter();
 }
 
 const submitProfile = singleFlight(async () => {
