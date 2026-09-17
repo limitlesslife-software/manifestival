@@ -43,18 +43,26 @@ export const MANIFEST_PATH = 'docs/activation-0003-0008-release-manifest.json';
 
 export const PRODUCTION_URL = 'https://manifestival-ten.vercel.app';
 
-/** Aja git ja palauta tuloste, tai null jos komento epäonnistuu. */
-export function git(args) {
+/**
+ * Aja git ja palauta tuloste, tai null jos komento epäonnistuu.
+ *
+ * `cwd` on valinnainen ja oletuksena tämä repositorio. Sen avulla
+ * SAMAA git-objektikantaa voi kysyä toisen työpuun (esim. `git
+ * worktree add --detach`) näkökulmasta -- HEAD ratkeaa SIINÄ
+ * työpuussa, objektit ovat silti samat. Ks. `tools/release/lineage.mjs`,
+ * `isDetachedHead` ja `waveOfCommit`.
+ */
+export function git(args, cwd = ROOT) {
   try {
-    return execFileSync('git', args, { cwd: ROOT, encoding: 'utf8' }).trim();
+    return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
   } catch {
     return null;
   }
 }
 
 /** Onko git käytettävissä ja ollaanko repositoriossa? */
-export function gitAvailable() {
-  return git(['rev-parse', '--git-dir']) !== null;
+export function gitAvailable(cwd = ROOT) {
+  return git(['rev-parse', '--git-dir'], cwd) !== null;
 }
 
 /** Tiedoston sisältö tietyssä commitissa, tai null. */

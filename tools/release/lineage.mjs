@@ -117,6 +117,66 @@ export function isDescendantOfOriginMain() {
 }
 
 /**
+ * Onko HEAD irrallinen (detached) tässä työpuussa?
+ *
+ * MIKSI TÄMÄ ON OLEMASSA
+ *
+ * `git branch --show-current` palauttaa tyhjän merkkijonon myös
+ * irrallisella HEADilla, mutta se EI kerro EROA "irrallinen" ja
+ * "haaraa ei voitu lukea" välillä. `activation-preflight.mjs` käytti
+ * pelkkää haaran nimen pituutta tunnistaakseen sen -- ja koska
+ * irrallinen HEAD ON kelvollinen tila (esim. julkaisuautomaatio, joka
+ * tarkistaa nimetyn commitin eikä haaraa), sen ei pitäisi tuottaa
+ * FAILia joka näyttää samalta kuin oikea porttivika. `git symbolic-ref`
+ * on tarkka väline juuri tähän: se onnistuu JOS JA VAIN JOS HEAD
+ * osoittaa haaraan.
+ *
+ * @param {string} [cwd] mistä työpuusta kysytään -- oletus tämä repo
+ * @returns {boolean|null} null jos git ei ole käytettävissä
+ */
+export function isDetachedHead(cwd = ROOT) {
+  if (!gitAvailable(cwd)) return null;
+  return git(['symbolic-ref', '-q', 'HEAD'], cwd) === null;
+}
+
+/**
+ * Mitä aaltoa annettu commit vastaa `Release-Wave:`-trailerin
+ * perusteella -- KESTÄVÄ tunniste, joka ei koskaan lue haaran nimeä.
+ *
+ * TÄMÄ ON SE, JOKA KORVAA HAARAN NIMEEN NOJAAVAN PÄÄTTELYN. `ref`
+ * ratkaistaan `cwd`:n NYKYISESSÄ tilassa (jotta irrallisella HEADilla
+ * `'HEAD'` tarkoittaa juuri sitä irrallista committia), ja sen
+ * jälkeen luetaan TÄSMÄLLEEN sen yhden commitin oma viesti --
+ * TAHALLAAN EI `tools/release/manifest.mjs`:n `discoverWaveCommits()`,
+ * joka rajaa haun `PRODUCTION.sha..HEAD`-väliin NYKYISEN haaran
+ * ("tämän puun") HEADista käsin. Jos pyydetty commit on eri haaran
+ * historiassa (esim. erillinen julkaisujuna, joka ei ole tämän puun
+ * esi-isä), tuo väli ei koskaan tavoittaisi sitä, vaikka commitilla
+ * ITSELLÄÄN olisi täysin kelvollinen trailer. Tunnisteen on siis
+ * riipputtava VAIN pyydetyn commitin omasta sisällöstä, ei siitä millä
+ * haaralla tämä työpuu sattuu olemaan.
+ *
+ * Commit, jolla EI ole `Release-Wave:`-trailería, ei ole virhe: se on
+ * tavallinen kehityscommit. Palautetaan silloin null, ei arvata.
+ *
+ * @param {string} [ref] git-referenssi, oletus 'HEAD'
+ * @param {string} [cwd] mistä työpuusta `ref` ratkaistaan
+ * @returns {string|null} 'BASE', 'A'..'E', tai null jos commit ei
+ *   kanna tunnettua aaltomerkintää
+ */
+export function waveOfCommit(ref = 'HEAD', cwd = ROOT) {
+  if (!gitAvailable(cwd)) return null;
+  const sha = git(['rev-parse', ref], cwd);
+  if (!sha) return null;
+
+  const body = git(['log', '-1', '--format=%B', sha], cwd);
+  if (!body) return null;
+
+  const match = /^Release-Wave:\s*(BASE|[A-E])\s*$/m.exec(body);
+  return match ? match[1] : null;
+}
+
+/**
  * Vertaa tämän puun väitettyä välimuistiversiota origin/mainin
  * todelliseen. Palauttaa kuvauksen ongelmasta tai null jos ei ole
  * mitään sanottavaa (joko origin/main ei ole saatavilla, tai versiot
