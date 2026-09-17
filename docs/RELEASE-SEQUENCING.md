@@ -24,19 +24,25 @@ Luettu suoraan committista, ei dokumentaatiosta:
 
 ```
 git rev-parse origin/main
-  ddfc356d7d0d055b3923cdbfefbcb0bb6d92ec9c
+  cf259d0ef755f7e875cc9cd9c15405eba632e408
 
-git show ddfc356:sw.js | grep CACHE_VERSION
-  const CACHE_VERSION = 'v15';
+git show cf259d0:sw.js | grep CACHE_VERSION
+  const CACHE_VERSION = 'v16';
 
-git show ddfc356:src/data/schema.js | grep ': true'
+git show cf259d0:src/data/schema.js | grep ': true'
+  routines: true
+  routineExceptions: true
   goals: true
   projects: true
   notificationPreferences: true
   wellbeing: true
 ```
 
-Aallot **A ja B on siis deployattu**. Junan tila on aalto B, `v15`.
+Aallot **A, B ja C on siis deployattu**. Junan tila on aalto C, `v16`.
+**Aalto C on DEPLOYATTU mutta EI VIELÄ KÄYTTÄJÄN HYVÄKSYMÄ** -- tämä
+päivitys itsessään ei ole hyväksyntätapahtuma, se vain tunnustaa
+gitin todellisen tilan tässä dokumentissa. Ks. Panun hyväksyntäpaketti
+`docs/acceptance/` -hakemistossa.
 
 ### Paikallisesti rakennettu
 
@@ -65,7 +71,7 @@ Tämä on se osa ongelmasta, joka on helpoin ohittaa.
 | Lähde | Väittää |
 |---|---|
 | `docs/PRODUCTION-STATUS.md` **tässä haarassa** | `v12`, kaikki portit kiinni |
-| `origin/main` | `v15`, neljä porttia auki |
+| `origin/main` | `v16`, kuusi porttia auki |
 
 Dokumentti julistaa itsensä auktoritatiiviseksi ("jos jokin muu
 tiedosto on ristiriidassa tämän kanssa, tämä on oikeassa"), ja tässä
@@ -84,7 +90,7 @@ ollut julkaisupäätös.
 
 ### Julkaisujunan varaamat numerot
 
-<!-- LINEAGE-CHECK: origin/main sha=ddfc356d7d0d055b3923cdbfefbcb0bb6d92ec9c cache=v15 -->
+<!-- LINEAGE-CHECK: origin/main sha=cf259d0ef755f7e875cc9cd9c15405eba632e408 cache=v16 -->
 
 `tests/production-lineage.test.mjs` lukee edellisen rivin ja vertaa sitä
 siihen, mitä `origin/main` PAIKALLISESTI (ei verkosta) on juuri nyt.
@@ -96,13 +102,18 @@ saattoi ennen tätä työtä.
 |---|---|---|
 | Perustila | `v13` | valmis, ei deployattu |
 | A | `v14` | **deployattu** (`703c28f`) |
-| B | `v15` | **deployattu** (`ddfc356`) — tuotannon nykytila |
-| C | `v16` | valmis, ei deployattu — commitoitu `release/activation-0003-0008`-haaraan (`cf259d0`), EI origin/mainiin |
-| D | `v17` | valmis, ei deployattu — sama haara (`091e73c`) |
+| B | `v15` | **deployattu** (`ddfc356`) |
+| C | `v16` | **deployattu** (`cf259d0`) — tuotannon nykytila, EI VIELÄ hyväksytty käyttäjän toimesta |
+| D | `v17` | valmis, ei deployattu — commitoitu `release/activation-0003-0008`-haaraan (`091e73c`) |
 | E | `v18` | valmis, ei deployattu — sama haara (`2b947cc`), haaran kärki `86c4325` |
 | F | `v19` | estetty (migraatio 0009 ajamatta) |
 | G | `v20` | estetty (migraatio 0010 ajamatta) |
 | H | `v21` | estetty (migraatio 0011 ajamatta) |
+
+**Aalto C:n deployaus EI ole sama asia kuin sen hyväksyntä.** Rivi
+yllä kertoo vain, mitä `origin/main` sisältää -- ei sitä, että Panu
+olisi hyväksynyt sen selaimessa. Ks. `docs/PRODUCTION-STATUS.md`
+kohta "Odottavat asiat" ja aalto C:n hyväksyntäpaketti.
 
 `release/activation-0003-0008` on ERI asia kuin tuotepakettihaarat.
 Se on juna itse: aallot C, D ja E on siellä rakennettu, testattu ja
@@ -172,7 +183,7 @@ tuotepakettia** — Talous 2.0, Tavoitteesta tekemiseksi ja
 Henkilökohtainen avustaja — on rakennettu haaroihin, joiden `sw.js`
 sanoo `v13`.
 
-`v13` on **pienempi kuin tuotannon `v15`**.
+`v13` on **pienempi kuin tuotannon `v16`**.
 
 ### 2. Välimuistiversio ei koskaan saa laskea
 
