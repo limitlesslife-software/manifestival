@@ -48,6 +48,24 @@ Viimeinen on tärkein. Se on automaattitestattu, mutta laitteella
 elinkaari on eri: prosessi voi jäädä henkiin taustalle tavalla, jota
 selain ei tunne.
 
+### Natiivi resume/pause (`src/platform/lifecycle.js`)
+
+Työpöydällä testattu vain Capacitorin App-liitännäisen
+kaksoiskappaleella (`tests/platform-lifecycle.test.mjs`). Sitä, laukeaako
+oikea `resume`-tapahtuma oikeissa OS-tilanteissa, ei voi todentaa
+selaimesta.
+
+- [ ] Sovelluksen tuominen taustalta etualalle laukaisee NYT/MYÖHÄSSÄ-
+      päivityksen ja muistutusten synkronoinnin **heti**, ei vasta
+      30 sekunnin ajastimen kohdalla
+- [ ] Sama toimii myös kun sovellus on ollut Doze-tilassa tai
+      akunsäästössä pitkään taustalla
+- [ ] `resume` ei laukea kahdesti samasta palaamisesta (ei
+      kaksinkertaista synkronointia — vertaa `visibilitychange`-
+      varajärjestelmän kanssa)
+- [ ] Sovelluksen tappaminen kokonaan ja uudelleenavaus toimii kuin
+      kylmäkäynnistys, ei kuin resume
+
 ### Aallottain
 
 **A — muistutusasetukset, hyvinvointi**
@@ -363,6 +381,13 @@ tavallista, ei virhe.
 
 ## Muistutukset
 
+- [ ] Tehtävän ajan muokkaus synkronoi laitteen ajastetun ilmoituksen
+      uudelleen n. 2 sekunnin kuluttua (`scheduleNotificationResync`) —
+      vanha kellonaika ei enää herätä
+- [ ] Tehtävän poisto perii laitteelta ajastetun ilmoituksen samassa
+      ikkunassa
+- [ ] Useita nopeita muokkauksia peräkkäin ei ajasta useaa
+      päällekkäistä synkronointia laitteelle
 - [ ] Muistutuksen luonti ilman tehtävää toimii
 - [ ] Muistutuksen liittäminen tehtävään toimii
 - [ ] Torkkupainikkeet (+5 / +15 / +30 / +60) ovat erotettavissa
