@@ -44,6 +44,29 @@ test('koontiskriptit ovat olemassa ja oikeassa järjestyksessä', () => {
   assert.ok(packageJson.scripts['build:android'].includes('sync:android'));
 });
 
+test('KRIITTINEN: vanhentuneet Android-assetit paikataan automaattisesti ennen testejä', () => {
+  // android/app/src/main/assets/public on gitignorattu (android/.gitignore),
+  // joten se syntyy vain kun joku on ajanut sync:androidin paikallisesti.
+  // Jos web-lähdettä muutetaan sen jälkeen synkronoimatta uudelleen, "npm
+  // test" ei saa enää vain kaataa yhtä testiä 1600+ muun joukossa --
+  // pretest-koukun on korjattava tilanne AUTOMAATTISESTI ennen kuin
+  // tests/android.test.mjs edes ehtii nähdä vanhentuneen tilan.
+  assert.ok(packageJson.scripts.pretest,
+    'package.jsonista puuttuu "pretest" -- Android-assettien vanhentuminen '
+    + 'näkyisi erottamattomana FAILina muun testijoukon seassa');
+  assert.ok(packageJson.scripts.pretest.includes('pretest-android-sync.mjs'),
+    'pretest ei aja Android-assettien paikkausskriptiä');
+  assert.ok(fs.existsSync(path.join(ROOT, 'scripts/pretest-android-sync.mjs')),
+    'pretest-android-sync.mjs puuttuu, vaikka package.json viittaa siihen');
+
+  const skripti = read('scripts/pretest-android-sync.mjs');
+  assert.match(skripti, /sync:android/,
+    'paikkausskripti ei aja sync:android-komentoa');
+  assert.match(skripti, /existsSync/,
+    'paikkausskripti ei tarkista, onko assets/public ylipäätään olemassa -- '
+    + 'ilman sitä se pakottaisi Android-koonnin myös fressissä kloonissa');
+});
+
 // ------------------------------------------------- yksi koodikanta
 
 test('SÄÄNTÖ: Android-hakemistossa ei ole sovelluslogiikkaa', { skip: !hasAndroid }, () => {
