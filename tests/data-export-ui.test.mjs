@@ -23,14 +23,27 @@ test('KRIITTINEN: profiilinäkymä kutsuu vientifunktioita eikä vain tuo niitä
   assert.match(profileSource, /serializeExport\(/);
 });
 
-test('KRIITTINEN: jokainen vientikokoelma kootaan käyttöliittymästä', () => {
-  for (const name of EXPORTED_COLLECTIONS) {
-    assert.match(
-      profileSource,
-      new RegExp(`\\b${name}\\s*:\\s*state\\.${name}\\b`),
-      `collectExportData ei kokoa kokoelmaa "${name}"`
-    );
-  }
+test('KRIITTINEN: vientidata kootaan EXPORTED_COLLECTIONS-listasta, ei käsin kirjoitetusta kopiosta', () => {
+  // Käsin kirjoitettu { routines: state.routines, goals: state.goals, ... }
+  // ajautuisi EXPORTED_COLLECTIONS:sta eroon ensimmäisellä unohtuneella
+  // lisäyksellä. collectExportData() lukee saman listan uudelleenviennillä,
+  // joten tämä testi todistaa RAKENTEEN eikä yksittäisiä nimiä.
+  assert.match(profileSource,
+    /import\s*\{[^}]*EXPORTED_COLLECTIONS[^}]*\}\s*from\s*['"]\.\.\/\.\.\/domain\/dataExport\.js['"]/,
+    'profile.js ei tuo EXPORTED_COLLECTIONS:ia dataExport.js:stä');
+
+  const start = profileSource.indexOf('function collectExportData');
+  assert.ok(start > -1, 'collectExportData puuttuu');
+  const body = profileSource.slice(start, profileSource.indexOf('\n}', start));
+
+  assert.match(body, /for\s*\(\s*const\s+name\s+of\s+EXPORTED_COLLECTIONS\s*\)/,
+    'collectExportData ei iteroi EXPORTED_COLLECTIONS:ia — se voisi olla käsin kirjoitettu kopio');
+  assert.match(body, /data\[name\]\s*=\s*state\[name\]/,
+    'collectExportData ei indeksoi tilaa nimen perusteella');
+
+  // Ja sama lista todella kattaa kaikki nykyiset kokoelmat -- ei tyhjä eikä
+  // vaillinainen (tarkistettu erikseen account-lifecycle.test.mjs:ssä).
+  assert.ok(EXPORTED_COLLECTIONS.length >= 15, 'EXPORTED_COLLECTIONS näyttää vaillinaiselta');
 });
 
 test('KRIITTINEN: latauspainike on olemassa ja kytketty klikkaukseen', () => {

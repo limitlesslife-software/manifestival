@@ -14,7 +14,7 @@ import { saveProfile } from '../actions.js';
 import { userEmail } from '../../data/session.js';
 import { volatileFields } from '../../data/schema.js';
 import { capabilities, notifications as platformNotifications } from '../../platform/index.js';
-import { buildUserDataExport, serializeExport } from '../../domain/dataExport.js';
+import { buildUserDataExport, serializeExport, EXPORTED_COLLECTIONS } from '../../domain/dataExport.js';
 
 function numberOrNull(value) {
   if (value === '' || value === null || value === undefined) return null;
@@ -154,30 +154,18 @@ function renderPrivacyCenter() {
   }
 }
 
-/** Kokoa vientiin annettava data nykyisestä tilasta. */
+/**
+ * Kokoa vientiin annettava data nykyisestä tilasta.
+ *
+ * LUETTELO TULEE YKSISTÄÄN EXPORTED_COLLECTIONS:STA. Käsin kirjoitettu
+ * kopio ajautuisi siitä eroon ensimmäisellä unohtuneella tietotyypin
+ * lisäyksellä, ja vienti näyttäisi onnistuneen vaikka jokin kokoelma
+ * puuttuisi tiedostosta hiljaa.
+ */
 function collectExportData(state) {
-  return {
-    tasks: state.tasks,
-    routines: state.routines,
-    routineExceptions: state.routineExceptions,
-    goals: state.goals,
-    projects: state.projects,
-    bills: state.bills,
-    recurringExpenses: state.recurringExpenses,
-    savingsGoals: state.savingsGoals,
-    wellbeing: state.wellbeing,
-    notificationPreferences: state.notificationPreferences,
-    profile: state.profile,
-    aiAudit: state.aiAudit,
-    transactions: state.transactions,
-    investments: state.investments,
-    milestones: state.milestones,
-    inboxItems: state.inboxItems,
-    reminders: state.reminders,
-    notices: state.notices,
-    travelPlans: state.travelPlans,
-    locationRules: state.locationRules
-  };
+  const data = {};
+  for (const name of EXPORTED_COLLECTIONS) data[name] = state[name];
+  return data;
 }
 
 /** Käynnistä tiedoston lataus selaimessa. */
