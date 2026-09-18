@@ -15,8 +15,10 @@ import assert from 'node:assert/strict';
 
 import { readCode } from './helpers/sources.mjs';
 import { EXPORTED_COLLECTIONS } from '../src/domain/dataExport.js';
+import { authAccountDeletable } from '../src/domain/accountLifecycle.js';
 
 const profileSource = readCode('src/app/views/profile.js');
+const indexHtml = readCode('index.html');
 
 test('KRIITTINEN: profiilinäkymä kutsuu vientifunktioita eikä vain tuo niitä', () => {
   assert.match(profileSource, /buildUserDataExport\(/);
@@ -57,4 +59,50 @@ test('vienti ei koskaan lähetä käyttäjätunnistetta eikä tokenia painikkeen
   // varmistetaan ettei käyttöliittymä ohita redact()-suodatusta lisäämällä
   // oman raa'an kentän mukaan.
   assert.doesNotMatch(profileSource, /userEmail\(\)[^)]*data\.push|token[\s\S]{0,20}collectExportData/i);
+});
+
+// ================================================== tilin poiston UX
+//
+// docs/ACCOUNT-DELETION.md: "Sovellus EI SAA luoda fake-successia."
+// Nämä testit lukitsevat, että käyttöliittymä noudattaa sitä kirjaimellisesti:
+// poistopainike on olemassa mutta pois päältä kunnes backend on valmis,
+// syy näytetään suoraan, ja kuiva-ajo ei koskaan kirjoita mihinkään.
+
+test('KRIITTINEN: DOM-koukku tilin poistolle on olemassa index.html:ssä', () => {
+  assert.match(indexHtml, /id="pfAccountDeletion"/);
+});
+
+test('KRIITTINEN: poistopainike on pois päältä niin kauan kuin authAccountDeletable() on false', () => {
+  // Tämä testi KAATUU sinä päivänä kun backend valmistuu ja
+  // authAccountDeletable() muuttuu todeksi -- se on tarkoituksellista:
+  // silloin joku tarkistaa käsin, että painikkeen disabled-ehto ja
+  // vahvistuspolku päivitetään samassa yhteydessä, ei jää unohtumaan.
+  assert.equal(authAccountDeletable(), false,
+    'authAccountDeletable() on true -- päivitä pfDeletionBtn-ehto ja tämä testi tietoisesti');
+
+  const start = profileSource.indexOf('function renderAccountDeletion');
+  const body = profileSource.slice(start, profileSource.indexOf('\n}', start));
+  assert.match(body, /id="pfDeletionBtn"/);
+  assert.match(body, /deletable\s*\?\s*''\s*:\s*'disabled/,
+    'poistopainike ei ole ehdollisesti pois päältä authAccountDeletable():n mukaan');
+  assert.match(body, /authAccountBlockedReason\(\)/,
+    'estosyytä ei näytetä käyttäjälle');
+});
+
+test('poiston esikatselu käyttää dryRunDeletion():ia, ei omaa laskentaansa', () => {
+  assert.match(profileSource, /import\s*\{[^}]*dryRunDeletion[^}]*\}\s*from\s*['"]\.\.\/\.\.\/domain\/accountLifecycle\.js['"]/);
+  const start = profileSource.indexOf('function showDeletionPreview');
+  const body = profileSource.slice(start, profileSource.indexOf('\n}', start));
+  assert.match(body, /dryRunDeletion\(collectExportData\(getState\(\)\)\)/,
+    'esikatselu ei käytä samaa dataa kuin vienti — kaksi eri totuutta samasta tilasta');
+});
+
+test('poiston esikatselupainike on kytketty, varsinainen poistopainike ei kutsu mitään', () => {
+  const start = profileSource.indexOf('function renderAccountDeletion');
+  const body = profileSource.slice(start, profileSource.indexOf('\n}', start));
+  assert.match(body, /pfDeletionPreviewBtn['"]\)/);
+  assert.match(body, /addEventListener\('click',\s*showDeletionPreview\)/);
+  // pfDeletionBtn ei saa olla kytketty mihinkään toimintoon niin kauan
+  // kuin se on pois päältä -- muuten se olisi napattavissa DOM:ista käsin.
+  assert.doesNotMatch(body, /pfDeletionBtn['"]\)\.addEventListener/);
 });

@@ -94,6 +94,7 @@ const SHELL = [
   '/src/data/schema.js',
   '/src/data/session.js',
   '/src/data/tasksRepo.js',
+  '/src/domain/accountLifecycle.js',
   '/src/domain/assistant.js',
   '/src/domain/audit.js',
   '/src/domain/automation.js',

@@ -15,6 +15,7 @@ import { userEmail } from '../../data/session.js';
 import { volatileFields } from '../../data/schema.js';
 import { capabilities, notifications as platformNotifications } from '../../platform/index.js';
 import { buildUserDataExport, serializeExport, EXPORTED_COLLECTIONS } from '../../domain/dataExport.js';
+import { dryRunDeletion, authAccountDeletable, authAccountBlockedReason } from '../../domain/accountLifecycle.js';
 
 function numberOrNull(value) {
   if (value === '' || value === null || value === undefined) return null;
@@ -155,6 +156,64 @@ function renderPrivacyCenter() {
 }
 
 /**
+ * Renderöi "Poista tili" -osio.
+ *
+ * SOVELLUS EI SAA VÄITTÄÄ POISTOA MAHDOLLISEKSI ENNEN KUIN SE ON.
+ * Kuiva-ajo (dryRunDeletion) on aina turvallinen: se on puhdas laskenta
+ * käyttäjän omasta, jo ladatusta datasta eikä koske kantaan. Varsinainen
+ * poistopainike on POIS PÄÄLTÄ ja kertoo suoraan miksi — ei piiloteta
+ * eikä väitetä toimivaksi (ks. docs/ACCOUNT-DELETION.md).
+ */
+function renderAccountDeletion() {
+  const container = maybe('pfAccountDeletion');
+  if (!container) return;
+
+  const deletable = authAccountDeletable();
+
+  container.innerHTML = `
+    <h2 class="section-title">Poista tili</h2>
+    <div class="notice tone-clay">
+      Tilin poisto on pysyvä eikä sitä voi perua. Kaikki tehtävät, rutiinit,
+      tavoitteet, projektit, laskut ja muu oma tietosi poistetaan
+      kokonaan. Lataa oma data talteen ennen poistoa (yllä).
+    </div>
+    <div id="pfDeletionPreview"></div>
+    <div class="form-actions" style="margin-top:10px; flex-wrap:wrap;">
+      <button class="form-btn" id="pfDeletionPreviewBtn" type="button">
+        Näytä mitä poistettaisiin
+      </button>
+      <button class="form-btn danger" id="pfDeletionBtn" type="button" ${deletable ? '' : 'disabled aria-disabled="true"'}>
+        Poista tili pysyvästi
+      </button>
+    </div>
+    ${deletable ? '' : `<div class="hint" style="margin-top:6px;">${escapeHtml(authAccountBlockedReason())}</div>`}`;
+
+  const previewBtn = maybe('pfDeletionPreviewBtn');
+  if (previewBtn) previewBtn.addEventListener('click', showDeletionPreview);
+}
+
+function showDeletionPreview() {
+  const output = maybe('pfDeletionPreview');
+  if (!output) return;
+
+  const report = dryRunDeletion(collectExportData(getState()));
+  const nonEmpty = report.collections.filter(entry => entry.count > 0);
+
+  const rows = nonEmpty.length
+    ? nonEmpty.map(entry => `<div class="preview-row"><span>${escapeHtml(entry.name)}</span><strong>${entry.count}</strong></div>`).join('')
+    : '<div class="hint">Ei yhtään riviä missään kokoelmassa.</div>';
+
+  output.innerHTML = `
+    <div class="preview-block" style="margin-top:8px;">
+      <div class="preview-title">Poisto vaikuttaisi ${report.totalRows} riviin</div>
+      ${rows}
+      ${report.storedFileCategories.length
+        ? `<div class="hint">Tallennettuja tiedostoja: ${escapeHtml(report.storedFileCategories.join(', '))}</div>`
+        : '<div class="hint">Ei tallennettuja tiedostoja (kuittikuvia ei säilytetä).</div>'}
+    </div>`;
+}
+
+/**
  * Kokoa vientiin annettava data nykyisestä tilasta.
  *
  * LUETTELO TULEE YKSISTÄÄN EXPORTED_COLLECTIONS:STA. Käsin kirjoitettu
@@ -216,6 +275,7 @@ export function renderProfile() {
   renderPreview();
   renderSchemaNotice();
   renderPrivacyCenter();
+  renderAccountDeletion();
 }
 
 const submitProfile = singleFlight(async () => {
