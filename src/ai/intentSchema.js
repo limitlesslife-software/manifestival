@@ -719,8 +719,13 @@ export const COMMANDS = Object.freeze({
       const name = cleanString(raw.name ?? raw.title, MAX_TITLE_LENGTH);
       if (!name) return { ok: false, reason: 'Laskun nimi puuttuu' };
 
+      // domain/finance.js:n validateBill() vaatii amountMinor:n aina —
+      // ilman tätä tarkistusta ehdotus näyttäisi käyttäjälle valmiilta
+      // ja hyväksyttävältä, mutta epäonnistuisi äänettömästi vasta
+      // suorituksessa, kun createBill() palauttaisi validointivirheen
+      // jota vahvistusnäkymä ei ole vielä näyttänyt.
       const amountMinor = cleanAmountMinor(raw.amount);
-      if (raw.amount != null && amountMinor === null) rejected.push('amount');
+      if (amountMinor === null) return { ok: false, reason: 'Summa puuttuu' };
 
       let dueDate = cleanString(raw.dueDate ?? raw.date ?? raw.deadline, 10);
       if (dueDate && !isIsoDate(dueDate)) { rejected.push('dueDate'); dueDate = null; }

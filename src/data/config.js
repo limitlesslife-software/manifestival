@@ -37,5 +37,14 @@ export const API = Object.freeze({
    * (src/domain/capture.js) eikä mitään synny ilman käyttäjän
    * hyväksyntää. Ks. api/capture.js.
    */
-  capture: '/api/capture'
+  capture: '/api/capture',
+  /**
+   * Komennon luokittelu lauseesta ("siirrä X perjantaille").
+   *
+   * PALAUTTAA RAAKAEHDOTUKSEN, EI SUORITA MITÄÄN. Turvallinen
+   * sovelluskomento syntyy vasta src/ai/intentSchema.js:n
+   * resolveCommand()-funktiossa selaimessa. Ks. api/command.js ja
+   * src/app/aiCommands.js.
+   */
+  command: '/api/command'
 });

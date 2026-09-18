@@ -18,22 +18,28 @@ export const SCREENS = Object.freeze([
 export function switchTab(screenId) {
   if (!SCREENS.includes(screenId)) return;
 
-  document.querySelectorAll('.tab-btn').forEach(button => {
-    const active = button.dataset.screen === screenId;
-    button.classList.toggle('active', active);
-    // aria-selected kertoo ruudunlukijalle mikä välilehti on auki.
-    button.setAttribute('aria-selected', String(active));
-    button.setAttribute('tabindex', active ? '0' : '-1');
-  });
+  // DOM-päivitys vain jos DOM:ia on: AI-komentokäsittelijät
+  // (aiCommandHandlers.js) kutsuvat tätä yksikkötesteissä Node-
+  // ympäristössä, jossa document ei ole olemassa. Tilamuutos
+  // (setScreen/setDevicePreference) tehdään joka tapauksessa alla.
+  if (typeof document !== 'undefined') {
+    document.querySelectorAll('.tab-btn').forEach(button => {
+      const active = button.dataset.screen === screenId;
+      button.classList.toggle('active', active);
+      // aria-selected kertoo ruudunlukijalle mikä välilehti on auki.
+      button.setAttribute('aria-selected', String(active));
+      button.setAttribute('tabindex', active ? '0' : '-1');
+    });
 
-  document.querySelectorAll('.screen').forEach(screen => {
-    const active = screen.id === screenId;
-    screen.classList.toggle('active', active);
-    // Piilotettu näkymä pois ruudunlukijalta ja sarkainjärjestyksestä.
-    screen.setAttribute('aria-hidden', String(!active));
-    if (active) screen.removeAttribute('inert');
-    else screen.setAttribute('inert', '');
-  });
+    document.querySelectorAll('.screen').forEach(screen => {
+      const active = screen.id === screenId;
+      screen.classList.toggle('active', active);
+      // Piilotettu näkymä pois ruudunlukijalta ja sarkainjärjestyksestä.
+      screen.setAttribute('aria-hidden', String(!active));
+      if (active) screen.removeAttribute('inert');
+      else screen.setAttribute('inert', '');
+    });
+  }
 
   setScreen(screenId);
   setDevicePreference('lastScreen', screenId);
