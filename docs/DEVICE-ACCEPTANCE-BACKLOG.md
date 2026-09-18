@@ -412,6 +412,50 @@ tavallista, ei virhe.
 - [ ] Toimintopainikkeet mahtuvat riville kääntymättä päällekkäin
 - [ ] "Avaa" vie oikeaan osioon
 
+## Verkon palautuminen ja taustalta paluu (src/app/reconnect.js)
+
+Deterministisesti testattu ilman oikeaa verkkoa tai ajastimia
+(`tests/reconnect.test.mjs`). Laitteella jää: oikea radion tilan
+vaihtuminen, oikea taustalle jääminen ja niiden yhteisvaikutus.
+
+- [P0] Lentotila päälle ja pois palauttaa datan ja poistaa
+      offline-bannerin **kerran**, ei useaan kertaan peräkkäin
+- [P0] Heikko/katkeileva verkko (wifi-tuen reunalla) ei laukaise
+      useaa rinnakkaista täyttä latausta
+- [P1] Sovelluksen tuominen taustalta etualalle SAMAAN AIKAAN kuin
+      verkko palautuu ei tuota kahta rinnakkaista latausta
+      (`reconnect.isRefreshing()` on ollut väärässä tilassa yksikkö-
+      testien ulkopuolella aiemminkin natiivikuorissa)
+- [P1] Uloskirjautuminen kesken odottavan verkon-palautuksen debouncen
+      ei kirjoita mitään edellisen käyttäjän näytölle
+
+## AI-komennot (src/app/commandBar.js, haun komentopainike)
+
+Putki lauseesta suoritukseen on yksikkötestattu injektoiduilla
+vahvistus-/valintafunktioilla (`tests/command-bar.test.mjs`). Laitteella
+jää: oikea dialogi, oikea kosketus, oikea /api/command-verkkokutsu.
+
+- [P0] Tuhoisa komento ("poista X") näyttää AINA vahvistusdialogin
+      ennen suoritusta — ei koskaan suoraan
+- [P0] Epäselvä kohde näyttää valintalistan, ei arvaa ensimmäistä
+- [P1] Komentopainike hakupaneelissa näkyy vain kun kentässä on
+      tekstiä, eikä laukea automaattisesti kirjoittaessa
+- [P1] Verkkovirhe komentoa luokitellessa näyttää virheen, ei jää
+      pyörimään loputtomiin
+- [P2] Komennon suomenkielinen tulkinta on käytännössä riittävän
+      tarkka yleisimmille lauseille (tuotelaatuasia, ei turva-asia)
+- [ ] **Puheohjattu komento EI OLE toteutettu tässä paketissa** —
+      vain kirjoitettu komento hakupaneelin kautta. Ks. raportin
+      "Mitä on yhä puuttuu" -osio.
+
+## Tilin poiston esikatselu (src/app/views/profile.js)
+
+- [P1] "Näytä mitä poistettaisiin" näyttää oikeat rivimäärät laitteen
+      omasta, jo ladatusta tilasta
+- [P2] "Poista tili pysyvästi" -painike pysyy pois päältä ja selittää
+      miksi — **tätä ei pidä koskaan merkitä hyväksytyksi ennen kuin
+      palvelinpuolen poistotransaktio on olemassa ja testattu erikseen**
+
 ## Suorituskyky laitteella
 
 Hälytyskierros ajetaan **30 sekunnin välein** niin kauan kuin sovellus
