@@ -17,6 +17,7 @@ import { loadUserData, clearLocalUserData } from './actions.js';
 import { initAuth, showAuthGate, hideAuthGate } from './auth.js';
 import { initNavigation, restoreLastScreen } from './navigation.js';
 import { initVoice } from './voice.js';
+import { initSearch, closeSearch } from './search.js';
 import { initOnboarding, maybeShowOnboarding } from './onboarding.js';
 import { renderToday, initTodayNavigation } from './views/today.js';
 import { renderWeek, initWeekNavigation } from './views/week.js';
@@ -213,6 +214,7 @@ function onSignedOut() {
   // sisaltaa mita tahansa, mita edellinen kayttaja oli kirjoittamassa.
   closeCaptureReview();
   closeNoticeCenter();
+  closeSearch();
 
   // Nollaa myös kesken olevan kuvan luennan ja tyhjentää
   // tiedostovalitsimen. Seuraava käyttäjä samalla selaimella ei saa
@@ -255,6 +257,7 @@ async function start() {
   initTravelForms();
   initNotices();
   initVoice();
+  initSearch();
   initOnboarding();
 
   // 2. Näkymät seuraavat tilaa.
