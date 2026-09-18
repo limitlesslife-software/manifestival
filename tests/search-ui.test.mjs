@@ -48,7 +48,10 @@ test('KRIITTINEN: jokainen hakutyyppi johtaa johonkin näkymään ja avausfunkti
 
 test('hakupaneelin DOM-koukut ovat olemassa index.html:ssä', () => {
   const html = readCode('index.html');
-  for (const id of ['searchFabBtn', 'searchOverlay', 'searchCloseX', 'searchInput', 'searchResults']) {
+  for (const id of [
+    'searchFabBtn', 'searchOverlay', 'searchCloseX', 'searchInput', 'searchResults',
+    'searchCommandBtn'
+  ]) {
     assert.match(html, new RegExp(`id="${id}"`), `#${id} puuttuu index.html:stä`);
   }
   assert.match(html, /id="i-search"/, 'hakukuvake puuttuu SVG-symboleista');
@@ -58,4 +61,46 @@ test('haku kytketään käynnistyksessä ja siivotaan uloskirjautuessa', () => {
   const main = readCode('src/app/main.js');
   assert.match(main, /initSearch\(\)/);
   assert.match(main, /closeSearch\(\)/);
+});
+
+// ------------------------------------ AI-komentotila haun sisällä
+//
+// updateCommandAffordance/runCommandFromSearch koskevat DOM:iin
+// (maybe('searchCommandBtn') ym.) samalla tavalla kuin muu tämän
+// tiedoston koodi, eikä niitä siksi voida ajaa Node-testissä (ks.
+// tiedoston yläreunan kommentti). Sama rajaus, sama todistustapa:
+// lähdekoodin tarkistus sen sijaan että koodia suoritetaan.
+
+test('KRIITTINEN: AI-komentotila kutsuu commandBar.js:n runTypedCommand():ia, ei omaa logiikkaa', () => {
+  const source = readCode('src/app/search.js');
+  assert.match(source, /import\s*\{\s*runTypedCommand\s*\}\s*from\s*['"]\.\/commandBar\.js['"]/,
+    'search.js ei tuo komentoputkea commandBar.js:stä');
+  assert.match(source, /runTypedCommand\(text,\s*\{\s*source:\s*'text'\s*\}\)/,
+    'runCommandFromSearch ei kutsu runTypedCommand():ia oikealla lähteellä');
+});
+
+test('KRIITTINEN: tyhjä hakuteksti ei näytä komentopainiketta eikä laukaise luokittelua', () => {
+  const source = readCode('src/app/search.js');
+  const start = source.indexOf('function updateCommandAffordance');
+  const body = source.slice(start, source.indexOf('\n}', start));
+  assert.match(body, /trim\(\)/, 'affordanssi ei siisti syötettä ennen tyhjyystarkistusta');
+  assert.match(body, /if\s*\(!trimmed\)/, 'tyhjä syöte ei ohjaudu erilliseen haaraan');
+
+  const runStart = source.indexOf('async function runCommandFromSearch');
+  const runBody = source.slice(runStart, source.indexOf('\n}', runStart));
+  assert.match(runBody, /if\s*\(!text\.trim\(\)/,
+    'runCommandFromSearch ei estä tyhjän tekstin luokittelua');
+});
+
+test('haun tulokset eivät laukea automaattista tekoälyluokittelua', () => {
+  // runSearch() ajetaan JOKA näppäimellä (input-tapahtuma). Sen sisällä
+  // saa kutsua vain UI:n päivitystä (updateCommandAffordance), ei
+  // itse luokittelua (runCommandFromSearch/runTypedCommand) — muuten
+  // jokainen kirjoitettu kirjain kuluttaisi Anthropic-kiintiötä.
+  const source = readCode('src/app/search.js');
+  const start = source.indexOf('function runSearch()');
+  const body = source.slice(start, source.indexOf('\n}', start));
+  assert.equal(body.includes('runTypedCommand'), false,
+    'runSearch() kutsuu suoraan tekoälyluokittelua joka näppäimellä');
+  assert.equal(body.includes('runCommandFromSearch'), false);
 });

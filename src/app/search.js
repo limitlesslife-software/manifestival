@@ -19,6 +19,7 @@ import { openRoutineForm } from './views/routines.js';
 import { openGoalForm } from './views/goals.js';
 import { openProjectForm } from './views/projects.js';
 import { openBillForm } from './views/finance.js';
+import { runTypedCommand } from './commandBar.js';
 
 /**
  * Reitti tulostyypistä: mihin näkymään ja osioon siirrytään, ja millä
@@ -80,6 +81,28 @@ function renderResults(searchResult) {
 /** Nykyisen hakukentän tulos. Uudelleenlasketaan joka näppäimellä. */
 let currentResult = null;
 
+/**
+ * Näytä tai piilota "tulkitse komentona" -painike.
+ *
+ * EI KOSKAAN AUTOMAATTISTA LUOKITTELUA. Haku itse on puhdas ja
+ * hakee joka näppäimellä, mutta tekoälykutsu on eri asia — se
+ * kuluttaa kiintiötä ja voi muuttaa tietoa. Painike on siis vain
+ * TARJOUS, ei koskaan itsestään laukeava tulkinta.
+ */
+function updateCommandAffordance(query) {
+  const button = maybe('searchCommandBtn');
+  if (!button) return;
+
+  const trimmed = query.trim();
+  if (!trimmed) {
+    button.hidden = true;
+    return;
+  }
+  button.hidden = false;
+  button.textContent = `Tulkitse komentona: "${trimmed}"`;
+  button.disabled = false;
+}
+
 function runSearch() {
   const input = maybe('searchInput');
   const query = input ? input.value : '';
@@ -96,6 +119,33 @@ function runSearch() {
     }
   });
   renderResults(currentResult);
+  updateCommandAffordance(query);
+}
+
+/**
+ * Tulkitse hakukentän teksti AI-komentona.
+ *
+ * EKSPLISIITTINEN TOIMINTO, EI HAUN SIVUVAIKUTUS. Käyttäjä on painanut
+ * painiketta erikseen — pelkkä hakusana ei koskaan johda tähän itsestään.
+ * Koko vahvistus- ja suorituspolku on src/app/commandBar.js:ssä; tämä
+ * moduuli ei tunne allowlistiä, riskiä eikä kohteentunnistusta.
+ */
+async function runCommandFromSearch() {
+  const input = maybe('searchInput');
+  const button = maybe('searchCommandBtn');
+  const text = input ? input.value : '';
+  if (!text.trim() || !button) return;
+
+  button.disabled = true;
+  try {
+    const result = await runTypedCommand(text, { source: 'text' });
+    // Suljetaan haku vain onnistuneesti suoritetulla komennolla: peruttu,
+    // hylätty tai epäonnistunut komento jättää tekstin näkyviin, jotta
+    // käyttäjä voi korjata tai yrittää uudelleen ilman uudelleenkirjoitusta.
+    if (result.ok) closeSearch();
+  } finally {
+    if (button) button.disabled = false;
+  }
 }
 
 /** Siirry tulokseen: vaihda näkymä, osio, ja avaa muokkaus. */
@@ -127,8 +177,10 @@ export function openSearch() {
   currentResult = null;
   const input = maybe('searchInput');
   const results = maybe('searchResults');
+  const commandBtn = maybe('searchCommandBtn');
   if (input) input.value = '';
   if (results) results.innerHTML = '';
+  if (commandBtn) commandBtn.hidden = true;
   if (input) input.focus();
 }
 
@@ -159,4 +211,6 @@ export function initSearch() {
     if (!row) return;
     openResult(row.dataset.resultType, row.dataset.resultId);
   });
+
+  maybe('searchCommandBtn').addEventListener('click', runCommandFromSearch);
 }
