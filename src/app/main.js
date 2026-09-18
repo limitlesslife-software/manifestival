@@ -14,6 +14,7 @@ import { todayMidnight, startOfWeek } from '../lib/datetime.js';
 import { getDevicePreference, clearDevicePreferences } from '../data/preferences.js';
 import { subscribe, resetState, setViewDate, setWeekStart, getState } from './state.js';
 import { loadUserData, clearLocalUserData } from './actions.js';
+import { createReconnectController } from './reconnect.js';
 import { initAuth, showAuthGate, hideAuthGate } from './auth.js';
 import { initNavigation, restoreLastScreen } from './navigation.js';
 import { initVoice } from './voice.js';
@@ -58,6 +59,24 @@ import { maybe } from '../ui/dom.js';
 const NOW_REFRESH_MS = 30000;
 
 let signedIn = false;
+
+/**
+ * Päivitä data verkon palautuessa tai sovelluksen palatessa etualalle.
+ *
+ * EI KUTSU renderAll():ia SUORAAN. loadUserData() kirjoittaa uudet
+ * kokoelmat tilaan setX()-toiminnoilla, ja tila on tilattu (subscribe)
+ * jo käynnistyksessä — sama automaattinen renderöinti joka tapahtuu
+ * kirjautuessa hoitaa myös tämän, eikä näytä tai käyttäjän sijaintia
+ * näkymässä tarvitse koskea erikseen.
+ */
+async function refreshAfterReconnect() {
+  if (!signedIn) return;
+  const result = await loadUserData();
+  if (result.discarded) return;
+  runAssistantSweeps();
+}
+
+const reconnect = createReconnectController({ onRefresh: refreshAfterReconnect });
 
 /**
  * Rekisteröi service worker.
@@ -194,6 +213,7 @@ async function onSignedIn() {
 function onSignedOut() {
   signedIn = false;
   cancelScheduledResync();
+  reconnect.cancelPending();
   lastNotifiableRefs = { tasks: null, routines: null, routineExceptions: null };
   closeForm();
   closeRoutineForm();
@@ -297,6 +317,14 @@ async function start() {
       syncNotifications().catch(error => {
         console.warn('Manifestival: muistutusten synkronointi paluulla ei onnistunut', error);
       });
+      // Sovellus on voinut olla taustalla pitkään: data on voinut vanhentua
+      // (esim. muokattu toisella laitteella). refreshNow() on limitelty
+      // reconnect.js:ssä, joten tämä ei koskaan käynnisty rinnakkain
+      // samanaikaisen online-palautuksen kanssa.
+      reconnect.refreshNow();
+    },
+    onPause: () => {
+      reconnect.cancelPending();
     }
   });
 
@@ -314,8 +342,14 @@ async function start() {
     const banner = maybe('offlineBanner');
     if (banner) banner.style.display = offline ? 'block' : 'none';
   };
-  window.addEventListener('online', updateOnlineState);
-  window.addEventListener('offline', updateOnlineState);
+  window.addEventListener('online', () => {
+    updateOnlineState();
+    reconnect.notifyOnline();
+  });
+  window.addEventListener('offline', () => {
+    updateOnlineState();
+    reconnect.notifyOffline();
+  });
   updateOnlineState();
 }
 

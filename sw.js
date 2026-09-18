@@ -56,6 +56,7 @@ const SHELL = [
   '/src/app/onboarding.js',
   '/src/app/planning.js',
   '/src/app/receiptCapture.js',
+  '/src/app/reconnect.js',
   '/src/app/search.js',
   '/src/app/state.js',
   '/src/app/speechInput.js',
