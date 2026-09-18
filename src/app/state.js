@@ -175,7 +175,18 @@ function initialState() {
     /** Näkymä, joka on auki. */
     screen: 'screen-today',
     /** Onko ensimmäinen lataus vielä kesken. */
-    loading: true
+    loading: true,
+
+    /**
+     * Kokoelmakohtainen latausstatus: { [domain]: { ok, error, lastSuccessAt } }.
+     *
+     * TÄTÄ VARTEN: ilman tätä loadUserData() ei voisi erottaa "kokoelma on
+     * oikeasti tyhjä" ja "haku epäonnistui" -tilanteita, ja uudelleenlataus
+     * (verkon palautuminen) päätyisi kirjoittamaan tyhjän listan tilalle
+     * jo ladatun datan päälle transientin virheen sattuessa. Ks.
+     * setDomainLoadStatus() ja loadUserData().
+     */
+    dataLoadStatus: {}
   };
 }
 
@@ -998,6 +1009,34 @@ export function viewDateIso() {
 
 export function setProfile(profile, exists = true) {
   commit({ profile: { ...DEFAULT_PROFILE, ...profile }, profileExists: exists });
+}
+
+// -------------------------------------------------------------- lataustila
+
+/**
+ * Merkitse yhden kokoelman viimeisimmän haun tulos.
+ *
+ * KUTSUJA VASTAA SIITÄ, ETTÄ TILAN KOKOELMA PÄIVITETÄÄN VAIN ONNISTUNEELLA
+ * HAULLA. Tämä funktio ei koskaan tyhjennä eikä korvaa kokoelmaa itseään —
+ * se ainoastaan kirjaa, oliko viimeisin haku onnistunut, jotta näkymä voi
+ * kertoa käyttäjälle tiedon olevan vanhentunutta ilman että tieto katoaa.
+ *
+ * @param {string} domain esim. 'tasks', 'routines'
+ * @param {boolean} ok
+ * @param {*} [error] tallennetaan vain epäonnistuessa
+ */
+export function setDomainLoadStatus(domain, ok, error = null) {
+  const previous = state.dataLoadStatus[domain] || { lastSuccessAt: null };
+  commit({
+    dataLoadStatus: {
+      ...state.dataLoadStatus,
+      [domain]: {
+        ok,
+        error: ok ? null : error,
+        lastSuccessAt: ok ? Date.now() : previous.lastSuccessAt
+      }
+    }
+  });
 }
 
 // ------------------------------------------------------------------ elinkaari

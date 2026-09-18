@@ -77,7 +77,7 @@ import {
   removeMilestoneFromState, findMilestone, replaceMilestonesInState,
   setPendingReplan, clearPendingReplan,
   setInboxItems, setReminders, setNotices, setTravelPlans, setLocationRules,
-  setAiAudit
+  setAiAudit, setDomainLoadStatus
 } from './state.js';
 import {
   loadPreferences as loadNotificationPreferences,
@@ -86,6 +86,7 @@ import {
 import { sessionSnapshot, isSameSession } from '../data/session.js';
 import { showError, success, notify } from '../ui/toast.js';
 import { confirmDelete, confirmAction } from '../ui/confirm.js';
+import { logError } from '../lib/result.js';
 
 /** Kertaalleen näytettävä huomautus kentistä, jotka eivät vielä tallennu. */
 let volatileWarningShown = false;
@@ -120,6 +121,36 @@ function warnAboutVolatileCollections() {
 }
 
 /**
+ * Ota yhden kokoelman hakutulos vastaan.
+ *
+ * VIIMEKSI ONNISTUNUT TILA EI SAA KADOTA TRANSIENTISSA VIRHEESSÄ. Aiemmin
+ * epäonnistunut haku kirjoitti tyhjän listan tilalle — turvallista
+ * ENSIMMÄISELLÄ latauksella (tilassa ei ollut mitään menetettävää), mutta
+ * väärin heti kun loadUserData() ajetaan uudelleen esim. verkon
+ * palautuessa: hetkellinen virhe olisi näyttänyt käyttäjän jo nähneen
+ * tiedon poistettuna.
+ *
+ * Onnistunut haku korvaa kokoelman aina, myös tyhjällä listalla — se on
+ * legitiimi tulos, ei virhe. Epäonnistunut haku EI KOSKAAN kutsu
+ * asettajaa: mahdollinen aiemmin ladattu tila jää näkyviin, ja
+ * epäonnistuminen näkyy vain dataLoadStatus-kentässä.
+ *
+ * @param {string} domain esim. 'routines', 'goals'
+ * @param {{ok:boolean, value?:*, error?:*}} result
+ * @param {(value:*) => void} setter
+ */
+function applyLoadResult(domain, result, setter) {
+  if (result.ok) {
+    setter(result.value);
+    setDomainLoadStatus(domain, true);
+    return true;
+  }
+  setDomainLoadStatus(domain, false, result.error);
+  logError(result.error);
+  return false;
+}
+
+/**
  * Lataa kirjautuneen käyttäjän kaikki tiedot.
  *
  * VANHENTUNUT VASTAUS HYLÄTÄÄN. Lataus on parikymmentä rinnakkaista
@@ -131,6 +162,11 @@ function warnAboutVolatileCollections() {
  * Tarkistus tehdään istunnon TILANNEKUVASTA eikä pelkästä tunnisteesta:
  * ketju "A ulos -> A takaisin sisään" jättää tunnisteen ennalleen, mutta
  * kesken jäänyt lataus on siitä huolimatta vanhentunut.
+ *
+ * KUTSUTTAVISSA USEAMMIN KUIN KERRAN. Tätä kutsutaan kirjautuessa ja myös
+ * uudelleenlataukseen (esim. verkon palautuessa, ks. reconnect.js) —
+ * jälkimmäisellä kertaa mikä tahansa yksittäinen epäonnistuminen ei saa
+ * hävittää jo ladattua kokoelmaa, ks. applyLoadResult().
  */
 export async function loadUserData() {
   const startedIn = sessionSnapshot();
@@ -168,42 +204,55 @@ export async function loadUserData() {
     return { tasksOk: false, profileOk: false, discarded: true };
   }
 
-  if (tasksResult.ok) setTasks(tasksResult.value);
-  else { setTasks([]); showError(tasksResult.error); }
+  // Jokainen kokoelma kulkee applyLoadResult():n läpi: onnistunut haku
+  // korvaa kokoelman (myös tyhjällä listalla — se on kelvollinen tulos),
+  // epäonnistunut haku EI KOSKAAN tyhjennä jo ladattua tilaa. Virhe
+  // näytetään käyttäjälle, mutta sovellus ei kaadu eikä väitä tiedon
+  // kadonneen.
+  if (!applyLoadResult('tasks', tasksResult, setTasks)) showError(tasksResult.error);
 
-  if (profileResult.ok) setProfile(profileResult.value.profile, profileResult.value.exists);
-  else showError(profileResult.error);
+  if (profileResult.ok) {
+    setProfile(profileResult.value.profile, profileResult.value.exists);
+    setDomainLoadStatus('profile', true);
+  } else {
+    setDomainLoadStatus('profile', false, profileResult.error);
+    showError(profileResult.error);
+  }
 
-  // Kokoelmien lataus ei saa estää sovelluksen käyttöä: virhe näytetään,
-  // mutta tila jää tyhjäksi eikä sovellus kaadu.
-  setRoutines(routinesResult.ok ? routinesResult.value : []);
-  setRoutineExceptions(exceptionsResult.ok ? exceptionsResult.value : []);
-  setGoals(goalsResult.ok ? goalsResult.value : []);
-  setProjects(projectsResult.ok ? projectsResult.value : []);
-  setWellbeing(wellbeingResult.ok ? wellbeingResult.value : []);
+  // Muistutusasetukset: alkutila on jo hiljainen oletus (normalizePreferences({})),
+  // joten epäonnistuessa ensimmäisellä latauksella ei tarvita erillistä
+  // fallbackia; uudelleenlatauksella jo ladatut asetukset säilyvät samalla
+  // applyLoadResult()-periaatteella.
+  const collectionsOk = [
+    applyLoadResult('routines', routinesResult, setRoutines),
+    applyLoadResult('routineExceptions', exceptionsResult, setRoutineExceptions),
+    applyLoadResult('goals', goalsResult, setGoals),
+    applyLoadResult('projects', projectsResult, setProjects),
+    applyLoadResult('wellbeing', wellbeingResult, setWellbeing),
+    applyLoadResult('notificationPreferences', preferencesResult, setNotificationPreferences),
+    applyLoadResult('bills', billsResult, setBills),
+    applyLoadResult('recurringExpenses', expensesResult, setRecurringExpenses),
+    applyLoadResult('savingsGoals', savingsResult, setSavingsGoals),
+    applyLoadResult('transactions', transactionsResult, setTransactions),
+    applyLoadResult('investments', investmentsResult, setInvestments),
+    applyLoadResult('milestones', milestonesResult, setMilestones),
+    applyLoadResult('aiAudit', auditResult, setAiAudit),
+    // Avustajan kokoelmat. Nämä ladataan VAIKKA käyttöliittymää ei vielä
+    // olisi — muuten tieto katoaisi sinä hetkenä kun näkymä rakennetaan.
+    applyLoadResult('inboxItems', inboxResult, setInboxItems),
+    applyLoadResult('reminders', remindersResult, setReminders),
+    applyLoadResult('notices', noticesResult, setNotices),
+    applyLoadResult('travelPlans', travelResult, setTravelPlans),
+    applyLoadResult('locationRules', locationResult, setLocationRules)
+  ];
 
-  // Muistutusasetukset: virhe ei saa estää sovelluksen käyttöä, ja
-  // epäonnistuessa palataan hiljaiseen oletukseen.
-  setNotificationPreferences(preferencesResult.ok ? preferencesResult.value : {});
-
-  // Talous ja kirjausketju. Sama periaate: virhe ei estä sovelluksen
-  // käyttöä, vaan tila jää tyhjäksi.
-  setBills(billsResult.ok ? billsResult.value : []);
-  setRecurringExpenses(expensesResult.ok ? expensesResult.value : []);
-  setSavingsGoals(savingsResult.ok ? savingsResult.value : []);
-  setTransactions(transactionsResult.ok ? transactionsResult.value : []);
-  setInvestments(investmentsResult.ok ? investmentsResult.value : []);
-  setMilestones(milestonesResult.ok ? milestonesResult.value : []);
-  setAiAudit(auditResult.ok ? auditResult.value : []);
-
-  // Avustajan kokoelmat. Sama periaate: virhe ei estä sovelluksen
-  // käyttöä. Nämä ladataan VAIKKA käyttöliittymää ei vielä olisi —
-  // muuten tieto katoaisi sinä hetkenä kun näkymä rakennetaan.
-  setInboxItems(inboxResult.ok ? inboxResult.value : []);
-  setReminders(remindersResult.ok ? remindersResult.value : []);
-  setNotices(noticesResult.ok ? noticesResult.value : []);
-  setTravelPlans(travelResult.ok ? travelResult.value : []);
-  setLocationRules(locationResult.ok ? locationResult.value : []);
+  // Yksittäiset kokoelmavirheet kirjautuvat konsoliin (applyLoadResult) ja
+  // dataLoadStatus-kenttään, mutta eivät yksitellen ilmoituksena — kaksi
+  // tusinaa toastia yhdellä verkkokatkolla olisi pahempi kuin hyödyllinen.
+  // Yksi kooste riittää, ja se kertoo suoraan, ettei näkyvä tieto katoa.
+  if (collectionsOk.includes(false)) {
+    notify('Osa tiedoista ei päivittynyt. Aiemmin ladattu tieto pysyy näkyvissä.', 6000);
+  }
 
   return { tasksOk: tasksResult.ok, profileOk: profileResult.ok, discarded: false };
 }
