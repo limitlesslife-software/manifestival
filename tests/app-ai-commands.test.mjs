@@ -10,7 +10,7 @@ import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  PROPOSAL_STATUS, buildProposal, buildChangeRows, applyShift,
+  PROPOSAL_STATUS, buildProposal, buildProposalForChosenTarget, buildChangeRows, applyShift,
   executeProposal, runAiCommand, recordProposal, completeAudit, targetLabel
 } from '../src/app/aiCommands.js';
 import { INTENT, RISK } from '../src/ai/intentSchema.js';
@@ -90,6 +90,68 @@ test('KRIITTINEN: epäselvä kohde ei koskaan etene', () => {
   assert.equal(proposal.candidates.length, 2);
   assert.equal(proposal.target, undefined, 'kohdetta ei saa valita puolesta');
   assert.equal(proposal.audit.result, AUDIT_RESULT.AMBIGUOUS);
+});
+
+// --------------------------------------- käyttäjän valinta epäselvyyteen
+
+test('KRIITTINEN: käyttäjän valinta epäselvästä joukosta tuottaa READY-ehdotuksen VALITULLE riville', () => {
+  setTasks([
+    normalizeTask({ id: 'a', title: 'Lääkäriaika', date: '2026-09-03' }),
+    normalizeTask({ id: 'b', title: 'Lääkäriaika', date: '2026-09-10' })
+  ]);
+
+  const ambiguous = buildProposal({
+    intent: INTENT.UPDATE_TASK, targetTitle: 'Lääkäriaika', time: '16:00'
+  }, { now: TODAY });
+  assert.equal(ambiguous.status, PROPOSAL_STATUS.NEEDS_CHOICE);
+
+  const resolved = buildProposalForChosenTarget(ambiguous, 'b', { now: TODAY });
+  assert.equal(resolved.status, PROPOSAL_STATUS.READY);
+  assert.equal(resolved.target.id, 'b', 'valittu rivi, ei arvattu ensimmäinen');
+  assert.equal(resolved.command.intent, INTENT.UPDATE_TASK);
+});
+
+test('epäselvyyden ratkaisu ei aja alkuperäistä komentoa uudelleen raakatekstistä', () => {
+  // Jos tämä palaisi resolveCommand()-funktion läpi, se hylkäisi
+  // UPDATE_TASK-payloadin, koska sen "changes"-kenttä on olio eikä
+  // primitiivi -- se on koostettu tulos, ei mallin raakakenttä.
+  setTasks([
+    normalizeTask({ id: 'a', title: 'Lääkäriaika', date: '2026-09-03' }),
+    normalizeTask({ id: 'b', title: 'Lääkäriaika', date: '2026-09-10' })
+  ]);
+
+  const ambiguous = buildProposal({
+    intent: INTENT.UPDATE_TASK, targetTitle: 'Lääkäriaika', time: '16:00'
+  }, { now: TODAY });
+
+  const resolved = buildProposalForChosenTarget(ambiguous, 'a', { now: TODAY });
+  assert.equal(resolved.status, PROPOSAL_STATUS.READY);
+  assert.deepEqual(resolved.command.payload.changes, { time: '16:00' });
+});
+
+test('kadonnut kohde valinnan jälkeen palauttaa rehellisen NOT_FOUND-tuloksen, ei arvausta', () => {
+  setTasks([
+    normalizeTask({ id: 'a', title: 'Lääkäriaika', date: '2026-09-03' }),
+    normalizeTask({ id: 'b', title: 'Lääkäriaika', date: '2026-09-10' })
+  ]);
+  const ambiguous = buildProposal({
+    intent: INTENT.UPDATE_TASK, targetTitle: 'Lääkäriaika', time: '16:00'
+  }, { now: TODAY });
+
+  // Rivi poistui valitsimen näyttämisen ja vahvistuksen välissä.
+  setTasks([normalizeTask({ id: 'a', title: 'Lääkäriaika', date: '2026-09-03' })]);
+
+  const resolved = buildProposalForChosenTarget(ambiguous, 'b', { now: TODAY });
+  assert.equal(resolved.status, PROPOSAL_STATUS.NEEDS_CHOICE);
+  assert.equal(resolved.candidates.length, 0);
+});
+
+test('buildProposalForChosenTarget hylätään ilman NEEDS_CHOICE-lähtötilaa', () => {
+  const ready = buildProposal({
+    intent: INTENT.CREATE_TASK, title: 'X', date: '2026-09-03'
+  }, { now: TODAY });
+  const result = buildProposalForChosenTarget(ready, 'whatever', { now: TODAY });
+  assert.equal(result.status, PROPOSAL_STATUS.REJECTED);
 });
 
 test('tuntematon kohde ei etene', () => {

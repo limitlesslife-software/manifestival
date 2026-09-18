@@ -146,46 +146,47 @@ export function buildChangeRows(command, entity) {
  * @param {object} raw       AI:n tuottama objekti
  * @param {object} [options] { inputText, now }
  */
-export function buildProposal(raw, options = {}) {
-  const now = options.now instanceof Date ? options.now : new Date();
-  const todayIso = fmtISO(todayMidnight());
-  const inputSummary = summarizeInput(options.inputText);
-
-  const resolved = resolveCommand(raw, { today: todayIso });
-
-  if (!resolved.ok) {
-    return {
-      status: PROPOSAL_STATUS.REJECTED,
-      reason: resolved.reason,
-      audit: {
-        id: newTaskId(),
-        timestamp: now.toISOString(),
-        inputSummary,
-        intent: resolved.intent || 'unknown',
-        risk: RISK.LOW,
-        result: AUDIT_RESULT.REJECTED,
-        proposal: resolved.reason
-      }
-    };
-  }
-
-  const command = resolved.command;
+/**
+ * Ratkaise kohde ja rakenna READY- tai NEEDS_CHOICE-ehdotus jo
+ * validoidusta komennosta.
+ *
+ * EROTETTU buildProposal():sta, jotta epäselvän kohteen jälkeinen
+ * uudelleenyritys (buildProposalForChosenTarget) voi käyttää TÄSMÄLLEEN
+ * saman esikatselun rakennuslogiikan kuin ensimmäinen ehdotus, sen
+ * sijaan että se kopioisi sen.
+ */
+function resolveAndPreview(command, { now, inputSummary, forcedTargetId } = {}) {
   const state = getState();
 
   let target = null;
   if (needsTarget(command)) {
-    const resolution = resolveTarget({
-      entities: collectionFor(command.targetType, state),
-      id: command.payload.targetId,
-      name: command.payload.targetName,
-      entityType: command.targetType,
-      filter: filterFor(command.intent, command.targetType)
-    });
+    // KÄYTTÄJÄ ON JO VALINNUT: forcedTargetId tulee vain
+    // ui/confirm.js:n chooseTarget()-valitsimesta, jonka vaihtoehdot
+    // olivat juuri tämän saman resolveTarget()-kutsun tuottamia
+    // candidateOf()-olioita. Tunnisteperustainen haku ei enää tarvitse
+    // eikä käytä suodatinta (ks. entityResolver.js `id` voittaa aina).
+    const resolution = forcedTargetId
+      ? resolveTarget({
+        entities: collectionFor(command.targetType, state),
+        id: forcedTargetId,
+        entityType: command.targetType
+      })
+      : resolveTarget({
+        entities: collectionFor(command.targetType, state),
+        id: command.payload.targetId,
+        name: command.payload.targetName,
+        entityType: command.targetType,
+        filter: filterFor(command.intent, command.targetType)
+      });
 
     if (resolution.status !== RESOLUTION.EXACT) {
       // EPÄSELVÄ TAI PUUTTUVA KOHDE EI KOSKAAN ETENE. Tämä on koko
       // resolverin olemassaolon syy: arvaus mutaatiossa muuttaisi väärää
       // tietoa, eikä käyttäjä huomaisi sitä ennen kuin on myöhäistä.
+      //
+      // (forcedTargetId-polulla NOT_FOUND on mahdollinen jos kohde
+      // ehti kadota valinnan ja vahvistuksen välissä -- silloinkin
+      // vastaus on rehellinen "ei löydy", ei arvaus.)
       return {
         status: PROPOSAL_STATUS.NEEDS_CHOICE,
         command,
@@ -239,6 +240,55 @@ export function buildProposal(raw, options = {}) {
       proposal: command.description
     }
   };
+}
+
+export function buildProposal(raw, options = {}) {
+  const now = options.now instanceof Date ? options.now : new Date();
+  const todayIso = fmtISO(todayMidnight());
+  const inputSummary = summarizeInput(options.inputText);
+
+  const resolved = resolveCommand(raw, { today: todayIso });
+
+  if (!resolved.ok) {
+    return {
+      status: PROPOSAL_STATUS.REJECTED,
+      reason: resolved.reason,
+      audit: {
+        id: newTaskId(),
+        timestamp: now.toISOString(),
+        inputSummary,
+        intent: resolved.intent || 'unknown',
+        risk: RISK.LOW,
+        result: AUDIT_RESULT.REJECTED,
+        proposal: resolved.reason
+      }
+    };
+  }
+
+  return resolveAndPreview(resolved.command, { now, inputSummary });
+}
+
+/**
+ * Rakenna ehdotus uudelleen, kun käyttäjä on JO valinnut kohteen
+ * epäselvästä joukosta (NEEDS_CHOICE-tilan `candidates`, ks.
+ * ui/confirm.js `chooseTarget`).
+ *
+ * EI PALAA raw-tekstiin eikä resolveCommand():iin. `proposal.command`
+ * on jo validoitu kertaalleen -- vain kohde puuttui. Uudelleenajo
+ * `resolveCommand`:n läpi hylkäisi UPDATE_*-komennot, joiden payload
+ * sisältää jo koostetun `changes`-olion (ei enää mallin raakakenttiä).
+ *
+ * @param {object} proposal NEEDS_CHOICE-tilainen buildProposal()-tulos
+ * @param {string} candidateId valitun ehdokkaan id (candidates[i].id)
+ * @param {object} [options] { inputText, now }
+ */
+export function buildProposalForChosenTarget(proposal, candidateId, options = {}) {
+  if (!proposal || proposal.status !== PROPOSAL_STATUS.NEEDS_CHOICE) {
+    return { status: PROPOSAL_STATUS.REJECTED, reason: 'Ei ratkaistavaa valintaa.' };
+  }
+  const now = options.now instanceof Date ? options.now : new Date();
+  const inputSummary = summarizeInput(options.inputText);
+  return resolveAndPreview(proposal.command, { now, inputSummary, forcedTargetId: candidateId });
 }
 
 // -------------------------------------------------------------- kirjaus
