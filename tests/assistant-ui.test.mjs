@@ -379,8 +379,8 @@ test('KRIITTINEN: matkanäkymä ei näytä lähtöaikaa tuntemattomasta kestosta
   const body = source.slice(start, source.indexOf('\n}', start));
 
   // Tuntematon tarkistetaan ENNEN kuin kellonaikaa muodostetaan.
-  const tarkistus = body.indexOf('leaveBy.known');
-  const kellonaika = body.indexOf('leaveBy.leaveByTime');
+  const tarkistus = body.indexOf('departure.known');
+  const kellonaika = body.indexOf('departure.message');
 
   assert.ok(tarkistus > -1, 'leaveByHtml ei tarkista tuntemattomuutta');
   assert.ok(tarkistus < kellonaika,

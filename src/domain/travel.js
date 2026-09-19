@@ -410,36 +410,39 @@ export function describeDeparture(plan, { todayIso, nowMinutes }) {
 // =====================================================================
 
 /**
- * Rajapinta tulevalle reittipalvelulle.
+ * Rajapinta reittipalvelulle.
  *
- * TÄTÄ EI OLE TOTEUTETTU EIKÄ SITÄ KUTSUTA. Se on olemassa siksi, että
- * myöhempi integraatio ei vaadi tämän moduulin uudelleenkirjoittamista:
- * toteuttaja täyttää `estimate`-funktion, ja `travelSource` muuttuu
- * arvoon PROVIDER.
+ * REITTIPALVELUA EI OLE VALITTU EIKÄ KYTKETTY. Sopimus on olemassa, jotta
+ * myöhempi integraatio ei vaadi tämän moduulin uudelleenkirjoitusta ja
+ * jotta jokainen tulos kulkee saman tiukan tarkistuksen läpi
+ * (`normalizeRouteResult`), olipa palvelu mikä tahansa.
  *
  * Sopimus:
- *   estimate({ origin, destination, mode, arriveBy })
- *     -> Promise<{ minutes, source, estimatedAt, trafficIncluded, confidence }>
+ *   estimate({ origin, destination, departureTime, mode })
+ *     -> Promise<{ status, durationSeconds, distanceMeters, provider,
+ *                  calculatedAt, freshUntil, confidence }>
  *
  * Toteuttajan on:
- *   - palautettava kesto KOKONAISINA MINUUTTEINA
- *   - merkittävä `estimatedAt`, jotta vanhentuminen näkyy
- *   - kerrottava sisältääkö arvio ruuhkan
- *   - EPÄONNISTUTTAVA NÄKYVÄSTI, ei palautettava arvausta
+ *   - palautettava `status: 'OK'` VAIN kun kesto on oikeasti laskettu
+ *   - merkittävä `calculatedAt` ja `freshUntil`: ruuhka muuttuu, joten
+ *     vanhentunutta tulosta ei käytetä lähtöaikaan (tulos on STALE)
+ *   - kerrottava `provider` ja `confidence` (high|medium|low)
+ *   - EPÄONNISTUTTAVA NÄKYVÄSTI (`UNKNOWN` tai `ERROR`), ei koskaan
+ *     palautettava nollaa, oletuskestoa tai arvausta
  *
- * Erityisesti: palvelun katkos EI saa palauttaa nollaa eikä
- * oletuskestoa. Tuntematon on ainoa rehellinen vastaus, ja
- * `computeLeaveBy` osaa käsitellä sen.
+ * Origin voi olla nimi tai (vain muistissa, vain reittipalvelulle)
+ * sijainti; sijaintia ei tallenneta eikä lähetetä muualle.
  */
 export const TRAVEL_PROVIDER_CONTRACT = Object.freeze({
   method: 'estimate',
-  input: '{ origin, destination, mode, arriveBy }',
-  output: '{ minutes: integer, source: string, estimatedAt: ISO, '
-    + 'trafficIncluded: boolean, confidence: high|medium|low }',
+  input: '{ origin, destination, departureTime, mode }',
+  output: 'status: OK|UNKNOWN|ERROR, durationSeconds: number, '
+    + 'distanceMeters: number|null, provider: string, calculatedAt: ISO, '
+    + 'freshUntil: ISO, confidence: high|medium|low',
   rules: Object.freeze([
-    'kesto kokonaisina minuutteina',
-    'estimatedAt on pakollinen, jotta vanhentuminen näkyy',
-    'katkos on virhe, ei oletuskesto',
+    'status OK vain oikeasti lasketulle kestolle',
+    'calculatedAt ja freshUntil ovat pakollisia, vanhentunutta ei käytetä',
+    'katkos on UNKNOWN/ERROR, ei oletuskesto',
     'tuntematon reitti jätetään pois, ei palauteta nollana'
   ])
 });
@@ -570,4 +573,338 @@ export function locationRuleMatches(rule, context = {}) {
   }
 
   return false;
+}
+
+// =====================================================================
+// REITTIPALVELUN TULOS: TIUKKA TARKISTUS
+// =====================================================================
+
+export const ROUTE_STATUS = Object.freeze({
+  /** Kesto on oikeasti laskettu ja tuore. */
+  OK: 'OK',
+  /** Palvelu ei tiedä. Kestoa EI ole. */
+  UNKNOWN: 'UNKNOWN',
+  /** Tulos oli oikea mutta on vanhentunut. Ei käytetä lähtöaikaan. */
+  STALE: 'STALE',
+  /** Palvelu epäonnistui tai palautti kelvottoman tuloksen. */
+  ERROR: 'ERROR'
+});
+
+const ROUTE_CONFIDENCE = Object.freeze(['high', 'medium', 'low']);
+/** Yli vuorokauden kesto on virhe, ei matka. */
+const MAX_ROUTE_SECONDS = MAX_TRAVEL_MINUTES * 60;
+
+function validIso(value) {
+  return typeof value === 'string' && Number.isFinite(Date.parse(value));
+}
+
+function routeFailure(status, reason) {
+  return Object.freeze({
+    status, durationSeconds: null, distanceMeters: null, provider: null,
+    calculatedAt: null, freshUntil: null, confidence: null, reason
+  });
+}
+
+/**
+ * Tarkista reittipalvelun tulos. EI KOSKAAN keksi kestoa.
+ *
+ * Mikä tahansa puute (kesto ei ole positiivinen äärellinen luku, aika-
+ * leimat puuttuvat, tuoreus puuttuu, palveluntarjoajaa ei nimetä) tekee
+ * tuloksesta ERRORin -- ei "melkein kelvollista". Vanhentunut tulos
+ * palautuu STALE:na ilman kestoa, jotta sitä ei vahingossa käytetä.
+ *
+ * @param {unknown} raw
+ * @param {{nowMs: number}} options nykyhetki millisekunteina (pakollinen)
+ */
+export function normalizeRouteResult(raw, { nowMs } = {}) {
+  // Domain ei lue kelloa: kutsuja antaa nykyhetken. Ilman sitä tuoreutta
+  // ei voi todentaa, joten tulos hylätään (suljettu epäonnistuminen).
+  if (!Number.isFinite(nowMs)) {
+    return routeFailure(ROUTE_STATUS.ERROR, 'Nykyhetkeä ei annettu, joten tuoreutta ei voi todentaa.');
+  }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return routeFailure(ROUTE_STATUS.ERROR, 'Reittipalvelun vastaus ei ollut olio.');
+  }
+  if (raw.status === ROUTE_STATUS.UNKNOWN) {
+    return routeFailure(ROUTE_STATUS.UNKNOWN, 'Reittipalvelu ei tiedä matka-aikaa.');
+  }
+  if (raw.status !== ROUTE_STATUS.OK) {
+    return routeFailure(ROUTE_STATUS.ERROR, 'Reittipalvelu ei onnistunut.');
+  }
+
+  const seconds = raw.durationSeconds;
+  const provider = typeof raw.provider === 'string' ? raw.provider.trim().slice(0, 40) : '';
+  if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds <= 0 || seconds > MAX_ROUTE_SECONDS) {
+    return routeFailure(ROUTE_STATUS.ERROR, 'Reittipalvelun kesto ei kelpaa.');
+  }
+  if (!provider) return routeFailure(ROUTE_STATUS.ERROR, 'Reittipalvelu ei nimennyt itseään.');
+  if (!validIso(raw.calculatedAt) || !validIso(raw.freshUntil)) {
+    return routeFailure(ROUTE_STATUS.ERROR, 'Reittipalvelun tulokselta puuttuvat ajat.');
+  }
+  if (Date.parse(raw.freshUntil) <= Date.parse(raw.calculatedAt)) {
+    return routeFailure(ROUTE_STATUS.ERROR, 'Reittipalvelun tuoreus ei kelpaa.');
+  }
+  if (!ROUTE_CONFIDENCE.includes(raw.confidence)) {
+    return routeFailure(ROUTE_STATUS.ERROR, 'Reittipalvelu ei kertonut varmuutta.');
+  }
+
+  const meters = raw.distanceMeters;
+  const distanceMeters = typeof meters === 'number' && Number.isFinite(meters) && meters >= 0
+    ? Math.round(meters) : null;
+
+  if (Date.parse(raw.freshUntil) <= nowMs) {
+    return routeFailure(ROUTE_STATUS.STALE, 'Reittipalvelun tulos on vanhentunut.');
+  }
+
+  return Object.freeze({
+    status: ROUTE_STATUS.OK,
+    durationSeconds: Math.round(seconds),
+    distanceMeters,
+    provider,
+    calculatedAt: new Date(raw.calculatedAt).toISOString(),
+    freshUntil: new Date(raw.freshUntil).toISOString(),
+    confidence: raw.confidence,
+    reason: ''
+  });
+}
+
+/**
+ * Käytä tuoretta reittipalvelun tulosta suunnitelman kestona.
+ *
+ * PALAUTTAA UUDEN, TRANSIENTIN SUUNNITELMAN -- EI KIRJOITA MITÄÄN. Tulos
+ * on laskettu tälle hetkelle, ja sen tallentaminen ylikirjoittaisi
+ * käyttäjän itse antaman keston. Ilman käyttökelpoista tulosta
+ * suunnitelma palautuu SELLAISENAAN: käsin kirjattu kesto säilyy, ja
+ * jos sitäkään ei ole, kesto pysyy tuntemattomana.
+ *
+ * Minuutit pyöristetään YLÖSPÄIN: aliarvio olisi myöhästyminen.
+ */
+export function withRouteResult(plan, rawRoute, { nowMs } = {}) {
+  if (!plan) return null;
+  const route = normalizeRouteResult(rawRoute, { nowMs });
+  if (route.status !== ROUTE_STATUS.OK) return plan;
+
+  return normalizeTravelPlan({
+    ...plan,
+    travelMinutes: Math.ceil(route.durationSeconds / 60),
+    travelSource: TRAVEL_SOURCE.PROVIDER,
+    estimatedAt: route.calculatedAt
+  });
+}
+
+// =====================================================================
+// LÄHTÖMOOTTORI: TILAT
+// =====================================================================
+//
+// UNKNOWN     kestoa ei tiedetä -> mitään lähtöaikaa ei väitetä
+// NOT_YET     liian aikaista
+// PREPARE     aloita valmistautuminen
+// LEAVE_SOON  lähtöön on enintään LEAVE_SOON_MINUTES
+// LEAVE_NOW   lähtöaika on nyt (tai meni alle LEAVE_NOW_GRACE_MINUTES sitten)
+// LATE        lähtöaika on mennyt
+//
+//   saapuminen
+//   - matka
+//   - pysäköinti ja kävely   = LÄHTÖAIKA (ovelta)
+//   - valmistautuminen       = VALMISTAUTUMISEN ALKU
+//
+// Aiempi computeLeaveBy() yhdistää valmistautumisen lähtöaikaan; tämä
+// moottori erottaa ne, jotta "lähde 17:15" tarkoittaa oven ohitusta eikä
+// valmistautumisen aloitusta.
+
+export const DEPARTURE_STATE = Object.freeze({
+  UNKNOWN: 'unknown',
+  NOT_YET: 'not_yet',
+  PREPARE: 'prepare',
+  LEAVE_SOON: 'leave_soon',
+  LEAVE_NOW: 'leave_now',
+  LATE: 'late'
+});
+
+export const LEAVE_SOON_MINUTES = 15;
+export const LEAVE_NOW_GRACE_MINUTES = 2;
+
+/** Kalenteripäivän järjestysluku. UTC-laskenta: seinäkelloaika ei kärsi kesäajasta. */
+function dayNumber(iso) {
+  const [year, month, day] = iso.split('-').map(Number);
+  const date = new Date(0);
+  date.setUTCFullYear(year, month - 1, day);
+  return Math.round(date.getTime() / 86400000);
+}
+
+function absoluteMinutes(dateIso, minutes) {
+  return dayNumber(dateIso) * 1440 + minutes;
+}
+
+function fromAbsolute(abs) {
+  const day = Math.floor(abs / 1440);
+  const minutes = ((abs % 1440) + 1440) % 1440;
+  const date = new Date(day * 86400000);
+  const pad = (n, width = 2) => String(n).padStart(width, '0');
+  return {
+    date: `${pad(date.getUTCFullYear(), 4)}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())}`,
+    time: fromMinutes(minutes),
+    abs
+  };
+}
+
+/** Hetki `minutes` minuuttia ennen lähtöä: { date, time }. Kalenteripäivä rullaa oikein keskiyön yli. */
+export function leaveAtMinus(schedule, minutes) {
+  if (!schedule || !schedule.known) return null;
+  const { date, time } = fromAbsolute(schedule.leave.abs - minutes);
+  return { date, time };
+}
+
+function unknownSchedule(reason) {
+  return Object.freeze({ known: false, reason, arrive: null, leave: null, prepare: null, parts: null, source: null });
+}
+
+const SOURCE_LABELS = Object.freeze({
+  [TRAVEL_SOURCE.MANUAL]: 'itse arvioitu',
+  [TRAVEL_SOURCE.PROVIDER]: 'reittipalvelusta'
+});
+
+/**
+ * Lähtöaikataulu. `known: false`, ellei kestoa tiedetä.
+ *
+ * Ilman päivää saapuminen tulkitaan annetuksi päiväksi `todayIso`.
+ */
+export function departureSchedule(plan, { todayIso } = {}) {
+  if (!plan || !isTimeOfDay(plan.arrivalTime)) return unknownSchedule('Saapumisaikaa ei ole annettu.');
+
+  const minutes = plan.travelMinutes;
+  if (minutes === null || minutes === undefined || !Number.isFinite(minutes) || minutes <= 0) {
+    return unknownSchedule('Matka-aikaa ei tiedetä, joten lähtöaikaa ei voi laskea. Kirjaa arvioitu matka-aika itse.');
+  }
+
+  const arrivalDate = plan.arrivalDate || todayIso;
+  if (!isIsoDate(arrivalDate)) return unknownSchedule('Saapumispäivää ei tiedetä.');
+
+  const arriveAbs = absoluteMinutes(arrivalDate, toMinutes(plan.arrivalTime));
+  const arrivalBuffer = plan.arrivalBufferMinutes ?? 0;
+  const preparation = plan.preparationMinutes ?? 0;
+  const leaveAbs = arriveAbs - minutes - arrivalBuffer;
+  const prepareAbs = leaveAbs - preparation;
+
+  return Object.freeze({
+    known: true,
+    reason: '',
+    arrive: fromAbsolute(arriveAbs),
+    leave: fromAbsolute(leaveAbs),
+    prepare: fromAbsolute(prepareAbs),
+    parts: Object.freeze({ travel: minutes, arrivalBuffer, preparation }),
+    source: plan.travelSource
+  });
+}
+
+/**
+ * Lähtötila hetkelle `nowMinutes` (päivänä `todayIso`).
+ *
+ * @returns {{state:string, known:boolean, minutesUntilLeave:number|null,
+ *            minutesLate:number|null, minutesToArrival:number|null,
+ *            schedule:object, message:string, detail:string}}
+ */
+export function departureState(plan, { todayIso, nowMinutes, soonMinutes = LEAVE_SOON_MINUTES } = {}) {
+  const schedule = departureSchedule(plan, { todayIso });
+
+  if (!schedule.known || !isIsoDate(todayIso) || !Number.isFinite(nowMinutes)) {
+    return Object.freeze({
+      state: DEPARTURE_STATE.UNKNOWN, known: false, minutesUntilLeave: null, minutesLate: null,
+      minutesToArrival: null, schedule, message: schedule.reason || 'Nykyhetkeä ei tiedetä.', detail: ''
+    });
+  }
+
+  const nowAbs = absoluteMinutes(todayIso, nowMinutes);
+  const delta = schedule.leave.abs - nowAbs;
+  const destination = plan.destination || 'perille';
+
+  const where = schedule.leave.date === todayIso ? '' : `${schedule.leave.date} `;
+  const leaveText = `${where}${schedule.leave.time}`;
+  const detail = `Matka ${schedule.parts.travel} min`
+    + (SOURCE_LABELS[schedule.source] ? ` (${SOURCE_LABELS[schedule.source]})` : '')
+    + (schedule.parts.arrivalBuffer > 0 ? `, pysäköinti ja kävely ${schedule.parts.arrivalBuffer} min` : '')
+    + (schedule.parts.preparation > 0 ? `, valmistautuminen ${schedule.parts.preparation} min` : '')
+    + '.';
+
+  let state;
+  let message;
+  let minutesLate = null;
+  let minutesUntilLeave = null;
+
+  if (delta < -LEAVE_NOW_GRACE_MINUTES) {
+    state = DEPARTURE_STATE.LATE;
+    minutesLate = -delta;
+    message = nowAbs > schedule.arrive.abs
+      ? `Saapumisaika klo ${plan.arrivalTime} kohteeseen ${destination} on jo mennyt.`
+      : `Olet ${minutesLate} min myöhässä: lähtöaika kohteeseen ${destination} oli klo ${leaveText}.`;
+  } else if (delta <= 0) {
+    state = DEPARTURE_STATE.LEAVE_NOW;
+    minutesUntilLeave = 0;
+    message = `Lähde nyt kohteeseen ${destination}, jotta ehdit klo ${plan.arrivalTime}.`;
+  } else if (delta <= soonMinutes) {
+    state = DEPARTURE_STATE.LEAVE_SOON;
+    minutesUntilLeave = delta;
+    message = `Lähde noin ${leaveText} (${delta} min kuluttua), jotta ehdit klo ${plan.arrivalTime}.`;
+  } else if (nowAbs >= schedule.prepare.abs) {
+    state = DEPARTURE_STATE.PREPARE;
+    minutesUntilLeave = delta;
+    message = `Aloita valmistautuminen: lähde noin ${leaveText}, jotta ehdit klo ${plan.arrivalTime}.`;
+  } else {
+    state = DEPARTURE_STATE.NOT_YET;
+    minutesUntilLeave = delta;
+    message = `Lähde noin ${leaveText}, jotta ehdit klo ${plan.arrivalTime}.`;
+  }
+
+  return Object.freeze({
+    state, known: true, minutesUntilLeave, minutesLate,
+    /** Minuutteja saapumiseen; negatiivinen, kun saapumisaika on mennyt. */
+    minutesToArrival: schedule.arrive.abs - nowAbs,
+    schedule, message, detail
+  });
+}
+
+// =====================================================================
+// TALLENNETUT PAIKAT: EHDOTUKSET ILMAN HISTORIAA
+// =====================================================================
+
+/** Enintään näin monta paikkaehdotusta. */
+export const MAX_PLACE_SUGGESTIONS = 8;
+
+/**
+ * Käyttäjän aiemmin kirjoittamat paikannimet ("Koti", "Työ", "Asiakas X").
+ *
+ * EI UUTTA TIETOA, EI SIJAINTIHISTORIAA. Ehdotukset johdetaan matkojen
+ * ja paikkamuistutusten OLEMASSA OLEVISTA nimikentistä; mitään ei
+ * tallenneta erikseen eikä koordinaattia käytetä (paikka on nimi, ks.
+ * tämän moduulin alku). Yleisin nimi ensin, sitten aakkosjärjestys.
+ * Kirjainkoko ja välilyönnit eivät luo kaksoiskappaleita.
+ *
+ * Paikkatunniste (provider place ID) lisätään myöhemmin vasta kun
+ * reittipalvelu on valittu -- nimi on aina pakollinen perusta.
+ */
+export function suggestPlaces(travelPlans = [], locationRules = [], limit = MAX_PLACE_SUGGESTIONS) {
+  const counts = new Map();
+  const add = raw => {
+    const text = cleanText(raw, 200);
+    if (!text) return;
+    const key = text.toLocaleLowerCase('fi');
+    const entry = counts.get(key);
+    if (entry) entry.count += 1;
+    else counts.set(key, { name: text, count: 1 });
+  };
+
+  for (const plan of Array.isArray(travelPlans) ? travelPlans : []) {
+    if (!plan) continue;
+    add(plan.origin);
+    add(plan.destination);
+  }
+  for (const rule of Array.isArray(locationRules) ? locationRules : []) {
+    if (rule) add(rule.place);
+  }
+
+  const max = Math.max(0, Math.min(Number.isInteger(limit) ? limit : MAX_PLACE_SUGGESTIONS, MAX_PLACE_SUGGESTIONS));
+  return [...counts.values()]
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, 'fi'))
+    .slice(0, max)
+    .map(entry => entry.name);
 }

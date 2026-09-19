@@ -52,8 +52,7 @@ import {
 } from '../domain/notificationCenter.js';
 import {
   normalizeTravelPlan, validateTravelPlan, normalizeLocationRule,
-  applyEstimate, manualEstimate, shouldAlertDeparture, describeDeparture,
-  leaveStatus
+  applyEstimate, manualEstimate, departureState, DEPARTURE_STATE
 } from '../domain/travel.js';
 import { buildReplanProposal, REPLAN_TRIGGER } from '../domain/replan.js';
 import { NOTICE_KIND, NOTICE_LEVEL } from '../domain/notificationCenter.js';
@@ -596,7 +595,7 @@ export async function deleteTravelPlan(id) {
 /**
  * Tuota lähtöilmoitukset niistä matkoista, joiden aika on käsillä.
  *
- * TUNTEMATON KESTO EI TUOTA ILMOITUSTA. `shouldAlertDeparture`
+ * TUNTEMATON KESTO EI TUOTA ILMOITUSTA. `departureState` (travel.js)
  * palauttaa epätoden, kun lähtöaikaa ei voi laskea — ilmoitus
  * kellonajalla, jota ei tiedetä, olisi vale.
  */
@@ -607,19 +606,24 @@ export async function runDepartureSweep({ now = new Date() } = {}) {
 
   const created = [];
   for (const plan of state.travelPlans) {
-    if (!shouldAlertDeparture(plan, { todayIso: today, nowMinutes: minutes })) {
-      continue;
-    }
+    // Sama lähtömoottori kuin NOW/NEXT:ssä ja ajastetuissa ilmoituksissa
+    // (travel.js departureState): yksi totuus lähtöajalle.
+    const departure = departureState(plan, { todayIso: today, nowMinutes: minutes });
+    if (!departure.known) continue;
 
-    // `describeDeparture` palauttaa MERKKIJONON, ja myöhässäolo
-    // luetaan `leaveStatus`-tilasta. Ne ovat eri funktioita, koska
-    // toinen on tekstiä ihmiselle ja toinen lukuja koneelle.
-    const status = leaveStatus(plan, { todayIso: today, nowMinutes: minutes });
+    const late = departure.state === DEPARTURE_STATE.LATE;
+    const due = late || departure.state === DEPARTURE_STATE.LEAVE_SOON
+      || departure.state === DEPARTURE_STATE.LEAVE_NOW;
+    if (!due) continue;
+    // Myöhästyneestä ei ilmoiteta enää kun saapumisaika on jo mennyt yli
+    // puoli tuntia sitten.
+    if (late && departure.minutesToArrival < -30) continue;
+
     const notice = noticeFromDeparture(plan, {
       id: newTaskId(),
       todayIso: today,
-      reason: describeDeparture(plan, { todayIso: today, nowMinutes: minutes }),
-      late: status.late
+      reason: departure.message,
+      late
     });
     if (!notice) continue;
     if (!validateNotice(notice).valid) continue;

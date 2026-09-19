@@ -142,6 +142,7 @@ const SHELL = [
   '/src/lib/result.js',
   '/src/lib/rows.js',
   '/src/platform/capabilities.js',
+  '/src/platform/geolocation.js',
   '/src/platform/index.js',
   '/src/platform/lifecycle.js',
   '/src/platform/nativeNotifications.js',

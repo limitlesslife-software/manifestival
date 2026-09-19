@@ -33,7 +33,7 @@
 import { isIsoDate, toMinutes, durationOf, deadlineUrgency, URGENCY } from './task.js';
 import { priorityWeight } from './priority.js';
 import { LIVE_STATUSES, isDue as reminderIsDue } from './reminder.js';
-import { leaveStatus, shouldAlertDeparture } from './travel.js';
+import { departureState, DEPARTURE_STATE } from './travel.js';
 import { isOpenItem } from './inbox.js';
 
 /** Mitä ehdokas on. */
@@ -186,27 +186,36 @@ export function collectCandidates({
 
   // LÄHTÖAIKA ENSIN. Ainoa asia, jonka myöhästyminen ei ole
   // korjattavissa myöhemmin samana päivänä.
+  //
+  // Lähtömoottori (travel.js departureState) päättää tilan; tämä vain
+  // valitsee, milloin se on käsillä: valmistautuminen, lähtö lähellä /
+  // nyt, tai myöhässä (kunnes saapumisajasta on kulunut 30 min), sekä
+  // "ei vielä" kun lähtöön on enintään tunti. Tuntematon kesto ei ole
+  // ehdokas -- lähtöaikaa ei väitetä.
   for (const plan of travelPlans) {
     if (!plan) continue;
-    if (plan.arrivalDate && plan.arrivalDate !== todayIso) continue;
-    if (!shouldAlertDeparture(plan, { todayIso, nowMinutes, leadMinutes: 60 })) continue;
+    const departure = departureState(plan, { todayIso, nowMinutes });
+    if (!departure.known) continue;
 
-    const status = leaveStatus(plan, { todayIso, nowMinutes });
-    const leaveMinutes = status.leaveBy.leaveByTime
-      ? toMinutes(status.leaveBy.leaveByTime) : null;
+    const state = departure.state;
+    const atHand = state === DEPARTURE_STATE.PREPARE
+      || state === DEPARTURE_STATE.LEAVE_SOON
+      || state === DEPARTURE_STATE.LEAVE_NOW
+      || (state === DEPARTURE_STATE.NOT_YET && departure.minutesUntilLeave <= 60)
+      || (state === DEPARTURE_STATE.LATE && departure.minutesToArrival >= -30);
+    if (!atHand) continue;
 
+    const late = state === DEPARTURE_STATE.LATE;
+    const leaveToday = departure.schedule.leave.date === todayIso;
     out.push(candidate(CANDIDATE_KIND.DEPARTURE, {
       id: plan.id,
       title: plan.title || plan.destination || 'Lähtö',
-      minutes: leaveMinutes,
-      reason: status.late
-        ? `Lähtöaika kohteeseen ${plan.destination} meni jo.`
-        : `Lähde ${status.minutesUntilLeave} min kuluttua kohteeseen `
-          + `${plan.destination}.`,
+      minutes: leaveToday ? toMinutes(departure.schedule.leave.time) : null,
+      reason: departure.message,
       score: scoreOf(CANDIDATE_KIND.DEPARTURE, {
-        minutes: status.late ? -1 : (status.minutesUntilLeave ?? null)
+        minutes: late ? -1 : (departure.minutesUntilLeave ?? null)
       }),
-      meta: { destination: plan.destination, late: status.late }
+      meta: { destination: plan.destination, late, departureState: state }
     }));
   }
 

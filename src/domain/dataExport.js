@@ -119,7 +119,11 @@ export const REDACTED_FIELDS = Object.freeze([
   'password', 'passwordHash', 'salt',
   'token', 'accessToken', 'refreshToken', 'idToken', 'sessionToken',
   'apiKey', 'anonKey', 'serviceRoleKey', 'secret', 'clientSecret',
-  'authorization', 'session', 'credentials'
+  'authorization', 'session', 'credentials',
+  // Koordinaatit eivät kuulu mihinkään vientiin. Ks. src/platform/geolocation.js:
+  // sijainti on vain muistissa, mutta jos koordinaatti jostain syystä päätyisi
+  // dataan, se putoaa pois nimen perusteella.
+  'latitude', 'longitude', 'lat', 'lng', 'lon', 'coords', 'coordinates', 'position', 'geolocation'
 ]);
 
 const REDACTED_LOWER = new Set(REDACTED_FIELDS.map(field => field.toLowerCase()));

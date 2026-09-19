@@ -51,7 +51,7 @@ import {
   refreshNotificationPermission, syncNotifications,
   scheduleNotificationResync, cancelScheduledResync
 } from './notifications.js';
-import { lifecycle } from '../platform/index.js';
+import { lifecycle, location as platformLocation } from '../platform/index.js';
 import { clearToasts } from '../ui/toast.js';
 import { maybe } from '../ui/dom.js';
 
@@ -118,7 +118,7 @@ function renderAll() {
  * mutatoida paikallaan. Sama viittaus tarkoittaa siis varmasti samaa
  * sisältöä.
  */
-let lastNotifiableRefs = { tasks: null, routines: null, routineExceptions: null };
+let lastNotifiableRefs = { tasks: null, routines: null, routineExceptions: null, travelPlans: null };
 
 /**
  * Pyydä muistutusten uudelleensynkronointi, kun ajastukseen vaikuttava
@@ -134,12 +134,16 @@ function watchNotifiableChanges() {
   const state = getState();
   const changed = state.tasks !== lastNotifiableRefs.tasks
     || state.routines !== lastNotifiableRefs.routines
-    || state.routineExceptions !== lastNotifiableRefs.routineExceptions;
+    || state.routineExceptions !== lastNotifiableRefs.routineExceptions
+    // Matkasuunnitelman muutos siirtää lähtömuistutuksen aikaa: sama
+    // tunniste, uusi aika -> uudelleenajastus korvaa vanhan.
+    || state.travelPlans !== lastNotifiableRefs.travelPlans;
 
   lastNotifiableRefs = {
     tasks: state.tasks,
     routines: state.routines,
-    routineExceptions: state.routineExceptions
+    routineExceptions: state.routineExceptions,
+    travelPlans: state.travelPlans
   };
 
   if (changed) scheduleNotificationResync();
@@ -214,7 +218,7 @@ function onSignedOut() {
   signedIn = false;
   cancelScheduledResync();
   reconnect.cancelPending();
-  lastNotifiableRefs = { tasks: null, routines: null, routineExceptions: null };
+  lastNotifiableRefs = { tasks: null, routines: null, routineExceptions: null, travelPlans: null };
   closeForm();
   closeRoutineForm();
   closeGoalForm();
@@ -235,6 +239,9 @@ function onSignedOut() {
   closeCaptureReview();
   closeNoticeCenter();
   closeSearch();
+
+  // Muistissa oleva sijainti unohtuu uloskirjautuessa (ei koskaan levylle).
+  platformLocation.forget();
 
   // Nollaa myös kesken olevan kuvan luennan ja tyhjentää
   // tiedostovalitsimen. Seuraava käyttäjä samalla selaimella ei saa

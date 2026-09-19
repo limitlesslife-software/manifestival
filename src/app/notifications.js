@@ -78,6 +78,7 @@ export function planUpcoming(from = todayMidnight()) {
   const intents = planRange({
     tasks: state.tasks,
     routineOccurrences,
+    travelPlans: state.travelPlans,
     from: fromIso,
     days: SYNC_HORIZON_DAYS,
     todayIso,

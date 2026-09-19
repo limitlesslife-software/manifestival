@@ -13,7 +13,9 @@ import { getState, viewDateIso } from '../state.js';
 import { saveProfile } from '../actions.js';
 import { userEmail } from '../../data/session.js';
 import { volatileFields } from '../../data/schema.js';
-import { capabilities, notifications as platformNotifications } from '../../platform/index.js';
+import {
+  capabilities, notifications as platformNotifications, location as platformLocation
+} from '../../platform/index.js';
 import { buildUserDataExport, serializeExport, EXPORTED_COLLECTIONS } from '../../domain/dataExport.js';
 import { renderAccountDeletionSection } from '../accountDeletion.js';
 
@@ -110,6 +112,67 @@ function capabilityRow(item) {
   return `<div class="notice tone-${tone}"><strong>${escapeHtml(item.label)}</strong> — ${escapeHtml(status)}</div>`;
 }
 
+/**
+ * Sijainnin tila ja hallinta.
+ *
+ * SIJAINTIA EI PYYDETÄ TÄÄLTÄ ITSESTÄÄN: lupa kysytään vain painikkeen
+ * painalluksesta, ja haku on kertaluonteinen kokeilu, joka kertoo vain
+ * tarkkuuden. Koordinaatteja ei näytetä, tallenneta eikä lähetetä minnekään.
+ */
+function locationControlsHtml() {
+  const state = platformLocation.capability();
+  if (!state.supported || !state.implemented) {
+    return `<div class="hint" style="margin-top:6px;">${escapeHtml(state.reason || 'Sijainti ei ole käytettävissä.')}</div>`;
+  }
+
+  const permission = platformLocation.permissionState();
+  const canAsk = permission === 'not_requested' || permission === 'prompt' || permission === 'denied';
+  const canTry = permission === 'granted';
+
+  return `
+    <div class="hint" id="pfLocationStatus" style="margin-top:6px;">${escapeHtml(platformLocation.describePermission(permission))}</div>
+    <div class="form-actions" style="margin-top:6px; flex-wrap:wrap;">
+      <button class="form-btn" id="pfLocationRefreshBtn" type="button">Tarkista sijaintilupa</button>
+      ${canAsk ? '<button class="form-btn" id="pfLocationAskBtn" type="button">Salli sijainti</button>' : ''}
+      ${canTry ? '<button class="form-btn" id="pfLocationTryBtn" type="button">Kokeile sijainnin hakua</button>' : ''}
+    </div>
+    <div class="hint" id="pfLocationMsg" role="status" aria-live="polite" style="margin-top:4px;"></div>
+    <div class="hint" style="margin-top:4px;">
+      Sijaintia haetaan vain kun pyydät, kerran kerrallaan. Sitä ei tallenneta,
+      lähetetä tekoälylle eikä sisällytetä vientiin. Taustaseurantaa ei ole.
+    </div>`;
+}
+
+function wireLocationControls() {
+  const message = text => { const node = maybe('pfLocationMsg'); if (node) node.textContent = text; };
+  const rerender = () => renderPrivacyCenter();
+
+  const refresh = maybe('pfLocationRefreshBtn');
+  if (refresh) refresh.addEventListener('click', async () => {
+    await platformLocation.refreshPermission();
+    rerender();
+  });
+
+  const ask = maybe('pfLocationAskBtn');
+  if (ask) ask.addEventListener('click', async () => {
+    const result = await platformLocation.requestPermission();
+    rerender();
+    message(result.reason);
+  });
+
+  const attempt = maybe('pfLocationTryBtn');
+  if (attempt) attempt.addEventListener('click', async () => {
+    message('Haetaan…');
+    const result = await platformLocation.current({ allowPrompt: false });
+    const text = result.ok
+      ? `Sijainti saatu (tarkkuus ±${result.position.accuracyMeters ?? '?'} m). Sitä ei tallenneta.`
+      : result.reason;
+    // Uudelleenrenderöinti tyhjentää viestin, joten viesti asetetaan sen jälkeen.
+    rerender();
+    message(text);
+  });
+}
+
 /** Renderöi tietosuoja- ja kyvykkyysosio. */
 function renderPrivacyCenter() {
   const container = maybe('pfCapabilities');
@@ -129,6 +192,7 @@ function renderPrivacyCenter() {
       Alusta: ${escapeHtml(caps.platform)}${caps.native ? ' (natiivisovellus)' : ' (selain)'}
     </div>
     ${rows}
+    ${locationControlsHtml()}
     ${showPendingCount
       ? '<div class="hint" id="pfPendingNotices">Ajastettuja ilmoituksia laitteella: …</div>'
       : ''}
@@ -143,6 +207,7 @@ function renderPrivacyCenter() {
 
   const exportBtn = maybe('pfExportBtn');
   if (exportBtn) exportBtn.addEventListener('click', runExport);
+  wireLocationControls();
 
   if (showPendingCount) {
     // Kysytään laitteelta erikseen: pendingCount on asynkroninen eikä sitä

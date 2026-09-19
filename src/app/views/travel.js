@@ -33,7 +33,7 @@ import {
 } from '../state.js';
 import {
   TRAVEL_MODE, TRAVEL_MODES, TRAVEL_SOURCE, travelModeLabel,
-  computeLeaveBy, leaveStatus, isEstimateStale, hasTravelProvider,
+  departureState, DEPARTURE_STATE, isEstimateStale, hasTravelProvider, suggestPlaces,
   LOCATION_TRIGGER, LOCATION_TRIGGERS
 } from '../../domain/travel.js';
 import { TABLES } from '../../data/schema.js';
@@ -89,13 +89,23 @@ function nowMinutes() {
  *   AJOISSA     kellonaika ja erittely
  *   MYÖHÄSSÄ    punainen, ja se sanotaan suoraan
  */
-function leaveByHtml(plan) {
-  const leaveBy = computeLeaveBy(plan);
+const STATE_TAGS = Object.freeze({
+  [DEPARTURE_STATE.NOT_YET]: { label: 'Ei vielä', tone: '' },
+  [DEPARTURE_STATE.PREPARE]: { label: 'Valmistaudu', tone: 'tone-warn' },
+  [DEPARTURE_STATE.LEAVE_SOON]: { label: 'Lähtö pian', tone: 'tone-warn' },
+  [DEPARTURE_STATE.LEAVE_NOW]: { label: 'Lähde nyt', tone: 'tone-late' },
+  [DEPARTURE_STATE.LATE]: { label: 'Myöhässä', tone: 'tone-late' }
+});
 
-  if (!leaveBy.known) {
+function leaveByHtml(plan) {
+  const departure = departureState(plan, {
+    todayIso: fmtISO(todayMidnight()), nowMinutes: nowMinutes()
+  });
+
+  if (!departure.known) {
     return `
       <div class="assist-reason assist-unknown">
-        Lähtöaikaa ei voi laskea: ${escapeHtml(leaveBy.reason)}
+        Lähtöaikaa ei voi laskea: ${escapeHtml(departure.message)}
       </div>
       <div class="assist-actions">
         <label class="visually-hidden" for="est-${escapeHtml(plan.id)}">Matka-aika minuutteina</label>
@@ -106,29 +116,17 @@ function leaveByHtml(plan) {
       </div>`;
   }
 
-  const status = leaveStatus(plan, {
-    todayIso: fmtISO(todayMidnight()), nowMinutes: nowMinutes()
-  });
-
-  const paiva = leaveBy.leaveByDate && leaveBy.leaveByDate !== plan.arrivalDate
-    ? `${escapeHtml(leaveBy.leaveByDate)} `
-    : '';
-
-  const otsikko = status.late
-    ? `<span class="assist-tag tone-late">Myöhässä</span> Lähtöaika `
-      + `${paiva}klo ${escapeHtml(leaveBy.leaveByTime)} on mennyt`
-      + (status.minutesLate !== null ? ` ${status.minutesLate} min sitten.` : '.')
-    : `Lähde ${paiva}klo <strong>${escapeHtml(leaveBy.leaveByTime)}</strong>`
-      + (status.minutesUntilLeave !== null
-        ? ` — ${status.minutesUntilLeave} min kuluttua.` : '.');
-
+  const tag = STATE_TAGS[departure.state] || STATE_TAGS[DEPARTURE_STATE.NOT_YET];
   const vanhentunut = isEstimateStale(plan, new Date().toISOString())
     ? ' <span class="assist-tag tone-warn">Arvio on vanha</span>'
     : '';
 
   return `
-    <div class="assist-meta">${otsikko}${vanhentunut}</div>
-    <div class="assist-reason">${escapeHtml(leaveBy.reason)}</div>`;
+    <div class="assist-meta" role="status">
+      <span class="assist-tag ${tag.tone}">${escapeHtml(tag.label)}</span>
+      ${escapeHtml(departure.message)}${vanhentunut}
+    </div>
+    <div class="assist-reason">${escapeHtml(departure.detail)}</div>`;
 }
 
 function planRowHtml(plan) {
@@ -205,6 +203,16 @@ export function renderTravel() {
   fillSelectOptions();
 
   const state = getState();
+
+  // Aiemmin käytetyt paikannimet ehdotuksina. Ei historiaa eikä koordinaatteja.
+  const suggestions = maybe('tvPlaceSuggestions');
+  if (suggestions) {
+    suggestions.replaceChildren(...suggestPlaces(state.travelPlans, state.locationRules).map(name => {
+      const option = document.createElement('option');
+      option.value = name;
+      return option;
+    }));
+  }
 
   const plans = maybe('travelListContainer');
   if (plans) {

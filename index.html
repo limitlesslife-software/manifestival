@@ -415,11 +415,12 @@
           <div class="form-row">
             <div>
               <label class="field-label" for="tvOrigin">Mistä</label>
-              <input type="text" id="tvOrigin" placeholder="Koti" autocomplete="off">
+              <input type="text" id="tvOrigin" placeholder="Koti" autocomplete="off" list="tvPlaceSuggestions">
             </div>
             <div>
               <label class="field-label" for="tvDestination">Minne</label>
-              <input type="text" id="tvDestination" placeholder="Keskusta" autocomplete="off">
+              <input type="text" id="tvDestination" placeholder="Keskusta" autocomplete="off" list="tvPlaceSuggestions">
+              <datalist id="tvPlaceSuggestions"></datalist>
               <div class="field-error" id="tvDestinationError"></div>
             </div>
           </div>

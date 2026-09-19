@@ -343,7 +343,8 @@ test('myöhässä oleva lähtö sanotaan menneeksi', () => {
     travelPlans: [travel()], todayIso: TODAY, nowMinutes: 600
   });
   assert.equal(entry.late, true);
-  assert.ok(/meni jo/i.test(entry.reason), entry.reason);
+  // Lähtömoottori (departureState) kertoo myöhästymisen minuutteina ja ajan.
+  assert.ok(/myöhässä.*oli klo 09:30/i.test(entry.reason), entry.reason);
 });
 
 // =====================================================================

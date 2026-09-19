@@ -19,6 +19,7 @@ import {
 } from './capabilities.js';
 import * as notificationPlatform from './notifications.js';
 import { bindLifecycle, isNativeLifecycleAvailable } from './lifecycle.js';
+import * as geolocation from './geolocation.js';
 
 export {
   CAPABILITY, CAPABILITIES, PERMISSION, NATIVE_REQUIRED,
@@ -90,11 +91,22 @@ export const notifications = Object.freeze({
 
 export const location = Object.freeze({
   capability: () => capability(CAPABILITY.LOCATION),
-  /** PLANNED (WP11). */
-  async current() {
-    return { ok: false, ...NOT_IMPLEMENTED };
-  },
-  /** PLANNED (WP11). */
+  /** Rikas lupatila (not_requested, prompt, granted, denied, blocked, ...). Synkroninen, ei pyydä lupaa. */
+  permissionState: geolocation.locationPermissionState,
+  describePermission: geolocation.describeLocationState,
+  /** Lue lupatila laitteelta. EI pyydä lupaa. */
+  refreshPermission: geolocation.checkLocationPermission,
+  /** Pyydä lupa. VAIN käyttäjän omasta eleestä. */
+  requestPermission: geolocation.requestLocationPermission,
+  /**
+   * Hae sijainti kerran (etualalla). Ei taustaseurantaa, ei historiaa;
+   * koordinaatit vain muistissa. Ks. src/platform/geolocation.js.
+   */
+  current: geolocation.getCurrentLocation,
+  cached: geolocation.getCachedLocation,
+  /** Unohda muistissa oleva sijainti. Uloskirjautuminen. */
+  forget: geolocation.clearLocationCache,
+  /** Geoaidat ja taustaseuranta: EI TOTEUTETTU eikä luvattu. */
   async watchArrival() {
     return { ok: false, ...NOT_IMPLEMENTED };
   }

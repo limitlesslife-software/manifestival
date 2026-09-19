@@ -44,7 +44,9 @@ export const SENSITIVE_KEYS = Object.freeze([
   'note', 'notes', 'description', 'title', 'name',
   'prompt', 'input', 'text', 'transcript',
   'energy', 'mood', 'stress', 'sleephours',
-  'amount', 'amountminor', 'targetminor', 'currentminor'
+  'amount', 'amountminor', 'targetminor', 'currentminor',
+  // Sijainti: koordinaatti ei saa päätyä konsoliin (src/platform/geolocation.js).
+  'latitude', 'longitude', 'lat', 'lng', 'lon', 'coords', 'coordinates', 'position', 'geolocation'
 ]);
 
 const SENSITIVE = new Set(SENSITIVE_KEYS);
