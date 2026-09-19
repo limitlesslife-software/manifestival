@@ -3,7 +3,8 @@
 // Virta:
 //   mikrofoni -> selaimen puheentunnistus -> teksti
 //     -> KÄYTTÄJÄ TARKISTAA/MUOKKAA TEKSTIÄ
-//     -> runTypedCommand({source:'voice'})  (src/app/commandBar.js)
+//     -> selvä haku ("etsi ...") -> hakupaneeli (ei komentoa)
+//     -> muuten runTypedCommand({source:'voice'})  (src/app/commandBar.js)
 //     -> SAMA luokittelu, SAMA allowlist, SAMA kohteentunnistus,
 //        SAMA vahvistusdialogi, SAMA kirjausketju kuin kirjoitetulla
 //        komennolla (src/ai/commandClient.js requestCommand,
@@ -11,39 +12,66 @@
 //
 // TÄMÄ TIEDOSTO EI TULKITSE MITÄÄN ITSE. Se on ohut sovitin mikrofonin
 // ja commandBar.js:n välissä -- täsmälleen sama periaate kuin
-// src/app/search.js:n "Tulkitse komentona" -painike. Kahta erillistä
-// tulkintaputkea (yksi luonnille, yksi komennoille) ei enää ole:
-// luontikin ("muistuta minua...") on vain yksi COMMANDS-rekisterin
-// intentti (create_task) ja kulkee saman vahvistuksen läpi.
+// src/app/search.js:n "Tulkitse komentona" -painike. Luontikin
+// ("muistuta minua...") on vain yksi COMMANDS-rekisterin intentti
+// (create_task) ja kulkee saman vahvistuksen läpi.
 //
-// AI ei koskaan tallenna mitään suoraan. Jokainen ehdotus näytetään
-// vahvistettavana (confirmProposal) ennen suoritusta.
+// TILAKONE: src/domain/voiceFlow.js päättää sallitut siirtymät
+// (IDLE -> REQUESTING_PERMISSION -> LISTENING -> TRANSCRIPT_READY ->
+// CLASSIFYING -> REVIEW/TARGET_SELECTION/CONFIRMATION/EXECUTING ->
+// SUCCESS | ERROR). Tämä moduuli vain toteuttaa sivuvaikutukset:
+//
+//   - MIKROFONI on päällä vain kun tila sitä sallii (micActive). Jokainen
+//     siirtymä muuhun tilaan sammuttaa tunnistuksen, myös sivun
+//     piilottaminen (visibilitychange/pagehide). Ei taustamikrofonia.
+//   - LITTEROINTI EI KOSKAAN mene suoraan tallennukseen: käyttäjä näkee ja
+//     voi muokata tekstin ennen kuin se lähtee tulkittavaksi.
+//   - Kohteenvalinta ja vahvistus näytetään ui/confirm.js:n jaetulla
+//     dialogilla, joka kerrostuu tämän paneelin päälle.
 //
 // Jos selain ei tue puheentunnistusta tai verkko pettää, käyttäjä voi aina
 // kirjoittaa saman asian tekstinä. Puheohjaus ei koskaan päädy umpikujaan.
-//
-// TILAKONE (ks. myös src/app/speechInput.js:n tilakuvaus):
-//
-//   IDLE -> LISTENING -> TRANSCRIPT (muokattava, peru/yritä uudelleen)
-//        -> PROCESSING (luokittelu + mahdollinen kohteenvalinta + vahvistus,
-//           kaikki commandBar.js:n sisällä) -> SUCCESS (sulkee) | ERROR
-//
-// Kohteenvalinta ja vahvistus näytetään ui/confirm.js:n jaetulla
-// dialogilla (proposalDialog), joka kerrostuu tämän paneelin päälle --
-// sama komponentti jota tekstikomento käyttää, ei kopiota siitä.
 
 import { el, maybe, singleFlight } from '../ui/dom.js';
 import { runTypedCommand } from './commandBar.js';
+import { openSearch } from './search.js';
 import { speech } from '../platform/index.js';
 import { logEvent } from '../lib/logger.js';
+import {
+  VOICE, VOICE_EVENT, initialVoiceState, nextVoiceState, micActive
+} from '../domain/voiceFlow.js';
+import { routeUtterance, ROUTE } from '../domain/utteranceRoute.js';
 
-const STATES = ['listening', 'transcript', 'processing', 'error', 'typefallback'];
+/** Tila -> mikä paneelin osa näytetään. Käsittelyvaiheet (ja dialogit) näyttävät "tulkitsen". */
+const PANEL = Object.freeze({
+  [VOICE.REQUESTING_PERMISSION]: 'listening',
+  [VOICE.LISTENING]: 'listening',
+  [VOICE.TRANSCRIPT_READY]: 'transcript',
+  [VOICE.CLASSIFYING]: 'processing',
+  [VOICE.REVIEW]: 'processing',
+  [VOICE.TARGET_SELECTION]: 'processing',
+  [VOICE.CONFIRMATION]: 'processing',
+  [VOICE.EXECUTING]: 'processing',
+  [VOICE.ERROR]: 'error',
+  [VOICE.TYPE_FALLBACK]: 'typefallback'
+});
+
+const PANELS = ['listening', 'transcript', 'processing', 'error', 'typefallback'];
+
+/** commandBar.js:n vaiheraportti -> tilakoneen tapahtuma. */
+const PHASE_EVENT = Object.freeze({
+  review: VOICE_EVENT.PHASE_REVIEW,
+  target_selection: VOICE_EVENT.PHASE_TARGET,
+  confirmation: VOICE_EVENT.PHASE_CONFIRM,
+  executing: VOICE_EVENT.PHASE_EXECUTE
+});
 
 const SpeechRecognitionCtor = typeof window !== 'undefined'
   ? (window.SpeechRecognition || window.webkitSpeechRecognition)
   : null;
 
 let recognition = null;
+let flow = initialVoiceState();
 /** Estää samasta tunnistuksesta useamman tuloksen käsittelyn (onresult voi
  *  laueta uudelleen, ja onend ei saa näyttää virhettä enää tuloksen jälkeen). */
 let resultHandled = false;
@@ -51,16 +79,15 @@ let resultHandled = false;
 let opener = null;
 
 function showState(name) {
-  for (const state of STATES) {
+  for (const state of PANELS) {
     const node = maybe('voiceState-' + state);
     if (node) node.style.display = state === name ? 'block' : 'none';
   }
 }
 
-function showVoiceError(message) {
+function setErrorText(message) {
   const node = maybe('voiceErrorMsg');
   if (node) node.textContent = message;
-  showState('error');
 }
 
 function openOverlay() {
@@ -86,6 +113,35 @@ function stopRecognition() {
   try { recognition.stop(); } catch { /* jo pysähtynyt */ }
 }
 
+/** Ota tila käyttöön: mikrofoni, paneeli ja sulkeminen seuraavat tilasta. */
+function applyState() {
+  if (!micActive(flow)) stopRecognition();
+
+  if (flow === VOICE.IDLE || flow === VOICE.SUCCESS) {
+    closeOverlay();
+    flow = VOICE.IDLE;
+    return;
+  }
+  const panel = PANEL[flow];
+  if (panel) showState(panel);
+}
+
+/** Yksi ainoa paikka, jossa tila muuttuu. Kielletty siirtymä ei tee mitään. */
+function transition(event) {
+  const before = flow;
+  flow = nextVoiceState(flow, event, { micSupported: Boolean(recognition) });
+  if (flow === before) return flow;
+  logEvent('voice.state', { from: before, to: flow });
+  applyState();
+  return flow;
+}
+
+/** Virhe näkyviin: viesti ensin, sitten siirtymä ERROR-tilaan. */
+function failWith(message, event = VOICE_EVENT.FAIL) {
+  setErrorText(message);
+  transition(event);
+}
+
 /**
  * Näytä tunnistettu teksti muokattavana ennen mitään tulkintaa.
  *
@@ -96,7 +152,6 @@ function stopRecognition() {
 function showTranscriptReview(text) {
   const input = maybe('vfTranscriptText');
   if (input) input.value = text;
-  showState('transcript');
   if (input) input.focus();
 }
 
@@ -108,7 +163,7 @@ function showTranscriptReview(text) {
  * komennon kanssa: sama funktio, ainoastaan `source: 'voice'` eroaa.
  *
  * @param {string} text käyttäjän tarkistama/muokkaama teksti
- * @param {object} [options] testejä varten: { confirmFn, chooseFn, fetchImpl }
+ * @param {object} [options] testejä varten: { confirmFn, chooseFn, fetchImpl, onPhase }
  */
 export async function runVoiceCommand(text, options = {}) {
   return runTypedCommand(text, { ...options, source: 'voice' });
@@ -123,31 +178,47 @@ export async function runVoiceCommand(text, options = {}) {
  */
 const submitTranscript = singleFlight(async (text, ui) => {
   const clean = String(text ?? '').trim();
-  if (!clean) { showVoiceError('En kuullut mitään. Yritä uudelleen.'); return; }
+  if (!clean) {
+    // Tyhjä teksti ei ole virhe: käyttäjä on poistanut sen. Pysytään muokkauksessa.
+    const input = maybe('vfTranscriptText') || maybe('vfFallbackInput');
+    if (input) input.focus();
+    return;
+  }
 
-  showState('processing');
+  // Selvä haku ("etsi ...") ei ole komento: avataan hakupaneeli hakusanalla.
+  const route = routeUtterance(clean);
+  if (route.kind === ROUTE.SEARCH) {
+    logEvent('voice.route', { kind: 'search' });
+    transition(VOICE_EVENT.CANCEL);
+    openSearch(route.query);
+    return;
+  }
+
+  transition(VOICE_EVENT.SUBMIT);
+  if (flow !== VOICE.CLASSIFYING) return;
 
   logEvent('voice.submit', { chars: clean.length });
-  const result = await runVoiceCommand(clean, ui);
+  const result = await runVoiceCommand(clean, {
+    ...ui,
+    onPhase: phase => { if (PHASE_EVENT[phase]) transition(PHASE_EVENT[phase]); }
+  });
   logEvent('voice.result', { ok: Boolean(result.ok), status: String(result.status || '') });
 
   if (result.ok) {
-    closeOverlay();
+    transition(VOICE_EVENT.DONE_OK);
     return;
   }
   if (result.status === 'cancelled') {
     // Käyttäjä perui vahvistuksen tai kohteenvalinnan -- ei virhe,
-    // palataan hiljaa sulkien paneeli (sama kuin tekstikomennossa).
-    closeOverlay();
+    // paneeli sulkeutuu hiljaa (sama kuin tekstikomennossa).
+    transition(VOICE_EVENT.DONE_CANCELLED);
     return;
   }
-  if (result.status === 'empty') {
-    showVoiceError('En kuullut mitään. Yritä uudelleen.');
-    return;
-  }
-  // 'rejected' | 'error' | suoritus epäonnistui: näytetään syy ja
-  // tarjotaan uudelleenyritys tai kirjoitus, ei umpikuja.
-  showVoiceError(result.reason || 'Komentoa ei ymmärretty.');
+  // 'rejected' | 'error' | 'empty' | 'duplicate' | suoritus epäonnistui:
+  // näytetään syy ja tarjotaan uudelleenyritys tai kirjoitus, ei umpikuja.
+  failWith(result.status === 'empty'
+    ? 'En kuullut mitään. Yritä uudelleen.'
+    : (result.reason || 'Komentoa ei ymmärretty.'), VOICE_EVENT.DONE_ERROR);
 });
 
 function setupRecognition() {
@@ -157,6 +228,8 @@ function setupRecognition() {
   instance.lang = 'fi-FI';
   instance.continuous = false;
   instance.interimResults = true;
+
+  instance.onstart = () => transition(VOICE_EVENT.MIC_STARTED);
 
   instance.onresult = event => {
     let transcript = '';
@@ -168,46 +241,35 @@ function setupRecognition() {
     if (event.results[event.results.length - 1].isFinal) {
       if (resultHandled) return;
       const clean = transcript.trim();
-      if (!clean) { showVoiceError('En kuullut mitään. Yritä uudelleen.'); return; }
+      if (!clean) { failWith('En kuullut mitään. Yritä uudelleen.'); return; }
       resultHandled = true;
       // Vain pituus: litterointi on käyttäjän puhetta eikä kuulu lokiin.
       logEvent('voice.transcript', { chars: clean.length });
+      // Tunnistus voi päättyä ennen onstart-tapahtumaa: varmistetaan tila.
+      transition(VOICE_EVENT.MIC_STARTED);
+      transition(VOICE_EVENT.HEARD);
       showTranscriptReview(clean);
     }
   };
 
   instance.onerror = event => {
     logEvent('voice.error', { code: String(event.error || 'unknown') });
-    if (event.error === 'no-speech') showVoiceError('En kuullut mitään. Yritä uudelleen.');
-    else if (event.error === 'not-allowed') showVoiceError('Mikrofonin käyttö estetty. Salli mikrofoni selaimen asetuksista.');
+    if (event.error === 'no-speech') failWith('En kuullut mitään. Yritä uudelleen.');
+    else if (event.error === 'not-allowed' || event.error === 'service-not-allowed') failWith('Mikrofonin käyttö estetty. Salli mikrofoni selaimen asetuksista.');
     else if (event.error === 'aborted') { /* käyttäjä sulki — ei virhe */ }
-    else showVoiceError('Puheentunnistus ei onnistunut.');
+    else failWith('Puheentunnistus ei onnistunut.');
   };
 
   instance.onend = () => {
-    const listening = maybe('voiceState-listening');
-    const overlayOpen = el('voiceOverlay').classList.contains('open');
-    if (listening && listening.style.display !== 'none' && overlayOpen && !resultHandled) {
-      showVoiceError('En kuullut mitään. Yritä uudelleen.');
-    }
+    if (micActive(flow) && !resultHandled) failWith('En kuullut mitään. Yritä uudelleen.');
   };
 
   return instance;
 }
 
-/** Avaa puhepaneeli ja aloita kuuntelu. */
-export function startVoiceFlow() {
-  if (!el('voiceOverlay').classList.contains('open')) openOverlay();
+/** Aloita kuuntelu nykyisessä (avoimessa) tilassa. */
+function beginListening() {
   resultHandled = false;
-
-  if (!recognition) {
-    showState('typefallback');
-    const input = maybe('vfFallbackInput');
-    if (input) input.focus();
-    return;
-  }
-
-  showState('listening');
   const display = maybe('voiceTranscript');
   if (display) display.textContent = '';
 
@@ -215,8 +277,23 @@ export function startVoiceFlow() {
     recognition.start();
   } catch {
     // start() heittää, jos tunnistus on jo käynnissä.
-    showVoiceError('Mikrofonia ei voitu käynnistää.');
+    failWith('Mikrofonia ei voitu käynnistää.');
   }
+}
+
+/** Avaa puhepaneeli ja aloita kuuntelu (tai uusi yritys, jos paneeli on jo auki). */
+export function startVoiceFlow() {
+  const wasClosed = flow === VOICE.IDLE;
+  if (wasClosed) openOverlay();
+
+  transition(wasClosed ? VOICE_EVENT.OPEN : VOICE_EVENT.RETRY);
+
+  if (flow === VOICE.TYPE_FALLBACK) {
+    const input = maybe('vfFallbackInput');
+    if (input) input.focus();
+    return;
+  }
+  if (flow === VOICE.REQUESTING_PERMISSION) beginListening();
 }
 
 /** Kytke puheohjauksen tapahtumat. Kutsutaan kerran käynnistyksessä. */
@@ -224,30 +301,37 @@ export function initVoice() {
   recognition = setupRecognition();
 
   el('fabBtn').addEventListener('click', startVoiceFlow);
-  el('voiceErrorCloseBtn').addEventListener('click', closeOverlay);
+  el('voiceErrorCloseBtn').addEventListener('click', () => transition(VOICE_EVENT.CANCEL));
   el('voiceErrorRetry').addEventListener('click', startVoiceFlow);
   el('voiceErrorTypeInstead').addEventListener('click', () => {
-    showState('typefallback');
+    transition(VOICE_EVENT.TYPE_INSTEAD);
     const input = maybe('vfFallbackInput');
     if (input) input.focus();
   });
-  el('voiceCloseX').addEventListener('click', closeOverlay);
+  el('voiceCloseX').addEventListener('click', () => transition(VOICE_EVENT.CANCEL));
 
   el('voiceOverlay').addEventListener('click', event => {
-    if (event.target.id === 'voiceOverlay') closeOverlay();
+    if (event.target.id === 'voiceOverlay') transition(VOICE_EVENT.CANCEL);
   });
 
   // Esc sulkee paneelin, kuten dialogeissa kuuluu.
   document.addEventListener('keydown', event => {
-    if (event.key === 'Escape' && el('voiceOverlay').classList.contains('open')) closeOverlay();
+    if (event.key === 'Escape' && el('voiceOverlay').classList.contains('open')) transition(VOICE_EVENT.CANCEL);
   });
+
+  // EI TAUSTAMIKROFONIA: kun sivu piilotetaan tai suljetaan (välilehden vaihto,
+  // sovellus taustalle, navigointi), mikrofoni sammuu ja kuunteleva paneeli sulkeutuu.
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) transition(VOICE_EVENT.HIDDEN);
+  });
+  window.addEventListener('pagehide', () => transition(VOICE_EVENT.HIDDEN));
 
   // Tunnistettu teksti: käyttäjä voi muokata ennen tulkintaa.
   const transcriptInput = el('vfTranscriptText');
   el('voiceTranscriptContinueBtn').addEventListener('click', () => {
     submitTranscript(transcriptInput.value, {});
   });
-  el('voiceTranscriptCancelBtn').addEventListener('click', closeOverlay);
+  el('voiceTranscriptCancelBtn').addEventListener('click', () => transition(VOICE_EVENT.CANCEL));
   el('voiceTranscriptRetryBtn').addEventListener('click', startVoiceFlow);
   transcriptInput.addEventListener('keydown', event => {
     if (event.key === 'Enter') { event.preventDefault(); submitTranscript(transcriptInput.value, {}); }

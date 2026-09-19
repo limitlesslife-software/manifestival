@@ -172,15 +172,18 @@ export function closeSearch() {
 }
 
 /** Avaa hakupaneeli ja tyhjennä edellinen haku. */
-export function openSearch() {
+export function openSearch(query = '') {
   openOverlay();
   currentResult = null;
+  // Klikkaus antaa tapahtumaolion: vain merkkijono kelpaa esitäytöksi.
+  const prefill = typeof query === 'string' ? query : '';
   const input = maybe('searchInput');
   const results = maybe('searchResults');
   const commandBtn = maybe('searchCommandBtn');
-  if (input) input.value = '';
+  if (input) input.value = prefill;
   if (results) results.innerHTML = '';
   if (commandBtn) commandBtn.hidden = true;
+  if (prefill) runSearch();
   if (input) input.focus();
 }
 

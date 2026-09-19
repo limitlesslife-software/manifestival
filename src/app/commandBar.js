@@ -28,6 +28,9 @@ import { AUDIT_RESULT } from '../domain/audit.js';
 import { logEvent } from '../lib/logger.js';
 import { reconcileTemporal } from '../ai/temporalReconcile.js';
 
+/** Vaiheraportti (onPhase) on valinnainen: ilman sitä vaiheista ei kerrota kenellekään. */
+const NO_PHASE = () => {};
+
 function finish(auditId, changes) {
   completeAudit(auditId, changes);
 }
@@ -43,8 +46,9 @@ function finish(auditId, changes) {
  * samalla periaatteella kuin aiCommands.js:n `runAiCommand({confirm})` —
  * jotta vahvistuksen läpäisy/esto on yksikkötestattavissa ilman DOM:ia.
  */
-async function confirmAndExecute(proposal, auditId, confirmFn) {
+async function confirmAndExecute(proposal, auditId, confirmFn, phase) {
   if (proposal.requiresConfirmation) {
+    phase('confirmation');
     const accepted = await confirmFn(proposal);
     if (!accepted) {
       finish(auditId, { confirmed: false, executed: false, result: AUDIT_RESULT.CANCELLED });
@@ -52,6 +56,7 @@ async function confirmAndExecute(proposal, auditId, confirmFn) {
     }
   }
 
+  phase('executing');
   const result = await executeProposal(proposal, handlers);
   logEvent('command.executed', {
     intent: proposal.command.intent, risk: proposal.command.risk, ok: Boolean(result.ok),
@@ -85,6 +90,7 @@ async function confirmAndExecute(proposal, auditId, confirmFn) {
  * @param {object} ui { confirmFn, chooseFn } — injektoitavissa testeissä
  */
 async function handleProposal(proposal, inputText, ui) {
+  const phase = ui.phase || NO_PHASE;
   const auditId = recordProposal(proposal);
 
   if (proposal.status === PROPOSAL_STATUS.REJECTED) {
@@ -99,6 +105,7 @@ async function handleProposal(proposal, inputText, ui) {
       return { ok: false, status: proposal.status, reason: proposal.reason };
     }
 
+    phase('target_selection');
     const chosen = await ui.chooseFn(proposal.candidates, proposal.reason);
     if (!chosen) {
       finish(auditId, { confirmed: false, executed: false, result: AUDIT_RESULT.CANCELLED });
@@ -112,7 +119,8 @@ async function handleProposal(proposal, inputText, ui) {
     return handleProposal(resolved, inputText, ui);
   }
 
-  return confirmAndExecute(proposal, auditId, ui.confirmFn);
+  phase('review');
+  return confirmAndExecute(proposal, auditId, ui.confirmFn, phase);
 }
 
 /**
@@ -128,12 +136,17 @@ async function handleProposal(proposal, inputText, ui) {
  * @param {Function} [options.confirmFn] testejä varten; oletus ui/confirm.js confirmProposal
  * @param {Function} [options.chooseFn] testejä varten; oletus ui/confirm.js chooseTarget
  * @param {Function} [options.fetchImpl] testejä varten
+ * @param {(phase:string) => void} [options.onPhase] vaiheraportti: 'classifying' | 'review' |
+ *   'target_selection' | 'confirmation' | 'executing' (puheen tilakone käyttää; ei muuta käyttäytymistä)
  */
 export async function runTypedCommand(text, {
-  source = 'text', confirmFn = confirmProposal, chooseFn = chooseTarget, fetchImpl
+  source = 'text', confirmFn = confirmProposal, chooseFn = chooseTarget, fetchImpl, onPhase
 } = {}) {
   const trimmed = String(text ?? '').trim();
   if (!trimmed) return { ok: false, status: 'empty' };
+
+  const phase = typeof onPhase === 'function' ? onPhase : NO_PHASE;
+  phase('classifying');
 
   const today = fmtISO(todayMidnight());
   const weekday = weekdayName(new Date());
@@ -162,5 +175,5 @@ export async function runTypedCommand(text, {
     intent: proposal.command ? proposal.command.intent : null,
     risk: proposal.command ? proposal.command.risk : null
   });
-  return handleProposal(proposal, trimmed, { confirmFn, chooseFn });
+  return handleProposal(proposal, trimmed, { confirmFn, chooseFn, phase });
 }
