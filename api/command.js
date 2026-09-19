@@ -75,28 +75,73 @@ const ALLOWED_INTENTS = [
   'show_day_plan', 'show_week_plan'
 ];
 
+/**
+ * Esimerkkipäivä kehotteen esimerkeille: maanantai 2026-03-02.
+ *
+ * Esimerkit ovat KIINTEITÄ ja niiden päivämäärät on laskettu tätä päivää
+ * vasten. tests/ai-command-prompt.test.mjs ajaa jokaisen esimerkin
+ * tuotoksen oikean skeeman (resolveCommand) ja suomen ajanlausekkeiden
+ * jäsentimen (src/domain/fiTemporal.js) läpi, joten kehote ei voi
+ * ajautua sovelluksen todellisesta sopimuksesta.
+ */
+const EXAMPLE_TODAY = '2026-03-02';
+
+const PROMPT_EXAMPLES = [
+  { input: 'Lisää tehtävä pestä auto huomenna', output: { intent: 'create_task', title: 'Pese auto', date: '2026-03-03' } },
+  { input: 'Muistuta minua huomenna kello 8 soittamaan Matille', output: { intent: 'create_task', title: 'Soita Matille', date: '2026-03-03', time: '08:00' } },
+  { input: 'Muistuta perjantaina puoli yhdeksältä hakemaan paketti', output: { intent: 'create_task', title: 'Hae paketti', date: '2026-03-06', time: '08:30' } },
+  { input: 'Siirrä auton pesu huomiselta sunnuntaille', output: { intent: 'reschedule_task', targetName: 'Auton pesu', date: '2026-03-08' } },
+  { input: 'Siirrä palaveri kahdella tunnilla eteenpäin', output: { intent: 'reschedule_task', targetName: 'Palaveri', shiftMinutes: 120 } },
+  { input: 'Merkitse auton pesu tehdyksi', output: { intent: 'complete_task', targetName: 'Auton pesu' } },
+  { input: 'Poista muistutus lääkäri', output: { intent: 'delete_task', targetName: 'Lääkäri' } },
+  { input: 'Merkitse sähkölasku maksetuksi', output: { intent: 'mark_bill_paid', targetName: 'Sähkölasku' } },
+  { input: 'Lisää projekti autotallin remontti, määräaika kuun lopussa', output: { intent: 'create_project', name: 'Autotallin remontti', deadline: '2026-03-31' } },
+  { input: 'Näytä ensi viikko', output: { intent: 'show_week_plan', date: '2026-03-09' } },
+  { input: 'Etsi kaikki rengastilaukseen liittyvät tehtävät', output: { intent: 'unknown' } },
+  { input: 'Mikä sää huomenna on?', output: { intent: 'unknown' } }
+];
+
 function buildPrompt({ text, today, weekday }) {
-  return `Tämän hetken päivämäärä on ${today}${weekday ? ` (${weekday})` : ''}.
+  const examples = PROMPT_EXAMPLES
+    .map(example => JSON.stringify(example.input) + ' -> ' + JSON.stringify(example.output))
+    .join('\n');
 
-Käyttäjä kirjoitti tai sanoi tämän suomenkielisen KOMENNON elämänhallintasovellukseen: ${JSON.stringify(text)}
-
-Tulkitse, mitä käyttäjä haluaa tehdä. Valitse TÄSMÄLLEEN yksi näistä intent-arvoista:
-${ALLOWED_INTENTS.join(', ')}
-
-Jos lause ei selvästi vastaa mitään näistä, tai se on uuden asian LUOMISTA eikä olemassa olevan muokkaamista, vastaa intentillä "unknown".
-
-SÄÄNNÖT:
-- ÄLÄ keksi tunnistetta (id). Kohde tunnistetaan nimen perusteella selaimessa: käytä "targetName" (tai "targetTitle") sille, mihin komento kohdistuu.
-- Jos käyttäjä antaa kohteelle UUDEN nimen, käytä "newTitle" (tai "newName") -- ÄLÄ ylikirjoita "targetName"-kenttää sillä.
-- Anna VAIN ne kentät, jotka käyttäjä oikeasti mainitsi. Älä täytä kenttiä, joita ei mainittu.
-- Suhteellinen ajansiirto ("kahdella tunnilla eteenpäin/taaksepäin") menee kenttään "shiftMinutes" (negatiivinen = taaksepäin).
-- Rahasumma menee kenttään "amount" euroina (esim. 49.90), ei sentteinä.
-- Päivämäärät muodossa YYYY-MM-DD, kellonajat muodossa HH:MM.
-- Kategoria (jos mainittu): yksi näistä: tyo, perhe, hyvinvointi, harrastus, koti, kehitys, talous, muu.
-- Prioriteetti (jos mainittu): yksi näistä: korkea, normaali, matala.
-
-Vastaa VAIN JSON-objektilla, ei muuta tekstiä eikä koodilohkomerkintöjä. Sisällytä vain oleelliset kentät:
-{"intent":"<yksi sallituista tai \\"unknown\\">","targetName":"tai null","newTitle":"tai null","title":"tai null","name":"tai null","date":"tai null","time":"tai null","endTime":"tai null","deadline":"tai null","dueDate":"tai null","targetDate":"tai null","durationMinutes":"tai null","shiftMinutes":"tai null","amount":"tai null","category":"tai null","priority":"tai null","note":"tai null","recurrence":"tai null","weekdays":"tai null","active":"tai null","status":"tai null","enabled":"tai null"}`;
+  return [
+    'Tämän hetken päivämäärä on ' + today + (weekday ? ' (' + weekday + ')' : '') + '.',
+    '',
+    'Käyttäjä kirjoitti tai sanoi tämän suomenkielisen KOMENNON elämänhallintasovellukseen: ' + JSON.stringify(text),
+    '',
+    'Tulkitse, mitä käyttäjä haluaa tehdä. Valitse TÄSMÄLLEEN yksi näistä intent-arvoista:',
+    ALLOWED_INTENTS.join(', '),
+    '',
+    'LUONTI vs. MUOKKAUS (tärkein ero):',
+    '- Jos käyttäjä haluaa LISÄTÄ, LUODA tai saada MUISTUTUKSEN uudesta asiasta ("lisää tehtävä ...", "muistuta minua ...", "luo rutiini ...", "uusi projekti ...", "lisää lasku ..."), valitse create_*-intent. Muistutus ja tehtävä ovat molemmat create_task.',
+    '- Jos käyttäjä viittaa OLEMASSA OLEVAAN asiaan ja haluaa muuttaa, siirtää, merkitä tehdyksi tai maksetuksi, palauttaa keskeneräiseksi tai poistaa sen, valitse update_*, reschedule_task, complete_task, uncomplete_task, mark_bill_paid tai delete_* ja kerro kohde kentässä "targetName".',
+    '- Vastaa "unknown" VAIN kun lause ei ole mikään näistä: kysymys, keskustelu, haku ("etsi ...") tai jotain jota sovellus ei osaa. ÄLÄ vastaa "unknown" pelkästään siksi, että lause on uuden asian luomista.',
+    '',
+    'SÄÄNNÖT:',
+    '- ÄLÄ keksi tunnistetta (id). Kohde tunnistetaan nimen perusteella selaimessa: käytä "targetName" (tai "targetTitle") sille, mihin komento kohdistuu.',
+    '- Jos käyttäjä antaa kohteelle UUDEN nimen, käytä "newTitle" (tai "newName") -- ÄLÄ ylikirjoita "targetName"-kenttää sillä.',
+    '- Anna VAIN ne kentät, jotka käyttäjä oikeasti mainitsi. Älä täytä kenttiä, joita ei mainittu.',
+    '- Suhteellinen ajansiirto ("kahdella tunnilla eteenpäin/taaksepäin") menee kenttään "shiftMinutes" (negatiivinen = taaksepäin).',
+    '- Rahasumma menee kenttään "amount" euroina (esim. 49.90), ei sentteinä.',
+    '- Päivämäärät muodossa YYYY-MM-DD, kellonajat muodossa HH:MM.',
+    '- Kategoria (jos mainittu): yksi näistä: tyo, perhe, hyvinvointi, harrastus, koti, kehitys, talous, muu.',
+    '- Prioriteetti (jos mainittu): yksi näistä: korkea, normaali, matala.',
+    '',
+    'PÄIVÄT JA KELLONAJAT SUOMEKSI:',
+    '- "tänään" = tämän päivän päivämäärä; "huomenna" = seuraava päivä; "ylihuomenna" = kaksi päivää eteenpäin.',
+    '- Viikonpäivä ("perjantaina", "maanantaiksi", "sunnuntaille") = seuraava kyseinen päivä TÄMÄN PÄIVÄN JÄLKEEN. "Ensi maanantaina" = seuraava maanantai.',
+    '- "Kuun lopussa" = kuukauden viimeinen päivä. "Ensi viikolla" ilman päivää: älä keksi päivää (näyttökomennossa käytä ensi viikon maanantaita).',
+    '- "klo 8" = 08:00. "Puoli yhdeksältä" = 08:30 (suomessa "puoli yhdeksän" on kahdeksan ja puoli). "Varttia vaille yhdeksän" = 08:45. "Varttia yli kahdeksan" = 08:15.',
+    '- Jos kellonaikaa ei sanota ("aamulla", "illalla"), ÄLÄ keksi sitä: jätä "time" pois.',
+    '',
+    'ESIMERKKEJÄ (esimerkeissä tänään on ' + EXAMPLE_TODAY + ', maanantai):',
+    examples,
+    '',
+    'Vastaa VAIN JSON-objektilla, ei muuta tekstiä eikä koodilohkomerkintöjä. Sisällytä vain oleelliset kentät:',
+    '{"intent":"<yksi sallituista tai \\"unknown\\">","targetName":"tai null","newTitle":"tai null","title":"tai null","name":"tai null","date":"tai null","time":"tai null","endTime":"tai null","deadline":"tai null","dueDate":"tai null","targetDate":"tai null","durationMinutes":"tai null","shiftMinutes":"tai null","amount":"tai null","category":"tai null","priority":"tai null","note":"tai null","recurrence":"tai null","weekdays":"tai null","active":"tai null","status":"tai null","enabled":"tai null"}'
+  ].join('\n');
 }
 
 module.exports = async (req, res) => {
@@ -184,4 +229,6 @@ module.exports = async (req, res) => {
 // Vientejä testejä varten. Vercel käyttää vain yllä olevaa funktiota.
 module.exports.buildPrompt = buildPrompt;
 module.exports.ALLOWED_INTENTS = ALLOWED_INTENTS;
+module.exports.PROMPT_EXAMPLES = PROMPT_EXAMPLES;
+module.exports.EXAMPLE_TODAY = EXAMPLE_TODAY;
 module.exports.RATE_LIMIT = RATE_LIMIT;

@@ -125,7 +125,9 @@ test('resume + online samaan aikaan: toinen pyyntö odottaa ja ajetaan kerran pe
   controller.notifyOnline();
   controller.refreshNow(); controller.refreshNow(); controller.refreshNow();
   await clock.advance(RECONNECT_DEBOUNCE_MS + 1);
-  await new Promise(resolve => setTimeout(resolve, 20));
+  // Odota kunnes ketju on valmis (ei kiinteää viivettä: kuormitettu kone hidastaa).
+  for (let i = 0; i < 200 && (running > 0 || runs < 2); i += 1) await new Promise(resolve => setTimeout(resolve, 5));
+  await new Promise(resolve => setTimeout(resolve, 30));
   assert.equal(peak, 1, 'ei koskaan kahta rinnakkaista päivitystä');
   assert.ok(runs <= 3 && runs >= 2, 'ajokertoja ' + runs);
 });

@@ -26,6 +26,7 @@ import { showError, notify } from '../ui/toast.js';
 import { fmtISO, todayMidnight } from '../lib/datetime.js';
 import { AUDIT_RESULT } from '../domain/audit.js';
 import { logEvent } from '../lib/logger.js';
+import { reconcileTemporal } from '../ai/temporalReconcile.js';
 
 function finish(auditId, changes) {
   completeAudit(auditId, changes);
@@ -149,7 +150,13 @@ export async function runTypedCommand(text, {
     return { ok: false, status: 'error', reason: classified.error.userMessage };
   }
 
-  const proposal = buildProposal(classified.value.raw, { inputText: trimmed });
+  // Mallin päivä ja kellonaika vs. käyttäjän oma lause: korjataan vain kun
+  // jäsennin on yksiselitteinen (ks. ai/temporalReconcile.js).
+  const reconciled = reconcileTemporal(classified.value.raw, trimmed, today);
+  if (reconciled.corrections.length > 0) {
+    logEvent('command.reconciled', { fields: reconciled.corrections.join(',') });
+  }
+  const proposal = buildProposal(reconciled.raw, { inputText: trimmed });
   logEvent('command.proposal', {
     status: proposal.status,
     intent: proposal.command ? proposal.command.intent : null,

@@ -39,6 +39,9 @@ import {
   AUDIT_RESULT, summarizeInput, appendAuditEntry, completeAuditEntry
 } from '../domain/audit.js';
 import { formatMoney } from '../domain/money.js';
+import { categoryLabel } from '../domain/categories.js';
+import { priorityLabel } from '../domain/priority.js';
+import { weekdayShort } from '../domain/routine.js';
 import { getState, setAiAudit } from './state.js';
 import { aiAuditRepo } from '../data/collectionsRepo.js';
 import { logError } from '../lib/result.js';
@@ -115,11 +118,19 @@ function fieldLabel(field) {
 /** Laskun tilan luettavat nimet. Muut tilat (tavoite, projekti) näytetään sellaisenaan. */
 const BILL_STATUS_LABELS = Object.freeze({ open: 'avoin', paid: 'maksettu', cancelled: 'peruttu' });
 
+const RECURRENCE_LABELS = Object.freeze({
+  daily: 'päivittäin', weekdays: 'arkipäivisin', weekly: 'viikoittain', custom_weekdays: 'valittuina viikonpäivinä'
+});
+
 function formatValue(field, value, entity) {
   if (value === null || value === undefined || value === '') return '—';
   if (field === 'status' && Object.prototype.hasOwnProperty.call(BILL_STATUS_LABELS, value)) {
     return BILL_STATUS_LABELS[value];
   }
+  if (field === 'category') return categoryLabel(value);
+  if (field === 'priority') return priorityLabel(value);
+  if (field === 'recurrence' && Object.prototype.hasOwnProperty.call(RECURRENCE_LABELS, value)) return RECURRENCE_LABELS[value];
+  if (field === 'weekdays' && Array.isArray(value)) return value.map(weekdayShort).filter(Boolean).join(', ');
   if (field === 'amountMinor') return formatMoney(value, (entity && entity.currency) || 'EUR');
   if (field === 'completed' || field === 'active') return value ? 'kyllä' : 'ei';
   if (Array.isArray(value)) return value.join(', ');
@@ -135,6 +146,18 @@ function formatValue(field, value, entity) {
  * samasta payloadista jonka käsittelijä suorittaa: esikatselu ja suoritus
  * eivät voi erota toisistaan.
  */
+/** Vain ne kentät, joilla on arvo. Tyhjä lista -> null (ei rivejä). */
+function presentFields(payload, fields) {
+  const out = {};
+  for (const field of fields) {
+    const value = payload[field];
+    if (value === null || value === undefined || value === '') continue;
+    if (Array.isArray(value) && value.length === 0) continue;
+    out[field] = value;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
 function derivedChanges(command, entity) {
   const payload = command.payload || {};
   switch (command.intent) {
@@ -151,6 +174,15 @@ function derivedChanges(command, entity) {
     case 'complete_task': return { completed: true };
     case 'uncomplete_task': return { completed: false };
     case 'mark_bill_paid': return { status: 'paid' };
+    // Luonti: näytetään mitä syntyy. Otsikko on jo kuvauksessa; muut asetetut
+    // kentät (päivä, aika, kesto ...) muuten jäisivät käyttäjältä näkemättä.
+    case 'create_task':
+      return presentFields(payload, ['date', 'time', 'endTime', 'durationMinutes', 'deadline', 'category', 'priority', 'note']);
+    case 'create_routine':
+      return presentFields(payload, ['recurrence', 'weekdays', 'preferredTime', 'durationMinutes', 'category', 'priority']);
+    case 'create_goal': return presentFields(payload, ['targetDate', 'category', 'priority']);
+    case 'create_project': return presentFields(payload, ['deadline', 'category', 'priority']);
+    case 'create_bill': return presentFields(payload, ['amountMinor', 'dueDate']);
     default: return null;
   }
 }
