@@ -112,12 +112,47 @@ function fieldLabel(field) {
   return labels[field] || field;
 }
 
+/** Laskun tilan luettavat nimet. Muut tilat (tavoite, projekti) näytetään sellaisenaan. */
+const BILL_STATUS_LABELS = Object.freeze({ open: 'avoin', paid: 'maksettu', cancelled: 'peruttu' });
+
 function formatValue(field, value, entity) {
   if (value === null || value === undefined || value === '') return '—';
+  if (field === 'status' && Object.prototype.hasOwnProperty.call(BILL_STATUS_LABELS, value)) {
+    return BILL_STATUS_LABELS[value];
+  }
   if (field === 'amountMinor') return formatMoney(value, (entity && entity.currency) || 'EUR');
   if (field === 'completed' || field === 'active') return value ? 'kyllä' : 'ei';
   if (Array.isArray(value)) return value.join(', ');
   return String(value);
+}
+
+/**
+ * Muutokset komennoille, joiden payload ei kanna valmista `changes`-oliota.
+ *
+ * Ilman tätä siirto, valmiiksi merkintä ja maksun merkintä näkyisivät
+ * vahvistuksessa pelkkänä kuvauksena ilman "nykyinen -> uusi" -rivejä, ja
+ * käyttäjä hyväksyisi muutoksen näkemättä mitä se tekee. Johdetaan
+ * samasta payloadista jonka käsittelijä suorittaa: esikatselu ja suoritus
+ * eivät voi erota toisistaan.
+ */
+function derivedChanges(command, entity) {
+  const payload = command.payload || {};
+  switch (command.intent) {
+    case 'reschedule_task': {
+      if (payload.shiftMinutes != null) {
+        const shifted = applyShift(entity, payload.shiftMinutes);
+        return shifted ? { date: shifted.date, time: shifted.time } : null;
+      }
+      const changes = {};
+      if (payload.date) changes.date = payload.date;
+      if (payload.time) changes.time = payload.time;
+      return Object.keys(changes).length ? changes : null;
+    }
+    case 'complete_task': return { completed: true };
+    case 'uncomplete_task': return { completed: false };
+    case 'mark_bill_paid': return { status: 'paid' };
+    default: return null;
+  }
 }
 
 /**
@@ -127,7 +162,7 @@ function formatValue(field, value, entity) {
  * Pelkkä "Muuta tehtävää: Hammaslääkäri" ei riitä päätöksen pohjaksi.
  */
 export function buildChangeRows(command, entity) {
-  const changes = (command.payload && command.payload.changes) || null;
+  const changes = (command.payload && command.payload.changes) || derivedChanges(command, entity);
   if (!changes) return [];
 
   return Object.entries(changes).map(([field, next]) => ({
