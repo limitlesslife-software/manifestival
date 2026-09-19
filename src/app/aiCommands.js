@@ -415,7 +415,12 @@ export async function executeProposal(proposal, handlers = {}) {
   }
 
   const { command, target } = proposal;
-  const handler = handlers[command.intent];
+  // OMA ominaisuus, ei prototyypistä peritty: handlers['constructor'] tai
+  // handlers['toString'] olisi muuten "kytketty" funktio. Allowlist estää
+  // nämä jo aiemmin, tämä on toinen, itsenäinen kerros.
+  const handler = Object.prototype.hasOwnProperty.call(handlers, command.intent)
+    ? handlers[command.intent]
+    : undefined;
 
   if (typeof handler !== 'function') {
     // Komento on skeemassa mutta sitä ei ole kytketty. Rehellinen

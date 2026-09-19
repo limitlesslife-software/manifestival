@@ -122,8 +122,22 @@ function cleanString(value, maxLength) {
   return trimmed.slice(0, maxLength);
 }
 
+/**
+ * Tiukka luku: numero tai numeromerkkijono, ei muuta.
+ *
+ * Number(true) on 1, Number(['5']) on 5 ja Number([]) on 0 -- pelkkä
+ * Number()-muunnos päästäisi läpi totuusarvot ja taulukot, jotka mallin
+ * ei ole tarkoitus lähettää lukuina. Palauttaa NaN, jos arvo ei ole
+ * yksiselitteinen luku; kutsuja tarkistaa Number.isFinite.
+ */
+function strictNumber(value) {
+  if (typeof value === 'number') return value;
+  if (typeof value === 'string' && /^\s*-?\d+(\.\d+)?\s*$/.test(value)) return Number(value);
+  return NaN;
+}
+
 function cleanMinutes(value, max = 1440) {
-  const n = Number(value);
+  const n = strictNumber(value);
   if (!Number.isFinite(n) || n <= 0) return null;
   return Math.min(Math.round(n), max);
 }
@@ -137,7 +151,7 @@ function cleanMinutes(value, max = 1440) {
  */
 function cleanAmountMinor(value) {
   if (value === null || value === undefined || value === '') return null;
-  const n = Number(value);
+  const n = strictNumber(value);
   if (!Number.isFinite(n) || n < 0) return null;
   return Math.round(n * 100);
 }
@@ -397,7 +411,7 @@ export const COMMANDS = Object.freeze({
       const raw_shift = raw.shiftMinutes;
       let shiftMinutes = null;
       if (raw_shift != null) {
-        const n = Number(raw_shift);
+        const n = strictNumber(raw_shift);
         if (Number.isFinite(n) && n !== 0 && Math.abs(n) <= 1440) shiftMinutes = Math.round(n);
         else rejected.push('shiftMinutes');
       }
@@ -595,7 +609,7 @@ export const COMMANDS = Object.freeze({
       }
 
       if (raw.manualProgress != null) {
-        const value = Number(raw.manualProgress);
+        const value = strictNumber(raw.manualProgress);
         if (Number.isFinite(value) && value >= 0 && value <= 100) {
           changes.manualProgress = Math.round(value);
         } else rejected.push('manualProgress');
@@ -818,13 +832,13 @@ export const COMMANDS = Object.freeze({
 
       for (const field of ['taskLeadMinutes', 'routineLeadMinutes']) {
         if (raw[field] == null) continue;
-        const value = Number(raw[field]);
+        const value = strictNumber(raw[field]);
         if (Number.isFinite(value) && value >= 0 && value <= 240) changes[field] = Math.round(value);
         else rejected.push(field);
       }
 
       if (raw.maxPerDay != null) {
-        const value = Number(raw.maxPerDay);
+        const value = strictNumber(raw.maxPerDay);
         if (Number.isFinite(value) && value >= 1 && value <= 50) changes.maxPerDay = Math.round(value);
         else rejected.push('maxPerDay');
       }

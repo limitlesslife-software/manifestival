@@ -29,8 +29,23 @@ export const SCHEDULING = Object.freeze({
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 
+/**
+ * Onko arvo kalenterissa OLEVA ISO-päivä.
+ *
+ * Date.parse() hyväksyy "2026-02-31" ja "2026-04-31" (V8 sallii päivän 31
+ * kuukaudesta riippumatta), joten pelkkä jäsennys ei riitä: AI:n tai tuonnin
+ * mahdoton päivä menisi läpi ja kaatuisi vasta kannassa. Kiertotarkistus
+ * vaatii, että vuosi, kuukausi ja päivä säilyvät jäsennyksen jälkeen.
+ */
 export function isIsoDate(value) {
-  return typeof value === 'string' && ISO_DATE.test(value) && !Number.isNaN(Date.parse(value));
+  if (typeof value !== 'string' || !ISO_DATE.test(value)) return false;
+  const [year, month, day] = value.split('-').map(Number);
+  // setUTCFullYear eikä Date.UTC: jälkimmäinen tulkitsee vuodet 0-99 vuosiksi 1900-1999.
+  const date = new Date(0);
+  date.setUTCFullYear(year, month - 1, day);
+  return date.getUTCFullYear() === year
+    && date.getUTCMonth() === month - 1
+    && date.getUTCDate() === day;
 }
 
 export function isTimeOfDay(value) {

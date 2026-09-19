@@ -33,6 +33,14 @@ export const RESOLUTION = Object.freeze({
 export const MAX_CANDIDATES = 5;
 
 /**
+ * Osittaisosuman vähimmäispituus tasoittain. Täsmällinen osuma kelpaa
+ * kaiken pituisena, mutta yksi kirjain ("k") ei saa ratkaista kohdetta
+ * etuliitteenä eikä osajonona -- poistokomennolle se olisi käytännössä
+ * jokeri, joka osuu ainoaan sopivasti alkavaan riviin.
+ */
+const MIN_PARTIAL_LENGTH = Object.freeze({ prefix: 2, contains: 3 });
+
+/**
  * Normalisoi teksti vertailua varten.
  *
  * Tekee: NFC-normalisoinnin, välilyöntien siistimisen, pienaakkostuksen.
@@ -113,6 +121,7 @@ export function resolveByName({ entities = [], query, entityType = 'entity', fil
     .filter(entity => (filter ? filter(entity) : true));
 
   for (const tier of TIERS) {
+    if (needle.length < (MIN_PARTIAL_LENGTH[tier.name] || 0)) continue;
     const hits = pool.filter(entity => tier.test(normalizeForMatch(nameOf(entity)), needle));
     if (hits.length === 0) continue;
 
