@@ -437,17 +437,59 @@ export async function executeProposal(proposal, handlers = {}) {
     return { ok: false, reason: 'Kohde on ehtinyt muuttua tai kadota. Yritä uudelleen.' };
   }
 
+  // SUORITUSTUNNISTE: sama vahvistettu ehdotus suoritetaan enintään kerran.
+  // Tuplaklikkaus, verkkouudelleenyritys, käyttöliittymän kilpa-ajo tai
+  // resume-tapahtuma voi kutsua samaa suoritusta kahdesti -- ilman tätä
+  // kaksi "luo tehtävä" -kutsua loisi kaksi riviä. Tunnisteena on ehdotuksen
+  // audit.id (yksi per buildProposal-kutsu); uusi ehdotus saa uuden.
+  const executionId = proposal.audit && proposal.audit.id;
+  if (executionId != null) {
+    if (executionLedger.has(executionId)) {
+      logWarn('AI-komento oli jo suoritettu tai kesken', { intent: command.intent });
+      return { ok: false, duplicate: true, reason: 'Komento on jo suoritettu.' };
+    }
+    claimExecution(executionId);
+  }
+
   try {
     const result = await handler({
       payload: command.payload,
       target: fresh.target,
       entity: fresh.target ? fresh.target.entity : null
     });
-    return result && typeof result === 'object' ? result : { ok: true };
+    const normalized = result && typeof result === 'object' ? result : { ok: true };
+    // Selvästi epäonnistunut suoritus vapauttaa tunnisteen: käyttäjä saa
+    // yrittää uudelleen. Onnistunut PYSYY kirjattuna.
+    if (executionId != null && normalized.ok === false) executionLedger.delete(executionId);
+    return normalized;
   } catch (error) {
+    // Poikkeus on epäselvä (rivi on voinut ehtiä muuttua), joten tunniste
+    // PYSYY kirjattuna: automaattinen uudelleenyritys voisi tuplata luonnin.
     logWarn('AI-komennon suoritus epäonnistui', { intent: command.intent });
     return { ok: false, reason: 'Komennon suoritus epäonnistui.', cause: error };
   }
+}
+
+/**
+ * Suoritettujen (tai kesken olevien) ehdotusten tunnisteet.
+ *
+ * Rajattu FIFO: vain viimeisimmät tunnisteet muistetaan, jotta pitkään
+ * auki oleva sovellus ei kasvata muistia loputtomasti. Tunniste on
+ * satunnainen eikä sisällä käyttäjädataa.
+ */
+const LEDGER_LIMIT = 500;
+const executionLedger = new Set();
+
+function claimExecution(id) {
+  executionLedger.add(id);
+  if (executionLedger.size > LEDGER_LIMIT) {
+    executionLedger.delete(executionLedger.values().next().value);
+  }
+}
+
+/** Tyhjennä suoritusmuisti (uloskirjautuminen, testit). */
+export function resetExecutionLedger() {
+  executionLedger.clear();
 }
 
 /**
@@ -482,6 +524,7 @@ export async function runAiCommand(raw, { inputText, confirm, handlers, now } = 
   }
 
   const result = await executeProposal(proposal, handlers);
+  if (result.duplicate) return { ok: false, status: 'duplicate', reason: result.reason };
 
   completeAudit(auditId, {
     confirmed: true,

@@ -51,6 +51,12 @@ async function confirmAndExecute(proposal, auditId, confirmFn) {
   }
 
   const result = await executeProposal(proposal, handlers);
+
+  // Sama ehdotus oli jo suoritettu tai kesken: ensimmäisen suorituksen
+  // kirjaus ja tulos ovat totuus, eikä toinen kutsu saa ylikirjoittaa
+  // niitä epäonnistumisella tai näyttää virhettä onnistuneesta komennosta.
+  if (result.duplicate) return { ok: false, status: 'duplicate', reason: result.reason };
+
   finish(auditId, {
     confirmed: true,
     executed: Boolean(result.ok),
