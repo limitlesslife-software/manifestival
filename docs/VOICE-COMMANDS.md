@@ -9,7 +9,10 @@ Toteutus: `src/ai/intentSchema.js` (turvamalli), `src/ai/commandClient.js`
 `src/app/search.js` (kirjoitetun komennon käyttöliittymä)
 Testit: `tests/ai-command-client.test.mjs`, `tests/ai-command-handlers.test.mjs`,
 `tests/api-command-validation.test.mjs`, `tests/app-ai-commands.test.mjs`,
-`tests/command-bar.test.mjs`, `tests/voice-command-pipeline.test.mjs`
+`tests/command-bar.test.mjs`, `tests/voice-command-pipeline.test.mjs`,
+`tests/voice-flow.test.mjs`, `tests/fi-temporal.test.mjs`,
+`tests/temporal-reconcile.test.mjs`, `tests/ai-command-prompt.test.mjs`,
+`tests/ai-command-adversarial.test.mjs`, `tests/ai-command-idempotency.test.mjs`
 
 ---
 
@@ -202,14 +205,64 @@ muokattavana ennen kuin mitään tulkitaan (`voiceState-transcript`,
 `src/app/voice.js`) — puheentunnistus erehtyy säännöllisesti, ja virhe on
 halvin korjata ennen luokittelua.
 
+### Tilakone (`src/domain/voiceFlow.js`)
+
+Puheen käyttöliittymä ei aseta paneelia tapahtumakäsittelijöistä käsin: jokainen
+tapahtuma kulkee puhtaan reducerin `nextVoiceState(state, event)` läpi, ja vasta
+uusi tila piirretään (`applyState`). Kielletty siirtymä palauttaa saman tilan.
+
+```
+IDLE → REQUESTING_PERMISSION → LISTENING → TRANSCRIPT_READY ──SUBMIT──▶ CLASSIFYING
+        │ (ei tukea)                          ▲ (kirjoitettu: TYPE_FALLBACK ─SUBMIT─┘)
+        └▶ TYPE_FALLBACK                      │
+CLASSIFYING → [TARGET_SELECTION] → REVIEW → [CONFIRMATION] → EXECUTING → SUCCESS | ERROR | IDLE
+```
+
+Takuut (testattu `tests/voice-flow.test.mjs`):
+
+- Litterointi ei etene tulkintaan ilman käyttäjän SUBMIT-toimintoa.
+- Mikrofoni on päällä vain tiloissa `REQUESTING_PERMISSION` ja `LISTENING`;
+  jokaisessa muussa tilassa tunnistus sammutetaan.
+- `visibilitychange` (piilotettu) ja `pagehide` sammuttavat mikrofonin
+  (`HIDDEN`); ei taustakuuntelua, `continuous = false`, ääntä ei tallenneta
+  (ei `getUserMedia`/`MediaRecorder`).
+- Peruutus onnistuu joka tilasta; suljetun paneelin myöhäinen tulos ei avaa
+  paneelia uudelleen.
+- Vaiheet CLASSIFYING/REVIEW/TARGET_SELECTION/CONFIRMATION/EXECUTING tulevat
+  `commandBar.js`:n `onPhase`-kutsusta — samat vaiheet kuin kirjoitetulla
+  komennolla, ei omaa rinnakkaista logiikkaa.
+- Tilasiirtymät lokitetaan vain tilojen nimillä (`voice.state`), ei litterointia.
+
+### Alkureititys (`src/domain/utteranceRoute.js`)
+
+Selvä haku ("etsi …", "löydä …") ohjataan suoraan hakupaneeliin hakusanalla
+(täytesanat kuten "kaikki", "liittyvät", "tehtävät" poistetaan) eikä sitä lähetetä
+mallille. "Hae" jätetään tarkoituksella pois: "hae lapset koulusta klo 15" on
+tehtävä. Pelkkä "etsi" ilman hakusanaa, "etsimään", "etsin" jne. menevät mallille.
+
+### Luonti vs. komento ja suomen aikailmaisut
+
+- Palvelinkehote (`api/command.js` `buildPrompt`) erottaa LUONNIN ("lisää
+  tehtävä …", "muistuta minua …") olemassa olevan kohteen KOMENNOSTA ("siirrä …",
+  "merkitse … maksetuksi") ja sisältää validoidut esimerkit (`PROMPT_EXAMPLES`).
+- Deterministinen jäsennin `src/domain/fiTemporal.js` tunnistaa suomen aikailmaisut
+  (huomenna, ylihuomenna, ensi viikon perjantaina, viikonpäivät, klo 8, puoli
+  yhdeksältä = 08:30 (ei 09:30)) ja `src/ai/temporalReconcile.js` korjaa mallin päivämäärän tai
+  kellonajan VAIN kun jäsennin on yksiselitteinen; muuten mallin arvo jää
+  ennalleen. Korjaus kirjataan (`command.reconciled`, vain kenttien nimet).
+- Luonnin esikatselu ja muutoskomentojen "nykyinen → uusi" -rivit näytetään
+  vahvistusdialogissa (`derivedChanges`).
+- Rajoitus: mallin luokittelun tarkkuutta (create vs. command) ei voi testata
+  ilman oikeaa mallia; testit kattavat kehotteen sisällön, esimerkit ja koko
+  putken mallia matkivilla vastauksilla.
+
 ---
 
 ## Rajoitukset
 
-- Ei vapaamuotoista hakua puheella ("etsi kaikki rengastilaukseen
-  liittyvät tehtävät") — `COMMANDS`-rekisterissä ei ole hakuintenttiä,
-  vain nimettyjä muutos- ja lukukomentoja. Haku on oma, erillinen
-  käyttöliittymänsä (`src/app/search.js`).
+- Haku ei ole komento: `COMMANDS`-rekisterissä ei ole hakuintenttiä. Selvä
+  "etsi/löydä …" -lause ohjataan paikallisesti hakupaneeliin hakusanalla
+  (`utteranceRoute.js`); muut hakumuotoiset lauseet ("hae …") menevät mallille.
 - Ei monivaiheista keskustelua ("mihin aikaan?" → vastaus → jatka)
 - Ei kohdetehtävän tunnistusta epämääräisestä viittauksesta ("se eilinen")
 - Ei offline-tulkintaa — vaatii verkkoyhteyden

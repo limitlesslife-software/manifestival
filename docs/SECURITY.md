@@ -140,7 +140,9 @@ turvallisuusarvionsa — ei tämän laajennus.
 | `ANTHROPIC_API_KEY` | Vercelin ympäristömuuttuja | **EI** | Vain palvelinpuolen `api/parse.js`, `api/extract.js` ja `api/plan.js` lukevat. Ei koskaan selaimeen. |
 | Supabase URL | `index.html` | Kyllä | Julkinen projektin osoite |
 | Supabase anon-avain | `index.html` | Kyllä | Suunniteltu julkiseksi. Turva perustuu RLS:ään. |
-| Supabase `service_role` | **Ei missään** | **EI KOSKAAN** | Ohittaa RLS:n. Ei saa päätyä repoon, selaimeen eikä `api/`-koodiin. |
+| Supabase `service_role` | **Ei missään repossa, ei selaimessa, ei `api/`-koodissa** | **EI KOSKAAN** | Ohittaa RLS:n. Ainoa sallittu paikka on Supabasen oma Edge Function -salaisuusvarasto (alla). |
+| `SUPABASE_SECRET_KEYS` / `SUPABASE_SERVICE_ROLE_KEY` | Supabase Edge Function -salaisuudet (Supabase asettaa itse; **funktiota ei ole deployattu**) | **EI** | Vain `supabase/functions/delete-account`. `index.ts` välittää handlerille vain neljä nimettyä muuttujaa, ei koko ympäristöä. Repossa on vain muuttujien nimet. |
+| `DELETE_ACCOUNT_ALLOWED_ORIGINS` | Edge Function -salaisuus | Ei | Sallittujen selainlähteiden lista; tyhjä = kaikki selainpyynnöt hylätään. |
 
 ### Säännöt
 
@@ -323,10 +325,32 @@ rakennetta. Molemmat on testattu.
 | 2 | Anthropic-avain selkokielisenä työpöytätiedostossa | Avoin — kierrätysohje `docs/DEPLOYMENT.md` |
 | 3 | Poisto ilman vahvistusta | Korjattu — `src/ui/confirm.js` |
 | 4 | Kantavirheet vain `console.error`-lokiin | Korjattu — virhe näytetään ja muutos perutaan |
-| 5 | Ei datan vientiä eikä tilin poistoa (konsepti luku 24 vaatii) | Avoin |
+| 5 | Tilin poisto (konsepti luku 24) | Toteutettu paikallisesti, **EI KÄYTÖSSÄ**: Edge Function + esikatselu + vahvistus-UI + testit valmiit; funktiota ei ole deployattu ja `ACCOUNT_DELETION.endpointEnabled = false`. Ks. `docs/ACCOUNT-DELETION.md`. Datan vienti on toteutettu. |
+| 9 | Puheohjaus ja AI-komennot | Korjattu MEGA BUILD III:ssa: kaikki komennot yhden allowlist-putken kautta, vahvistus muutoksille, vanhentuneen kohteen suojaus, idempotenssi, tilakone (mikrofoni vain kuunteluvaiheessa), vastakkainasettelutestit (`tests/ai-command-adversarial.test.mjs`) |
+| 10 | Sijainti | Vain etualan kertahaku, koordinaatit vain muistissa, ei taustasijaintia; laitteella todentamatta. Ks. `docs/LOCATION-DEPARTURE-ARCHITECTURE.md` |
+| 11 | Offline-kirjausjono | Vain tehtävän lisäys/muokkaus; käyttäjäkohtainen avain, ei tunnisteita muille käyttäjille, ei poistoja/talousdataa/AI-komentoja jonoon. Ks. `docs/ARCHITECTURE.md` |
 | 6 | Ei service workeria, ei offline-tukea | Korjattu — `sw.js` |
 | 7 | Muistutusten sisältö näkyy laitteen lukitusnäytöllä | Hyväksytty — käyttäjä kytkee muistutukset itse |
 | 8 | Tavoiteviite voi osoittaa toisen käyttäjän tunnisteeseen | Hyväksytty — ks. migraation 0004 huomio viite-eheydestä |
+
+### Tilin poisto: Edge Function -salaisuusmalli
+
+`supabase/functions/delete-account` on ainoa koodi, joka tarvitsee
+palvelinpuolen avaimen, ja se on tarkoituksella erillään `api/`-välityksestä.
+
+- Käyttäjä tunnistetaan **kutsujan omasta Bearer-JWT:stä palvelimella**
+  (`auth.getUser`), ei pyynnön rungosta. Poisto vaatii sähköpostin ja lauseen
+  `POISTA TILINI`; muuten pyyntö hylätään ennen kuin mitään poistetaan.
+  Kuiva-ajo (`mode`) laskee vain rivimäärät eikä muuta mitään.
+- Poisto on yksi atominen `auth.admin.deleteUser`, koska kaikki käyttäjätaulut
+  viittaavat `auth.users(id) on delete cascade` -sääntöön (drift-testit
+  jäsentävät migraatiot: uusi taulu ilman cascadea kaataa testin).
+- Palvelinavain luetaan vain funktion ympäristöstä; selain-/repokoodissa ei
+  koskaan (`tests/account-deletion-function.test.mjs`, `tests/account-deletion-inventory.test.mjs`).
+- Sallitut selainlähteet rajataan `DELETE_ACCOUNT_ALLOWED_ORIGINS`-listalla;
+  virheilmoitukset eivät paljasta sisäistä tilaa.
+- **Käyttöönotto on omistajan erillinen päätös** (deploy, salaisuudet,
+  lähdelista, `endpointEnabled = true`). Sitä ei ole tehty.
 
 ---
 

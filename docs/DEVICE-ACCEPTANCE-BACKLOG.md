@@ -444,17 +444,105 @@ jää: oikea dialogi, oikea kosketus, oikea /api/command-verkkokutsu.
       pyörimään loputtomiin
 - [P2] Komennon suomenkielinen tulkinta on käytännössä riittävän
       tarkka yleisimmille lauseille (tuotelaatuasia, ei turva-asia)
-- [ ] **Puheohjattu komento EI OLE toteutettu tässä paketissa** —
-      vain kirjoitettu komento hakupaneelin kautta. Ks. raportin
-      "Mitä on yhä puuttuu" -osio.
+- Puheohjattu komento on toteutettu (MEGA BUILD III) samalla putkella;
+  laitehyväksyntä on osiossa "MEGA BUILD III" alla.
 
 ## Tilin poiston esikatselu (src/app/views/profile.js)
 
 - [P1] "Näytä mitä poistettaisiin" näyttää oikeat rivimäärät laitteen
       omasta, jo ladatusta tilasta
 - [P2] "Poista tili pysyvästi" -painike pysyy pois päältä ja selittää
-      miksi — **tätä ei pidä koskaan merkitä hyväksytyksi ennen kuin
-      palvelinpuolen poistotransaktio on olemassa ja testattu erikseen**
+      miksi (`ACCOUNT_DELETION.endpointEnabled = false`) — **tätä ei pidä
+      koskaan merkitä hyväksytyksi ennen kuin Edge Function on deployattu ja
+      kontrolloitu oikea poisto on tehty testitilillä.** Ks. "MEGA BUILD III".
+
+---
+
+## MEGA BUILD III — laitehyväksyntä (EI SUORITETTU)
+
+Kaikki alla oleva on koodattu ja testattu paikallisesti (selain-/mock-ympäristö,
+`node --test`). **Mitään ei ole ajettu fyysisellä laitteella, ADB:llä eikä
+tuotannossa.** Yhtäkään kohtaa ei saa merkitä hyväksytyksi ilman laiteajoa.
+
+### Puhekomennot (P0)
+
+- [P0] Mikrofonilupa pyydetään vasta kun käyttäjä avaa puhepaneelin; luvan
+      epäys näyttää selityksen ja "Kirjoita sen sijaan" -tilan
+- [P0] Puhuttu luontikomento ("lisää tehtävä pestä auto huomenna") näyttää
+      tunnistetun tekstin muokattavana, sitten vahvistuksen esikatselun;
+      mitään ei tallenneta ennen vahvistusta
+- [P0] Puhuttu muutoskomento ("siirrä auton pesu perjantaille") näyttää
+      "nykyinen → uusi" ja vaatii vahvistuksen
+- [P0] Epäselvä kohde (kaksi samannimistä) näyttää valintalistan
+- [P0] Peruutus jokaisessa vaiheessa (kuuntelu, teksti, vahvistus) ei muuta dataa
+- [P0] Sovelluksen vienti taustalle / näytön sammutus kuuntelun aikana
+      sammuttaa mikrofonin (Android-järjestelmän mikrofoni-ilmaisin sammuu)
+- [P0] Puhelu / toinen ääntä käyttävä sovellus keskeyttää kuuntelun siististi
+- [P1] "Etsi kaikki rengastilaukseen liittyvät tehtävät" avaa haun sanalla
+      "rengastilaukseen" (ei virhettä)
+- [P1] Tunnistuksen virhe ("ei puhetta", verkkovirhe) näyttää selkeän viestin
+      ja uudelleenyritys toimii; fokus palaa avaajapainikkeeseen suljettaessa
+- [P2] Suomen kielen tunnistuslaatu (`fi-FI`) arkilauseilla riittää
+
+### Sijainti (P1)
+
+- [P1] Sijaintilupa pyydetään vasta kun käyttäjä painaa "käytä sijaintia";
+      ei käynnistyksessä
+- [P1] Lupa evätty → selitys ja käyttäjän antama matka-aika toimii
+- [P1] Lupa evätty pysyvästi (`blocked`) → ohjaus järjestelmäasetuksiin, ei
+      toistuvaa kysymistä
+- [P1] Laitteen sijainti pois päältä → selkeä viesti, ei jumia
+- [P1] Kertahaku onnistuu; Androidin sijaintikuvake ei jää päälle haun jälkeen
+- [P0] **Koordinaatteja ei löydy** localStoragesta, IndexedDB:stä, lokeista,
+      viennistä eikä tilin inventaarioista (tarkista selaimen/WebView:n
+      tallennus etätarkastajalla)
+- [P0] Asetuksissa/luvissa **ei ole taustasijaintia** (vain "vain käytön aikana")
+
+### Lähtöaika ja ilmoitukset (P1)
+
+- [P1] Matka, jolla käyttäjän antama kesto → lähtöaika oikein; ilman kestoa
+      ei lähtöaikaa eikä ilmoitusta
+- [P1] Lähtöilmoitus (10 min ennen) saapuu ajallaan: sovellus auki, taustalla,
+      tapettuna, näyttö lukittuna, Doze-tilassa
+- [P1] Ilmoitus säilyy / ajastuu uudelleen laitteen uudelleenkäynnistyksen jälkeen
+- [P1] Lähtöajan muutos (kesto tai tehtävän aika muuttuu) siirtää ilmoituksen
+      eikä jätä vanhaa
+- [P1] Yön yli -matka, kesäajan vaihtuminen ja aikavyöhykkeen vaihto antavat
+      oikean lähtöhetken
+- [P1] Lähtöilmoitus saapuu hiljaisten tuntien aikana (omistajan päätös: kyllä)
+- [P2] Ilmoituskanavan asetukset (ääni/värinä) noudattavat käyttäjän valintoja
+
+### Offline-kirjausjono (P1)
+
+- [P0] Lentotila: tehtävän lisäys näkyy heti listassa merkittynä "odottaa
+      synkronointia"; ei häviä sovelluksen uudelleenkäynnistyksessä
+- [P0] Yhteyden palautuessa jono toistuu **kerran** (ei tuplia), merkintä poistuu
+- [P0] Tehtävän muokkaus offline + sama tehtävä muokattu toisella laitteella →
+      ristiriita ratkeaa ilman datan häviämistä (kenttäkohtainen yhdistäminen)
+- [P0] Uloskirjautuminen / käyttäjän vaihto: edellisen käyttäjän jono ei
+      näy eikä toistu toiselle käyttäjälle
+- [P1] Heikko/katkeileva verkko ei tuota rinnakkaisia toistoja
+- [P1] Jonoon **ei** päädy poistoja, taloutta, AI-komentoja eikä tilin toimintoja
+      (offline-tilassa niiden painikkeet kertovat miksi ne ovat pois päältä)
+- [P2] Suuri jono (50+) toistuu ilman jäätymistä
+
+### Tilin poisto (P0/P2)
+
+- [P0] Esikatselu (kuiva-ajo) näyttää oikeat rivimäärät ja **ei poista mitään**
+- [P0] Vahvistus vaatii sähköpostin ja lauseen; väärä syöte estää painikkeen
+- [P0] Poistopainike on pois käytöstä niin kauan kuin `endpointEnabled = false`
+- [ ] **Vasta omistajan päätöksellä, testitilillä:** kontrolloitu oikea poisto
+      (deploy → kuiva-ajo → poisto → kirjautuminen epäonnistuu → tiedot poissa)
+      — EI SUORITETTU, EI SAA SUORITTAA tuotantotilillä
+
+### Kesto ja ympäristö (P2)
+
+- [P2] Sovellus tapettu / Doze / uudelleenkäynnistys / kesäaika / aikavyöhyke
+      edellä oleville virroille (ks. ilmoitukset ja jono)
+- [P2] Puhe- ja jonopolut TalkBackilla: fokus, live-alueet, kosketuskohteet ≥ 48 dp
+- [P2] Puhepaneelin avaus ja tilanvaihdot pitkällä listalla ilman kuroutumista
+
+---
 
 ## Suorituskyky laitteella
 
