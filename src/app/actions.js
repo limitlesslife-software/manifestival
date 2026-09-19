@@ -25,6 +25,8 @@ import {
   volatileCollections, clearAllCollections
 } from '../data/collectionsRepo.js';
 import { newTaskId } from '../lib/rows.js';
+import { offline, isOnlineNow } from './offline.js';
+import { classifyError, ERROR_CLASS } from '../domain/offlineQueue.js';
 import { fmtISO, todayMidnight } from '../lib/datetime.js';
 import { normalizeTask, validateTask, SCHEDULING } from '../domain/task.js';
 import { normalizeRoutine, validateRoutine, normalizeException, EXCEPTION } from '../domain/routine.js';
@@ -209,7 +211,9 @@ export async function loadUserData() {
   // epäonnistunut haku EI KOSKAAN tyhjennä jo ladattua tilaa. Virhe
   // näytetään käyttäjälle, mutta sovellus ei kaadu eikä väitä tiedon
   // kadonneen.
-  if (!applyLoadResult('tasks', tasksResult, setTasks)) showError(tasksResult.error);
+  // Lähettämättömät offline-muutokset lisätään palvelimen listan päälle:
+  // muuten lataus korvaisi paikallisen tilan ja odottava tehtävä katoaisi näkyvistä.
+  if (!applyLoadResult('tasks', tasksResult, list => setTasks(offline.overlay(list)))) showError(tasksResult.error);
 
   if (profileResult.ok) {
     setProfile(profileResult.value.profile, profileResult.value.exists);
@@ -263,7 +267,33 @@ export async function loadUserData() {
  * Luo uusi tehtävä.
  * @returns {Promise<{ok:boolean, errors?:object, task?:object}>}
  */
-export async function createTask(input) {
+/**
+ * Verkko- tai istuntovirheen jälkeen muutos jonotetaan eikä peruta.
+ * Palvelimen hylkäys (validointi, RLS) EI jonoteta: sen toisto ei auttaisi.
+ */
+function canQueueAfter(error) {
+  const kind = classifyError(error, { offline: !isOnlineNow() });
+  return kind === ERROR_CLASS.NETWORK || kind === ERROR_CLASS.AUTH;
+}
+
+let queuedNoticeAt = 0;
+
+/** Kerro jonotuksesta, mutta ei jokaisella muutoksella (ei toast-ryöppyä). */
+function announceQueued() {
+  const at = Date.now();
+  if (at - queuedNoticeAt < 60000) return;
+  queuedNoticeAt = at;
+  notify('Ei yhteyttä: muutos tallennettiin laitteelle ja lähetetään kun yhteys palaa.', 5000);
+}
+
+/**
+ * Luo tehtävä.
+ *
+ * @param {object} input
+ * @param {{queueOffline?: boolean}} [options] queueOffline:false estää
+ *   offline-jonotuksen (AI-komennon suoritusta ei koskaan jonoteta)
+ */
+export async function createTask(input, options = {}) {
   const task = normalizeTask({
     ...input,
     id: newTaskId(),
@@ -278,10 +308,22 @@ export async function createTask(input) {
   if (task.isWake) clearOtherWakeFlagsInState(task.date, task.id);
   warnAboutVolatileFields(task);
 
-  const result = await tasksRepo.insertTask(task);
+  const mayQueue = options.queueOffline !== false && offline.isActive();
+  // Tiedossa oleva offline-tila: ei odoteta verkkokutsun aikakatkaisua.
+  const result = mayQueue && !isOnlineNow()
+    ? { ok: false, error: null, skipped: true }
+    : await tasksRepo.insertTask(task);
+
   if (!result.ok) {
+    if (mayQueue && (result.skipped || canQueueAfter(result.error))) {
+      const queued = offline.enqueueTaskCreate(task);
+      if (queued.ok) {
+        announceQueued();
+        return { ok: true, task, queued: true };
+      }
+    }
     removeTaskFromState(task.id); // peruutus
-    showError(result.error);
+    showError(result.error || 'Tehtävää ei voitu tallentaa: ei verkkoyhteyttä eikä tilaa offline-jonossa.');
     return { ok: false };
   }
 
@@ -293,7 +335,7 @@ export async function createTask(input) {
  * Muokkaa olemassa olevaa tehtävää.
  * @returns {Promise<{ok:boolean, errors?:object}>}
  */
-export async function editTask(id, changes) {
+export async function editTask(id, changes, options = {}) {
   const previous = findTask(id);
   if (!previous) return { ok: false };
 
@@ -328,10 +370,21 @@ export async function editTask(id, changes) {
   if (updated.isWake) clearOtherWakeFlagsInState(updated.date, id);
   warnAboutVolatileFields(updated);
 
-  const result = await tasksRepo.updateTask(updated);
+  const mayQueue = options.queueOffline !== false && offline.isActive();
+  const result = mayQueue && !isOnlineNow()
+    ? { ok: false, error: null, skipped: true }
+    : await tasksRepo.updateTask(updated);
+
   if (!result.ok) {
+    if (mayQueue && (result.skipped || canQueueAfter(result.error))) {
+      const queued = offline.enqueueTaskUpdate({ id, previous, updated });
+      if (queued.ok) {
+        if (queued.queued !== false) announceQueued();
+        return { ok: true, queued: queued.queued !== false };
+      }
+    }
     replaceTaskInState(id, previous); // peruutus
-    showError(result.error);
+    showError(result.error || 'Muutosta ei voitu tallentaa: ei verkkoyhteyttä eikä tilaa offline-jonossa.');
     return { ok: false };
   }
 
@@ -347,10 +400,23 @@ export async function toggleComplete(id) {
   const nextCompleted = !task.completed;
   patchTaskInState(id, { completed: nextCompleted });
 
-  const result = await tasksRepo.setCompleted(id, nextCompleted);
+  const mayQueue = offline.isActive();
+  const result = mayQueue && !isOnlineNow()
+    ? { ok: false, error: null, skipped: true }
+    : await tasksRepo.setCompleted(id, nextCompleted);
+
   if (!result.ok) {
+    if (mayQueue && (result.skipped || canQueueAfter(result.error))) {
+      const queued = offline.enqueueTaskUpdate({
+        id, previous: task, updated: { ...task, completed: nextCompleted }
+      });
+      if (queued.ok) {
+        announceQueued();
+        return true;
+      }
+    }
     patchTaskInState(id, { completed: task.completed }); // peruutus
-    showError(result.error);
+    showError(result.error || 'Merkintää ei voitu tallentaa: ei verkkoyhteyttä.');
     return false;
   }
   return true;

@@ -304,6 +304,10 @@ test('tunnistegeneraattori pysyy sovelluskerroksessa', () => {
     // ilmoituksille, matkasuunnitelmille ja saapuville riveille. Sama
     // perustelu kuin suunnittelulla: domain ei tuota tunnisteita.
     'src/app/assistantActions.js', 'src/app/capture.js',
+    // Offline-jono luo operaatiotunnisteet (idempotenssiavaimet). Domain
+    // (offlineQueue.js) ei tuota niitä: `createOperation` ottaa tunnisteen
+    // parametrina.
+    'src/app/offline.js',
     'src/data/schema.js', 'src/data/tasksRepo.js', 'src/lib/rows.js'
   ]);
 

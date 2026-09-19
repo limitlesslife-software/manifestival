@@ -140,3 +140,84 @@ export async function clearOtherWakeFlags(dateIso, exceptId) {
     return fail('Herätysmerkinnän päivitys ei onnistunut.', { cause, code: 'tasks.wake' });
   }
 }
+
+/**
+ * Hae yksi tehtävä tunnisteella. `value` on null, jos riviä ei ole.
+ * Käytetään offline-jonon toistossa: palvelimen nykytila ennen kirjoitusta.
+ */
+export async function getTask(id) {
+  try {
+    const { data, error } = await getClient()
+      .from(TABLE)
+      .select('*')
+      .eq('user_id', requireUserId())
+      .eq('id', id)
+      .maybeSingle();
+
+    if (error) return fail('Tehtävän haku ei onnistunut.', { cause: error, code: 'tasks.get' });
+    return ok(data ? fromRow(data) : null);
+  } catch (cause) {
+    return fail('Tehtävän haku ei onnistunut.', { cause, code: 'tasks.get' });
+  }
+}
+
+function sameColumn(a, b) {
+  if (a === b) return true;
+  return (a === null || a === undefined) && (b === null || b === undefined);
+}
+
+/**
+ * Osittainen kirjoitus: vain sarakkeet, jotka poikkeavat toisistaan.
+ *
+ * Molemmat puolet kulkevat payloadForin kautta (skeemaportti, normalisointi
+ * ja assertClientSafe), joten erotus ei voi sisältää saraketta, jota koko
+ * rivin kirjoitus ei saisi lähettää. `guards` kertoo jokaisen muuttuvan
+ * sarakkeen nykyarvon ehdollista kirjoitusta varten.
+ */
+function partialPayloadFor(next, current) {
+  const nextRow = payloadFor(next);
+  const currentRow = payloadFor(current);
+  const diff = {};
+  const guards = {};
+  for (const column of Object.keys(nextRow)) {
+    if (column === 'id') continue;
+    if (!sameColumn(nextRow[column], currentRow[column])) {
+      diff[column] = nextRow[column];
+      guards[column] = currentRow[column] === undefined ? null : currentRow[column];
+    }
+  }
+  return { diff, guards };
+}
+
+/**
+ * Päivitä vain muuttuneet sarakkeet EHDOLLISESTI (compare-and-set).
+ *
+ * `expected` on rivi sellaisena kuin kutsuja sen juuri luki. Jokainen
+ * muuttuva sarake ehdollistetaan siihen, että se on yhä `expected`-arvossaan
+ * -- jos joku ehti muuttaa sitä lukemisen ja kirjoituksen välissä,
+ * yhtään riviä ei päivity (`applied: false`) eikä palvelimen uudempaa
+ * arvoa ylikirjoiteta. Erotus laskee mikä oikeasti muuttuu.
+ *
+ * @returns {Promise<{ok:true,value:{applied:boolean,noop:boolean}}|{ok:false,error:object}>}
+ */
+export async function patchTask(id, changes, expected) {
+  try {
+    const { diff, guards } = partialPayloadFor({ ...expected, ...changes, id }, { ...expected, id });
+    if (Object.keys(diff).length === 0) return ok({ applied: true, noop: true });
+
+    let query = getClient()
+      .from(TABLE)
+      .update(diff)
+      .eq('user_id', requireUserId())
+      .eq('id', id);
+    for (const [column, value] of Object.entries(guards)) {
+      query = value === null ? query.is(column, null) : query.eq(column, value);
+    }
+
+    const { data, error } = await query.select('id');
+    if (error) return fail('Muutoksen tallennus ei onnistunut.', { cause: error, code: 'tasks.patch' });
+    return ok({ applied: Array.isArray(data) && data.length > 0, noop: false });
+  } catch (cause) {
+    return fail('Muutoksen tallennus ei onnistunut.', { cause, code: 'tasks.patch' });
+  }
+}

@@ -6,10 +6,11 @@
 // KAPEA tavoite.
 //
 // MITÄ TÄMÄ EI TEE
-// Tämä ei ole offline-synkronointi. Tehtäviä ei tallenneta jonoon eikä
-// lähetetä myöhemmin. Sellainen vaatisi konfliktimallin, jota ei ole vielä
-// suunniteltu, ja ilman sitä käyttäjä luulisi tallentaneensa jotain mitä ei
-// tallennettu. Ks. docs/ARCHITECTURE.md, kohta "Offline-malli".
+// Service worker EI synkronoi mitään: se välimuistittaa vain sovelluskuoren.
+// Tehtävän lisäyksen ja muokkauksen offline-jono on erillinen, rajattu
+// sovelluskerroksen ominaisuus (src/domain/offlineQueue.js), jolla on oma
+// konfliktimalli -- ei tässä tiedostossa. Ks. docs/ARCHITECTURE.md,
+// kohta "Offline-malli".
 //
 // STRATEGIA: NETWORK-FIRST
 // Sovelluksessa ei ole käännösvaihetta eikä tiedostonimissä sisältötiivistettä.
@@ -59,6 +60,9 @@ const SHELL = [
   '/src/app/main.js',
   '/src/app/navigation.js',
   '/src/app/notifications.js',
+  '/src/app/offline.js',
+  '/src/app/offlineStatus.js',
+  '/src/app/offlineSync.js',
   '/src/app/onboarding.js',
   '/src/app/planning.js',
   '/src/app/receiptCapture.js',
@@ -90,6 +94,7 @@ const SHELL = [
   '/src/data/config.js',
   '/src/data/memoryStore.js',
   '/src/data/notificationPrefsRepo.js',
+  '/src/data/offlineQueueStore.js',
   '/src/data/preferences.js',
   '/src/data/profileRepo.js',
   '/src/data/schema.js',
@@ -119,6 +124,7 @@ const SHELL = [
   '/src/domain/money.js',
   '/src/domain/notification.js',
   '/src/domain/notificationCenter.js',
+  '/src/domain/offlineQueue.js',
   '/src/domain/plan.js',
   '/src/domain/planScheduler.js',
   '/src/domain/priority.js',

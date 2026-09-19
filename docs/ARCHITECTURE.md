@@ -165,32 +165,73 @@ Yksityiskohdat: `docs/DOMAIN-MODEL.md`.
 
 ## Offline-malli
 
-`sw.js` toteuttaa **vain sovelluskuoren** offline-toiminnan: sivu avautuu,
-käyttöliittymä latautuu ja käyttäjälle kerrotaan näkyvästi, ettei verkkoa ole.
+Kaksi erillistä kerrosta:
 
-**Tämä ei ole offline-synkronointi.** Tehtäviä ei jonouteta eikä lähetetä
-myöhemmin.
+1. `sw.js` tekee **sovelluskuoresta** offline-kelpoisen: sivu avautuu,
+   käyttöliittymä latautuu ja käyttäjälle kerrotaan näkyvästi, ettei verkkoa ole.
+2. **Rajattu kirjausjono** (`src/domain/offlineQueue.js`,
+   `src/app/offlineSync.js`) säilyttää kaksi matalan riskin kirjausta,
+   kun verkko puuttuu: **tehtävän lisäys ja tehtävän muokkaus** (myös
+   valmis/kesken-merkintä).
 
-### Miksi ei
+### Mitä jonotetaan ja mitä EI
 
-Offline-kirjoitus ilman konfliktimallia on vaarallisempi kuin sen puuttuminen:
-käyttäjä luulisi tallentaneensa jotain, mitä ei tallennettu. Sama tehtävä voisi
-muuttua kahdella laitteella, eikä järjestelmällä olisi sääntöä siitä kumpi
-voittaa.
+| Jonotetaan | Ei koskaan (FORBIDDEN_OPERATIONS) |
+|---|---|
+| `tasks.create` | poisto (tehtävä, rutiini, tavoite, projekti) |
+| `tasks.update` | laskun maksu ja muu talouden mutaatio |
+| | AI-komennon suoritus |
+| | tilin poisto ja tilin asetukset |
 
-### Mitä myöhempi offline-synkronointi vaatisi
+Viivästetty toisto voisi tehdä peruuttamatonta vahinkoa vanhentuneen
+päätöksen perusteella, joten vain ne kirjaukset, joiden toisto on
+turvallinen, ovat jonossa. AI-käsittelijät antavat `NO_QUEUE`-lipun.
 
-1. **Muutosloki, ei tilan kopiointi.** Jono operaatioista (`lisää`, `muuta`,
-   `poista`) aikaleimoineen — ei "viimeisin kirjoitus voittaa" koko riville.
-2. **Palvelinpuolen aikaleimat.** Migraatio 0002 lisää `updated_at`-sarakkeen
-   ja triggerin; laitteen kelloon ei voi luottaa.
-3. **Konfliktisääntö per kenttä.** Kuittaus ja ajan muutos ovat eri asioita:
-   toinen voi sulautua, toinen vaatii käyttäjän valinnan.
-4. **Näkyvä synkronointitila.** Käyttäjän pitää nähdä mikä on tallennettu ja
-   mikä odottaa.
-5. **Poiston käsittely.** Poistettu rivi ei saa palata toiselta laitteelta.
+### Säännöt
 
-Tämä on oma työpakettinsa, ei sivutuote.
+- **Idempotenssi.** Tehtävän tunniste luodaan asiakkaalla. Jos lisäys
+  onnistui mutta vastaus katosi, toisto saa 23505 ja tarkistaa, että rivi
+  on TÄMÄN käyttäjän — vasta sitten se on onnistuminen. Toisen käyttäjän
+  rivi samalla tunnisteella on virhe, ei onnistuminen.
+- **Konflikti ei ratkea arvaamalla.** Muokkaus lähetetään vain jos
+  palvelimen rivi on yhä sellainen kuin se oli muutoshetkellä
+  (kolmisuuntainen vertailu kenttä kerrallaan, `decideUpdate`), ja itse
+  kirjoitus on ehdollinen (compare-and-set, `tasksRepo.patchTask`). Muuten
+  operaatio on CONFLICT ja käyttäjä päättää: "käytä minun muutostani" tai
+  (erillisellä vahvistuksella) "hylkää oma". Palvelimen uudempaa ei
+  ylikirjoiteta hiljaa; poistettua riviä ei herätetä henkiin.
+- **Yksi ajaja, järjestys.** Rinnakkainen toisto ei käynnisty; lisäysjärjestys
+  säilyy; saman rivin myöhempi muutos ei ohita aiempaa epäonnistunutta.
+- **Poisto jonosta vasta vahvistetusta onnistumisesta.** Verkko- ja
+  istuntovirhe ei kuluta yrityksiä. Palvelimen hylkäys (FAILED) ja
+  ristiriita jäävät näkyviin — ei hiljaista katoamista.
+- **Käyttäjäraja.** Jono tallentuu avaimelle `manifestival.offlineQueue.v1.<userId>`
+  ja parseQueue tarkistaa userId:n sisällöstäkin. Toisen käyttäjän jonoa ei
+  koskaan lähetetä tällä tilillä; istunnon vaihto kesken toiston pysäyttää
+  toiston. Tilin poisto tyhjentää jonon.
+- **Ei salaisuuksia.** Kenttälista johdetaan `normalizeTask`ista; tokeneita,
+  avaimia tai user_id:tä ei voi päätyä jonoon.
+- **Latauksen yli.** Verkon palautuessa lähetetään ensin, ladataan sitten;
+  ladatun listan päälle lisätään vielä lähettämättömät muutokset
+  (`overlayPending`), jotta odottava tehtävä ei katoa näkyvistä.
+
+### Näkyvä tila
+
+Yksi rivi (`#syncStatus`): "Offline · 1 muutos odottaa synkronointia" /
+"Synkronoidaan…" / "Synkronointi epäonnistui (n)" / "Vaatii tarkistuksen
+(n)". Odottavat tehtävät on merkitty "Odottaa synkronointia" — muutos ei
+ole palvelimen vahvistama ennen replayta. Rivi päivittyy vain kun teksti
+muuttuu; jonotuksesta ilmoitetaan toastilla enintään kerran minuutissa.
+Jos localStorage ei ole käytettävissä, jono elää muistissa ja rivi sanoo,
+ettei se säily sivun latauksen yli.
+
+### Mitä EI ole toteutettu
+
+Muiden domainien (rutiinit, tavoitteet, talous) jonotus; poiston jonotus
+(tarkoituksella); toisto sovelluksen ollessa suljettuna (ei taustapollausta
+eikä ajastimia); usean laitteen välinen automaattinen yhdistäminen
+kentittäin (konflikti kysytään käyttäjältä). Laitehyväksyntä puuttuu, ks.
+DEVICE-ACCEPTANCE-BACKLOG.md.
 
 ### Service workerin valinnat
 

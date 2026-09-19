@@ -54,6 +54,9 @@ import {
 import { lifecycle, location as platformLocation } from '../platform/index.js';
 import { clearToasts } from '../ui/toast.js';
 import { maybe } from '../ui/dom.js';
+import { getUser } from '../data/session.js';
+import { offline, setSyncedHandler } from './offline.js';
+import { initOfflineStatus, refreshSyncStatus } from './offlineStatus.js';
 
 /** Kuinka usein NYT-tila päivitetään ilman sivun uudelleenlatausta. */
 const NOW_REFRESH_MS = 30000;
@@ -69,8 +72,21 @@ let signedIn = false;
  * kirjautuessa hoitaa myös tämän, eikä näytä tai käyttäjän sijaintia
  * näkymässä tarvitse koskea erikseen.
  */
+let reconnectRefreshing = false;
+
 async function refreshAfterReconnect() {
   if (!signedIn) return;
+  // LÄHETÄ ENSIN, LATAA VASTA SITTEN: lataus korvaisi muuten paikallisen tilan
+  // ennen kuin odottavat offline-muutokset ovat lähteneet (overlay kattaa
+  // näkymän, mutta palvelimen tila on oikea vasta lähetyksen jälkeen).
+  reconnectRefreshing = true;
+  try {
+    await offline.replay();
+  } catch (error) {
+    console.warn('Manifestival: offline-jonon toisto ei onnistunut', error);
+  } finally {
+    reconnectRefreshing = false;
+  }
   const result = await loadUserData();
   if (result.discarded) return;
   runAssistantSweeps();
@@ -171,6 +187,12 @@ async function onSignedIn() {
   signedIn = true;
   hideAuthGate();
 
+  // Käyttäjän oma odottava jono ladataan ENNEN ensimmäistä latausta, jotta
+  // sen muutokset näkyvät heti (overlay) eikä toisen käyttäjän jono
+  // koskaan osu tähän (avain on käyttäjäkohtainen).
+  const current = getUser();
+  offline.activate(current && current.id ? current.id : null);
+
   // Päivä ja viikko nollataan kirjautuessa: sovellus avautuu aina tähän
   // päivään, ei siihen mihin edellinen istunto jäi.
   setViewDate(todayMidnight());
@@ -184,6 +206,11 @@ async function onSignedIn() {
   // uudempi onSignedIn on jo ottanut vastuun näkymästä.
   const loaded = await loadUserData();
   if (loaded.discarded) return;
+
+  // Lähetä kirjautumisen aikana odottaneet muutokset (jos verkko on).
+  offline.replay().catch(error => {
+    console.warn('Manifestival: offline-jonon toisto ei onnistunut', error);
+  });
 
   fillProfileForm();
 
@@ -242,6 +269,10 @@ function onSignedOut() {
 
   // Muistissa oleva sijainti unohtuu uloskirjautuessa (ei koskaan levylle).
   platformLocation.forget();
+
+  // Offline-jono vapautetaan muistista; tallennus säilyy käyttäjäkohtaisella
+  // avaimella eikä koskaan lähetetä toisen käyttäjän tilillä.
+  offline.deactivate();
 
   // Nollaa myös kesken olevan kuvan luennan ja tyhjentää
   // tiedostovalitsimen. Seuraava käyttäjä samalla selaimella ei saa
@@ -341,13 +372,23 @@ async function start() {
   //    ilman sitäkin, vain ilman offline-tukea.
   registerServiceWorker();
 
+  // Offline-jonon tila näkyviin, ja synkronoinnin jälkeinen uudelleenlataus.
+  initOfflineStatus();
+  setSyncedHandler(() => {
+    if (!signedIn || reconnectRefreshing) return;
+    loadUserData().catch(error => {
+      console.warn('Manifestival: lataus synkronoinnin jälkeen ei onnistunut', error);
+    });
+  });
+
   // 6. Verkon tilan ilmaisu. Palvelinta vaativat toiminnot eivät saa
   //    valehdella onnistuneensa, joten offline-tila kerrotaan näkyvästi.
   const updateOnlineState = () => {
-    const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
-    document.body.classList.toggle('is-offline', offline);
+    const isOffline = typeof navigator !== 'undefined' && navigator.onLine === false;
+    document.body.classList.toggle('is-offline', isOffline);
     const banner = maybe('offlineBanner');
-    if (banner) banner.style.display = offline ? 'block' : 'none';
+    if (banner) banner.style.display = isOffline ? 'block' : 'none';
+    refreshSyncStatus();
   };
   window.addEventListener('online', () => {
     updateOnlineState();

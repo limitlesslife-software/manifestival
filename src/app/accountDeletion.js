@@ -31,6 +31,8 @@ import {
 } from '../domain/accountDeletionFlow.js';
 import { currentAccessToken, queueAuthNote } from './auth.js';
 import { clearLocalUserData } from './actions.js';
+import { offline } from './offline.js';
+import { getUser } from '../data/session.js';
 
 let flow = initialFlowState();
 let previewSeen = false;
@@ -260,6 +262,9 @@ const submitDeletion = singleFlight(async () => {
   }
 
   dispatch(FLOW_EVENT.SUCCEEDED);
+  // Tili on poistettu: sen lähettämättömät offline-muutokset poistetaan laitteelta.
+  const deleted = getUser();
+  offline.purge(deleted && deleted.id ? deleted.id : null);
   const complete = result.value.complete === true;
   queueAuthNote(complete
     ? 'Tilisi ja kaikki siihen liittynyt tieto on poistettu.'

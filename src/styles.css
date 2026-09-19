@@ -279,6 +279,12 @@ h1.title { font-family:'Fraunces',serif; font-weight:500; font-size:24px; line-h
 /* ---- Offline ---- */
 .offline-banner { display:none; background:var(--clay); color:#fff; font-size:12px; font-weight:700; text-align:center; padding:7px 12px; }
 body.is-offline .offline-banner { display:block; }
+.sync-status { display:block; width:100%; appearance:none; -webkit-appearance:none; border:none; font-family:'Manrope',sans-serif; font-size:12px; font-weight:700; text-align:center; padding:7px 12px; background:var(--sage-soft); color:var(--forest); cursor:default; }
+.sync-status[hidden] { display:none; }
+.sync-status.tone-warn { background:var(--gold-soft); color:var(--gold); }
+.sync-status.tone-error { background:var(--clay-soft); color:var(--clay); }
+.sync-status.needs-review { cursor:pointer; text-decoration:underline; }
+.sync-status:focus-visible { outline:2px solid var(--gold); outline-offset:-2px; }
 
 /* ---- Segmentoitu valinta (tehtävät / rutiinit) ---- */
 .segment { display:flex; gap:5px; background:var(--sage-soft); padding:4px; border-radius:13px; margin-bottom:16px; }

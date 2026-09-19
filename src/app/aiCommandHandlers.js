@@ -37,6 +37,9 @@ import { INTENT } from '../ai/intentSchema.js';
 import { applyShift } from './aiCommands.js';
 import { parseISO, startOfWeek } from '../lib/datetime.js';
 
+/** AI-komennon suoritus ei koskaan mene offline-jonoon (ks. domain/offlineQueue.js). */
+const NO_QUEUE = Object.freeze({ queueOffline: false });
+
 /**
  * Muunna { ok:boolean } -tulos muotoon jota executeProposal() odottaa.
  * Legacy-poistofunktiot (deleteTask ym.) palauttavat pelkän boolean-arvon.
@@ -55,22 +58,24 @@ function fromBoolean(result, reason) {
 export const handlers = Object.freeze({
   // ------------------------------------------------------------- tehtävät
 
-  [INTENT.CREATE_TASK]: async ({ payload }) => createTask(payload),
+  // AI-komennon suoritusta ei koskaan jonoteta offline-jonoon: viivästetty
+  // toisto vanhentuneesta ehdotuksesta olisi juuri se, mitä vahvistus estää.
+  [INTENT.CREATE_TASK]: async ({ payload }) => createTask(payload, NO_QUEUE),
 
   [INTENT.UPDATE_TASK]: async ({ payload, target }) =>
-    editTask(target.id, payload.changes),
+    editTask(target.id, payload.changes, NO_QUEUE),
 
   [INTENT.DELETE_TASK]: async ({ target }) =>
     fromBoolean(await deleteTask(target.id), 'Poisto peruttiin tai epäonnistui.'),
 
   [INTENT.COMPLETE_TASK]: async ({ target }) =>
-    editTask(target.id, { completed: true }),
+    editTask(target.id, { completed: true }, NO_QUEUE),
 
   [INTENT.UNCOMPLETE_TASK]: async ({ target }) =>
-    editTask(target.id, { completed: false }),
+    editTask(target.id, { completed: false }, NO_QUEUE),
 
   [INTENT.SCHEDULE_TASK]: async ({ payload, target }) =>
-    editTask(target.id, payload.changes),
+    editTask(target.id, payload.changes, NO_QUEUE),
 
   [INTENT.RESCHEDULE_TASK]: async ({ payload, target, entity }) => {
     if (payload.shiftMinutes != null) {
@@ -78,12 +83,12 @@ export const handlers = Object.freeze({
       if (!shifted) {
         return { ok: false, reason: 'Tehtävällä ei ole kellonaikaa, jota siirtää.' };
       }
-      return editTask(target.id, shifted);
+      return editTask(target.id, shifted, NO_QUEUE);
     }
     const changes = {};
     if (payload.date) changes.date = payload.date;
     if (payload.time) changes.time = payload.time;
-    return editTask(target.id, changes);
+    return editTask(target.id, changes, NO_QUEUE);
   },
 
   // ------------------------------------------------------------- rutiinit

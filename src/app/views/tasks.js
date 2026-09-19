@@ -12,6 +12,7 @@ import { getState, findTask, findGoal, setEditingId, setTasksSegment } from '../
 import { createTask, editTask, toggleComplete, deleteTask } from '../actions.js';
 import { switchTab } from '../navigation.js';
 import { renderRoutines } from './routines.js';
+import { offline } from '../offline.js';
 import { renderInbox } from './inbox.js';
 import { renderReminders } from './reminders.js';
 import { renderTravel } from './travel.js';
@@ -61,6 +62,7 @@ function renderList(container, tasks) {
   }
 
   const groups = groupByDate(tasks);
+  const waiting = offline.pendingIds();
   let html = '';
 
   for (const [dateIso, group] of groups) {
@@ -76,6 +78,10 @@ function renderList(container, tasks) {
       const priorityTag = task.priority && task.priority !== 'normaali'
         ? `<span class="prio-tag prio-${priorityTone(task.priority)}">${escapeHtml(priorityLabel(task.priority))}</span>`
         : '';
+      // Odottava muutos EI ole palvelimen vahvistama: merkitään näkyvästi.
+      const pendingTag = waiting.has(String(task.id))
+        ? '<span class="assist-tag tone-warn">Odottaa synkronointia</span>'
+        : '';
 
       return `<div class="task-row ${task.completed ? 'done' : ''}">
         <button class="chk ${task.completed ? 'done' : ''}" data-toggle="${escapeHtml(task.id)}"
@@ -84,7 +90,7 @@ function renderList(container, tasks) {
           <svg aria-hidden="true"><use href="#i-check"/></svg>
         </button>
         <button class="t-body t-open" data-edit="${escapeHtml(task.id)}" aria-label="Muokkaa: ${escapeHtml(task.title)}">
-          <div class="t-title">${task.isWake ? '☀ ' : ''}${escapeHtml(task.title)}${priorityTag}</div>
+          <div class="t-title">${task.isWake ? '☀ ' : ''}${escapeHtml(task.title)}${priorityTag}${pendingTag}</div>
           <div class="t-meta">
             ${timeLabel ? `<span>${escapeHtml(timeLabel)}</span>` : '<span class="muted">ei aikaa</span>'}
             ${duration ? `<span>${escapeHtml(duration)}</span>` : ''}

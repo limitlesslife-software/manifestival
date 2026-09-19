@@ -9,6 +9,8 @@
 import { getClient } from '../data/client.js';
 import { setUser, clearUser, getUser } from '../data/session.js';
 import { el, setBusy, singleFlight } from '../ui/dom.js';
+import { confirmAction } from '../ui/confirm.js';
+import { offline } from './offline.js';
 
 export const MIN_PASSWORD_LENGTH = 8;
 
@@ -116,6 +118,20 @@ const submit = singleFlight(async () => {
 });
 
 const signOut = singleFlight(async () => {
+  // Lähettämättömät offline-muutokset eivät katoa uloskirjautumisessa, mutta
+  // käyttäjän on tiedettävä, ettei niitä ole vielä lähetetty.
+  const { total } = offline.status();
+  if (total > 0) {
+    const sure = await confirmAction({
+      title: 'Lähettämättömiä muutoksia',
+      message: total + (total === 1 ? ' muutos' : ' muutosta')
+        + ' ei ole vielä lähetetty. Ne säilyvät tällä laitteella ja lähetetään, kun kirjaudut takaisin samalla tilillä. Kirjaudutaanko ulos?',
+      confirmLabel: 'Kirjaudu ulos',
+      cancelLabel: 'Peruuta'
+    });
+    if (!sure) return;
+  }
+
   const button = el('signoutBtn');
   setBusy(button, true, 'Kirjaudutaan ulos…');
   try {
