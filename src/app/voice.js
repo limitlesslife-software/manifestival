@@ -47,6 +47,8 @@ let recognition = null;
 /** Estää samasta tunnistuksesta useamman tuloksen käsittelyn (onresult voi
  *  laueta uudelleen, ja onend ei saa näyttää virhettä enää tuloksen jälkeen). */
 let resultHandled = false;
+/** Elementti, joka avasi paneelin: sulkeminen palauttaa fokuksen sinne (näppäimistö- ja ruudunlukijakäyttäjä ei putoa sivun alkuun). */
+let opener = null;
 
 function showState(name) {
   for (const state of STATES) {
@@ -62,8 +64,12 @@ function showVoiceError(message) {
 }
 
 function openOverlay() {
+  opener = typeof document !== 'undefined' ? document.activeElement : null;
   el('voiceOverlay').classList.add('open');
   el('voiceOverlay').setAttribute('aria-hidden', 'false');
+  // Fokus paneeliin: ilman tätä se jää taustalle piilotetun sisällön päälle.
+  const close = maybe('voiceCloseX');
+  if (close) close.focus();
 }
 
 function closeOverlay() {
@@ -71,6 +77,8 @@ function closeOverlay() {
   el('voiceOverlay').setAttribute('aria-hidden', 'true');
   stopRecognition();
   resultHandled = false;
+  if (opener && typeof opener.focus === 'function') opener.focus();
+  opener = null;
 }
 
 function stopRecognition() {
@@ -189,7 +197,7 @@ function setupRecognition() {
 
 /** Avaa puhepaneeli ja aloita kuuntelu. */
 export function startVoiceFlow() {
-  openOverlay();
+  if (!el('voiceOverlay').classList.contains('open')) openOverlay();
   resultHandled = false;
 
   if (!recognition) {

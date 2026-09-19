@@ -122,7 +122,7 @@ function leaveByHtml(plan) {
     : '';
 
   return `
-    <div class="assist-meta" role="status">
+    <div class="assist-meta">
       <span class="assist-tag ${tag.tone}">${escapeHtml(tag.label)}</span>
       ${escapeHtml(departure.message)}${vanhentunut}
     </div>

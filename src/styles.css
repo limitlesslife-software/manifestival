@@ -157,7 +157,7 @@ h1.title { font-family:'Fraunces',serif; font-weight:500; font-size:24px; line-h
 .form-row { display:flex; gap:8px; flex-wrap:wrap; }
 .form-row > * { flex:1 1 90px; min-width:0; }
 .form-actions { display:flex; gap:8px; margin-top:2px; flex-wrap:wrap; }
-.form-btn { flex:1 1 90px; padding:10px; border-radius:10px; border:none; font-weight:700; font-size:13px; cursor:pointer; font-family:'Manrope',sans-serif; }
+.form-btn { flex:1 1 90px; min-height:44px; padding:10px; border-radius:10px; border:none; font-weight:700; font-size:13px; cursor:pointer; font-family:'Manrope',sans-serif; }
 .form-btn.primary { background:var(--forest); color:var(--cream); }
 .form-btn.secondary { background:var(--sage-soft); color:var(--forest); }
 .form-btn.danger { background:var(--clay-soft); color:var(--clay); }
@@ -212,11 +212,12 @@ h1.title { font-family:'Fraunces',serif; font-weight:500; font-size:24px; line-h
 .voice-spinner { width:32px; height:32px; border-radius:50%; border:3px solid var(--sage-soft); border-top-color:var(--gold); margin:4px auto 16px; animation:spin .8s linear infinite; }
 @keyframes spin { to{ transform:rotate(360deg); } }
 .voice-field { width:100%; font-family:'Manrope',sans-serif; font-size:14px; border:1px solid var(--border); border-radius:10px; padding:11px 13px; background:var(--cream-card); color:var(--text-1); margin-bottom:9px; }
+textarea.voice-field { resize:vertical; min-height:72px; line-height:1.4; }
 .voice-field:focus { outline:none; border-color:var(--sage); box-shadow:0 0 0 2px var(--sage-soft); }
 .voice-row2 { display:flex; gap:8px; flex-wrap:wrap; }
 .voice-row2 > * { flex:1 1 90px; min-width:0; }
 .voice-actions { display:flex; gap:10px; margin-top:6px; }
-.voice-btn { flex:1; padding:12px; border-radius:12px; border:none; font-weight:700; font-size:14px; cursor:pointer; font-family:'Manrope',sans-serif; }
+.voice-btn { flex:1; min-height:44px; padding:12px; border-radius:12px; border:none; font-weight:700; font-size:14px; cursor:pointer; font-family:'Manrope',sans-serif; }
 .voice-btn.save { background:var(--forest); color:var(--cream); }
 .voice-btn.cancel { background:var(--sage-soft); color:var(--forest); }
 .voice-btn:focus-visible { outline:2px solid var(--gold); outline-offset:2px; }
@@ -283,7 +284,8 @@ body.is-offline .offline-banner { display:block; }
 .sync-status[hidden] { display:none; }
 .sync-status.tone-warn { background:var(--gold-soft); color:var(--gold); }
 .sync-status.tone-error { background:var(--clay-soft); color:var(--clay); }
-.sync-status.needs-review { cursor:pointer; text-decoration:underline; }
+.sync-status.needs-review { cursor:pointer; text-decoration:underline; min-height:44px; }
+.sync-status { overflow-wrap:anywhere; }
 .sync-status:focus-visible { outline:2px solid var(--gold); outline-offset:-2px; }
 
 /* ---- Segmentoitu valinta (tehtävät / rutiinit) ---- */
@@ -555,7 +557,7 @@ body.is-offline .offline-banner { display:block; }
 .assist-btn {
   appearance:none; -webkit-appearance:none; border:1px solid var(--border);
   background:var(--cream); color:var(--text-1); border-radius:10px;
-  padding:7px 11px; font-family:'Manrope',sans-serif; font-size:12px;
+  padding:7px 11px; min-height:44px; font-family:'Manrope',sans-serif; font-size:12px;
   font-weight:700; cursor:pointer;
 }
 .assist-btn.primary { background:var(--forest); color:var(--cream); border-color:var(--forest); }

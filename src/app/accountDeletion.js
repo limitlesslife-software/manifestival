@@ -278,6 +278,8 @@ function reset() {
   previewRows = null;
   previewNote = '';
   render();
+  // Vaihe vaihtui ja aiempi painike poistui DOM:ista: fokus takaisin alkuun.
+  focus('pfDeletionPreviewBtn');
 }
 
 function wire() {
