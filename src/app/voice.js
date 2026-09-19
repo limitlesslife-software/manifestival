@@ -35,6 +35,7 @@
 import { el, maybe, singleFlight } from '../ui/dom.js';
 import { runTypedCommand } from './commandBar.js';
 import { speech } from '../platform/index.js';
+import { logEvent } from '../lib/logger.js';
 
 const STATES = ['listening', 'transcript', 'processing', 'error', 'typefallback'];
 
@@ -118,7 +119,9 @@ const submitTranscript = singleFlight(async (text, ui) => {
 
   showState('processing');
 
+  logEvent('voice.submit', { chars: clean.length });
   const result = await runVoiceCommand(clean, ui);
+  logEvent('voice.result', { ok: Boolean(result.ok), status: String(result.status || '') });
 
   if (result.ok) {
     closeOverlay();
@@ -159,11 +162,14 @@ function setupRecognition() {
       const clean = transcript.trim();
       if (!clean) { showVoiceError('En kuullut mitään. Yritä uudelleen.'); return; }
       resultHandled = true;
+      // Vain pituus: litterointi on käyttäjän puhetta eikä kuulu lokiin.
+      logEvent('voice.transcript', { chars: clean.length });
       showTranscriptReview(clean);
     }
   };
 
   instance.onerror = event => {
+    logEvent('voice.error', { code: String(event.error || 'unknown') });
     if (event.error === 'no-speech') showVoiceError('En kuullut mitään. Yritä uudelleen.');
     else if (event.error === 'not-allowed') showVoiceError('Mikrofonin käyttö estetty. Salli mikrofoni selaimen asetuksista.');
     else if (event.error === 'aborted') { /* käyttäjä sulki — ei virhe */ }

@@ -139,3 +139,40 @@ export function log(level, message, context = null) {
  * silloin `log()`-funktiolle suoraan.
  */
 export const logWarn = (message, context) => log(LOG_LEVEL.WARN, message, context);
+
+// ---------------------------------------------------------------- tapahtumat
+
+const EVENT_NAME = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$/;
+/** Pitkä merkkijono on lähes aina käyttäjän sisältöä (litterointi, otsikko). */
+const MAX_EVENT_STRING = 60;
+
+/**
+ * Rakenteinen diagnostiikkatapahtuma: tunniste + koodit + lukumäärät.
+ *
+ * TÄMÄ EI OLE SISÄLLÖN LOKI. Sallitaan vain lyhyet merkkijonot (koodit,
+ * tilat, operaatiotunnisteet), luvut ja totuusarvot. Pitkä merkkijono
+ * korvataan, oliot ja taulukot pudotetaan, ja arkaluontoisten avainten
+ * (token, koordinaatit, teksti, litterointi ...) arvot korvataan aina.
+ * Tapahtuman nimi on kiinteä tunniste, ei vapaa teksti.
+ *
+ * Käyttö: puhe, komennot, tilin poisto, sijainti, lähtö ja offline-jono
+ * kirjaavat tällä VAIN mitä tapahtui ja miten se päättyi -- ei mitä
+ * käyttäjä sanoi tai missä hän oli.
+ *
+ * @param {string} event esim. 'offline.replay'
+ * @param {Record<string, string|number|boolean|null>} [fields]
+ * @param {string} [level] LOG_LEVEL; oletus INFO
+ */
+export function logEvent(event, fields = {}, level = LOG_LEVEL.INFO) {
+  if (typeof event !== 'string' || !EVENT_NAME.test(event)) return;
+
+  const safe = {};
+  for (const [key, value] of Object.entries(fields || {})) {
+    if (SENSITIVE.has(key.toLowerCase())) { safe[key] = REDACTED; continue; }
+    if (typeof value === 'string') safe[key] = value.length > MAX_EVENT_STRING ? '[pitkä]' : value;
+    else if (typeof value === 'number') safe[key] = Number.isFinite(value) ? value : null;
+    else if (typeof value === 'boolean' || value === null) safe[key] = value;
+    // oliot, taulukot, funktiot: pudotetaan
+  }
+  log(level, event, safe);
+}

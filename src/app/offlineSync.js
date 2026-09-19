@@ -28,6 +28,7 @@ import {
   overlayPending, pendingEntityIds, QUEUE_TASK_FIELDS, ERROR_CLASS, OP_STATUS, MAX_OPERATIONS
 } from '../domain/offlineQueue.js';
 import { normalizeTask, validateTask } from '../domain/task.js';
+import { logEvent } from '../lib/logger.js';
 
 function sameValue(a, b) {
   if (a === b) return true;
@@ -258,6 +259,10 @@ export function createOfflineSync(deps) {
 
           commit(markSyncing(queue, op.id), { silent: true });
           const outcome = await execute(op);
+          // Vain tunniste, operaatio ja lopputulos -- ei tehtävän sisältöä.
+          logEvent('offline.op', {
+            opId: op.id, operation: op.domain + '.' + op.operation, outcome: outcome.kind, code: outcome.code || null
+          });
 
           if (owner !== startedFor || !session.isSame(snapshot)) {
             // Toisto ehti alkaa vanhalle käyttäjälle: palauta operaatio
@@ -290,6 +295,9 @@ export function createOfflineSync(deps) {
       }
     } finally {
       replaying = false;
+      logEvent('offline.replay', {
+        synced: result.synced, conflicts: result.conflicts, failed: result.failed, reason: result.reason || null
+      });
       emit();
       if (result.synced > 0 || result.conflicts > 0) {
         try { onSynced(); } catch { /* lataus ei saa kaataa toistoa */ }

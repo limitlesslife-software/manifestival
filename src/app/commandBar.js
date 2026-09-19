@@ -25,6 +25,7 @@ import { confirmProposal, chooseTarget } from '../ui/confirm.js';
 import { showError, notify } from '../ui/toast.js';
 import { fmtISO, todayMidnight } from '../lib/datetime.js';
 import { AUDIT_RESULT } from '../domain/audit.js';
+import { logEvent } from '../lib/logger.js';
 
 function finish(auditId, changes) {
   completeAudit(auditId, changes);
@@ -51,6 +52,10 @@ async function confirmAndExecute(proposal, auditId, confirmFn) {
   }
 
   const result = await executeProposal(proposal, handlers);
+  logEvent('command.executed', {
+    intent: proposal.command.intent, risk: proposal.command.risk, ok: Boolean(result.ok),
+    duplicate: Boolean(result.duplicate)
+  });
 
   // Sama ehdotus oli jo suoritettu tai kesken: ensimmäisen suorituksen
   // kirjaus ja tulos ovat totuus, eikä toinen kutsu saa ylikirjoittaa
@@ -136,11 +141,19 @@ export async function runTypedCommand(text, {
   const classified = await requestCommand({
     text: trimmed, today, weekday, source, accessToken, fetchImpl
   });
+  logEvent('command.classified', {
+    source, ok: classified.ok, code: classified.ok ? null : classified.error.code, chars: trimmed.length
+  });
   if (!classified.ok) {
     showError(classified.error);
     return { ok: false, status: 'error', reason: classified.error.userMessage };
   }
 
   const proposal = buildProposal(classified.value.raw, { inputText: trimmed });
+  logEvent('command.proposal', {
+    status: proposal.status,
+    intent: proposal.command ? proposal.command.intent : null,
+    risk: proposal.command ? proposal.command.risk : null
+  });
   return handleProposal(proposal, trimmed, { confirmFn, chooseFn });
 }

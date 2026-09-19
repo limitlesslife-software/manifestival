@@ -35,6 +35,7 @@
 //    tehtävään. Tämä kerros ei saa kiertää sitä kirjoittamalla
 //    kohteeseen erikseen — eikä se kirjoita.
 
+import { logEvent } from '../lib/logger.js';
 import {
   remindersRepo, noticesRepo, travelPlansRepo, locationRulesRepo
 } from '../data/collectionsRepo.js';
@@ -629,6 +630,7 @@ export async function runDepartureSweep({ now = new Date() } = {}) {
     if (!validateNotice(notice).valid) continue;
     if (!addNoticeToState(notice)) continue;
     created.push(notice);
+    logEvent('departure.notice', { state: departure.state });
   }
 
   await Promise.all(created.map(n => noticesRepo.insert(n)));

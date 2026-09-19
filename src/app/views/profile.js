@@ -18,6 +18,7 @@ import {
 } from '../../platform/index.js';
 import { buildUserDataExport, serializeExport, EXPORTED_COLLECTIONS } from '../../domain/dataExport.js';
 import { renderAccountDeletionSection } from '../accountDeletion.js';
+import { logEvent } from '../../lib/logger.js';
 
 function numberOrNull(value) {
   if (value === '' || value === null || value === undefined) return null;
@@ -156,6 +157,7 @@ function wireLocationControls() {
   const ask = maybe('pfLocationAskBtn');
   if (ask) ask.addEventListener('click', async () => {
     const result = await platformLocation.requestPermission();
+    logEvent('location.permission', { state: result.state });
     rerender();
     message(result.reason);
   });
@@ -164,6 +166,8 @@ function wireLocationControls() {
   if (attempt) attempt.addEventListener('click', async () => {
     message('Haetaan…');
     const result = await platformLocation.current({ allowPrompt: false });
+    // Vain onnistuiko ja virhekoodi. Koordinaatit eivät koskaan lokiin.
+    logEvent('location.attempt', { ok: result.ok, code: result.ok ? null : result.code });
     const text = result.ok
       ? `Sijainti saatu (tarkkuus ±${result.position.accuracyMeters ?? '?'} m). Sitä ei tallenneta.`
       : result.reason;

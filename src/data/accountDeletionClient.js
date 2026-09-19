@@ -15,6 +15,7 @@
 
 import { SUPABASE_URL, SUPABASE_ANON_KEY, ACCOUNT_DELETION } from './config.js';
 import { ok, fail } from '../lib/result.js';
+import { logEvent, LOG_LEVEL } from '../lib/logger.js';
 
 export const PREVIEW_TIMEOUT_MS = 15000;
 export const DELETE_TIMEOUT_MS = 30000;
@@ -43,7 +44,19 @@ function functionUrl() {
   return `${SUPABASE_URL}/functions/v1/${ACCOUNT_DELETION.functionName}`;
 }
 
+/** Tulos diagnostiikkaan: tila ja koodi, ei tokenia, sähköpostia eikä vastauksen sisältöä. */
+function recorded(mode, result) {
+  logEvent('account_deletion.call', {
+    mode, ok: result.ok, code: result.ok ? null : result.error.code
+  }, result.ok ? LOG_LEVEL.INFO : LOG_LEVEL.WARN);
+  return result;
+}
+
 async function callFunction({ body, accessToken, fetchImpl, timeoutMs, enabled }) {
+  return recorded(body.mode, await callFunctionRaw({ body, accessToken, fetchImpl, timeoutMs, enabled }));
+}
+
+async function callFunctionRaw({ body, accessToken, fetchImpl, timeoutMs, enabled }) {
   if (enabled !== true) {
     return fail(MESSAGES.unavailable, { code: 'accountDeletion.unavailable' });
   }
