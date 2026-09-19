@@ -1,11 +1,14 @@
 # Tilin poisto ja datan omistajuus
 
-**TILA: ARKKITEHTUURI VALMIS, BACKEND PUUTTUU.**
-Sovellus **ei saa** näyttää tilin poistoa toimivana ennen kuin se on
-oikeasti toteutettu.
+**TILA: PAIKALLINEN TOTEUTUS VALMIS JA TESTATTU, EI DEPLOYATTU.**
+Palvelinfunktio (`supabase/functions/delete-account`) ja koko
+vahvistusvirta on toteutettu, mutta funktiota ei ole otettu käyttöön,
+joten sovellus ei väitä poistoa mahdolliseksi
+(`ACCOUNT_DELETION.endpointEnabled = false`, `src/data/config.js`).
 
 Vienti: `src/domain/dataExport.js` — **IMPLEMENTED**
-Tilin poisto: **PRODUCTION-BLOCKED**
+Tilin poisto: **COMPLETE_LOCAL, EI KÄYTÖSSÄ TUOTANNOSSA** (omistajan
+päätökset ja kontrolloitu käyttöönotto puuttuvat, ks. alla)
 
 ---
 
@@ -74,61 +77,66 @@ lykätty.
 
 ---
 
-## Tilin poisto (PRODUCTION-BLOCKED)
+## Tilin poisto (COMPLETE_LOCAL, ei deployattu)
 
-### Miksi tätä ei toteutettu
+### Arkkitehtuuri
 
-Tilin poisto on **kertaluonteinen ja peruuttamaton**. Se vaatii
-palvelinpuolen transaktion, jota ei voi todentaa ilman toimivaa
-production-Supabasea — ja se on tällä hetkellä portin takana.
-
-Puolivalmis toteutus olisi tässä pahin mahdollinen: käyttöliittymä, joka
-näyttää onnistumisen mutta jättää datan kantaan, on suoraan valhe.
-
-**Sovellus ei saa luoda fake-successia.** Jos poistoa yritetään ennen kuin
-backend tukee sitä, käyttöliittymän on sanottava suoraan, ettei toiminto
-ole vielä käytettävissä.
-
-### Sopimus, kun se toteutetaan
+Korotettu oikeus elää **vain Supabase Edge Functionissa**
+(`supabase/functions/delete-account`). Se ei ole selaimessa, ei Vercelin
+`api/`-hakemistossa eikä repositoriossa: Supabase injektoi avaimen
+funktion ympäristöön ajohetkellä. Testit lukitsevat tämän
+(`tests/account-deletion-inventory.test.mjs`).
 
 ```
-RequestAccountDeletion
-  ↓
-1. Vahvistus: käyttäjä kirjoittaa sähköpostinsa
-2. Pakotettu vienti: lataa tietosi ennen poistoa
-3. Palvelinkutsu (yksi transaktio)
-4. Uloskirjautuminen ja paikallisen tilan tyhjennys
-5. Vahvistus sähköpostiin
+selain: esikatselu -> varoitus -> sähköposti + "POISTA TILINI" ->
+        lopullinen dialogi -> POST /functions/v1/delete-account
+funktio: JWT -> auth.getUser (käyttäjä johdetaan tokenista) ->
+         vahvistus + tuore kirjautuminen -> auth.admin.deleteUser ->
+         jälkitarkistus rivimääristä
+selain: clearLocalUserData + signOut + päätetila
 ```
 
-### Poistojärjestys palvelimella
+- Käyttäjän tunniste tulee **vain tokenista**. Rungossa oleva `userId`,
+  `user_id` ym. hylätään (400 `unexpected_field`).
+- Poisto vaatii täsmälleen oman sähköpostin ja vahvistuslauseen sekä
+  kirjautumisen 15 minuutin sisällä (`recent_login_required` muuten).
+- Virheet ovat vakiokoodeja; Supabasen viestiä, avaimia, tokeneita tai
+  sähköpostia ei palauteta eikä lokiteta.
+- CORS on suljettu oletuksena; sallitut originit asetetaan
+  `DELETE_ACCOUNT_ALLOWED_ORIGINS`-salaisuudella.
 
-Kaikki yhdessä transaktiossa. Osittainen poisto jättäisi orpoja rivejä,
-joita kukaan ei omista eikä voi poistaa.
+### Poistojärjestys: yksi atominen kaskadi, ei käsin kirjoitettu lista
 
-```sql
-begin;
-  delete from public.ai_action_audit    where user_id = :uid;
-  delete from public.bills              where user_id = :uid;
-  delete from public.savings_goals      where user_id = :uid;
-  delete from public.recurring_expenses where user_id = :uid;
-  delete from public.wellbeing_entries  where user_id = :uid;
-  delete from public.routine_exceptions where user_id = :uid;
-  delete from public.routines           where user_id = :uid;
-  delete from public.tasks              where user_id = :uid;
-  delete from public.projects           where user_id = :uid;
-  delete from public.goals              where user_id = :uid;
-  delete from public.notification_preferences where id = :uid;
-  delete from public.profile            where id = :uid;
-  -- Viimeisenä käyttäjä itse. auth.users -> on delete cascade hoitaisi
-  -- yllä olevat, mutta nimenomainen järjestys on tarkistettavissa ja
-  -- dokumentoitu — implisiittiseen kaskadiin ei kannata luottaa silloin
-  -- kun virhe on peruuttamaton.
-commit;
-```
+Aiempi suunnitelma (rivikohtaiset DELETE-lauseet järjestyksessä) on
+**korvattu**. Jokaisen käyttäjätaulun omistajasarake viittaa
+`auth.users(id)` ... `on delete cascade`, joten yksi `auth.admin.deleteUser`
+poistaa kaikki 20 taulua yhdessä tietokantatransaktiossa. Erilliset
+PostgREST-DELETE:t olisivat ei-atomisia ja jättäisivät puolikkaan tilin,
+jos yksi epäonnistuisi.
 
-Käyttäjän poisto `auth.users`-taulusta vaatii `service_role`-oikeudet,
-joita **selain ei koskaan saa**. Se kuuluu palvelinfunktioon.
+Kaskadi **todistetaan**, ei oleteta:
+`tests/account-deletion-inventory.test.mjs` jäsentää migraatiot ja
+vaatii, että (1) jokainen viennin kokoelma on kartassa (`ACCOUNT_DATA_MAP`),
+(2) jokainen kartan taulu kaskadoituu omistajasarakkeellaan ja (3)
+skeemassa ei ole käyttäjätaulua, jota kartta ei tunne. Uusi taulu, jota
+inventaario ei tunne, kaataa testin.
+
+Funktio tekee poiston jälkeen rivimäärätarkistuksen ja raportoi
+`complete: false` (+ `residual`/`unverified`), jos jotain jäi — se ei
+väitä täydellistä onnistumista, jota ei ole varmistettu.
+
+### Mitä EI ole päätetty (OMISTAJAN PÄÄTÖS)
+
+`aiAudit` (AI-toimintoloki) poistuu nyt tilin mukana (`delete-with-account`,
+`RETENTION_DECISIONS`). Jos lakisääteinen tai turvallisuusperusteinen
+säilytysvelvoite todetaan, poikkeus vaatii skeemamuutoksen (FK ei saa
+kaskadoitua) — sitä ei ole toteutettu, eikä oletus ole hiljainen.
+
+### Käyttöönotto (ei suoritettu)
+
+Ks. `supabase/functions/README.md`: säilytyspäätös, deploy, origin-lista,
+kontrolloitu testi kertakäyttöisellä testitilillä, vasta sitten
+`endpointEnabled = true`.
 
 ### Mitä poisto EI saa tehdä
 
@@ -164,5 +172,8 @@ kumpikin oli aiemmin todellinen vuoto.
 | Tuonnin jäsennys ja esikatselu | **IMPLEMENTED** |
 | Tuonnin kirjoitus | **PLANNED** — vaatii konfliktimallin |
 | Paikallisen datan tyhjennys | **IMPLEMENTED** |
-| Tilin poiston käyttöliittymä | **PLANNED** |
-| Tilin poiston palvelintransaktio | **PRODUCTION-BLOCKED** |
+| Inventaario + kaskadin todistus | **COMPLETE_LOCAL** |
+| Edge Function (lähdekoodi, testit) | **COMPLETE_LOCAL** |
+| Poiston käyttöliittymä ja vahvistusvirta | **COMPLETE_LOCAL** (DOM-osuus laitteella todentamatta) |
+| Edge Functionin deploy ja tuotantoaktivointi | **BLOCKED_EXTERNAL_DECISION** |
+| aiAudit-säilytyslinjaus | **BLOCKED_EXTERNAL_DECISION** |

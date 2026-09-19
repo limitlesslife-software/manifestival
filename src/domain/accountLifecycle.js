@@ -27,6 +27,99 @@ import { EXPORTED_COLLECTIONS } from './dataExport.js';
 export { EXPORTED_COLLECTIONS as ACCOUNT_OWNED_COLLECTIONS };
 
 /**
+ * Mihin tauluun ja omistajasarakkeeseen kukin inventaarion kokoelma
+ * tallentuu, ja miten sen poisto tapahtuu.
+ *
+ * KAIKKI POISTUVAT YHDESSÄ ATOMISESTI: jokaisen taulun omistajasarake
+ * viittaa `auth.users(id)` ... `on delete cascade`, joten auth-käyttäjän
+ * poisto poistaa kaikki rivit yhdessä tietokantatransaktiossa.
+ * Järjestyksellä (lapset ennen vanhempia) ei siksi ole väliä eikä
+ * erillisiä DELETE-lauseita tarvita -- ne olisivat PostgREST-kutsuina
+ * ei-atomisia ja jättäisivät puolikkaan tilin, jos yksi epäonnistuisi.
+ * Väite ("jokainen taulu kaskadoituu") todistetaan migraatiotiedostoista
+ * tests/account-deletion-inventory.test.mjs:ssä, ei oleteta.
+ *
+ * Kopio tästä on supabase/functions/_shared/accountInventory.js, koska
+ * Edge Function ei voi tuoda selainpuolen src/-hakemistoa. Testi vaatii,
+ * että kopio on täsmälleen sama.
+ */
+export const ACCOUNT_DATA_MAP = Object.freeze({
+  tasks: { table: 'tasks', ownerColumn: 'user_id' },
+  routines: { table: 'routines', ownerColumn: 'user_id' },
+  routineExceptions: { table: 'routine_exceptions', ownerColumn: 'user_id' },
+  goals: { table: 'goals', ownerColumn: 'user_id' },
+  projects: { table: 'projects', ownerColumn: 'user_id' },
+  bills: { table: 'bills', ownerColumn: 'user_id' },
+  recurringExpenses: { table: 'recurring_expenses', ownerColumn: 'user_id' },
+  savingsGoals: { table: 'savings_goals', ownerColumn: 'user_id' },
+  wellbeing: { table: 'wellbeing_entries', ownerColumn: 'user_id' },
+  notificationPreferences: { table: 'notification_preferences', ownerColumn: 'id' },
+  profile: { table: 'profile', ownerColumn: 'id' },
+  aiAudit: { table: 'ai_action_audit', ownerColumn: 'user_id' },
+  transactions: { table: 'transactions', ownerColumn: 'user_id' },
+  investments: { table: 'investments', ownerColumn: 'user_id' },
+  milestones: { table: 'milestones', ownerColumn: 'user_id' },
+  inboxItems: { table: 'inbox_items', ownerColumn: 'user_id' },
+  reminders: { table: 'reminders', ownerColumn: 'user_id' },
+  notices: { table: 'notices', ownerColumn: 'user_id' },
+  travelPlans: { table: 'travel_plans', ownerColumn: 'user_id' },
+  locationRules: { table: 'location_rules', ownerColumn: 'user_id' }
+});
+
+/**
+ * Käyttäjälle näytettävät nimet. Jokaisella inventaarion kokoelmalla on
+ * oma (testi vaatii kattavuuden) -- raaka tekninen nimi ("routineExceptions")
+ * ei kuulu poiston esikatseluun.
+ */
+export const ACCOUNT_DOMAIN_LABELS = Object.freeze({
+  tasks: 'Tehtävät',
+  routines: 'Rutiinit',
+  routineExceptions: 'Rutiinien poikkeukset',
+  goals: 'Tavoitteet',
+  projects: 'Projektit',
+  bills: 'Laskut',
+  recurringExpenses: 'Toistuvat menot',
+  savingsGoals: 'Säästötavoitteet',
+  wellbeing: 'Hyvinvointimerkinnät',
+  notificationPreferences: 'Muistutusasetukset',
+  profile: 'Profiili',
+  aiAudit: 'AI-toimintoloki',
+  transactions: 'Talouden tapahtumat',
+  investments: 'Sijoitukset',
+  milestones: 'Välitavoitteet',
+  inboxItems: 'Saapuneet kirjaukset',
+  reminders: 'Muistutukset',
+  notices: 'Ilmoitushistoria',
+  travelPlans: 'Matkasuunnitelmat',
+  locationRules: 'Paikkamuistutukset'
+});
+
+/** Kokoelman käyttäjälle näytettävä nimi. Tuntematon nimi näytetään sellaisenaan. */
+export function domainLabel(name) {
+  return Object.prototype.hasOwnProperty.call(ACCOUNT_DOMAIN_LABELS, name)
+    ? ACCOUNT_DOMAIN_LABELS[name]
+    : String(name);
+}
+
+/**
+ * Kokoelmat, joiden säilytys- tai poistolinjaus vaatii tuote- tai
+ * lakipäätöksen.
+ *
+ * `aiAudit` (AI-toimintoloki) poistuu nyt tilin mukana, koska se on
+ * käyttäjän omaa dataa (sisältää tiivistelmän hänen syötteistään) ja
+ * poistoperiaate on oletuksena "kaikki oma data pois". Jos lakisääteinen
+ * tai turvallisuusperusteinen säilytysvelvoite todetaan, sen poikkeus
+ * on OMISTAJAN PÄÄTÖS ja vaatii skeemamuutoksen (FK ei saa kaskadoitua) --
+ * sitä ei ole toteutettu eikä sen puuttuminen ole hiljainen oletus.
+ */
+export const RETENTION_DECISIONS = Object.freeze({
+  aiAudit: Object.freeze({
+    decision: 'delete-with-account',
+    ownerReviewRequired: true
+  })
+});
+
+/**
  * Tallennustiedostojen kategoriat, joita tilin poisto koskisi.
  *
  * TYHJÄ LISTA ON TOTUUS, EI PUUTE. Kuitin ja laskun kuvaa ei tallenneta
@@ -39,27 +132,26 @@ export { EXPORTED_COLLECTIONS as ACCOUNT_OWNED_COLLECTIONS };
 export const STORED_FILE_CATEGORIES = Object.freeze([]);
 
 /**
- * Onko auth-käyttäjän poisto (auth.users-rivi) mahdollista nykyisellä
- * backendillä?
+ * Onko auth-käyttäjän poisto (auth.users-rivi) mahdollista?
  *
- * EI, PYSYVÄSTI KUNNES PÄÄTETÄÄN TOISIN. `auth.users`-rivin poisto vaatii
- * Supabasen korotetun palvelinoikeuden (ks. docs/SECURITY.md,
- * "Salaisuudet"-taulukon viimeinen rivi), jota tämä repo tarkoituksella
- * ei sisällä missään — ei selaimessa, ei `api/`-hakemistossa. Tämä ei
- * ole unohdus vaan tietoinen rajaus (lukittu testillä
- * tests/security-invariants.test.mjs), jonka poistaminen vaatii
- * erillisen infrastruktuuripäätöksen: esim. Supabase Edge Function,
- * jossa korotettu oikeus elää Supabasen puolella eikä Vercelin
- * ympäristömuuttujissa. Ks. docs/ACCOUNT-DELETION.md.
+ * Domain ei tiedä deploymentista, joten kutsuja kertoo sen: käyttöliittymä
+ * antaa `ACCOUNT_DELETION.endpointEnabled` (src/data/config.js), joka on
+ * false kunnes Supabase Edge Function `delete-account` on oikeasti
+ * deployattu ja testattu. Oletus on EI -- poisto ei koskaan näy
+ * mahdollisena vahingossa.
+ *
+ * Korotettu oikeus (auth.users-rivin poisto) elää vain Edge Functionissa
+ * (supabase/functions/delete-account), ei selaimessa eikä `api/`-
+ * hakemistossa; ks. docs/ACCOUNT-DELETION.md.
  */
-export function authAccountDeletable() {
-  return false;
+export function authAccountDeletable(endpointEnabled = false) {
+  return endpointEnabled === true;
 }
 
 /** Ihmisluettava syy, jos auth-tiliä ei voi poistaa. */
 export function authAccountBlockedReason() {
-  return 'Tilin auth-rivin poisto vaatii palvelinpuolen korotettua oikeutta, '
-    + 'jota tässä sovelluksessa ei ole toteutettu (ks. docs/ACCOUNT-DELETION.md).';
+  return 'Tilin poisto ei ole vielä käytössä: palvelinpuolen poistotoiminto on '
+    + 'valmisteltu mutta sitä ei ole otettu käyttöön (ks. docs/ACCOUNT-DELETION.md).';
 }
 
 /**
@@ -74,7 +166,7 @@ export function authAccountBlockedReason() {
  *   blockers: string[]
  * }}
  */
-export function dryRunDeletion(data = {}) {
+export function dryRunDeletion(data = {}, { endpointEnabled = false } = {}) {
   const collections = EXPORTED_COLLECTIONS.map(name => {
     const value = data[name];
     const count = Array.isArray(value) ? value.length : (value && typeof value === 'object' ? 1 : 0);
@@ -82,7 +174,7 @@ export function dryRunDeletion(data = {}) {
   });
 
   const totalRows = collections.reduce((sum, entry) => sum + entry.count, 0);
-  const authDeletable = authAccountDeletable();
+  const authDeletable = authAccountDeletable(endpointEnabled);
   const blockers = authDeletable ? [] : [authAccountBlockedReason()];
 
   return {

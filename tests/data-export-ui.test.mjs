@@ -19,6 +19,7 @@ import { authAccountDeletable } from '../src/domain/accountLifecycle.js';
 
 const profileSource = readCode('src/app/views/profile.js');
 const indexHtml = readCode('index.html');
+const deletionSource = readCode('src/app/accountDeletion.js');
 
 test('KRIITTINEN: profiilinäkymä kutsuu vientifunktioita eikä vain tuo niitä', () => {
   assert.match(profileSource, /buildUserDataExport\(/);
@@ -72,37 +73,31 @@ test('KRIITTINEN: DOM-koukku tilin poistolle on olemassa index.html:ssä', () =>
   assert.match(indexHtml, /id="pfAccountDeletion"/);
 });
 
-test('KRIITTINEN: poistopainike on pois päältä niin kauan kuin authAccountDeletable() on false', () => {
-  // Tämä testi KAATUU sinä päivänä kun backend valmistuu ja
-  // authAccountDeletable() muuttuu todeksi -- se on tarkoituksellista:
-  // silloin joku tarkistaa käsin, että painikkeen disabled-ehto ja
-  // vahvistuspolku päivitetään samassa yhteydessä, ei jää unohtumaan.
-  assert.equal(authAccountDeletable(), false,
-    'authAccountDeletable() on true -- päivitä pfDeletionBtn-ehto ja tämä testi tietoisesti');
-
-  const start = profileSource.indexOf('function renderAccountDeletion');
-  const body = profileSource.slice(start, profileSource.indexOf('\n}', start));
-  assert.match(body, /id="pfDeletionBtn"/);
-  assert.match(body, /deletable\s*\?\s*''\s*:\s*'disabled/,
-    'poistopainike ei ole ehdollisesti pois päältä authAccountDeletable():n mukaan');
-  assert.match(body, /authAccountBlockedReason\(\)/,
-    'estosyytä ei näytetä käyttäjälle');
+test('KRIITTINEN: poistoon johtava painike on pois päältä niin kauan kuin poisto ei ole käytössä', () => {
+  // Poiston käyttöliittymä on src/app/accountDeletion.js:ssä (profiili
+  // vain delegoi). Lippu ACCOUNT_DELETION.endpointEnabled on false kunnes
+  // Edge Function on oikeasti deployattu -- silloin "Jatka poistoon" on
+  // disabled, syy näytetään, eikä mitään verkkokutsua tehdä.
+  assert.equal(authAccountDeletable(), false);
+  assert.match(deletionSource, /id="pfDeletionContinueBtn"[\s\S]{0,120}\$\{enabled \? '' : 'disabled aria-disabled="true"'\}/,
+    'jatka-poistoon-painike ei ole ehdollisesti pois päältä palvelinpoiston mukaan');
+  assert.match(deletionSource, /authAccountBlockedReason\(\)/, 'estosyytä ei näytetä käyttäjälle');
+  assert.match(profileSource, /renderAccountDeletionSection\(/, 'profiili ei delegoi poistoa');
 });
 
-test('poiston esikatselu käyttää dryRunDeletion():ia, ei omaa laskentaansa', () => {
-  assert.match(profileSource, /import\s*\{[^}]*dryRunDeletion[^}]*\}\s*from\s*['"]\.\.\/\.\.\/domain\/accountLifecycle\.js['"]/);
-  const start = profileSource.indexOf('function showDeletionPreview');
-  const body = profileSource.slice(start, profileSource.indexOf('\n}', start));
-  assert.match(body, /dryRunDeletion\(collectExportData\(getState\(\)\)\)/,
-    'esikatselu ei käytä samaa dataa kuin vienti — kaksi eri totuutta samasta tilasta');
+test('poiston esikatselu käyttää dryRunDeletion():ia samasta datasta kuin vienti', () => {
+  assert.match(deletionSource, /import\s*\{[^}]*dryRunDeletion[^}]*\}\s*from\s*['"]\.\.\/domain\/accountLifecycle\.js['"]/);
+  assert.match(deletionSource, /dryRunDeletion\(readData\(\)/,
+    'esikatselu ei käytä annettua dataa');
+  assert.match(profileSource, /\(\) => collectExportData\(getState\(\)\)/,
+    'esikatselun data ei tule samasta kokoajasta kuin vienti — kaksi eri totuutta samasta tilasta');
 });
 
-test('poiston esikatselupainike on kytketty, varsinainen poistopainike ei kutsu mitään', () => {
-  const start = profileSource.indexOf('function renderAccountDeletion');
-  const body = profileSource.slice(start, profileSource.indexOf('\n}', start));
-  assert.match(body, /pfDeletionPreviewBtn['"]\)/);
-  assert.match(body, /addEventListener\('click',\s*showDeletionPreview\)/);
-  // pfDeletionBtn ei saa olla kytketty mihinkään toimintoon niin kauan
-  // kuin se on pois päältä -- muuten se olisi napattavissa DOM:ista käsin.
-  assert.doesNotMatch(body, /pfDeletionBtn['"]\)\.addEventListener/);
+test('poiston esikatselupainike on kytketty, ja poisto kulkee vain tilakoneen kautta', () => {
+  assert.match(deletionSource, /on\('pfDeletionPreviewBtn',\s*openPreview\)/);
+  // Varsinainen poistokutsu ei saa olla kytketty suoraan mihinkään
+  // painikkeeseen ohi vahvistusvirran: vain submitDeletion() kutsuu sitä.
+  const calls = deletionSource.match(/executeAccountDeletion\(\{/g) || [];
+  assert.equal(calls.length, 1, 'executeAccountDeletion() saa olla yhdessä paikassa');
+  assert.doesNotMatch(deletionSource, /on\('pfDeletionContinueBtn',\s*executeAccountDeletion/);
 });

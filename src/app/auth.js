@@ -127,12 +127,29 @@ const signOut = singleFlight(async () => {
   }
 });
 
+/**
+ * Viesti, joka näytetään seuraavan kerran kun kirjautumisportti avautuu.
+ *
+ * Tarvitaan tilin poiston jälkeen: uloskirjautuminen avaa portin
+ * asynkronisesti ja setMode() tyhjentää viestit, joten viesti ei voi olla
+ * suora showNote()-kutsu poiston hetkellä.
+ */
+let pendingAuthNote = null;
+
+export function queueAuthNote(message) {
+  pendingAuthNote = typeof message === 'string' && message ? message : null;
+}
+
 /** Näytä kirjautumisportti ja piilota sovellus. */
 export function showAuthGate() {
   el('app').classList.add('app-hidden');
   el('authGate').classList.add('open');
   el('authPassword').value = '';
   setMode('signin');
+  if (pendingAuthNote) {
+    showNote(pendingAuthNote);
+    pendingAuthNote = null;
+  }
 }
 
 /** Piilota kirjautumisportti ja näytä sovellus. */

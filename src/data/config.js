@@ -48,3 +48,20 @@ export const API = Object.freeze({
    */
   command: '/api/command'
 });
+
+/**
+ * Tilin poiston palvelinfunktio (Supabase Edge Function).
+ *
+ * `endpointEnabled` ON TOTUUSLIPPU, EI TOIVE: se on false kunnes
+ * funktio on OIKEASTI deployattu, sen origin-lista on asetettu ja
+ * kertakäyttöinen testitili on läpäissyt poiston. Niin kauan sovellus
+ * ei väitä poistoa mahdolliseksi eikä lähetä verkkokutsua.
+ * Ks. supabase/functions/README.md ja docs/ACCOUNT-DELETION.md.
+ *
+ * Funktion korotettu avain ei ole täällä eikä missään selaimeen
+ * menevässä tiedostossa -- se elää vain Supabasen puolella.
+ */
+export const ACCOUNT_DELETION = Object.freeze({
+  endpointEnabled: false,
+  functionName: 'delete-account'
+});
