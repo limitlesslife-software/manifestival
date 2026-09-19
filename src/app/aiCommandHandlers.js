@@ -88,10 +88,31 @@ export const handlers = Object.freeze({
 
   // ------------------------------------------------------------- rutiinit
 
-  [INTENT.CREATE_ROUTINE]: async ({ payload }) => createRoutine(payload),
+  [INTENT.CREATE_ROUTINE]: async ({ payload }) => createRoutine({
+    ...payload,
+    // AI-komennon payload on LITTEÄ (recurrence merkkijonona, weekdays
+    // omana kenttänään) -- src/domain/routine.js normalizeRoutine() ja
+    // käsin täytetty lomake (views/routines.js readForm()) käyttävät
+    // SISÄKKÄISTÄ muotoa. Ilman tätä muunnosta toistotyyppi ja
+    // viikonpäivät katoaisivat hiljaa ja rutiini tallentuisi päivittäisenä.
+    recurrence: { type: payload.recurrence, weekdays: payload.weekdays }
+  }),
 
-  [INTENT.UPDATE_ROUTINE]: async ({ payload, target }) =>
-    editRoutine(target.id, payload.changes),
+  [INTENT.UPDATE_ROUTINE]: async ({ payload, target }) => {
+    const changes = { ...payload.changes };
+    if (changes.recurrence !== undefined || changes.weekdays !== undefined) {
+      // Osittainen muutos ("vaihda maanantaiksi" ilman toistotyyppiä)
+      // täydennetään TUOREESTA kohteesta (target.entity, ks. aiCommands.js
+      // refreshTarget) -- ei ehdotushetken jäädytetystä kopiosta.
+      const current = (target.entity && target.entity.recurrence) || {};
+      changes.recurrence = {
+        type: changes.recurrence !== undefined ? changes.recurrence : current.type,
+        weekdays: changes.weekdays !== undefined ? changes.weekdays : current.weekdays
+      };
+      delete changes.weekdays;
+    }
+    return editRoutine(target.id, changes);
+  },
 
   [INTENT.DELETE_ROUTINE]: async ({ target }) =>
     fromBoolean(await deleteRoutine(target.id), 'Poisto peruttiin tai epäonnistui.'),

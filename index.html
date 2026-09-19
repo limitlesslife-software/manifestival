@@ -1245,7 +1245,7 @@
     <svg class="icon" style="width:20px;height:20px;" aria-hidden="true"><use href="#i-search"/></svg>
   </button>
 
-  <button class="fab" id="fabBtn" type="button" aria-label="Lisää puheella">
+  <button class="fab" id="fabBtn" type="button" aria-label="Puheohjaus">
     <span class="fab-ring" aria-hidden="true"></span>
     <svg class="icon" style="width:24px;height:24px;" aria-hidden="true"><use href="#i-mic"/></svg>
   </button>
@@ -1275,7 +1275,7 @@
   </div>
 
   <!-- ============ PUHEOHJAUS ============ -->
-  <div class="voice-overlay" id="voiceOverlay" role="dialog" aria-modal="true" aria-label="Lisää puheella" aria-hidden="true">
+  <div class="voice-overlay" id="voiceOverlay" role="dialog" aria-modal="true" aria-label="Puheohjaus" aria-hidden="true">
     <div class="voice-sheet">
       <button class="voice-close-x" id="voiceCloseX" type="button" aria-label="Sulje"><svg class="icon" style="width:20px;height:20px;" aria-hidden="true"><use href="#i-x"/></svg></button>
 
@@ -1290,25 +1290,15 @@
         <div class="voice-label">Tulkitsen…</div>
       </div>
 
-      <div class="voice-state" id="voiceState-confirm" style="display:none;">
-        <div class="voice-label">Tarkista ja tallenna</div>
-        <div class="voice-source" id="vfSource"></div>
-        <label class="visually-hidden" for="vfTitle">Otsikko</label>
-        <input class="voice-field" id="vfTitle" placeholder="Otsikko">
-        <div class="voice-row2">
-          <div><label class="field-label" for="vfDate">Päivä</label><input class="voice-field" type="date" id="vfDate"></div>
-          <div><label class="field-label" for="vfTime">Alkaa</label><input class="voice-field" type="time" id="vfTime"></div>
-          <div><label class="field-label" for="vfEndTime">Päättyy</label><input class="voice-field" type="time" id="vfEndTime"></div>
-        </div>
-        <div class="voice-row2">
-          <div><label class="field-label" for="vfDuration">Kesto (min)</label><input class="voice-field" type="number" id="vfDuration" min="1" max="1440" step="5"></div>
-          <div><label class="field-label" for="vfCategory">Elämänalue</label><select class="voice-field" id="vfCategory"></select></div>
-          <div><label class="field-label" for="vfPriority">Prioriteetti</label><select class="voice-field" id="vfPriority"></select></div>
-        </div>
+      <div class="voice-state" id="voiceState-transcript" style="display:none;">
+        <div class="voice-label">Tarkista mitä kuulin</div>
+        <label class="visually-hidden" for="vfTranscriptText">Tunnistettu teksti</label>
+        <textarea class="voice-field" id="vfTranscriptText" rows="3"></textarea>
         <div class="voice-actions">
-          <button class="voice-btn cancel" id="voiceCancelBtn" type="button">Peruuta</button>
-          <button class="voice-btn save" id="voiceSaveBtn" type="button">Tallenna</button>
+          <button class="voice-btn cancel" id="voiceTranscriptCancelBtn" type="button">Peruuta</button>
+          <button class="voice-btn save" id="voiceTranscriptContinueBtn" type="button">Jatka</button>
         </div>
+        <button class="form-btn secondary" id="voiceTranscriptRetryBtn" type="button" style="width:100%; margin-top:8px; padding:12px;">Kuuntele uudelleen</button>
       </div>
 
       <div class="voice-state" id="voiceState-error" style="display:none;">

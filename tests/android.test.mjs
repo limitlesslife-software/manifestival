@@ -150,8 +150,8 @@ test('natiivikuoressa API-kutsu osoittaa tuotantoon', async () => {
 });
 
 test('AI-kutsu käyttää alustakohtaista osoitetta', () => {
-  const source = readCode('src/ai/parseClient.js');
-  assert.ok(source.includes('apiUrl(API.parse)'),
+  const source = readCode('src/ai/commandClient.js');
+  assert.ok(source.includes('apiUrl(API.command)'),
     'kutsun pitää kulkea alustasovittimen kautta');
 });
 

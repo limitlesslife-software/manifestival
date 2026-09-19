@@ -376,6 +376,33 @@ export function applyShift(entity, shiftMinutes) {
 }
 
 /**
+ * Hae kohteen TUORE tila juuri ennen suoritusta.
+ *
+ * `proposal.target` on jäädytetty kuva ehdotuksen RAKENNUSHETKELTÄ.
+ * Käyttäjä saattaa katsoa vahvistusdialogia sekunteja tai minuutteja --
+ * sinä aikana toinen komento, toinen välilehti tai reconnect-synkronointi
+ * on voinut muuttaa tai poistaa juuri sen rivin. Suoritus EI SAA käyttää
+ * jäädytettyä kopiota: "siirrä kahdella tunnilla" laskettuna vanhentuneesta
+ * kellonajasta siirtäisi tehtävän väärään aikaan, hiljaa.
+ *
+ * Palauttaa tuoreen `{id, type, label, date, entity}`-kandidaatin tai
+ * `null`, jos kohdetta ei enää löydy -- jälkimmäinen EI KOSKAAN johda
+ * arvaukseen, vaan suoritus epäonnistuu rehellisesti (ks. executeProposal).
+ */
+function refreshTarget(target, targetType) {
+  if (!target) return { ok: true, target: null };
+
+  const resolution = resolveTarget({
+    entities: collectionFor(targetType, getState()),
+    id: target.id,
+    entityType: targetType
+  });
+
+  if (resolution.status !== RESOLUTION.EXACT) return { ok: false };
+  return { ok: true, target: resolution.match };
+}
+
+/**
  * Suorita vahvistettu ehdotus.
  *
  * @param {object} proposal buildProposal-tulos
@@ -397,11 +424,19 @@ export async function executeProposal(proposal, handlers = {}) {
     return { ok: false, reason: 'Tätä komentoa ei ole vielä kytketty käyttöön.' };
   }
 
+  const fresh = refreshTarget(target, command.targetType);
+  if (!fresh.ok) {
+    // Kohde ehti muuttua tunnistamattomaksi (poistettu, tai nimen
+    // perusteella tunnistettu rivi ei enää täsmää) ehdotuksen ja
+    // vahvistuksen välissä. Vanhentunutta mutaatiota ei suoriteta.
+    return { ok: false, reason: 'Kohde on ehtinyt muuttua tai kadota. Yritä uudelleen.' };
+  }
+
   try {
     const result = await handler({
       payload: command.payload,
-      target,
-      entity: target ? target.entity : null
+      target: fresh.target,
+      entity: fresh.target ? fresh.target.entity : null
     });
     return result && typeof result === 'object' ? result : { ok: true };
   } catch (error) {

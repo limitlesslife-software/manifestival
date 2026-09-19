@@ -46,7 +46,6 @@ const SHELL = [
   '/src/ai/commandClient.js',
   '/src/ai/entityResolver.js',
   '/src/ai/intentSchema.js',
-  '/src/ai/parseClient.js',
   '/src/ai/planSchema.js',
   '/src/ai/proposalSchema.js',
   '/src/app/actions.js',
