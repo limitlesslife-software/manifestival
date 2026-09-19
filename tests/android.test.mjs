@@ -272,18 +272,26 @@ test('selväkielinen liikenne on nimenomaisesti kielletty', { skip: !hasAndroid 
 });
 
 test('luvat rajoittuvat siihen, mitä toteutetut ominaisuudet vaativat', { skip: !hasAndroid }, () => {
-  // Oma manifesti pyytää vain INTERNETin. Loput tulevat
-  // ilmoituslisäosasta yhdistämisen kautta, eikä niitä lisätä käsin.
+  // Oma manifesti pyytää INTERNETin ja etualan sijainnin (kertahaku,
+  // src/platform/geolocation.js; Capacitor-liitännäinen ei julista niitä
+  // itse). Loput tulevat ilmoituslisäosasta yhdistämisen kautta, eikä niitä
+  // lisätä käsin.
   const manifest = appManifest();
   const permissions = [...manifest.matchAll(/uses-permission android:name="([^"]+)"/g)]
     .map(m => m[1]);
 
-  assert.deepEqual(permissions, ['android.permission.INTERNET'],
-    'omaan manifestiin lisättiin lupa: ' + permissions.join(', '));
+  assert.deepEqual(permissions, [
+    'android.permission.INTERNET',
+    'android.permission.ACCESS_COARSE_LOCATION',
+    'android.permission.ACCESS_FINE_LOCATION'
+  ], 'omaan manifestiin lisättiin lupa: ' + permissions.join(', '));
 
-  // Sijaintia ei ole toteutettu. Lupaa ei saa pyytää suunnitelman takia.
-  for (const forbidden of ['ACCESS_FINE_LOCATION', 'ACCESS_COARSE_LOCATION',
-    'ACCESS_BACKGROUND_LOCATION', 'CAMERA', 'RECORD_AUDIO',
+  // GPS ei saa rajata jakelua: laite ilman GPS:ää käyttää käyttäjän antamaa matka-aikaa.
+  assert.match(manifest, /uses-feature android:name="android\.hardware\.location\.gps" android:required="false"/);
+
+  // Taustasijaintia ei ole eikä tule: vain etualan kertahaku.
+  for (const forbidden of ['ACCESS_BACKGROUND_LOCATION', 'FOREGROUND_SERVICE_LOCATION',
+    'CAMERA', 'RECORD_AUDIO',
     'READ_EXTERNAL_STORAGE', 'READ_CONTACTS']) {
     assert.equal(manifest.includes(forbidden), false,
       'lupa ilman toteutusta: ' + forbidden);

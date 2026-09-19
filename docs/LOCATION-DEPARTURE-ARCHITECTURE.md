@@ -68,7 +68,10 @@ ihmisille, jotka myöhästyvät siksi ettei kukaan muistuttanut ajoissa.
    (jota ei vielä ole).
 6. **Ei taustasijaintia**: Android-manifestiin ei lisätä `ACCESS_BACKGROUND_LOCATION`;
    staattiset testit (`tests/geolocation.test.mjs`, `tests/android.test.mjs`) vartioivat sitä. `@capacitor/geolocation`
-   tuo vain karkean/tarkan etualan luvan.
+   ei julista lupia itse, joten oma manifesti julistaa vain
+   `ACCESS_COARSE_LOCATION` ja `ACCESS_FINE_LOCATION` (etualan kertahaku) sekä
+   `location.gps` `required="false"`. Ilman näitä natiivihaku ei voisi koskaan
+   onnistua; APK:n `aapt2 dump badging` vahvistaa (ei taustasijaintia).
 
 ---
 
