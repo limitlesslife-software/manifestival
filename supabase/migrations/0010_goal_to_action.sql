@@ -106,11 +106,18 @@
 -- poisto kaatuisi. Sama vika korjattiin migraatiossa 0004.
 --
 -- =====================================================================
--- OBJEKTIEN MÄÄRÄ: 41
+-- OBJEKTIEN MÄÄRÄ: 38
 -- =====================================================================
 --
+-- KORJATTU 41 -> 38 (todennettu oikealla PostgreSQL 17:llä,
+-- tools/pg-rehearsal). Aiempi luku laski osan rajoitteista kahdesti,
+-- joten täysin ajetun migraation uudelleenajo ilmoitti "kesken: 38
+-- objektia 41:sta" eikä "JO AJETTU" — ja ohjasi palautuspolulle
+-- turhaan. goals_status_check EI ole luvussa: se on olemassa jo ennen
+-- 0010:aa (0004) ja vain korvataan.
+--
 --    1  taulu           milestones
---    8  rajoitetta      milestones (7 check + owner_row_key)
+--    7  rajoitetta      milestones (6 check + owner_row_key)
 --    1  vierasavain     milestones -> goals
 --    2  indeksiä        milestones
 --    1  liipaisin       milestones
@@ -120,9 +127,9 @@
 --    1  sarake          projects
 --    2  saraketta       profile
 --    2  vierasavainta   tasks/projects -> milestones
---    4  rajoitetta      goals (mittari + tila)
+--    4  rajoitetta      goals (mittari, yksikkö, pari, säästö)
 --    2  rajoitetta      tasks (depends_on)
---    4  rajoitetta      profile/milestones-lisät
+--    2  rajoitetta      profile
 --
 -- Luku on käsin laskettu ja sitä käytetään osittaisen ajon
 -- tunnistukseen. Nolla = tuore ajo. Mikä tahansa muu luku tarkoittaa,
@@ -220,7 +227,7 @@ begin
     raise exception 'Hyvaksyttya omistajaa % ei loydy auth.users-taulusta. Vaara projekti?', omistaja;
   end if;
 
-  -- 7. OSITTAISEN TAI AIEMMAN AJON TUNNISTUS — 41 objektia.
+  -- 7. OSITTAISEN TAI AIEMMAN AJON TUNNISTUS — 38 objektia.
   select count(*) into olemassa from (
     select 1 from pg_tables
       where schemaname = 'public' and tablename = 'milestones'
@@ -273,7 +280,7 @@ begin
       where schemaname = 'public' and tablename = 'milestones'
   ) kaikki;
 
-  if olemassa = 41 then
+  if olemassa = 38 then
     raise exception 'Migraatio 0010 on JO AJETTU. Ala aja uudelleen — aja supabase/verify/verify_0010.sql.';
   end if;
 
@@ -323,11 +330,11 @@ begin
         where schemaname = 'public' and tablename = 'milestones'
     ) loydetyt;
 
-    raise exception 'Migraatio 0010 on kesken: % objektia 41:sta on jo olemassa (%).',
+    raise exception 'Migraatio 0010 on kesken: % objektia 38:sta on jo olemassa (%).',
       olemassa, nimet;
   end if;
 
-  raise notice 'Esiehdot kunnossa. Omistaja %, 0010:n objekteja 0/41.', omistaja;
+  raise notice 'Esiehdot kunnossa. Omistaja %, 0010:n objekteja 0/38.', omistaja;
 end $$;
 
 -- ---------------------------------------------------------------------
