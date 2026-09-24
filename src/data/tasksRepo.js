@@ -14,7 +14,9 @@ import { getClient } from './client.js';
 import { requireUserId } from './session.js';
 import { taskColumns } from './schema.js';
 import { normalizeTask } from '../domain/task.js';
-import { toRow, fromRow, assertClientSafe } from '../lib/rows.js';
+import {
+  toRow, fromRow, assertClientSafe, sameColumnValue, pgArrayLiteral
+} from '../lib/rows.js';
 import { ok, fail } from '../lib/result.js';
 
 const TABLE = 'tasks';
@@ -37,8 +39,8 @@ const TABLE = 'tasks';
  * uudelleen jo normalisoidulle oliolle ei muuta mitään. Sama malli on
  * käytössä kaikissa muissa repositorioissa (collectionsRepo).
  */
-function payloadFor(task) {
-  return assertClientSafe(toRow(normalizeTask(task), taskColumns()));
+function payloadFor(task, columns = taskColumns()) {
+  return assertClientSafe(toRow(normalizeTask(task), columns));
 }
 
 /**
@@ -161,11 +163,6 @@ export async function getTask(id) {
   }
 }
 
-function sameColumn(a, b) {
-  if (a === b) return true;
-  return (a === null || a === undefined) && (b === null || b === undefined);
-}
-
 /**
  * Osittainen kirjoitus: vain sarakkeet, jotka poikkeavat toisistaan.
  *
@@ -173,20 +170,42 @@ function sameColumn(a, b) {
  * ja assertClientSafe), joten erotus ei voi sisältää saraketta, jota koko
  * rivin kirjoitus ei saisi lähettää. `guards` kertoo jokaisen muuttuvan
  * sarakkeen nykyarvon ehdollista kirjoitusta varten.
+ *
+ * Taulukkosarakkeet (depends_on) verrataan arvoina (sameColumnValue):
+ * identiteettivertailu teki jokaisesta taulukosta "muuttuneen", jolloin
+ * pelkkä otsikon muutos lähetti myös depends_on-sarakkeen ja käytti sitä
+ * vertailuehtona. `columns` on testejä varten; oletus on portin mukainen.
  */
-function partialPayloadFor(next, current) {
-  const nextRow = payloadFor(next);
-  const currentRow = payloadFor(current);
+export function partialPayloadFor(next, current, columns = taskColumns()) {
+  const nextRow = payloadFor(next, columns);
+  const currentRow = payloadFor(current, columns);
   const diff = {};
   const guards = {};
   for (const column of Object.keys(nextRow)) {
     if (column === 'id') continue;
-    if (!sameColumn(nextRow[column], currentRow[column])) {
+    if (!sameColumnValue(nextRow[column], currentRow[column])) {
       diff[column] = nextRow[column];
       guards[column] = currentRow[column] === undefined ? null : currentRow[column];
     }
   }
   return { diff, guards };
+}
+
+/**
+ * Ehdollisen kirjoituksen vertailuehto yhdelle sarakkeelle.
+ *
+ *   null      -> is null
+ *   taulukko  -> eq PostgreSQL-taulukkoliteraalina ({"a","b"})
+ *   muu       -> eq arvona
+ *
+ * Taulukko suoraan `.eq`:lle muuttuisi URL:ssa muotoon `sarake=eq.` ja
+ * kanta vastaisi 22P02 — jokainen offline-muokkauksen toisto kaatuisi
+ * aallosta G alkaen.
+ */
+export function guardFilter(value) {
+  if (value === null || value === undefined) return ['is', null];
+  if (Array.isArray(value)) return ['eq', pgArrayLiteral(value)];
+  return ['eq', value];
 }
 
 /**
@@ -211,7 +230,8 @@ export async function patchTask(id, changes, expected) {
       .eq('user_id', requireUserId())
       .eq('id', id);
     for (const [column, value] of Object.entries(guards)) {
-      query = value === null ? query.is(column, null) : query.eq(column, value);
+      const [method, arg] = guardFilter(value);
+      query = query[method](column, arg);
     }
 
     const { data, error } = await query.select('id');

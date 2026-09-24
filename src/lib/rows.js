@@ -100,6 +100,15 @@ export function fromRow(row) {
     durationMinutes: row.duration_minutes ?? null,
     priority: row.priority ?? undefined,
     schedulingState: row.scheduling_state ?? undefined,
+    // Suunnittelukentät (migraatio 0010, GOAL_PLANNING_FIELDS). toRow
+    // kirjoittaa ne portin ollessa auki, joten ne on myös luettava:
+    // muuten välitavoite ja riippuvuudet tallentuisivat mutta katoaisivat
+    // uudelleenlatauksessa, ja seuraava koko rivin kirjoitus nollaisi ne
+    // (löydös aallon H harjoitteluintegraatiossa). Ennen 0010:tä
+    // sarakkeita ei ole, jolloin arvot ovat samat kuin normalizeTaskin
+    // oletukset.
+    milestoneId: row.milestone_id ?? null,
+    dependsOn: Array.isArray(row.depends_on) ? [...row.depends_on] : [],
     // Aikaleimat ovat kannan omaisuutta: created_at saa arvonsa
     // oletusarvosta ja updated_at liipaisimesta (migraatio 0002).
     // Client LUKEE ne mutta ei koskaan kirjoita — ne eivät ole
@@ -109,6 +118,38 @@ export function fromRow(row) {
     createdAt: row.created_at ?? null,
     updatedAt: row.updated_at ?? null
   };
+}
+
+/**
+ * Ovatko kaksi sarakearvoa samat? Taulukot (tasks.depends_on) verrataan
+ * ARVOINA: kaksi erillistä tyhjää taulukkoa ovat sama arvo. Identiteetti-
+ * vertailu (===) tulkitsi jokaisen taulukon muuttuneeksi, jolloin
+ * ehdollinen kirjoitus lähetti sen ja käytti sitä vertailuehtona.
+ * null ja undefined ovat sama tyhjä arvo; taulukkosarakkeessa tyhjä =
+ * tyhjä taulukko (sarake on NOT NULL default '{}').
+ */
+export function sameColumnValue(a, b) {
+  if (a === b) return true;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    const x = Array.isArray(a) ? a : (a == null ? [] : null);
+    const y = Array.isArray(b) ? b : (b == null ? [] : null);
+    if (!x || !y || x.length !== y.length) return false;
+    return x.every((value, i) => String(value) === String(y[i]));
+  }
+  return (a === null || a === undefined) && (b === null || b === undefined);
+}
+
+/**
+ * PostgreSQL-taulukkoliteraali PostgREST-suodattimeen: ['a', 'b'] -> {"a","b"}.
+ *
+ * `.eq('depends_on', [])` muuttuisi URL:ssa muotoon `depends_on=eq.` ja
+ * kanta vastaisi 22P02 (malformed array literal). Alkiot lainataan aina,
+ * ja lainausmerkki sekä kenoviiva suojataan.
+ */
+export function pgArrayLiteral(values) {
+  const items = (Array.isArray(values) ? values : [])
+    .map(value => '"' + String(value).replace(/(["\\])/g, '\\$1') + '"');
+  return '{' + items.join(',') + '}';
 }
 
 /**

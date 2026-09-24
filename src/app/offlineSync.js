@@ -32,6 +32,15 @@ import { logEvent } from '../lib/logger.js';
 
 function sameValue(a, b) {
   if (a === b) return true;
+  // Taulukot (dependsOn) arvoina: kaksi erillistä tyhjää taulukkoa ovat
+  // sama arvo. Identiteettivertailulla jokainen muokkaus olisi näyttänyt
+  // muuttavan riippuvuuksia, ja toisto olisi päätynyt konfliktiin.
+  if (Array.isArray(a) || Array.isArray(b)) {
+    const x = Array.isArray(a) ? a : (a == null ? [] : null);
+    const y = Array.isArray(b) ? b : (b == null ? [] : null);
+    return Boolean(x && y) && x.length === y.length
+      && x.every((value, i) => String(value) === String(y[i]));
+  }
   const empty = value => value === null || value === undefined || value === '';
   return empty(a) && empty(b);
 }
