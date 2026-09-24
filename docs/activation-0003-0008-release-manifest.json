@@ -328,7 +328,7 @@
       ],
       "dependencies": [],
       "rollbackTarget": "F",
-      "rollbackSha": null,
+      "rollbackSha": "e05c54bd4fa7d5afffe3efd6ca7a176b0162008e",
       "acceptancePack": "docs/acceptance/WAVE-G.md",
       "requiredAcceptance": [
         "npm run activation:verify-wave -- G",

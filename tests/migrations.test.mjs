@@ -1251,9 +1251,15 @@ function taulunSarakkeet(migraatio, taulu) {
     .filter(nimi => nimi !== 'constraint' && nimi !== 'foreign');
 
   // Myöhemmät migraatiot lisäävät sarakkeita olemassa oleviin tauluihin
-  // (0009: bills.payee/iban/reference). Ne kuuluvat tauluun yhtä lailla;
-  // sarakeportti ja migraation ajotila vartioidaan omissa testeissään.
+  // (0009: bills.payee/iban/reference, 0010: goals.metric ...). Ne
+  // kuuluvat tauluun VAIN jos migraatio on merkitty ajetuksi
+  // PRODUCTION-STATUS.md:ssä — sama lähde, joka sallii sarakeportin
+  // avaamisen. Ajamattoman migraation sarakkeita ei ole kannassa.
+  const statusRivit = read('docs/PRODUCTION-STATUS.md').split(NEWLINE);
+  const ajettu = tiedosto => statusRivit.some(r =>
+    r.includes('|') && r.includes('`' + tiedosto + '`') && /\*\*AJETTU\*\*/.test(r));
   const lisatyt = migrationFiles()
+    .filter(ajettu)
     .flatMap(tiedosto => [...read(`${MIGRATION_DIR}/${tiedosto}`)
       .matchAll(new RegExp(`alter table public\\.${taulu} add column (\\w+)`, 'g'))]
       .map(m => m[1]));
