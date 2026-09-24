@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="fi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Suunta E2E (paikallinen)</title>
+<link rel="stylesheet" href="/src/styles.css">
+</head>
+<body>
+<!--
+  PAIKALLINEN E2E-VALJAS. EI TUOTANTOA.
+
+  Liittää oikean index.html:n #app-merkinnän ja oikeat näkymämoduulit
+  sivulle, mutta istunto ja tietokanta ovat tekoja:
+    - käyttäjä asetetaan suoraan (setUser), kirjautumista ei tehdä
+    - Supabase-asiakas on paikallinen korvike, joka ei ota verkkoyhteyttä
+    - supabase-js:ää ei ladata lainkaan
+  Ajaja (tools/e2e/run-suunta-e2e.mjs) estää lisäksi *.supabase.co- ja
+  Anthropic-nimet DNS-tasolla.
+
+  Kello on siirrettävä (window.__e2e.advance), jotta ajastimen minuutit
+  voidaan todentaa odottamatta oikeaa aikaa.
+-->
+<script type="module" src="/tools/e2e/harness.mjs"></script>
+</body>
+</html>

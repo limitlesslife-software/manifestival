@@ -15,7 +15,8 @@
     "activation:preflight": "node scripts/activation-preflight.mjs",
     "activation:verify-wave": "node scripts/verify-wave.mjs",
     "production:verify-assets": "node scripts/production-verify-assets.mjs",
-    "release:manifest": "node scripts/release-manifest.mjs"
+    "release:manifest": "node scripts/release-manifest.mjs",
+    "e2e:suunta": "node tools/e2e/run-suunta-e2e.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.5.0",
