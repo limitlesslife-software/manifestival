@@ -12,28 +12,38 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { setUser, clearUser } from '../src/data/session.js';
+import { setUser, clearUser, getUser } from '../src/data/session.js';
+import { setClient } from '../src/data/client.js';
 import { clearLocalUserData, loadUserData } from '../src/app/actions.js';
 import { routinesRepo, goalsRepo, projectsRepo, wellbeingRepo } from '../src/data/collectionsRepo.js';
 import { savePreferences } from '../src/data/notificationPrefsRepo.js';
 import { resetState, getState } from '../src/app/state.js';
+import { createMultiTableServer } from './helpers/multiTableServer.mjs';
 
 const USER_A = { id: 'aaaaaaaa-1111-0000-0000-000000000001', email: 'a@example.com' };
+
+// Portin ollessa auki repositoriot hakevat kannasta. Muistinvarainen
+// palvelin pitää testin samana molemmissa tiloissa: tuotehaaralla
+// (portit kiinni) kirjoitukset menevät muistivarastoon, julkaisulinjassa
+// (portit auki) tänne. Ks. tests/helpers/multiTableServer.mjs.
+const server = createMultiTableServer(() => getUser()?.id ?? null);
 
 beforeEach(() => {
   clearUser();
   clearLocalUserData();
   resetState();
+  server.reset();
+  setClient(server);
 });
 
 async function seed() {
-  await routinesRepo.memory.insert({
+  await routinesRepo.insert({
     id: 'r-1', title: 'Aamulenkki', active: true,
     recurrence: { type: 'daily', weekdays: [] }
   });
-  await goalsRepo.memory.insert({ id: 'g-1', title: 'Tavoite 1' });
-  await projectsRepo.memory.insert({ id: 'p-1', name: 'Projekti 1' });
-  await wellbeingRepo.memory.insert({ id: 'w-1', date: '2026-09-02', energy: 3 });
+  await goalsRepo.insert({ id: 'g-1', title: 'Tavoite 1' });
+  await projectsRepo.insert({ id: 'p-1', name: 'Projekti 1' });
+  await wellbeingRepo.insert({ id: 'w-1', date: '2026-09-02', energy: 3 });
   await savePreferences({ enabled: true, maxPerDay: 5 });
 }
 
@@ -156,7 +166,7 @@ test('7. onnistunut uudelleenlataus korvaa vanhentuneen tilan uudella', async ()
   assert.equal(getState().dataLoadStatus.routines.ok, false);
 
   routinesRepo.list = original;
-  await routinesRepo.memory.insert({
+  await routinesRepo.insert({
     id: 'r-2', title: 'Uusi rutiini', active: true,
     recurrence: { type: 'daily', weekdays: [] }
   });
