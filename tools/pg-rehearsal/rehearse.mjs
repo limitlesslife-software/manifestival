@@ -641,6 +641,56 @@ async function inventoryScenario(fixtureDir) {
 }
 
 // ---------------------------------------------------------------------
+// Peruutus: migraation oma ROLLBACK-osio palauttaa skeeman
+// ---------------------------------------------------------------------
+
+/** Poimi migraation kommentoitu ROLLBACK-lohko (begin; ... commit;). */
+export function extractRollback(sql) {
+  const lines = sql.replace(/\r\n/g, '\n').split('\n');
+  const start = lines.findIndex(l => /^-- ROLLBACK\s*$/.test(l));
+  if (start === -1) return null;
+  const out = [];
+  let inside = false;
+  for (const line of lines.slice(start + 1)) {
+    const m = /^--   (.*)$/.exec(line);
+    const body = m ? m[1] : null;
+    if (!inside && body && /^begin;\s*$/.test(body.trim())) inside = true;
+    if (inside && body !== null) out.push(body);
+    if (inside && body && /^commit;\s*$/.test(body.trim())) break;
+  }
+  return out.length ? out.join('\n') : null;
+}
+
+async function rollbackScenario() {
+  const results = [];
+  for (const name of MIGRATIONS.filter(m => numberOf(m) >= '0009')) {
+    const n = numberOf(name);
+    const prev = String(Number(n) - 1).padStart(4, '0');
+    const db = `mv_rehearsal_rb_${n}`;
+    const client = await freshAt(db, prev);
+    try {
+      const sql = readSql(`supabase/migrations/${name}.sql`);
+      const rollback = extractRollback(sql);
+      const before = await catalogFingerprint(client);
+      const applied = await runSql(client, sql);
+      const rolled = rollback ? await runSql(client, rollback) : { ok: false, error: { message: 'ROLLBACK-lohkoa ei löytynyt' } };
+      const after = await catalogFingerprint(client);
+      // Ja migraatio on ajettavissa uudelleen peruutuksen jälkeen.
+      const again = await runSql(client, sql);
+      const pass = applied.ok && rolled.ok && before.hash === after.hash && again.ok;
+      results.push({ migration: n, pass, applied: applied.ok, rolledBack: rolled.ok,
+                     schemaRestored: before.hash === after.hash, reapplied: again.ok,
+                     error: applied.error?.message || rolled.error?.message || again.error?.message });
+      if (!pass) {
+        fail('rollback', `${n}: ${!applied.ok ? 'migraatio kaatui' : !rolled.ok ? 'peruutus kaatui: ' + rolled.error.message
+          : before.hash !== after.hash ? 'skeema ei palautunut' : 'uudelleenajo kaatui: ' + again.error?.message}`);
+      }
+    } finally { await client.end(); await dropDatabase(db); }
+  }
+  return results;
+}
+
+// ---------------------------------------------------------------------
 // Esitarkistusmatriisi: jokainen preflight jokaisessa tilassa
 // ---------------------------------------------------------------------
 
@@ -672,6 +722,7 @@ async function preflightScenario() {
 
 try {
   if (want('preflight')) report.scenarios.preflight = await preflightScenario();
+  if (want('rollback')) report.scenarios.rollback = await rollbackScenario();
   if (want('inventory')) {
     const dir = args.fixtures ? String(args.fixtures) : null;
     if (dir) fs.mkdirSync(dir, { recursive: true });
@@ -700,6 +751,8 @@ for (const [name, value] of Object.entries(report.scenarios)) {
   } else if (name === 'lifecycle') {
     const vals = Object.entries(value).filter(([k]) => k !== 'userBRowsBeforeDelete');
     summary.push(`lifecycle: ${vals.filter(([, v]) => v === 'PASS').length}/${vals.length} PASS`);
+  } else if (name === 'rollback') {
+    summary.push(`rollback: ${value.filter(r => r.pass).length}/${value.length} (ajo -> ROLLBACK-osio -> skeema täsmälleen ennallaan -> ajo uudelleen)`);
   } else if (name === 'preflight') {
     summary.push(`preflight: ${value.filter(r => r.pass).length}/${value.length} odotetusti (PASS vain omassa tilassaan)`);
   } else if (name === 'inventory') {

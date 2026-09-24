@@ -1,0 +1,460 @@
+{
+  "generatedBy": "tools/activation/train-map.mjs",
+  "originMain": "cf259d0ef755f7e875cc9cd9c15405eba632e408",
+  "productBranch": {
+    "ref": "feature/life-alignment-foundation",
+    "sha": "96f35fe3dca3c403ad4313ce62e6c83a78e5c455"
+  },
+  "waves": [
+    {
+      "wave": "C",
+      "deployTarget": "cf259d0ef755f7e875cc9cd9c15405eba632e408",
+      "ref": "origin/main",
+      "waveCommit": "cf259d0ef755f7e875cc9cd9c15405eba632e408",
+      "parentWave": "B",
+      "descendsFromParent": null,
+      "cacheVersion": "v16",
+      "expectedCacheVersion": "v16",
+      "gateMatrixResolvesTo": "C",
+      "gatesCumulative": [
+        "notificationPreferences",
+        "wellbeing",
+        "goals",
+        "projects",
+        "routines",
+        "routineExceptions"
+      ],
+      "migration": null,
+      "preflight": null,
+      "verify": null,
+      "acceptance": "docs/acceptance/WAVE-C-OWNER-ACCEPTANCE.md",
+      "status": "DEPLOYED_NOT_ACCEPTED",
+      "rollbackTarget": "B",
+      "columnGates": {
+        "BILL_PAYMENT_FIELDS": {
+          "actual": false,
+          "expected": false
+        },
+        "GOAL_PLANNING_FIELDS": {
+          "actual": false,
+          "expected": false
+        },
+        "GOAL_MAINTENANCE_MODE": {
+          "actual": false,
+          "expected": false
+        },
+        "GOAL_LIFE_AREA_FIELD": {
+          "actual": false,
+          "expected": false
+        },
+        "ALIGNMENT_REALITY_FIELDS": {
+          "actual": false,
+          "expected": false
+        }
+      },
+      "consistent": true
+    },
+    {
+      "wave": "D",
+      "deployTarget": "091e73c0091e8f135641e3501742b998dbac8461",
+      "ref": "091e73c0091e8f135641e3501742b998dbac8461",
+      "waveCommit": "091e73c0091e8f135641e3501742b998dbac8461",
+      "parentWave": "C",
+      "descendsFromParent": true,
+      "cacheVersion": "v17",
+      "expectedCacheVersion": "v17",
+      "gateMatrixResolvesTo": "D",
+      "gatesCumulative": [
+        "notificationPreferences",
+        "wellbeing",
+        "goals",
+        "projects",
+        "routines",
+        "routineExceptions",
+        "recurringExpenses",
+        "savingsGoals",
+        "bills"
+      ],
+      "migration": null,
+      "preflight": null,
+      "verify": null,
+      "acceptance": "docs/acceptance/WAVE-D.md",
+      "status": "READY_FROZEN",
+      "rollbackTarget": "C",
+      "columnGates": {
+        "BILL_PAYMENT_FIELDS": {
+          "actual": false,
+          "expected": false
+        },
+        "GOAL_PLANNING_FIELDS": {
+          "actual": false,
+          "expected": false
+        },
+        "GOAL_MAINTENANCE_MODE": {
+          "actual": false,
+          "expected": false
+        },
+        "GOAL_LIFE_AREA_FIELD": {
+          "actual": false,
+          "expected": false
+        },
+        "ALIGNMENT_REALITY_FIELDS": {
+          "actual": false,
+          "expected": false
+        }
+      },
+      "consistent": true
+    },
+    {
+      "wave": "E",
+      "deployTarget": "86c4325b00e8d58913afebdd0f1eca95d430174e",
+      "ref": "release/activation-0003-0008",
+      "waveCommit": "2b947cc1e6b7438b8f8388ac9818ec8468553fd2",
+      "parentWave": "D",
+      "descendsFromParent": true,
+      "cacheVersion": "v18",
+      "expectedCacheVersion": "v18",
+      "gateMatrixResolvesTo": "E",
+      "gatesCumulative": [
+        "notificationPreferences",
+        "wellbeing",
+        "goals",
+        "projects",
+        "routines",
+        "routineExceptions",
+        "recurringExpenses",
+        "savingsGoals",
+        "bills",
+        "aiAudit"
+      ],
+      "migration": null,
+      "preflight": null,
+      "verify": null,
+      "acceptance": "docs/acceptance/WAVE-E.md",
+      "status": "READY_FROZEN",
+      "rollbackTarget": "D",
+      "columnGates": {
+        "BILL_PAYMENT_FIELDS": {
+          "actual": false,
+          "expected": false
+        },
+        "GOAL_PLANNING_FIELDS": {
+          "actual": false,
+          "expected": false
+        },
+        "GOAL_MAINTENANCE_MODE": {
+          "actual": false,
+          "expected": false
+        },
+        "GOAL_LIFE_AREA_FIELD": {
+          "actual": false,
+          "expected": false
+        },
+        "ALIGNMENT_REALITY_FIELDS": {
+          "actual": false,
+          "expected": false
+        }
+      },
+      "consistent": true
+    },
+    {
+      "wave": "F",
+      "deployTarget": "5e4e7cf50e40fe1e0ba7b4543b147767e3a0eb32",
+      "ref": "rehearsal/wave-f-v3",
+      "waveCommit": "e05c54bd4fa7d5afffe3efd6ca7a176b0162008e",
+      "parentWave": "E",
+      "descendsFromParent": true,
+      "cacheVersion": "v19",
+      "expectedCacheVersion": "v19",
+      "gateMatrixResolvesTo": "F",
+      "gatesCumulative": [
+        "notificationPreferences",
+        "wellbeing",
+        "goals",
+        "projects",
+        "routines",
+        "routineExceptions",
+        "recurringExpenses",
+        "savingsGoals",
+        "bills",
+        "aiAudit",
+        "transactions",
+        "investments"
+      ],
+      "migration": "0009_finance_2.sql",
+      "preflight": "supabase/preflight/preflight_0009.sql",
+      "verify": "supabase/verify/verify_0009.sql",
+      "acceptance": "docs/acceptance/WAVE-F.md",
+      "status": "READY_AFTER_MIGRATION",
+      "rollbackTarget": "E",
+      "columnGates": {
+        "BILL_PAYMENT_FIELDS": {
+          "actual": true,
+          "expected": true
+        },
+        "GOAL_PLANNING_FIELDS": {
+          "actual": false,
+          "expected": false
+        },
+        "GOAL_MAINTENANCE_MODE": {
+          "actual": false,
+          "expected": false
+        },
+        "GOAL_LIFE_AREA_FIELD": {
+          "actual": false,
+          "expected": false
+        },
+        "ALIGNMENT_REALITY_FIELDS": {
+          "actual": false,
+          "expected": false
+        }
+      },
+      "consistent": true
+    },
+    {
+      "wave": "G",
+      "deployTarget": "173afd5dc01d16e244ec07e72fb6e29918415e81",
+      "ref": "rehearsal/wave-g-v3",
+      "waveCommit": "f362e1aed58557e6ad0fd13cf671145f3b7b1ee6",
+      "parentWave": "F",
+      "descendsFromParent": true,
+      "cacheVersion": "v20",
+      "expectedCacheVersion": "v20",
+      "gateMatrixResolvesTo": "G",
+      "gatesCumulative": [
+        "notificationPreferences",
+        "wellbeing",
+        "goals",
+        "projects",
+        "routines",
+        "routineExceptions",
+        "recurringExpenses",
+        "savingsGoals",
+        "bills",
+        "aiAudit",
+        "transactions",
+        "investments",
+        "milestones"
+      ],
+      "migration": "0010_goal_to_action.sql",
+      "preflight": "supabase/preflight/preflight_0010.sql",
+      "verify": "supabase/verify/verify_0010.sql",
+      "acceptance": "docs/acceptance/WAVE-G.md",
+      "status": "READY_AFTER_MIGRATION",
+      "rollbackTarget": "F",
+      "columnGates": {
+        "BILL_PAYMENT_FIELDS": {
+          "actual": true,
+          "expected": true
+        },
+        "GOAL_PLANNING_FIELDS": {
+          "actual": true,
+          "expected": true
+        },
+        "GOAL_MAINTENANCE_MODE": {
+          "actual": true,
+          "expected": true
+        },
+        "GOAL_LIFE_AREA_FIELD": {
+          "actual": false,
+          "expected": false
+        },
+        "ALIGNMENT_REALITY_FIELDS": {
+          "actual": false,
+          "expected": false
+        }
+      },
+      "consistent": true
+    },
+    {
+      "wave": "H",
+      "deployTarget": "48b2cad8bc62362dbe371d08f36b32677df270f6",
+      "ref": "rehearsal/wave-h-v3",
+      "waveCommit": "b7be37752bb38ce8186c5fc68448df0a82e7a261",
+      "parentWave": "G",
+      "descendsFromParent": true,
+      "cacheVersion": "v21",
+      "expectedCacheVersion": "v21",
+      "gateMatrixResolvesTo": "H",
+      "gatesCumulative": [
+        "notificationPreferences",
+        "wellbeing",
+        "goals",
+        "projects",
+        "routines",
+        "routineExceptions",
+        "recurringExpenses",
+        "savingsGoals",
+        "bills",
+        "aiAudit",
+        "transactions",
+        "investments",
+        "milestones",
+        "inboxItems",
+        "reminders",
+        "notices",
+        "travelPlans",
+        "locationRules"
+      ],
+      "migration": "0011_personal_assistant.sql",
+      "preflight": "supabase/preflight/preflight_0011.sql",
+      "verify": "supabase/verify/verify_0011.sql",
+      "acceptance": "docs/acceptance/WAVE-H.md",
+      "status": "READY_AFTER_MIGRATION",
+      "rollbackTarget": "G",
+      "columnGates": {
+        "BILL_PAYMENT_FIELDS": {
+          "actual": true,
+          "expected": true
+        },
+        "GOAL_PLANNING_FIELDS": {
+          "actual": true,
+          "expected": true
+        },
+        "GOAL_MAINTENANCE_MODE": {
+          "actual": true,
+          "expected": true
+        },
+        "GOAL_LIFE_AREA_FIELD": {
+          "actual": false,
+          "expected": false
+        },
+        "ALIGNMENT_REALITY_FIELDS": {
+          "actual": false,
+          "expected": false
+        }
+      },
+      "consistent": true
+    },
+    {
+      "wave": "I",
+      "deployTarget": "4cfb4bcfea649146fb0bc9202d309aea8d1ffd9e",
+      "ref": "rehearsal/wave-i-v1",
+      "waveCommit": "d418b79e6f4a3a79f3e743bcf8c375c0ef5c55e8",
+      "parentWave": "H",
+      "descendsFromParent": true,
+      "cacheVersion": "v22",
+      "expectedCacheVersion": "v22",
+      "gateMatrixResolvesTo": "I",
+      "gatesCumulative": [
+        "notificationPreferences",
+        "wellbeing",
+        "goals",
+        "projects",
+        "routines",
+        "routineExceptions",
+        "recurringExpenses",
+        "savingsGoals",
+        "bills",
+        "aiAudit",
+        "transactions",
+        "investments",
+        "milestones",
+        "inboxItems",
+        "reminders",
+        "notices",
+        "travelPlans",
+        "locationRules",
+        "lifeAreas",
+        "weeklyCapacities",
+        "timeEntries",
+        "alignmentReviews"
+      ],
+      "migration": "0012_life_alignment.sql",
+      "preflight": "supabase/preflight/preflight_0012.sql",
+      "verify": "supabase/verify/verify_0012.sql",
+      "acceptance": "docs/acceptance/WAVE-I.md",
+      "status": "READY_AFTER_MIGRATION",
+      "rollbackTarget": "H",
+      "columnGates": {
+        "BILL_PAYMENT_FIELDS": {
+          "actual": true,
+          "expected": true
+        },
+        "GOAL_PLANNING_FIELDS": {
+          "actual": true,
+          "expected": true
+        },
+        "GOAL_MAINTENANCE_MODE": {
+          "actual": true,
+          "expected": true
+        },
+        "GOAL_LIFE_AREA_FIELD": {
+          "actual": true,
+          "expected": true
+        },
+        "ALIGNMENT_REALITY_FIELDS": {
+          "actual": false,
+          "expected": false
+        }
+      },
+      "consistent": true
+    },
+    {
+      "wave": "J",
+      "deployTarget": "7194f2e1e7588024da8206e9193776661f974904",
+      "ref": "rehearsal/wave-j-v1",
+      "waveCommit": "e96942c296944b4ac1a86d96563f2a1370678d97",
+      "parentWave": "I",
+      "descendsFromParent": true,
+      "cacheVersion": "v23",
+      "expectedCacheVersion": "v23",
+      "gateMatrixResolvesTo": "J",
+      "gatesCumulative": [
+        "notificationPreferences",
+        "wellbeing",
+        "goals",
+        "projects",
+        "routines",
+        "routineExceptions",
+        "recurringExpenses",
+        "savingsGoals",
+        "bills",
+        "aiAudit",
+        "transactions",
+        "investments",
+        "milestones",
+        "inboxItems",
+        "reminders",
+        "notices",
+        "travelPlans",
+        "locationRules",
+        "lifeAreas",
+        "weeklyCapacities",
+        "timeEntries",
+        "alignmentReviews",
+        "runningTimers",
+        "alignmentItemSettings"
+      ],
+      "migration": "0013_alignment_reality.sql",
+      "preflight": "supabase/preflight/preflight_0013.sql",
+      "verify": "supabase/verify/verify_0013.sql",
+      "acceptance": "docs/acceptance/WAVE-J.md",
+      "status": "READY_AFTER_MIGRATION",
+      "rollbackTarget": "I",
+      "columnGates": {
+        "BILL_PAYMENT_FIELDS": {
+          "actual": true,
+          "expected": true
+        },
+        "GOAL_PLANNING_FIELDS": {
+          "actual": true,
+          "expected": true
+        },
+        "GOAL_MAINTENANCE_MODE": {
+          "actual": true,
+          "expected": true
+        },
+        "GOAL_LIFE_AREA_FIELD": {
+          "actual": true,
+          "expected": true
+        },
+        "ALIGNMENT_REALITY_FIELDS": {
+          "actual": true,
+          "expected": true
+        }
+      },
+      "consistent": true
+    }
+  ]
+}
