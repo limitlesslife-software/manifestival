@@ -39,6 +39,7 @@ import { horizonCapacity, horizonEnd, remainingWork } from '../../domain/capacit
 import { summarizeHorizon, planHorizon } from '../../domain/planScheduler.js';
 import { fmtISO, todayMidnight } from '../../lib/datetime.js';
 import { showError, success } from '../../ui/toast.js';
+import { currentPlanningFeedback } from '../alignment.js';
 
 let generating = false;
 let committing = false;
@@ -477,6 +478,17 @@ export function renderPlanning() {
 
   fillAutomationOptions();
   syncAutomation(state);
+
+  // Suunnan palaute näkyy käyttäjälle: miksi suunnitelma on kevyempi.
+  const hint = maybe('planAlignmentHint');
+  if (hint) {
+    const feedback = currentPlanningFeedback();
+    hint.textContent = feedback && Number.isInteger(feedback.capHours)
+      ? (feedback.overloaded
+        ? `Suunta: tämän viikon suunnitelma ylitti kapasiteettisi. Uusi suunnitelma olettaa enintään ${feedback.capHours} h viikossa.`
+        : `Suunta: suunnitelma olettaa enintään ${feedback.capHours} h viikossa, kuten itse arvioit.`)
+      : '';
+  }
 
   const review = maybe('planReviewContainer');
   if (review) renderPlanReview(review, state);

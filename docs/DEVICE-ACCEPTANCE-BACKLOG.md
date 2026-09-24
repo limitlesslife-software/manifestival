@@ -560,6 +560,37 @@ Kasvun muoto on testattu deterministisesti
 
 ---
 
+## Suunta (Life Alignment) — EI SUORITETTU
+
+Näkymä on renderöity paikallisesti headless-Chromessa 390–500 px
+leveydellä (ei ylivuotoa, seitsemän välilehteä mahtuu). **Fyysisellä
+laitteella ei ole ajettu mitään.** Migraatio 0012 ajamatta: tieto elää
+istunnon muistissa, ja näkymä kertoo sen.
+
+- [P1] Elämänalueiden ensikäyttö: ehdotuspainikkeet esitäyttävät lomakkeen
+      eivätkä luo mitään; oma nimi, tärkeys ja tavoite tallentuvat
+- [P1] Kapasiteetin muokkaus numeronäppäimistöllä (desimaalipilkku "2,5"
+      toimii); yli 60 h näyttää varoituksen
+- [P1] Viikkokatsaus mobiilissa: seitsemän kysymystä, pohdinta ja
+      ehdotukset vierivät; tallennus ei hyppää alkuun
+- [P1] Havaintojen luettavuus: vakavuus näkyy SANANA myös ilman värejä
+      (harmaasävy/värisokeus); "Miksi tämä näkyy?" avautuu kosketuksella
+- [P1] Suunniteltu vs. kapasiteetti -palkki ja aluepalkit: TalkBack lukee
+      tekstivastineen (role="img" + aria-label)
+- [P1] Muutosehdotus: "Tee muutos…" avaa vahvistuksen; peruutus ei muuta
+      mitään; kaksoisnapautus ei toteuta kahdesti
+- [P2] Offline/uudelleenyhteys: Suunnan kirjoitukset EIVÄT mene
+      offline-jonoon (ne vaativat verkon ja vahvistuksen); virhe näkyy
+- [P2] Näppäimistö (Bluetooth/Chromebook): välilehdet nuolilla, lomakkeet
+      Tabilla, Esc sulkee aluelomakkeen
+- [P2] Turva-alueet (lovi, eleriba): Suunta-otsikko ja välilehtipalkki
+      eivät jää peittoon
+- [P2] Vaakasuunta: pitkät aluenimet rivittyvät, ei ylivuotoa
+- [P2] Päiväkortti Tänään-näkymässä: yksi havainto, ei kaavioita,
+      "Avaa Suunta" vie oikeaan välilehteen
+
+---
+
 ## Muistutus siitä, mitä nämä ovat
 
 > **Yhtäkään tämän osion kohtaa ei saa merkitä hyväksytyksi ilman

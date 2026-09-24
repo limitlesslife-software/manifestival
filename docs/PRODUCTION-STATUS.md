@@ -57,7 +57,8 @@ Automaattinen testi vartioi, että tämä dokumentti pysyy ajan tasalla.
 | 0008 | `0008_ai_audit.sql` | **AJETTU** | PASS |
 | 0009 | `0009_finance_2.sql` | **AJETTU** | EDELLYTYS (aalto F, e05c54b): `verify_0009.sql` 0 poikkeavaa |
 | 0010 | `0010_goal_to_action.sql` | **AJETTU** | EDELLYTYS (aalto G, f362e1a): `verify_0010.sql` 0 poikkeavaa |
-| 0011 | `0011_personal_assistant.sql` | **AJETTU** | EDELLYTYS: `verify_0011.sql` 0 poikkeavaa ennen tämän commitin deployta |
+| 0011 | `0011_personal_assistant.sql` | **AJETTU** | EDELLYTYS (aalto H, b7be377): `verify_0011.sql` 0 poikkeavaa |
+| 0012 | `0012_life_alignment.sql` | **EI AJETTU** | — |
 
 > **EDELLYTYS-merkintä (0009 alkaen).** Aallot F–J on valmisteltu
 > etukäteen harjoitteluhaaroissa. Rivi, jossa lukee AJETTU ja
@@ -155,6 +156,11 @@ vertaa niihin.
 | `notices` | 0011 | **AKTIVOITU** |
 | `travelPlans` | 0011 | **AKTIVOITU** |
 | `locationRules` | 0011 | **AKTIVOITU** |
+| `lifeAreas` | 0012 | kiinni |
+| `weeklyCapacities` | 0012 | kiinni |
+| `timeEntries` | 0012 | kiinni |
+| `alignmentReviews` | 0012 | kiinni |
+| `GOAL_LIFE_AREA_FIELD` | 0012 | kiinni |
 
 `GOAL_PLANNING_FIELDS` on **sarakeportti** ja `GOAL_MAINTENANCE_MODE`
 **arvoportti**. Ne ovat erillisiä, koska niiden viat ovat erilaisia:
@@ -197,7 +203,8 @@ hyväksyntäpaketit: `docs/RELEASE-TRAIN-0003-0008.md`.
 | **E** | `aiAudit` | `v18` | VALMIS | `2b947cc` | — | — | — | — |
 | **F** | `transactions`, `investments`, `BILL_PAYMENT_FIELDS` | `v19` | VALMIS (edellyttää 0009) | `e05c54b` | — | — | — | — |
 | **G** | `milestones`, `GOAL_PLANNING_FIELDS`, `GOAL_MAINTENANCE_MODE` | `v20` | VALMIS (edellyttää 0010) | `f362e1a` | — | — | — | — |
-| **H** | `inboxItems`, `reminders`, `notices`, `travelPlans`, `locationRules` | `v21` | VALMIS (edellyttää 0011) | tämä commit | — | — | — | — |
+| **H** | `inboxItems`, `reminders`, `notices`, `travelPlans`, `locationRules` | `v21` | VALMIS (edellyttää 0011) | `b7be377` | — | — | — | — |
+| **I** | `lifeAreas`, `weeklyCapacities`, `timeEntries`, `alignmentReviews`, `GOAL_LIFE_AREA_FIELD` | `v22` | **ESTETTY** | — | — | — | — | — |
 
 **Aalto F = Talous 2.0:n tuotekoodi + migraatio 0009 + sen portit
 yhtenä hyväksyntätapahtumana** (lukittu päätös,

@@ -158,6 +158,20 @@ const FIXTUURIT = Object.freeze({
   locationRules: {
     id: 'w-si-1', place: 'Kauppa', trigger: 'arriving',
     message: 'Osta maitoa', active: false
+  },
+  lifeAreas: {
+    id: 'w-la-1', name: 'Perhe', importance: 5, targetMinutesPerWeek: 600,
+    categoryKey: 'perhe', active: true, sortOrder: 0
+  },
+  weeklyCapacities: {
+    id: 'w-wc-1', weekStart: '2026-09-14', availableMinutes: 1800, energyLevel: 3
+  },
+  timeEntries: {
+    id: 'w-te-1', entryDate: '2026-09-15', minutes: 45, lifeAreaId: 'w-la-1'
+  },
+  alignmentReviews: {
+    id: 'w-ar-1', weekStart: '2026-09-14', snapshotVersion: 1,
+    snapshot: { version: 1, weekStart: '2026-09-14' }, adjustments: []
   }
 });
 

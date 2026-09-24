@@ -171,6 +171,16 @@ export function normalizeGoal(input = {}) {
      */
     savingsGoalId: input.savingsGoalId != null ? String(input.savingsGoalId) : null,
 
+    /**
+     * Elämänalue (migraatio 0012, EI AJETTU). Enintään yksi.
+     *
+     * null = "Ei elämänaluetta". Vanha tavoite on kelvollinen ilman
+     * aluetta; mitään ei täytetä automaattisesti. Portin ollessa kiinni
+     * arvo elää istunnon muistissa. Ks. GOAL_LIFE_AREA_FIELD
+     * src/data/schema.js.
+     */
+    lifeAreaId: input.lifeAreaId != null && input.lifeAreaId !== '' ? String(input.lifeAreaId) : null,
+
     createdAt: input.createdAt ?? null,
     updatedAt: input.updatedAt ?? null
   };

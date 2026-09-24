@@ -308,6 +308,10 @@ test('tunnistegeneraattori pysyy sovelluskerroksessa', () => {
     // (offlineQueue.js) ei tuota niitä: `createOperation` ottaa tunnisteen
     // parametrina.
     'src/app/offline.js',
+    // Suunta luo tunnisteet elämänalueille, kapasiteeteille, kirjauksille
+    // ja katsauksille. Domain (lifeArea.js, alignment.js ...) ei tuota
+    // niitä.
+    'src/app/alignment.js',
     'src/data/schema.js', 'src/data/tasksRepo.js', 'src/lib/rows.js'
   ]);
 

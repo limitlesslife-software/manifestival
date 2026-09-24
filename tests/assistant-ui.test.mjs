@@ -478,16 +478,16 @@ test('jokaisella uudella repositoriolla on portti ja normalisointi', () => {
   }
 });
 
-test('repositorioita on seitsemäntoista', () => {
+test('repositorioita on kaksikymmentäyksi', () => {
   // Luku on käsin laskettu ja tarkoituksella: uusi repositorio kaataa
   // tämän, ja se on oikea hetki tarkistaa, että sillä on portti,
   // migraatio, varmistus ja tavoitettavuusrivi.
-  assert.equal(ALL_REPOSITORIES.length, 17,
+  assert.equal(ALL_REPOSITORIES.length, 21,
     `repositorioita on ${ALL_REPOSITORIES.length}`);
 });
 
-test('tavoitettavuusmatriisi kattaa kaikki kahdeksantoista', () => {
-  assert.equal(REACHABILITY.length, 18);
+test('tavoitettavuusmatriisi kattaa kaikki kaksikymmentäkaksi', () => {
+  assert.equal(REACHABILITY.length, 22);
   assert.equal(REACHABILITY.filter(r => r.reach === REACH.NO_UI).length, 0,
     'jokin domain on yhä ilman käyttöliittymää');
 });

@@ -18,7 +18,9 @@
 
 import { getClient } from './client.js';
 import { requireUserId } from './session.js';
-import { hasTable, BILL_PAYMENT_FIELDS, GOAL_PLANNING_FIELDS } from './schema.js';
+import {
+  hasTable, BILL_PAYMENT_FIELDS, GOAL_PLANNING_FIELDS, GOAL_LIFE_AREA_FIELD
+} from './schema.js';
 import { createMemoryRepository } from './memoryStore.js';
 import { ok, fail } from '../lib/result.js';
 import { normalizeRoutine, normalizeException } from '../domain/routine.js';
@@ -36,6 +38,10 @@ import { normalizeInboxItem } from '../domain/inbox.js';
 import { normalizeReminder } from '../domain/reminder.js';
 import { normalizeNotice } from '../domain/notificationCenter.js';
 import { normalizeTravelPlan, normalizeLocationRule } from '../domain/travel.js';
+import { normalizeLifeArea } from '../domain/lifeArea.js';
+import { normalizeWeeklyCapacity } from '../domain/weeklyCapacity.js';
+import { normalizeTimeEntry } from '../domain/timeEntry.js';
+import { normalizeAlignmentReview } from '../domain/alignmentReview.js';
 
 /** Kentät, joita client ei saa koskaan lähettää. */
 const SERVER_OWNED = Object.freeze(['user_id', 'created_at', 'updated_at']);
@@ -255,7 +261,11 @@ export const goalsRepo = createRepository({
       target_value: goal.targetValue,
       measured_on: goal.measuredOn,
       savings_goal_id: goal.savingsGoalId
-    } : {})
+    } : {}),
+
+    // ELÄMÄNALUE (0012) jätetään pois kunnes sarake on olemassa. Sama
+    // syy kuin yllä: goals on tuotannossa auki.
+    ...(GOAL_LIFE_AREA_FIELD ? { life_area_id: goal.lifeAreaId } : {})
   }),
   fromRow: row => normalizeGoal({
     id: row.id,
@@ -279,6 +289,7 @@ export const goalsRepo = createRepository({
     targetValue: row.target_value,
     measuredOn: row.measured_on,
     savingsGoalId: row.savings_goal_id,
+    lifeAreaId: row.life_area_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   })
@@ -820,6 +831,122 @@ export const locationRulesRepo = createRepository({
   })
 });
 
+// ------------------------------------------------------------ Suunta (0012)
+
+/**
+ * Elämänalueet. Käyttäjän oma määritelmä siitä mikä on tärkeää.
+ * Portti kiinni -> istunnon muisti (migraatio 0012 EI AJETTU).
+ */
+export const lifeAreasRepo = createRepository({
+  table: 'life_areas',
+  schemaKey: 'lifeAreas',
+  normalize: normalizeLifeArea,
+  toRow: area => ({
+    id: area.id,
+    name: area.name,
+    description: area.description,
+    importance: area.importance,
+    target_minutes_per_week: area.targetMinutesPerWeek,
+    category_key: area.categoryKey,
+    active: area.active,
+    sort_order: area.sortOrder
+  }),
+  fromRow: row => normalizeLifeArea({
+    id: row.id,
+    name: row.name,
+    description: row.description,
+    importance: row.importance,
+    targetMinutesPerWeek: row.target_minutes_per_week,
+    categoryKey: row.category_key,
+    active: row.active,
+    sortOrder: row.sort_order,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  })
+});
+
+/** Viikkokapasiteetti: yksi rivi viikkoa (maanantaita) kohti. */
+export const weeklyCapacitiesRepo = createRepository({
+  table: 'weekly_capacities',
+  schemaKey: 'weeklyCapacities',
+  normalize: normalizeWeeklyCapacity,
+  toRow: capacity => ({
+    id: capacity.id,
+    week_start: capacity.weekStart,
+    available_minutes: capacity.availableMinutes,
+    energy_level: capacity.energyLevel,
+    note: capacity.note
+  }),
+  fromRow: row => normalizeWeeklyCapacity({
+    id: row.id,
+    weekStart: row.week_start,
+    availableMinutes: row.available_minutes,
+    energyLevel: row.energy_level,
+    note: row.note,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  })
+});
+
+/**
+ * Kirjattu aika. TOTEUMA ON KÄYTTÄJÄN KIRJAAMA: arviota ei kopioida
+ * tänne eikä valmiiksi merkintä tuota riviä.
+ */
+export const timeEntriesRepo = createRepository({
+  table: 'time_entries',
+  schemaKey: 'timeEntries',
+  normalize: normalizeTimeEntry,
+  toRow: entry => ({
+    id: entry.id,
+    entry_date: entry.entryDate,
+    minutes: entry.minutes,
+    life_area_id: entry.lifeAreaId,
+    goal_id: entry.goalId,
+    task_id: entry.taskId,
+    source: entry.source,
+    note: entry.note
+  }),
+  fromRow: row => normalizeTimeEntry({
+    id: row.id,
+    entryDate: row.entry_date,
+    minutes: row.minutes,
+    lifeAreaId: row.life_area_id,
+    goalId: row.goal_id,
+    taskId: row.task_id,
+    source: row.source,
+    note: row.note,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  })
+});
+
+/** Viikkokatsaukset: versioitu tilannekuva + pohdinta + valitut muutokset. */
+export const alignmentReviewsRepo = createRepository({
+  table: 'alignment_reviews',
+  schemaKey: 'alignmentReviews',
+  normalize: normalizeAlignmentReview,
+  toRow: review => ({
+    id: review.id,
+    week_start: review.weekStart,
+    snapshot_version: review.snapshotVersion,
+    snapshot: review.snapshot,
+    reflection: review.reflection,
+    adjustments: review.adjustments,
+    completed_at: review.completedAt
+  }),
+  fromRow: row => normalizeAlignmentReview({
+    id: row.id,
+    weekStart: row.week_start,
+    snapshotVersion: row.snapshot_version,
+    snapshot: row.snapshot,
+    reflection: row.reflection,
+    adjustments: row.adjustments,
+    completedAt: row.completed_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  })
+});
+
 // ------------------------------------------------------- AI-kirjausketju
 
 export const aiAuditRepo = createRepository({
@@ -876,6 +1003,7 @@ export const ALL_REPOSITORIES = Object.freeze([
   billsRepo, recurringExpensesRepo, savingsGoalsRepo,
   transactionsRepo, investmentsRepo, milestonesRepo,
   inboxRepo, remindersRepo, noticesRepo, travelPlansRepo, locationRulesRepo,
+  lifeAreasRepo, weeklyCapacitiesRepo, timeEntriesRepo, alignmentReviewsRepo,
   aiAuditRepo
 ]);
 

@@ -187,8 +187,8 @@ test('KRIITTINEN: yhdenkin portin poikkeama muuttaa tai mitätöi tilan', () => 
     }
   }
 
-  // Yhdeksän tilaa (BASE + A-H) kertaa kahdeksantoista porttia.
-  assert.equal(mutaatioita, 162, `mutaatioita ajettiin ${mutaatioita}, odotettiin 162`);
+  // Kymmenen tilaa (BASE + A-I) kertaa kaksikymmentäkaksi porttia.
+  assert.equal(mutaatioita, 220, `mutaatioita ajettiin ${mutaatioita}, odotettiin 220`);
 
   // Ainoat sallitut siirtymät ovat niiden aaltojen välillä, jotka
   // eroavat tasan yhdellä portilla. Jos tähän ilmestyisi uusi pari,
@@ -209,8 +209,9 @@ test('KRIITTINEN: yhdenkin portin poikkeama muuttaa tai mitätöi tilan', () => 
   // seuraus siitä, että aalto G avaa tasan yhden portin.
   //
   // Aalto H avaa VIISI porttia, joten se ei tuo uutta paria: G:stä
-  // H:hon on viiden käännöksen matka.
-  assert.equal(mitättömiä, 158);
+  // H:hon on viiden käännöksen matka. Aalto I avaa NELJÄ porttia,
+  // joten sekään ei tuo uutta paria: 220 - 4 sallittua siirtymää = 216.
+  assert.equal(mitättömiä, 216);
 });
 
 test('KRIITTINEN: puuttuva tai ylimääräinen portti hylätään', () => {
@@ -257,10 +258,10 @@ test('KRIITTINEN: vierasavaimet luetaan molemmista ilmoitusmuodoista', () => {
   // aallossa.
   const viitteet = ownershipForeignKeys();
 
-  // Yhdeksän erästä 0003-0008, kolme migraatiosta 0010 ja kaksi
-  // migraatiosta 0011.
-  assert.equal(viitteet.length, 14,
-    `omistajuusviitteitä löytyi ${viitteet.length}, odotettiin 14`);
+  // Yhdeksän erästä 0003-0008, kolme migraatiosta 0010, kaksi
+  // migraatiosta 0011 ja neljä migraatiosta 0012.
+  assert.equal(viitteet.length, 18,
+    `omistajuusviitteitä löytyi ${viitteet.length}, odotettiin 18`);
 
   const parit = viitteet.map(v => `${v.child}->${v.parent}`);
   assert.ok(parit.includes('routine_exceptions->routines'),
@@ -340,7 +341,9 @@ test('KRIITTINEN: aallon taulut vastaavat sen portteja', () => {
     transactions: 'transactions', investments: 'investments',
     milestones: 'milestones',
     inbox_items: 'inboxItems', reminders: 'reminders', notices: 'notices',
-    travel_plans: 'travelPlans', location_rules: 'locationRules'
+    travel_plans: 'travelPlans', location_rules: 'locationRules',
+    life_areas: 'lifeAreas', weekly_capacities: 'weeklyCapacities',
+    time_entries: 'timeEntries', alignment_reviews: 'alignmentReviews'
   };
 
   for (const wave of WAVES) {
@@ -614,8 +617,9 @@ test('KRIITTINEN: varmistuksen odotusluvut vastaavat migraatioita', () => {
     .map(v => `${v.child}->${v.parent}`)
     .sort();
   assert.deepEqual(ulkopuoliset,
-    ['location_rules->tasks', 'milestones->goals', 'projects->milestones',
-     'tasks->milestones', 'travel_plans->tasks'],
+    ['goals->life_areas', 'location_rules->tasks', 'milestones->goals',
+     'projects->milestones', 'tasks->milestones', 'time_entries->goals',
+     'time_entries->life_areas', 'time_entries->tasks', 'travel_plans->tasks'],
     'erän ulkopuolisten omistajuusviitteiden joukko muuttui');
 
   // 10 porttitaulua.
