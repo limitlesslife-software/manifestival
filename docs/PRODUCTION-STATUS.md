@@ -46,13 +46,15 @@ Automaattinen testi vartioi, että tämä dokumentti pysyy ajan tasalla.
 | 0006 | `0006_wellbeing.sql` | **AJETTU** | PASS |
 | 0007 | `0007_finance.sql` | **AJETTU** | PASS |
 | 0008 | `0008_ai_audit.sql` | **AJETTU** | PASS |
-| 0009 | `0009_finance_2.sql` | **EI AJETTU** | — |
+| 0009 | `0009_finance_2.sql` | **AJETTU** | EDELLYTYS: `verify_0009.sql` 0 poikkeavaa ennen tämän commitin deployta |
 
-> **Migraatio 0009 on suunniteltu, ei ajettu.** Se luo taulut
-> `transactions` ja `investments` sekä lisää `bills`-tauluun kolme
-> maksutietosaraketta. Talous 2.0:n sovelluskoodi toimii ilman sitä:
-> portit ovat kiinni, jolloin tieto elää istunnon muistissa. Ajaminen
-> vaatii Panun erillisen hyväksynnän.
+> **Aaltocommit F.** Tämä rivi on tämän commitin EDELLYTYS, ei
+> historiallinen havainto: commit on valmisteltu etukäteen ja se
+> deployataan vasta, kun Panu on hyväksynyt migraation 0009, se on
+> ajettu tuotantoon ja `supabase/verify/verify_0009.sql` antaa 0
+> poikkeavaa. Migraatio luo
+> taulut `transactions` ja `investments` sekä lisää `bills`-tauluun
+> kolme maksutietosaraketta.
 
 > **Yhtäkään ajettua ei saa ajaa uudelleen.** Jokainen on fail-closed ja
 > keskeytyy itse, mutta älä luota siihen — ne on tarkoitettu ajettaviksi
@@ -123,9 +125,9 @@ vertaa niihin.
 | `recurringExpenses` | 0007 | **AKTIVOITU** |
 | `savingsGoals` | 0007 | **AKTIVOITU** |
 | `aiAudit` | 0008 | **AKTIVOITU** |
-| `transactions` | 0009 | kiinni |
-| `investments` | 0009 | kiinni |
-| `BILL_PAYMENT_FIELDS` | 0009 | kiinni |
+| `transactions` | 0009 | **AKTIVOITU** |
+| `investments` | 0009 | **AKTIVOITU** |
+| `BILL_PAYMENT_FIELDS` | 0009 | **AKTIVOITU** |
 
 `BILL_PAYMENT_FIELDS` on **sarakeportti**, ei taulu. `bills`-taulu on
 ollut olemassa migraatiosta 0007, mutta sarakkeet `payee`, `iban` ja
@@ -159,28 +161,23 @@ hyväksyntäpaketit: `docs/RELEASE-TRAIN-0003-0008.md`.
 | **C** | `routines`, `routineExceptions` | `v16` | VALMIS | `cf259d0` | — | — | — | — |
 | **D** | `recurringExpenses`, `savingsGoals`, `bills` | `v17` | VALMIS | `091e73c` | — | — | — | — |
 | **E** | `aiAudit` | `v18` | VALMIS | `2b947cc` | — | — | — | — |
-| **F** | `transactions`, `investments` | `v19` | **ESTETTY** | — | — | — | — | — |
+| **F** | `transactions`, `investments`, `BILL_PAYMENT_FIELDS` | `v19` | VALMIS (edellyttää 0009) | tämä commit | — | — | — | — |
 
-**Aalto F on estetty, ei kesken.** Sen sovelluskoodi on valmis ja
-testattu porttien ollessa kiinni. Este on yksi ja nimetty: migraatiota
-`0009_finance_2.sql` **ei ole ajettu tuotantoon**. Portteja ei voi
-avata tauluihin, joita ei ole.
+**Aalto F = Talous 2.0:n tuotekoodi + migraatio 0009 + sen portit
+yhtenä hyväksyntätapahtumana** (lukittu päätös,
+`docs/RELEASE-SEQUENCING.md`). Välimuistiversio `v19` kattaa sekä
+tuotekoodin että porttien avaamisen: kuori vaihtuu yhdellä kertaa.
 
-Aalto muuttuu VALMIIKSI vasta kun
+Järjestys on pakollinen:
 
-1. Panu on hyväksynyt migraation 0009,
-2. migraatio on ajettu tuotantoon, ja
-3. `supabase/verify/verify_0009.sql` antaa 0 poikkeavaa.
+1. Panu hyväksyy migraation 0009,
+2. migraatio ajetaan tuotantoon,
+3. `supabase/verify/verify_0009.sql` antaa 0 poikkeavaa,
+4. vasta sitten tämä commit deployataan.
 
-> **HUOM. Talous 2.0:n tuotantoversiota ei ole vielä valittu.**
->
-> Aallon F cache-versio `v19` koskee porttien avaamista. Talous 2.0:n
-> *tuotekoodi* on eri asia: se on uusi julkaisu, joka ei muuta yhtään
-> porttia mutta muuttaa sovelluskuorta — ja siksi vaatii oman
-> cache-version bumpin deployhetkellä. Sitä ei ole annettu tässä
-> haarassa, koska oikea numero riippuu siitä, missä järjestyksessä
-> aallot C–E ja Talous 2.0 deployataan. Ks.
-> `docs/FINANCE-2.0.md`, kohta "Julkaisujärjestys".
+Jos kohta 3 ei ole PASS, tätä committia EI deployata: auki olevat
+portit kaataisivat jokaisen tapahtuman, sijoituksen ja laskun
+tallennuksen.
 
 Aaltojen commit-SHA:t: `docs/activation-0003-0008-release-manifest.json`.
 

@@ -171,7 +171,9 @@ export const WAVES = Object.freeze([
     // Deployattavuus on siksi molempien ehtojen konjunktio. Ks.
     // `isDeployable()`.
     readiness: 'READY',
-    blockedBy: 'supabase/migrations/0009_finance_2.sql — EI AJETTU',
+    // Este poistettu aaltocommitissa: 0009_finance_2.sql on tämän commitin
+    // EDELLYTYS. Deploy vasta kun verify_0009.sql = 0 poikkeavaa.
+    blockedBy: null,
     gates: Object.freeze(['transactions', 'investments']),
     title: 'Talous 2.0: tapahtumat ja sijoitukset',
     rationale:

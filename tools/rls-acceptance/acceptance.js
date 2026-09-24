@@ -1849,7 +1849,12 @@ export function billRow(id, name, dueDate, { taskId = null, recurringExpenseId =
     category: 'talous',
     task_id: taskId,
     recurring_expense_id: recurringExpenseId,
-    note: null
+    note: null,
+    // Migraatio 0009 (aalto F): sovellus kirjoittaa maksutiedot, kun
+    // BILL_PAYMENT_FIELDS on auki. Testirivin on vastattava sitä.
+    payee: null,
+    iban: null,
+    reference: null
   };
 }
 

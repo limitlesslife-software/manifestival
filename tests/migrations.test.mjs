@@ -1210,11 +1210,20 @@ function taulunSarakkeet(migraatio, taulu) {
     .exec(read(`${MIGRATION_DIR}/${migraatio}`));
   assert.ok(luonti, `${taulu}: create table ei löytynyt tiedostosta ${migraatio}`);
 
-  return luonti[1].split(NEWLINE)
+  const luodut = luonti[1].split(NEWLINE)
     .map(line => /^ {2}(\w+)\s+\S/.exec(line))
     .filter(Boolean)
     .map(m => m[1])
     .filter(nimi => nimi !== 'constraint' && nimi !== 'foreign');
+
+  // Myöhemmät migraatiot lisäävät sarakkeita olemassa oleviin tauluihin
+  // (0009: bills.payee/iban/reference). Ne kuuluvat tauluun yhtä lailla;
+  // sarakeportti ja migraation ajotila vartioidaan omissa testeissään.
+  const lisatyt = migrationFiles()
+    .flatMap(tiedosto => [...read(`${MIGRATION_DIR}/${tiedosto}`)
+      .matchAll(new RegExp(`alter table public\\.${taulu} add column (\\w+)`, 'g'))]
+      .map(m => m[1]));
+  return [...luodut, ...lisatyt];
 }
 
 test('KRIITTINEN: repositorio ei kirjoita saraketta jota kanta ei luo', async () => {
@@ -4522,7 +4531,12 @@ test('KRIITTINEN: yksikään portti ei ole auki ilman ajettua migraatiota', () =
   const dokumentinPortit = parseStatusDoc(read('docs/PRODUCTION-STATUS.md'));
   assert.ok(dokumentinPortit, 'PRODUCTION-STATUS.md:n porttitaulukkoa ei voitu lukea');
 
-  const dokumentinAuki = ['TASK_EXTENDED_FIELDS',
+  // Sarakeportit (BILL_PAYMENT_FIELDS, aalto F) eivät ole tauluportteja,
+  // joten parseStatusDoc ei lue niitä: ne luetaan omilta riveiltään.
+  const statusRivit = read('docs/PRODUCTION-STATUS.md').split(NEWLINE);
+  const sarakeportitAuki = ['BILL_PAYMENT_FIELDS'].filter(portti =>
+    statusRivit.some(r => r.includes('|') && r.includes('`' + portti + '`') && /AKTIVOITU/.test(r)));
+  const dokumentinAuki = ['TASK_EXTENDED_FIELDS', ...sarakeportitAuki,
     ...Object.entries(dokumentinPortit).filter(([, v]) => v).map(([k]) => k)];
 
   assert.deepEqual(auki.sort(), dokumentinAuki.sort(),

@@ -64,8 +64,8 @@ export const TABLES = Object.freeze({
   /** Migraatio 0008 */
   aiAudit: true,
   /** Migraatio 0009 */
-  transactions: false,
-  investments: false
+  transactions: true,
+  investments: true
 });
 
 /**
@@ -85,7 +85,7 @@ export const TABLES = Object.freeze({
  *
  * Tämä saa mennä arvoon true VASTA kun migraatio 0009 on ajettu.
  */
-export const BILL_PAYMENT_FIELDS = false;
+export const BILL_PAYMENT_FIELDS = true;
 
 /** Onko taulu käytettävissä tietokannassa? */
 export function hasTable(name) {

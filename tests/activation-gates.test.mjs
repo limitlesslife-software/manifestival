@@ -429,20 +429,19 @@ test('KRIITTINEN: tilannedokumentti luettelee jokaisen migraation', () => {
       `tilannedokumentti ei mainitse migraatiota ${nimi}`);
   }
 
-  // KAHDEKSAN AJETTUA, YKSI AJAMATON.
+  // AALTOCOMMIT F: YHDEKSÄN AJETTUA.
   //
-  // Migraatio 0009 (Talous 2.0) on suunniteltu mutta EI AJETTU. Jos
-  // tämä luku nousisi yhdeksään ilman että migraatio on todella
-  // ajettu, dokumentti väittäisi tuotannosta jotain mitä siellä ei
-  // ole -- ja porttien avaaminen sen perusteella kaataisi jokaisen
-  // kirjoituksen.
-  assert.equal((doc.match(/\*\*AJETTU\*\*/g) || []).length, 8,
-    'tilannedokumentti ei merkitse kahdeksaa ajetuksi');
+  // Migraatio 0009 on tämän commitin EDELLYTYS. Rivi saa sanoa AJETTU
+  // vain, jos se samalla nimeää ehdon: verify_0009.sql 0 poikkeavaa
+  // ENNEN deployta. Pelkkä "AJETTU" ilman ehtoa väittäisi tuotannosta
+  // jotain, mitä commitin valmisteluhetkellä ei ollut tapahtunut.
+  assert.equal((doc.match(/\*\*AJETTU\*\*/g) || []).length, 9,
+    'tilannedokumentti ei merkitse yhdeksää ajetuksi');
 
   const rivi0009 = doc.split(NEWLINE).find(r => r.includes('0009_finance_2.sql'));
   assert.ok(rivi0009, 'tilannedokumentti ei mainitse migraatiota 0009');
-  assert.match(rivi0009, /EI AJETTU/,
-    'migraatio 0009 ei ole merkitty ajamattomaksi');
+  assert.match(rivi0009, /EDELLYTYS: `verify_0009\.sql` 0 poikkeavaa ennen tämän commitin deployta/,
+    'migraation 0009 rivi ei nimeä deployn edellytystä');
 });
 
 test('KRIITTINEN: tilannedokumentin porttitaulukko vastaa koodia', () => {
