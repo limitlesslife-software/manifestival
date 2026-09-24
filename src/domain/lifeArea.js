@@ -166,6 +166,14 @@ export function desiredShares(areas = []) {
   return { totalMinutes, shares };
 }
 
+/**
+ * Lukumäärä oikeassa sijamuodossa: "1 asia", "2 asiaa". Suomen partitiivi
+ * ei ole yksikössä sama kuin monikossa, eikä "1 asiaa" ole suomea.
+ */
+export function countOf(count, singular, partitive) {
+  return `${count} ${count === 1 ? singular : partitive}`;
+}
+
 /** "3 h 30 min" / "45 min" / "0 min". Näyttöä varten, ei laskentaan. */
 export function formatMinutes(minutes) {
   if (!Number.isFinite(minutes)) return '–';

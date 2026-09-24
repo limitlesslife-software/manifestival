@@ -70,6 +70,7 @@ import {
   addRoutineToState, removeRoutineFromState
 } from './state.js';
 import { logError } from '../lib/result.js';
+import { currentPlanningFeedback } from './alignment.js';
 
 /**
  * Tallennetut avaimet.
@@ -133,11 +134,18 @@ export async function requestPlan({ goalText, goalId = null, fetchImpl } = {}) {
     exceptions: state.routineExceptions
   });
 
+  // SUUNNAN PALAUTE. Jos käyttäjä on itse sanonut ehtivänsä viikossa
+  // vähemmän kuin kalenteri näyttää (tai viikko ylittyi), suunnitelma ei
+  // saa olettaa enempää. Raja vain laskee vapaata aikaa, ei nosta. Mallille
+  // lähtee edelleen vain luku, ei alueiden nimiä eikä havaintoja.
+  const feedback = currentPlanningFeedback();
+
   const context = buildPlanningContext({
     goals: state.goals,
     capacity,
     todayIso,
-    existingGoal: goalId ? state.goals.find(goal => goal.id === goalId) : null
+    existingGoal: goalId ? state.goals.find(goal => goal.id === goalId) : null,
+    alignmentCapHours: feedback ? feedback.capHours : null
   });
 
   try {

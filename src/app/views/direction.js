@@ -16,7 +16,7 @@ import { getState, findLifeArea } from '../state.js';
 import { switchTab } from '../navigation.js';
 import { CATEGORIES } from '../../domain/categories.js';
 import {
-  SUGGESTED_AREAS, importanceLabel, formatMinutes, compareLifeAreas
+  SUGGESTED_AREAS, importanceLabel, formatMinutes, compareLifeAreas, countOf
 } from '../../domain/lifeArea.js';
 import { weekDates, weekStartOf, capacityWarnings, capacityForWeek } from '../../domain/weeklyCapacity.js';
 import { entriesInRange } from '../../domain/timeEntry.js';
@@ -174,7 +174,7 @@ function weekSummaryHtml(analysis) {
       + 'Aseta kapasiteetti alla, niin näet mahtuuko se viikkoon.</p>');
   }
   if (planned.unknownCount > 0) {
-    parts.push(`<p class="dir-line dir-unknown">${planned.unknownCount} asiaa ilman kestoarviota — `
+    parts.push(`<p class="dir-line dir-unknown">${countOf(planned.unknownCount, 'asia', 'asiaa')} ilman kestoarviota — `
       + 'niitä ei ole laskettu mukaan (tuntematon ei ole nolla).</p>');
   }
   parts.push(actual.entryCount > 0
@@ -442,7 +442,9 @@ export function renderTodayDirection() {
     lines.push(`${SEVERITY_LABELS[signal.severity]}: ${text.title}.`);
   }
   if (analysis.unassigned.plannedItems > 0) {
-    lines.push(`${analysis.unassigned.plannedItems} viikon asiaa ei kuulu mihinkään alueeseen.`);
+    lines.push(analysis.unassigned.plannedItems === 1
+      ? '1 viikon asia ei kuulu mihinkään alueeseen.'
+      : `${analysis.unassigned.plannedItems} viikon asiaa ei kuulu mihinkään alueeseen.`);
   }
   if (lines.length === 0) lines.push('Ei havaintoja tällä viikolla.');
   container.innerHTML = `<div class="dir-today">

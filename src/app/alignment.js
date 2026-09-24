@@ -35,6 +35,7 @@ import {
 } from '../domain/weeklyCapacity.js';
 import { normalizeTimeEntry, validateTimeEntry } from '../domain/timeEntry.js';
 import { analyzeWeek } from '../domain/alignment.js';
+import { addDaysIso } from '../domain/fiTemporal.js';
 import {
   buildReviewSnapshot, normalizeAlignmentReview, validateAlignmentReview,
   proposeAdjustments, planningFeedback, ADJUSTMENT, SNAPSHOT_VERSION
@@ -339,11 +340,14 @@ export async function applyAdjustment(proposal, { confirmFn = confirmAction, ove
         weekStart: payload.weekStart, availableMinutes: payload.availableMinutes
       });
       break;
-    case ADJUSTMENT.UNSCHEDULE_TASKS: {
+    case ADJUSTMENT.POSTPONE_TASKS: {
       let all = true;
+      const days = Number.isInteger(payload.days) ? payload.days : 7;
       for (const taskId of payload.taskIds || []) {
-        if (!findTask(taskId)) continue;
-        const one = await editTask(taskId, { date: null, time: null, endTime: null }, NO_QUEUE);
+        const current = findTask(taskId);
+        // Kadonnut tai jo valmis tehtävä ohitetaan: ehdotus on voinut vanhentua.
+        if (!current || current.completed || !current.date) continue;
+        const one = await editTask(taskId, { date: addDaysIso(current.date, days) }, NO_QUEUE);
         all = all && one.ok;
       }
       result = { ok: all };

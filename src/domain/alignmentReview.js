@@ -22,7 +22,7 @@
 // Versio kasvaa jos muoto muuttuu, ja vanha versio luetaan sellaisenaan.
 
 import { SIGNAL, SEVERITY, RULES } from './alignment.js';
-import { formatMinutes, importanceLabel } from './lifeArea.js';
+import { formatMinutes, importanceLabel, countOf } from './lifeArea.js';
 import { priorityWeight } from './priority.js';
 
 export const SNAPSHOT_VERSION = 1;
@@ -32,7 +32,7 @@ const MAX_PAUSE_PROPOSALS = 3;
 
 export const ADJUSTMENT = Object.freeze({
   SET_CAPACITY: 'set_capacity',
-  UNSCHEDULE_TASKS: 'unschedule_tasks',
+  POSTPONE_TASKS: 'postpone_tasks',
   CREATE_TASK: 'create_task',
   CHANGE_TARGET: 'change_target',
   PAUSE_GOAL: 'pause_goal'
@@ -74,17 +74,17 @@ export function explainSignal(signal, areas = []) {
         return {
           title: 'Kuormitus voi ylittyä',
           text: `Arvioitu työ vie ${formatMinutes(m.plannedMinutes)} kapasiteetistasi `
-            + `${formatMinutes(m.availableMinutes)}, ja lisäksi ${m.unknownCount} asiaa on arvioimatta.`,
+            + `${formatMinutes(m.availableMinutes)}, ja lisäksi ${countOf(m.unknownCount, 'asia', 'asiaa')} on arvioimatta.`,
           why: `Tunnettu työ on vähintään ${Math.round(RULES.OVERLOAD_POSSIBLE_RATIO * 100)} % `
             + 'kapasiteetista ja osa työstä on ilman kestoarviota.'
         };
       }
       return {
         title: 'Kuormitus ylittää kapasiteetin',
-        text: `Suunniteltu työ ${formatMinutes(m.plannedMinutes)} ylittää viikon kapasiteetin `
-          + `${formatMinutes(m.availableMinutes)} ${formatMinutes(m.overageMinutes)}`
-          + (m.percentOfCapacity !== null ? ` (${m.percentOfCapacity} %).` : '.')
-          + (m.unknownCount > 0 ? ` Lisäksi ${m.unknownCount} asiaa on arvioimatta.` : ''),
+        text: `Suunniteltu työ ${formatMinutes(m.plannedMinutes)} on ${formatMinutes(m.overageMinutes)} yli `
+          + `viikon kapasiteetin ${formatMinutes(m.availableMinutes)}`
+          + (m.percentOfCapacity !== null ? ` (${m.percentOfCapacity} % kapasiteetista).` : '.')
+          + (m.unknownCount > 0 ? ` Lisäksi ${countOf(m.unknownCount, 'asia', 'asiaa')} on arvioimatta.` : ''),
         why: 'Arvioitujen kestojen summa on suurempi kuin itse asettamasi viikon kapasiteetti. '
           + `Vahva, kun ylitys on vähintään ${Math.round((RULES.OVERLOAD_STRONG_RATIO - 1) * 100)} %.`
       };
@@ -105,7 +105,7 @@ export function explainSignal(signal, areas = []) {
         title: `${name}: suunnitelmassa vähän aikaa`,
         text: `Tämän viikon suunnitelmassa ${name} saa ${formatMinutes(m.plannedMinutes)}, `
           + `tavoitteesi on ${formatMinutes(m.targetMinutes)}.`
-          + (m.unknownCount > 0 ? ` (${m.unknownCount} asiaa ilman kestoa.)` : ''),
+          + (m.unknownCount > 0 ? ` (${countOf(m.unknownCount, 'asia', 'asiaa')} ilman kestoa.)` : ''),
         why: `Tärkeä alue, jolle suunniteltu aika on alle ${Math.round(RULES.NEGLECT_RATIO * 100)} % `
           + 'viikkotavoitteesta. Suunnitelma on vielä muutettavissa.'
       };
@@ -248,7 +248,9 @@ export function proposeAdjustments(analysis, {
   const overloaded = analysis.signals.some(signal =>
     signal.kind === SIGNAL.OVERLOAD && signal.severity !== SEVERITY.INFO);
 
-  // 2. Ensi viikon kuorman keventäminen: poista päivä vähiten tärkeiltä.
+  // 2. Ensi viikon kuorman keventäminen: siirrä vähiten tärkeitä viikolla
+  //    eteenpäin. Tehtävällä on aina päivä (validateTask), joten
+  //    "ilman päivää" ei ole vaihtoehto: tehtävä siirtyy, se ei katoa.
   const cap = nextCapacity ? nextCapacity.availableMinutes : analysis.capacity.availableMinutes;
   if (nextWeekAnalysis && Number.isInteger(cap) && nextWeekAnalysis.planned.knownMinutes > cap) {
     const excess = nextWeekAnalysis.planned.knownMinutes - cap;
@@ -272,13 +274,13 @@ export function proposeAdjustments(analysis, {
     }
     if (chosen.length > 0) {
       add({
-        id: `${ADJUSTMENT.UNSCHEDULE_TASKS}:${next}`,
-        type: ADJUSTMENT.UNSCHEDULE_TASKS,
+        id: `${ADJUSTMENT.POSTPONE_TASKS}:${next}`,
+        type: ADJUSTMENT.POSTPONE_TASKS,
         reason: { kind: SIGNAL.OVERLOAD },
-        label: `Kevennä ensi viikkoa: ${chosen.length} tehtävää ilman päivää`,
+        label: `Kevennä ensi viikkoa: siirrä ${countOf(chosen.length, 'tehtävä', 'tehtävää')} viikolla eteenpäin`,
         detail: `Ensi viikon suunnitelma ylittää kapasiteetin ${formatMinutes(excess)}. `
-          + 'Tehtävät säilyvät, ne vain irrotetaan päivästä.',
-        payload: { taskIds: chosen, freedMinutes: freed }
+          + 'Tehtävät säilyvät; ne siirtyvät samalle viikonpäivälle viikkoa myöhemmin.',
+        payload: { taskIds: chosen, freedMinutes: freed, days: 7 }
       });
     }
   }
