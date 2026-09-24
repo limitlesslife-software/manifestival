@@ -25,7 +25,7 @@ import { ADJUSTMENT } from '../src/domain/alignmentReview.js';
 import {
   createLifeArea, editLifeArea, deleteLifeArea, assignGoalToLifeArea, saveWeeklyCapacity,
   logTime, deleteTimeEntry, saveWeeklyReview, applyAdjustment, analyzeCurrentWeek,
-  currentProposals, currentPlanningFeedback, resetAppliedAdjustments
+  currentProposals, currentPlanningFeedback, resetAppliedAdjustments, alignmentPersistence
 } from '../src/app/alignment.js';
 import {
   renderDirection, renderTodayDirection, openAreaForm, resetDirectionView, initDirection
@@ -126,8 +126,15 @@ test('tyhjä tila: ehdotukset näkyvät mutta mitään ei luoda; havainnot kerto
   assert.match(html('dirAreaSuggestions'), /data-area-suggest="Perhe"/);
   assert.match(html('dirSignals'), /Aloita elämänalueista/);
   assert.equal(getState().lifeAreas.length, 0, 'ehdotuksista ei synny alueita');
-  assert.match(html('dirPersistNote'), /säilyvät toistaiseksi vain tämän istunnon ajan/,
-    'portit kiinni: näkymä kertoo, ettei tieto säily');
+  // Näkymä kertoo säilyvyydestä rehellisesti portin mukaan: kiinni ->
+  // "vain tämän istunnon ajan", auki -> ei varoitusta.
+  if (Object.values(alignmentPersistence()).every(Boolean)) {
+    assert.doesNotMatch(html('dirPersistNote'), /vain tämän istunnon ajan/,
+      'portit auki: näkymä väittää, ettei tieto säily');
+  } else {
+    assert.match(html('dirPersistNote'), /säilyvät toistaiseksi vain tämän istunnon ajan/,
+      'portit kiinni: näkymä kertoo, ettei tieto säily');
+  }
 
   openAreaForm(null, { name: 'Perhe', categoryKey: 'perhe' });
   assert.equal(document.getElementById('dirAreaName').value, 'Perhe', 'ehdotus esitäyttää lomakkeen');
