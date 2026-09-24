@@ -301,7 +301,7 @@
     {
       "id": "G",
       "title": "Tavoitteesta tekemiseksi: välitavoitteet",
-      "commitSha": null,
+      "commitSha": "f362e1aed58557e6ad0fd13cf671145f3b7b1ee6",
       "cacheVersion": "v20",
       "readiness": "READY",
       "gatesEnabled": [
