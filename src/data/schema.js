@@ -13,7 +13,9 @@
 // Kuvaus, kesto, prioriteetti ja aikataulutuksen tila tallentuvat nyt.
 // Ks. docs/TASK-EXTENDED-FIELDS-ACTIVATION.md.
 
-import { TASK_COLUMNS_CORE, TASK_COLUMNS_EXTENDED } from '../lib/rows.js';
+import {
+  TASK_COLUMNS_CORE, TASK_COLUMNS_EXTENDED, TASK_COLUMNS_PLANNING
+} from '../lib/rows.js';
 
 /**
  * Onko migraatio 0002 ajettu tuotantoon?
@@ -30,9 +32,17 @@ import { TASK_COLUMNS_CORE, TASK_COLUMNS_EXTENDED } from '../lib/rows.js';
  */
 export const TASK_EXTENDED_FIELDS = true;
 
-/** Sarakkeet, joita tehtävän kirjoituksissa saa käyttää juuri nyt. */
+/**
+ * Sarakkeet, joita tehtävän kirjoituksissa saa käyttää juuri nyt.
+ *
+ * KOLME TASOA, KAKSI PORTTIA. Migraatio 0002 toi laajennetut kentät ja
+ * migraatio 0010 tuo suunnittelukentät. Portin lukeminen tässä on ainoa
+ * paikka, jossa sarakejoukko valitaan — kutsupaikat eivät tiedä
+ * migraatioista mitään.
+ */
 export function taskColumns() {
-  return TASK_EXTENDED_FIELDS ? TASK_COLUMNS_EXTENDED : TASK_COLUMNS_CORE;
+  if (!TASK_EXTENDED_FIELDS) return TASK_COLUMNS_CORE;
+  return GOAL_PLANNING_FIELDS ? TASK_COLUMNS_PLANNING : TASK_COLUMNS_EXTENDED;
 }
 
 /**
@@ -65,7 +75,9 @@ export const TABLES = Object.freeze({
   aiAudit: true,
   /** Migraatio 0009 */
   transactions: true,
-  investments: true
+  investments: true,
+  /** Migraatio 0010 — EI AJETTU. Ks. supabase/migrations/0010_goal_to_action.sql. */
+  milestones: false
 });
 
 /**
@@ -86,6 +98,46 @@ export const TABLES = Object.freeze({
  * Tämä saa mennä arvoon true VASTA kun migraatio 0009 on ajettu.
  */
 export const BILL_PAYMENT_FIELDS = true;
+
+/**
+ * Onko migraatio 0010 ajettu tavoitteiden ja tehtävien osalta?
+ *
+ * PRODUCTION GATE, sarakeportti — sama kuvio kuin TASK_EXTENDED_FIELDS
+ * ja BILL_PAYMENT_FIELDS.
+ *
+ * false = seuraavia sarakkeita EI ole kannassa:
+ *           goals.metric, unit, baseline_value, current_value,
+ *                target_value, measured_on, savings_goal_id
+ *           tasks.milestone_id, depends_on
+ *           projects.milestone_id
+ *         Tieto elää istunnon muistissa.
+ * true  = ne tallentuvat.
+ *
+ * MIKSI TÄMÄ ON ERITYISEN VAARALLINEN PORTTI:
+ *
+ * `goals` ja `projects` ovat TUOTANNOSSA AUKI (aalto B, ddfc356) ja
+ * niissä on käyttäjän oikeaa dataa. Tämän portin avaaminen ennen
+ * migraatiota 0010 ei kaataisi uutta ominaisuutta vaan JOKAISEN
+ * tavoitteen ja projektin tallennuksen — myös niiden, jotka toimivat
+ * tänään.
+ *
+ * Tämä saa mennä arvoon true VASTA kun migraatio 0010 on ajettu.
+ */
+export const GOAL_PLANNING_FIELDS = false;
+
+/**
+ * Onko `maintenance` sallittu tavoitteen tilaksi?
+ *
+ * PRODUCTION GATE. Rajoite `goals_status_check` sallii tuotannossa
+ * viisi tilaa; `maintenance` on kuudes ja se lisätään migraatiossa
+ * 0010.
+ *
+ * Erillinen portti, koska tilan käyttö kaataisi tallennuksen
+ * rajoiterikkomukseen (23514) vaikka kaikki sarakkeet olisivat
+ * paikallaan. Sarakkeen puuttuminen ja arvon kieltäminen ovat eri
+ * vikoja, ja niillä on eri oire.
+ */
+export const GOAL_MAINTENANCE_MODE = false;
 
 /** Onko taulu käytettävissä tietokannassa? */
 export function hasTable(name) {
@@ -128,4 +180,21 @@ export function isPersisted(field) {
  */
 export function volatileBillFields() {
   return BILL_PAYMENT_FIELDS ? [] : ['payee', 'iban', 'reference'];
+}
+
+/**
+ * Tavoitteen kentät, jotka eivät vielä säily tallennuksen yli.
+ * Käyttöliittymä kertoo tämän käyttäjälle sen sijaan, että
+ * teeskentelisi tallentavansa mittarin.
+ */
+export function volatileGoalFields() {
+  return GOAL_PLANNING_FIELDS
+    ? []
+    : ['metric', 'unit', 'baselineValue', 'currentValue', 'targetValue',
+       'measuredOn', 'savingsGoalId'];
+}
+
+/** Tehtävän kentät, jotka eivät vielä säily tallennuksen yli. */
+export function volatileTaskPlanningFields() {
+  return GOAL_PLANNING_FIELDS ? [] : ['milestoneId', 'dependsOn'];
 }

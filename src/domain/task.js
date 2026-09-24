@@ -132,6 +132,28 @@ function normalizeText(value, maxLength) {
   return trimmed === '' ? null : trimmed;
 }
 
+/**
+ * Riippuvuuslista.
+ *
+ * Yläraja on tarkoituksellinen: kymmenen edeltäjää on jo paljon, ja
+ * rajaton lista olisi tapa rakentaa verkko, jonka läpikäynti on
+ * kallista eikä kukaan pysty lukemaan.
+ */
+function normalizeDependsOn(value, ownId) {
+  if (!Array.isArray(value)) return [];
+  const self = ownId != null ? String(ownId) : null;
+  const seen = new Set();
+
+  for (const entry of value) {
+    if (entry == null) continue;
+    const id = String(entry).trim();
+    if (!id || id === self) continue;
+    seen.add(id);
+    if (seen.size >= 10) break;
+  }
+  return [...seen];
+}
+
 export function normalizeTask(input = {}) {
   const time = isTimeOfDay(input.time) ? input.time : null;
   const endTime = isTimeOfDay(input.endTime) ? input.endTime : null;
@@ -192,6 +214,26 @@ export function normalizeTask(input = {}) {
     goalId: input.goalId != null ? String(input.goalId) : null,
     /** Vapaaehtoinen yhteys projektiin. */
     projectId: input.projectId != null ? String(input.projectId) : null,
+
+    /**
+     * Vapaaehtoinen yhteys välitavoitteeseen.
+     *
+     * Migraatio 0010, EI AJETTU. Portin ollessa kiinni tämä elää
+     * istunnon muistissa. Ks. GOAL_PLANNING_FIELDS src/data/schema.js.
+     */
+    milestoneId: input.milestoneId != null ? String(input.milestoneId) : null,
+
+    /**
+     * Tehtävät, joiden on oltava tehty ennen tätä.
+     *
+     * ITSEVIITTAUS PUDOTETAAN. Tehtävä, joka riippuu itsestään, ei ole
+     * mahdoton vaan mahdoton tulkita — ja se kaataisi topologisen
+     * järjestyksen aikatauluttajassa.
+     *
+     * Kaksoiskappaleet poistetaan: sama riippuvuus kahdesti ei tarkoita
+     * mitään, mutta se painaisi järjestystä kahdesti.
+     */
+    dependsOn: normalizeDependsOn(input.dependsOn, input.id),
     time,
     endTime,
     durationMinutes,

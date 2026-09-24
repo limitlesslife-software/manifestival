@@ -134,7 +134,7 @@ test('KRIITTINEN: peruutuskohde on aina edellinen aalto', () => {
 // SALLITUT TILAT — MUTAATIOTESTI
 // =====================================================================
 
-test('KRIITTINEN: resolveWave tunnistaa seitsemän sallittua tilaa', () => {
+test('KRIITTINEN: resolveWave tunnistaa kahdeksan sallittua tilaa', () => {
   for (const id of ['BASE', ...WAVE_IDS]) {
     assert.equal(resolveWave(expectedMatrix(id)), id,
       `aallon ${id} matriisia ei tunnistettu`);
@@ -142,13 +142,13 @@ test('KRIITTINEN: resolveWave tunnistaa seitsemän sallittua tilaa', () => {
 });
 
 test('KRIITTINEN: yhdenkin portin poikkeama muuttaa tai mitätöi tilan', () => {
-  // TÄMÄ ON KOKO TYÖKALUN YDIN. Jos jokin muu kuin seitsemän sallittua
+  // TÄMÄ ON KOKO TYÖKALUN YDIN. Jos jokin muu kuin kahdeksan sallittua
   // matriisia menisi läpi, esitarkistus hyväksyisi tilan jota kukaan
   // ei suunnitellut — ja juuri sellainen tila on se, jossa portti on
   // avautunut vahingossa.
   //
   // Käydään läpi JOKAINEN sallittu tila ja JOKAINEN yhden portin
-  // käännös: 7 × 12 = 84 mutaatiota.
+  // käännös: 8 × 13 = 104 mutaatiota.
   //
   // HUOM. YKSI KÄÄNNÖS EI AINA TUOTA MITÄTÖNTÄ TILAA.
   //
@@ -187,19 +187,26 @@ test('KRIITTINEN: yhdenkin portin poikkeama muuttaa tai mitätöi tilan', () => 
     }
   }
 
-  assert.equal(mutaatioita, 84, `mutaatioita ajettiin ${mutaatioita}, odotettiin 84`);
+  assert.equal(mutaatioita, 104, `mutaatioita ajettiin ${mutaatioita}, odotettiin 104`);
 
   // Ainoat sallitut siirtymät ovat niiden aaltojen välillä, jotka
   // eroavat tasan yhdellä portilla. Jos tähän ilmestyisi uusi pari,
   // aaltojako olisi muuttunut niin että kahta aaltoa ei enää erota
   // toisistaan yhdellä vahingolla.
   assert.deepEqual(siirtymät.sort(),
-    ['D->E (aiAudit)', 'E->D (aiAudit)'],
+    ['D->E (aiAudit)', 'E->D (aiAudit)',
+     'F->G (milestones)', 'G->F (milestones)'],
     `odottamattomia siirtymiä sallittujen tilojen välillä: ${siirtymät.join(', ')}`);
-  // 84 mutaatiota, joista kaksi tuottaa toisen kelvollisen aallon
-  // (D<->E, jotka eroavat tasan yhdellä portilla). Aalto F avaa kaksi
-  // porttia, joten se ei tuota uutta yhden käännöksen siirtymää.
-  assert.equal(mitättömiä, 82);
+  // 104 mutaatiota, joista NELJÄ tuottaa toisen kelvollisen aallon.
+  //
+  // Kaksi paria eroaa tasan yhdellä portilla:
+  //   D <-> E  (aiAudit)
+  //   F <-> G  (milestones)
+  //
+  // Aalto F avaa kaksi porttia, joten E <-> F ei ole yhden käännöksen
+  // päässä. Uusi pari on odotettu eikä merkki viasta — se on
+  // seuraus siitä, että aalto G avaa tasan yhden portin.
+  assert.equal(mitättömiä, 100);
 });
 
 test('KRIITTINEN: puuttuva tai ylimääräinen portti hylätään', () => {
@@ -246,8 +253,9 @@ test('KRIITTINEN: vierasavaimet luetaan molemmista ilmoitusmuodoista', () => {
   // aallossa.
   const viitteet = ownershipForeignKeys();
 
-  assert.equal(viitteet.length, 9,
-    `omistajuusviitteitä löytyi ${viitteet.length}, odotettiin 9`);
+  // Yhdeksän erästä 0003-0008 ja kolme migraatiosta 0010.
+  assert.equal(viitteet.length, 12,
+    `omistajuusviitteitä löytyi ${viitteet.length}, odotettiin 12`);
 
   const parit = viitteet.map(v => `${v.child}->${v.parent}`);
   assert.ok(parit.includes('routine_exceptions->routines'),
@@ -260,6 +268,14 @@ test('KRIITTINEN: vierasavaimet luetaan molemmista ilmoitusmuodoista', () => {
   // raportoituisi muodossa projects -> projects.
   assert.ok(parit.includes('goals->projects'),
     'goals -> projects luettiin väärin: väliin osuva alter table vei lapsen nimen');
+  // Migraation 0010 viitteet. Välitavoite kuuluu tavoitteelle, ja
+  // tehtävä sekä projekti voivat viitata välitavoitteeseen.
+  for (const odotettu of ['milestones->goals', 'tasks->milestones',
+                          'projects->milestones']) {
+    assert.ok(parit.includes(odotettu),
+      `migraation 0010 viite ${odotettu} jäi lukematta`);
+  }
+
   assert.equal(parit.filter(p => p === 'projects->projects').length, 0,
     'itseviittaus projects -> projects on jäsennysvirhe, ei todellinen viite');
 });
@@ -316,7 +332,8 @@ test('KRIITTINEN: aallon taulut vastaavat sen portteja', () => {
     wellbeing_entries: 'wellbeing', bills: 'bills',
     recurring_expenses: 'recurringExpenses', savings_goals: 'savingsGoals',
     ai_action_audit: 'aiAudit',
-    transactions: 'transactions', investments: 'investments'
+    transactions: 'transactions', investments: 'investments',
+    milestones: 'milestones'
   };
 
   for (const wave of WAVES) {
@@ -570,9 +587,28 @@ test('KRIITTINEN: varmistuksen odotusluvut vastaavat migraatioita', () => {
   assert.match(lähde, /'Neljakymmentakaksi domain-rajoitetta on tallella', '42'/,
     'varmistuksen rajoitemäärä ei vastaa migraatioita');
 
-  // 9 omistajuusvierasavainta.
-  assert.equal(ownershipForeignKeys().length, 9);
+  // 9 omistajuusvierasavainta ERÄSSÄ 0003-0008.
+  //
+  // Rajaus on pakollinen: loppuvarmistus kattaa nimenomaan tämän erän,
+  // ja migraatio 0010 tuo kolme lisää. Ilman rajausta tämä testi
+  // kertoisi, että ajettu varmistustiedosto on väärässä — vaikka se
+  // kuvaa oikein sitä erää jota se varmistaa.
+  const eranViitteet = ownershipForeignKeys()
+    .filter(v => /^000[3-8]/.test(v.file));
+  assert.equal(eranViitteet.length, 9);
   assert.match(lähde, /'Yhdeksan omistajuuden yhdistelmavierasavainta', '9'/);
+
+  // ERÄN ULKOPUOLISET LUETELLAAN NIMELTÄ.
+  //
+  // Rajaus yllä poistaisi muuten kanarialinnun: uusi omistajuusviite
+  // missä tahansa migraatiossa menisi läpi huomaamatta.
+  const ulkopuoliset = ownershipForeignKeys()
+    .filter(v => !/^000[3-8]/.test(v.file))
+    .map(v => `${v.child}->${v.parent}`)
+    .sort();
+  assert.deepEqual(ulkopuoliset,
+    ['milestones->goals', 'projects->milestones', 'tasks->milestones'],
+    'erän ulkopuolisten omistajuusviitteiden joukko muuttui');
 
   // 10 porttitaulua.
   const taulut = new Set(

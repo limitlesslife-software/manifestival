@@ -122,6 +122,14 @@ export function normalizeProject(input = {}) {
     status: PROJECT_STATUSES.includes(input.status) ? input.status : PROJECT_STATUS.ACTIVE,
     /** Vapaaehtoinen yhteys tavoitteeseen. */
     goalId: input.goalId != null ? String(input.goalId) : null,
+
+    /**
+     * Vapaaehtoinen yhteys välitavoitteeseen.
+     *
+     * Migraatio 0010, EI AJETTU. Ks. GOAL_PLANNING_FIELDS
+     * src/data/schema.js.
+     */
+    milestoneId: input.milestoneId != null ? String(input.milestoneId) : null,
     startDate: isIsoDate(input.startDate) ? input.startDate : null,
     /**
      * Projektin oma määräaika. Eri asia kuin tehtävien määräajat: projekti

@@ -19,8 +19,10 @@ Oletamme, että:
 3. **Ainoa todellinen pääsynvalvonta on tietokannassa.** Selainkoodiin ei voi
    luottaa: kuka tahansa voi kutsua Supabasen REST-rajapintaa suoraan ilman
    sovellusta.
-4. **`/api/parse` ja `/api/extract` ovat julkisia päätepisteitä**, joita
-   kuka tahansa voi kutsua. Molemmat vaativat kirjautumisen ja
+4. **`/api/parse`, `/api/extract` ja `/api/plan` ovat julkisia
+   päätepisteitä**, joita kuka tahansa voi kutsua. Kaikki vaativat
+   kirjautumisen ja rajoittavat pyyntöjä omalla avaimellaan, mutta
+   reitti itsessään on avoin. Molemmat vaativat kirjautumisen ja
    rajoittavat pyyntöjä, mutta reitti itsessään on avoin.
 
 ---
@@ -58,6 +60,64 @@ testillä `tests/api-extract-validation.test.cjs`.
 
 ---
 
+## Suunnittelun konteksti
+
+**Mallille lähetetään lukuja, ei sisältöä.**
+
+`/api/plan` saa käyttäjän vapaan tavoitetekstin (jonka hän itse
+kirjoitti) ja kolme lukua:
+
+```
+activeGoalCount       montako tavoitetta kilpailee ajasta
+nearestDeadlineDays   kuinka monen päivän päässä lähin määräpäivä on
+weeklyFreeHours       paljonko vapaata aikaa viikossa on
+```
+
+**Käyttäjän tehtävälista, muistiinpanot, hyvinvointimerkinnät ja
+taloustiedot eivät lähde ulos.** Numero ei voi sisältää ohjetta, eikä
+siitä voi lukea mitä käyttäjä tekee tai ajattelee.
+
+Kontekstista luetaan vain nimetyt kentät (`cleanContext`). Nimenomainen
+sallittujen lista on ainoa tapa varmistaa, ettei promptiin päädy
+sisältöä jota kukaan ei osannut kieltää etukäteen. Kelvoton luku
+muuttuu `null`-arvoksi eikä nollaksi: nolla olisi väite, `null` on
+rehellinen.
+
+Vapaa tavoiteteksti kulkee **JSON-koodattuna**, jolloin lainausmerkki
+tai rivinvaihto ei voi katkaista promptin rakennetta.
+
+Lukittu testeillä `tests/api-plan-validation.test.cjs` ja
+`tests/goal-to-action-domain.test.mjs`.
+
+### Mallin vastaus on ulkoista syötettä
+
+Malli ei saa päättää tunnisteita, kellonaikoja eikä tiloja. Mallin
+ehdottama `id` voisi olla käyttäjän olemassa olevan rivin tunniste, ja
+"luonti" ylikirjoittaisi sen.
+
+`src/ai/planSchema.js` pudottaa nämä kentät ja **kirjaa ne
+hylätyiksi**, jotta kehotteen ajautuminen huomataan. Kelvoton vastaus
+hylätään kokonaan eikä osittain: puolittain ymmärretty suunnitelma
+näyttäisi suunnitelmalta.
+
+---
+
+## Suunnitelmaehdotus ei ole pysyvä
+
+Ehdotustaulua ei ole. Ehdotus elää istunnon muistissa siihen asti että
+käyttäjä hyväksyy tai hylkää sen; hyväksynnästä syntyy tavallisia
+rivejä ja ehdotus katoaa.
+
+Se on myös turvallisuuspäätös: ehdotus sisältää mallin tuottamaa
+tekstiä, ja mitä vähemmän sitä säilytetään, sitä vähemmän sitä voi
+vuotaa. Hylätty ehdotus ei jää vientiin eikä kantaan.
+
+Uloskirjautuminen nollaa ehdotuksen, muutosehdotuksen ja
+idempotenssiavaimet — jäänyt avain estäisi seuraavaa käyttäjää
+tallentamasta.
+
+---
+
 ## Maksaminen
 
 **Manifestivalilla ei ole pankkiyhteyttä eikä valtuutta siirtää rahaa.**
@@ -77,7 +137,7 @@ turvallisuusarvionsa — ei tämän laajennus.
 
 | Arvo | Sijainti | Julkinen? | Huomiot |
 |---|---|---|---|
-| `ANTHROPIC_API_KEY` | Vercelin ympäristömuuttuja | **EI** | Vain palvelinpuolen `api/parse.js` ja `api/extract.js` lukevat. Ei koskaan selaimeen. |
+| `ANTHROPIC_API_KEY` | Vercelin ympäristömuuttuja | **EI** | Vain palvelinpuolen `api/parse.js`, `api/extract.js` ja `api/plan.js` lukevat. Ei koskaan selaimeen. |
 | Supabase URL | `index.html` | Kyllä | Julkinen projektin osoite |
 | Supabase anon-avain | `index.html` | Kyllä | Suunniteltu julkiseksi. Turva perustuu RLS:ään. |
 | Supabase `service_role` | **Ei missään** | **EI KOSKAAN** | Ohittaa RLS:n. Ei saa päätyä repoon, selaimeen eikä `api/`-koodiin. |

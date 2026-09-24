@@ -27,7 +27,10 @@ import { PROJECT_STATUS } from '../src/domain/project.js';
 import { PRIORITIES } from '../src/domain/priority.js';
 import { SCALE_MIN, SCALE_MAX } from '../src/domain/wellbeing.js';
 import { DEFAULT_PREFERENCES } from '../src/domain/notification.js';
-import { TABLES, TASK_EXTENDED_FIELDS, BILL_PAYMENT_FIELDS } from '../src/data/schema.js';
+import {
+  TABLES, TASK_EXTENDED_FIELDS, BILL_PAYMENT_FIELDS,
+  GOAL_PLANNING_FIELDS, GOAL_MAINTENANCE_MODE
+} from '../src/data/schema.js';
 import { parseStatusDoc } from '../tools/release/state.mjs';
 import { routineExceptionsRepo } from '../src/data/collectionsRepo.js';
 import { normalizeException } from '../src/domain/routine.js';
@@ -224,7 +227,8 @@ test('uudet taulut viittaavat auth.users-tauluun poistoketjulla', () => {
 const KOVENNETUT = [
   '0003_routines.sql', '0004_goals_projects.sql',
   '0005_notification_preferences.sql', '0006_wellbeing.sql',
-  '0007_finance.sql', '0008_ai_audit.sql', '0009_finance_2.sql'
+  '0007_finance.sql', '0008_ai_audit.sql', '0009_finance_2.sql',
+  '0010_goal_to_action.sql'
 ];
 
 /** Migraation suorittava osa: kommenttirivit pois. */
@@ -239,7 +243,7 @@ function allCode() {
   return migrationFiles().map(code).join(NEWLINE);
 }
 
-test('KRIITTINEN: taulusäännöt eivät ole tyhjiä — ne kattavat kaksitoista taulua', () => {
+test('KRIITTINEN: taulusäännöt eivät ole tyhjiä — ne kattavat 13 taulua', () => {
   // Tämä testi on olemassa yhtä vikaa varten: yllä olevat säännöt
   // etsivät tauluja hahmolla `create table public.X`. Jos hahmo ei
   // vastaa migraatioiden muotoa, jokainen sääntö käy läpi nolla taulua
@@ -252,7 +256,7 @@ test('KRIITTINEN: taulusäännöt eivät ole tyhjiä — ne kattavat kaksitoista
     .map(m => m[1]).sort();
 
   assert.deepEqual(taulut, [
-    'ai_action_audit', 'bills', 'goals', 'investments',
+    'ai_action_audit', 'bills', 'goals', 'investments', 'milestones',
     'notification_preferences', 'projects', 'recurring_expenses',
     'routine_exceptions', 'routines', 'savings_goals', 'transactions',
     'wellbeing_entries'
@@ -478,11 +482,41 @@ test('poikkeustyypit vastaavat migraatiota 0003', () => {
     Object.values(EXCEPTION).sort());
 });
 
-test('tavoitteen tilat vastaavat migraatiota 0004', () => {
-  const source = sql('0004_goals_projects.sql');
+test('KRIITTINEN: tavoitteen tilat vastaavat VIIMEISINTÄ migraatiota', () => {
+  // RAJOITE ON KORVATTU, JOTEN 0004 EI OLE ENÄÄ TOTUUS.
+  //
+  // Migraatio 0010 pudottaa `goals_status_check` -rajoitteen ja luo sen
+  // uudelleen kuudella arvolla. Vanhan migraation lukeminen kertoisi
+  // sen, mitä kannassa oli ennen — ja se on eri asia kuin se, mitä
+  // siellä on.
+  //
+  // Luetaan siksi VIIMEISIN määrittely: käydään migraatiot läpi
+  // järjestyksessä ja otetaan viimeinen, joka määrittelee rajoitteen.
+  // Näin uusi korvaus löytyy automaattisesti eikä testi jää kertomaan
+  // vanhentunutta totuutta.
+  let viimeisin = null;
+  let lahde = null;
+
+  for (const nimi of migrationFiles()) {
+    const source = sql(nimi);
+    if (!source.includes('add constraint goals_status_check')) continue;
+    viimeisin = allowedValues(source, 'goals_status_check');
+    lahde = nimi;
+  }
+
+  assert.ok(viimeisin, 'goals_status_check ei löydy yhdestäkään migraatiosta');
+  assert.deepEqual(viimeisin, Object.values(GOAL_STATUS).sort(),
+    `${lahde}: tilarajoite ja domain ovat erkaantuneet`);
+
+  // JA MIGRAATIO 0004:N ALKUPERÄINEN JOUKKO ON YHÄ VIISI ARVOA.
+  //
+  // Se on tuotannossa juuri nyt. Jos joku muokkaisi ajettua
+  // migraatiota jälkikäteen, repositorio kertoisi eri tarinan kuin
+  // kanta — ja tämä kaatuu siitä.
   assert.deepEqual(
-    allowedValues(source, 'goals_status_check'),
-    Object.values(GOAL_STATUS).sort());
+    allowedValues(sql('0004_goals_projects.sql'), 'goals_status_check'),
+    ['abandoned', 'active', 'archived', 'completed', 'paused'],
+    'ajettua migraatiota 0004 on muokattu jälkikäteen');
 });
 
 test('tavoitteen edistymistavat vastaavat migraatiota 0004', () => {
@@ -1588,7 +1622,8 @@ test('KRIITTINEN: loppuvarmistuksen luvut lasketaan migraatioista', () => {
     }
   }
   assert.deepEqual([...eranUlkopuoliset].sort(),
-    ['investments_owner_row_key', 'transactions_owner_row_key'],
+    ['investments_owner_row_key', 'milestones_owner_row_key',
+     'transactions_owner_row_key'],
     'erän ulkopuolisten omistajan rivin avainten joukko muuttui');
 
   // Yhdeksän liipaisinta erässä: jokaiselle taululle jolla on
@@ -2809,7 +2844,7 @@ test('varmistuskyselyt ovat vain lukevia', () => {
   // tiedostomäärä, jolloin uusi varmistus näytti puuttuvalta
   // migraatiolta.
   const migraatiokohtaiset = files.filter(name => /^verify_\d{4}\.sql$/.test(name));
-  assert.equal(migraatiokohtaiset.length, 9, 'yksi varmistustiedosto migraatiota kohti');
+  assert.equal(migraatiokohtaiset.length, 10, 'yksi varmistustiedosto migraatiota kohti');
 
   // supabase/acceptance elaa saman saannon alla. Se ei ole
   // migraatiokohtainen varmistus, joten se on eri hakemistossa, mutta se
@@ -4465,7 +4500,14 @@ test('KRIITTINEN: yksikään portti ei ole auki ilman ajettua migraatiota', () =
     // Sarakeportti on erillinen, koska bills-taulu on olemassa jo
     // 0007:sta: taulun portin avaaminen ei kerro mitään sarakkeista.
     transactions: '0009', investments: '0009',
-    BILL_PAYMENT_FIELDS: '0009'
+    BILL_PAYMENT_FIELDS: '0009',
+    // Migraatio 0010 tuo yhden taulun JA sarakkeita kolmeen tauluun,
+    // joiden portit ovat auki tuotannossa. Sarakeportti ja tilaportti
+    // ovat erillisiä: sarakkeen puuttuminen (42703) ja arvon
+    // kieltäminen (23514) ovat eri vikoja eri oireella.
+    milestones: '0010',
+    GOAL_PLANNING_FIELDS: '0010',
+    GOAL_MAINTENANCE_MODE: '0010'
   };
 
   // KAKSI HYVAKSYTTYA LAHDETTA SILLE, ETTA MIGRAATIO ON AJETTU.
@@ -4500,7 +4542,10 @@ test('KRIITTINEN: yksikään portti ei ole auki ilman ajettua migraatiota', () =
     return otsikossa || dokumentissa;
   };
 
-  const portit = { TASK_EXTENDED_FIELDS, BILL_PAYMENT_FIELDS, ...TABLES };
+  const portit = {
+    TASK_EXTENDED_FIELDS, BILL_PAYMENT_FIELDS,
+    GOAL_PLANNING_FIELDS, GOAL_MAINTENANCE_MODE, ...TABLES
+  };
 
   // Jokaisella portilla on migraatio, ja jokaisella migraatiolla 0002-0008
   // on vähintään yksi portti. Kumpikaan suunta ei saa jäädä auki.
@@ -4547,7 +4592,8 @@ test('KRIITTINEN: yksikään portti ei ole auki ilman ajettua migraatiota', () =
   // uuden portin lisääminen kaataa tämän, ja se on oikea hetki
   // tarkistaa, että portti on myös tilannedokumentissa ja
   // migraatiokartassa.
-  assert.equal(Object.keys(portit).length, 14);
+  // Kolmetoista taulua + neljä sarake-/arvoporttia.
+  assert.equal(Object.keys(portit).length, 17);
 
   // Ja avatun portin migraatio on todella ajettu — sama sääntö kuin yllä,
   // mutta nimenomaisesti sille portille joka on auki.

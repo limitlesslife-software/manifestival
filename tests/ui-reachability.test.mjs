@@ -30,8 +30,12 @@ const NEWLINE = String.fromCharCode(10);
 
 /** Kaikki käyttöliittymäkoodi yhtenä merkkijonona. */
 function uiSource() {
-  const views = ['goals', 'notificationSettings', 'profile', 'routines',
-                 'tasks', 'today', 'week'];
+  // LISTA ON NIMENOMAINEN. Uusi näkymä on lisättävä tänne käsin, ja se
+  // on tarkoituksellista: näkymä joka ei ole tässä listassa ei ole
+  // mukana tavoitettavuuden tarkistuksessa, ja juuri sellainen näkymä
+  // jäi aiemmin löytymättä.
+  const views = ['goals', 'goalDetail', 'notificationSettings', 'planning',
+                 'profile', 'routines', 'tasks', 'today', 'week'];
   return [read('index.html'), ...views.map(v => read(`src/app/views/${v}.js`))]
     .join(NEWLINE);
 }

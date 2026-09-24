@@ -18,7 +18,7 @@
 
 import { getClient } from './client.js';
 import { requireUserId } from './session.js';
-import { hasTable, BILL_PAYMENT_FIELDS } from './schema.js';
+import { hasTable, BILL_PAYMENT_FIELDS, GOAL_PLANNING_FIELDS } from './schema.js';
 import { createMemoryRepository } from './memoryStore.js';
 import { ok, fail } from '../lib/result.js';
 import { normalizeRoutine, normalizeException } from '../domain/routine.js';
@@ -31,6 +31,7 @@ import {
 import { normalizeAuditEntry } from '../domain/audit.js';
 import { normalizeTransaction } from '../domain/transactions.js';
 import { normalizeHolding } from '../domain/investments.js';
+import { normalizeMilestone } from '../domain/milestone.js';
 
 /** Kentät, joita client ei saa koskaan lähettää. */
 const SERVER_OWNED = Object.freeze(['user_id', 'created_at', 'updated_at']);
@@ -234,7 +235,23 @@ export const goalsRepo = createRepository({
     progress_mode: goal.progressMode,
     manual_progress: goal.manualProgress,
     parent_goal_id: goal.parentGoalId,
-    project_id: goal.projectId
+    project_id: goal.projectId,
+
+    // MITTARI JA SÄÄSTÖKYTKENTÄ JÄTETÄÄN POIS, JOS SARAKKEITA EI OLE.
+    //
+    // `goals` on TUOTANNOSSA AUKI ja siinä on käyttäjän dataa. Näiden
+    // lähettäminen — NULLINAKIN — kaataisi jokaisen tavoitteen
+    // tallennuksen koodilla 42703, myös niiden jotka toimivat tänään.
+    // Sama kuvio kuin taskColumns() ja BILL_PAYMENT_FIELDS.
+    ...(GOAL_PLANNING_FIELDS ? {
+      metric: goal.metric,
+      unit: goal.unit,
+      baseline_value: goal.baselineValue,
+      current_value: goal.currentValue,
+      target_value: goal.targetValue,
+      measured_on: goal.measuredOn,
+      savings_goal_id: goal.savingsGoalId
+    } : {})
   }),
   fromRow: row => normalizeGoal({
     id: row.id,
@@ -248,6 +265,16 @@ export const goalsRepo = createRepository({
     manualProgress: row.manual_progress,
     parentGoalId: row.parent_goal_id,
     projectId: row.project_id,
+    // Lukeminen on turvallista kummassakin tilassa: ennen migraatiota
+    // kenttää ei ole rivissä, jolloin arvo on undefined ja
+    // normalizeGoal tekee siitä nullin.
+    metric: row.metric,
+    unit: row.unit,
+    baselineValue: row.baseline_value,
+    currentValue: row.current_value,
+    targetValue: row.target_value,
+    measuredOn: row.measured_on,
+    savingsGoalId: row.savings_goal_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   })
@@ -268,7 +295,8 @@ export const projectsRepo = createRepository({
     status: project.status,
     goal_id: project.goalId,
     start_date: project.startDate,
-    deadline: project.deadline
+    deadline: project.deadline,
+    ...(GOAL_PLANNING_FIELDS ? { milestone_id: project.milestoneId } : {})
   }),
   fromRow: row => normalizeProject({
     id: row.id,
@@ -280,6 +308,7 @@ export const projectsRepo = createRepository({
     goalId: row.goal_id,
     startDate: row.start_date,
     deadline: row.deadline,
+    milestoneId: row.milestone_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   })
@@ -525,6 +554,48 @@ export const investmentsRepo = createRepository({
   })
 });
 
+// ------------------------------------------------------ välitavoitteet
+
+/**
+ * Välitavoitteet.
+ *
+ * VÄLITAVOITE EI ELÄ ILMAN TAVOITETTA: `goal_id` on NOT NULL ja
+ * yhdistelmävierasavain `(user_id, goal_id)` estää kiinnittämisen
+ * toisen käyttäjän tavoitteeseen. Vierasavaimen tarkistus EI kulje
+ * RLS:n läpi, joten kaksi saraketta viitteessä on koko suoja.
+ *
+ * Ks. migraatio 0010 — EI AJETTU.
+ */
+export const milestonesRepo = createRepository({
+  table: 'milestones',
+  schemaKey: 'milestones',
+  normalize: normalizeMilestone,
+  toRow: milestone => ({
+    id: milestone.id,
+    goal_id: milestone.goalId,
+    title: milestone.title,
+    description: milestone.description,
+    target_date: milestone.targetDate,
+    status: milestone.status,
+    order_index: milestone.orderIndex,
+    rule: milestone.rule,
+    reached_date: milestone.reachedDate
+  }),
+  fromRow: row => normalizeMilestone({
+    id: row.id,
+    goalId: row.goal_id,
+    title: row.title,
+    description: row.description,
+    targetDate: row.target_date,
+    status: row.status,
+    orderIndex: row.order_index,
+    rule: row.rule,
+    reachedDate: row.reached_date,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  })
+});
+
 // ------------------------------------------------------- AI-kirjausketju
 
 export const aiAuditRepo = createRepository({
@@ -579,7 +650,7 @@ export const aiAuditRepo = createRepository({
 export const ALL_REPOSITORIES = Object.freeze([
   routinesRepo, routineExceptionsRepo, goalsRepo, projectsRepo, wellbeingRepo,
   billsRepo, recurringExpensesRepo, savingsGoalsRepo,
-  transactionsRepo, investmentsRepo, aiAuditRepo
+  transactionsRepo, investmentsRepo, milestonesRepo, aiAuditRepo
 ]);
 
 /** Tyhjennä kaikki muistivarastot. Kutsutaan uloskirjautumisessa. */

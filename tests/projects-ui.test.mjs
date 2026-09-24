@@ -81,9 +81,22 @@ test('KRIITTINEN: näkymä renderöidään ja lomake kytketään käynnistyksess
     'projektilomaketta ei suljeta uloskirjautumisessa');
 
   // Kytkentä tehdään kerran käynnistyksessä, ei renderöinnissä.
+  //
+  // RAJAUS LUETAAN FUNKTION OMASTA RUNGOSTA, ei seuraavan funktion
+  // nimestä. Aiempi versio katkaisi kohtaan `function syncSegment`, ja
+  // kun se funktio poistettiin, `indexOf` palautti -1 — jolloin slice
+  // kattoi koko loppurungon ja testi kaatui väärästä syystä.
+  //
+  // Sulkeva aaltosulje rivin alussa on funktion loppu tässä
+  // koodityylissä.
   const view = read('src/app/views/projects.js');
-  const render = view.slice(view.indexOf('export function renderProjects'),
-                            view.indexOf('function syncSegment'));
+  const alku = view.indexOf('export function renderProjects');
+  assert.ok(alku !== -1, 'renderProjects-funktiota ei löydy');
+
+  const loppu = view.indexOf(String.fromCharCode(10) + '}', alku);
+  assert.ok(loppu !== -1, 'renderProjects-funktion loppua ei löydy');
+
+  const render = view.slice(alku, loppu);
   assert.equal(/addEventListener/.test(render), false,
     'renderProjects lisää kuuntelijoita — ne kertyisivät joka renderöinnissä');
 });

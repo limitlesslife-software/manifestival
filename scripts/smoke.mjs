@@ -157,9 +157,10 @@ try {
     'sovellusnäkymä on piilotettu ennen kirjautumista');
 
   // 7. Palvelinpuolen koodi ei vuoda staattisena
-  for (const route of ['/api/parse', '/api/extract',
+  for (const route of ['/api/parse', '/api/extract', '/api/plan',
                        '/api/_auth.js', '/api/_validate.js',
-                       '/api/_validateExtract.js', '/api/_ratelimit.js']) {
+                       '/api/_validateExtract.js', '/api/_validatePlan.js',
+                       '/api/_ratelimit.js']) {
     const response = await fetch(BASE + route);
     check(response.status === 501, 'lähdekoodia ei tarjoilla: ' + route, 'status ' + response.status);
   }

@@ -1,0 +1,313 @@
+// Kapasiteetti: paljonko aikaa oikeasti on.
+//
+// =====================================================================
+// VUOROKAUDESSA EI OLE 24 SUUNNITELTAVAA TUNTIA
+// =====================================================================
+//
+// Tämä on koko moduulin perustelu. Suunnittelija, joka pitää
+// vuorokautta 1440 minuutin säiliönä, tuottaa suunnitelmia jotka ovat
+// aritmeettisesti mahdollisia ja inhimillisesti mahdottomia — ja
+// mahdoton suunnitelma näyttää täsmälleen yhtä valmiilta kuin
+// mahdollinen.
+//
+// Päivä kuluu neljään osaan:
+//
+//   UNI             ei suunniteltavissa, tulee profiilista
+//   KIINTEÄ          käyttäjän itse ajastama työ, ei siirrettävissä
+//   JOUSTAVA         suunniteltu mutta siirrettävissä
+//   VAPAA            se mitä jää — ja siitäkään ei käytetä kaikkea
+//
+// =====================================================================
+// PUSKURI EI OLE HUKKAA
+// =====================================================================
+//
+// `bufferRatio` jättää osan vapaasta ajasta suunnittelematta. Se ei ole
+// varovaisuutta vaan realismia: päivät venyvät, asiat kestävät
+// arvioitua pidempään ja jokin tulee aina väliin. Täyteen ahdettu
+// kalenteri epäonnistuu ensimmäisestä yllätyksestä, ja epäonnistunut
+// suunnitelma opettaa käyttäjän olemaan luottamatta suunnitelmiin.
+//
+// =====================================================================
+// TÄMÄ MODUULI EI SIJOITA MITÄÄN
+// =====================================================================
+//
+// Se laskee KUINKA PALJON. Mihin kohtaan päivää mikin menee on
+// `planScheduler.js`:n asia, ja se nojaa olemassa olevaan
+// `scheduler.js`:n vapaiden välien laskentaan.
+
+import { fmtISO, parseISO, addDays } from '../lib/datetime.js';
+import { isIsoDate, durationOf } from './task.js';
+import { DEFAULT_PROFILE, DEFAULT_TASK_MINUTES, awakeWindow } from './scheduler.js';
+import { expandRoutines } from './routine.js';
+import { DEFAULT_ROUTINE_MINUTES } from './routine.js';
+
+/**
+ * Osuus vapaasta ajasta, joka jätetään suunnittelematta.
+ *
+ * 0,25 tarkoittaa: neljästä vapaasta tunnista suunnitellaan kolme.
+ *
+ * Luku on maltillinen tarkoituksella. Sen tehtävä ei ole tehdä
+ * suunnitelmasta väljää vaan estää sitä olemasta mahdoton.
+ */
+export const DEFAULT_BUFFER_RATIO = 0.25;
+
+/** Lyhin väli, jota kannattaa laskea käytettäväksi. */
+export const MIN_USABLE_MINUTES = 15;
+
+/** Kuinka pitkälle eteenpäin kapasiteettia lasketaan oletuksena. */
+export const DEFAULT_HORIZON_DAYS = 28;
+
+/** Pisin sallittu horisontti. Yli vuoden ennuste on arvaus. */
+export const MAX_HORIZON_DAYS = 365;
+
+function clampRatio(value, fallback) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  // Puskuri ei voi olla koko päivä: silloin mitään ei voisi suunnitella
+  // eikä suunnittelija kertoisi miksi.
+  return Math.max(0, Math.min(0.9, n));
+}
+
+/**
+ * Yhden päivän kapasiteetti.
+ *
+ * KAIKKI LUVUT OVAT MINUUTTEJA.
+ *
+ * @param {object} input
+ * @param {Array}  input.tasks       kaikki tehtävät (suodatetaan päivälle)
+ * @param {object} input.profile     herätys- ja nukkumaanmenoajan lähde
+ * @param {string} input.dateIso
+ * @param {Array}  [input.routines]
+ * @param {Array}  [input.exceptions]
+ * @param {number} [input.bufferRatio]
+ */
+export function dayCapacity({
+  tasks = [],
+  profile = DEFAULT_PROFILE,
+  dateIso,
+  routines = [],
+  exceptions = [],
+  bufferRatio = DEFAULT_BUFFER_RATIO
+} = {}) {
+  const ratio = clampRatio(bufferRatio, DEFAULT_BUFFER_RATIO);
+
+  const dayTasks = tasks.filter(task => task && task.date === dateIso && !task.completed);
+
+  // Valveillaoloaika luetaan olemassa olevasta aikataulumoottorista.
+  // Herätys- ja nukkumaanmenoaika johdetaan profiilista ja päivän
+  // ensimmäisestä kiinteästä sitoumuksesta — sitä logiikkaa ei toisteta.
+  const valve = awakeWindow({ tasks: dayTasks, profile, dateIso });
+  const awakeMinutes = Math.max(0, valve.end - valve.start);
+
+  // KIINTEÄ: käyttäjän itse ajastama. Ei siirrettävissä.
+  const fixed = dayTasks.filter(task => task.time && task.schedulingState !== 'auto');
+  const fixedMinutes = sumMinutes(fixed);
+
+  // JOUSTAVA: automaatin sijoittama, siirrettävissä.
+  const flexible = dayTasks.filter(task => task.time && task.schedulingState === 'auto');
+  const flexibleMinutes = sumMinutes(flexible);
+
+  // RUTIINIT: toistuvat sitoumukset. Nekin varaavat aikaa, vaikka niitä
+  // ei ole kirjattu tehtäviksi.
+  const occurrences = expandRoutines({
+    routines, from: dateIso, to: dateIso, exceptions
+  });
+  const routineMinutes = occurrences
+    .reduce((total, o) => total + (o.durationMinutes || DEFAULT_ROUTINE_MINUTES), 0);
+
+  const committedMinutes = fixedMinutes + flexibleMinutes + routineMinutes;
+  const rawFreeMinutes = Math.max(0, awakeMinutes - committedMinutes);
+
+  // Puskuri lasketaan VAPAASTA ajasta, ei valveillaoloajasta. Muuten
+  // täysi päivä kuluttaisi puskurin kahdesti: kerran sitoumuksina ja
+  // kerran puskurina.
+  const bufferMinutes = Math.round(rawFreeMinutes * ratio);
+  const usableMinutes = Math.max(0, rawFreeMinutes - bufferMinutes);
+
+  return {
+    dateIso,
+    awakeMinutes,
+    fixedMinutes,
+    flexibleMinutes,
+    routineMinutes,
+    committedMinutes,
+    /** Vapaa aika ennen puskuria. */
+    rawFreeMinutes,
+    bufferMinutes,
+    /** SE LUKU, JOTA SUUNNITTELIJA SAA KÄYTTÄÄ. */
+    usableMinutes: usableMinutes >= MIN_USABLE_MINUTES ? usableMinutes : 0,
+    counts: {
+      fixed: fixed.length,
+      flexible: flexible.length,
+      routines: occurrences.length
+    }
+  };
+}
+
+function sumMinutes(tasks) {
+  return tasks.reduce((total, task) => total + (durationOf(task) ?? DEFAULT_TASK_MINUTES), 0);
+}
+
+/**
+ * Kapasiteetti aikavälillä.
+ *
+ * Palauttaa päiväkohtaiset luvut JA summan. Päiväkohtaiset ovat se,
+ * jonka varassa sijoitus tehdään; summa on se, jonka varassa
+ * ennuste tehdään.
+ *
+ * @returns {{days: Array, totalUsableMinutes: number, dayCount: number}}
+ */
+export function horizonCapacity({
+  tasks = [],
+  profile = DEFAULT_PROFILE,
+  fromIso,
+  toIso,
+  routines = [],
+  exceptions = [],
+  bufferRatio = DEFAULT_BUFFER_RATIO
+} = {}) {
+  const days = [];
+
+  if (!isIsoDate(fromIso) || !isIsoDate(toIso) || toIso < fromIso) {
+    return { days, totalUsableMinutes: 0, dayCount: 0 };
+  }
+
+  let cursor = parseISO(fromIso);
+  const end = parseISO(toIso);
+  let guard = 0;
+
+  while (cursor <= end && guard < MAX_HORIZON_DAYS) {
+    const dateIso = fmtISO(cursor);
+    days.push(dayCapacity({
+      tasks, profile, dateIso, routines, exceptions, bufferRatio
+    }));
+    cursor = addDays(cursor, 1);
+    guard += 1;
+  }
+
+  return {
+    days,
+    totalUsableMinutes: days.reduce((total, day) => total + day.usableMinutes, 0),
+    dayCount: days.length
+  };
+}
+
+/**
+ * Horisontin loppupäivä.
+ *
+ * Rajataan `MAX_HORIZON_DAYS`:iin, koska pidemmälle laskettu kapasiteetti
+ * ei ole tietoa vaan arvaus — profiili, rutiinit ja elämä muuttuvat.
+ */
+export function horizonEnd(fromIso, days = DEFAULT_HORIZON_DAYS) {
+  if (!isIsoDate(fromIso)) return null;
+  const n = Math.max(1, Math.min(MAX_HORIZON_DAYS, Math.trunc(Number(days) || 0)));
+  return fmtISO(addDays(parseISO(fromIso), n - 1));
+}
+
+/**
+ * Kapasiteetti määräpäivään mennessä.
+ *
+ * Tämä on ennusteen ja mahdottomuustarkistuksen perusluku: paljonko
+ * suunniteltavaa aikaa on jäljellä ennen kuin määräpäivä tulee.
+ *
+ * Palauttaa `null` kun määräpäivä on menneisyydessä — kysymys ei ole
+ * enää voimassa, eikä nolla kertoisi sitä.
+ */
+export function capacityUntil({
+  tasks = [],
+  profile = DEFAULT_PROFILE,
+  todayIso,
+  deadlineIso,
+  routines = [],
+  exceptions = [],
+  bufferRatio = DEFAULT_BUFFER_RATIO
+} = {}) {
+  if (!isIsoDate(todayIso) || !isIsoDate(deadlineIso)) return null;
+  if (deadlineIso < todayIso) return null;
+
+  return horizonCapacity({
+    tasks, profile, fromIso: todayIso, toIso: deadlineIso,
+    routines, exceptions, bufferRatio
+  });
+}
+
+/**
+ * Paljonko työtä on jäljellä?
+ *
+ * Vain KESKENERÄINEN työ lasketaan. Valmis tehtävä ei vaadi aikaa,
+ * eikä sitä pidä laskea jäljellä olevaksi kuormaksi.
+ *
+ * Tehtävä ilman kestoarviota saa oletuksen. Se on arvaus, ja
+ * `estimated`-luku kertoo montako sellaista mukana on — jotta
+ * käyttöliittymä voi sanoa, kuinka luotettava kokonaisluku on.
+ */
+export function remainingWork(tasks = []) {
+  let minutes = 0;
+  let counted = 0;
+  let estimated = 0;
+
+  for (const task of tasks) {
+    if (!task || task.completed) continue;
+    counted += 1;
+
+    const duration = durationOf(task);
+    if (duration === null) {
+      estimated += 1;
+      minutes += DEFAULT_TASK_MINUTES;
+    } else {
+      minutes += duration;
+    }
+  }
+
+  return {
+    minutes,
+    taskCount: counted,
+    /** Montako tehtävää käytti oletuskestoa oikean arvion sijaan. */
+    estimatedCount: estimated,
+    /** Kuinka suuri osa luvusta on arvattu. */
+    estimateRatio: counted === 0 ? 0 : Math.round((estimated / counted) * 100) / 100
+  };
+}
+
+/**
+ * Riittääkö aika?
+ *
+ * Vertaa jäljellä olevaa työtä jäljellä olevaan kapasiteettiin.
+ *
+ * `feasible: null` tarkoittaa ettei kysymykseen voi vastata — ei sitä,
+ * että vastaus olisi kielteinen. Määräpäivätön tavoite ei ole mahdoton;
+ * se on määräpäivätön.
+ */
+export function feasibility({ remaining, capacity }) {
+  if (!remaining || !capacity) {
+    return { feasible: null, requiredMinutes: null, availableMinutes: null, ratio: null };
+  }
+
+  const required = remaining.minutes;
+  const available = capacity.totalUsableMinutes;
+
+  return {
+    feasible: required <= available,
+    requiredMinutes: required,
+    availableMinutes: available,
+    /**
+     * Kuinka täyteen kapasiteetti menisi. Yli 1 tarkoittaa mahdotonta.
+     * Nolla kapasiteettia ja nolla työtä on mahdollista, ei mahdotonta.
+     */
+    ratio: available === 0
+      ? (required === 0 ? 0 : Infinity)
+      : Math.round((required / available) * 100) / 100
+  };
+}
+
+/**
+ * Montako minuuttia päivässä keskimäärin tarvittaisiin?
+ *
+ * Käytetään perusteluissa: "tähän tarvittaisiin noin 45 min päivässä".
+ * Se on ymmärrettävämpi kuin "18 tuntia jäljellä".
+ */
+export function dailyRequirement(remainingMinutes, dayCount) {
+  const days = Math.trunc(Number(dayCount) || 0);
+  if (days <= 0) return null;
+  return Math.ceil(Number(remainingMinutes || 0) / days);
+}

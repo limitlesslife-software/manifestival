@@ -42,7 +42,8 @@ export const ALL_GATES = Object.freeze([
   'wellbeing',
   'bills', 'recurringExpenses', 'savingsGoals',
   'aiAudit',
-  'transactions', 'investments'
+  'transactions', 'investments',
+  'milestones'
 ]);
 
 /**
@@ -182,6 +183,23 @@ export const WAVES = Object.freeze([
       + 'siksi, että se on ainoa aalto, jonka migraatiota ei ole ajettu — '
       + 'ja aalto jonka kanta puuttuu ei saa olla minkään toisen edellä.',
     tables: Object.freeze(['transactions', 'investments'])
+  }),
+  Object.freeze({
+    id: 'G',
+    cacheVersion: 'v20',
+
+    // READY koskee käyttöliittymää, `blockedBy` kantaa. Ks. aalto F.
+    readiness: 'READY',
+    blockedBy: 'supabase/migrations/0010_goal_to_action.sql — EI AJETTU',
+    gates: Object.freeze(['milestones']),
+    title: 'Tavoitteesta tekemiseksi: välitavoitteet',
+    rationale:
+      'Välitavoite viittaa tavoitteeseen yhdistelmävierasavaimella, joten '
+      + 'aallon B (goals) on oltava ensin — ja se on tuotannossa. '
+      + 'MIGRAATIO 0010 ON VAARALLISEMPI KUIN AIEMMAT: se ei vain luo uutta '
+      + 'taulua vaan MUUTTAA goals-, tasks- ja projects-tauluja, joissa on '
+      + 'käyttäjän oikeaa dataa ja joiden portit ovat auki tuotannossa.',
+    tables: Object.freeze(['milestones'])
   })
 ]);
 
@@ -197,7 +215,11 @@ export const WAVES = Object.freeze([
  * hyväksyntä, sama peruutus.
  */
 export const COLUMN_GATES = Object.freeze({
-  BILL_PAYMENT_FIELDS: 'F'
+  BILL_PAYMENT_FIELDS: 'F',
+  /** goals-, tasks- ja projects-taulujen uudet sarakkeet. */
+  GOAL_PLANNING_FIELDS: 'G',
+  /** `maintenance` sallittuna tavoitteen tilana. */
+  GOAL_MAINTENANCE_MODE: 'G'
 });
 
 /**
@@ -296,8 +318,8 @@ export function rollbackTargetOf(id) {
  * Palauttaa aaltotunnisteen ('BASE', 'A', ...) tai null, jos matriisi
  * ei vastaa YHTÄKÄÄN sallittua tilaa.
  *
- * TÄMÄ ON KOKO TYÖKALUN YDIN. Kaksitoista porttia tuottaa 4096
- * yhdistelmää; niistä vain seitsemän on sallittuja. Kaikki muut ovat
+ * TÄMÄ ON KOKO TYÖKALUN YDIN. Kolmetoista porttia tuottaa 8192
+ * yhdistelmää; niistä vain kahdeksan on sallittuja. Kaikki muut ovat
  * virheitä — joko portti on avattu liian aikaisin, portti on jäänyt
  * avaamatta tai jokin on sulkeutunut vahingossa. Jokainen näistä on
  * tuotantovirhe, ja jokainen niistä kaatuu tässä.

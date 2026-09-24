@@ -47,6 +47,14 @@ Automaattinen testi vartioi, että tämä dokumentti pysyy ajan tasalla.
 | 0007 | `0007_finance.sql` | **AJETTU** | PASS |
 | 0008 | `0008_ai_audit.sql` | **AJETTU** | PASS |
 | 0009 | `0009_finance_2.sql` | **AJETTU** | EDELLYTYS: `verify_0009.sql` 0 poikkeavaa ennen tämän commitin deployta |
+| 0010 | `0010_goal_to_action.sql` | **EI AJETTU** | — |
+
+> **⚠ Migraatio 0010 on suunniteltu, ei ajettu — ja se on
+> vaarallisempi kuin aiemmat.** Se on ensimmäinen migraatio, joka
+> MUUTTAA tauluja joissa on käyttäjän dataa ja joiden portit ovat auki
+> tuotannossa (`goals`, `projects`, `tasks`). Se myös korvaa
+> `goals_status_check` -rajoitteen. Varmuuskopio ei ole muodollisuus.
+> Ks. `docs/GOAL-TO-ACTION.md`.
 
 > **Aaltocommit F.** Tämä rivi on tämän commitin EDELLYTYS, ei
 > historiallinen havainto: commit on valmisteltu etukäteen ja se
@@ -128,6 +136,16 @@ vertaa niihin.
 | `transactions` | 0009 | **AKTIVOITU** |
 | `investments` | 0009 | **AKTIVOITU** |
 | `BILL_PAYMENT_FIELDS` | 0009 | **AKTIVOITU** |
+| `milestones` | 0010 | kiinni |
+| `GOAL_PLANNING_FIELDS` | 0010 | kiinni |
+| `GOAL_MAINTENANCE_MODE` | 0010 | kiinni |
+
+`GOAL_PLANNING_FIELDS` on **sarakeportti** ja `GOAL_MAINTENANCE_MODE`
+**arvoportti**. Ne ovat erillisiä, koska niiden viat ovat erilaisia:
+puuttuva sarake kaataa tallennuksen koodilla `42703`, kielletty arvo
+koodilla `23514`. Kumpikin koskee tauluja, joiden portit ovat **auki
+tuotannossa** — niiden ennenaikainen avaaminen kaataisi myös sen, mikä
+toimii tänään.
 
 `BILL_PAYMENT_FIELDS` on **sarakeportti**, ei taulu. `bills`-taulu on
 ollut olemassa migraatiosta 0007, mutta sarakkeet `payee`, `iban` ja
@@ -146,10 +164,10 @@ aaltocommitti muuttaa kaikkia kolmea, ja
 
 ---
 
-## Julkaisujuna 0003–0009
+## Julkaisujuna 0003–0010
 
-Kaksitoista porttia avataan kuudessa aallossa (A–E porteille 0003–0008,
-F migraation 0009 porteille). Ohje ja aaltokohtaiset
+Kolmetoista porttia avataan seitsemässä aallossa (A–E porteille
+0003–0008, F migraation 0009 porteille, G migraation 0010 porteille). Ohje ja aaltokohtaiset
 hyväksyntäpaketit: `docs/RELEASE-TRAIN-0003-0008.md`.
 
 | Vaihe | Portit | Cache | Valmius | Suunniteltu | Deployattu | Selain | Kanta | Turva |
@@ -161,7 +179,8 @@ hyväksyntäpaketit: `docs/RELEASE-TRAIN-0003-0008.md`.
 | **C** | `routines`, `routineExceptions` | `v16` | VALMIS | `cf259d0` | — | — | — | — |
 | **D** | `recurringExpenses`, `savingsGoals`, `bills` | `v17` | VALMIS | `091e73c` | — | — | — | — |
 | **E** | `aiAudit` | `v18` | VALMIS | `2b947cc` | — | — | — | — |
-| **F** | `transactions`, `investments`, `BILL_PAYMENT_FIELDS` | `v19` | VALMIS (edellyttää 0009) | tämä commit | — | — | — | — |
+| **F** | `transactions`, `investments`, `BILL_PAYMENT_FIELDS` | `v19` | VALMIS (edellyttää 0009) | `e05c54b` | — | — | — | — |
+| **G** | `milestones`, `GOAL_PLANNING_FIELDS`, `GOAL_MAINTENANCE_MODE` | `v20` | **ESTETTY** | — | — | — | — | — |
 
 **Aalto F = Talous 2.0:n tuotekoodi + migraatio 0009 + sen portit
 yhtenä hyväksyntätapahtumana** (lukittu päätös,

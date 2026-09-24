@@ -22,5 +22,12 @@ export const API = Object.freeze({
    * KUVA KULKEE LÄPI, EI TALTEEN. Päätepiste ei tallenna kuvaa
    * mihinkään. Ks. api/extract.js ja src/app/receiptCapture.js.
    */
-  extract: '/api/extract'
+  extract: '/api/extract',
+  /**
+   * Tavoitteen suunnittelu vapaasta tekstistä.
+   *
+   * PALAUTTAA EHDOTUKSEN, EI KIRJOITA MITÄÄN. Hyväksyntä on
+   * domain-sääntö (src/domain/plan.js). Ks. api/plan.js.
+   */
+  plan: '/api/plan'
 });

@@ -105,7 +105,7 @@ function valeasiakas(vastaus = { data: [], error: null }) {
 // FIXTUURIT
 // =====================================================================
 //
-// Yksi kelvollinen domain-olio jokaiselle kahdelletoista portille.
+// Yksi kelvollinen domain-olio jokaiselle kolmelletoista portille.
 // Nämä ovat se syöte, jolla tietokantapolku ajetaan portin auettua.
 
 const FIXTUURIT = Object.freeze({
@@ -133,6 +133,10 @@ const FIXTUURIT = Object.freeze({
   investments: {
     id: 'w-i-1', name: 'Indeksirahasto', kind: 'fund', quantity: 12.5,
     costBasisMinor: 250000
+  },
+  milestones: {
+    id: 'w-m-1', goalId: 'w-g-1', title: 'Ominaisuusvalmis',
+    targetDate: '2026-11-01', orderIndex: 0
   }
 });
 

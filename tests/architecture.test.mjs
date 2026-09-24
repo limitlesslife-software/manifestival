@@ -295,6 +295,11 @@ test('tunnistegeneraattori pysyy sovelluskerroksessa', () => {
   // sivuvaikutukset ovat sallittuja.
   const sallitut = new Set([
     'src/app/actions.js', 'src/app/aiCommands.js',
+    // Suunnittelu luo tunnisteet hyväksytylle suunnitelmalle. Domain
+    // ei tuota niitä (`toCommittable` ottaa `makeId`-funktion
+    // parametrina), joten generaattori kuuluu tänne — samaan
+    // kerrokseen kuin muutkin sivuvaikutukset.
+    'src/app/planning.js',
     'src/data/schema.js', 'src/data/tasksRepo.js', 'src/lib/rows.js'
   ]);
 

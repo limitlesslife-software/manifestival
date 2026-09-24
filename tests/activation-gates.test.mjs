@@ -36,18 +36,19 @@ import { ROOT, read } from './helpers/sources.mjs';
 import { CLOSED_GATES, OPEN_GATES, repoForGate } from './helpers/gates.mjs';
 import { WAVES, describeMatrix, resolveWave } from '../tools/release/waves.mjs';
 import {
-  TABLES, hasTable, pendingTables, isPersistent, BILL_PAYMENT_FIELDS
+  TABLES, hasTable, pendingTables, isPersistent, BILL_PAYMENT_FIELDS,
+  GOAL_PLANNING_FIELDS, GOAL_MAINTENANCE_MODE
 } from '../src/data/schema.js';
 import { ALL_REPOSITORIES, volatileCollections } from '../src/data/collectionsRepo.js';
 import * as prefsRepo from '../src/data/notificationPrefsRepo.js';
 
 const NEWLINE = String.fromCharCode(10);
 
-/** Kaikki kaksitoista porttia, jotka odottavat aktivointia. */
+/** Kaikki kolmetoista porttia, jotka odottavat aktivointia. */
 const PORTIT = ['routines', 'routineExceptions', 'goals', 'projects',
                 'notificationPreferences', 'wellbeing',
                 'bills', 'recurringExpenses', 'savingsGoals', 'aiAudit',
-                'transactions', 'investments'];
+                'transactions', 'investments', 'milestones'];
 
 // =====================================================================
 // PORTTIEN LÄHTÖTILA
@@ -60,8 +61,8 @@ test('KRIITTINEN: porttimatriisi on tasan yksi suunniteltu aalto', () => {
   // testi, joka kaatuu oikeasta tyosta, poistetaan ennen pitkaa
   // kokonaan.
   //
-  // Korvaava vaatimus on TIUKEMPI, ei loysempi. Kaksitoista porttia
-  // tuottaa 4096 yhdistelmaa; niista tasan seitseman on suunniteltuja.
+  // Korvaava vaatimus on TIUKEMPI, ei loysempi. Kolmetoista porttia
+  // tuottaa 8192 yhdistelmaa; niista tasan kahdeksan on suunniteltuja.
   // Kaikki muut ovat virheita: portti on avattu liian aikaisin,
   // jaanyt avaamatta tai sulkeutunut vahingossa. Yksikaan niista ei
   // mene tasta lapi.
@@ -78,16 +79,16 @@ test('KRIITTINEN: porttien joukko vastaa migraatioiden tauluja', () => {
   // taulua, kaataisi jokaisen tallennuksen aktivoinnin jälkeen.
   const taulut = new Set();
   for (const nimi of fs.readdirSync(path.join(ROOT, 'supabase/migrations'))
-                       .filter(n => /^000[3-9]/.test(n))) {
+                       .filter(n => /^00(0[3-9]|10)/.test(n))) {
     for (const m of read(`supabase/migrations/${nimi}`)
       .matchAll(/create table public\.(\w+)/g)) {
       taulut.add(m[1]);
     }
   }
 
-  assert.equal(taulut.size, 12,
-    `migraatiot 0003-0009 luovat ${taulut.size} taulua, portteja on ${PORTIT.length}`);
-  assert.equal(Object.keys(TABLES).length, 12,
+  assert.equal(taulut.size, 13,
+    `migraatiot 0003-0010 luovat ${taulut.size} taulua, portteja on ${PORTIT.length}`);
+  assert.equal(Object.keys(TABLES).length, 13,
     'porttien määrä ei vastaa migraatioiden taulujen määrää');
   assert.deepEqual(Object.keys(TABLES).sort(), [...PORTIT].sort());
 });
@@ -422,7 +423,7 @@ test('KRIITTINEN: tilannedokumentti luettelee jokaisen migraation', () => {
 
   const migraatiot = fs.readdirSync(path.join(ROOT, 'supabase/migrations'))
     .filter(n => n.endsWith('.sql')).sort();
-  assert.equal(migraatiot.length, 9, `migraatioita on ${migraatiot.length}`);
+  assert.equal(migraatiot.length, 10, `migraatioita on ${migraatiot.length}`);
 
   for (const nimi of migraatiot) {
     assert.ok(doc.includes(nimi),
@@ -442,6 +443,11 @@ test('KRIITTINEN: tilannedokumentti luettelee jokaisen migraation', () => {
   assert.ok(rivi0009, 'tilannedokumentti ei mainitse migraatiota 0009');
   assert.match(rivi0009, /EDELLYTYS: `verify_0009\.sql` 0 poikkeavaa ennen tämän commitin deployta/,
     'migraation 0009 rivi ei nimeä deployn edellytystä');
+
+  const rivi0010 = doc.split(NEWLINE).find(r => r.includes('0010_goal_to_action.sql'));
+  assert.ok(rivi0010, 'tilannedokumentti ei mainitse migraatiota 0010');
+  assert.match(rivi0010, /EI AJETTU/,
+    'migraatio 0010 ei ole merkitty ajamattomaksi');
 });
 
 test('KRIITTINEN: tilannedokumentin porttitaulukko vastaa koodia', () => {
@@ -478,11 +484,19 @@ test('KRIITTINEN: tilannedokumentin porttitaulukko vastaa koodia', () => {
   // BILL_PAYMENT_FIELDS on sarakeportti, ei taulu, joten se ei ole
   // TABLES-oliossa. Se on silti portti, ja portti jota dokumentti ei
   // mainitse on portti jonka tilaa kukaan ei tarkista.
-  const bpRivi = doc.split(NEWLINE)
-    .find(r => new RegExp('^\\|\\s*`BILL_PAYMENT_FIELDS`\\s*\\|').test(r));
-  assert.ok(bpRivi, 'tilannedokumentti ei mainitse porttia BILL_PAYMENT_FIELDS sen omalla taulukkorivillä');
-  assert.equal(/AKTIVOITU/.test(bpRivi), BILL_PAYMENT_FIELDS,
-    'BILL_PAYMENT_FIELDS: dokumentti ja koodi eivät ole yhtä mieltä');
+  // Rivi haetaan taulukkorivinä (`| \`NIMI\` |`), ei minä tahansa
+  // mainintana: sama nimi esiintyy dokumentin selitysteksteissä.
+  for (const [nimi, arvo] of [
+    ['BILL_PAYMENT_FIELDS', BILL_PAYMENT_FIELDS],
+    ['GOAL_PLANNING_FIELDS', GOAL_PLANNING_FIELDS],
+    ['GOAL_MAINTENANCE_MODE', GOAL_MAINTENANCE_MODE]
+  ]) {
+    const rivi = doc.split(NEWLINE)
+      .find(r => new RegExp('^\\|\\s*`' + nimi + '`\\s*\\|').test(r));
+    assert.ok(rivi, `tilannedokumentti ei mainitse porttia ${nimi} sen omalla taulukkorivillä`);
+    assert.equal(/AKTIVOITU/.test(rivi), arvo,
+      `${nimi}: dokumentti ja koodi eivät ole yhtä mieltä`);
+  }
 });
 
 test('KRIITTINEN: tilannedokumentti selittää vanhentuneen TILA-rivin', () => {

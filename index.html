@@ -316,9 +316,10 @@
       <div class="eyebrow">TAVOITTEET</div>
       <h1 class="title" style="margin-bottom:14px;">Miksi teet sitä mitä teet</h1>
 
-      <div class="segment" role="tablist" aria-label="Tavoitteet tai projektit">
+      <div class="segment segment-3" role="tablist" aria-label="Tavoitteet, projektit tai suunnittelu">
         <button class="segment-btn active" id="segmentGoals" type="button" role="tab" aria-selected="true">Tavoitteet</button>
         <button class="segment-btn" id="segmentProjects" type="button" role="tab" aria-selected="false">Projektit</button>
+        <button class="segment-btn" id="segmentPlan" type="button" role="tab" aria-selected="false">Suunnittelu</button>
       </div>
 
       <!-- ---- Tavoitteet ---- -->
@@ -373,6 +374,41 @@
           <label class="field-label" for="gfManualProgress">Edistyminen (%)</label>
           <input type="number" id="gfManualProgress" min="0" max="100" step="5" placeholder="0">
           <div class="field-error" id="gfManualProgressError"></div>
+        </div>
+
+        <div class="add-form-title" style="margin-top:10px;">Mitattava tavoite (valinnainen)</div>
+        <div class="hint" id="gfMetricHint">
+          Kolme lukua eikä yhtä: suunta johdetaan lähtö- ja tavoitearvosta.
+          Ilman lähtöarvoa edistymistä ei lasketa — tuntematon on
+          rehellisempi kuin nolla.
+        </div>
+
+        <div class="form-row">
+          <div>
+            <label class="field-label" for="gfMetric">Mitä mitataan</label>
+            <input type="text" id="gfMetric" placeholder="esim. paino" autocomplete="off">
+            <div class="field-error" id="gfMetricError"></div>
+          </div>
+          <div>
+            <label class="field-label" for="gfUnit">Yksikkö</label>
+            <input type="text" id="gfUnit" placeholder="esim. kg" autocomplete="off">
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div>
+            <label class="field-label" for="gfBaselineValue">Lähtöarvo</label>
+            <input type="text" id="gfBaselineValue" inputmode="decimal" placeholder="esim. 90" autocomplete="off">
+          </div>
+          <div>
+            <label class="field-label" for="gfCurrentValue">Nyt</label>
+            <input type="text" id="gfCurrentValue" inputmode="decimal" placeholder="esim. 82" autocomplete="off">
+          </div>
+          <div>
+            <label class="field-label" for="gfTargetValue">Tavoite</label>
+            <input type="text" id="gfTargetValue" inputmode="decimal" placeholder="esim. 75" autocomplete="off">
+            <div class="field-error" id="gfTargetValueError"></div>
+          </div>
         </div>
 
         <div class="form-actions">
@@ -446,6 +482,82 @@
         </div>
 
         <div id="projectsListContainer"></div>
+      </div>
+
+      <!-- ---- Suunnittelu ---- -->
+      <div id="planSection" style="display:none;">
+        <div class="hint" id="planIntro">
+          Kirjoita tavoite omin sanoin. Manifestival ehdottaa välitavoitteet,
+          projektit ja tehtävät — <strong>mitään ei tallenneta ennen kuin
+          hyväksyt sen</strong>.
+        </div>
+
+        <div class="add-form" id="planInputForm" style="display:flex;"
+             role="group" aria-labelledby="planInputTitle">
+          <div class="add-form-title" id="planInputTitle">Mitä haluat saavuttaa?</div>
+
+          <div>
+            <label class="field-label" for="plGoalText">Kerro omin sanoin</label>
+            <textarea id="plGoalText" rows="3"
+                      placeholder="esim. Haluan säästää 10 000 euroa ensi kesään mennessä"></textarea>
+            <div class="field-error" id="plGoalTextError"></div>
+          </div>
+
+          <div class="form-actions">
+            <button class="form-btn primary" id="plGenerate" type="button">Tee suunnitelma</button>
+          </div>
+        </div>
+
+        <div id="planReviewContainer"></div>
+
+        <div class="add-form-title" style="margin-top:18px;">Automaatiotaso</div>
+        <div class="hint" id="automationHint"></div>
+        <div>
+          <label class="field-label" for="plAutomationLevel">Mitä Manifestival saa tehdä kysymättä</label>
+          <select id="plAutomationLevel"></select>
+        </div>
+
+        <div class="add-form-title" style="margin-top:18px;">Suunnitelman tila</div>
+        <div id="planStatusContainer"></div>
+      </div>
+
+      <!-- ---- Tavoitteen yksityiskohdat ---- -->
+      <div id="goalDetailSection" style="display:none;">
+        <button class="add-row" id="goalDetailBack" type="button">← Takaisin tavoitteisiin</button>
+        <div id="goalDetailContainer"></div>
+
+        <div class="add-form" id="milestoneForm" style="display:none;"
+             role="group" aria-labelledby="milestoneFormTitle">
+          <div class="add-form-title" id="milestoneFormTitle">Uusi välitavoite</div>
+
+          <div class="hint">
+            Välitavoite on <strong>tila</strong>, ei tehtävälista: se joko on
+            saavutettu tai ei. Anna sille nimi, joka voidaan todeta.
+          </div>
+
+          <div>
+            <label class="field-label" for="msTitle">Mikä on saavutettu?</label>
+            <input type="text" id="msTitle" placeholder="esim. Tuote on ominaisuusvalmis" autocomplete="off">
+            <div class="field-error" id="msTitleError"></div>
+          </div>
+
+          <div>
+            <label class="field-label" for="msDescription">Kuvaus (valinnainen)</label>
+            <input type="text" id="msDescription" placeholder="Mistä tietää että tämä on saavutettu" autocomplete="off">
+          </div>
+
+          <div>
+            <label class="field-label" for="msTargetDate">Tavoitepäivä (valinnainen)</label>
+            <input type="date" id="msTargetDate">
+            <div class="field-error" id="msTargetDateError"></div>
+          </div>
+
+          <div class="form-actions">
+            <button class="form-btn danger" id="msDelete" type="button" style="display:none;">Poista</button>
+            <button class="form-btn secondary" id="msCancel" type="button">Peruuta</button>
+            <button class="form-btn primary" id="msSave" type="button">Tallenna</button>
+          </div>
+        </div>
       </div>
     </section>
 

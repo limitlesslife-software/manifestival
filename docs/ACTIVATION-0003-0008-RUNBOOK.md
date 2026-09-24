@@ -66,6 +66,15 @@ kaatuu, jos järjestys rikkoo yhtäkään.
 | **D** | `recurringExpenses`, `savingsGoals`, `bills` | `bills.recurring_expense_id → recurring_expenses` ja `bills.task_id → tasks`. Kulut on aktivoitava viimeistään samassa aallossa |
 | **E** | `aiAudit` | Ei vierasavaimia. Viimeisenä, koska se kirjaa muiden toimintaa — sen kannattaa olla käytössä vasta kun kirjattavaa on |
 | **F** | `transactions`, `investments` | Talous 2.0. Kumpikaan ei viittaa mihinkään sovellustauluun, joten riippuvuudet eivät pakota sijaintia. **ESTETTY:** migraatiota 0009 ei ole ajettu |
+| **G** | `milestones` | Tavoitteesta tekemiseksi. `milestones.goal_id` viittaa tavoitteeseen, joten aalto B on oltava ensin — ja se on tuotannossa. **ESTETTY:** migraatiota 0010 ei ole ajettu |
+
+> **⚠ Aalto G on estetty, ja sen migraatio on vaarallisempi kuin
+> aiemmat.** `0010_goal_to_action.sql` on ensimmäinen migraatio, joka
+> MUUTTAA tauluja joissa on käyttäjän dataa (`goals`, `projects`,
+> `tasks`) ja joiden portit ovat auki tuotannossa. Se myös korvaa
+> `goals_status_check` -rajoitteen: keskeytynyt ajo jättäisi taulun
+> ilman tilarajoitetta. Varmuuskopio ja esitarkistus ovat pakollisia.
+> Hyväksyntäpaketti: `docs/acceptance/WAVE-G.md`.
 
 > **Aalto F on estetty, eikä sitä saa yrittää ajaa.** Sen ainoa este
 > on nimetty: `supabase/migrations/0009_finance_2.sql` on suunniteltu

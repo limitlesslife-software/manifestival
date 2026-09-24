@@ -23,7 +23,25 @@ export const DEVICE_DEFAULTS = Object.freeze({
   /** Onko ensikäytön opastus nähty tällä laitteella. */
   onboardingCompleted: false,
   /** Mikä välilehti oli viimeksi auki. */
-  lastScreen: 'screen-today'
+  lastScreen: 'screen-today',
+
+  /**
+   * Automaatiotaso: mitä suunnittelija saa tehdä kysymättä.
+   *
+   * LAITEKOHTAINEN EIKÄ TILIKOHTAINEN — toistaiseksi.
+   *
+   * Tilikohtainen olisi oikeampi (asetus koskee käyttäjää, ei laitetta),
+   * mutta se vaatii sarakkeen `profile`-tauluun eli migraation 0010.
+   * Laitekohtainen toimii tänään ja EPÄONNISTUU TURVALLISESTI: uusi
+   * laite alkaa tasolta 1, eli varovaisimmasta.
+   *
+   * Väärä suunta olisi ollut jättää asetus kokonaan pois kunnes
+   * migraatio on ajettu — silloin käyttäjä ei voisi valita lainkaan, ja
+   * valitsematta jättäminen on itsessään valinta.
+   *
+   * Ks. src/domain/automation.js ja migraatio 0010.
+   */
+  automationLevel: 1
 });
 
 /**
@@ -42,7 +60,11 @@ export const ACCOUNT_DEFAULTS = Object.freeze({
   }),
   planning: Object.freeze({
     autoScheduleSuggestions: true,
-    weekStartsOn: 'monday'
+    weekStartsOn: 'monday',
+    /** Ks. DEVICE_DEFAULTS.automationLevel — tämä on sen tilikohtainen koti. */
+    automationLevel: 1,
+    /** Osuus vapaasta ajasta, joka jätetään suunnittelematta. */
+    planningBufferRatio: 0.25
   }),
   ai: Object.freeze({
     voiceInputEnabled: true,

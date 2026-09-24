@@ -37,6 +37,7 @@ taloutta eikä löytänyt kumpaakaan.
 | `aiAudit` | tausta | — | — | kirjoitus AI-komennoista | E |
 | `transactions` | **ON** | **Talous** → Tapahtumat | Tapahtumat | täysi + kuitista luenta | F |
 | `investments` | **ON** | **Talous** → Sijoitukset | Sijoitukset | täysi + arvon käsin päivitys | F |
+| `milestones` | **ON** | **Tavoitteet** → tavoite → Suunnitelma | Välitavoitteet | täysi + järjestys + saavutus | G |
 
 **Portti ei vaikuta näkyvyyteen.** Kaikki näkymät ovat käytettävissä
 myös portin ollessa kiinni — silloin tieto elää istunnon muistissa ja
