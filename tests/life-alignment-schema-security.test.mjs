@@ -30,6 +30,8 @@ import {
 import { TABLES, GOAL_LIFE_AREA_FIELD, volatileGoalAlignmentFields } from '../src/data/schema.js';
 import { setUser, clearUser } from '../src/data/session.js';
 import { setClient } from '../src/data/client.js';
+import { getUser } from '../src/data/session.js';
+import { createMultiTableServer } from './helpers/multiTableServer.mjs';
 import { normalizeGoal } from '../src/domain/goal.js';
 
 const MIGRATION = read('supabase/migrations/0012_life_alignment.sql').replace(/\r\n/g, '\n');
@@ -252,21 +254,25 @@ test('MUTAATIO: jokainen poistettu ehto havaitaan', () => {
 
 // ============================================================ REPOSITORIOT
 
-test('portit ovat kiinni: Suunta ei kirjoita kantaan ennen migraatiota', () => {
-  assert.equal(TABLES.lifeAreas, false);
-  assert.equal(TABLES.weeklyCapacities, false);
-  assert.equal(TABLES.timeEntries, false);
-  assert.equal(TABLES.alignmentReviews, false);
-  assert.equal(GOAL_LIFE_AREA_FIELD, false);
-  assert.deepEqual(volatileGoalAlignmentFields(), ['lifeAreaId']);
+test('Suunnan portit avautuvat yhdessä ja säilyvyysväite vastaa porttia', () => {
+  // Migraatio 0012 luo neljä taulua JA goals.life_area_id-sarakkeen.
+  // Tuotehaaralla portit ovat kiinni; aallossa I kaikki viisi aukeavat
+  // yhdessä. Osittain avattu joukko kirjoittaisi tauluun, jota ei ole.
+  const auki = TABLES.lifeAreas === true;
+  for (const gate of ['lifeAreas', 'weeklyCapacities', 'timeEntries', 'alignmentReviews']) {
+    assert.equal(TABLES[gate] === true, auki, `portti ${gate} poikkeaa muista`);
+  }
+  assert.equal(GOAL_LIFE_AREA_FIELD, auki, 'GOAL_LIFE_AREA_FIELD poikkeaa tauluporteista');
+  assert.deepEqual(volatileGoalAlignmentFields(), auki ? [] : ['lifeAreaId']);
   for (const repo of [lifeAreasRepo, weeklyCapacitiesRepo, timeEntriesRepo, alignmentReviewsRepo]) {
-    assert.equal(repo.isPersistent(), false, repo.table);
+    assert.equal(repo.isPersistent(), auki, repo.table);
   }
 });
 
-test('KRIITTINEN: tavoitteen tallennus ei lähetä life_area_id:tä ennen sarakeporttia (goals on tuotannossa auki)', () => {
+test('KRIITTINEN: tavoitteen tallennus lähettää life_area_id:n vain sarakeportin ollessa auki (goals on tuotannossa auki)', () => {
   const row = goalsRepo.mapping.toRow(normalizeGoal({ id: 'g', title: 'T', lifeAreaId: 'a1' }));
-  assert.equal(Object.prototype.hasOwnProperty.call(row, 'life_area_id'), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(row, 'life_area_id'), GOAL_LIFE_AREA_FIELD);
+  if (GOAL_LIFE_AREA_FIELD) assert.equal(row.life_area_id, 'a1');
   const source = read('src/data/collectionsRepo.js');
   assert.match(source, /\.\.\.\(GOAL_LIFE_AREA_FIELD \? \{ life_area_id: goal\.lifeAreaId \} : \{\}\)/);
   // Lukeminen on turvallista molemmissa tiloissa.
@@ -300,12 +306,19 @@ beforeEach(() => {
   clearAllCollections();
 });
 
-test('muistivarasto (portti kiinni): tieto elää istunnon ajan ja katoaa uloskirjautumisessa', async () => {
+test('tilinvaihto: A:n alueet ja kirjaukset eivät näy B:lle (portti kiinni tai auki)', async () => {
+  // Portti kiinni: tieto elää muistissa ja katoaa tyhjennyksessä.
+  // Portti auki (aalto I): tieto on kannassa ja haku rajataan
+  // käyttäjään; muistinvarainen palvelin jäljittelee omistajuutta.
+  setClient(createMultiTableServer(() => getUser()?.id ?? null));
   setUser({ id: USER_A, email: 'a@example.com' });
   await lifeAreasRepo.insert({ id: 'a1', name: 'Perhe', importance: 5 });
   await timeEntriesRepo.insert({ id: 't1', entryDate: '2026-09-15', minutes: 30 });
   assert.equal((await lifeAreasRepo.list()).value.length, 1);
   clearAllCollections();
+  assert.equal((await lifeAreasRepo.memory.list()).value.length, 0, 'laitteen muisti ei tyhjentynyt');
+  clearUser();
+  setUser({ id: 'bbbbbbbb-0000-4000-8000-00000000000b', email: 'b@example.com' });
   assert.equal((await lifeAreasRepo.list()).value.length, 0, 'käyttäjän B ei pidä nähdä A:n alueita');
   assert.equal((await timeEntriesRepo.list()).value.length, 0);
 });
