@@ -312,6 +312,9 @@ test('tunnistegeneraattori pysyy sovelluskerroksessa', () => {
     // ja katsauksille. Domain (lifeArea.js, alignment.js ...) ei tuota
     // niitä.
     'src/app/alignment.js',
+    // Ajanseuranta luo tunnisteet ajastimille ja kohdeasetuksille.
+    // Domain (timer.js) ottaa ajastimen tunnisteen parametrina.
+    'src/app/timeTracking.js',
     'src/data/schema.js', 'src/data/tasksRepo.js', 'src/lib/rows.js'
   ]);
 

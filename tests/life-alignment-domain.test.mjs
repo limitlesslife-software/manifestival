@@ -741,7 +741,15 @@ test('ehdotus: huomiotta jäävälle alueelle varaus tärkeimpään tavoitteesee
 test('ehdotus: kapasiteetti ensi viikolle vain jos sitä ei ole asetettu', () => {
   const { areas, goals, tasks, analysis } = proposalFixture();
   const without = proposeAdjustments(analysis, { areas, goals, tasks });
-  assert.ok(without.some(p => p.type === ADJUSTMENT.SET_CAPACITY && p.payload.availableMinutes === 600));
+  // Suunta 2: viikko on päättynyt ja kirjattu toteuma (800 min) poikkesi
+  // arviosta (600 min) selvästi, joten ehdotus perustuu toteumaan
+  // (lähimpään puoleen tuntiin) ja on KYSYMYS, ei korjaus. Arvo on
+  // käyttäjän muokattavissa ennen vahvistusta.
+  const capacity = without.find(p => p.type === ADJUSTMENT.SET_CAPACITY);
+  assert.equal(capacity.payload.availableMinutes, 810);
+  assert.equal(capacity.reason.kind, 'capacity_deviation');
+  assert.match(capacity.label, /\?$/);
+  assert.match(capacity.detail, /Arvioit ehtiväsi 10 h, ja kirjasit 13 h 20 min/);
   const withCapacity = proposeAdjustments(analysis, {
     areas, goals, tasks, nextCapacity: normalizeWeeklyCapacity({ weekStart: '2026-09-21', availableMinutes: 500 })
   });

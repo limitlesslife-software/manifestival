@@ -304,7 +304,10 @@ test('viikkokatsaus: tilannekuva, pohdinta ja historia; toinen tallennus päivit
   await saveWeeklyCapacity({ weekStart: WEEK, availableMinutes: 1200 });
   const first = await saveWeeklyReview({ weekStart: WEEK, reflection: 'Liikaa töitä.' });
   assert.equal(first.ok, true);
-  assert.equal(first.review.snapshot.version, 1);
+  // Tilannekuva v2 (Suunta 2): kantaa sääntöversion.
+  assert.equal(first.review.snapshot.version, 2);
+  assert.equal(first.review.snapshot.policyVersion, 2);
+  assert.equal(first.review.policyVersion, 2);
   assert.equal(first.review.snapshot.capacity.availableMinutes, 1200);
   const second = await saveWeeklyReview({ weekStart: WEEK, reflection: 'Päivitetty.' });
   assert.equal(second.review.id, first.review.id);

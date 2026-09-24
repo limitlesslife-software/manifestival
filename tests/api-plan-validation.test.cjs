@@ -64,7 +64,9 @@ test('konteksti on vapaaehtoinen', () => {
   const tulos = validatePlanRequest({ ...VALID, context: undefined });
   assert.equal(tulos.ok, true);
   assert.deepEqual(tulos.value.context, {
-    activeGoalCount: null, nearestDeadlineDays: null, weeklyFreeHours: null
+    activeGoalCount: null, nearestDeadlineDays: null, weeklyFreeHours: null,
+    remainingWeeklyHours: null, unestimatedCount: null, heavyRemainingHours: null,
+    protectedHours: null, neglectedImportantAreaCount: null
   });
 });
 
@@ -129,8 +131,10 @@ test('KRIITTINEN: kontekstista luetaan vain nimetyt luvut', () => {
     notes: 'Henkilokohtaista'
   });
 
+  // Suunnan rajat (0013) ovat myös nimettyjä lukuja; mitään muuta ei tule.
   assert.deepEqual(Object.keys(siistitty).sort(),
-    ['activeGoalCount', 'nearestDeadlineDays', 'weeklyFreeHours']);
+    ['activeGoalCount', 'heavyRemainingHours', 'nearestDeadlineDays', 'neglectedImportantAreaCount',
+      'protectedHours', 'remainingWeeklyHours', 'unestimatedCount', 'weeklyFreeHours']);
 
   const serialized = JSON.stringify(siistitty);
   assert.equal(serialized.includes('Salainen'), false);
@@ -160,12 +164,13 @@ test('kontekstin ylarajat ovat mielekkaita', () => {
 });
 
 test('kontekstin taulukko tai merkkijono ei kelpaa', () => {
-  assert.deepEqual(cleanContext([1, 2, 3]), {
-    activeGoalCount: null, nearestDeadlineDays: null, weeklyFreeHours: null
-  });
-  assert.deepEqual(cleanContext('roska'), {
-    activeGoalCount: null, nearestDeadlineDays: null, weeklyFreeHours: null
-  });
+  const tyhja = {
+    activeGoalCount: null, nearestDeadlineDays: null, weeklyFreeHours: null,
+    remainingWeeklyHours: null, unestimatedCount: null, heavyRemainingHours: null,
+    protectedHours: null, neglectedImportantAreaCount: null
+  };
+  assert.deepEqual(cleanContext([1, 2, 3]), tyhja);
+  assert.deepEqual(cleanContext('roska'), tyhja);
 });
 
 // =====================================================================

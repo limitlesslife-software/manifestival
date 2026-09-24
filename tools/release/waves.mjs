@@ -45,7 +45,8 @@ export const ALL_GATES = Object.freeze([
   'transactions', 'investments',
   'milestones',
   'inboxItems', 'reminders', 'notices', 'travelPlans', 'locationRules',
-  'lifeAreas', 'weeklyCapacities', 'timeEntries', 'alignmentReviews'
+  'lifeAreas', 'weeklyCapacities', 'timeEntries', 'alignmentReviews',
+  'runningTimers', 'alignmentItemSettings'
 ]);
 
 /**
@@ -249,6 +250,25 @@ export const WAVES = Object.freeze([
       + 'ne lasketaan, joten aalto ei tuo johdettua dataa kantaan. '
       + 'Riippumaton aalloista F–H: 0012 ei vaadi 0009–0011:tä.',
     tables: Object.freeze(['life_areas', 'weekly_capacities', 'time_entries', 'alignment_reviews'])
+  }),
+  Object.freeze({
+    id: 'J',
+    cacheVersion: 'v23',
+
+    // READY koskee käyttöliittymää, `blockedBy` kantaa. Ks. aalto F.
+    readiness: 'READY',
+    blockedBy: 'supabase/migrations/0013_alignment_reality.sql — EI AJETTU',
+    gates: Object.freeze(['runningTimers', 'alignmentItemSettings']),
+    title: 'Suunta 2: ajastin, kuormittavuus ja toteuman lähteet',
+    rationale:
+      'Kaksi uutta taulua (running_timers, alignment_item_settings) ja '
+      + 'sarakkeita aallon I tauluihin (time_entries, weekly_capacities, '
+      + 'alignment_reviews). Riippuu aallosta I: 0013 muuttaa 0012:n tauluja '
+      + 'ja viittaa life_areas-tauluun. Yhtäkään tuotannossa auki olevaa '
+      + 'taulua (tasks, goals, projects, routines) ei muuteta; niihin '
+      + 'viitataan vain yhdistelmävierasavaimilla. Siksi oma aalto: I voi '
+      + 'mennä tuotantoon ilman J:tä, mutta ei päinvastoin.',
+    tables: Object.freeze(['running_timers', 'alignment_item_settings'])
   })
 ]);
 
@@ -270,7 +290,9 @@ export const COLUMN_GATES = Object.freeze({
   /** `maintenance` sallittuna tavoitteen tilana. */
   GOAL_MAINTENANCE_MODE: 'G',
   /** goals.life_area_id (migraatio 0012). */
-  GOAL_LIFE_AREA_FIELD: 'I'
+  GOAL_LIFE_AREA_FIELD: 'I',
+  /** 0012:n taulujen uudet sarakkeet (migraatio 0013). */
+  ALIGNMENT_REALITY_FIELDS: 'J'
 });
 
 /**

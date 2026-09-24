@@ -110,6 +110,7 @@ saattoi ennen tätä työtä.
 | G | `v20` | estetty (migraatio 0010 ajamatta) |
 | H | `v21` | estetty (migraatio 0011 ajamatta) |
 | I | `v22` | estetty (migraatio 0012 ajamatta) |
+| J | `v23` | estetty (migraatio 0013 ajamatta; riippuu aallosta I) |
 
 **Aalto C:n deployaus EI ole sama asia kuin sen hyväksyntä.** Rivi
 yllä kertoo vain, mitä `origin/main` sisältää -- ei sitä, että Panu
@@ -313,6 +314,7 @@ Aalto B  v15  (tuotannon nykytila, origin/main)
           -> G  v20   Tavoitteesta tekemiseksi -- migraatio 0010
             -> H  v21   Henkilökohtainen avustaja -- migraatio 0011
               -> I  v22   Suunta (Life Alignment) -- migraatio 0012
+                -> J  v23   Suunta 2: ajastin ja kuormittavuus -- migraatio 0013
 ```
 
 **Feature-haarat EIVÄT ole tuotantojulkaisulinjan luotettava kuva.**
@@ -355,7 +357,14 @@ Migraatioita EI koskaan pakata samaan tuotantoikkunaan/transaktioon:
    riipu 0009–0011:stä. Koska se koskee `goals`-tauluun, jonka portti on
    auki, sarakkeella on oma portti `GOAL_LIFE_AREA_FIELD`.
 
-Kukaan ei saa niputtaa 0009+0010+0011+0012 yhteen tuotantoajoon. Jokainen
+5. **0013** (Suunta 2) luo kaksi uutta taulua (`running_timers`,
+   `alignment_item_settings`) ja lisää sarakkeita 0012:n tauluihin.
+   Se RIIPPUU 0012:sta (ja `verify_0012.sql` ajetaan ennen sitä, koska
+   0013 korvaa sen tarkistaman lähderajoitteen). Tuotannossa auki oleviin
+   tauluihin se ei koske; sarakkeilla on oma portti
+   `ALIGNMENT_REALITY_FIELDS`.
+
+Kukaan ei saa niputtaa 0009+0010+0011+0012+0013 yhteen tuotantoajoon. Jokainen
 saa oman `supabase/verify/verify_00XX.sql`-todennuksensa ja oman
 `docs/acceptance/WAVE-*.md`-hyväksyntäpakettinsa.
 

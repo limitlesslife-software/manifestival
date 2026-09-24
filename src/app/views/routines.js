@@ -4,6 +4,7 @@
 // ma–pe klo 07:00") eikä esiintymiä — ja kertoo milloin se osuu seuraavaksi,
 // jotta sääntö on ymmärrettävä ilman kalenteria.
 
+import { itemSettingsFor, saveItemSettings } from '../timeTracking.js';
 import { fmtISO, todayMidnight, parseISO } from '../../lib/datetime.js';
 import { escapeHtml, formatDuration } from '../../lib/format.js';
 import { CATEGORIES, categoryLabel } from '../../domain/categories.js';
@@ -251,6 +252,11 @@ function fillForm(routine) {
   el('rfStartDate').value = routine && routine.startDate ? routine.startDate : '';
   el('rfEndDate').value = routine && routine.endDate ? routine.endDate : '';
   syncWeekdayVisibility();
+  const energy = maybe('rfEnergy');
+  if (energy) {
+    const settings = routine ? itemSettingsFor('routine', routine.id) : null;
+    energy.value = settings && settings.energyDemand ? String(settings.energyDemand) : '';
+  }
 }
 
 /** Avaa lomake uuden rutiinin luomiseen. */
@@ -314,6 +320,11 @@ const submitRoutine = singleFlight(async () => {
     if (!result.ok) {
       if (result.errors) showFieldErrors(result.errors);
       return;
+    }
+    const savedId = editingId || (result.routine && result.routine.id);
+    const energy = maybe('rfEnergy');
+    if (savedId && energy) {
+      await saveItemSettings('routine', savedId, { energyDemand: energy.value ? Number(energy.value) : null });
     }
     closeRoutineForm();
   } finally {

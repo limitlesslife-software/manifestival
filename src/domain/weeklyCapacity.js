@@ -51,6 +51,9 @@ export function normalizeWeeklyCapacity(input = {}) {
     weekStart: weekStartOf(input.weekStart),
     availableMinutes: wholeNumber(input.availableMinutes),
     energyLevel: energy !== null && energy >= 1 && energy <= 5 ? energy : null,
+    // "Kuormittavaa tekemistä enintään" minuutteina. Käyttäjän oma raja,
+    // ei johdettu mistään (ks. energyLoad.js). null = ei asetettu.
+    energyBudgetMinutes: wholeNumber(input.energyBudgetMinutes),
     note,
     createdAt: input.createdAt ?? null,
     updatedAt: input.updatedAt ?? null
@@ -65,6 +68,11 @@ export function validateWeeklyCapacity(capacity) {
     errors.availableMinutes = 'Anna viikon käytettävissä oleva aika.';
   } else if (minutes < 0 || minutes > MINUTES_PER_WEEK) {
     errors.availableMinutes = 'Aika on 0–168 tuntia viikossa.';
+  }
+  const budget = capacity?.energyBudgetMinutes;
+  if (budget !== null && budget !== undefined
+      && (!Number.isInteger(budget) || budget < 0 || budget > MINUTES_PER_WEEK)) {
+    errors.energyBudgetMinutes = 'Kuormittavan ajan raja on 0–168 tuntia.';
   }
   return { valid: Object.keys(errors).length === 0, errors };
 }

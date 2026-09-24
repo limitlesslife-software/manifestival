@@ -19,7 +19,8 @@
 import { getClient } from './client.js';
 import { requireUserId } from './session.js';
 import {
-  hasTable, BILL_PAYMENT_FIELDS, GOAL_PLANNING_FIELDS, GOAL_LIFE_AREA_FIELD
+  hasTable, BILL_PAYMENT_FIELDS, GOAL_PLANNING_FIELDS, GOAL_LIFE_AREA_FIELD,
+  ALIGNMENT_REALITY_FIELDS
 } from './schema.js';
 import { createMemoryRepository } from './memoryStore.js';
 import { ok, fail } from '../lib/result.js';
@@ -42,6 +43,8 @@ import { normalizeLifeArea } from '../domain/lifeArea.js';
 import { normalizeWeeklyCapacity } from '../domain/weeklyCapacity.js';
 import { normalizeTimeEntry } from '../domain/timeEntry.js';
 import { normalizeAlignmentReview } from '../domain/alignmentReview.js';
+import { normalizeTimer } from '../domain/timer.js';
+import { normalizeItemSettings } from '../domain/alignmentItemSettings.js';
 
 /** Kentät, joita client ei saa koskaan lähettää. */
 const SERVER_OWNED = Object.freeze(['user_id', 'created_at', 'updated_at']);
@@ -875,6 +878,8 @@ export const weeklyCapacitiesRepo = createRepository({
     week_start: capacity.weekStart,
     available_minutes: capacity.availableMinutes,
     energy_level: capacity.energyLevel,
+    // 0013: sarake puuttuu kunnes migraatio on ajettu -> jätetään pois.
+    ...(ALIGNMENT_REALITY_FIELDS ? { energy_budget_minutes: capacity.energyBudgetMinutes } : {}),
     note: capacity.note
   }),
   fromRow: row => normalizeWeeklyCapacity({
@@ -882,6 +887,7 @@ export const weeklyCapacitiesRepo = createRepository({
     weekStart: row.week_start,
     availableMinutes: row.available_minutes,
     energyLevel: row.energy_level,
+    energyBudgetMinutes: row.energy_budget_minutes,
     note: row.note,
     createdAt: row.created_at,
     updatedAt: row.updated_at
@@ -903,8 +909,19 @@ export const timeEntriesRepo = createRepository({
     life_area_id: entry.lifeAreaId,
     goal_id: entry.goalId,
     task_id: entry.taskId,
-    source: entry.source,
-    note: entry.note
+    // 0012 sallii vain lähteen 'manual'. Ennen 0013:a ajastimen kirjaus
+    // tallentuu 'manual'-lähteellä: minuutit ja kohde säilyvät, vain
+    // lähteen erottelu odottaa migraatiota.
+    source: ALIGNMENT_REALITY_FIELDS ? entry.source : 'manual',
+    note: entry.note,
+    ...(ALIGNMENT_REALITY_FIELDS ? {
+      project_id: entry.projectId,
+      routine_id: entry.routineId,
+      occurrence_date: entry.occurrenceDate,
+      operation_id: entry.operationId,
+      started_at: entry.startedAt,
+      ended_at: entry.endedAt
+    } : {})
   }),
   fromRow: row => normalizeTimeEntry({
     id: row.id,
@@ -913,6 +930,12 @@ export const timeEntriesRepo = createRepository({
     lifeAreaId: row.life_area_id,
     goalId: row.goal_id,
     taskId: row.task_id,
+    projectId: row.project_id,
+    routineId: row.routine_id,
+    occurrenceDate: row.occurrence_date,
+    operationId: row.operation_id,
+    startedAt: row.started_at,
+    endedAt: row.ended_at,
     source: row.source,
     note: row.note,
     createdAt: row.created_at,
@@ -932,7 +955,11 @@ export const alignmentReviewsRepo = createRepository({
     snapshot: review.snapshot,
     reflection: review.reflection,
     adjustments: review.adjustments,
-    completed_at: review.completedAt
+    completed_at: review.completedAt,
+    ...(ALIGNMENT_REALITY_FIELDS ? {
+      policy_version: review.policyVersion,
+      reflection_answers: review.reflectionAnswers
+    } : {})
   }),
   fromRow: row => normalizeAlignmentReview({
     id: row.id,
@@ -941,7 +968,78 @@ export const alignmentReviewsRepo = createRepository({
     snapshot: row.snapshot,
     reflection: row.reflection,
     adjustments: row.adjustments,
+    policyVersion: row.policy_version,
+    reflectionAnswers: row.reflection_answers,
     completedAt: row.completed_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  })
+});
+
+// ---------------------------------------------------- Suunta 2 (0013)
+
+/**
+ * Käynnissä oleva ajastin. ENINTÄÄN YKSI KÄYTTÄJÄÄ KOHTI (kannan
+ * uniikkirajoite). Portti kiinni -> muisti; ajastin säilyy silti
+ * laitteella (src/data/timerStore.js), jotta uudelleenlataus ei hukkaa
+ * kulunutta aikaa.
+ */
+export const runningTimersRepo = createRepository({
+  table: 'running_timers',
+  schemaKey: 'runningTimers',
+  normalize: normalizeTimer,
+  toRow: timer => ({
+    id: timer.id,
+    target_kind: timer.targetKind,
+    life_area_id: timer.lifeAreaId,
+    goal_id: timer.goalId,
+    task_id: timer.taskId,
+    project_id: timer.projectId,
+    routine_id: timer.routineId,
+    occurrence_date: timer.occurrenceDate,
+    started_at: timer.startedAt,
+    paused_at: timer.pausedAt,
+    paused_seconds: timer.pausedSeconds,
+    note: timer.note
+  }),
+  fromRow: row => normalizeTimer({
+    id: row.id,
+    targetKind: row.target_kind,
+    lifeAreaId: row.life_area_id,
+    goalId: row.goal_id,
+    taskId: row.task_id,
+    projectId: row.project_id,
+    routineId: row.routine_id,
+    occurrenceDate: row.occurrence_date,
+    startedAt: row.started_at,
+    pausedAt: row.paused_at,
+    pausedSeconds: row.paused_seconds,
+    note: row.note,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  })
+});
+
+/** Tehtävän/rutiinin/projektin Suunta-asetukset: kuormittavuus ym. */
+export const alignmentItemSettingsRepo = createRepository({
+  table: 'alignment_item_settings',
+  schemaKey: 'alignmentItemSettings',
+  normalize: normalizeItemSettings,
+  toRow: settings => ({
+    id: settings.id,
+    item_kind: settings.itemKind,
+    item_id: settings.itemId,
+    energy_demand: settings.energyDemand,
+    alignment_opt_out: settings.alignmentOptOut,
+    estimate_approximate: settings.estimateApproximate
+  }),
+  fromRow: row => normalizeItemSettings({
+    id: row.id,
+    itemKind: row.item_kind,
+    itemId: row.item_id,
+    energyDemand: row.energy_demand,
+    alignmentOptOut: row.alignment_opt_out,
+    estimateApproximate: row.estimate_approximate,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   })
@@ -1004,6 +1102,7 @@ export const ALL_REPOSITORIES = Object.freeze([
   transactionsRepo, investmentsRepo, milestonesRepo,
   inboxRepo, remindersRepo, noticesRepo, travelPlansRepo, locationRulesRepo,
   lifeAreasRepo, weeklyCapacitiesRepo, timeEntriesRepo, alignmentReviewsRepo,
+  runningTimersRepo, alignmentItemSettingsRepo,
   aiAuditRepo
 ]);
 

@@ -113,7 +113,13 @@ export const EXPORTED_COLLECTIONS = Object.freeze([
   'lifeAreas',
   'weeklyCapacities',
   'timeEntries',
-  'alignmentReviews'
+  'alignmentReviews',
+
+  // Suunta 2 (0013): kuormittavuus- ja muut kohdeasetukset sekä
+  // käynnissä oleva ajastin (0 tai 1 riviä). Ajastin on käyttäjän
+  // omaa, vielä kirjaamatonta toteumaa, joten se kuuluu vientiin.
+  'alignmentItemSettings',
+  'runningTimers'
 ]);
 
 /**

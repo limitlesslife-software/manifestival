@@ -38,7 +38,9 @@
     "lifeAreas": [],
     "weeklyCapacities": [],
     "timeEntries": [],
-    "alignmentReviews": []
+    "alignmentReviews": [],
+    "runningTimers": [],
+    "alignmentItemSettings": []
   },
   "waves": [
     {
@@ -75,7 +77,9 @@
         "lifeAreas",
         "weeklyCapacities",
         "timeEntries",
-        "alignmentReviews"
+        "alignmentReviews",
+        "runningTimers",
+        "alignmentItemSettings"
       ],
       "tables": [
         "notification_preferences",
@@ -128,7 +132,9 @@
         "lifeAreas",
         "weeklyCapacities",
         "timeEntries",
-        "alignmentReviews"
+        "alignmentReviews",
+        "runningTimers",
+        "alignmentItemSettings"
       ],
       "tables": [
         "goals",
@@ -181,7 +187,9 @@
         "lifeAreas",
         "weeklyCapacities",
         "timeEntries",
-        "alignmentReviews"
+        "alignmentReviews",
+        "runningTimers",
+        "alignmentItemSettings"
       ],
       "tables": [
         "routines",
@@ -237,7 +245,9 @@
         "lifeAreas",
         "weeklyCapacities",
         "timeEntries",
-        "alignmentReviews"
+        "alignmentReviews",
+        "runningTimers",
+        "alignmentItemSettings"
       ],
       "tables": [
         "recurring_expenses",
@@ -290,7 +300,9 @@
         "lifeAreas",
         "weeklyCapacities",
         "timeEntries",
-        "alignmentReviews"
+        "alignmentReviews",
+        "runningTimers",
+        "alignmentItemSettings"
       ],
       "tables": [
         "ai_action_audit"
@@ -342,7 +354,9 @@
         "lifeAreas",
         "weeklyCapacities",
         "timeEntries",
-        "alignmentReviews"
+        "alignmentReviews",
+        "runningTimers",
+        "alignmentItemSettings"
       ],
       "tables": [
         "transactions",
@@ -394,7 +408,9 @@
         "lifeAreas",
         "weeklyCapacities",
         "timeEntries",
-        "alignmentReviews"
+        "alignmentReviews",
+        "runningTimers",
+        "alignmentItemSettings"
       ],
       "tables": [
         "milestones"
@@ -449,7 +465,9 @@
         "lifeAreas",
         "weeklyCapacities",
         "timeEntries",
-        "alignmentReviews"
+        "alignmentReviews",
+        "runningTimers",
+        "alignmentItemSettings"
       ],
       "tables": [
         "inbox_items",
@@ -507,7 +525,10 @@
         "timeEntries",
         "alignmentReviews"
       ],
-      "gatesDisabled": [],
+      "gatesDisabled": [
+        "runningTimers",
+        "alignmentItemSettings"
+      ],
       "tables": [
         "life_areas",
         "weekly_capacities",
@@ -526,6 +547,60 @@
         "supabase/acceptance/verify_0003_0008_post_activation.sql"
       ],
       "rationale": "Neljä uutta taulua ja yksi nullable sarake goals-tauluun (life_area_id). goals.life_area_id ja time_entries viittaavat goals- ja tasks-tauluihin yhdistelmävierasavaimella, joten aallon B (goals) on oltava tuotannossa. Havaintoja (kuormitus, huomiotta jääminen, poikkeama) ei tallenneta: ne lasketaan, joten aalto ei tuo johdettua dataa kantaan. Riippumaton aalloista F–H: 0012 ei vaadi 0009–0011:tä."
+    },
+    {
+      "id": "J",
+      "title": "Suunta 2: ajastin, kuormittavuus ja toteuman lähteet",
+      "commitSha": null,
+      "cacheVersion": "v23",
+      "readiness": "READY",
+      "gatesEnabled": [
+        "runningTimers",
+        "alignmentItemSettings"
+      ],
+      "gatesCumulative": [
+        "notificationPreferences",
+        "wellbeing",
+        "goals",
+        "projects",
+        "routines",
+        "routineExceptions",
+        "recurringExpenses",
+        "savingsGoals",
+        "bills",
+        "aiAudit",
+        "transactions",
+        "investments",
+        "milestones",
+        "inboxItems",
+        "reminders",
+        "notices",
+        "travelPlans",
+        "locationRules",
+        "lifeAreas",
+        "weeklyCapacities",
+        "timeEntries",
+        "alignmentReviews",
+        "runningTimers",
+        "alignmentItemSettings"
+      ],
+      "gatesDisabled": [],
+      "tables": [
+        "running_timers",
+        "alignment_item_settings"
+      ],
+      "dependencies": [],
+      "rollbackTarget": "I",
+      "rollbackSha": null,
+      "acceptancePack": "docs/acceptance/WAVE-J.md",
+      "requiredAcceptance": [
+        "npm run activation:verify-wave -- J",
+        "npm run activation:preflight -- --wave=J",
+        "npm run production:verify-assets -- --wave=J",
+        "selainhyväksyntä: luonti, muokkaus, poisto, säilyvyys sivun latauksen yli",
+        "supabase/acceptance/verify_0003_0008_post_activation.sql"
+      ],
+      "rationale": "Kaksi uutta taulua (running_timers, alignment_item_settings) ja sarakkeita aallon I tauluihin (time_entries, weekly_capacities, alignment_reviews). Riippuu aallosta I: 0013 muuttaa 0012:n tauluja ja viittaa life_areas-tauluun. Yhtäkään tuotannossa auki olevaa taulua (tasks, goals, projects, routines) ei muuteta; niihin viitataan vain yhdistelmävierasavaimilla. Siksi oma aalto: I voi mennä tuotantoon ilman J:tä, mutta ei päinvastoin."
     }
   ]
 }

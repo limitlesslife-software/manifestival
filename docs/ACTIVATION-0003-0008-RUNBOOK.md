@@ -69,6 +69,7 @@ kaatuu, jos järjestys rikkoo yhtäkään.
 | **G** | `milestones` | Tavoitteesta tekemiseksi. `milestones.goal_id` viittaa tavoitteeseen, joten aalto B on oltava ensin — ja se on tuotannossa. **ESTETTY:** migraatiota 0010 ei ole ajettu |
 | **H** | `inboxItems`, `reminders`, `notices`, `travelPlans`, `locationRules` | Henkilökohtainen avustaja. `travel_plans.task_id` ja `location_rules.task_id` viittaavat tehtävään, joka on tuotannossa; muut kolme eivät viittaa mihinkään sovellustauluun. Riippuvuudet eivät siis pakota sijaintia. **ESTETTY KAHDESTI:** migraatiota 0011 ei ole ajettu EIKÄ yhdelläkään viidestä domainista ole näkymää |
 | **I** | `lifeAreas`, `weeklyCapacities`, `timeEntries`, `alignmentReviews` | Suunta (Life Alignment). `goals.life_area_id` ja `time_entries` viittaavat tavoitteeseen ja tehtävään yhdistelmävierasavaimella, joten aalto B on oltava ensin — ja se on tuotannossa. Riippumaton aalloista F–H. Sarakeportti `GOAL_LIFE_AREA_FIELD` kuuluu samaan aaltoon. **ESTETTY:** migraatiota 0012 ei ole ajettu |
+| **J** | `runningTimers`, `alignmentItemSettings` | Suunta 2: ajastin ja kuormittavuus. Migraatio 0013 muuttaa 0012:n tauluja, joten aalto I on oltava ensin. Sarakeportti `ALIGNMENT_REALITY_FIELDS` kuuluu samaan aaltoon. **ESTETTY:** migraatiota 0013 ei ole ajettu |
 
 > **Aalto H on ainoa, jolla on KAKSINKERTAINEN este.** Migraatiota
 > `0011_personal_assistant.sql` ei ole ajettu, eikä yhdelläkään sen

@@ -102,7 +102,19 @@ export const TABLES = Object.freeze({
   lifeAreas: false,
   weeklyCapacities: false,
   timeEntries: false,
-  alignmentReviews: false
+  alignmentReviews: false,
+  /**
+   * Migraatio 0013 — EI AJETTU. Riippuu 0012:sta.
+   * Ks. supabase/migrations/0013_alignment_reality.sql.
+   *
+   * Kaksi uutta taulua: käynnissä oleva ajastin (yksi käyttäjää kohti)
+   * ja tehtävän/rutiinin/projektin Suunta-asetukset (kuormittavuus,
+   * "tarkoituksella ilman aluetta", karkea arvio). Portin ollessa kiinni
+   * ajastin säilyy laitteella (src/data/timerStore.js), asetukset
+   * istunnon muistissa.
+   */
+  runningTimers: false,
+  alignmentItemSettings: false
 });
 
 /**
@@ -178,6 +190,28 @@ export const GOAL_MAINTENANCE_MODE = false;
  */
 export const GOAL_LIFE_AREA_FIELD = false;
 
+/**
+ * Onko migraatio 0013 ajettu 0012:n taulujen uusien sarakkeiden osalta?
+ *
+ * PRODUCTION GATE, sarakeportti — sama kuvio kuin GOAL_LIFE_AREA_FIELD.
+ *
+ * false = seuraavia sarakkeita EI ole kannassa:
+ *           time_entries.project_id, routine_id, occurrence_date,
+ *                        operation_id, started_at, ended_at
+ *           weekly_capacities.energy_budget_minutes
+ *           alignment_reviews.policy_version, reflection_answers
+ *         Ne elävät istunnon muistissa, ja ajastimella tehty kirjaus
+ *         tallentuu lähteellä 'manual' (0012 sallii vain sen).
+ * true  = ne tallentuvat.
+ *
+ * MIKSI ERILLÄÄN TABLES-porteista: 0012:n taulut voivat olla auki ilman
+ * 0013:a. Ilman tätä porttia jokainen kirjaus kaatuisi tuntemattomaan
+ * sarakkeeseen (42703) heti kun timeEntries-portti avataan.
+ *
+ * Tämä saa mennä arvoon true VASTA kun migraatio 0013 on ajettu.
+ */
+export const ALIGNMENT_REALITY_FIELDS = false;
+
 /** Onko taulu käytettävissä tietokannassa? */
 export function hasTable(name) {
   return TABLES[name] === true;
@@ -231,6 +265,16 @@ export function volatileGoalFields() {
     ? []
     : ['metric', 'unit', 'baselineValue', 'currentValue', 'targetValue',
        'measuredOn', 'savingsGoalId'];
+}
+
+/** Suunta 2 -kentät (0013): mitkä eivät vielä säily tallennuksen yli. */
+export function volatileAlignmentRealityFields() {
+  return ALIGNMENT_REALITY_FIELDS
+    ? []
+    : ['timeEntry.projectId', 'timeEntry.routineId', 'timeEntry.occurrenceDate',
+       'timeEntry.operationId', 'timeEntry.startedAt', 'timeEntry.endedAt',
+       'weeklyCapacity.energyBudgetMinutes', 'alignmentReview.policyVersion',
+       'alignmentReview.reflectionAnswers'];
 }
 
 /** Tavoitteen elämänalue: säilyykö se tallennuksen yli? */

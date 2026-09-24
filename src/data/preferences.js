@@ -41,7 +41,13 @@ export const DEVICE_DEFAULTS = Object.freeze({
    *
    * Ks. src/domain/automation.js ja migraatio 0010.
    */
-  automationLevel: 1
+  automationLevel: 1,
+
+  /**
+   * Kysytäänkö tehtävän valmistuessa "Kirjataanko käytetty aika?".
+   * Laitekohtainen: käyttäjä voi mykistää kysymyksen dialogista.
+   */
+  askTimeOnComplete: true
 });
 
 /**

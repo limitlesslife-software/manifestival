@@ -23,6 +23,7 @@ import {
   transactionsRepo, investmentsRepo, milestonesRepo,
   inboxRepo, remindersRepo, noticesRepo, travelPlansRepo, locationRulesRepo,
   lifeAreasRepo, weeklyCapacitiesRepo, timeEntriesRepo, alignmentReviewsRepo,
+  alignmentItemSettingsRepo, runningTimersRepo,
   volatileCollections, clearAllCollections
 } from '../data/collectionsRepo.js';
 import { newTaskId } from '../lib/rows.js';
@@ -81,8 +82,10 @@ import {
   setPendingReplan, clearPendingReplan,
   setInboxItems, setReminders, setNotices, setTravelPlans, setLocationRules,
   setAiAudit, setDomainLoadStatus,
-  setLifeAreas, setWeeklyCapacities, setTimeEntries, setAlignmentReviews
+  setLifeAreas, setWeeklyCapacities, setTimeEntries, setAlignmentReviews,
+  setAlignmentItemSettings, removeItemSettingsFromState
 } from './state.js';
+import { adoptLoadedTimers } from './timerState.js';
 import {
   loadPreferences as loadNotificationPreferences,
   clearPreferences as clearNotificationPreferences
@@ -181,7 +184,7 @@ export async function loadUserData() {
     investmentsResult, milestonesResult, auditResult,
     inboxResult, remindersResult, noticesResult, travelResult,
     locationResult, areasResult, capacitiesResult, entriesResult,
-    reviewsResult] = await Promise.all([
+    reviewsResult, itemSettingsResult, timersResult] = await Promise.all([
     tasksRepo.listTasks(),
     profileRepo.loadProfile(),
     routinesRepo.list(),
@@ -205,7 +208,9 @@ export async function loadUserData() {
     lifeAreasRepo.list(),
     weeklyCapacitiesRepo.list(),
     timeEntriesRepo.list(),
-    alignmentReviewsRepo.list()
+    alignmentReviewsRepo.list(),
+    alignmentItemSettingsRepo.list(),
+    runningTimersRepo.list()
   ]);
 
   // Istunto on voinut vaihtua odotuksen aikana.
@@ -259,7 +264,11 @@ export async function loadUserData() {
     applyLoadResult('lifeAreas', areasResult, setLifeAreas),
     applyLoadResult('weeklyCapacities', capacitiesResult, setWeeklyCapacities),
     applyLoadResult('timeEntries', entriesResult, setTimeEntries),
-    applyLoadResult('alignmentReviews', reviewsResult, setAlignmentReviews)
+    applyLoadResult('alignmentReviews', reviewsResult, setAlignmentReviews),
+    // Suunta 2 (0013). Ajastin: kannan rivi voittaa laitteen kopion
+    // (src/app/timeTracking.js adoptTimer), joten lataus vain asettaa listan.
+    applyLoadResult('alignmentItemSettings', itemSettingsResult, setAlignmentItemSettings),
+    applyLoadResult('runningTimers', timersResult, timers => adoptLoadedTimers(timers))
   ];
 
   // Yksittäiset kokoelmavirheet kirjautuvat konsoliin (applyLoadResult) ja
@@ -404,8 +413,35 @@ export async function editTask(id, changes, options = {}) {
   return { ok: true };
 }
 
+/**
+ * Valmistumisen jälkeinen koukku (Suunta: "Kirjataanko käytetty aika?").
+ *
+ * Näkymä rekisteröi tämän (src/app/views/timeLog.js). Toiminto EI
+ * kirjaa aikaa itse: valmiiksi merkitty tehtävä ei ole toteutunutta
+ * aikaa, ja arviota ei kopioida toteumaksi. Koukku vain tarjoaa
+ * käyttäjälle mahdollisuuden kirjata.
+ */
+let completionHook = null;
+
+export function setCompletionHook(fn) {
+  completionHook = typeof fn === 'function' ? fn : null;
+}
+
 /** Merkitse tehtävä tehdyksi tai palauta kesken. */
 export async function toggleComplete(id) {
+  const done = await toggleCompleteInner(id);
+  const task = findTask(id);
+  if (done && task && task.completed && completionHook) {
+    try {
+      completionHook(task);
+    } catch (error) {
+      console.warn('Manifestival: valmistumisen koukku epäonnistui', error);
+    }
+  }
+  return done;
+}
+
+async function toggleCompleteInner(id) {
   const task = findTask(id);
   if (!task) return false;
 
@@ -435,6 +471,22 @@ export async function toggleComplete(id) {
 }
 
 /**
+ * Poistetun kohteen Suunta-asetukset (kuormittavuus ym.) pois.
+ *
+ * alignment_item_settings.item_id ei ole vierasavain (kohde voi olla
+ * kolmessa taulussa), joten kanta ei poista riviä kohteen mukana.
+ * Sovellus poistaa, ettei orpoja rivejä kerry. Epäonnistuminen ei peru
+ * kohteen poistoa: orpo rivi ei viittaa mihinkään eikä näy missään.
+ */
+async function dropItemSettings(kind, id) {
+  const rows = getState().alignmentItemSettings.filter(s => s.itemKind === kind && s.itemId === id);
+  for (const row of rows) {
+    removeItemSettingsFromState(row.id);
+    await alignmentItemSettingsRepo.remove(row.id);
+  }
+}
+
+/**
  * Poista tehtävä. Kysyy aina vahvistuksen.
  * @returns {Promise<boolean>} poistettiinko
  */
@@ -454,6 +506,7 @@ export async function deleteTask(id) {
     return false;
   }
 
+  await dropItemSettings('task', id);
   success('Tehtävä poistettu.');
   return true;
 }
@@ -549,6 +602,7 @@ export async function deleteRoutine(id) {
     return false;
   }
 
+  await dropItemSettings('routine', id);
   success('Rutiini poistettu.');
   return true;
 }
@@ -750,6 +804,7 @@ export async function deleteProject(id) {
     return false;
   }
 
+  await dropItemSettings('project', id);
   success('Projekti poistettu.');
   return true;
 }

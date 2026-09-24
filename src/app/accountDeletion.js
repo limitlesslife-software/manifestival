@@ -32,6 +32,7 @@ import {
 import { currentAccessToken, queueAuthNote } from './auth.js';
 import { clearLocalUserData } from './actions.js';
 import { offline } from './offline.js';
+import { purgeTimerData } from '../data/timerStore.js';
 import { getUser } from '../data/session.js';
 
 let flow = initialFlowState();
@@ -265,6 +266,8 @@ const submitDeletion = singleFlight(async () => {
   // Tili on poistettu: sen lähettämättömät offline-muutokset poistetaan laitteelta.
   const deleted = getUser();
   offline.purge(deleted && deleted.id ? deleted.id : null);
+  // Ajastin ja lähettämättömät aikakirjaukset samoin.
+  purgeTimerData(deleted && deleted.id ? deleted.id : null);
   const complete = result.value.complete === true;
   queueAuthNote(complete
     ? 'Tilisi ja kaikki siihen liittynyt tieto on poistettu.'

@@ -59,6 +59,14 @@ Automaattinen testi vartioi, että tämä dokumentti pysyy ajan tasalla.
 | 0010 | `0010_goal_to_action.sql` | **EI AJETTU** | — |
 | 0011 | `0011_personal_assistant.sql` | **EI AJETTU** | — |
 | 0012 | `0012_life_alignment.sql` | **EI AJETTU** | — |
+| 0013 | `0013_alignment_reality.sql` | **EI AJETTU** | — |
+
+> **Migraatio 0013 on suunniteltu, ei ajettu.** Se riippuu 0012:sta:
+> lisää taulut `running_timers` (yksi ajastin käyttäjää kohti) ja
+> `alignment_item_settings` (kuormittavuus ym.) sekä sarakkeita 0012:n
+> tauluihin. Tuotannossa auki oleviin tauluihin se ei koske. Portit
+> `runningTimers`, `alignmentItemSettings` ja
+> `ALIGNMENT_REALITY_FIELDS` ovat kiinni (aalto J, v23).
 
 > **⚠ Migraatio 0010 on suunniteltu, ei ajettu — ja se on
 > vaarallisempi kuin aiemmat.** Se on ensimmäinen migraatio, joka
@@ -158,6 +166,9 @@ vertaa niihin.
 | `timeEntries` | 0012 | kiinni |
 | `alignmentReviews` | 0012 | kiinni |
 | `GOAL_LIFE_AREA_FIELD` | 0012 | kiinni |
+| `runningTimers` | 0013 | kiinni |
+| `alignmentItemSettings` | 0013 | kiinni |
+| `ALIGNMENT_REALITY_FIELDS` | 0013 | kiinni |
 
 `GOAL_PLANNING_FIELDS` on **sarakeportti** ja `GOAL_MAINTENANCE_MODE`
 **arvoportti**. Ne ovat erillisiä, koska niiden viat ovat erilaisia:

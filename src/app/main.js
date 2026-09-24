@@ -14,6 +14,9 @@ import { todayMidnight, startOfWeek } from '../lib/datetime.js';
 import { getDevicePreference, clearDevicePreferences } from '../data/preferences.js';
 import { subscribe, resetState, setViewDate, setWeekStart, getState } from './state.js';
 import { loadUserData, clearLocalUserData } from './actions.js';
+import { renderTimerBar, initTimeLog, closeTimeLogDialog } from './views/timeLog.js';
+import { restoreLocalTimer } from './timerState.js';
+import { flushTimeOutbox } from './alignment.js';
 import { createReconnectController } from './reconnect.js';
 import { initAuth, showAuthGate, hideAuthGate } from './auth.js';
 import { initNavigation, restoreLastScreen } from './navigation.js';
@@ -86,6 +89,9 @@ async function refreshAfterReconnect() {
   reconnectRefreshing = true;
   try {
     await offline.replay();
+    // Suunnan lähettämättömät aikakirjaukset (vain aikakirjaukset; uusinta
+    // on idempotentti operaatiotunnisteen ansiosta).
+    await flushTimeOutbox();
   } catch (error) {
     console.warn('Manifestival: offline-jonon toisto ei onnistunut', error);
   } finally {
@@ -119,6 +125,7 @@ function registerServiceWorker() {
 /** Renderöi kaikki näkymät. Kutsutaan tilamuutoksesta. */
 function renderAll() {
   if (!signedIn) return;
+  renderTimerBar();
   renderToday();
   renderTodayDirection();
   renderDirection();
@@ -199,6 +206,11 @@ async function onSignedIn() {
   const current = getUser();
   offline.activate(current && current.id ? current.id : null);
 
+  // Käyttäjän oma ajastin laitteelta ENNEN latausta: uudelleenlataus ei
+  // hukkaa kulunutta aikaa, eikä toisen käyttäjän ajastin osu tähän
+  // (avain ja sisältö ovat käyttäjäkohtaisia).
+  restoreLocalTimer();
+
   // Päivä ja viikko nollataan kirjautuessa: sovellus avautuu aina tähän
   // päivään, ei siihen mihin edellinen istunto jäi.
   setViewDate(todayMidnight());
@@ -216,6 +228,9 @@ async function onSignedIn() {
   // Lähetä kirjautumisen aikana odottaneet muutokset (jos verkko on).
   offline.replay().catch(error => {
     console.warn('Manifestival: offline-jonon toisto ei onnistunut', error);
+  });
+  flushTimeOutbox().catch(error => {
+    console.warn('Manifestival: aikakirjausten lähetys ei onnistunut', error);
   });
 
   fillProfileForm();
@@ -290,6 +305,7 @@ function onSignedOut() {
   // yli — jäänyt avain estäisi seuraavaa käyttäjää tallentamasta.
   resetPlanning();
   closeAreaForm();
+  closeTimeLogDialog();
   resetDirectionView();
   resetAppliedAdjustments();
   clearIdempotencyKeys();
@@ -324,6 +340,7 @@ async function start() {
   initTravelForms();
   initNotices();
   initDirection();
+  initTimeLog();
   initVoice();
   initSearch();
   initOnboarding();

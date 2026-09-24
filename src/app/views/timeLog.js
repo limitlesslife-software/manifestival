@@ -1,0 +1,395 @@
+// Ajanseuranta ja nopea kirjaus: näkymä.
+//
+// Kolme osaa:
+//
+//   1. AJASTINPALKKI (#timerBar). Näkyy kaikissa näkymissä, kun ajastin on
+//      käynnissä tai tauolla. Tila kerrotaan TEKSTINÄ ("Käynnissä",
+//      "Tauolla"), ei vain värillä. Kulunut aika päivitetään näytölle
+//      puolen minuutin välein — päivitys on pelkkää näyttöä: aika
+//      lasketaan aina aikaleimoista (src/domain/timer.js), joten
+//      taustalla olo tai lukittu näyttö ei vaikuta tulokseen.
+//
+//   2. KIRJAUSDIALOGI. "+15 min / +30 min / +1 h / Muu" muutamalla
+//      napautuksella. Natiivi <dialog>: fokusloukku, Esc ja
+//      ruudunlukijasemantiikka tulevat selaimelta. Dialogi sulkeutuu
+//      ensimmäisestä valinnasta, ja kirjauksella on dialogikohtainen
+//      operaatiotunniste, joten kaksoisnapautus ei tuota kahta riviä.
+//
+//   3. VALMISTUMISEN KIRJAUS. Tehtävän valmistuessa kysytään "Kirjataanko
+//      tähän käytetty aika?". Arvio EI kopioidu toteumaksi: käyttäjä voi
+//      valita sen, ja painike sanoo sen ääneen ("hyväksyn arvion
+//      toteumaksi").
+
+import { maybe } from '../../ui/dom.js';
+import { escapeHtml } from '../../lib/format.js';
+import { fmtISO } from '../../lib/datetime.js';
+import { confirmAction } from '../../ui/confirm.js';
+import { showError, notify } from '../../ui/toast.js';
+import { getState, findTask, findRoutine, findProject } from '../state.js';
+import { getDevicePreference, setDevicePreference } from '../../data/preferences.js';
+import { durationOf } from '../../domain/task.js';
+import { formatMinutes, compareLifeAreas } from '../../domain/lifeArea.js';
+import { timerStatus, formatElapsed } from '../../domain/timer.js';
+import { TIMER_RULES } from '../../domain/alignmentPolicy.js';
+import { OPERATION } from '../../domain/timeEntry.js';
+
+import {
+  currentTimer, startTracking, pauseTracking, resumeTracking, stopTracking, cancelTracking,
+  logQuickTime, describeTarget, targetOfTimer, announceLogged, loggedMinutesForOccurrence,
+  occurrenceOperationId, nowMs, newOperationId
+} from '../timeTracking.js';
+import { setCompletionHook } from '../actions.js';
+
+const DIALOG_ID = 'timeLogDialog';
+const TICK_MS = 30 * 1000;
+let tickHandle = null;
+
+// ------------------------------------------------------ ajastinpalkki
+
+function stateLabel(state) {
+  return state === 'paused' ? 'Tauolla' : 'Käynnissä';
+}
+
+/** Kulunut aika sanoina ruudunlukijalle: "1 h 5 min". */
+function spokenElapsed(seconds) {
+  return formatMinutes(Math.floor(seconds / 60));
+}
+
+export function renderTimerBar(now = nowMs()) {
+  const bar = maybe('timerBar');
+  if (!bar) return;
+  const timer = currentTimer();
+  if (!timer) {
+    bar.hidden = true;
+    bar.innerHTML = '';
+    return;
+  }
+  const status = timerStatus(timer, now);
+  const label = describeTarget(targetOfTimer(timer));
+  bar.hidden = false;
+  bar.classList.toggle('is-paused', status.state === 'paused');
+  bar.innerHTML = `
+    <div class="timer-info">
+      <span class="timer-state">${escapeHtml(stateLabel(status.state))}</span>
+      <span class="timer-target">${escapeHtml(label)}</span>
+      <span class="timer-elapsed" id="timerElapsed" aria-hidden="true">${escapeHtml(formatElapsed(status.elapsedSeconds))}</span>
+      <span class="visually-hidden" id="timerElapsedText">Kulunut ${escapeHtml(spokenElapsed(status.elapsedSeconds))}</span>
+    </div>
+    <div class="timer-actions">
+      ${status.state === 'paused'
+        ? '<button type="button" class="assist-btn" data-timer="resume">Jatka</button>'
+        : '<button type="button" class="assist-btn" data-timer="pause">Tauko</button>'}
+      <button type="button" class="assist-btn primary" data-timer="stop">Pysäytä ja kirjaa</button>
+      <button type="button" class="assist-btn danger" data-timer="cancel" aria-label="Hylkää ajastus kirjaamatta">Hylkää</button>
+    </div>
+    ${status.clockSkew ? '<p class="hint timer-skew">Laitteen kello on siirtynyt taaksepäin. Kulunutta aikaa ei näytetä negatiivisena.</p>' : ''}`;
+}
+
+/** Vain kuluneen ajan teksti; ei koske painikkeisiin (fokus säilyy). */
+function tick() {
+  const timer = currentTimer();
+  const elapsed = maybe('timerElapsed');
+  if (!timer || !elapsed) return;
+  const status = timerStatus(timer, nowMs());
+  elapsed.textContent = formatElapsed(status.elapsedSeconds);
+  const spoken = maybe('timerElapsedText');
+  if (spoken) spoken.textContent = `Kulunut ${spokenElapsed(status.elapsedSeconds)}`;
+}
+
+// ------------------------------------------------------------ dialogi
+
+function dialogElement() {
+  let dialog = document.getElementById(DIALOG_ID);
+  if (!dialog) {
+    dialog = document.createElement('dialog');
+    dialog.id = DIALOG_ID;
+    dialog.className = 'confirm-dialog time-log-dialog';
+    dialog.setAttribute('aria-labelledby', 'timeLogTitle');
+    document.body.appendChild(dialog);
+  }
+  return dialog;
+}
+
+function areaSelectHtml() {
+  const areas = [...getState().lifeAreas].filter(area => area.active).sort(compareLifeAreas);
+  if (areas.length === 0) return '';
+  return `<label class="field-label" for="timeLogArea">Elämänalue</label>
+    <select id="timeLogArea"><option value="">Ei aluetta</option>
+    ${areas.map(area => `<option value="${escapeHtml(area.id)}">${escapeHtml(area.name)}</option>`).join('')}</select>`;
+}
+
+/**
+ * Avaa kirjausdialogi.
+ *
+ * @param {object} options
+ * @param {object} options.target        { kind, id, occurrenceDate?, lifeAreaId? }
+ * @param {string} options.title
+ * @param {string} [options.message]
+ * @param {Array<{minutes: number, label: string, hint?: string}>} [options.suggestions]
+ * @param {boolean} [options.allowTimer]  näytä "Aloita ajastin"
+ * @param {boolean} [options.chooseArea]  yleinen kirjaus: alueen valinta
+ * @param {string} [options.operationId]
+ * @param {string} [options.skipLabel]
+ * @param {boolean} [options.offerMute]  "Älä kysy tätä tällä laitteella"
+ * @returns {Promise<{action: 'logged'|'timer'|'skip', result?: object}>}
+ */
+export function openTimeLogDialog(options) {
+  const {
+    target = { kind: 'none' }, title, message = '', suggestions = null, allowTimer = false,
+    chooseArea = false, operationId = null, skipLabel = 'Peruuta', offerMute = false, entryDate = null
+  } = options;
+  const dialog = dialogElement();
+  const presets = suggestions || TIMER_RULES.QUICK_MINUTES.map(minutes => ({ minutes, label: formatMinutes(minutes) }));
+  // Dialogikohtainen tunniste: sama dialogi = sama kirjaus.
+  const operation = operationId || newOperationId();
+  const introHtml = message ? `<p class="confirm-message">${escapeHtml(message)}</p>` : '';
+
+  dialog.innerHTML = `
+    <form method="dialog" class="confirm-body time-log-body">
+      <h2 class="confirm-title" id="timeLogTitle">${escapeHtml(title)}</h2>
+      ${introHtml}
+      ${chooseArea ? areaSelectHtml() : ''}
+      <div class="time-log-presets" role="group" aria-label="Kirjattava aika">
+        ${presets.map(preset => `<button type="submit" class="form-btn secondary time-log-preset" value="m:${preset.minutes}">
+            ${escapeHtml(preset.label)}${preset.hint ? `<span class="time-log-hint">${escapeHtml(preset.hint)}</span>` : ''}
+          </button>`).join('')}
+      </div>
+      <div class="time-log-custom">
+        <label class="field-label" for="timeLogMinutes">Muu (minuuttia)</label>
+        <input type="number" id="timeLogMinutes" min="1" max="1440" step="5" inputmode="numeric">
+        <button type="submit" class="form-btn secondary" value="custom">Kirjaa</button>
+      </div>
+      ${offerMute ? `<label class="checkbox-row" for="timeLogMute"><input type="checkbox" id="timeLogMute"> Älä kysy tätä tällä laitteella</label>` : ''}
+      <div class="confirm-actions">
+        <button type="submit" class="form-btn secondary" value="cancel">${escapeHtml(skipLabel)}</button>
+        ${allowTimer ? '<button type="submit" class="form-btn primary" value="timer">Aloita ajastin</button>' : ''}
+      </div>
+    </form>`;
+
+  // Varasuunnitelma selaimelle ilman <dialog>-tukea: ei kirjausta.
+  if (typeof dialog.showModal !== 'function') return Promise.resolve({ action: 'skip' });
+
+  return new Promise(resolve => {
+    const onClose = async () => {
+      dialog.removeEventListener('close', onClose);
+      const value = dialog.returnValue || 'cancel';
+      const mute = dialog.querySelector('#timeLogMute');
+      if (mute && mute.checked) setDevicePreference('askTimeOnComplete', false);
+      const areaPicker = dialog.querySelector('#timeLogArea');
+      const chosenTarget = chooseArea && areaPicker && areaPicker.value
+        ? { kind: 'life_area', id: areaPicker.value } : target;
+
+      if (value === 'timer') {
+        const started = await startTimerFor(chosenTarget);
+        resolve({ action: 'timer', result: started });
+        return;
+      }
+      let minutes = null;
+      if (value.startsWith('m:')) minutes = Number(value.slice(2));
+      if (value === 'custom') minutes = Math.round(Number(dialog.querySelector('#timeLogMinutes').value));
+      if (!Number.isInteger(minutes) || minutes <= 0) {
+        resolve({ action: 'skip' });
+        return;
+      }
+      const result = await logQuickTime({ target: chosenTarget, minutes, operationId: operation, entryDate });
+      if (result.ok && !result.duplicate) announceLogged(minutes, { queued: Boolean(result.queued) });
+      resolve({ action: 'logged', result });
+    };
+    dialog.addEventListener('close', onClose);
+    dialog.returnValue = 'cancel';
+    dialog.showModal();
+    const first = dialog.querySelector('.time-log-preset');
+    if (first) first.focus();
+  });
+}
+
+// ------------------------------------------------ ajastimen toiminnot
+
+/** Käynnistä ajastin; jos toinen on käynnissä, kysy ensin. */
+export async function startTimerFor(target, { confirmFn = confirmAction } = {}) {
+  const running = currentTimer();
+  if (running) {
+    const replace = await confirmFn({
+      title: 'Ajastin on jo käynnissä',
+      message: `Pysäytetäänkö ja kirjataanko "${describeTarget(targetOfTimer(running))}" ennen uuden aloittamista?`,
+      confirmLabel: 'Pysäytä ja aloita uusi'
+    });
+    if (!replace) return { ok: false, cancelled: true };
+    const stopped = await stopAndLog();
+    if (!stopped || !stopped.ok) return { ok: false };
+  }
+  const result = await startTracking(target);
+  if (!result.ok && result.message) {
+    showError(result.message);
+  }
+  return result;
+}
+
+/** Tarkistus pitkälle ajastukselle: vahvista tai korjaa kesto. */
+function openStopReview(totalMinutes) {
+  const dialog = dialogElement();
+  dialog.innerHTML = `
+    <form method="dialog" class="confirm-body">
+      <h2 class="confirm-title" id="timeLogTitle">Tarkista ajastettu aika</h2>
+      <p class="confirm-message">Ajastin on ollut käynnissä ${escapeHtml(formatMinutes(totalMinutes))}.
+        Jos se unohtui päälle, korjaa kesto ennen kirjausta.</p>
+      <label class="field-label" for="timeLogReviewMinutes">Kirjattava aika (minuuttia)</label>
+      <input type="number" id="timeLogReviewMinutes" min="1" max="10080" step="5" value="${escapeHtml(String(totalMinutes))}">
+      <div class="confirm-actions">
+        <button type="submit" class="form-btn secondary" value="cancel">Takaisin</button>
+        <button type="submit" class="form-btn primary" value="confirm">Kirjaa</button>
+      </div>
+    </form>`;
+  if (typeof dialog.showModal !== 'function') return Promise.resolve(null);
+  return new Promise(resolve => {
+    const onClose = () => {
+      dialog.removeEventListener('close', onClose);
+      if (dialog.returnValue !== 'confirm') { resolve(null); return; }
+      const minutes = Math.round(Number(dialog.querySelector('#timeLogReviewMinutes').value));
+      resolve(Number.isInteger(minutes) && minutes > 0 ? minutes : null);
+    };
+    dialog.addEventListener('close', onClose);
+    dialog.returnValue = 'cancel';
+    dialog.showModal();
+  });
+}
+
+/** Pysäytä ja kirjaa. Pitkä ajastus tarkistetaan ensin. */
+export async function stopAndLog({ reviewFn = openStopReview } = {}) {
+  let result = await stopTracking();
+  if (result.needsReview) {
+    const minutes = await reviewFn(result.totalMinutes);
+    if (minutes === null) return { ok: false, cancelled: true };
+    result = await stopTracking({ overrideMinutes: minutes });
+  }
+  if (result.ok && result.tooShort) {
+    notify('Alle minuutin ajastusta ei kirjattu.', 3000);
+  } else if (result.ok && !result.duplicate) {
+    announceLogged(result.totalMinutes);
+  }
+  return result;
+}
+
+// ------------------------------------------------ valmistumisen kirjaus
+
+/**
+ * "Kirjataanko tähän käytetty aika?" tehtävän valmistuessa.
+ * Kysytään vain, jos Suunta on käytössä (alueita on) eikä käyttäjä ole
+ * mykistänyt kysymystä tällä laitteella.
+ */
+export async function offerCompletionLog(task) {
+  if (!task) return { action: 'skip' };
+  const state = getState();
+  if (state.lifeAreas.length === 0) return { action: 'skip' };
+  if (getDevicePreference('askTimeOnComplete') === false) return { action: 'skip' };
+
+  const estimate = durationOf(task);
+  const suggestions = [
+    { minutes: 15, label: '15 min' },
+    { minutes: 30, label: '30 min' }
+  ];
+  if (Number.isFinite(estimate) && estimate > 0 && estimate !== 15 && estimate !== 30) {
+    suggestions.push({
+      minutes: estimate, label: `Arvio ${formatMinutes(estimate)}`,
+      hint: 'hyväksyn arvion toteumaksi'
+    });
+  }
+  return openTimeLogDialog({
+    target: { kind: 'task', id: task.id },
+    title: 'Kirjataanko tähän käytetty aika?',
+    message: task.title,
+    suggestions,
+    skipLabel: 'Ohita',
+    offerMute: true,
+    // Yksi valmistuminen = yksi kirjaus, vaikka dialogia napautettaisiin kahdesti.
+    operationId: OPERATION.taskCompletion(task.id, String(nowMs()))
+  });
+}
+
+/** Rutiinin esiintymän kirjaus. Rutiinin kesto on vain ehdotus. */
+export async function openRoutineLog(routineId, dateIso) {
+  const routine = findRoutine(routineId);
+  if (!routine) return { action: 'skip' };
+  const already = loggedMinutesForOccurrence(routineId, dateIso);
+  const suggestions = [{ minutes: 15, label: '15 min' }, { minutes: 30, label: '30 min' }];
+  if (Number.isInteger(routine.durationMinutes) && ![15, 30].includes(routine.durationMinutes)) {
+    suggestions.push({ minutes: routine.durationMinutes, label: `Rutiinin kesto ${formatMinutes(routine.durationMinutes)}`, hint: 'ehdotus' });
+  }
+  return openTimeLogDialog({
+    target: { kind: 'routine', id: routineId, occurrenceDate: dateIso },
+    title: already > 0 ? 'Lisätäänkö aikaa tälle kerralle?' : 'Kirjaa rutiiniin käytetty aika',
+    message: already > 0
+      ? `${routine.title}: tälle kerralle on jo kirjattu ${formatMinutes(already)}.`
+      : routine.title,
+    suggestions,
+    allowTimer: dateIso === fmtISO(new Date(nowMs())),
+    entryDate: dateIso,
+    operationId: occurrenceOperationId(routineId, dateIso)
+  });
+}
+
+/** Tehtävän tai projektin kirjaus lomakkeelta. */
+export function openItemLog(kind, id) {
+  const item = kind === 'task' ? findTask(id) : kind === 'project' ? findProject(id) : null;
+  if (!item) return Promise.resolve({ action: 'skip' });
+  return openTimeLogDialog({
+    target: { kind, id },
+    title: 'Kirjaa aikaa',
+    message: kind === 'task' ? item.title : item.name,
+    allowTimer: true
+  });
+}
+
+/** Yleinen kirjaus Suunnasta: valitse alue. */
+export function openGeneralLog() {
+  return openTimeLogDialog({
+    target: { kind: 'none' }, title: 'Kirjaa aikaa', chooseArea: true, allowTimer: true
+  });
+}
+
+// --------------------------------------------------------- kytkennät
+
+async function onTimerAction(event) {
+  const button = event.target.closest('[data-timer]');
+  if (!button) return;
+  button.disabled = true;
+  try {
+    switch (button.dataset.timer) {
+      case 'pause': await pauseTracking(); break;
+      case 'resume': await resumeTracking(); break;
+      case 'stop': await stopAndLog(); break;
+      case 'cancel': await cancelTracking(); break;
+      default: break;
+    }
+  } finally {
+    button.disabled = false;
+  }
+}
+
+export function initTimeLog() {
+  const bar = maybe('timerBar');
+  if (bar) bar.addEventListener('click', onTimerAction);
+  setCompletionHook(task => { offerCompletionLog(task); });
+  if (!tickHandle && typeof setInterval === 'function') {
+    tickHandle = setInterval(tick, TICK_MS);
+  }
+}
+
+/**
+ * Uloskirjautuminen: auki oleva dialogi suljetaan ILMAN kirjausta ja
+ * sen sisältö tyhjennetään, jottei seuraava käyttäjä näe edellisen
+ * tehtävän nimeä.
+ */
+export function closeTimeLogDialog() {
+  const dialog = typeof document !== 'undefined' ? document.getElementById(DIALOG_ID) : null;
+  if (!dialog) return;
+  dialog.returnValue = 'cancel';
+  if (dialog.open && typeof dialog.close === 'function') dialog.close('cancel');
+  dialog.innerHTML = '';
+}
+
+/** Testejä ja uloskirjautumista varten. */
+export function stopTimeLogTicker() {
+  if (tickHandle) clearInterval(tickHandle);
+  tickHandle = null;
+}

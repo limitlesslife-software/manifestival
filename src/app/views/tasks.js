@@ -1,5 +1,7 @@
 // Tehtävänäkymä: koko lista sekä lisäys- ja muokkauslomake.
 
+import { itemSettingsFor, saveItemSettings } from '../timeTracking.js';
+import { openItemLog, startTimerFor } from './timeLog.js';
 import { fmtISO, todayMidnight } from '../../lib/datetime.js';
 import { escapeHtml, formatTimeRange, formatDuration } from '../../lib/format.js';
 import { CATEGORIES, categoryLabel } from '../../domain/categories.js';
@@ -266,6 +268,24 @@ function fillForm(task) {
   syncDurationField();
 
   selectGoal(task && task.goalId ? task.goalId : null);
+
+  // Suunta: kuormittavuus ja karkea arvio (omat asetuksensa, ei tasks-sarake).
+  const settings = task ? itemSettingsFor('task', task.id) : null;
+  const energy = maybe('afEnergy');
+  if (energy) energy.value = settings && settings.energyDemand ? String(settings.energyDemand) : '';
+  const approx = maybe('afEstimateApprox');
+  if (approx) approx.checked = Boolean(settings && settings.estimateApproximate);
+  toggle('afTimeActions', Boolean(task), 'flex');
+}
+
+/** Lomakkeen Suunta-asetukset tallennettaviksi. */
+function readAlignmentSettings() {
+  const energy = maybe('afEnergy');
+  const approx = maybe('afEstimateApprox');
+  return {
+    energyDemand: energy && energy.value ? Number(energy.value) : null,
+    estimateApproximate: Boolean(approx && approx.checked)
+  };
 }
 
 /**
@@ -357,6 +377,8 @@ const submitForm = singleFlight(async () => {
       if (result.errors) showFieldErrors(result.errors);
       return;
     }
+    const savedId = editingId || (result.task && result.task.id);
+    if (savedId) await saveItemSettings('task', savedId, readAlignmentSettings());
     closeForm();
   } finally {
     setBusy(saveButton, false);
@@ -383,6 +405,20 @@ export function initTaskForm() {
   el('afCancel').addEventListener('click', closeForm);
   el('afSave').addEventListener('click', submitForm);
   el('afDelete').addEventListener('click', removeCurrent);
+  const logButton = maybe('afLogTime');
+  if (logButton) {
+    logButton.addEventListener('click', () => {
+      const id = getState().editingId;
+      if (id) openItemLog('task', id);
+    });
+  }
+  const timerButton = maybe('afStartTimer');
+  if (timerButton) {
+    timerButton.addEventListener('click', () => {
+      const id = getState().editingId;
+      if (id) startTimerFor({ kind: 'task', id });
+    });
+  }
 
   // Enter otsikkokentässä tallentaa; Esc sulkee lomakkeen.
   el('afTitle').addEventListener('keydown', event => {

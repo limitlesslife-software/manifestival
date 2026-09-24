@@ -31,6 +31,8 @@ import { normalizeLifeArea } from '../domain/lifeArea.js';
 import { normalizeWeeklyCapacity } from '../domain/weeklyCapacity.js';
 import { normalizeTimeEntry } from '../domain/timeEntry.js';
 import { normalizeAlignmentReview } from '../domain/alignmentReview.js';
+import { normalizeItemSettings } from '../domain/alignmentItemSettings.js';
+import { normalizeTimer } from '../domain/timer.js';
 import { getDevicePreference, setDevicePreference } from '../data/preferences.js';
 
 function initialState() {
@@ -114,6 +116,9 @@ function initialState() {
     weeklyCapacities: [],
     timeEntries: [],
     alignmentReviews: [],
+    /** Suunta 2 (0013): kohdeasetukset ja käynnissä oleva ajastin (0–1). */
+    alignmentItemSettings: [],
+    runningTimers: [],
 
     /**
      * Kirjaus, jonka tulkintaa käyttäjä parhaillaan tarkistaa.
@@ -1149,6 +1154,42 @@ export function upsertAlignmentReviewInState(review) {
 
 export function removeAlignmentReviewFromState(id) {
   commit({ alignmentReviews: state.alignmentReviews.filter(r => r.id !== id) });
+}
+
+// ------------------------------------------------------------ Suunta 2
+
+export function setAlignmentItemSettings(settings) {
+  commit({ alignmentItemSettings: (settings || []).map(normalizeItemSettings) });
+}
+
+/** Yksi rivi kohdetta kohti: sama kohde korvataan. */
+export function upsertItemSettingsInState(settings) {
+  const normalized = normalizeItemSettings(settings);
+  commit({
+    alignmentItemSettings: [
+      ...state.alignmentItemSettings.filter(s => s.id !== normalized.id
+        && !(s.itemKind === normalized.itemKind && s.itemId === normalized.itemId)),
+      normalized
+    ]
+  });
+}
+
+export function removeItemSettingsFromState(id) {
+  commit({ alignmentItemSettings: state.alignmentItemSettings.filter(s => s.id !== id) });
+}
+
+/** Ajastin: enintään yksi. Tyhjä lista = ei ajastinta. */
+export function setRunningTimers(timers) {
+  const list = (timers || []).map(normalizeTimer).filter(timer => timer.id && timer.startedAt);
+  commit({ runningTimers: list.slice(0, 1) });
+}
+
+export function setRunningTimerInState(timer) {
+  commit({ runningTimers: timer ? [normalizeTimer(timer)] : [] });
+}
+
+export function replaceTimeEntryInState(id, entry) {
+  commit({ timeEntries: state.timeEntries.map(e => (e.id === id ? normalizeTimeEntry(entry) : e)) });
 }
 
 export function resetState() {

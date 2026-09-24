@@ -47,6 +47,8 @@ taloutta eikä löytänyt kumpaakaan.
 | `weeklyCapacities` | **ON** | **Suunta** → Tämä viikko → Kapasiteetti | Kapasiteetti | luku + tallennus | I |
 | `timeEntries` | **ON** | **Suunta** → Toteuma | Toteuma | luonti + luku + poisto | I |
 | `alignmentReviews` | **ON** | **Suunta** → Viikkokatsaus | Viikkokatsaus | luonti + luku + päivitys | I |
+| `runningTimers` | **ON** | Kaikki näkymät → **Ajanseuranta**-palkki (käynnistys Suunnasta, tehtävästä, projektista tai rutiinista) | Ajanseuranta | käynnistys + tauko + pysäytys + hylkäys | J |
+| `alignmentItemSettings` | **ON** | Tehtävä → **Kuormittavuus** (myös rutiini, projekti, Suunta → Arvioi tehtäviä) | Kuormittavuus | luonti + luku + muokkaus + poisto kohteen mukana | J |
 
 ### Aallon H viisi näkymää
 

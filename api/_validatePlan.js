@@ -33,7 +33,14 @@ const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const CONTEXT_LIMITS = Object.freeze({
   activeGoalCount: 500,
   nearestDeadlineDays: 3650,
-  weeklyFreeHours: 168
+  weeklyFreeHours: 168,
+  // Suunnan rajat (src/domain/planAlignment.js buildPlanningConstraints).
+  // VAIN LUKUJA: ei alueiden nimiä, ei tärkeyksiä yksitellen, ei otsikoita.
+  remainingWeeklyHours: 168,
+  unestimatedCount: 10000,
+  heavyRemainingHours: 168,
+  protectedHours: 168,
+  neglectedImportantAreaCount: 40
 });
 
 /**
@@ -101,7 +108,7 @@ function validatePlanRequest(body) {
  */
 function cleanContext(context) {
   if (!context || typeof context !== 'object' || Array.isArray(context)) {
-    return { activeGoalCount: null, nearestDeadlineDays: null, weeklyFreeHours: null };
+    return Object.fromEntries(Object.keys(CONTEXT_LIMITS).map(key => [key, null]));
   }
 
   const out = {};

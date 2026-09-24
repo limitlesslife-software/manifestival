@@ -216,8 +216,10 @@ test('estetty aalto ei ole deployattavissa', () => {
   }
 });
 
-test('aalto I on junan viimeisenä', () => {
-  // Sen migraatio (0012) on ajamatta, ja aalto jonka kanta puuttuu ei
-  // saa olla minkään toisen edellä.
-  assert.equal(WAVE_IDS[WAVE_IDS.length - 1], 'I');
+test('aalto J on junan viimeisenä, heti aallon I jälkeen', () => {
+  // Sen migraatio (0013) on ajamatta ja riippuu 0012:sta (aalto I).
+  // Aalto, jonka kanta puuttuu, ei saa olla minkään toisen edellä, eikä
+  // J voi tulla ennen I:tä.
+  assert.equal(WAVE_IDS[WAVE_IDS.length - 1], 'J');
+  assert.equal(WAVE_IDS[WAVE_IDS.length - 2], 'I');
 });

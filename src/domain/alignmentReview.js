@@ -24,19 +24,25 @@
 import { SIGNAL, SEVERITY, RULES } from './alignment.js';
 import { formatMinutes, importanceLabel, countOf } from './lifeArea.js';
 import { priorityWeight } from './priority.js';
+import { REVIEW_RULES, ENERGY_RULES, POLICY_VERSION, policyVersionOf } from './alignmentPolicy.js';
 
-export const SNAPSHOT_VERSION = 1;
+export const SNAPSHOT_VERSION = 2;
 export const MAX_REFLECTION_LENGTH = 4000;
-export const MAX_PROPOSALS = 12;
-const MAX_PAUSE_PROPOSALS = 3;
+export const MAX_PROPOSALS = REVIEW_RULES.MAX_PROPOSALS;
+const MAX_PAUSE_PROPOSALS = REVIEW_RULES.MAX_PAUSE_PROPOSALS;
 
 export const ADJUSTMENT = Object.freeze({
   SET_CAPACITY: 'set_capacity',
   POSTPONE_TASKS: 'postpone_tasks',
   CREATE_TASK: 'create_task',
   CHANGE_TARGET: 'change_target',
-  PAUSE_GOAL: 'pause_goal'
+  PAUSE_GOAL: 'pause_goal',
+  /** Ei kirjoita mitään: avaa arvioinnin työnkulun. */
+  REQUEST_ESTIMATES: 'request_estimates'
 });
+
+/** Ehdotukset, jotka eivät muuta mitään (vain ohjaavat näkymään). */
+export const NON_WRITING_ADJUSTMENTS = Object.freeze([ADJUSTMENT.REQUEST_ESTIMATES]);
 export const ADJUSTMENT_TYPES = Object.freeze(Object.values(ADJUSTMENT));
 
 /** Katsauksen seitsemän kysymystä. Järjestys on katsauksen järjestys. */
@@ -120,6 +126,39 @@ export function explainSignal(signal, areas = []) {
           + 'Toivottu jakauma lasketaan alueiden viikkotavoitteista.'
       };
 
+    case SIGNAL.ENERGY_OVERLOAD: {
+      const timeNote = m.timeOverloaded
+        ? 'Myös aikakapasiteetti ylittyy.'
+        : 'Aikaa näyttäisi olevan riittävästi, mutta suunniteltu viikko on energiakuormaltaan raskas.';
+      if (signal.rule === 'energy.low_energy_heavy_share') {
+        return {
+          title: 'Raskas viikko matalalla energialla',
+          text: `Arvioit viikon energiasi tasolle ${m.energyLevel}/5, ja ${m.heavySharePercent} % suunnitellusta `
+            + `ajasta (${formatMinutes(m.heavyMinutes)}) on merkitty kuormittavaksi.`,
+          why: `Oma energia-arviosi on enintään ${ENERGY_RULES.LOW_ENERGY_LEVEL}, ja vähintään `
+            + `${Math.round(ENERGY_RULES.LOW_ENERGY_HEAVY_SHARE * 100)} % tunnetusta ajasta on kuormittavaa. `
+            + 'Aseta kuormittavan ajan raja, niin vertailu on tarkempi. Aika ja energia ovat eri asioita.'
+        };
+      }
+      if (signal.rule === 'energy.possible_with_unrated') {
+        return {
+          title: 'Energiaraja voi ylittyä',
+          text: `Kuormittavaa tekemistä on ${formatMinutes(m.heavyMinutes)} rajastasi ${formatMinutes(m.energyBudgetMinutes)}, `
+            + `ja ${countOf(m.unratedCount, 'asia', 'asiaa')} on ilman kuormittavuusarviota.`,
+          why: `Kuormittavaa on vähintään ${Math.round(ENERGY_RULES.OVERLOAD_POSSIBLE_RATIO * 100)} % omasta rajastasi, `
+            + 'ja osa työstä on arvioimatta.'
+        };
+      }
+      return {
+        title: 'Viikko on energiakuormaltaan raskas',
+        text: `${timeNote} Kuormittavaa tekemistä on ${formatMinutes(m.heavyMinutes)}, `
+          + `oma rajasi on ${formatMinutes(m.energyBudgetMinutes)} (yli ${formatMinutes(m.overageMinutes)}).`,
+        why: `Kuormittavaksi (4) tai erittäin kuormittavaksi (5) merkityn työn kesto ylittää itse asettamasi rajan. `
+          + `Vahva, kun ylitys on vähintään ${Math.round((ENERGY_RULES.OVERLOAD_STRONG_RATIO - 1) * 100)} %. `
+          + 'Tämä on eri havainto kuin aikakuormitus.'
+      };
+    }
+
     case SIGNAL.TARGET_TENSION:
       return {
         title: 'Tavoitteet eivät mahdu viikkoon',
@@ -141,13 +180,22 @@ export function explainSignal(signal, areas = []) {
  * muistiinpanoja: vain luvut, alueiden nimet ja tunnisteet.
  */
 export function buildReviewSnapshot(analysis) {
+  const energy = analysis.energy || null;
   return {
     version: SNAPSHOT_VERSION,
+    // Millä säännöillä havainnot syntyivät. Kynnysten virittäminen
+    // myöhemmin ei muuta tämän katsauksen merkitystä.
+    policyVersion: analysis.policyVersion || POLICY_VERSION,
     weekStart: analysis.weekStart,
     capacity: {
       availableMinutes: analysis.capacity.availableMinutes,
-      energyLevel: analysis.capacity.energyLevel
+      energyLevel: analysis.capacity.energyLevel,
+      energyBudgetMinutes: analysis.capacity.energyBudgetMinutes ?? null
     },
+    energy: energy ? {
+      heavyMinutes: energy.heavyMinutes, veryHeavyMinutes: energy.veryHeavyMinutes,
+      unratedMinutes: energy.unratedMinutes, ratedPercent: energy.ratedPercent
+    } : null,
     areas: analysis.areas.map(area => ({
       id: area.id, name: area.name, importance: area.importance, active: area.active,
       targetMinutes: area.targetMinutes, desiredPercent: area.desiredPercent,
@@ -165,18 +213,52 @@ export function buildReviewSnapshot(analysis) {
   };
 }
 
+/**
+ * Valinnaiset pohdintakysymykset (katsaus v2, osio "Miksi?"). Käyttäjä
+ * voi ohittaa jokaisen. Vastaukset ovat käyttäjän sisältöä: niitä ei
+ * lähetetä tekoälylle eikä kirjata lokiin.
+ */
+export const REFLECTION_PROMPTS = Object.freeze([
+  Object.freeze({ code: 'took_longer', text: 'Mikä vei enemmän aikaa kuin odotit?' }),
+  Object.freeze({ code: 'too_little', text: 'Mikä jäi liian vähälle?' }),
+  Object.freeze({ code: 'unplanned_important', text: 'Mikä tuntui tärkeältä mutta ei näkynyt suunnitelmassa?' }),
+  Object.freeze({ code: 'most_draining', text: 'Mikä kuormitti eniten?' }),
+  Object.freeze({ code: 'drop_next_week', text: 'Kannattaako jotain jättää ensi viikolla tekemättä?' })
+]);
+export const REFLECTION_CODES = Object.freeze(REFLECTION_PROMPTS.map(prompt => prompt.code));
+export const MAX_REFLECTION_ANSWER_LENGTH = 1000;
+
+/** Vain tunnetut kysymykset, tyhjät pois, pituus rajattu. */
+export function normalizeReflectionAnswers(input) {
+  const out = {};
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return out;
+  for (const code of REFLECTION_CODES) {
+    const value = input[code];
+    if (value === null || value === undefined) continue;
+    const text = String(value).trim().slice(0, MAX_REFLECTION_ANSWER_LENGTH);
+    if (text) out[code] = text;
+  }
+  return out;
+}
+
 export function normalizeAlignmentReview(input = {}) {
   const reflection = input.reflection == null
     ? null
     : String(input.reflection).trim().slice(0, MAX_REFLECTION_LENGTH) || null;
   const version = Number(input.snapshotVersion);
+  const snapshot = input.snapshot && typeof input.snapshot === 'object' && !Array.isArray(input.snapshot)
+    ? input.snapshot : {};
+  const policy = Number(input.policyVersion);
   return {
     id: input.id != null ? String(input.id) : null,
     weekStart: typeof input.weekStart === 'string' ? input.weekStart : null,
     snapshotVersion: Number.isInteger(version) && version >= 1 ? version : SNAPSHOT_VERSION,
-    snapshot: input.snapshot && typeof input.snapshot === 'object' && !Array.isArray(input.snapshot)
-      ? input.snapshot : {},
+    snapshot,
+    // Sääntöversio: nimenomainen kenttä, tai tilannekuvasta, tai 1
+    // (ensimmäisen version katsaus ei tiennyt versiostaan).
+    policyVersion: Number.isInteger(policy) && policy >= 1 ? policy : policyVersionOf(snapshot),
     reflection,
+    reflectionAnswers: normalizeReflectionAnswers(input.reflectionAnswers),
     adjustments: Array.isArray(input.adjustments) ? input.adjustments : [],
     completedAt: input.completedAt ?? null,
     createdAt: input.createdAt ?? null,
@@ -221,7 +303,8 @@ function signalsOf(analysis, kind, { includeInfo = false } = {}) {
  * @returns {Array<object>} ehdotukset; mitään ei ole muutettu
  */
 export function proposeAdjustments(analysis, {
-  areas = [], goals = [], tasks = [], nextWeekAnalysis = null, nextCapacity = null
+  areas = [], goals = [], tasks = [], nextWeekAnalysis = null, nextCapacity = null,
+  recentAnalyses = []
 } = {}) {
   const proposals = new Map();
   const add = proposal => { if (!proposals.has(proposal.id)) proposals.set(proposal.id, proposal); };
@@ -231,17 +314,45 @@ export function proposeAdjustments(analysis, {
     .filter(area => area.active && area.targetMinutesPerWeek > 0)
     .reduce((sum, area) => sum + area.targetMinutesPerWeek, 0);
 
-  // 1. Kapasiteetti ensi viikolle, jos sitä ei ole asetettu.
+  // 1. Kapasiteetti ensi viikolle, jos sitä ei ole asetettu. Jos viikko on
+  //    päättynyt ja kirjattu toteuma poikkesi arviosta selvästi, ehdotus
+  //    perustuu toteumaan — mutta arvo on käyttäjän muokattavissa, ja
+  //    sanamuoto on kysymys, ei korjaus.
   if (!nextCapacity) {
+    const declared = analysis.capacity.availableMinutes;
+    const actual = analysis.actual.minutes;
+    const deviates = analysis.capacity.declared && analysis.progress.state === 'after'
+      && analysis.actual.entryCount > 0 && declared > 0
+      && Math.abs(actual - declared) >= REVIEW_RULES.CAPACITY_DEVIATION_MIN_MINUTES
+      && Math.abs(actual - declared) / declared >= REVIEW_RULES.CAPACITY_DEVIATION_RATIO;
+    const suggestion = deviates ? Math.round(actual / 30) * 30 : declared;
     add({
       id: `${ADJUSTMENT.SET_CAPACITY}:${next}`,
       type: ADJUSTMENT.SET_CAPACITY,
-      reason: null,
-      label: 'Aseta ensi viikon kapasiteetti',
-      detail: analysis.capacity.declared
-        ? `Tämän viikon arvio oli ${formatMinutes(analysis.capacity.availableMinutes)}.`
-        : 'Ilman kapasiteettia kuormitusta ei voi arvioida.',
-      payload: { weekStart: next, availableMinutes: analysis.capacity.availableMinutes }
+      reason: deviates ? { kind: 'capacity_deviation' } : null,
+      label: deviates
+        ? (actual < declared ? 'Pienennetäänkö ensi viikon kapasiteettioletusta?' : 'Kasvatetaanko ensi viikon kapasiteettioletusta?')
+        : 'Aseta ensi viikon kapasiteetti',
+      detail: deviates
+        ? `Arvioit ehtiväsi ${formatMinutes(declared)}, ja kirjasit ${formatMinutes(actual)}. `
+          + 'Voit pitää arviosi tai käyttää kirjattua aikaa lähtökohtana — valitse itse.'
+        : analysis.capacity.declared
+          ? `Tämän viikon arvio oli ${formatMinutes(declared)}.`
+          : 'Ilman kapasiteettia kuormitusta ei voi arvioida.',
+      payload: { weekStart: next, availableMinutes: suggestion }
+    });
+  }
+
+  // 1b. Arvioimaton työ: ei kirjoita mitään, avaa arvioinnin.
+  const unestimatedNext = nextWeekAnalysis ? nextWeekAnalysis.planned.unknownCount : 0;
+  if (unestimatedNext > 0) {
+    add({
+      id: `${ADJUSTMENT.REQUEST_ESTIMATES}:${next}`,
+      type: ADJUSTMENT.REQUEST_ESTIMATES,
+      reason: { kind: 'data_quality' },
+      label: `Arvioi ensi viikon ${countOf(unestimatedNext, 'asia', 'asiaa')}`,
+      detail: 'Ilman kestoa näitä ei lasketa kuormaan. Karkea arvio riittää.',
+      payload: { weekStart: next, count: unestimatedNext }
     });
   }
 
@@ -317,7 +428,8 @@ export function proposeAdjustments(analysis, {
     const goal = goals
       .filter(entry => entry && entry.lifeAreaId === area.id && entry.status === 'active')
       .sort((a, b) => priorityWeight(a.priority) - priorityWeight(b.priority) || a.id.localeCompare(b.id))[0];
-    const block = Math.min(60, area.targetMinutesPerWeek || 60);
+    const block = Math.min(REVIEW_RULES.RESERVE_BLOCK_MINUTES,
+      area.targetMinutesPerWeek || REVIEW_RULES.RESERVE_BLOCK_MINUTES);
     add({
       id: `${ADJUSTMENT.CREATE_TASK}:${area.id}`,
       type: ADJUSTMENT.CREATE_TASK,
@@ -339,9 +451,10 @@ export function proposeAdjustments(analysis, {
         id: `${ADJUSTMENT.CHANGE_TARGET}:${area.id}`,
         type: ADJUSTMENT.CHANGE_TARGET,
         reason: { kind: SIGNAL.NEGLECT, areaId: area.id },
-        label: `Tai muuta alueen ${area.name} tavoitetta`,
-        detail: `Nykyinen tavoite ${formatMinutes(area.targetMinutesPerWeek)}; tämän viikon tahdilla `
-          + `${formatMinutes(observed)}. Valitse itse, kumpi kuvaa haluamaasi.`,
+        label: `${area.name}: pidetäänkö tavoite vai muutetaanko suunnitelmaa?`,
+        detail: `Tavoitteesi on ${formatMinutes(area.targetMinutesPerWeek)}; tämän viikon tahdilla `
+          + `${formatMinutes(observed)}. Tavoite voi olla juuri oikea — silloin varaa aikaa. `
+          + 'Jos haluat muuttaa tavoitetta, valitse uusi arvo itse.',
         payload: { areaId: area.id, from: area.targetMinutesPerWeek, to: observed }
       });
     }
@@ -361,11 +474,49 @@ export function proposeAdjustments(analysis, {
       id: `${ADJUSTMENT.CHANGE_TARGET}:${area.id}`,
       type: ADJUSTMENT.CHANGE_TARGET,
       reason: { kind: SIGNAL.MISALIGNMENT, areaId: area.id },
-      label: `Tarkista alueen ${area.name} tavoite`,
-      detail: `Toteutunut osuus ${signal.metrics.actualPercent} %, tavoite ${signal.metrics.desiredPercent} %. `
-        + 'Jos todellisuus kuvaa haluamaasi paremmin, päivitä tavoite; muuten jätä ennalleen.',
+      label: `${area.name}: pidetäänkö tavoite vai muutetaanko suunnitelmaa?`,
+      detail: `Toteutunut osuus ${signal.metrics.actualPercent} %, toiveesi ${signal.metrics.desiredPercent} %. `
+        + 'Jos toiveesi on yhä sama, muuta suunnitelmaa; jos todellisuus kuvaa haluamaasi paremmin, '
+        + 'voit päivittää tavoitteen. Kumpikin on sinun päätöksesi.',
       payload: { areaId: area.id, from: area.targetMinutesPerWeek, to: suggested }
     });
+  }
+
+  // 6. Hiljainen tavoite: ei suunniteltua eikä kirjattua aikaa useaan
+  //    viikkoon, ja alue on vähemmän tärkeä tai tavoitteen prioriteetti
+  //    matala. Keskeytys on ehdotus; tavoite ei katoa.
+  const recentWeeks = [analysis, ...(recentAnalyses || [])].filter(Boolean);
+  if (recentWeeks.length >= REVIEW_RULES.INACTIVE_GOAL_WEEKS) {
+    const touched = new Set();
+    const goalsById = new Map(goals.filter(Boolean).map(goal => [goal.id, goal]));
+    for (const week of recentWeeks.slice(0, REVIEW_RULES.INACTIVE_GOAL_WEEKS)) {
+      for (const item of week.items || []) if (item.goalId) touched.add(item.goalId);
+      for (const goalId of week.activeGoalIds || []) touched.add(goalId);
+    }
+    // Ylätavoite on aktiivinen, jos sen alatavoite on.
+    for (const goalId of [...touched]) {
+      let parent = goalsById.get(goalId)?.parentGoalId;
+      const seen = new Set();
+      while (parent && !seen.has(parent)) { seen.add(parent); touched.add(parent); parent = goalsById.get(parent)?.parentGoalId; }
+    }
+    const quiet = goals
+      .filter(goal => goal && goal.status === 'active' && !touched.has(goal.id))
+      .map(goal => ({ goal, area: areasById.get(goal.lifeAreaId) || null }))
+      .filter(({ goal, area }) => (area && area.importance <= 3) || goal.priority === 'matala')
+      .sort((a, b) => (a.area ? a.area.importance : 0) - (b.area ? b.area.importance : 0)
+        || a.goal.id.localeCompare(b.goal.id))
+      .slice(0, MAX_PAUSE_PROPOSALS);
+    for (const { goal } of quiet) {
+      add({
+        id: `${ADJUSTMENT.PAUSE_GOAL}:${goal.id}`,
+        type: ADJUSTMENT.PAUSE_GOAL,
+        reason: { kind: 'inactive_goal' },
+        label: `Keskeytetäänkö hiljainen tavoite "${goal.title}"?`,
+        detail: `Tavoitteelle ei ole suunniteltu eikä kirjattu aikaa ${REVIEW_RULES.INACTIVE_GOAL_WEEKS} viikkoon. `
+          + 'Keskeytys vapauttaa sen mielestä; tavoite ei katoa ja sen voi jatkaa milloin tahansa.',
+        payload: { goalId: goal.id }
+      });
+    }
   }
 
   return [...proposals.values()].slice(0, MAX_PROPOSALS);

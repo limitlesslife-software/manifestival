@@ -12,7 +12,7 @@
 import { el, maybe, toggle, setText, focus } from '../../ui/dom.js';
 import { escapeHtml } from '../../lib/format.js';
 import { fmtISO, todayMidnight } from '../../lib/datetime.js';
-import { getState, findLifeArea } from '../state.js';
+import { getState, findLifeArea, findTask, findRoutine, findGoal, findProject } from '../state.js';
 import { switchTab } from '../navigation.js';
 import { CATEGORIES } from '../../domain/categories.js';
 import {
@@ -20,14 +20,24 @@ import {
 } from '../../domain/lifeArea.js';
 import { weekDates, weekStartOf, capacityWarnings, capacityForWeek } from '../../domain/weeklyCapacity.js';
 import { entriesInRange } from '../../domain/timeEntry.js';
-import { SIGNAL, SEVERITY, SEVERITY_LABELS, QUALITY, primarySignal } from '../../domain/alignment.js';
-import { explainSignal, REVIEW_QUESTIONS, ADJUSTMENT } from '../../domain/alignmentReview.js';
+import { SIGNAL, SEVERITY, SEVERITY_LABELS, QUALITY } from '../../domain/alignment.js';
+import {
+  explainSignal, REVIEW_QUESTIONS, ADJUSTMENT, REFLECTION_CODES, NON_WRITING_ADJUSTMENTS
+} from '../../domain/alignmentReview.js';
+import { qualityIssues, QUALITY_ACTION, QUALITY_ACTION_LABELS } from '../../domain/alignmentQuality.js';
+import { POLICY_VERSIONS, ESTIMATE_PRESETS } from '../../domain/alignmentPolicy.js';
+import { energyDemandLabel } from '../../domain/alignmentItemSettings.js';
 import { addDaysIso } from '../../domain/fiTemporal.js';
 import {
   analyzeCurrentWeek, currentProposals, currentWeekStart, alignmentPersistence,
   createLifeArea, editLifeArea, deleteLifeArea, assignGoalToLifeArea,
-  saveWeeklyCapacity, logTime, deleteTimeEntry, saveWeeklyReview, applyAdjustment
+  saveWeeklyCapacity, logTime, deleteTimeEntry, saveWeeklyReview, applyAdjustment,
+  applySelectedAdjustments, previewSelectedAdjustments, compareWithPreviousWeek, recentTrends,
+  currentDailyAlignment, explainSignalOptionally, pendingTimeEntryCount
 } from '../alignment.js';
+import { saveItemSettings, itemSettingsFor, currentTimer } from '../timeTracking.js';
+import { editTask, editRoutine } from '../actions.js';
+import { startTimerFor, openGeneralLog } from './timeLog.js';
 
 /** Näytettävä viikko (maanantai). null = tämä viikko. Näkymän oma tila. */
 let viewWeek = null;
@@ -35,6 +45,25 @@ let viewWeek = null;
 let editingAreaId = null;
 /** Viimeksi näytetyt ehdotukset: painike viittaa tunnisteella. */
 let shownProposals = [];
+/** Valitut ehdotukset ryhmävahvistusta varten. */
+let selectedProposalIds = new Set();
+/** Viimeisin esikatselu (valinnoille); valinnan muutos mitätöi sen. */
+let lastPreview = null;
+/** Työnkulut auki? */
+let estimateOpen = false;
+/** 'duration' = kestoarviot, 'energy' = kuormittavuusarviot. */
+let estimateMode = 'duration';
+let unassignedOpen = false;
+/** Tällä kertaa ohitetut luokittelemattomat (ei tallenneta: ei nalkutusta, ei päätöstä). */
+let skippedUnassigned = new Set();
+/** Havaintojen selitykset: `kind:areaId` -> { source, text }. */
+let explanations = new Map();
+/** Viimeisin analyysi (selitys käyttää samaa aineistoa, ei laske uudelleen). */
+let lastAnalysis = null;
+/** Kehitys lasketaan vasta pyydettäessä (kahdeksan viikon analyysi). */
+let trendsRequested = false;
+/** Kuinka monta luokittelematonta/arvioimatonta näytetään kerralla. */
+const WORKFLOW_BATCH = 5;
 
 const OPEN_GOAL_STATUSES = new Set(['active', 'paused', 'maintenance']);
 
@@ -117,10 +146,16 @@ function qualityHtml(analysis) {
     + `${escapeHtml(reasons.join(', '))}. Havainnot perustuvat vain siihen mitä on tiedossa.</p>`;
 }
 
+function signalKey(signal) {
+  return `${signal.kind}:${signal.areaId || 'week'}`;
+}
+
 function signalHtml(signal, areas) {
   const text = explainSignal(signal, areas);
   const metrics = Object.entries(signal.metrics || {})
     .map(([key, value]) => `${escapeHtml(key)}: ${escapeHtml(String(value))}`).join(' · ');
+  const key = signalKey(signal);
+  const explained = explanations.get(key);
   return `
     <div class="dir-signal ${severityClass(signal.severity)}">
       <div class="dir-signal-head">
@@ -132,8 +167,26 @@ function signalHtml(signal, areas) {
         <summary>Miksi tämä näkyy?</summary>
         <p>${escapeHtml(text.why)}</p>
         <p class="dir-rule">Sääntö: ${escapeHtml(signal.rule)} · perusta: ${escapeHtml(signal.basis)}<br>${metrics}</p>
+        ${explained
+          ? `<div class="dir-explanation" role="status"><strong>${explained.source === 'ai'
+              ? 'Tekoälyn selitys (ei päätä mitään puolestasi):' : 'Selitys:'}</strong> ${escapeHtml(explained.text)}</div>`
+          : `<button class="assist-btn" type="button" data-explain="${escapeHtml(key)}">Selitä tarkemmin</button>`}
       </details>
     </div>`;
+}
+
+/** Aineiston laatu v2: mitä puuttuu ja mitä sille voi tehdä. Ei moralisointia. */
+function qualityActionsHtml(analysis) {
+  const issues = qualityIssues(analysis);
+  if (issues.length === 0) return '';
+  return `<div class="dir-quality-list" role="group" aria-label="Aineiston täydennys">
+    ${issues.map(issue => `
+      <div class="dir-quality-row">
+        <p class="dir-line">${escapeHtml(issue.text)}</p>
+        ${issue.action ? `<button class="assist-btn" type="button" data-quality-action="${escapeHtml(issue.action)}">`
+          + `${escapeHtml(QUALITY_ACTION_LABELS[issue.action])}</button>` : ''}
+      </div>`).join('')}
+  </div>`;
 }
 
 function signalsHtml(analysis, areas) {
@@ -183,7 +236,163 @@ function weekSummaryHtml(analysis) {
   if (capacity.energyLevel) {
     parts.push(`<p class="dir-line">Oma energia-arvio: ${capacity.energyLevel}/5.</p>`);
   }
+  // Energia on eri asia kuin aika: oma rivinsä, oma rajansa, ei yhteispisteitä.
+  const energy = analysis.energy;
+  if (energy && (energy.heavyMinutes > 0 || Number.isInteger(energy.budgetMinutes))) {
+    const label = Number.isInteger(energy.budgetMinutes)
+      ? `Kuormittavaa ${hours(energy.heavyMinutes)}, oma raja ${hours(energy.budgetMinutes)}`
+      : `Kuormittavaa ${hours(energy.heavyMinutes)} (rajaa ei asetettu)`;
+    if (Number.isInteger(energy.budgetMinutes) && energy.budgetMinutes > 0) {
+      parts.push(barHtml({ value: energy.heavyMinutes, max: energy.budgetMinutes, label }));
+    }
+    parts.push(`<p class="dir-line">${escapeHtml(label)}`
+      + (energy.unratedCount > 0 ? ` · ${countOf(energy.unratedCount, 'asia', 'asiaa')} ilman kuormittavuusarviota` : '')
+      + '.</p>');
+  }
+  const pending = pendingTimeEntryCount();
+  if (pending > 0) {
+    parts.push(`<p class="dir-line">${countOf(pending, 'kirjaus odottaa', 'kirjausta odottaa')} yhteyttä — ne lähetetään, kun yhteys palaa.</p>`);
+  }
   return parts.join('');
+}
+
+// ------------------------------------------------ arviointi ja kohdistus
+
+function itemTitle(item) {
+  if (item.kind === 'task') return findTask(item.id)?.title || 'Tehtävä';
+  return findRoutine(item.routineId)?.title || 'Rutiini';
+}
+
+function itemDateLabel(item) {
+  return item.date ? shortDate(item.date) : '';
+}
+
+/** Kuormittavuuden arviointi: kestolliset asiat, joilta arvio puuttuu. */
+function energyRateHtml(analysis) {
+  const seenRoutines = new Set();
+  const items = analysis.items.filter(item => item.minutes !== null && item.energyDemand == null && !item.completed)
+    .filter(item => {
+      if (item.kind !== 'routine') return true;
+      if (seenRoutines.has(item.routineId)) return false;
+      seenRoutines.add(item.routineId);
+      return true;
+    });
+  if (items.length === 0) return '<div class="assist-empty">Kaikilla kestollisilla asioilla on kuormittavuusarvio.</div>';
+  const rows = items.slice(0, WORKFLOW_BATCH).map(item => {
+    const key = item.kind === 'task' ? `task:${item.id}` : `routine:${item.routineId}`;
+    const title = itemTitle(item);
+    return `
+      <div class="assist-row dir-estimate-row">
+        <div class="assist-title">${escapeHtml(title)}</div>
+        <div class="assist-meta">${escapeHtml(itemDateLabel(item))} · ${escapeHtml(hours(item.minutes))}</div>
+        <div class="dir-presets" role="group" aria-label="Kuormittavuus: ${escapeHtml(title)}">
+          ${[1, 2, 3, 4, 5].map(level => `<button class="assist-btn" type="button" data-energy-rate="${escapeHtml(key)}"
+            data-level="${level}">${level} — ${escapeHtml(energyDemandLabel(level))}</button>`).join('')}
+        </div>
+      </div>`;
+  }).join('');
+  const rest = items.length - Math.min(items.length, WORKFLOW_BATCH);
+  return '<p class="hint">Kuormittavuus on oma arviosi. Sitä ei päätellä otsikosta.</p>' + rows
+    + (rest > 0 ? `<p class="hint">+ ${countOf(rest, 'asia', 'asiaa')} lisää.</p>` : '');
+}
+
+/** Arvioimattomat viikon asiat: nopea karkea arvio, ei pakotettua tarkkuutta. */
+function estimateHtml(analysis) {
+  if (estimateMode === 'energy') return energyRateHtml(analysis);
+  // Rutiinin esiintymät ovat samaa sääntöä: arvio annetaan kerran rutiinille.
+  const seenRoutines = new Set();
+  const items = analysis.items.filter(item => item.minutes === null && !item.completed).filter(item => {
+    if (item.kind !== 'routine') return true;
+    if (seenRoutines.has(item.routineId)) return false;
+    seenRoutines.add(item.routineId);
+    return true;
+  });
+  if (items.length === 0) {
+    return '<div class="assist-empty">Kaikilla tämän viikon asioilla on kestoarvio.</div>';
+  }
+  const rows = items.slice(0, WORKFLOW_BATCH).map(item => {
+    const key = item.kind === 'task' ? `task:${item.id}` : `routine:${item.routineId}`;
+    const title = itemTitle(item);
+    return `
+      <div class="assist-row dir-estimate-row">
+        <div class="assist-title">${escapeHtml(title)}${item.kind === 'routine' ? ' <span class="routine-tag">RUTIINI</span>' : ''}</div>
+        <div class="assist-meta">${escapeHtml(itemDateLabel(item))}</div>
+        <div class="dir-presets" role="group" aria-label="Arvio: ${escapeHtml(title)}">
+          ${ESTIMATE_PRESETS.map(minutes => `<button class="assist-btn" type="button" data-estimate="${escapeHtml(key)}"
+            data-minutes="${minutes}">${escapeHtml(formatMinutes(minutes))}</button>`).join('')}
+        </div>
+        <div class="form-row">
+          <div>
+            <label class="field-label" for="dirEst-${escapeHtml(key)}">Muu (min)</label>
+            <input type="number" min="1" max="1440" step="5" id="dirEst-${escapeHtml(key)}" data-estimate-input="${escapeHtml(key)}">
+          </div>
+          <button class="assist-btn" type="button" data-estimate="${escapeHtml(key)}" data-minutes="custom">Tallenna arvio</button>
+        </div>
+        ${item.kind === 'task' ? `<label class="checkbox-row" for="dirApprox-${escapeHtml(key)}">
+          <input type="checkbox" id="dirApprox-${escapeHtml(key)}" data-estimate-approx="${escapeHtml(key)}" checked> Karkea arvio</label>` : ''}
+      </div>`;
+  }).join('');
+  const rest = items.length - Math.min(items.length, WORKFLOW_BATCH);
+  return rows + (rest > 0 ? `<p class="hint">+ ${countOf(rest, 'asia', 'asiaa')} lisää, kun nämä on arvioitu.</p>` : '');
+}
+
+function goalOptionsForAssign() {
+  const state = getState();
+  const areas = new Map(state.lifeAreas.map(area => [area.id, area]));
+  return state.goals.filter(goal => OPEN_GOAL_STATUSES.has(goal.status) && goal.lifeAreaId && areas.has(goal.lifeAreaId))
+    .sort((a, b) => a.title.localeCompare(b.title, 'fi'))
+    .map(goal => `<option value="${escapeHtml(goal.id)}">${escapeHtml(goal.title)} (${escapeHtml(areas.get(goal.lifeAreaId).name)})</option>`)
+    .join('');
+}
+
+function mappedCategoryOptions() {
+  return getState().lifeAreas.filter(area => area.categoryKey && area.active)
+    .sort(compareLifeAreas)
+    .map(area => {
+      const label = CATEGORIES.find(c => c.key === area.categoryKey)?.label || area.categoryKey;
+      return `<option value="${escapeHtml(area.categoryKey)}">${escapeHtml(label)} → ${escapeHtml(area.name)}</option>`;
+    }).join('');
+}
+
+/** Luokittelemattomat yksi kerrallaan: liitä, kytke kategoria tai jätä tarkoituksella. */
+function unassignedHtml(analysis) {
+  const seenRoutines = new Set();
+  const items = analysis.items.filter(item => !item.areaId && !item.optedOut).filter(item => {
+    const key = item.kind === 'task' ? `task:${item.id}` : `routine:${item.routineId}`;
+    if (skippedUnassigned.has(key)) return false;
+    if (item.kind !== 'routine') return true;
+    if (seenRoutines.has(item.routineId)) return false;
+    seenRoutines.add(item.routineId);
+    return true;
+  });
+  if (items.length === 0) {
+    return '<div class="assist-empty">Ei kohdistamattomia asioita tällä viikolla.</div>';
+  }
+  const goals = goalOptionsForAssign();
+  const categories = mappedCategoryOptions();
+  const intro = `<p class="dir-line">${escapeHtml(items.length === 1
+    ? 'Sinulla on 1 asia, jota ei ole liitetty elämänalueeseen.'
+    : `Sinulla on ${items.length} asiaa, joita ei ole liitetty elämänalueeseen.`)}</p>`;
+  const rows = items.slice(0, WORKFLOW_BATCH).map(item => {
+    const key = item.kind === 'task' ? `task:${item.id}` : `routine:${item.routineId}`;
+    const title = itemTitle(item);
+    return `
+      <div class="assist-row dir-assign-row">
+        <div class="assist-title">${escapeHtml(title)}${item.kind === 'routine' ? ' <span class="routine-tag">RUTIINI</span>' : ''}</div>
+        <div class="assist-meta">${escapeHtml(itemDateLabel(item))}${item.minutes ? ` · ${escapeHtml(hours(item.minutes))}` : ''}</div>
+        ${goals ? `<label class="field-label" for="dirAssignGoal-${escapeHtml(key)}">Liitä tavoitteeseen</label>
+          <select id="dirAssignGoal-${escapeHtml(key)}" data-assign-goal="${escapeHtml(key)}">
+            <option value="">Valitse tavoite</option>${goals}</select>` : ''}
+        ${categories && item.kind === 'task' ? `<label class="field-label" for="dirAssignCat-${escapeHtml(key)}">Tai kategoria, joka kuuluu alueeseen</label>
+          <select id="dirAssignCat-${escapeHtml(key)}" data-assign-category="${escapeHtml(key)}">
+            <option value="">Valitse kategoria</option>${categories}</select>` : ''}
+        <div class="assist-actions">
+          <button class="assist-btn" type="button" data-assign-optout="${escapeHtml(key)}">Jätä tarkoituksella ilman aluetta</button>
+          <button class="assist-btn" type="button" data-assign-skip="${escapeHtml(key)}">Ohita nyt</button>
+        </div>
+      </div>`;
+  }).join('');
+  return intro + rows;
 }
 
 function suggestionsHtml(areas) {
@@ -271,6 +480,16 @@ function goalsHtml(areas, goals) {
     </div>`).join('');
 }
 
+/** Kirjauksen kohde sanoin: alue, tehtävä, rutiini, projekti tai tavoite. */
+function entryTargetLabel(entry, byId) {
+  if (entry.lifeAreaId && byId.has(entry.lifeAreaId)) return byId.get(entry.lifeAreaId).name;
+  if (entry.taskId && findTask(entry.taskId)) return findTask(entry.taskId).title;
+  if (entry.routineId && findRoutine(entry.routineId)) return findRoutine(entry.routineId).title;
+  if (entry.projectId && findProject(entry.projectId)) return findProject(entry.projectId).name;
+  if (entry.goalId && findGoal(entry.goalId)) return findGoal(entry.goalId).title;
+  return 'Ei aluetta';
+}
+
 function timeListHtml(entries, areas) {
   if (entries.length === 0) return '';
   const byId = new Map(areas.map(area => [area.id, area]));
@@ -278,7 +497,8 @@ function timeListHtml(entries, areas) {
     <div class="assist-row">
       <div class="assist-meta">
         ${escapeHtml(shortDate(entry.entryDate))} · ${escapeHtml(hours(entry.minutes))}
-        · ${escapeHtml(entry.lifeAreaId && byId.has(entry.lifeAreaId) ? byId.get(entry.lifeAreaId).name : 'Ei aluetta')}
+        · ${escapeHtml(entryTargetLabel(entry, byId))}
+        · ${entry.source === 'timer' ? 'Ajastin' : 'Käsin'}
       </div>
       ${entry.note ? `<div class="assist-reason">${escapeHtml(entry.note)}</div>` : ''}
       <div class="assist-actions">
@@ -293,6 +513,11 @@ function signalsOfKind(analysis, kind, areas) {
     .map(signal => explainSignal(signal, areas).text);
 }
 
+/**
+ * Katsaus v2: SUUNTA · SUUNNITELMA · TOTEUMA · POIKKEAMAT. "Miksi?" on
+ * lomakkeen pohdintakysymyksissä ja "Ensi viikko" ehdotuksissa.
+ * Ensimmäisen version seitsemän kysymystä säilyvät kunkin osion alla.
+ */
 function reviewHtml(analysis, areas) {
   const active = [...areas].filter(area => area.active)
     .sort((a, b) => b.importance - a.importance || compareLifeAreas(a, b));
@@ -312,8 +537,97 @@ function reviewHtml(analysis, areas) {
     [...signalsOfKind(analysis, SIGNAL.MISALIGNMENT, areas), ...signalsOfKind(analysis, SIGNAL.TARGET_TENSION, areas)].join(' ')
       || 'Ei merkittäviä poikkeamia toivomastasi jakaumasta sen perusteella, mitä on tiedossa.'
   ];
-  return `<dl class="dir-review">${REVIEW_QUESTIONS.slice(0, 6).map((question, index) =>
-    `<dt>${escapeHtml(question)}</dt><dd>${escapeHtml(answers[index])}</dd>`).join('')}</dl>`;
+  const energyLine = analysis.energy && (analysis.energy.heavyMinutes > 0 || Number.isInteger(analysis.energy.budgetMinutes))
+    ? `Kuormittavaa ${hours(analysis.energy.heavyMinutes)}`
+      + (Number.isInteger(analysis.energy.budgetMinutes) ? `, oma raja ${hours(analysis.energy.budgetMinutes)}.` : '.')
+    : null;
+  const energySignals = signalsOfKind(analysis, SIGNAL.ENERGY_OVERLOAD, areas).join(' ');
+  const sections = [
+    { title: 'Suunta', lead: 'Mitä sanoin tärkeäksi?', rows: [[REVIEW_QUESTIONS[0], answers[0]]] },
+    { title: 'Suunnitelma', lead: 'Mitä aioin?', rows: [[REVIEW_QUESTIONS[1], answers[1]]] },
+    { title: 'Toteuma', lead: 'Mitä oikeasti tapahtui?', rows: [[REVIEW_QUESTIONS[2], answers[2]]] },
+    {
+      title: 'Poikkeamat', lead: 'Missä suunnitelma ja todellisuus erosivat?',
+      rows: [
+        [REVIEW_QUESTIONS[3], answers[3]],
+        ['Kuormittiko viikko enemmän kuin jaksoin?', energySignals || energyLine || 'Kuormittavuutta ei ole arvioitu.'],
+        [REVIEW_QUESTIONS[4], answers[4]],
+        [REVIEW_QUESTIONS[5], answers[5]]
+      ]
+    }
+  ];
+  return sections.map(section => `
+    <div class="dir-review-section">
+      <h3 class="dir-subtitle">${escapeHtml(section.title)} <span class="dir-review-lead">— ${escapeHtml(section.lead)}</span></h3>
+      <dl class="dir-review">${section.rows.map(([question, answer]) =>
+        `<dt>${escapeHtml(question)}</dt><dd>${escapeHtml(answer)}</dd>`).join('')}</dl>
+    </div>`).join('');
+}
+
+/** Edellinen viikko vs. tämä: vain havaittavat erot, ei trendejä yhdestä viikosta. */
+function compareHtml(comparison) {
+  if (!comparison || !comparison.available) {
+    return `<p class="hint">${escapeHtml((comparison && comparison.notes[0]) || 'Edellisestä viikosta ei ole vertailtavaa.')}</p>`;
+  }
+  const lines = comparison.lines.map(line => `<li>${escapeHtml(line.text)}</li>`).join('');
+  const areas = comparison.areas.filter(area => Number.isFinite(area.delta) && area.delta !== 0)
+    .map(area => `<li>${escapeHtml(area.name)}: ${escapeHtml(hours(area.before))} → ${escapeHtml(hours(area.after))}</li>`).join('');
+  return `<details class="dir-history" open>
+    <summary>Verrattuna edelliseen viikkoon</summary>
+    ${lines ? `<ul>${lines}</ul>` : ''}
+    ${areas ? `<p class="dir-line">Alueittain (${comparison.basis === 'actual' ? 'kirjattu' : 'suunniteltu'}):</p><ul>${areas}</ul>` : ''}
+    ${comparison.notes.map(note => `<p class="hint">${escapeHtml(note)}</p>`).join('')}
+    <p class="hint">Yksi viikko ei ole suunta: tämä kertoo vain erot.</p>
+  </details>`;
+}
+
+function previewHtml(preview) {
+  if (!preview) return '';
+  const row = (label, before, after) => `<tr><th scope="row">${escapeHtml(label)}</th>`
+    + `<td>${escapeHtml(before)}</td><td>${escapeHtml(after)}</td></tr>`;
+  const areaNames = new Map(preview.after.areas.map(area => [area.id, area]));
+  const areaRows = preview.before.areas.map(area => {
+    const next = areaNames.get(area.id) || area;
+    return row(area.name,
+      `${hours(area.plannedMinutes)} / tavoite ${hours(area.targetMinutes)}`,
+      `${hours(next.plannedMinutes)} / tavoite ${hours(next.targetMinutes)}`);
+  }).join('');
+  return `
+    <div class="dir-preview">
+      <table class="dir-preview-table">
+        <caption>Ensi viikko ennen ja jälkeen valittujen muutosten</caption>
+        <thead><tr><th scope="col">Mitä</th><th scope="col">Nyt</th><th scope="col">Muutosten jälkeen</th></tr></thead>
+        <tbody>
+          ${row('Suunniteltu', hours(preview.before.plannedMinutes), hours(preview.after.plannedMinutes))}
+          ${row('Kapasiteetti', hours(preview.before.capacityMinutes), hours(preview.after.capacityMinutes))}
+          ${row('Havaintoja', String(preview.before.signals), String(preview.after.signals))}
+          ${areaRows}
+        </tbody>
+      </table>
+      <ul>${preview.effects.map(effect => `<li>${escapeHtml(effect.text)}</li>`).join('')}</ul>
+      <p class="hint">Mitään ei ole vielä muutettu.</p>
+    </div>`;
+}
+
+function trendsHtml(trends) {
+  if (!trendsRequested) {
+    return '<button class="assist-btn" type="button" id="dirShowTrends" data-show-trends="1">Näytä viikkojen kehitys</button>';
+  }
+  if (!trends) return '';
+  const rows = trends.rows.map(row => `<tr>
+      <th scope="row">${escapeHtml(weekLabel(row.weekStart))}${row.origin === 'snapshot' ? ' *' : ''}</th>
+      <td>${escapeHtml(hours(row.capacityMinutes))}</td>
+      <td>${escapeHtml(hours(row.plannedMinutes))}</td>
+      <td>${escapeHtml(row.actualMinutes === null ? '–' : hours(row.actualMinutes))}</td>
+      <td>${row.timeOverloaded ? 'Kyllä' : 'Ei'}</td>
+    </tr>`).join('');
+  return `
+    <ul class="dir-trend-statements">${trends.statements.map(s => `<li>${escapeHtml(s)}</li>`).join('')}</ul>
+    ${rows ? `<table class="dir-preview-table">
+      <caption>Viikot (* = tallennettu katsaus, jonka luvut eivät muutu)</caption>
+      <thead><tr><th scope="col">Viikko</th><th scope="col">Kapasiteetti</th><th scope="col">Suunniteltu</th>
+        <th scope="col">Kirjattu</th><th scope="col">Ylitys</th></tr></thead>
+      <tbody>${rows}</tbody></table>` : ''}`;
 }
 
 function proposalInput(proposal) {
@@ -334,15 +648,22 @@ function proposalsHtml(proposals) {
   if (proposals.length === 0) {
     return '<div class="assist-empty">Ei ehdotuksia. Voit silti kirjata pohdintasi.</div>';
   }
-  return proposals.map(proposal => `
+  return proposals.map(proposal => {
+    const navigating = NON_WRITING_ADJUSTMENTS.includes(proposal.type);
+    return `
     <div class="assist-row">
+      ${navigating ? '' : `<label class="checkbox-row" for="dirSel-${escapeHtml(proposal.id)}">
+        <input type="checkbox" id="dirSel-${escapeHtml(proposal.id)}" data-adjust-select="${escapeHtml(proposal.id)}"
+          ${selectedProposalIds.has(proposal.id) ? 'checked' : ''}> Valitse</label>`}
       <div class="assist-title">${escapeHtml(proposal.label)}</div>
       ${proposal.detail ? `<div class="assist-reason">${escapeHtml(proposal.detail)}</div>` : ''}
       ${proposalInput(proposal)}
       <div class="assist-actions">
-        <button class="assist-btn primary" type="button" data-adjust="${escapeHtml(proposal.id)}">Tee muutos…</button>
+        <button class="assist-btn${navigating ? '' : ' primary'}" type="button" data-adjust="${escapeHtml(proposal.id)}">`
+          + `${navigating ? 'Avaa arviointi' : 'Tee muutos…'}</button>
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
 
 function historyHtml(reviews) {
@@ -355,9 +676,15 @@ function historyHtml(reviews) {
     const rows = areas.filter(area => area.active).map(area =>
       `<li>${escapeHtml(area.name)}: tavoite ${escapeHtml(area.desiredPercent === null || area.desiredPercent === undefined ? '–' : area.desiredPercent + ' %')}, `
       + `toteuma ${escapeHtml(area.actualPercent === null || area.actualPercent === undefined ? '–' : area.actualPercent + ' %')}</li>`).join('');
+    const version = review.policyVersion || 1;
+    const answers = review.reflectionAnswers || {};
+    const answered = REFLECTION_CODES.filter(code => answers[code]).length;
     return `
       <details class="dir-history">
         <summary>Viikko ${escapeHtml(weekLabel(review.weekStart))} · ${signals} havaintoa</summary>
+        <p class="hint">Säännöt: ${escapeHtml(POLICY_VERSIONS[version] || `versio ${version}`)}.
+          Tallennettua katsausta ei lasketa uudelleen.</p>
+        ${answered > 0 ? `<p class="dir-line">Vastattuja pohdintakysymyksiä: ${answered}</p>` : ''}
         ${snapshot.capacity && Number.isInteger(snapshot.capacity.availableMinutes)
           ? `<p class="dir-line">Kapasiteetti ${escapeHtml(hours(snapshot.capacity.availableMinutes))}</p>` : ''}
         ${rows ? `<ul>${rows}</ul>` : ''}
@@ -376,11 +703,31 @@ export function renderDirection() {
   const analysis = analyzeCurrentWeek(week);
   const areas = state.lifeAreas;
 
+  lastAnalysis = analysis;
+
   setText('dirWeekLabel', weekLabel(analysis.weekStart));
   toggle('dirThisWeek', analysis.weekStart !== currentWeekStart());
   el('dirPersistNote').innerHTML = persistNoteHtml();
   el('dirSignals').innerHTML = signalsHtml(analysis, areas);
+  const quality = maybe('dirQuality');
+  if (quality) quality.innerHTML = areas.length > 0 ? qualityActionsHtml(analysis) : '';
   el('dirWeekSummary').innerHTML = weekSummaryHtml(analysis);
+  const startTimer = maybe('dirStartTimer');
+  if (startTimer) {
+    startTimer.textContent = currentTimer() ? 'Ajastin käynnissä' : 'Aloita ajanseuranta';
+    startTimer.disabled = Boolean(currentTimer());
+  }
+
+  const estimateSection = maybe('dirEstimateSection');
+  if (estimateSection) {
+    estimateSection.hidden = !estimateOpen;
+    if (estimateOpen) el('dirEstimate').innerHTML = estimateHtml(analysis);
+  }
+  const unassignedSection = maybe('dirUnassignedSection');
+  if (unassignedSection) {
+    unassignedSection.hidden = !unassignedOpen;
+    if (unassignedOpen) el('dirUnassigned').innerHTML = unassignedHtml(analysis);
+  }
   el('dirAreaSuggestions').innerHTML = suggestionsHtml(areas);
   el('dirAreasList').innerHTML = areasHtml(areas, analysis);
   el('dirGoalsList').innerHTML = goalsHtml(areas, state.goals);
@@ -397,6 +744,10 @@ export function renderDirection() {
   if (document.activeElement !== hoursInput) hoursInput.value = capacity ? toHoursInput(capacity.availableMinutes) : '';
   const energy = el('dirEnergy');
   if (document.activeElement !== energy) energy.value = capacity && capacity.energyLevel ? String(capacity.energyLevel) : '';
+  const budget = maybe('dirEnergyBudget');
+  if (budget && document.activeElement !== budget) {
+    budget.value = capacity && Number.isInteger(capacity.energyBudgetMinutes) ? toHoursInput(capacity.energyBudgetMinutes) : '';
+  }
   const timeDate = el('dirTimeDate');
   if (!timeDate.value || !dates.includes(timeDate.value)) {
     const today = fmtISO(todayMidnight());
@@ -404,14 +755,33 @@ export function renderDirection() {
   }
 
   el('dirReview').innerHTML = reviewHtml(analysis, areas);
+  const compare = maybe('dirReviewCompare');
+  if (compare) compare.innerHTML = areas.length > 0 ? compareHtml(compareWithPreviousWeek(analysis.weekStart)) : '';
   const existingReview = state.alignmentReviews.find(review => review.weekStart === analysis.weekStart);
   const reflection = el('dirReflection');
   if (document.activeElement !== reflection && existingReview && !reflection.dataset.dirty) {
     reflection.value = existingReview.reflection || '';
   }
+  // Pohdintakysymykset: täytetään tallennetusta, jos käyttäjä ei ole kirjoittamassa.
+  for (const code of REFLECTION_CODES) {
+    const field = maybe(`dirAnswer-${code}`);
+    if (!field || document.activeElement === field || field.dataset.dirty) continue;
+    field.value = existingReview && existingReview.reflectionAnswers ? existingReview.reflectionAnswers[code] || '' : '';
+  }
   shownProposals = currentProposals(analysis);
+  const ids = new Set(shownProposals.map(proposal => proposal.id));
+  selectedProposalIds = new Set([...selectedProposalIds].filter(id => ids.has(id)));
   el('dirProposals').innerHTML = proposalsHtml(shownProposals);
+  // Esikatselu kuvaa sen tilan, jossa se laskettiin. Mikä tahansa muutos
+  // (toisessa näkymässä tai tallennuksen jälkeen) mitätöi sen.
+  if (lastPreview && lastPreview.stateRef !== state) lastPreview = null;
+  const preview = maybe('dirProposalPreview');
+  if (preview) preview.innerHTML = previewHtml(lastPreview);
+  const apply = maybe('dirApplySelected');
+  if (apply) apply.disabled = !lastPreview || selectedProposalIds.size === 0;
   el('dirReviewHistory').innerHTML = historyHtml(state.alignmentReviews);
+  const trends = maybe('dirTrends');
+  if (trends) trends.innerHTML = trendsHtml(trendsRequested ? recentTrends(analysis.weekStart) : null);
 }
 
 /**
@@ -428,29 +798,40 @@ export function renderTodayDirection() {
       <button class="assist-btn" type="button" data-open-direction="1">Avaa Suunta</button></div>`;
     return;
   }
-  const analysis = analyzeCurrentWeek(null);
-  const signal = primarySignal(analysis);
-  const lines = [];
-  if (analysis.capacity.declared) {
-    const remaining = analysis.capacity.remainingMinutes;
-    lines.push(remaining >= 0
-      ? `Viikon kapasiteettia jäljellä ${hours(remaining)}.`
-      : `Suunnitelma ylittää viikon kapasiteetin ${hours(-remaining)}.`);
-  }
-  if (signal) {
-    const text = explainSignal(signal, state.lifeAreas);
-    lines.push(`${SEVERITY_LABELS[signal.severity]}: ${text.title}.`);
-  }
-  if (analysis.unassigned.plannedItems > 0) {
-    lines.push(analysis.unassigned.plannedItems === 1
+  // Päivän havainnot: enintään muutama, deterministisessä järjestyksessä,
+  // ja jokainen kertoo miksi juuri se näytetään. Ei kaavioita.
+  const { analysis, daily } = currentDailyAlignment();
+  const lines = [...daily.status];
+  const shownUnassigned = daily.observations.some(observation => observation.code === 'unassigned');
+  const open = analysis.dataQuality.unassignedPlannedCount;
+  if (!shownUnassigned && open > 0) {
+    lines.push(open === 1
       ? '1 viikon asia ei kuulu mihinkään alueeseen.'
-      : `${analysis.unassigned.plannedItems} viikon asiaa ei kuulu mihinkään alueeseen.`);
+      : `${open} viikon asiaa ei kuulu mihinkään alueeseen.`);
   }
-  if (lines.length === 0) lines.push('Ei havaintoja tällä viikolla.');
+  const ACTION_LABELS = { open_unassigned: 'Kohdista', open_estimate: 'Arvioi', open_direction: 'Avaa Suunta' };
+  const observations = daily.observations.map(observation => `
+    <div class="dir-today-observation ${severityClass(observation.severity)}">
+      <p class="dir-line">${observation.primary ? '<strong>Tänään kannattaa huomata:</strong> ' : ''}`
+        + `${escapeHtml(SEVERITY_LABELS[observation.severity])}: ${escapeHtml(observation.title)}.</p>
+      <details class="dir-why">
+        <summary>Miksi tämä?</summary>
+        <p>${escapeHtml(observation.text)}</p>
+        <p class="hint">${escapeHtml(observation.why)}</p>
+      </details>
+      ${observation.action && observation.action !== 'open_direction'
+        ? `<button class="assist-btn" type="button" data-today-action="${escapeHtml(observation.action)}">${escapeHtml(ACTION_LABELS[observation.action])}</button>` : ''}
+    </div>`).join('');
+  if (lines.length === 0 && !observations) lines.push('Ei havaintoja tällä viikolla.');
   container.innerHTML = `<div class="dir-today">
     <div class="dir-today-title">Suunta</div>
     ${lines.map(line => `<p class="dir-line">${escapeHtml(line)}</p>`).join('')}
-    <button class="assist-btn" type="button" data-open-direction="1">Avaa Suunta</button></div>`;
+    ${observations}
+    ${daily.hiddenCount > 0 ? `<p class="hint">${countOf(daily.hiddenCount, 'muu havainto', 'muuta havaintoa')} Suunnassa.</p>` : ''}
+    <div class="assist-actions">
+      <button class="assist-btn" type="button" data-today-action="log_time">Kirjaa aikaa</button>
+      <button class="assist-btn" type="button" data-open-direction="1">Avaa Suunta</button>
+    </div></div>`;
 }
 
 // ------------------------------------------------------ lomakkeet
@@ -532,11 +913,20 @@ async function submitCapacity() {
     return;
   }
   const energyValue = el('dirEnergy').value;
+  setError('dirEnergyBudgetError', '');
+  const budgetField = maybe('dirEnergyBudget');
+  const budget = budgetField ? toMinutesFromHours(budgetField.value) : null;
+  if (Number.isNaN(budget)) {
+    setError('dirEnergyBudgetError', 'Anna tunnit, esim. 8, tai jätä tyhjäksi.');
+    return;
+  }
   const result = await saveWeeklyCapacity({
-    weekStart: shownWeek(), availableMinutes: minutes, energyLevel: energyValue ? Number(energyValue) : null
+    weekStart: shownWeek(), availableMinutes: minutes, energyLevel: energyValue ? Number(energyValue) : null,
+    energyBudgetMinutes: budget
   });
   if (!result.ok) {
     if (result.errors && result.errors.availableMinutes) setError('dirCapacityError', result.errors.availableMinutes);
+    if (result.errors && result.errors.energyBudgetMinutes) setError('dirEnergyBudgetError', result.errors.energyBudgetMinutes);
     return;
   }
   const previousWeek = addDaysIso(shownWeek(), -7);
@@ -574,11 +964,184 @@ async function submitReview() {
   const status = el('dirReviewStatus');
   status.textContent = '';
   const reflection = el('dirReflection');
-  const result = await saveWeeklyReview({ weekStart: shownWeek(), reflection: reflection.value || null });
+  const reflectionAnswers = {};
+  for (const code of REFLECTION_CODES) {
+    const field = maybe(`dirAnswer-${code}`);
+    if (field && field.value) reflectionAnswers[code] = field.value;
+  }
+  const result = await saveWeeklyReview({
+    weekStart: shownWeek(), reflection: reflection.value || null, reflectionAnswers
+  });
   if (result.ok) {
     delete reflection.dataset.dirty;
+    for (const code of REFLECTION_CODES) {
+      const field = maybe(`dirAnswer-${code}`);
+      if (field) delete field.dataset.dirty;
+    }
     status.textContent = 'Viikkokatsaus tallennettu.';
   }
+}
+
+// ------------------------------------------------ uudet toiminnot (v2)
+
+function overridesFor(proposal) {
+  const input = el('dirProposals').querySelector(`[data-adjust-value="${CSS.escape(proposal.id)}"]`);
+  if (!input) return {};
+  const minutes = toMinutesFromHours(input.value);
+  if (minutes === null || Number.isNaN(minutes)) return null;
+  if (proposal.type === ADJUSTMENT.CHANGE_TARGET) return { to: minutes };
+  if (proposal.type === ADJUSTMENT.SET_CAPACITY) return { availableMinutes: minutes };
+  return {};
+}
+
+function selectedProposals() {
+  return shownProposals.filter(proposal => selectedProposalIds.has(proposal.id));
+}
+
+function collectOverrides(proposals) {
+  const overrides = {};
+  for (const proposal of proposals) {
+    const value = overridesFor(proposal);
+    if (value === null) return null;
+    overrides[proposal.id] = value;
+  }
+  return overrides;
+}
+
+function onPreviewSelected() {
+  const proposals = selectedProposals();
+  if (proposals.length === 0) {
+    lastPreview = null;
+    const node = maybe('dirProposalPreview');
+    if (node) node.innerHTML = '<p class="hint">Valitse ensin yksi tai useampi ehdotus.</p>';
+    return;
+  }
+  const overrides = collectOverrides(proposals);
+  if (!overrides) return;
+  const preview = previewSelectedAdjustments(shownWeek(), proposals, overrides);
+  lastPreview = { ...preview, stateRef: getState(), ids: proposals.map(p => p.id), overrides };
+  renderDirection();
+}
+
+async function onApplySelected() {
+  if (!lastPreview) return;
+  const proposals = shownProposals.filter(proposal => lastPreview.ids.includes(proposal.id));
+  const result = await applySelectedAdjustments(proposals, { overrides: lastPreview.overrides, preview: lastPreview });
+  if (result.cancelled) return;
+  const week = shownWeek();
+  const existing = getState().alignmentReviews.find(review => review.weekStart === week);
+  const appliedIds = (result.results || []).filter(entry => entry.applied).map(entry => entry.id);
+  if (existing && appliedIds.length > 0) {
+    await saveWeeklyReview({ weekStart: week, reflection: existing.reflection, adjustments: appliedIds });
+  }
+  selectedProposalIds = new Set();
+  lastPreview = null;
+  renderDirection();
+}
+
+async function saveEstimate(key, minutes, approximate) {
+  const [kind, id] = [key.slice(0, key.indexOf(':')), key.slice(key.indexOf(':') + 1)];
+  if (kind === 'task') {
+    const result = await editTask(id, { durationMinutes: minutes });
+    if (result && result.ok) await saveItemSettings('task', id, { estimateApproximate: Boolean(approximate) });
+  } else if (kind === 'routine') {
+    await editRoutine(id, { durationMinutes: minutes });
+  }
+}
+
+async function onEstimateClick(event) {
+  const rate = event.target.closest('[data-energy-rate]');
+  if (rate) {
+    const { kind, id } = splitKey(rate.dataset.energyRate);
+    rate.disabled = true;
+    await saveItemSettings(kind, id, { energyDemand: Number(rate.dataset.level) });
+    return;
+  }
+  const button = event.target.closest('[data-estimate]');
+  if (!button) return;
+  const key = button.dataset.estimate;
+  let minutes = Number(button.dataset.minutes);
+  if (button.dataset.minutes === 'custom') {
+    const input = el('dirEstimate').querySelector(`[data-estimate-input="${CSS.escape(key)}"]`);
+    minutes = Math.round(Number(input ? input.value : NaN));
+  }
+  if (!Number.isInteger(minutes) || minutes <= 0 || minutes > 1440) return;
+  const approx = el('dirEstimate').querySelector(`[data-estimate-approx="${CSS.escape(key)}"]`);
+  button.disabled = true;
+  await saveEstimate(key, minutes, approx ? approx.checked : true);
+}
+
+function splitKey(key) {
+  const index = key.indexOf(':');
+  return { kind: key.slice(0, index), id: key.slice(index + 1) };
+}
+
+async function onAssignChange(event) {
+  const goalSelect = event.target.closest('[data-assign-goal]');
+  if (goalSelect && goalSelect.value) {
+    const { kind, id } = splitKey(goalSelect.dataset.assignGoal);
+    if (kind === 'task') await editTask(id, { goalId: goalSelect.value });
+    if (kind === 'routine') await editRoutine(id, { goalId: goalSelect.value });
+    return;
+  }
+  const categorySelect = event.target.closest('[data-assign-category]');
+  if (categorySelect && categorySelect.value) {
+    const { kind, id } = splitKey(categorySelect.dataset.assignCategory);
+    if (kind === 'task') await editTask(id, { category: categorySelect.value });
+  }
+}
+
+async function onAssignClick(event) {
+  const optOut = event.target.closest('[data-assign-optout]');
+  if (optOut) {
+    const { kind, id } = splitKey(optOut.dataset.assignOptout);
+    optOut.disabled = true;
+    await saveItemSettings(kind, id, { alignmentOptOut: true });
+    return;
+  }
+  const skip = event.target.closest('[data-assign-skip]');
+  if (skip) {
+    skippedUnassigned.add(skip.dataset.assignSkip);
+    renderDirection();
+  }
+}
+
+function openWorkflow(which, mode = 'duration') {
+  if (which === 'estimate') {
+    estimateOpen = true;
+    estimateMode = mode;
+  }
+  if (which === 'assign') unassignedOpen = true;
+  renderDirection();
+  const target = which === 'estimate' ? 'dirEstimateTitle' : 'dirUnassignedTitle';
+  const node = maybe(target);
+  if (node && typeof node.scrollIntoView === 'function') node.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function onQualityAction(action) {
+  switch (action) {
+    case QUALITY_ACTION.ESTIMATE: openWorkflow('estimate'); break;
+    case QUALITY_ACTION.ASSIGN: openWorkflow('assign'); break;
+    case QUALITY_ACTION.LOG_TIME: openGeneralLog(); break;
+    case QUALITY_ACTION.ADD_AREAS: openAreaForm(null); break;
+    case QUALITY_ACTION.SET_CAPACITY: focus('dirCapacityHours'); break;
+    case QUALITY_ACTION.SET_TARGETS: {
+      const first = [...getState().lifeAreas].sort(compareLifeAreas).find(area => area.active);
+      if (first) openAreaForm(first.id);
+      break;
+    }
+    case QUALITY_ACTION.RATE_ENERGY: openWorkflow('estimate', 'energy'); break;
+    default: break;
+  }
+}
+
+async function onExplain(key) {
+  if (!lastAnalysis) return;
+  const signal = lastAnalysis.signals.find(entry => signalKey(entry) === key);
+  if (!signal) return;
+  const result = await explainSignalOptionally(signal, lastAnalysis);
+  explanations.set(key, { source: result.source, text: result.text });
+  renderDirection();
 }
 
 async function onProposalClick(event) {
@@ -595,6 +1158,10 @@ async function onProposalClick(event) {
     if (proposal.type === ADJUSTMENT.SET_CAPACITY) overrides.availableMinutes = minutes;
   }
   const result = await applyAdjustment(proposal, { overrides });
+  if (result.navigate === 'estimate') {
+    openWorkflow('estimate');
+    return;
+  }
   if (result.applied) {
     const week = shownWeek();
     const state = getState();
@@ -610,6 +1177,8 @@ async function onProposalClick(event) {
 
 function goToWeek(offsetDays) {
   viewWeek = weekStartOf(addDaysIso(shownWeek(), offsetDays));
+  explanations = new Map();
+  lastPreview = null;
   renderDirection();
 }
 
@@ -655,10 +1224,69 @@ export function initDirection() {
   el('dirProposals').addEventListener('click', onProposalClick);
   el('dirReviewSave').addEventListener('click', submitReview);
 
+  // --- Suunta 2 ---
+  const on = (id, type, handler) => { const node = maybe(id); if (node) node.addEventListener(type, handler); };
+  on('dirStartTimer', 'click', () => startTimerFor({ kind: 'none' }));
+  on('dirQuickLog', 'click', () => openGeneralLog());
+  on('dirOpenEstimate', 'click', () => openWorkflow('estimate'));
+  on('dirOpenUnassigned', 'click', () => openWorkflow('assign'));
+  on('dirTimePresets', 'click', event => {
+    const preset = event.target.closest('[data-preset-minutes]');
+    if (preset) el('dirTimeMinutes').value = preset.dataset.presetMinutes;
+  });
+  on('dirEstimate', 'click', onEstimateClick);
+  on('dirUnassigned', 'change', onAssignChange);
+  on('dirUnassigned', 'click', onAssignClick);
+  on('dirQuality', 'click', event => {
+    const button = event.target.closest('[data-quality-action]');
+    if (button) onQualityAction(button.dataset.qualityAction);
+  });
+  on('dirSignals', 'click', event => {
+    const button = event.target.closest('[data-explain]');
+    if (!button) return;
+    button.disabled = true;
+    button.textContent = 'Haetaan selitystä…';
+    onExplain(button.dataset.explain);
+  });
+  on('dirProposals', 'change', event => {
+    const box = event.target.closest('[data-adjust-select]');
+    if (!box) return;
+    if (box.checked) selectedProposalIds.add(box.dataset.adjustSelect);
+    else selectedProposalIds.delete(box.dataset.adjustSelect);
+    // Valinnan muutos mitätöi esikatselun: vahvistettava on se mikä esikatseltiin.
+    lastPreview = null;
+    const preview = maybe('dirProposalPreview');
+    if (preview) preview.innerHTML = '';
+    const apply = maybe('dirApplySelected');
+    if (apply) apply.disabled = true;
+  });
+  on('dirPreviewSelected', 'click', onPreviewSelected);
+  on('dirApplySelected', 'click', onApplySelected);
+  on('dirTrends', 'click', event => {
+    if (event.target.closest('[data-show-trends]')) {
+      trendsRequested = true;
+      renderDirection();
+    }
+  });
+  on('dirReflectionPrompts', 'input', event => {
+    if (event.target && event.target.dataset) event.target.dataset.dirty = '1';
+  });
+
   const today = maybe('todayDirection');
   if (today) {
     today.addEventListener('click', event => {
-      if (event.target.closest('[data-open-direction]')) switchTab('screen-direction');
+      if (event.target.closest('[data-open-direction]')) {
+        switchTab('screen-direction');
+        return;
+      }
+      const action = event.target.closest('[data-today-action]');
+      if (!action) return;
+      switch (action.dataset.todayAction) {
+        case 'log_time': openGeneralLog(); break;
+        case 'open_unassigned': switchTab('screen-direction'); openWorkflow('assign'); break;
+        case 'open_estimate': switchTab('screen-direction'); openWorkflow('estimate'); break;
+        default: switchTab('screen-direction');
+      }
     });
   }
 }
@@ -668,4 +1296,20 @@ export function resetDirectionView() {
   viewWeek = null;
   editingAreaId = null;
   shownProposals = [];
+  selectedProposalIds = new Set();
+  lastPreview = null;
+  estimateOpen = false;
+  estimateMode = 'duration';
+  unassignedOpen = false;
+  skippedUnassigned = new Set();
+  explanations = new Map();
+  lastAnalysis = null;
+  trendsRequested = false;
+  // Pohdintakentät tyhjiksi: seuraava käyttäjä ei näe edellisen tekstiä.
+  if (typeof document !== 'undefined') {
+    for (const code of REFLECTION_CODES) {
+      const field = maybe(`dirAnswer-${code}`);
+      if (field) { field.value = ''; delete field.dataset.dirty; }
+    }
+  }
 }

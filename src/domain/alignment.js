@@ -56,17 +56,27 @@ import { expandRoutines } from './routine.js';
 import { desiredShares } from './lifeArea.js';
 import { weekDates, weekStartOf, nextWeekStart } from './weeklyCapacity.js';
 import { entriesInRange } from './timeEntry.js';
+import { TIME_RULES, POLICY_VERSION } from './alignmentPolicy.js';
+import { indexItemSettings, energyDemandFor, isOptedOut } from './alignmentItemSettings.js';
+import { summarizeEnergy, energySignals, ENERGY_SIGNAL } from './energyLoad.js';
 
+/**
+ * Havaintolajit. OVERLOAD on AIKAkuormitus (TIME_OVERLOAD);
+ * ENERGY_OVERLOAD on erillinen havainto eikä sitä yhdistetä aikaan.
+ */
 export const SIGNAL = Object.freeze({
   OVERLOAD: 'overload',
   NEGLECT: 'neglect',
   MISALIGNMENT: 'misalignment',
+  ENERGY_OVERLOAD: ENERGY_SIGNAL,
   TARGET_TENSION: 'target_tension'
 });
 
 export const SEVERITY = Object.freeze({ INFO: 'info', ATTENTION: 'attention', STRONG: 'strong' });
 const SEVERITY_RANK = Object.freeze({ strong: 3, attention: 2, info: 1 });
-const KIND_RANK = Object.freeze({ overload: 4, neglect: 3, misalignment: 2, target_tension: 1 });
+const KIND_RANK = Object.freeze({
+  overload: 5, neglect: 4, misalignment: 3, energy_overload: 2, target_tension: 1
+});
 
 export const SEVERITY_LABELS = Object.freeze({
   info: 'Tiedoksi',
@@ -80,37 +90,16 @@ export const ATTRIBUTION = Object.freeze({
   CATEGORY: 'category',
   DIRECT: 'direct',
   TASK: 'task',
+  ROUTINE: 'routine',
   NONE: 'none'
 });
 
-/** Kynnykset. Kaikki säännöt lukevat nämä; käyttöliittymä näyttää ne. */
-export const RULES = Object.freeze({
-  /** Kuormitus on vahva, kun suunniteltu >= 120 % kapasiteetista. */
-  OVERLOAD_STRONG_RATIO: 1.2,
-  /** Mahdollinen kuormitus: tunnettu >= 90 % ja arvioimatonta työtä on. */
-  OVERLOAD_POSSIBLE_RATIO: 0.9,
-
-  /** Huomiotta jäämistä arvioidaan vain alueille, joiden tärkeys on >= 4. */
-  NEGLECT_MIN_IMPORTANCE: 4,
-  /** Alle 30 min viikkotavoitetta ei ole mielekäs mittari. */
-  NEGLECT_MIN_TARGET_MINUTES: 30,
-  /** Alle puolet odotetusta = huomiotta jäämässä. */
-  NEGLECT_RATIO: 0.5,
-  /** Viikko päättynyt ja alle neljännes = vahva. */
-  NEGLECT_STRONG_RATIO: 0.25,
-  /** Toteumaa verrataan vasta kun viikosta on kulunut 3/7 (torstaista). */
-  NEGLECT_MIN_PROGRESS: 3 / 7,
-
-  /** Jakauman poikkeama prosenttiyksikköinä. */
-  MISALIGNMENT_POINTS: 15,
-  MISALIGNMENT_STRONG_POINTS: 25,
-  /** Jakaumaa ei arvioida alle kahden tunnin aineistosta. */
-  MISALIGNMENT_MIN_MINUTES: 120,
-  /** Jos alle 60 % ajasta on liitetty alueeseen, johtopäätös on vain tiedoksi. */
-  MIN_ASSIGNED_COVERAGE: 0.6,
-  /** Arvioitua kestoa alle puolella työstä = heikko aineisto. */
-  MIN_ESTIMATE_COVERAGE: 0.5
-});
+/**
+ * Kynnykset. Kaikki säännöt lukevat nämä; käyttöliittymä näyttää ne.
+ * Arvot asuvat politiikkamoduulissa (alignmentPolicy.js); tämä nimi
+ * säilyy, koska katsaus, näkymät ja testit lukevat sitä.
+ */
+export const RULES = TIME_RULES;
 
 const NONE_KEY = '__none__';
 
@@ -120,7 +109,7 @@ const NONE_KEY = '__none__';
  * Hakemistot alueen päättelyyn. Rakennetaan kerran; jokainen haku on O(1)
  * (tavoiteketju enintään MAX_GOAL_DEPTH askelta).
  */
-export function buildAttributionIndex({ areas = [], goals = [], projects = [] } = {}) {
+export function buildAttributionIndex({ areas = [], goals = [], projects = [], routines = [] } = {}) {
   const areaById = new Map();
   const categoryArea = new Map();
   for (const area of areas || []) {
@@ -160,7 +149,9 @@ export function buildAttributionIndex({ areas = [], goals = [], projects = [] } 
     return project ? goalArea(project.goalId) : null;
   }
 
-  return { areaById, categoryArea, goalById, projectById, goalArea, projectArea };
+  const routineById = new Map((routines || []).filter(r => r && r.id).map(r => [r.id, r]));
+
+  return { areaById, categoryArea, goalById, projectById, routineById, goalArea, projectArea };
 }
 
 const MAX_GOAL_DEPTH = 20;
@@ -187,6 +178,11 @@ export function areaForRoutine(routine, index) {
   return unattributed;
 }
 
+/**
+ * Kirjauksen alue. Järjestys: suora alue > tehtävä > rutiini > projekti >
+ * tavoite. Kirjauksella on tyypillisesti yksi kohde; jos useampi, ensimmäinen
+ * osuma voittaa, joten sama minuutti ei koskaan päädy kahteen alueeseen.
+ */
 export function areaForTimeEntry(entry, index, tasksById = new Map()) {
   if (!entry) return unattributed;
   if (entry.lifeAreaId && index.areaById.has(entry.lifeAreaId)) {
@@ -197,6 +193,13 @@ export function areaForTimeEntry(entry, index, tasksById = new Map()) {
     const byTask = areaForTask(task, index);
     if (byTask.areaId) return { areaId: byTask.areaId, via: ATTRIBUTION.TASK };
   }
+  const routine = entry.routineId && index.routineById ? index.routineById.get(entry.routineId) : null;
+  if (routine) {
+    const byRoutine = areaForRoutine(routine, index);
+    if (byRoutine.areaId) return { areaId: byRoutine.areaId, via: ATTRIBUTION.ROUTINE };
+  }
+  const byProject = index.projectArea(entry.projectId);
+  if (byProject) return { areaId: byProject, via: ATTRIBUTION.PROJECT_GOAL };
   const byGoal = index.goalArea(entry.goalId);
   if (byGoal) return { areaId: byGoal, via: ATTRIBUTION.GOAL };
   return unattributed;
@@ -231,7 +234,9 @@ export function weekProgress(weekStart, todayIso, nowMinutes = 0) {
  * (`isWake`) ei ole työtä. Valmiiksi merkitty tehtävä on YHÄ suunniteltua
  * työtä — suunnitelma ei muutu jälkikäteen.
  */
-export function plannedItems({ weekStart, tasks = [], routines = [], exceptions = [], index }) {
+export function plannedItems({
+  weekStart, tasks = [], routines = [], exceptions = [], index, settings = new Map()
+}) {
   const dates = weekDates(weekStart);
   if (dates.length === 0) return [];
   const inWeek = new Set(dates);
@@ -241,12 +246,15 @@ export function plannedItems({ weekStart, tasks = [], routines = [], exceptions 
     if (!task || !task.id || !inWeek.has(task.date) || task.isWake) continue;
     const minutes = durationOf(task);
     const { areaId, via } = areaForTask(task, index);
-    items.set('task:' + task.id, {
+    const item = {
       key: 'task:' + task.id, kind: 'task', id: task.id, date: task.date,
       minutes: Number.isFinite(minutes) && minutes > 0 ? minutes : null,
       completed: Boolean(task.completed), priority: task.priority || null,
-      goalId: task.goalId || null, areaId, via
-    });
+      goalId: task.goalId || null, projectId: task.projectId || null, areaId, via
+    };
+    item.energyDemand = energyDemandFor(item, settings, { projectIdOf: () => task.projectId || null });
+    item.optedOut = !areaId && isOptedOut(item, settings);
+    items.set(item.key, item);
   }
 
   const routineById = new Map((routines || []).filter(r => r && r.id).map(r => [r.id, r]));
@@ -254,13 +262,16 @@ export function plannedItems({ weekStart, tasks = [], routines = [], exceptions 
     const routine = routineById.get(occurrence.routineId);
     const { areaId, via } = areaForRoutine(routine, index);
     const minutes = occurrence.durationMinutes;
-    items.set('routine:' + occurrence.id, {
+    const item = {
       key: 'routine:' + occurrence.id, kind: 'routine', id: occurrence.id,
       routineId: occurrence.routineId, date: occurrence.date,
       minutes: Number.isFinite(minutes) && minutes > 0 ? minutes : null,
       completed: false, priority: occurrence.priority || null,
       goalId: routine ? routine.goalId || null : null, areaId, via
-    });
+    };
+    item.energyDemand = energyDemandFor(item, settings);
+    item.optedOut = !areaId && isOptedOut(item, settings);
+    items.set(item.key, item);
   }
 
   return [...items.values()];
@@ -273,16 +284,18 @@ function emptyBucket() {
 export function summarizePlanned(items = []) {
   const total = emptyBucket();
   const byArea = new Map();
+  let optedOutCount = 0;
   for (const item of items) {
     const key = item.areaId || NONE_KEY;
     if (!byArea.has(key)) byArea.set(key, emptyBucket());
+    if (!item.areaId && item.optedOut) optedOutCount += 1;
     for (const bucket of [total, byArea.get(key)]) {
       bucket.itemCount += 1;
       if (item.minutes === null) bucket.unknownCount += 1;
       else bucket.knownMinutes += item.minutes;
     }
   }
-  return { ...total, estimatedCount: total.itemCount - total.unknownCount, byArea };
+  return { ...total, estimatedCount: total.itemCount - total.unknownCount, byArea, optedOutCount };
 }
 
 // ----------------------------------------------------------- toteuma
@@ -292,19 +305,40 @@ export function summarizeActual({ weekStart, timeEntries = [], tasks = [], index
   const entries = dates.length ? entriesInRange(timeEntries, dates[0], dates[6]) : [];
   const tasksById = new Map((tasks || []).filter(t => t && t.id).map(t => [t.id, t]));
   const byArea = new Map();
+  const bySource = {};
   const days = new Set();
+  const goalIds = new Set();
   let minutes = 0;
   let entryCount = 0;
   for (const entry of entries) {
     if (!Number.isInteger(entry.minutes) || entry.minutes <= 0) continue;
+    const task = entry.taskId ? tasksById.get(entry.taskId) : null;
+    const project = index.projectById.get(entry.projectId || task?.projectId);
+    const routine = index.routineById ? index.routineById.get(entry.routineId) : null;
+    for (const goalId of [entry.goalId, task?.goalId, project?.goalId, routine?.goalId]) {
+      if (goalId) goalIds.add(goalId);
+    }
     const { areaId } = areaForTimeEntry(entry, index, tasksById);
     const key = areaId || NONE_KEY;
     byArea.set(key, (byArea.get(key) || 0) + entry.minutes);
+    const source = entry.source || 'manual';
+    bySource[source] = (bySource[source] || 0) + entry.minutes;
     minutes += entry.minutes;
     entryCount += 1;
     days.add(entry.entryDate);
   }
-  return { minutes, entryCount, daysWithEntries: days.size, byArea };
+  return { minutes, entryCount, daysWithEntries: days.size, byArea, bySource, goalIds };
+}
+
+/** Tavoitteet, joilla oli viikolla suunniteltua tai kirjattua tekemistä. */
+function activeGoals(items, actual, index) {
+  const ids = new Set(actual.goalIds || []);
+  for (const item of items) {
+    if (item.goalId) ids.add(item.goalId);
+    const project = item.projectId ? index.projectById.get(item.projectId) : null;
+    if (project && project.goalId) ids.add(project.goalId);
+  }
+  return [...ids].sort();
 }
 
 // ----------------------------------------------------------- havainnot
@@ -498,7 +532,11 @@ export function dataQuality({ areas, capacity, planned, actual }) {
 
   const plannedNone = planned.byArea.get(NONE_KEY) || emptyBucket();
   const plannedAssignedCoverage = ratio(planned.knownMinutes - plannedNone.knownMinutes, planned.knownMinutes);
-  if (plannedNone.itemCount > 0) reasons.push('unassigned_work');
+  // Tarkoituksella ilman aluetta jätetty ei ole aineiston puute: käyttäjä
+  // päätti sen, eikä siitä muistuteta uudelleen.
+  const optedOut = planned.optedOutCount || 0;
+  const openUnassigned = Math.max(0, plannedNone.itemCount - optedOut);
+  if (openUnassigned > 0) reasons.push('unassigned_work');
 
   const actualNone = actual.byArea.get(NONE_KEY) || 0;
   const actualAssignedCoverage = ratio(actual.minutes - actualNone, actual.minutes);
@@ -518,7 +556,8 @@ export function dataQuality({ areas, capacity, planned, actual }) {
     plannedAssignedPercent: percent(plannedAssignedCoverage),
     actualAssignedPercent: percent(actualAssignedCoverage),
     unestimatedCount: planned.unknownCount,
-    unassignedPlannedCount: plannedNone.itemCount,
+    unassignedPlannedCount: openUnassigned,
+    intentionallyUnassignedCount: optedOut,
     unassignedActualMinutes: actualNone,
     actualTracked: actual.entryCount > 0
   };
@@ -538,25 +577,32 @@ export function dataQuality({ areas, capacity, planned, actual }) {
 export function analyzeWeek({
   weekStart, todayIso, nowMinutes = 0,
   areas = [], goals = [], projects = [], tasks = [], routines = [], exceptions = [],
-  timeEntries = [], capacity = null
+  timeEntries = [], capacity = null, itemSettings = []
 } = {}) {
   const monday = weekStartOf(weekStart);
   const dates = weekDates(monday);
-  const index = buildAttributionIndex({ areas, goals, projects });
-  const items = plannedItems({ weekStart: monday, tasks, routines, exceptions, index });
+  const index = buildAttributionIndex({ areas, goals, projects, routines });
+  const settings = itemSettings instanceof Map ? itemSettings : indexItemSettings(itemSettings);
+  const items = plannedItems({ weekStart: monday, tasks, routines, exceptions, index, settings });
   const planned = summarizePlanned(items);
   const actual = summarizeActual({ weekStart: monday, timeEntries, tasks, index });
   const progress = weekProgress(monday, todayIso, nowMinutes);
   const cleanAreas = (areas || []).filter(area => area && area.id);
   const weekCapacity = capacity && capacity.weekStart === monday ? capacity : null;
+  const energy = summarizeEnergy(items);
 
   const desired = desiredShares(cleanAreas);
   const neglect = neglectSignals({ areas: cleanAreas, planned, actual, progress });
   const neglected = new Set(neglect.map(signal => signal.areaId));
+  const timeOverload = overloadSignals({ capacity: weekCapacity, planned });
   const signals = [
-    ...overloadSignals({ capacity: weekCapacity, planned }),
+    ...timeOverload,
     ...neglect,
     ...misalignmentSignals({ areas: cleanAreas, planned, actual, neglected }),
+    ...energySignals({
+      energy, capacity: weekCapacity,
+      timeOverloaded: timeOverload.some(signal => signal.severity !== SEVERITY.INFO)
+    }),
     ...tensionSignals({ areas: cleanAreas, capacity: weekCapacity })
   ].sort(compareSignals);
 
@@ -578,7 +624,10 @@ export function analyzeWeek({
   });
 
   const none = planned.byArea.get(NONE_KEY) || emptyBucket();
+  const budget = weekCapacity && Number.isInteger(weekCapacity.energyBudgetMinutes)
+    ? weekCapacity.energyBudgetMinutes : null;
   return {
+    policyVersion: POLICY_VERSION,
     weekStart: monday,
     weekEnd: dates[6] || null,
     nextWeekStart: nextWeekStart(monday),
@@ -587,19 +636,30 @@ export function analyzeWeek({
       declared: Boolean(weekCapacity),
       availableMinutes: weekCapacity ? weekCapacity.availableMinutes : null,
       energyLevel: weekCapacity ? weekCapacity.energyLevel : null,
+      energyBudgetMinutes: budget,
       remainingMinutes: weekCapacity ? weekCapacity.availableMinutes - planned.knownMinutes : null
+    },
+    energy: {
+      ...energy,
+      budgetMinutes: budget,
+      remainingMinutes: budget === null ? null : budget - energy.heavyMinutes
     },
     planned: {
       knownMinutes: planned.knownMinutes, unknownCount: planned.unknownCount,
       itemCount: planned.itemCount, estimatedCount: planned.estimatedCount
     },
-    actual: { minutes: actual.minutes, entryCount: actual.entryCount, daysWithEntries: actual.daysWithEntries },
+    actual: {
+      minutes: actual.minutes, entryCount: actual.entryCount, daysWithEntries: actual.daysWithEntries,
+      bySource: { ...actual.bySource }
+    },
     areas: areaRows,
     unassigned: {
       plannedMinutes: none.knownMinutes, plannedUnknown: none.unknownCount, plannedItems: none.itemCount,
+      intentionalItems: planned.optedOutCount,
       actualMinutes: actual.byArea.get(NONE_KEY) || 0
     },
     items,
+    activeGoalIds: activeGoals(items, actual, index),
     dataQuality: dataQuality({ areas: cleanAreas, capacity: weekCapacity, planned, actual }),
     signals
   };

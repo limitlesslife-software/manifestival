@@ -19,28 +19,39 @@ import {
   restoreLifeAreaInState,
   findLifeArea, upsertWeeklyCapacityInState, removeWeeklyCapacityFromState,
   addTimeEntryToState, removeTimeEntryFromState, upsertAlignmentReviewInState,
-  findGoal, findTask
+  findGoal, findTask, findProject, findRoutine
 } from './state.js';
 import {
   lifeAreasRepo, weeklyCapacitiesRepo, timeEntriesRepo, alignmentReviewsRepo
 } from '../data/collectionsRepo.js';
+import { getUser, sessionSnapshot, isSameSession } from '../data/session.js';
+import { loadOutbox, saveOutbox, MAX_OUTBOX_ENTRIES } from '../data/timerStore.js';
+import { createTimeEntryWriter } from './timeEntryWriter.js';
 import { newTaskId } from '../lib/rows.js';
 import { fmtISO, todayMidnight } from '../lib/datetime.js';
 import { logEvent } from '../lib/logger.js';
 import { showError, notify } from '../ui/toast.js';
 import { confirmAction } from '../ui/confirm.js';
-import { normalizeLifeArea, validateLifeArea } from '../domain/lifeArea.js';
+import { normalizeLifeArea, validateLifeArea, formatMinutes } from '../domain/lifeArea.js';
 import {
   normalizeWeeklyCapacity, validateWeeklyCapacity, capacityForWeek, weekStartOf, nextWeekStart
 } from '../domain/weeklyCapacity.js';
-import { normalizeTimeEntry, validateTimeEntry } from '../domain/timeEntry.js';
+import { normalizeTimeEntry, validateTimeEntry, entriesForOperation } from '../domain/timeEntry.js';
 import { analyzeWeek } from '../domain/alignment.js';
 import { addDaysIso } from '../domain/fiTemporal.js';
 import {
   buildReviewSnapshot, normalizeAlignmentReview, validateAlignmentReview,
-  proposeAdjustments, planningFeedback, ADJUSTMENT, SNAPSHOT_VERSION
+  proposeAdjustments, planningFeedback, explainSignal, ADJUSTMENT, SNAPSHOT_VERSION,
+  NON_WRITING_ADJUSTMENTS
 } from '../domain/alignmentReview.js';
 import { editGoal, setGoalStatus, createTask, editTask } from './actions.js';
+import { currentAccessToken } from './auth.js';
+import { previewAdjustments } from '../domain/rebalance.js';
+import { buildPlanningConstraints, validatePlanAlignment } from '../domain/planAlignment.js';
+import { dailyObservations } from '../domain/dailyAlignment.js';
+import { weekSummary, compareWeeks, alignmentTrends } from '../domain/reviewComparison.js';
+import { TREND_RULES, POLICY_VERSION } from '../domain/alignmentPolicy.js';
+import { explainWithFallback } from '../ai/alignmentExplainClient.js';
 
 /** Suunnan muutokset eivät mene offline-jonoon: ne vaativat vahvistuksen ja verkon. */
 const NO_QUEUE = Object.freeze({ queueOffline: false });
@@ -78,7 +89,8 @@ export function analyzeCurrentWeek(weekStart = null, clock = clockNow()) {
     routines: state.routines,
     exceptions: state.routineExceptions,
     timeEntries: state.timeEntries,
-    capacity: capacityForWeek(state.weeklyCapacities, monday)
+    capacity: capacityForWeek(state.weeklyCapacities, monday),
+    itemSettings: state.alignmentItemSettings
   });
 }
 
@@ -87,13 +99,121 @@ export function currentProposals(analysis, clock = clockNow()) {
   const state = getState();
   const next = nextWeekStart(analysis.weekStart);
   const nextAnalysis = analyzeCurrentWeek(next, clock);
+  // Hiljaisen tavoitteen tunnistus tarvitsee edelliset viikot.
+  const recentAnalyses = [1, 2].map(weeks => analyzeCurrentWeek(addDaysIso(analysis.weekStart, -7 * weeks), clock));
   return proposeAdjustments(analysis, {
     areas: state.lifeAreas,
     goals: state.goals,
     tasks: state.tasks,
     nextWeekAnalysis: nextAnalysis,
-    nextCapacity: capacityForWeek(state.weeklyCapacities, next)
+    nextCapacity: capacityForWeek(state.weeklyCapacities, next),
+    recentAnalyses
   });
+}
+
+/** analyzeWeek()-syötteet tilasta annetulle viikolle (esikatselu ja tarkistus). */
+export function weekInputs(weekStart, clock = clockNow()) {
+  const state = getState();
+  const monday = weekStartOf(weekStart);
+  return {
+    weekStart: monday, todayIso: clock.todayIso, nowMinutes: clock.nowMinutes,
+    areas: state.lifeAreas, goals: state.goals, projects: state.projects, tasks: state.tasks,
+    routines: state.routines, exceptions: state.routineExceptions, timeEntries: state.timeEntries,
+    capacity: capacityForWeek(state.weeklyCapacities, monday), itemSettings: state.alignmentItemSettings
+  };
+}
+
+/**
+ * Esikatsele valittujen ehdotusten vaikutus ensi viikkoon. EI kirjoita.
+ * @param {string} weekStart tarkasteltava viikko; ehdotukset koskevat seuraavaa
+ */
+export function previewSelectedAdjustments(weekStart, proposals = [], overrides = {}, clock = clockNow()) {
+  return previewAdjustments({ inputs: weekInputs(nextWeekStart(weekStart), clock), proposals, overrides });
+}
+
+/** Tavoitteesta tekemiseksi: rajat tälle viikolle (vain luvut). */
+export function currentPlanningConstraints(clock = clockNow()) {
+  return buildPlanningConstraints(analyzeCurrentWeek(null, clock));
+}
+
+/**
+ * Tarkista suunnitelmaehdotus Suunnan säännöillä ENNEN hyväksyntää.
+ * Alue: olemassa olevan tavoitteen alue, tai suunnitelman kategorian
+ * kautta kytketty alue. Ei kirjoita mitään.
+ */
+export function validatePlanAgainstAlignment(plan, { goalId = null } = {}, clock = clockNow()) {
+  if (!plan) return null;
+  const state = getState();
+  const existing = goalId ? findGoal(goalId) : null;
+  const category = plan.goal && plan.goal.category;
+  const byCategory = category ? state.lifeAreas.find(area => area.categoryKey === category) : null;
+  const areaId = (existing && existing.lifeAreaId) || (byCategory ? byCategory.id : null);
+  const keep = list => (list || []).filter(item => item && !item.excluded);
+  return validatePlanAlignment({
+    planTasks: keep(plan.tasks),
+    planRoutines: keep(plan.routines),
+    areaId,
+    base: {
+      todayIso: clock.todayIso, areas: state.lifeAreas, goals: state.goals, projects: state.projects,
+      tasks: state.tasks, routines: state.routines, exceptions: state.routineExceptions,
+      timeEntries: state.timeEntries, capacities: state.weeklyCapacities, itemSettings: state.alignmentItemSettings
+    }
+  });
+}
+
+/** Päivän havainnot tälle päivälle. */
+export function currentDailyAlignment(clock = clockNow()) {
+  const state = getState();
+  const analysis = analyzeCurrentWeek(null, clock);
+  return {
+    analysis,
+    daily: dailyObservations(analysis, {
+      todayIso: clock.todayIso, areas: state.lifeAreas,
+      explain: signal => explainSignal(signal, state.lifeAreas)
+    })
+  };
+}
+
+/**
+ * Viikon yhteenveto vertailuun ja kehitykseen. Tallennettu katsaus on
+ * historiaa ja voittaa: sitä ei lasketa uudelleen nykyisillä säännöillä.
+ */
+export function weekSummaryFor(weekStart, clock = clockNow()) {
+  const monday = weekStartOf(weekStart);
+  const saved = getState().alignmentReviews.find(review => review.weekStart === monday);
+  if (saved && saved.snapshot && saved.snapshot.version !== undefined) {
+    return weekSummary({ ...saved.snapshot, weekStart: monday }, { origin: 'snapshot' });
+  }
+  return weekSummary(analyzeCurrentWeek(monday, clock), { origin: 'live' });
+}
+
+/** Tämä viikko vs. edellinen. */
+export function compareWithPreviousWeek(weekStart, clock = clockNow()) {
+  const monday = weekStartOf(weekStart);
+  return compareWeeks(weekSummaryFor(monday, clock), weekSummaryFor(addDaysIso(monday, -7), clock));
+}
+
+/** Kehitys viimeisiltä viikoilta (vanhin ensin). Tyhjät viikot pois. */
+export function recentTrends(weekStart, clock = clockNow()) {
+  const monday = weekStartOf(weekStart);
+  const summaries = [];
+  for (let back = TREND_RULES.WEEKS - 1; back >= 0; back--) {
+    const summary = weekSummaryFor(addDaysIso(monday, -7 * back), clock);
+    const empty = !summary.capacityMinutes && !summary.plannedMinutes && !summary.actualMinutes;
+    if (!empty) summaries.push(summary);
+  }
+  return alignmentTrends(summaries);
+}
+
+/** Tekoälyselitys varapolulla. Palauttaa aina selityksen. */
+export async function explainSignalOptionally(signal, analysis, { fetchImpl = null, accessToken = undefined } = {}) {
+  const token = accessToken !== undefined ? accessToken : await currentAccessToken().catch(() => null);
+  const result = await explainWithFallback({
+    analysis, signal, areas: getState().lifeAreas, accessToken: token, fetchImpl
+  });
+  // Lokiin vain lähde ja lopputulos: ei tekstiä, ei aluenimiä.
+  logEvent('alignment.explanation', { kind: signal.kind, source: result.source, failure: result.failure || null });
+  return result;
 }
 
 /**
@@ -226,23 +346,105 @@ export async function saveWeeklyCapacity(input) {
 
 // ------------------------------------------------------------ toteuma
 
-export async function logTime(input) {
-  const entry = normalizeTimeEntry({ ...input, id: newTaskId() });
+/** Parhaillaan tallentuvat operaatiot: kaksoisklikkaus ei tuota toista riviä. */
+const inFlightOperations = new Set();
+
+function sessionUserId() {
+  const user = getUser();
+  return user && user.id ? String(user.id) : null;
+}
+
+const defaultWriter = createTimeEntryWriter({
+  repo: timeEntriesRepo,
+  loadOutbox,
+  saveOutbox,
+  userId: sessionUserId,
+  snapshot: sessionSnapshot,
+  isSameSession,
+  isOffline: () => typeof navigator !== 'undefined' && navigator.onLine === false,
+  maxOutbox: MAX_OUTBOX_ENTRIES
+});
+let writer = defaultWriter;
+
+/** Testejä varten: korvaa kirjoittaja (tekorepositorio). null palauttaa oletuksen. */
+export function setTimeEntryWriterForTests(replacement) {
+  writer = replacement || defaultWriter;
+}
+
+/**
+ * Kirjaa aikaa.
+ *
+ * IDEMPOTENTTI: jokaisella kirjauksella on operaatiotunniste. Jos sama
+ * operaatio on jo tilassa tai tallentumassa, uutta riviä ei synny
+ * (`duplicate: true`). Kanta vartioi samaa uniikkirajoitteella (0013).
+ *
+ * OFFLINE: kun kirjaus menisi kantaan ja verkko puuttuu, kirjaus jää
+ * tilaan ja laitteen lähtökoriin (`queued: true`) ja lähetetään kun
+ * yhteys palaa (flushTimeOutbox). Aika ei katoa hiljaa. Tämä koskee
+ * VAIN aikakirjauksia; yleistä offline-jonoa ei laajenneta.
+ */
+export async function logTime(input, { silent = false } = {}) {
+  const id = newTaskId();
+  const entry = normalizeTimeEntry({ ...input, id, operationId: input?.operationId || `log:${id}` });
   const { valid, errors } = validateTimeEntry(entry);
   if (!valid) return { ok: false, errors };
+  // Omistajuus: vain käyttäjän omassa tilassa oleva kohde kelpaa.
   if (entry.lifeAreaId && !findLifeArea(entry.lifeAreaId)) entry.lifeAreaId = null;
   if (entry.taskId && !findTask(entry.taskId)) entry.taskId = null;
   if (entry.goalId && !findGoal(entry.goalId)) entry.goalId = null;
-
-  addTimeEntryToState(entry);
-  const result = await timeEntriesRepo.insert(entry);
-  if (!result.ok) {
-    removeTimeEntryFromState(entry.id);
-    showError(result.error);
-    return { ok: false };
+  if (entry.projectId && !findProject(entry.projectId)) entry.projectId = null;
+  if (entry.routineId && !findRoutine(entry.routineId)) {
+    entry.routineId = null;
+    entry.occurrenceDate = null;
   }
-  logEvent('alignment.time_logged', { minutes: entry.minutes, linked: Boolean(entry.lifeAreaId || entry.taskId || entry.goalId) });
-  return { ok: true, entry };
+
+  const existing = entriesForOperation(getState().timeEntries, entry.operationId)
+    .find(other => other.operationId === entry.operationId);
+  if (existing) return { ok: true, duplicate: true, entry: existing };
+  if (inFlightOperations.has(entry.operationId)) return { ok: true, duplicate: true, pending: true };
+
+  inFlightOperations.add(entry.operationId);
+  try {
+    addTimeEntryToState(entry);
+    const result = await writer.insert(entry);
+    if (!result.ok) {
+      removeTimeEntryFromState(entry.id);
+      if (!silent) showError(result.error);
+      return { ok: false };
+    }
+    if (result.duplicate) return { ok: true, duplicate: true, entry };
+    if (result.queued) {
+      if (!silent) notify('Ei yhteyttä: kirjaus tallennetaan, kun yhteys palaa.', 5000);
+      return { ok: true, queued: true, entry };
+    }
+    logEvent('alignment.time_logged', {
+      minutes: entry.minutes, source: entry.source,
+      linked: Boolean(entry.lifeAreaId || entry.taskId || entry.goalId || entry.projectId || entry.routineId)
+    });
+    return { ok: true, entry };
+  } finally {
+    inFlightOperations.delete(entry.operationId);
+  }
+}
+
+/** Lähettämättömien kirjausten määrä (näkymälle). */
+export function pendingTimeEntryCount() {
+  return writer.pendingCount();
+}
+
+/**
+ * Lähetä laitteelle jääneet kirjaukset. Uusinta on turvallinen: sama
+ * operaatio tallentuu kerran (kannan uniikkirajoite -> "jo tallennettu").
+ */
+export async function flushTimeOutbox() {
+  const result = await writer.flush();
+  for (const { entry, error } of result.rejected || []) {
+    // Palvelin hylkäsi (esim. kohde poistettu): ei uusita loputtomiin.
+    removeTimeEntryFromState(entry.id);
+    showError(error);
+  }
+  if (result.sent > 0) logEvent('alignment.time_outbox_flushed', { sent: result.sent, left: result.left });
+  return { sent: result.sent, left: result.left };
 }
 
 export async function deleteTimeEntry(id) {
@@ -264,7 +466,9 @@ export async function deleteTimeEntry(id) {
  * Tallenna viikkokatsaus: tilannekuva siitä mitä käyttäjä näki, hänen
  * oma pohdintansa ja vahvistetut muutokset.
  */
-export async function saveWeeklyReview({ weekStart, reflection = null, adjustments = [] } = {}, clock = clockNow()) {
+export async function saveWeeklyReview({
+  weekStart, reflection = null, adjustments = [], reflectionAnswers = undefined
+} = {}, clock = clockNow()) {
   const analysis = analyzeCurrentWeek(weekStart, clock);
   const state = getState();
   const existing = state.alignmentReviews.find(review => review.weekStart === analysis.weekStart) || null;
@@ -274,7 +478,10 @@ export async function saveWeeklyReview({ weekStart, reflection = null, adjustmen
     weekStart: analysis.weekStart,
     snapshotVersion: SNAPSHOT_VERSION,
     snapshot: buildReviewSnapshot(analysis),
+    policyVersion: POLICY_VERSION,
     reflection,
+    reflectionAnswers: reflectionAnswers === undefined
+      ? (existing ? existing.reflectionAnswers : {}) : reflectionAnswers,
     adjustments: [...new Set([...(existing ? existing.adjustments : []), ...adjustments])],
     completedAt: new Date().toISOString()
   });
@@ -317,12 +524,18 @@ function describe(proposal) {
  * @param {object} [options.overrides] käyttäjän muokkaama arvo (esim. tavoiteminuutit)
  * @returns {Promise<{ok: boolean, applied?: boolean, cancelled?: boolean, duplicate?: boolean}>}
  */
-export async function applyAdjustment(proposal, { confirmFn = confirmAction, overrides = {} } = {}) {
+export async function applyAdjustment(proposal, { confirmFn = confirmAction, overrides = {}, confirmed = false } = {}) {
   if (!proposal || !Object.values(ADJUSTMENT).includes(proposal.type)) return { ok: false };
+  // Ohjaava ehdotus ei kirjoita mitään: näkymä avaa työnkulun.
+  if (NON_WRITING_ADJUSTMENTS.includes(proposal.type)) {
+    return { ok: true, applied: false, navigate: 'estimate' };
+  }
   if (applied.has(proposal.id)) return { ok: true, applied: false, duplicate: true };
 
   const payload = { ...proposal.payload, ...overrides };
-  const accepted = await confirmFn({
+  // `confirmed`: ryhmä on jo vahvistettu yhdellä dialogilla, jossa
+  // jokainen muutos oli lueteltu (applySelectedAdjustments).
+  const accepted = confirmed || await confirmFn({
     title: 'Tehdäänkö muutos?',
     message: describe(proposal),
     confirmLabel: 'Tee muutos'
@@ -371,6 +584,43 @@ export async function applyAdjustment(proposal, { confirmFn = confirmAction, ove
 
   if (!result.ok) applied.delete(proposal.id);
   logEvent('alignment.adjustment', { type: proposal.type, accepted: true, ok: Boolean(result.ok) });
-  if (result.ok) notify('Muutos tehty.', 3000);
+  if (result.ok && !confirmed) notify('Muutos tehty.', 3000);
   return { ok: Boolean(result.ok), applied: Boolean(result.ok) };
+}
+
+/**
+ * Toteuta valittu RYHMÄ muutoksia yhdellä vahvistuksella.
+ *
+ * Vahvistusdialogi luettelee JOKAISEN muutoksen ja esikatselun
+ * lopputuloksen; mitään ei tehdä piilossa. Ohjaavat ehdotukset
+ * (arvioi tehtäviä) eivät kuulu ryhmään.
+ *
+ * @returns {Promise<{ok: boolean, cancelled?: boolean, results?: Array}>}
+ */
+export async function applySelectedAdjustments(proposals = [], { confirmFn = confirmAction, overrides = {}, preview = null } = {}) {
+  const writing = (proposals || []).filter(proposal => proposal && !NON_WRITING_ADJUSTMENTS.includes(proposal.type)
+    && !applied.has(proposal.id));
+  if (writing.length === 0) return { ok: true, results: [] };
+  const lines = writing.map((proposal, index) => `${index + 1}. ${proposal.label}`);
+  const outcome = preview
+    ? `\n\nEnsi viikko muutosten jälkeen: suunniteltu ${formatMinutes(preview.after.plannedMinutes)}`
+      + (Number.isFinite(preview.after.capacityMinutes) ? `, kapasiteetti ${formatMinutes(preview.after.capacityMinutes)}.` : '.')
+    : '';
+  const accepted = await confirmFn({
+    title: writing.length === 1 ? 'Tehdäänkö muutos?' : `Tehdäänkö ${writing.length} muutosta?`,
+    message: lines.join('\n') + outcome,
+    confirmLabel: writing.length === 1 ? 'Tee muutos' : 'Tee muutokset'
+  });
+  if (!accepted) {
+    logEvent('alignment.adjustment_group', { count: writing.length, accepted: false });
+    return { ok: true, cancelled: true, results: [] };
+  }
+  const results = [];
+  for (const proposal of writing) {
+    results.push({ id: proposal.id, ...(await applyAdjustment(proposal, { overrides: overrides[proposal.id] || {}, confirmed: true })) });
+  }
+  const done = results.filter(result => result.applied).length;
+  logEvent('alignment.adjustment_group', { count: writing.length, accepted: true, applied: done });
+  notify(done === writing.length ? 'Muutokset tehty.' : `${done}/${writing.length} muutosta tehty.`, 4000);
+  return { ok: done === writing.length, results };
 }

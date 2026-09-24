@@ -172,6 +172,13 @@ const FIXTUURIT = Object.freeze({
   alignmentReviews: {
     id: 'w-ar-1', weekStart: '2026-09-14', snapshotVersion: 1,
     snapshot: { version: 1, weekStart: '2026-09-14' }, adjustments: []
+  },
+  // Migraatio 0013 (aalto J).
+  runningTimers: {
+    id: 'w-rt-1', targetKind: 'none', startedAt: '2026-09-17T08:00:00.000Z', pausedSeconds: 0
+  },
+  alignmentItemSettings: {
+    id: 'w-ais-1', itemKind: 'task', itemId: 'w-task-1', energyDemand: 4
   }
 });
 

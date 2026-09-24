@@ -42,7 +42,10 @@ const SIGNAL_METRIC_KEYS = Object.freeze([
   'plannedMinutes', 'availableMinutes', 'overageMinutes', 'percentOfCapacity', 'unknownCount',
   'targetMinutes', 'expectedByNowMinutes', 'actualMinutes', 'percentOfExpected',
   'weekProgressPercent', 'direction', 'desiredPercent', 'actualPercent', 'deviationPoints',
-  'coveragePercent', 'incomplete', 'targetsMinutes', 'differenceMinutes'
+  'coveragePercent', 'incomplete', 'targetsMinutes', 'differenceMinutes',
+  // Energiakuormitus (Suunta 2). Vain lukuja ja totuusarvoja.
+  'heavyMinutes', 'veryHeavyMinutes', 'energyBudgetMinutes', 'percentOfBudget',
+  'unratedCount', 'unratedMinutes', 'timeOverloaded', 'heavySharePercent', 'energyLevel', 'knownMinutes'
 ]);
 
 /**

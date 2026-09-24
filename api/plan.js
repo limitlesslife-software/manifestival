@@ -86,6 +86,23 @@ function buildPrompt({ goalText, today, mode, context }) {
   if (context.nearestDeadlineDays !== null) {
     tilanne.push(`Lähin määräpäivä on ${context.nearestDeadlineDays} päivän päässä.`);
   }
+  // SUUNNAN RAJAT. Käyttäjän omat, deterministisesti lasketut. Malli
+  // suunnittelee niiden sisällä eikä voi muuttaa niitä.
+  const rajat = [];
+  if (context.remainingWeeklyHours !== null && context.remainingWeeklyHours !== undefined) {
+    rajat.push(`Tämän viikon kapasiteettia on jäljellä noin ${context.remainingWeeklyHours} h.`);
+  }
+  if (context.protectedHours) {
+    rajat.push(`Käyttäjälle tärkeille elämänalueille (${context.neglectedImportantAreaCount || 0} kpl) on varattava `
+      + `noin ${context.protectedHours} h viikossa; älä suunnittele tätä aikaa muuhun.`);
+  }
+  if (context.heavyRemainingHours !== null && context.heavyRemainingHours !== undefined) {
+    rajat.push(`Kuormittavaa tekemistä mahtuu viikkoon enää noin ${context.heavyRemainingHours} h.`);
+  }
+  if (context.unestimatedCount) {
+    rajat.push(`Viikolla on jo ${context.unestimatedCount} arvioimatonta asiaa, joten jätä väljyyttä.`);
+  }
+  if (rajat.length > 0) tilanne.push('RAJAT: ' + rajat.join(' ') + ' Et voi muuttaa käyttäjän tärkeyksiä, tavoitteita etkä kapasiteettia.');
 
   return `Tämän hetken päivämäärä on ${today}.
 
