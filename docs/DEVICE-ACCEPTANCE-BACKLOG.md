@@ -591,6 +591,68 @@ istunnon muistissa, ja näkymä kertoo sen.
 
 ---
 
+## Suunta 2: ajastin, kirjaus, energia, katsaus v2 — EI SUORITETTU
+
+Paikallisesti todennettu: yksikkö- ja integraatiotestit sekä
+headless-Chromen E2E (`npm run e2e:suunta`, 412 px ja 360 px). **Fyysisellä
+laitteella ei ole ajettu mitään.** Migraatiot 0012 ja 0013 ajamatta:
+ajastin säilyy laitteen localStoragessa (käyttäjäkohtainen avain), muu
+Suunnan tieto elää istunnon muistissa.
+
+Ajastimen kesto lasketaan aikaleimoista. Taustasuoritusta EI ole eikä
+sitä väitetä: laitteella todennetaan, että **näyttö** on oikein paluun
+jälkeen, ei että jokin laskisi taustalla.
+
+### P0
+
+- [P0] Ajastin: käynnistä → sovellus taustalle 10 min → takaisin:
+      palkki näyttää ~10 min lisää, tila "Käynnissä"
+- [P0] Ajastin näyttö lukittuna 30 min → avaus: kulunut aika oikein,
+      pysäytys kirjaa oikean määrän
+- [P0] Ajastin + sovelluksen sulku (swipe pois) → avaus: ajastin palaa
+      (localStorage), pysäytys kirjaa koko ajan
+- [P0] Ajastin keskiyön yli (esim. 23.40 → 00.20): kaksi kirjausta
+      oikeille päiville; sunnuntai → maanantai menee eri viikoille
+- [P0] Ajastin offline: lentotila → pysäytä → "tallennetaan, kun yhteys
+      palaa" (vain kun 0013 on ajettu ja portti auki); yhteys takaisin →
+      yksi kirjaus, ei kahta
+- [P0] Nopea kirjaus: +15/+30/+1 h yhdellä napautuksella; kaksoisnapautus
+      ei tuota kahta kirjausta
+- [P0] Tehtävän valmistuminen: "Kirjataanko tähän käytetty aika?" —
+      "Arvio … hyväksyn arvion toteumaksi" näkyy vain kun arvio on;
+      "Ohita" ei kirjaa mitään; "Älä kysy" pitää
+
+### P1
+
+- [P1] Energiakentät (tehtävä, rutiini, projekti) ja kuormittavan ajan
+      raja: numeronäppäimistö, desimaalipilkku, tyhjä = ei asetettu
+- [P1] Suunta vierii mobiilissa: pikatoiminnot, arviointi, kohdistus,
+      katsaus v2, esikatselu ja kehitys — ei vaakavieritystä
+- [P1] Viikkokatsaus v2: viisi pohdintakysymystä, tallennus ei hyppää
+      alkuun, näppäimistö ei peitä aktiivista kenttää
+- [P1] Ensi viikon esikatselu → "Vahvista valitut muutokset…" → dialogi
+      luettelee jokaisen muutoksen; peruutus ei muuta mitään
+- [P1] Pitkät elämänalueiden nimet (60 merkkiä) ajastinpalkissa,
+      havainnoissa ja taulukoissa rivittyvät
+- [P1] Turva-alue: ajastinpalkki ei jää loven/tilarivin alle
+      (env(safe-area-inset-top))
+- [P1] TalkBack: ajastinpalkin tila luetaan sanoina ("Käynnissä",
+      "Kulunut 1 h 5 min"); painikkeilla on nimet; dialogin fokus
+
+### P2
+
+- [P2] Ajastin kesäajan vaihdon yli (lokakuun viimeinen sunnuntai):
+      kesto seinäkellon mukaan oikein (3 h, ei 2 h)
+- [P2] Aikavyöhykkeen vaihto ajastimen ollessa käynnissä (matka): kesto
+      ei muutu; päivä tulee pysäytyshetken vyöhykkeestä
+- [P2] Tumma/vaalea tila: ajastinpalkin kontrasti, Tauolla-tilan väri
+- [P2] Ilmoituksia ei käytetä ajastimessa eikä päivän havainnoissa:
+      mitään ei ilmoiteta taustalla
+- [P2] Tekoälyselitys: ilman verkkoa "Selitä tarkemmin" näyttää
+      deterministisen selityksen eikä jumiudu
+
+---
+
 ## Muistutus siitä, mitä nämä ovat
 
 > **Yhtäkään tämän osion kohtaa ei saa merkitä hyväksytyksi ilman

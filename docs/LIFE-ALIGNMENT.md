@@ -1,8 +1,9 @@
 # Suunta (Life Alignment)
 
-**Tila:** ensimmäinen pystyviipale rakennettu paikallisesti, haara
-`feature/life-alignment-foundation`. Migraatio `0012` **EI AJETTU**; portit
-kiinni, joten tieto elää istunnon muistissa ja näkymä sanoo sen.
+**Tila:** Suunta 1 (perusta) ja Suunta 2 (toteuma arkeen, ajastin, energia,
+katsaus v2) rakennettu paikallisesti, haara `feature/life-alignment-foundation`.
+Migraatiot `0012` ja `0013` **EI AJETTU**; portit kiinni, joten tieto elää
+istunnon muistissa (ajastin laitteen localStoragessa) ja näkymä sanoo sen.
 
 > Käyttäjä kertoo mikä on tärkeää ja paljonko ehtii. Suunta näyttää, missä
 > suunnitelma ja todellisuus poikkeavat siitä — ja käyttäjä päättää mitä
@@ -120,9 +121,9 @@ alueet välitetään tunnisteina — ei mallille.
 Havainnot ovat deterministisiä; testi vartioi, ettei domain tuo mitään
 ai-kerroksesta. `src/ai/alignmentContext.js` rakentaa selitystä varten
 minimoidun kontekstin (luvut, havainnot, aluenimet tunnuksina A1…, ei
-otsikoita/muistiinpanoja/pohdintoja). **Kutsupolkua mallille ei ole
-rakennettu:** käyttöliittymän selitykset ovat deterministisiä
-(`explainSignal`).
+otsikoita/muistiinpanoja/pohdintoja). Suunta 2 lisäsi valinnaisen
+kutsupolun (`/api/explain`, ks. "Tekoälyselitys" alla); deterministinen
+selitys (`explainSignal`) on aina varapolku ja oletus.
 
 ## Laajennuspisteet
 
@@ -133,24 +134,205 @@ tuottaa samoja faktoja:
   omalla migraatiollaan)
 - **Talous** → rahan sitoumukset/toteuma alueittain (erillinen ulottuvuus;
   rahaa ei sekoiteta aikaan)
-- **Hyvinvointi** (`wellbeing_entries.energy`) → toteutunut energia; tänään
-  vain käyttäjän viikkoarvio `energy_level` näytetään, energiakuormitusta ei
-  lasketa, koska tehtävillä ei ole energiavaatimusta
+- **Hyvinvointi** (`wellbeing_entries.energy`) → voi suostumuksella vain
+  ehdottaa energia-arviota; ei koskaan kirjoita kapasiteettia. Energiakuorma
+  lasketaan Suunta 2:ssa käyttäjän omista kuormittavuusmerkinnöistä (ks. alla)
 - **Terveys/aktiivisuus** → energian ja liikkeen näyttö
+
+## Suunta 2 — toteuma arkeen
+
+### Sääntöpolitiikka ja versio
+
+Kaikki kynnykset ovat yhdessä moduulissa `src/domain/alignmentPolicy.js`
+(`TIME_RULES`, `ENERGY_RULES`, `DAILY_RULES`, `QUALITY_RULES`,
+`REVIEW_RULES`, `TREND_RULES`, `TIMER_RULES`). Ajan kynnykset ovat
+ensimmäisen version arvot sellaisenaan (`RULES` alignment.js:ssä on sama
+olio). Kynnyksiä ei näytetä käyttäjälle säädettävinä.
+
+`POLICY_VERSION = 2` tallentuu viikkokatsauksen tilannekuvaan
+(`snapshot.policyVersion`, 0013:n jälkeen myös sarakkeeseen). Katsaus ilman
+versiota on versio 1. Vanhoja tilannekuvia **ei lasketa uudelleen**; historia
+ja vertailu näyttävät millä säännöillä viikko arvioitiin.
+
+### Toteuma: nopea kirjaus ja ajastin
+
+| Mistä | Mitä |
+|---|---|
+| Suunta → Pikatoiminnot | Aloita ajanseuranta · Kirjaa aikaa (alue valittavissa) |
+| Tehtävän lomake | Kirjaa aikaa · Aloita ajastin |
+| Projektin lomake | Kirjaa aikaa · Aloita ajastin |
+| Tänään → rutiinin esiintymä | Kirjaa (esiintymän identiteetti: rutiini + päivä) |
+| Tänään → Suunta-kortti | Kirjaa aikaa |
+| Tehtävän valmistuminen | "Kirjataanko tähän käytetty aika?" 15 min / 30 min / Arvio (hyväksyn arvion toteumaksi) / Muu / Ohita |
+
+**Ajastin** (`src/domain/timer.js`): kesto = (tauon alku tai nyt) − alku −
+taukojen summa. Aikaleimat ovat totuus; näytön päivitys on vain näyttöä.
+Keskiyön ylittävä ajastus jaetaan päiville paikallisen keskiyön kohdalta
+(keskiyö rakennetaan kalenterista, joten kesäajan 23/25 tunnin päivät
+toimivat; yli 24 h päivä pilkotaan kahteen kirjaukseen). Tauot jaetaan
+päiville suhteessa. Alle puolen minuutin ajastus ei tuota kirjausta; yli
+12 h pyydetään tarkistamaan. Tulevaisuuden alku hylätään; kello taaksepäin
+→ 0 eikä negatiivista. Aikavyöhykkeen vaihto ei muuta kestoa.
+
+**Pysyvyys:** ajastin laitteen localStoragessa käyttäjäkohtaisella avaimella
+(sisällön userId tarkistetaan), kannassa `running_timers` 0013:n jälkeen
+(YKSI käyttäjää kohti, `unique (user_id)`). Kanta voittaa laitteen kopion.
+Uloskirjautuminen tyhjentää tilan; A:n ajastin ei näy B:lle. Tilin poisto
+poistaa laitteen kopion.
+
+**Idempotenssi:** jokaisella kirjauksella on operaatiotunniste
+(`timer:<id>[.<n>]`, `task-done:<id>:<hetki>`, `routine:<id>:<päivä>[:<n>]`,
+`log:<id>`). Sama operaatio tallentuu kerran: tilassa, kesken olevana ja
+kannassa (`unique (user_id, operation_id)`, 23505 = jo perillä).
+
+**Offline:** kapea lähtökori vain aikakirjauksille (`src/app/timeEntryWriter.js`).
+Verkkovirhe → kirjaus jää tilaan ja koriin; paluu → lähetys järjestyksessä,
+pysähtyy ensimmäiseen verkkovirheeseen; hylätty ei uusiudu loputtomiin;
+istunnon vaihto keskeyttää. Yleistä offline-jonoa ei laajennettu. Ennen
+0013:a sarakeportti `ALIGNMENT_REALITY_FIELDS` pitää uudet sarakkeet pois ja
+ajastinkirjaus tallentuu lähteellä 'manual' (minuutit ja kohde säilyvät).
+
+**Alueen päättely kirjaukselle:** suora alue > tehtävä > rutiini > projekti >
+tavoite. Ensimmäinen osuma voittaa; sama minuutti ei päädy kahteen alueeseen.
+
+### Energia (ENERGY_OVERLOAD)
+
+Kuormittavuus 1 kevyt · 2 melko kevyt · 3 keskitaso · 4 kuormittava · 5
+erittäin kuormittava tehtävälle, rutiinille tai projektille (tehtävä perii
+projektin arvon, jos omaa ei ole). Merkitsemätön = tuntematon; mitään ei
+päätellä otsikosta. Tallennus omaan tauluun `alignment_item_settings` (ei
+tasks-saraketta).
+
+```
+kuormittava aika = Σ kesto (min) niistä viikon suunnitelluista kohteista,
+                   joiden kuormittavuus >= 4          (ei painoja)
+raja             = weekly_capacities.energy_budget_minutes (käyttäjän oma)
+
+energy.heavy_exceeds_budget    raja asetettu, kuormittava > raja       -> Huomio
+                               kuormittava >= 1,2 x raja tai raja 0    -> Vahva
+energy.possible_with_unrated   kuormittava >= 0,9 x raja ja osa
+                               kestollisesta työstä on arvioimatta     -> Tiedoksi
+energy.low_energy_heavy_share  ei rajaa; oma energia-arvio <= 2;
+                               kuormittavaa >= 50 % tunnetusta ajasta
+                               ja >= 2 h                                -> Tiedoksi
+```
+
+TIME_OVERLOAD (`overload`) ja ENERGY_OVERLOAD (`energy_overload`) ovat eri
+havaintoja; yhdistettyä pistettä ei ole. Selitys sanoo "Aikaa näyttäisi
+olevan riittävästi, mutta suunniteltu viikko on energiakuormaltaan raskas",
+kun aika ei ylity.
+
+### Päivän Suunta
+
+Enintään 3 havaintoa, deterministinen järjestys: 1 vahva kuormitus · 2 vahva
+huomiotta jääminen · 3 vahva poikkeama · 4 energiakuormitus · 5–7 huomio-tason
+aikahavainnot · 8 luokittelematon työ (≥ 3) · 9 aineiston laatu (≥ 3
+arvioimatonta / ei kapasiteettia) · 10 tiedoksi. Ensimmäinen on "Tänään
+kannattaa huomata", ja jokainen kertoo "Miksi tämä?". Lisäksi tilarivit:
+kapasiteettia jäljellä, kuormittavaa jäljellä rajasta, tämän päivän yhteys
+hyvin tärkeisiin alueisiin. Ei ilmoituksia, ei kaavioita.
+
+### Aineiston laatu v2 ja työnkulut
+
+Jokainen puute on lause ja toimenpide (`src/domain/alignmentQuality.js`):
+"42 % tämän viikon suunnitelluista asioista ei sisällä aika-arviota" →
+Arvioi tehtäviä; "Vain 35 % kirjatusta ajasta on yhdistetty
+elämänalueisiin" → Kohdista; "Et ole vielä kirjannut toteutunutta aikaa" →
+Kirjaa aikaa. Arviointi: 10 min / 30 min / 1 h / 2 h / muu + "karkea arvio".
+Kohdistus yksi kerrallaan: liitä tavoitteeseen, kytke alueeseen kuuluvaan
+kategoriaan, **jätä tarkoituksella ilman aluetta** (ei muistuteta uudelleen)
+tai ohita nyt. Tehtävää ei liitetä suoraan alueeseen (0012:n periaate).
+
+### Viikkokatsaus v2, vertailu ja kehitys
+
+Osiot: SUUNTA (mitä sanoin tärkeäksi) · SUUNNITELMA · TOTEUMA · POIKKEAMAT
+(ml. kuormittavuus) · MIKSI? (viisi valinnaista pohdintakysymystä,
+`reflection_answers`, ei tekoälylle) · ENSI VIIKKO (ehdotukset).
+
+Vertailu edelliseen viikkoon kertoo vain erot ("12 h → 15 h"); toteumaa ei
+verrata, jos toisella viikolla ei ole kirjauksia; eri sääntöversiot
+mainitaan. Kehitys ("kasvoi/väheni") vasta kun ≥ 3 peräkkäistä viikkoa
+muuttuu samaan suuntaan ja ≥ 60 min; kuormituksen toistuvuus lukuna. Kehitys
+lasketaan vasta pyydettäessä. Ei elämänpisteitä, ei tulostaulua.
+
+### Tasapainotus ja esikatselu
+
+Uudet ehdotukset: kapasiteettioletus kirjatun toteuman perusteella (vain kun
+viikko on päättynyt ja poikkeama ≥ 25 % ja ≥ 2 h; kysymyksenä), arvioi
+ensi viikon arvioimattomat (ohjaava, ei kirjoita), hiljainen tavoite (ei
+tekemistä 3 viikkoon, alue ≤ 3 tai matala prioriteetti). Tavoitteen muutos on
+kysymys: "Pidetäänkö tavoite vai muutetaanko suunnitelmaa?" — ei väitettä,
+että tavoite oli väärä.
+
+`previewAdjustments` soveltaa valinnat kopioon ja näyttää ensi viikon ennen
+ja jälkeen (suunniteltu, kapasiteetti, havainnot, alueet). Ryhmä vahvistetaan
+yhdellä dialogilla, joka luettelee jokaisen muutoksen; mikään ei muutu
+ennen sitä. Esikatselu mitätöityy mistä tahansa tilamuutoksesta.
+
+### Tavoitteesta tekemiseksi
+
+Suunnittelija saa lukumuotoiset rajat (`buildPlanningConstraints`):
+jäljellä oleva kapasiteetti, tärkeiden vajaiden alueiden suojattu aika ja
+lukumäärä, kuormittavaa jäljellä, arvioimattomien määrä. Palvelin päästää läpi
+vain nimetyt lukukentät (`api/_validatePlan.js`). Ennen hyväksyntää
+suunnitelma ajetaan samojen sääntöjen läpi (`validatePlanAlignment`):
+"Suunnitelma mahtuu kapasiteettiin." / "…ylittää kapasiteetin 3 h (viikko
+…)" / "…ei mahdu tärkeän alueen Perhe tavoitetta (puuttuu 10 h)". Tarkistus
+ei estä hyväksyntää.
+
+### Tekoälyselitys (valinnainen)
+
+"Selitä tarkemmin" havainnon "Miksi?"-osiossa → `/api/explain`
+(`api/explain.js`, `api/_validateExplain.js`): vain valittu havainto,
+alueet tunnuksina A1…, ajat tunteina, lueteltuja arvoja; ei otsikoita, ei
+pohdintoja. Kehote kieltää tärkeyden/tavoitteiden/kapasiteetin muuttamisen,
+diagnoosit ja moralisoinnin. Vastaus hylätään, jos se väittää tehneensä
+muutoksen tai sisältää linkin. Jokainen virhe (ei tokenia, verkko, 5xx,
+aikakatkaisu, kelvoton vastaus) → deterministinen selitys. Lokiin vain lähde
+ja lopputulos.
+
+### Toteuman lähteet (laajennuspisteet)
+
+`src/domain/realitySources.js`: jokainen fakta kantaa lähteen, jakson,
+resurssin (aika/raha/energia/aktiivisuus), varmuuden ja kattavuuden.
+Toteutetut: manual, timer. Tulevat (vain rajapinta, `toFacts() = []`):
+calendar, activity, finance (Talous 2.0 auktoritatiivinen, ei omaa taulua),
+wellbeing. **Yksikään lähde ei kirjoita kapasiteettia.** Hyvinvointi voi
+käyttäjän suostumuksella vain *ehdottaa* energia-arviota
+(`suggestEnergyFromWellbeing`, `applies: false`); sovellus ei kytke sitä.
+
+### Migraatio 0013 (EI AJETTU)
+
+`running_timers` (yksi käyttäjää kohti), `alignment_item_settings`
+(kuormittavuus, tarkoituksellinen ohitus, karkea arvio; yksi rivi kohdetta
+kohti), `time_entries` + kohde-, operaatio- ja aikavälisarakkeet ja lähde
+'timer', `weekly_capacities.energy_budget_minutes`,
+`alignment_reviews.policy_version` ja `reflection_answers`. 46 objektia,
+osittaisen ajon tunnistus, RLS + 8 politiikkaa, yhdistelmävierasavaimet
+(`on delete set null (sarake)`), `supabase/verify/verify_0013.sql`.
+Tuotannossa auki oleviin tauluihin (tasks, goals, projects, routines) ei
+kosketa. Aalto J (v23), riippuu aallosta I. **verify_0012 ajetaan ennen
+0013:a** (0013 korvaa 0012:n lähderajoitteen).
 
 ## Tila (rehellinen)
 
 | Osa | Tila |
 |---|---|
 | Elämänalueet, tärkeys, tavoite, kategoriakytkentä | COMPLETE_LOCAL |
-| Tavoite → alue, periytyminen tehtäville/projekteille/rutiineille | COMPLETE_LOCAL |
-| Viikkokapasiteetti (+ energia-arvio) | COMPLETE_LOCAL |
-| Suunniteltu / toteuma / liittämätön / aineiston laatu | COMPLETE_LOCAL |
+| Viikkokapasiteetti + energia-arvio + kuormittavan ajan raja | COMPLETE_LOCAL |
 | OVERLOAD / NEGLECT / MISALIGNMENT / TENSION | COMPLETE_LOCAL |
-| Energiakuormitus | ARCHITECTURE_ONLY |
-| Viikkokatsaus + historia + muutosehdotukset | COMPLETE_LOCAL |
-| Palaute suunnittelulle | COMPLETE_LOCAL |
-| Tekoälyselitys | PARTIAL (minimoitu konteksti valmis, kutsupolkua ei) |
-| Suunta-näkymä ja päiväkortti | IMPLEMENTED_DEVICE_UNVERIFIED |
-| Pysyvyys kantaan (migraatio 0012) | BLOCKED (ajo vaatii omistajan hyväksynnän) |
-| RLS | Staattisesti + simuloidusti todennettu; oikea PostgreSQL-ajo puuttuu |
+| Nopea kirjaus (Suunta, tehtävä, projekti, rutiini, valmistuminen) | IMPLEMENTED_DEVICE_UNVERIFIED |
+| Ajastin (aikaleimat, uudelleenlataus, keskiyö, kesäaika, idempotenssi) | IMPLEMENTED_DEVICE_UNVERIFIED |
+| Offline-lähtökori aikakirjauksille | COMPLETE_LOCAL (kantapolku vasta 0013:n jälkeen) |
+| Kuormittavuus ja ENERGY_OVERLOAD | COMPLETE_LOCAL |
+| Päivän Suunta | IMPLEMENTED_DEVICE_UNVERIFIED |
+| Aineiston laatu v2, arviointi ja kohdistus | COMPLETE_LOCAL |
+| Viikkokatsaus v2, vertailu, kehitys | COMPLETE_LOCAL |
+| Tasapainotus + esikatselu + ryhmävahvistus | COMPLETE_LOCAL |
+| Suunnittelun rajat ja suunnitelman tarkistus | COMPLETE_LOCAL |
+| Tekoälyselitys + varapolku | PARTIAL (koodi ja testit valmiit; /api/explain ei deployattu) |
+| Toteuman lähteet: kalenteri, aktiivisuus, talous, hyvinvointi | ARCHITECTURE_ONLY |
+| Sääntöpolitiikka ja versio | COMPLETE_LOCAL |
+| Pysyvyys kantaan (0012, 0013) | BLOCKED (ajo vaatii omistajan hyväksynnän) |
+| RLS | Staattisesti + simuloidusti todennettu; oikea PostgreSQL-ajo puuttuu (REAL DB RLS = NOT YET PROVEN) |
+| Selain-E2E | COMPLETE_LOCAL (`npm run e2e:suunta`, paikallinen valjas, ei kirjautumista) |
