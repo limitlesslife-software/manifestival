@@ -109,6 +109,7 @@ saattoi ennen tätä työtä.
 | F | `v19` | estetty (migraatio 0009 ajamatta) |
 | G | `v20` | estetty (migraatio 0010 ajamatta) |
 | H | `v21` | estetty (migraatio 0011 ajamatta) |
+| I | `v22` | estetty (migraatio 0012 ajamatta) |
 
 **Aalto C:n deployaus EI ole sama asia kuin sen hyväksyntä.** Rivi
 yllä kertoo vain, mitä `origin/main` sisältää -- ei sitä, että Panu
@@ -311,6 +312,7 @@ Aalto B  v15  (tuotannon nykytila, origin/main)
         -> F  v19   Talous 2.0 -- migraatio 0009
           -> G  v20   Tavoitteesta tekemiseksi -- migraatio 0010
             -> H  v21   Henkilökohtainen avustaja -- migraatio 0011
+              -> I  v22   Suunta (Life Alignment) -- migraatio 0012
 ```
 
 **Feature-haarat EIVÄT ole tuotantojulkaisulinjan luotettava kuva.**
@@ -347,7 +349,13 @@ Migraatioita EI koskaan pakata samaan tuotantoikkunaan/transaktioon:
    missä järjestyksessä 0009/0010 lopulta hyväksytään -- se ei riipu
    niistä.
 
-Kukaan ei saa niputtaa 0009+0010+0011 yhteen tuotantoajoon. Jokainen
+4. **0012** (Suunta) luo neljä uutta taulua ja LISÄÄ yhden nullable
+   sarakkeen `goals`-tauluun (`life_area_id`, ei oletusta, ei täyttöä).
+   Se vaatii vain tuotannossa jo olevat 0001/0002/0004/0007, joten se ei
+   riipu 0009–0011:stä. Koska se koskee `goals`-tauluun, jonka portti on
+   auki, sarakkeella on oma portti `GOAL_LIFE_AREA_FIELD`.
+
+Kukaan ei saa niputtaa 0009+0010+0011+0012 yhteen tuotantoajoon. Jokainen
 saa oman `supabase/verify/verify_00XX.sql`-todennuksensa ja oman
 `docs/acceptance/WAVE-*.md`-hyväksyntäpakettinsa.
 

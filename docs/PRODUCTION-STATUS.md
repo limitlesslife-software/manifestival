@@ -58,6 +58,7 @@ Automaattinen testi vartioi, että tämä dokumentti pysyy ajan tasalla.
 | 0009 | `0009_finance_2.sql` | **EI AJETTU** | — |
 | 0010 | `0010_goal_to_action.sql` | **EI AJETTU** | — |
 | 0011 | `0011_personal_assistant.sql` | **EI AJETTU** | — |
+| 0012 | `0012_life_alignment.sql` | **EI AJETTU** | — |
 
 > **⚠ Migraatio 0010 on suunniteltu, ei ajettu — ja se on
 > vaarallisempi kuin aiemmat.** Se on ensimmäinen migraatio, joka
@@ -152,6 +153,11 @@ vertaa niihin.
 | `notices` | 0011 | kiinni |
 | `travelPlans` | 0011 | kiinni |
 | `locationRules` | 0011 | kiinni |
+| `lifeAreas` | 0012 | kiinni |
+| `weeklyCapacities` | 0012 | kiinni |
+| `timeEntries` | 0012 | kiinni |
+| `alignmentReviews` | 0012 | kiinni |
+| `GOAL_LIFE_AREA_FIELD` | 0012 | kiinni |
 
 `GOAL_PLANNING_FIELDS` on **sarakeportti** ja `GOAL_MAINTENANCE_MODE`
 **arvoportti**. Ne ovat erillisiä, koska niiden viat ovat erilaisia:

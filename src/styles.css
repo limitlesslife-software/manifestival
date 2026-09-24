@@ -617,6 +617,42 @@ body.is-offline .offline-banner { display:block; }
   .voice-orb { width:48px; height:48px; margin-bottom:10px; }
 }
 
+
+/* ============ SUUNTA ============
+   Vakavuus kerrotaan aina TEKSTINÄ (.dir-severity); väri on vain lisä.
+   Palkeilla on role="img" + aria-label, ja luvut ovat myös tekstinä. */
+.dir-section { margin-bottom:8px; }
+.dir-subtitle { font-family:'Fraunces',serif; font-size:15px; font-weight:500; color:var(--forest); margin:14px 0 6px; }
+.dir-line { font-size:13px; color:var(--text-1); line-height:1.5; margin:4px 0; }
+.dir-unknown { color:var(--text-2); }
+.dir-quality { margin-top:10px; }
+.dir-signal { background:var(--cream-card); border:1px solid var(--border); border-left:4px solid var(--sage); border-radius:14px; padding:12px 14px; margin-bottom:10px; }
+.dir-signal.dir-attention { border-left-color:var(--gold); }
+.dir-signal.dir-strong { border-left-color:var(--clay); }
+.dir-signal-head { display:flex; flex-wrap:wrap; align-items:baseline; gap:8px; }
+.dir-severity { font-size:10.5px; font-weight:800; letter-spacing:.4px; text-transform:uppercase; padding:2px 8px; border-radius:20px; background:var(--sage-soft); color:var(--forest); }
+.dir-attention .dir-severity { background:var(--gold-soft); }
+.dir-strong .dir-severity { background:var(--clay-soft); }
+.dir-signal-title { font-weight:700; color:var(--forest); font-size:14px; }
+.dir-signal-text { font-size:13px; color:var(--text-1); margin-top:6px; line-height:1.5; }
+.dir-why { margin-top:8px; font-size:12.5px; color:var(--text-2); }
+.dir-why summary { cursor:pointer; font-weight:700; color:var(--forest); min-height:44px; display:flex; align-items:center; }
+.dir-why summary:focus-visible { outline:2px solid var(--gold); outline-offset:2px; border-radius:6px; }
+.dir-rule { font-size:11.5px; color:var(--text-3); word-break:break-word; }
+.dir-bar { height:10px; background:var(--sage-soft); border-radius:6px; overflow:hidden; margin:8px 0 4px; }
+.dir-bar-fill { height:100%; background:var(--sage); border-radius:6px; }
+.dir-bar.is-over .dir-bar-fill { background:var(--clay); }
+.dir-chips { flex-wrap:wrap; }
+.dir-goal-row { display:flex; flex-direction:column; gap:4px; margin-bottom:10px; }
+.dir-goal-row select { font-family:'Manrope',sans-serif; font-size:13.5px; border:1px solid var(--border); border-radius:10px; padding:10px 11px; background:var(--cream-card); color:var(--text-1); min-height:44px; }
+.dir-review dt { font-weight:700; color:var(--forest); font-size:13px; margin-top:10px; }
+.dir-review dd { margin:3px 0 0; font-size:13px; color:var(--text-1); line-height:1.5; }
+.dir-history { background:var(--cream-card); border:1px solid var(--border); border-radius:12px; padding:10px 12px; margin-bottom:8px; font-size:13px; }
+.dir-history summary { cursor:pointer; font-weight:700; color:var(--forest); min-height:44px; display:flex; align-items:center; }
+.dir-today { background:var(--cream-card); border:1px solid var(--border); border-radius:16px; padding:12px 14px; margin:12px 0; }
+.dir-today-title { font-size:11px; font-weight:800; letter-spacing:.8px; text-transform:uppercase; color:var(--text-3); }
+#dirProposals input { font-family:'Manrope',sans-serif; font-size:13.5px; border:1px solid var(--border); border-radius:10px; padding:9px 11px; width:100%; max-width:200px; min-height:44px; }
+
 @media (prefers-reduced-motion:reduce) {
   .fab-ring, .now-pulse-ring, .voice-orb::before { animation:none; }
   .screen { transition:none; }

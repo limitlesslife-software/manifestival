@@ -45,6 +45,10 @@ import { initTravelForms, closeTravelForm, closeLocationRuleForm }
   from './views/travel.js';
 import { renderNotices, initNotices, closeNoticeCenter } from './views/notices.js';
 import {
+  renderDirection, renderTodayDirection, initDirection, closeAreaForm, resetDirectionView
+} from './views/direction.js';
+import { resetAppliedAdjustments } from './alignment.js';
+import {
   runReminderSweep, runDepartureSweep, pruneNoticeHistory, runReplanCheck
 } from './assistantActions.js';
 import {
@@ -116,6 +120,8 @@ function registerServiceWorker() {
 function renderAll() {
   if (!signedIn) return;
   renderToday();
+  renderTodayDirection();
+  renderDirection();
   renderWeek();
   renderTasks();
   renderGoals();
@@ -283,6 +289,9 @@ function onSignedOut() {
   // Avain viittaa ehdotukseen, joka ei sekään elä uloskirjautumisen
   // yli — jäänyt avain estäisi seuraavaa käyttäjää tallentamasta.
   resetPlanning();
+  closeAreaForm();
+  resetDirectionView();
+  resetAppliedAdjustments();
   clearIdempotencyKeys();
   clearToasts();
 
@@ -314,6 +323,7 @@ async function start() {
   initReminderForm();
   initTravelForms();
   initNotices();
+  initDirection();
   initVoice();
   initSearch();
   initOnboarding();

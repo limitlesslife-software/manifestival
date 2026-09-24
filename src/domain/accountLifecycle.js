@@ -63,7 +63,11 @@ export const ACCOUNT_DATA_MAP = Object.freeze({
   reminders: { table: 'reminders', ownerColumn: 'user_id' },
   notices: { table: 'notices', ownerColumn: 'user_id' },
   travelPlans: { table: 'travel_plans', ownerColumn: 'user_id' },
-  locationRules: { table: 'location_rules', ownerColumn: 'user_id' }
+  locationRules: { table: 'location_rules', ownerColumn: 'user_id' },
+  lifeAreas: { table: 'life_areas', ownerColumn: 'user_id' },
+  weeklyCapacities: { table: 'weekly_capacities', ownerColumn: 'user_id' },
+  timeEntries: { table: 'time_entries', ownerColumn: 'user_id' },
+  alignmentReviews: { table: 'alignment_reviews', ownerColumn: 'user_id' }
 });
 
 /**
@@ -91,7 +95,11 @@ export const ACCOUNT_DOMAIN_LABELS = Object.freeze({
   reminders: 'Muistutukset',
   notices: 'Ilmoitushistoria',
   travelPlans: 'Matkasuunnitelmat',
-  locationRules: 'Paikkamuistutukset'
+  locationRules: 'Paikkamuistutukset',
+  lifeAreas: 'Elämänalueet',
+  weeklyCapacities: 'Viikkokapasiteetit',
+  timeEntries: 'Kirjattu aika',
+  alignmentReviews: 'Viikkokatsaukset'
 });
 
 /** Kokoelman käyttäjälle näytettävä nimi. Tuntematon nimi näytetään sellaisenaan. */

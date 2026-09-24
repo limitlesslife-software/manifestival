@@ -44,6 +44,7 @@
     <symbol id="i-wallet" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2"/><rect x="3" y="7" width="18" height="12" rx="2"/><path d="M16 13h2"/></symbol>
     <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8.3" r="3.6" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M4.5 20C5.3 15.8 8.3 13.5 12 13.5C15.7 13.5 18.7 15.8 19.5 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
     <symbol id="i-moon" viewBox="0 0 24 24"><path d="M19.8 14.3A8.4 8.4 0 1 1 9.7 4.2A6.9 6.9 0 0 0 19.8 14.3Z" fill="currentColor"/></symbol>
+    <symbol id="i-compass" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M15.4 8.6L13.3 13.3L8.6 15.4L10.7 10.7Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></symbol>
     <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="1.8"/><line x1="15.3" y1="15.3" x2="20.5" y2="20.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
   </defs>
 </svg>
@@ -130,6 +131,7 @@
 
       <div id="noticeCenterContainer"></div>
       <div id="todayNowNext"></div>
+      <div id="todayDirection"></div>
 
       <div id="todayFocus"></div>
       <div id="todayOverdue"></div>
@@ -139,6 +141,174 @@
       <div id="todayCompleted"></div>
       <div id="todayWellbeing"></div>
       <div id="todayReview"></div>
+    </section>
+
+    <!-- ============ SUUNTA (Life Alignment) ============
+         Käyttäjä kertoo mikä on tärkeää ja paljonko ehtii; Suunta näyttää
+         missä suunnitelma ja todellisuus poikkeavat siitä. Havainnot
+         lasketaan (src/domain/alignment.js), mitään ei muuteta ilman
+         vahvistusta. -->
+    <section class="screen" id="screen-direction" role="tabpanel" aria-label="Suunta" aria-hidden="true" inert>
+      <div class="nav-row">
+        <button class="nav-arrow" id="dirPrev" type="button" aria-label="Edellinen viikko"><svg class="icon" aria-hidden="true"><use href="#i-chevron-left"/></svg></button>
+        <div style="text-align:center; flex:1;">
+          <div class="eyebrow">SUUNTA</div>
+          <h1 class="title" id="dirWeekLabel"></h1>
+        </div>
+        <button class="nav-arrow" id="dirNext" type="button" aria-label="Seuraava viikko"><svg class="icon" aria-hidden="true"><use href="#i-chevron-right"/></svg></button>
+      </div>
+      <button class="jump-link" id="dirThisWeek" type="button" style="display:none;">← Palaa tähän viikkoon</button>
+      <div id="dirPersistNote"></div>
+
+      <!-- Havainnot -->
+      <div class="dir-section" aria-labelledby="dirSignalsTitle">
+        <h2 class="section-title" id="dirSignalsTitle">Havainnot</h2>
+        <div id="dirSignals" aria-live="polite"></div>
+      </div>
+
+      <!-- Tämä viikko: kapasiteetti, suunnitelma, toteuma -->
+      <div class="dir-section" aria-labelledby="dirWeekTitle">
+        <h2 class="section-title" id="dirWeekTitle">Tämä viikko</h2>
+        <div id="dirWeekSummary"></div>
+        <div class="add-form dir-inline-form" role="group" aria-labelledby="dirCapacityTitle">
+          <div class="add-form-title" id="dirCapacityTitle">Kapasiteetti: paljonko realistisesti ehdit?</div>
+          <p class="hint">Aika jonka voit käyttää suunniteltuun tekemiseen, kun uni, ruoka, siirtymät ja yllätykset on vähennetty.</p>
+          <div class="form-row">
+            <div>
+              <label class="field-label" for="dirCapacityHours">Tunteja viikossa</label>
+              <input type="number" id="dirCapacityHours" min="0" max="168" step="0.5" inputmode="decimal">
+              <div class="field-error" id="dirCapacityError" role="alert"></div>
+            </div>
+            <div>
+              <label class="field-label" for="dirEnergy">Energia (oma arvio)</label>
+              <select id="dirEnergy">
+                <option value="">Ei arviota</option>
+                <option value="1">1 — hyvin vähän</option>
+                <option value="2">2 — vähän</option>
+                <option value="3">3 — tavallinen</option>
+                <option value="4">4 — hyvä</option>
+                <option value="5">5 — paljon</option>
+              </select>
+            </div>
+          </div>
+          <div class="hint" id="dirCapacityWarning" role="status"></div>
+          <div class="form-actions">
+            <button class="form-btn primary" id="dirCapacitySave" type="button">Tallenna kapasiteetti</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Elämänalueet -->
+      <div class="dir-section" aria-labelledby="dirAreasTitle">
+        <h2 class="section-title" id="dirAreasTitle">Elämänalueet</h2>
+        <div id="dirAreaSuggestions"></div>
+        <div id="dirAreasList"></div>
+        <button class="add-row" id="dirAddArea" type="button"><svg aria-hidden="true"><use href="#i-plus"/></svg>Lisää elämänalue</button>
+
+        <div class="add-form" id="dirAreaForm" style="display:none;" role="group" aria-labelledby="dirAreaFormTitle">
+          <div class="add-form-title" id="dirAreaFormTitle">Uusi elämänalue</div>
+          <div>
+            <label class="field-label" for="dirAreaName">Nimi</label>
+            <input type="text" id="dirAreaName" maxlength="60" autocomplete="off" placeholder="esim. Perhe">
+            <div class="field-error" id="dirAreaNameError" role="alert"></div>
+          </div>
+          <div>
+            <label class="field-label" for="dirAreaImportance">Kuinka tärkeä tämä on elämässä, jota haluat?</label>
+            <select id="dirAreaImportance">
+              <option value="1">1 — Vähän tärkeä</option>
+              <option value="2">2 — Jonkin verran tärkeä</option>
+              <option value="3" selected>3 — Tärkeä</option>
+              <option value="4">4 — Hyvin tärkeä</option>
+              <option value="5">5 — Erittäin tärkeä</option>
+            </select>
+            <div class="field-error" id="dirAreaImportanceError" role="alert"></div>
+            <p class="hint">Tärkeys ei ole kiire. Se kertoo suunnan, ei tämän päivän tehtäviä.</p>
+          </div>
+          <div>
+            <label class="field-label" for="dirAreaTarget">Viikon aikatavoite tunteina (valinnainen)</label>
+            <input type="number" id="dirAreaTarget" min="0" max="168" step="0.5" inputmode="decimal" placeholder="esim. 10">
+            <div class="field-error" id="dirAreaTargetError" role="alert"></div>
+            <p class="hint">Tyhjä = ei tavoitetta. 0 = en halua käyttää tähän aikaa nyt.</p>
+          </div>
+          <div>
+            <label class="field-label" for="dirAreaCategory">Laske tähän kategorian tehtävät (valinnainen)</label>
+            <select id="dirAreaCategory"></select>
+            <div class="field-error" id="dirAreaCategoryError" role="alert"></div>
+            <p class="hint">Tehtävä ilman tavoitetta kuuluu alueeseen kategoriansa kautta.</p>
+          </div>
+          <div>
+            <label class="field-label" for="dirAreaDescription">Mitä tämä tarkoittaa sinulle? (valinnainen)</label>
+            <textarea id="dirAreaDescription" rows="2" maxlength="500"></textarea>
+          </div>
+          <label class="check-row" for="dirAreaActive">
+            <input type="checkbox" id="dirAreaActive" checked>
+            <span>Käytössä (pois käytöstä oleva alue ei tuota havaintoja)</span>
+          </label>
+          <div class="form-actions">
+            <button class="form-btn danger" id="dirAreaDelete" type="button" style="display:none;">Poista</button>
+            <button class="form-btn secondary" id="dirAreaCancel" type="button">Peruuta</button>
+            <button class="form-btn primary" id="dirAreaSave" type="button">Tallenna</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tavoitteet alueittain -->
+      <div class="dir-section" aria-labelledby="dirGoalsTitle">
+        <h2 class="section-title" id="dirGoalsTitle">Tavoitteet</h2>
+        <div id="dirGoalsList"></div>
+      </div>
+
+      <!-- Toteuma -->
+      <div class="dir-section" aria-labelledby="dirActualTitle">
+        <h2 class="section-title" id="dirActualTitle">Toteuma</h2>
+        <p class="hint">Kirjaa mihin aikasi oikeasti kului. Valmiiksi merkitty tehtävä ei ole toteutunutta aikaa.</p>
+        <div class="add-form dir-inline-form" role="group" aria-labelledby="dirTimeTitle">
+          <div class="add-form-title" id="dirTimeTitle">Kirjaa aikaa</div>
+          <div class="form-row">
+            <div>
+              <label class="field-label" for="dirTimeDate">Päivä</label>
+              <input type="date" id="dirTimeDate">
+              <div class="field-error" id="dirTimeDateError" role="alert"></div>
+            </div>
+            <div>
+              <label class="field-label" for="dirTimeMinutes">Minuutteja</label>
+              <input type="number" id="dirTimeMinutes" min="1" max="1440" step="5" inputmode="numeric">
+              <div class="field-error" id="dirTimeMinutesError" role="alert"></div>
+            </div>
+          </div>
+          <div>
+            <label class="field-label" for="dirTimeArea">Elämänalue</label>
+            <select id="dirTimeArea"></select>
+          </div>
+          <div>
+            <label class="field-label" for="dirTimeNote">Mitä teit? (valinnainen)</label>
+            <input type="text" id="dirTimeNote" maxlength="500" autocomplete="off">
+          </div>
+          <div class="form-actions">
+            <button class="form-btn primary" id="dirTimeSave" type="button">Kirjaa</button>
+          </div>
+        </div>
+        <div id="dirTimeList"></div>
+      </div>
+
+      <!-- Viikkokatsaus -->
+      <div class="dir-section" aria-labelledby="dirReviewTitle">
+        <h2 class="section-title" id="dirReviewTitle">Viikkokatsaus</h2>
+        <div id="dirReview"></div>
+        <div>
+          <label class="field-label" for="dirReflection">Oma pohdinta: mitä haluat muistaa tästä viikosta?</label>
+          <textarea id="dirReflection" rows="3" maxlength="4000"></textarea>
+        </div>
+        <h3 class="dir-subtitle" id="dirProposalsTitle">Mitä muutan ensi viikolla?</h3>
+        <p class="hint">Ehdotukset eivät muuta mitään ennen kuin vahvistat ne yksitellen.</p>
+        <div id="dirProposals" aria-labelledby="dirProposalsTitle"></div>
+        <div class="form-actions">
+          <button class="form-btn primary" id="dirReviewSave" type="button">Tallenna viikkokatsaus</button>
+        </div>
+        <div id="dirReviewStatus" role="status" class="hint"></div>
+        <h3 class="dir-subtitle">Aiemmat viikot</h3>
+        <div id="dirReviewHistory"></div>
+      </div>
     </section>
 
     <!-- ============ VIIKKO ============ -->
@@ -1254,6 +1424,7 @@
 
   <nav class="tab-bar" role="tablist" aria-label="Päänavigaatio">
     <button class="tab-btn active" type="button" role="tab" aria-selected="true" data-screen="screen-today"><svg class="icon" aria-hidden="true"><use href="#i-sun"/></svg>Tänään</button>
+    <button class="tab-btn" type="button" role="tab" aria-selected="false" tabindex="-1" data-screen="screen-direction"><svg class="icon" aria-hidden="true"><use href="#i-compass"/></svg>Suunta</button>
     <button class="tab-btn" type="button" role="tab" aria-selected="false" tabindex="-1" data-screen="screen-week"><svg class="icon" aria-hidden="true"><use href="#i-cal"/></svg>Viikko</button>
     <button class="tab-btn" type="button" role="tab" aria-selected="false" tabindex="-1" data-screen="screen-tasks"><svg class="icon" aria-hidden="true"><use href="#i-list"/></svg>Tekeminen</button>
     <button class="tab-btn" type="button" role="tab" aria-selected="false" tabindex="-1" data-screen="screen-goals"><svg class="icon" aria-hidden="true"><use href="#i-target"/></svg>Tavoitteet</button>

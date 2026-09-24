@@ -37,7 +37,7 @@ import { CLOSED_GATES, OPEN_GATES, repoForGate } from './helpers/gates.mjs';
 import { WAVES, describeMatrix, resolveWave } from '../tools/release/waves.mjs';
 import {
   TABLES, hasTable, pendingTables, isPersistent, BILL_PAYMENT_FIELDS,
-  GOAL_PLANNING_FIELDS, GOAL_MAINTENANCE_MODE
+  GOAL_PLANNING_FIELDS, GOAL_MAINTENANCE_MODE, GOAL_LIFE_AREA_FIELD
 } from '../src/data/schema.js';
 import { ALL_REPOSITORIES, volatileCollections } from '../src/data/collectionsRepo.js';
 import * as prefsRepo from '../src/data/notificationPrefsRepo.js';
@@ -50,7 +50,8 @@ const PORTIT = ['routines', 'routineExceptions', 'goals', 'projects',
                 'bills', 'recurringExpenses', 'savingsGoals', 'aiAudit',
                 'transactions', 'investments', 'milestones',
                 'inboxItems', 'reminders', 'notices',
-                'travelPlans', 'locationRules'];
+                'travelPlans', 'locationRules',
+                'lifeAreas', 'weeklyCapacities', 'timeEntries', 'alignmentReviews'];
 
 // =====================================================================
 // PORTTIEN LÄHTÖTILA
@@ -63,8 +64,8 @@ test('KRIITTINEN: porttimatriisi on tasan yksi suunniteltu aalto', () => {
   // testi, joka kaatuu oikeasta tyosta, poistetaan ennen pitkaa
   // kokonaan.
   //
-  // Korvaava vaatimus on TIUKEMPI, ei loysempi. Kahdeksantoista
-  // porttia tuottaa 262144 yhdistelmaa; niista tasan yhdeksan on
+  // Korvaava vaatimus on TIUKEMPI, ei loysempi. Kaksikymmentakaksi
+  // porttia tuottaa 4194304 yhdistelmaa; niista tasan kymmenen on
   // suunniteltuja.
   // Kaikki muut ovat virheita: portti on avattu liian aikaisin,
   // jaanyt avaamatta tai sulkeutunut vahingossa. Yksikaan niista ei
@@ -82,16 +83,16 @@ test('KRIITTINEN: porttien joukko vastaa migraatioiden tauluja', () => {
   // taulua, kaataisi jokaisen tallennuksen aktivoinnin jälkeen.
   const taulut = new Set();
   for (const nimi of fs.readdirSync(path.join(ROOT, 'supabase/migrations'))
-                       .filter(n => /^00(0[3-9]|1[01])/.test(n))) {
+                       .filter(n => /^00(0[3-9]|1[0-2])/.test(n))) {
     for (const m of read(`supabase/migrations/${nimi}`)
       .matchAll(/create table public\.(\w+)/g)) {
       taulut.add(m[1]);
     }
   }
 
-  assert.equal(taulut.size, 18,
-    `migraatiot 0003-0011 luovat ${taulut.size} taulua, portteja on ${PORTIT.length}`);
-  assert.equal(Object.keys(TABLES).length, 18,
+  assert.equal(taulut.size, 22,
+    `migraatiot 0003-0012 luovat ${taulut.size} taulua, portteja on ${PORTIT.length}`);
+  assert.equal(Object.keys(TABLES).length, 22,
     'porttien määrä ei vastaa migraatioiden taulujen määrää');
   assert.deepEqual(Object.keys(TABLES).sort(), [...PORTIT].sort());
 });
@@ -426,7 +427,7 @@ test('KRIITTINEN: tilannedokumentti luettelee jokaisen migraation', () => {
 
   const migraatiot = fs.readdirSync(path.join(ROOT, 'supabase/migrations'))
     .filter(n => n.endsWith('.sql')).sort();
-  assert.equal(migraatiot.length, 11, `migraatioita on ${migraatiot.length}`);
+  assert.equal(migraatiot.length, 12, `migraatioita on ${migraatiot.length}`);
 
   for (const nimi of migraatiot) {
     assert.ok(doc.includes(nimi),
@@ -491,7 +492,8 @@ test('KRIITTINEN: tilannedokumentin porttitaulukko vastaa koodia', () => {
   for (const [nimi, arvo] of [
     ['BILL_PAYMENT_FIELDS', BILL_PAYMENT_FIELDS],
     ['GOAL_PLANNING_FIELDS', GOAL_PLANNING_FIELDS],
-    ['GOAL_MAINTENANCE_MODE', GOAL_MAINTENANCE_MODE]
+    ['GOAL_MAINTENANCE_MODE', GOAL_MAINTENANCE_MODE],
+    ['GOAL_LIFE_AREA_FIELD', GOAL_LIFE_AREA_FIELD]
   ]) {
     const rivi = doc.split(NEWLINE)
       .find(r => new RegExp('^\\|\\s*`' + nimi + '`\\s*\\|').test(r));

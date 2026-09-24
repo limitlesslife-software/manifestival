@@ -197,9 +197,14 @@ export function buildPlanningContext({
   goals = [],
   capacity = null,
   todayIso = null,
-  existingGoal = null
+  existingGoal = null,
+  alignmentCapHours = null
 } = {}) {
   const active = goals.filter(goal => goal && goal.status === 'active');
+
+  const computedHours = capacity && capacity.dayCount > 0
+    ? Math.round((capacity.totalUsableMinutes / capacity.dayCount) * 7 / 60)
+    : null;
 
   return {
     today: todayIso,
@@ -207,10 +212,18 @@ export function buildPlanningContext({
     activeGoalCount: active.length,
     /** Lähestyvät määräpäivät päivinä, ei tavoitteiden niminä. */
     nearestDeadlineDays: nearestDeadline(active, todayIso),
-    /** Vapaa aika viikossa tunteina. Karkea luku riittää. */
-    weeklyFreeHours: capacity && capacity.dayCount > 0
-      ? Math.round((capacity.totalUsableMinutes / capacity.dayCount) * 7 / 60)
-      : null,
+    /**
+     * Vapaa aika viikossa tunteina. Karkea luku riittää.
+     *
+     * Suunnan palaute (src/domain/alignmentReview.js planningFeedback)
+     * voi RAJATA tätä käyttäjän oman viikkokapasiteetin mukaan: jos
+     * käyttäjä on sanonut ehtivänsä vähemmän kuin kalenteri näyttää,
+     * suunnitelma ei saa olettaa enempää. Raja vain laskee, ei koskaan
+     * nosta.
+     */
+    weeklyFreeHours: Number.isFinite(alignmentCapHours) && alignmentCapHours >= 0
+      ? (computedHours === null ? alignmentCapHours : Math.min(computedHours, alignmentCapHours))
+      : computedHours,
     /** Kun kyse on olemassa olevan tavoitteen uudelleensuunnittelusta. */
     existingGoalTitle: existingGoal ? existingGoal.title : null,
     existingTargetDate: existingGoal ? existingGoal.targetDate : null

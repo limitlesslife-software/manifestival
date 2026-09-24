@@ -43,6 +43,10 @@ taloutta eikä löytänyt kumpaakaan.
 | `notices` | **ON** | **Tänään** → Ilmoitukset | Ilmoitukset | luku, kuittaus, hylkäys | H |
 | `travelPlans` | **ON** | **Tekeminen** → Matka | Matkat | täysi + matka-ajan käsin kirjaus | H |
 | `locationRules` | **ON** | **Tekeminen** → Matka → Paikkamuistutukset | Paikkamuistutukset | täysi + päälle/pois | H |
+| `lifeAreas` | **ON** | **Suunta** → Elämänalueet | Elämänalueet | täysi + pois käytöstä | I |
+| `weeklyCapacities` | **ON** | **Suunta** → Tämä viikko → Kapasiteetti | Kapasiteetti | luku + tallennus | I |
+| `timeEntries` | **ON** | **Suunta** → Toteuma | Toteuma | luonti + luku + poisto | I |
+| `alignmentReviews` | **ON** | **Suunta** → Viikkokatsaus | Viikkokatsaus | luonti + luku + päivitys | I |
 
 ### Aallon H viisi näkymää
 

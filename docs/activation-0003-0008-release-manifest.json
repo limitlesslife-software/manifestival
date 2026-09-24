@@ -34,7 +34,11 @@
     "reminders": [],
     "notices": [],
     "travelPlans": [],
-    "locationRules": []
+    "locationRules": [],
+    "lifeAreas": [],
+    "weeklyCapacities": [],
+    "timeEntries": [],
+    "alignmentReviews": []
   },
   "waves": [
     {
@@ -67,7 +71,11 @@
         "reminders",
         "notices",
         "travelPlans",
-        "locationRules"
+        "locationRules",
+        "lifeAreas",
+        "weeklyCapacities",
+        "timeEntries",
+        "alignmentReviews"
       ],
       "tables": [
         "notification_preferences",
@@ -116,7 +124,11 @@
         "reminders",
         "notices",
         "travelPlans",
-        "locationRules"
+        "locationRules",
+        "lifeAreas",
+        "weeklyCapacities",
+        "timeEntries",
+        "alignmentReviews"
       ],
       "tables": [
         "goals",
@@ -165,7 +177,11 @@
         "reminders",
         "notices",
         "travelPlans",
-        "locationRules"
+        "locationRules",
+        "lifeAreas",
+        "weeklyCapacities",
+        "timeEntries",
+        "alignmentReviews"
       ],
       "tables": [
         "routines",
@@ -217,7 +233,11 @@
         "reminders",
         "notices",
         "travelPlans",
-        "locationRules"
+        "locationRules",
+        "lifeAreas",
+        "weeklyCapacities",
+        "timeEntries",
+        "alignmentReviews"
       ],
       "tables": [
         "recurring_expenses",
@@ -266,7 +286,11 @@
         "reminders",
         "notices",
         "travelPlans",
-        "locationRules"
+        "locationRules",
+        "lifeAreas",
+        "weeklyCapacities",
+        "timeEntries",
+        "alignmentReviews"
       ],
       "tables": [
         "ai_action_audit"
@@ -314,7 +338,11 @@
         "reminders",
         "notices",
         "travelPlans",
-        "locationRules"
+        "locationRules",
+        "lifeAreas",
+        "weeklyCapacities",
+        "timeEntries",
+        "alignmentReviews"
       ],
       "tables": [
         "transactions",
@@ -362,7 +390,11 @@
         "reminders",
         "notices",
         "travelPlans",
-        "locationRules"
+        "locationRules",
+        "lifeAreas",
+        "weeklyCapacities",
+        "timeEntries",
+        "alignmentReviews"
       ],
       "tables": [
         "milestones"
@@ -413,7 +445,12 @@
         "travelPlans",
         "locationRules"
       ],
-      "gatesDisabled": [],
+      "gatesDisabled": [
+        "lifeAreas",
+        "weeklyCapacities",
+        "timeEntries",
+        "alignmentReviews"
+      ],
       "tables": [
         "inbox_items",
         "reminders",
@@ -433,6 +470,62 @@
         "supabase/acceptance/verify_0003_0008_post_activation.sql"
       ],
       "rationale": "Viisi uutta taulua, jotka eivät muuta yhtäkään olemassa olevaa. travel_plans ja location_rules viittaavat tasks-tauluun yhdistelmävierasavaimella, ja tasks on tuotannossa. Muut kolme eivät viittaa mihinkään sovellustauluun: muistutuksen ja ilmoituksen kohdetunniste EI OLE vierasavain, koska kohde saa kadota ilman että tietue muistuttamisen aikeesta katoaa. Aalto on siksi riippumaton A–G:stä ja voi tulla vasta viimeisenä ilman että mikään pakottaa siihen."
+    },
+    {
+      "id": "I",
+      "title": "Suunta: elämänalueet, kapasiteetti, toteuma ja viikkokatsaus",
+      "commitSha": null,
+      "cacheVersion": "v22",
+      "readiness": "READY",
+      "gatesEnabled": [
+        "lifeAreas",
+        "weeklyCapacities",
+        "timeEntries",
+        "alignmentReviews"
+      ],
+      "gatesCumulative": [
+        "notificationPreferences",
+        "wellbeing",
+        "goals",
+        "projects",
+        "routines",
+        "routineExceptions",
+        "recurringExpenses",
+        "savingsGoals",
+        "bills",
+        "aiAudit",
+        "transactions",
+        "investments",
+        "milestones",
+        "inboxItems",
+        "reminders",
+        "notices",
+        "travelPlans",
+        "locationRules",
+        "lifeAreas",
+        "weeklyCapacities",
+        "timeEntries",
+        "alignmentReviews"
+      ],
+      "gatesDisabled": [],
+      "tables": [
+        "life_areas",
+        "weekly_capacities",
+        "time_entries",
+        "alignment_reviews"
+      ],
+      "dependencies": [],
+      "rollbackTarget": "H",
+      "rollbackSha": null,
+      "acceptancePack": "docs/acceptance/WAVE-I.md",
+      "requiredAcceptance": [
+        "npm run activation:verify-wave -- I",
+        "npm run activation:preflight -- --wave=I",
+        "npm run production:verify-assets -- --wave=I",
+        "selainhyväksyntä: luonti, muokkaus, poisto, säilyvyys sivun latauksen yli",
+        "supabase/acceptance/verify_0003_0008_post_activation.sql"
+      ],
+      "rationale": "Neljä uutta taulua ja yksi nullable sarake goals-tauluun (life_area_id). goals.life_area_id ja time_entries viittaavat goals- ja tasks-tauluihin yhdistelmävierasavaimella, joten aallon B (goals) on oltava tuotannossa. Havaintoja (kuormitus, huomiotta jääminen, poikkeama) ei tallenneta: ne lasketaan, joten aalto ei tuo johdettua dataa kantaan. Riippumaton aalloista F–H: 0012 ei vaadi 0009–0011:tä."
     }
   ]
 }
