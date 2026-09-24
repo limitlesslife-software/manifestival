@@ -86,11 +86,11 @@ export const TABLES = Object.freeze({
    * 0011 ei muuta yhtäkään olemassa olevaa taulua — se on siksi
    * selvästi vähemmän vaarallinen, ja se on syytä sanoa ääneen.
    */
-  inboxItems: false,
-  reminders: false,
-  notices: false,
-  travelPlans: false,
-  locationRules: false
+  inboxItems: true,
+  reminders: true,
+  notices: true,
+  travelPlans: true,
+  locationRules: true
 });
 
 /**

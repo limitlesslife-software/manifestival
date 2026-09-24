@@ -219,7 +219,9 @@ export const WAVES = Object.freeze([
     //
     // `blockedBy` on yhä voimassa: käyttöliittymä on olemassa, kantaa ei.
     readiness: 'READY',
-    blockedBy: 'supabase/migrations/0011_personal_assistant.sql — EI AJETTU',
+    // Este poistettu aaltocommitissa: 0011_personal_assistant.sql on tämän commitin
+    // EDELLYTYS. Deploy vasta kun verify_0011.sql = 0 poikkeavaa.
+    blockedBy: null,
     gates: Object.freeze(['inboxItems', 'reminders', 'notices',
                           'travelPlans', 'locationRules']),
     title: 'Henkilökohtainen avustaja: kirjaus, muistutukset ja matka',

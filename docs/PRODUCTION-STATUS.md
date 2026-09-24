@@ -57,7 +57,7 @@ Automaattinen testi vartioi, että tämä dokumentti pysyy ajan tasalla.
 | 0008 | `0008_ai_audit.sql` | **AJETTU** | PASS |
 | 0009 | `0009_finance_2.sql` | **AJETTU** | EDELLYTYS (aalto F, e05c54b): `verify_0009.sql` 0 poikkeavaa |
 | 0010 | `0010_goal_to_action.sql` | **AJETTU** | EDELLYTYS (aalto G, f362e1a): `verify_0010.sql` 0 poikkeavaa |
-| 0011 | `0011_personal_assistant.sql` | **EI AJETTU** | — |
+| 0011 | `0011_personal_assistant.sql` | **AJETTU** | EDELLYTYS: `verify_0011.sql` 0 poikkeavaa ennen tämän commitin deployta |
 
 > **EDELLYTYS-merkintä (0009 alkaen).** Aallot F–J on valmisteltu
 > etukäteen harjoitteluhaaroissa. Rivi, jossa lukee AJETTU ja
@@ -150,11 +150,11 @@ vertaa niihin.
 | `milestones` | 0010 | **AKTIVOITU** |
 | `GOAL_PLANNING_FIELDS` | 0010 | **AKTIVOITU** |
 | `GOAL_MAINTENANCE_MODE` | 0010 | **AKTIVOITU** |
-| `inboxItems` | 0011 | kiinni |
-| `reminders` | 0011 | kiinni |
-| `notices` | 0011 | kiinni |
-| `travelPlans` | 0011 | kiinni |
-| `locationRules` | 0011 | kiinni |
+| `inboxItems` | 0011 | **AKTIVOITU** |
+| `reminders` | 0011 | **AKTIVOITU** |
+| `notices` | 0011 | **AKTIVOITU** |
+| `travelPlans` | 0011 | **AKTIVOITU** |
+| `locationRules` | 0011 | **AKTIVOITU** |
 
 `GOAL_PLANNING_FIELDS` on **sarakeportti** ja `GOAL_MAINTENANCE_MODE`
 **arvoportti**. Ne ovat erillisiä, koska niiden viat ovat erilaisia:
@@ -197,7 +197,7 @@ hyväksyntäpaketit: `docs/RELEASE-TRAIN-0003-0008.md`.
 | **E** | `aiAudit` | `v18` | VALMIS | `2b947cc` | — | — | — | — |
 | **F** | `transactions`, `investments`, `BILL_PAYMENT_FIELDS` | `v19` | VALMIS (edellyttää 0009) | `e05c54b` | — | — | — | — |
 | **G** | `milestones`, `GOAL_PLANNING_FIELDS`, `GOAL_MAINTENANCE_MODE` | `v20` | VALMIS (edellyttää 0010) | `f362e1a` | — | — | — | — |
-| **H** | `inboxItems`, `reminders`, `notices`, `travelPlans`, `locationRules` | `v21` | **ESTETTY** | — | — | — | — | — |
+| **H** | `inboxItems`, `reminders`, `notices`, `travelPlans`, `locationRules` | `v21` | VALMIS (edellyttää 0011) | tämä commit | — | — | — | — |
 
 **Aalto F = Talous 2.0:n tuotekoodi + migraatio 0009 + sen portit
 yhtenä hyväksyntätapahtumana** (lukittu päätös,
