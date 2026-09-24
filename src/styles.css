@@ -277,6 +277,28 @@ body.is-offline .offline-banner { display:block; }
  * lyhentamatta niita: lyhennetty nimi ei enaa loydy etsimalla. */
 .segment-3 .segment-btn { font-size:11.5px; padding:9px 4px; letter-spacing:-.1px; }
 
+/* Seitseman osion segmentti (Talous 2.0).
+ *
+ * SEITSEMAA NIMEA EI MAHDU PUHELIMEN LEVEYDELLE, eika niita saa
+ * lyhentaa: lyhennetty nimi ei enaa loydy etsimalla, ja juuri
+ * loytymattomyys oli se vika jonka kayttaja raportoi Taloudesta ja
+ * Hyvinvoinnista.
+ *
+ * Siksi segmentti KELAA VAAKASUUNNASSA. Jokainen nimi on kokonaan
+ * luettavissa, ja kelaus on kosketuslaitteella luonteva ele.
+ * Vierityspalkki piilotetaan, koska se veisi tilaa eika kerro mitaan
+ * mita reunaan jaava puolikas painike ei jo kerro. */
+.segment-scroll {
+  display:flex; gap:5px; background:var(--sage-soft); padding:4px;
+  border-radius:13px; margin-bottom:16px;
+  overflow-x:auto; -webkit-overflow-scrolling:touch;
+  scrollbar-width:none;
+}
+.segment-scroll::-webkit-scrollbar { display:none; }
+.segment-scroll .segment-btn {
+  flex:0 0 auto; padding:9px 13px; font-size:12.5px; white-space:nowrap;
+}
+
 /* Alapalkissa on kuusi valilehtea. Tiiviimpi vaakatayte pitaa ne
  * yhdella rivilla myos kapealla puhelimella. */
 .tab-btn { padding:6px 9px; }

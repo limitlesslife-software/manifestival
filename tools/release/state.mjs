@@ -38,10 +38,29 @@ export function readRepoFile(relativePath) {
  * tuloksen kuin moduulin oikea import. Jäsennin, joka erkanee
  * tulkinnasta, olisi pahempi kuin ei jäsennintä lainkaan.
  *
+ * HISTORIALLISET COMMITIT
+ *
+ * Vanhempi commit tuntee vähemmän portteja kuin nykyinen juna: aallon F
+ * portteja `transactions` ja `investments` ei ole olemassa yhdessäkään
+ * sitä edeltävässä commitissa. Tiukka vaatimus kaikkien porttien
+ * läsnäolosta hylkäisi jokaisen historiallisen commitin — myös
+ * perustilan, jonka manifesti todentaa.
+ *
+ * Siksi `allowMissing`. Portti, jota commit ei tunne, on KIINNI: se
+ * commit ei voi kirjoittaa tauluun, jonka olemassaolosta se ei tiedä.
+ * Oletus sanoo siis saman kuin `false`, eikä lievennä mitään.
+ *
+ * TYÖPUUN TARKISTUS PYSYY TIUKKANA. Oletusarvo on `false`, joten
+ * nykyisen schema.js:n on yhä lueteltava jokainen portti tasan kerran —
+ * puuttuva portti on siellä yhä virhe.
+ *
  * @param {string} source schema.js:n sisältö
+ * @param {object} [options]
+ * @param {boolean} [options.allowMissing] salli puuttuvat portit
+ *   (historiallinen commit). Puuttuva = kiinni.
  * @returns {object|null} portti -> boolean, tai null jos lohkoa ei löydy
  */
-export function parseGates(source) {
+export function parseGates(source, { allowMissing = false } = {}) {
   if (!source) return null;
 
   const start = source.indexOf('export const TABLES');
@@ -52,14 +71,21 @@ export function parseGates(source) {
   const gates = {};
   for (const gate of ALL_GATES) {
     const match = new RegExp(`\\b${gate}:\\s*(true|false)\\b`).exec(block);
-    if (!match) return null;
+    if (!match) {
+      if (!allowMissing) return null;
+      gates[gate] = false;
+      continue;
+    }
     gates[gate] = match[1] === 'true';
   }
 
-  // Ylimääräinen portti on virhe: se olisi taulu, jota tämä juna ei
-  // tunne, ja se avautuisi ilman aaltoa ja ilman hyväksyntää.
+  // Ylimääräinen portti on virhe AINA, myös historiallisessa
+  // commitissa: se olisi taulu, jota tämä juna ei tunne, ja se
+  // avautuisi ilman aaltoa ja ilman hyväksyntää.
   const declared = [...block.matchAll(/^\s{2}(\w+):\s*(?:true|false)/gm)].map(m => m[1]);
-  if (declared.length !== ALL_GATES.length) return null;
+  if (declared.some(gate => !ALL_GATES.includes(gate))) return null;
+
+  if (!allowMissing && declared.length !== ALL_GATES.length) return null;
 
   return gates;
 }

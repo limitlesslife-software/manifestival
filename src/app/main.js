@@ -26,8 +26,12 @@ import { renderGoals, initGoalForm, closeGoalForm } from './views/goals.js';
 import { renderProjects, initProjectForm, closeProjectForm } from './views/projects.js';
 import {
   renderFinance, initFinanceForms,
-  closeBillForm, closeExpenseForm, closeSavingsForm
+  closeBillForm, closeExpenseForm, closeSavingsForm, closeSavingsTransferForm
 } from './views/finance.js';
+import {
+  initTransactionForms, resetTransactionViews
+} from './views/transactions.js';
+import { initInvestmentForms, closeInvestmentForm } from './views/investments.js';
 import { renderProfile, initProfileForm, fillProfileForm } from './views/profile.js';
 import { renderNotificationSettings } from './views/notificationSettings.js';
 import { refreshNotificationPermission, syncNotifications } from './notifications.js';
@@ -115,6 +119,13 @@ function onSignedOut() {
   closeBillForm();
   closeExpenseForm();
   closeSavingsForm();
+  closeSavingsTransferForm();
+  closeInvestmentForm();
+
+  // Nollaa myös kesken olevan kuvan luennan ja tyhjentää
+  // tiedostovalitsimen. Seuraava käyttäjä samalla selaimella ei saa
+  // löytää edellisen kuittia mistään.
+  resetTransactionViews();
   clearToasts();
 
   // Tyhjentää myös repositorioiden muistivarastot. Ilman tätä seuraava
@@ -136,6 +147,8 @@ async function start() {
   initGoalForm();
   initProjectForm();
   initFinanceForms();
+  initTransactionForms();
+  initInvestmentForms();
   initProfileForm();
   initVoice();
   initOnboarding();

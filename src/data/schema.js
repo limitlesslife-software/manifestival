@@ -62,8 +62,30 @@ export const TABLES = Object.freeze({
   recurringExpenses: true,
   savingsGoals: true,
   /** Migraatio 0008 */
-  aiAudit: true
+  aiAudit: true,
+  /** Migraatio 0009 */
+  transactions: false,
+  investments: false
 });
+
+/**
+ * Onko migraatio 0009 ajettu `bills`-taulun osalta?
+ *
+ * PRODUCTION GATE, sarakeportti — sama kuvio kuin TASK_EXTENDED_FIELDS.
+ *
+ * false = `bills`-taulussa EI ole sarakkeita payee, iban, reference.
+ *         Maksutiedot elävät vain istunnon muistissa.
+ * true  = maksutiedot tallentuvat.
+ *
+ * MIKSI TÄMÄ ON ERILLÄÄN TABLES-porteista: `bills`-taulu voi olla
+ * olemassa ILMAN näitä sarakkeita, koska migraatio 0007 loi taulun ja
+ * migraatio 0009 lisää sarakkeet. Ilman erillistä porttia bills-portin
+ * avaaminen ennen migraatiota 0009 tarkoittaisi, että JOKAINEN laskun
+ * tallennus kaatuisi tuntemattomaan sarakkeeseen.
+ *
+ * Tämä saa mennä arvoon true VASTA kun migraatio 0009 on ajettu.
+ */
+export const BILL_PAYMENT_FIELDS = false;
 
 /** Onko taulu käytettävissä tietokannassa? */
 export function hasTable(name) {
@@ -97,4 +119,13 @@ export function volatileFields() {
 /** Säilyykö annettu domain-kenttä tallennuksen yli? */
 export function isPersisted(field) {
   return !volatileFields().includes(field);
+}
+
+/**
+ * Laskun kentät, jotka eivät vielä säily tallennuksen yli.
+ * Käyttöliittymä kertoo tämän käyttäjälle sen sijaan, että
+ * teeskentelisi tallentavansa maksutiedot.
+ */
+export function volatileBillFields() {
+  return BILL_PAYMENT_FIELDS ? [] : ['payee', 'iban', 'reference'];
 }

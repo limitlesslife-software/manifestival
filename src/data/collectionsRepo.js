@@ -18,7 +18,7 @@
 
 import { getClient } from './client.js';
 import { requireUserId } from './session.js';
-import { hasTable } from './schema.js';
+import { hasTable, BILL_PAYMENT_FIELDS } from './schema.js';
 import { createMemoryRepository } from './memoryStore.js';
 import { ok, fail } from '../lib/result.js';
 import { normalizeRoutine, normalizeException } from '../domain/routine.js';
@@ -29,6 +29,8 @@ import {
   normalizeBill, normalizeRecurringExpense, normalizeSavingsGoal
 } from '../domain/finance.js';
 import { normalizeAuditEntry } from '../domain/audit.js';
+import { normalizeTransaction } from '../domain/transactions.js';
+import { normalizeHolding } from '../domain/investments.js';
 
 /** Kentät, joita client ei saa koskaan lähettää. */
 const SERVER_OWNED = Object.freeze(['user_id', 'created_at', 'updated_at']);
@@ -333,7 +335,17 @@ export const billsRepo = createRepository({
     category: bill.category,
     task_id: bill.taskId,
     recurring_expense_id: bill.recurringExpenseId,
-    note: bill.note
+    note: bill.note,
+
+    // MAKSUTIEDOT JÄTETÄÄN POIS, JOS SARAKKEITA EI OLE.
+    //
+    // Sarakkeet payee, iban ja reference syntyvät migraatiossa 0009.
+    // Ennen sitä ne eivät ole olemassa, ja niiden lähettäminen —
+    // NULLINAKIN — kaataisi JOKAISEN laskun tallennuksen koodilla
+    // 42703 (undefined column). Sama kuvio kuin taskColumns().
+    ...(BILL_PAYMENT_FIELDS
+      ? { payee: bill.payee, iban: bill.iban, reference: bill.reference }
+      : {})
   }),
   fromRow: row => normalizeBill({
     id: row.id,
@@ -347,6 +359,12 @@ export const billsRepo = createRepository({
     taskId: row.task_id,
     recurringExpenseId: row.recurring_expense_id,
     note: row.note,
+    // Lukeminen on turvallista kummassakin tilassa: ennen migraatiota
+    // 0009 kenttää ei ole rivissä, jolloin arvo on undefined ja
+    // normalizeBill tekee siitä nullin.
+    payee: row.payee,
+    iban: row.iban,
+    reference: row.reference,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   })
@@ -410,6 +428,103 @@ export const savingsGoalsRepo = createRepository({
   })
 });
 
+// ---------------------------------------------------------- tapahtumat
+
+/**
+ * Tapahtumat: menot, tulot ja siirrot samassa taulussa.
+ *
+ * SUUNTA ON `kind`, EI ETUMERKKI. `amount_minor` on aina positiivinen
+ * kokonaisluku senttejä; kanta valvoo sen CHECK-rajoitteella.
+ *
+ * `source_kind` ja `source_id` kertovat mistä tapahtuma syntyi.
+ * Ne EIVÄT ole vierasavain: lähde saa kadota, mutta maksettu lasku ei
+ * muutu maksamattomaksi sillä, että lasku poistetaan. Ks. migraatio
+ * 0009 ja src/domain/transactions.js.
+ */
+export const transactionsRepo = createRepository({
+  table: 'transactions',
+  schemaKey: 'transactions',
+  normalize: normalizeTransaction,
+  toRow: transaction => ({
+    id: transaction.id,
+    kind: transaction.kind,
+    origin: transaction.origin,
+    amount_minor: transaction.amountMinor,
+    currency: transaction.currency,
+    date: transaction.date,
+    category: transaction.category,
+    description: transaction.description,
+    note: transaction.note,
+    source_kind: transaction.sourceKind,
+    source_id: transaction.sourceId
+  }),
+  fromRow: row => normalizeTransaction({
+    id: row.id,
+    kind: row.kind,
+    origin: row.origin,
+    amountMinor: row.amount_minor,
+    currency: row.currency,
+    date: row.date,
+    category: row.category,
+    description: row.description,
+    note: row.note,
+    sourceKind: row.source_kind,
+    sourceId: row.source_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  })
+});
+
+// ---------------------------------------------------------- sijoitukset
+
+/**
+ * Sijoitukset.
+ *
+ * MÄÄRÄ EI OLE RAHAA: `quantity` on numeric(20,8), koska osakkeita voi
+ * olla 12,5 ja kryptoa 0,00031. Rahasummat ovat yhä sentteinä.
+ *
+ * `current_value_minor` on NULL kun arvoa ei tiedetä — EI nolla.
+ * Manifestivalilla ei ole markkinadatan toimittajaa eikä se keksi
+ * kursseja. Ks. src/domain/investments.js.
+ */
+export const investmentsRepo = createRepository({
+  table: 'investments',
+  schemaKey: 'investments',
+  normalize: normalizeHolding,
+  toRow: holding => ({
+    id: holding.id,
+    name: holding.name,
+    symbol: holding.symbol,
+    kind: holding.kind,
+    quantity: holding.quantity,
+    cost_basis_minor: holding.costBasisMinor,
+    current_value_minor: holding.currentValueMinor,
+    valued_on: holding.valuedOn,
+    value_source: holding.valueSource,
+    currency: holding.currency,
+    target_value_minor: holding.targetValueMinor,
+    note: holding.note
+  }),
+  fromRow: row => normalizeHolding({
+    id: row.id,
+    name: row.name,
+    symbol: row.symbol,
+    kind: row.kind,
+    // numeric palautuu Supabasesta merkkijonona tarkkuuden
+    // säilyttämiseksi. normalizeHolding tekee siitä luvun.
+    quantity: row.quantity,
+    costBasisMinor: row.cost_basis_minor,
+    currentValueMinor: row.current_value_minor,
+    valuedOn: row.valued_on,
+    valueSource: row.value_source,
+    currency: row.currency,
+    targetValueMinor: row.target_value_minor,
+    note: row.note,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  })
+});
+
 // ------------------------------------------------------- AI-kirjausketju
 
 export const aiAuditRepo = createRepository({
@@ -463,7 +578,8 @@ export const aiAuditRepo = createRepository({
 /** Kaikki uudet repositoriot. Käytetään latauksessa ja tyhjennyksessä. */
 export const ALL_REPOSITORIES = Object.freeze([
   routinesRepo, routineExceptionsRepo, goalsRepo, projectsRepo, wellbeingRepo,
-  billsRepo, recurringExpensesRepo, savingsGoalsRepo, aiAuditRepo
+  billsRepo, recurringExpensesRepo, savingsGoalsRepo,
+  transactionsRepo, investmentsRepo, aiAuditRepo
 ]);
 
 /** Tyhjennä kaikki muistivarastot. Kutsutaan uloskirjautumisessa. */

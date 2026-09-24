@@ -1,4 +1,4 @@
-# Julkaisujuna 0003–0008 — aallot A–E
+# Julkaisujuna 0003–0009 — aallot A–F
 
 **Tila:** valmisteltu paikallisesti. **Mitään ei ole deployattu.**
 
@@ -12,6 +12,12 @@ Tämä on junan yleisohje. Aaltokohtaiset tarkistuslistat ovat erikseen:
 | **C** | `routines`, `routineExceptions` | `v16` | **VALMIS** | [WAVE-C.md](acceptance/WAVE-C.md) |
 | **D** | `recurringExpenses`, `savingsGoals`, `bills` | `v17` | **VALMIS** | [WAVE-D.md](acceptance/WAVE-D.md) |
 | **E** | `aiAudit` | `v18` | **VALMIS** | [WAVE-E.md](acceptance/WAVE-E.md) |
+| **F** | `transactions`, `investments` | `v19` | **ESTETTY** | [WAVE-F.md](acceptance/WAVE-F.md) |
+
+**Aalto F on estetty yhdestä nimetystä syystä:** migraatiota
+`0009_finance_2.sql` ei ole ajettu tuotantoon. Sen sovelluskoodi on
+valmis ja toimii porttien ollessa kiinni. Este puretaan ajamalla
+migraatio Panun hyväksynnällä — ks. `docs/FINANCE-2.0.md`.
 
 Tuotannossa juuri nyt: `63a96c5ab90b10a73369cd66e348f4a3774367e2`, `v12`,
 kaikki portit kiinni.
@@ -48,7 +54,9 @@ Aaltojen commit-SHA:t: `activation-0003-0008-release-manifest.json`.
    |
    +-- aalto D              v17   9/10
    |
-   +-- aalto E              v18   10/10
+   +-- aalto E              v18   10/12
+   |
+   +-- aalto F              v19   12/12   <- ESTETTY: migraatio 0009 ajamatta
 ```
 
 **Perustila deployataan ensin, kaikki portit kiinni.** Se korjaa kolme

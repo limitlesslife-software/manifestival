@@ -65,6 +65,15 @@ kaatuu, jos järjestys rikkoo yhtäkään.
 | **C** | `routines`, `routineExceptions` | `routines.goal_id → goals`, joten B on oltava ensin. Poikkeus viittaa rutiiniin, joten ne kuuluvat samaan aaltoon |
 | **D** | `recurringExpenses`, `savingsGoals`, `bills` | `bills.recurring_expense_id → recurring_expenses` ja `bills.task_id → tasks`. Kulut on aktivoitava viimeistään samassa aallossa |
 | **E** | `aiAudit` | Ei vierasavaimia. Viimeisenä, koska se kirjaa muiden toimintaa — sen kannattaa olla käytössä vasta kun kirjattavaa on |
+| **F** | `transactions`, `investments` | Talous 2.0. Kumpikaan ei viittaa mihinkään sovellustauluun, joten riippuvuudet eivät pakota sijaintia. **ESTETTY:** migraatiota 0009 ei ole ajettu |
+
+> **Aalto F on estetty, eikä sitä saa yrittää ajaa.** Sen ainoa este
+> on nimetty: `supabase/migrations/0009_finance_2.sql` on suunniteltu
+> mutta **ei ajettu tuotantoon**. Portteja ei voi avata tauluihin,
+> joita ei ole — yritys kaataisi jokaisen kirjoituksen koodilla
+> 42P01. Sovelluskoodi itse toimii porttien ollessa kiinni, joten
+> mikään ei ole rikki: tieto vain elää istunnon muistissa.
+> Hyväksyntäpaketti: `docs/acceptance/WAVE-F.md`.
 
 ### Miksi ei kaikkia kerralla
 

@@ -31,18 +31,25 @@ import {
 } from '../state.js';
 import {
   BILL_STATUS, CADENCE, CADENCES, cadenceLabel, billUrgency, BILL_URGENCY,
-  isOpenBill, summarizeSavingsGoal, monthlyCostByCurrency, summarizeFinances
+  isOpenBill, summarizeSavingsGoal, monthlyCostByCurrency, summarizeFinances,
+  monthlyContributionMinor, isSavingsGoalOverdue
 } from '../../domain/finance.js';
 import {
   DEFAULT_CURRENCY, parseMoneyToMinor, formatMoney, formatMinorAsInput,
   formatTotals
 } from '../../domain/money.js';
 import {
-  createBill, editBill, deleteBill, setBillPaid,
+  createBill, editBill, deleteBill, setBillPaid, payBillWithTransaction,
   createRecurringExpense, editRecurringExpense, deleteRecurringExpense,
-  createSavingsGoal, editSavingsGoal, deleteSavingsGoal
+  createSavingsGoal, editSavingsGoal, deleteSavingsGoal, recordSavingsTransfer
 } from '../actions.js';
 import { fmtISO, parseISO, todayMidnight } from '../../lib/datetime.js';
+import { success } from '../../ui/toast.js';
+import { renderTransactionViews, resetTransactionViews } from './transactions.js';
+import { renderInvestments, closeInvestmentForm } from './investments.js';
+import { FINANCE_SEGMENTS } from '../state.js';
+import { summarizeMonth } from '../../domain/budget.js';
+import { volatileBillFields } from '../../data/schema.js';
 
 /**
  * Tuetut valuutat.
@@ -151,6 +158,66 @@ function renderOverview(container, state) {
   void summary;
 }
 
+/**
+ * Yleiskuvan osio: mistä pääsee mihinkin.
+ *
+ * Talousosiossa on seitsemän välilehteä, ja kelaava segmentti näyttää
+ * niistä kerralla neljä. Yleiskuva on siksi myös SISÄLLYSLUETTELO:
+ * käyttäjän ei tarvitse arvata, mitä reunan taakse jää.
+ *
+ * Se oli tämän sovelluksen todistettu vika: Talous ja Hyvinvointi
+ * olivat olemassa mutta eivät löytyneet.
+ */
+function renderOverviewDetail(container, state) {
+  const todayIso = fmtISO(todayMidnight());
+  const summary = summarizeMonth({
+    month: state.budgetMonth,
+    transactions: state.transactions,
+    bills: state.bills,
+    recurringExpenses: state.recurringExpenses,
+    todayIso
+  });
+
+  const kortit = [
+    ['transactions', 'Tapahtumat',
+      `${state.transactions.length} kirjattua`,
+      'Menot, tulot ja siirrot. Voit myös lukea kuitin kuvasta.'],
+    ['budget', 'Budjetti',
+      `${formatMoney(summary.actualExpenseMinor, DEFAULT_CURRENCY)} tässä kuussa`,
+      'Toteuma, sitoumus ja ennuste erikseen — ei yhtenä saldona.'],
+    ['bills', 'Laskut',
+      `${state.bills.filter(isOpenBill).length} avointa`,
+      'Eräpäivät yhdessä paikassa.'],
+    ['expenses', 'Toistuvat menot',
+      `${state.recurringExpenses.filter(e => e.active !== false).length} käytössä`,
+      'Vuokra, vakuutus, tilaukset.'],
+    ['savings', 'Säästötavoitteet',
+      `${state.savingsGoals.length} tavoitetta`,
+      'Kuinka paljon kuukaudessa, jotta ehdit.'],
+    ['investments', 'Sijoitukset',
+      `${state.investments.length} omistusta`,
+      'Käsin kirjattu salkku. Kursseja ei haeta mistään.']
+  ];
+
+  container.innerHTML = `
+    <div class="hint" style="margin-bottom:14px;">
+      Manifestival ei ole yhteydessä pankkiin. Kaikki luvut lasketaan
+      siitä, mitä kirjaat itse.
+    </div>
+    ${kortit.map(([avain, otsikko, luku, selite]) => `
+      <div class="task-row">
+        <button class="t-body t-open" data-goto-segment="${escapeHtml(key)}"
+                aria-label="Siirry osioon ${escapeHtml(otsikko)}">
+          <div class="t-title">${escapeHtml(otsikko)}</div>
+          <div class="t-meta"><span class="task-cat-tag">${escapeHtml(luku)}</span></div>
+          <div class="t-sub">${escapeHtml(selite)}</div>
+        </button>
+      </div>`).join('')}`;
+
+  container.querySelectorAll('[data-goto-segment]').forEach(node =>
+    node.addEventListener('click', () => setFinanceSegment(node.dataset.gotoSegment)));
+}
+
 // --------------------------------------------------------------- laskut
 
 function renderBills(container, state) {
@@ -206,10 +273,28 @@ function renderBills(container, state) {
     node.addEventListener('click', () => toggleBillPaid(node.dataset.toggleBill)));
 }
 
+/**
+ * Merkitse lasku maksetuksi tai takaisin avoimeksi.
+ *
+ * MAKSETUKSI MERKINTÄ KIRJAA MYÖS TAPAHTUMAN, jotta lasku näkyy
+ * budjetissa siinä kuussa jona se maksettiin. `payBillWithTransaction`
+ * estää kaksoiskirjauksen: jos laskusta on jo tapahtuma, uutta ei
+ * synny.
+ *
+ * TAKAISIN AVOIMEKSI EI POISTA TAPAHTUMAA. Tapahtuma on kirjaus siitä
+ * että raha liikkui, ja laskun tilan korjaaminen ei tee sitä
+ * tapahtumattomaksi. Jos kirjaus on virheellinen, se poistetaan
+ * tapahtumista erikseen.
+ */
 async function toggleBillPaid(id) {
   const bill = findBill(id);
   if (!bill) return;
-  await setBillPaid(id, bill.status !== BILL_STATUS.PAID);
+
+  if (bill.status === BILL_STATUS.PAID) {
+    await setBillPaid(id, false);
+    return;
+  }
+  await payBillWithTransaction(id);
 }
 
 // ------------------------------------------------------ toistuvat menot
@@ -251,6 +336,30 @@ function renderExpenses(container, state) {
 
 // ------------------------------------------------------ säästötavoitteet
 
+/**
+ * Säästösuunnitelma yhtenä lauseena.
+ *
+ * Kertoo, paljonko kuukaudessa pitäisi säästää tavoitepäivään
+ * ehtiäkseen. Tämä on LASKELMA KIRJATUISTA LUVUISTA, ei ennuste eikä
+ * neuvo: se ei tiedä tuloistasi mitään.
+ *
+ * Ilman tavoitepäivää suunnitelmaa ei ole, ja tyhjä on silloin oikea
+ * vastaus — keksitty aikataulu olisi huonompi kuin ei aikataulua.
+ */
+function savingsPlanText(goal, todayIso) {
+  if (!goal || !goal.targetDate) return '';
+
+  if (isSavingsGoalOverdue(goal, todayIso)) {
+    return 'Tavoitepäivä on mennyt eikä tavoite ole täynnä.';
+  }
+
+  const monthly = monthlyContributionMinor(goal, todayIso);
+  if (monthly === null) return '';
+  if (monthly === 0) return 'Tavoite on jo täynnä.';
+
+  return `Ehtiäksesi tavoitepäivään: ${formatMoney(monthly, goal.currency)} / kk.`;
+}
+
 function renderSavings(container, state) {
   const goals = [...state.savingsGoals]
     .sort((a, b) => String(a.name).localeCompare(String(b.name), 'fi'));
@@ -265,8 +374,11 @@ function renderSavings(container, state) {
     return;
   }
 
+  const todayIso = fmtISO(todayMidnight());
+
   container.innerHTML = goals.map(goal => {
     const summary = summarizeSavingsGoal(goal);
+    const plan = savingsPlanText(goal, todayIso);
     return `<div class="task-row">
       <button class="t-body t-open" data-edit-savings="${escapeHtml(goal.id)}"
               aria-label="Muokkaa säästötavoitetta: ${escapeHtml(goal.name)}">
@@ -284,13 +396,22 @@ function renderSavings(container, state) {
           <div class="progress-fill${summary.reached ? ' done' : ''}"
                style="width:${summary.percent}%"></div>
         </div>
+        ${plan ? `<div class="t-sub">${escapeHtml(plan)}</div>` : ''}
+      </button>
+      <button class="chip-btn" data-transfer-savings="${escapeHtml(goal.id)}"
+              aria-label="Kirjaa siirto säästötavoitteeseen: ${escapeHtml(goal.name)}">
+        Kirjaa siirto
       </button>
     </div>`;
   }).join('');
 
   container.querySelectorAll('[data-edit-savings]').forEach(node =>
     node.addEventListener('click', () => openSavingsForm(node.dataset.editSavings)));
+  container.querySelectorAll('[data-transfer-savings]').forEach(node =>
+    node.addEventListener('click', () => openSavingsTransferForm(node.dataset.transferSavings)));
 }
+
+
 
 // ------------------------------------------------------------ renderöi
 
@@ -303,28 +424,40 @@ export function renderFinance() {
   const state = getState();
 
   renderOverview(overview, state);
+  const overviewSection = maybe('overviewContainer');
+  if (overviewSection) renderOverviewDetail(overviewSection, state);
   renderBills(el('billsListContainer'), state);
   renderExpenses(el('expensesListContainer'), state);
   renderSavings(el('savingsListContainer'), state);
+  renderTransactionViews();
+  renderInvestments();
   syncSegment();
 }
 
-function syncSegment() {
-  const segment = getState().financeSegment || 'bills';
-
-  toggle('billsSection', segment === 'bills');
-  toggle('expensesSection', segment === 'expenses');
-  toggle('savingsSection', segment === 'savings');
-
-  const tabs = {
-    bills: maybe('segmentBills'),
-    expenses: maybe('segmentExpenses'),
-    savings: maybe('segmentSavings')
+/**
+ * Osiot ja niiden elementit.
+ *
+ * Johdetaan FINANCE_SEGMENTS-luettelosta, jotta osion lisääminen
+ * vaatii muutoksen yhteen paikkaan. Aiemmin sama lista oli kolmessa:
+ * tilassa, tässä ja kytkennöissä.
+ */
+function segmentElements(key) {
+  return {
+    section: maybe(`${key}Section`),
+    tab: maybe('segment' + key.charAt(0).toUpperCase() + key.slice(1))
   };
-  for (const [key, node] of Object.entries(tabs)) {
-    if (!node) continue;
-    node.classList.toggle('active', key === segment);
-    node.setAttribute('aria-selected', String(key === segment));
+}
+
+function syncSegment() {
+  const segment = getState().financeSegment || 'overview';
+
+  for (const { key } of FINANCE_SEGMENTS) {
+    const { section, tab } = segmentElements(key);
+    if (section) section.style.display = key === segment ? 'block' : 'none';
+    if (tab) {
+      tab.classList.toggle('active', key === segment);
+      tab.setAttribute('aria-selected', String(key === segment));
+    }
   }
 }
 
@@ -411,6 +544,14 @@ function readBillForm() {
     paidDate: el('bfPaidDate').value || null,
     status: el('bfPaidDate').value ? BILL_STATUS.PAID : BILL_STATUS.OPEN,
     recurringExpenseId: picker && picker.value ? picker.value : null,
+
+    // MAKSUTIEDOT OVAT TIETOA, EIVÄT MAKSUKÄSKY. Manifestivalilla ei
+    // ole pankkiyhteyttä eikä valtuutta siirtää rahaa. Nämä ovat
+    // olemassa siksi, että käyttäjä voi kopioida ne omaan pankkiinsa.
+    payee: el('bfPayee').value.trim() || null,
+    iban: el('bfIban').value.trim() || null,
+    reference: el('bfReference').value.trim() || null,
+
     note: el('bfNote').value.trim() || null
   };
 }
@@ -422,8 +563,35 @@ function fillBillForm(bill) {
   el('bfCurrency').value = bill ? bill.currency : DEFAULT_CURRENCY;
   el('bfDueDate').value = bill && bill.dueDate ? bill.dueDate : '';
   el('bfPaidDate').value = bill && bill.paidDate ? bill.paidDate : '';
+  el('bfPayee').value = bill && bill.payee ? bill.payee : '';
+  el('bfIban').value = bill && bill.iban ? bill.iban : '';
+  el('bfReference').value = bill && bill.reference ? bill.reference : '';
   el('bfNote').value = bill && bill.note ? bill.note : '';
   refreshExpensePicker(bill && bill.recurringExpenseId ? bill.recurringExpenseId : null);
+  syncPaymentFieldNotice();
+}
+
+/**
+ * Kerro rehellisesti, jos maksutiedot eivät vielä säily.
+ *
+ * Sarakkeet payee, iban ja reference syntyvät migraatiossa 0009, jota
+ * ei ole ajettu. Portin ollessa kiinni ne elävät istunnon muistissa.
+ *
+ * Vaihtoehto — jättää kertomatta — olisi lupaus, jota sovellus ei
+ * pidä: käyttäjä kirjoittaisi tilinumeron ja löytäisi kentän tyhjänä
+ * seuraavalla latauksella.
+ */
+function syncPaymentFieldNotice() {
+  const hint = maybe('bfPaymentHint');
+  if (!hint) return;
+
+  const haihtuvat = volatileBillFields();
+  hint.innerHTML = haihtuvat.length === 0
+    ? 'Nämä ovat tietoa, jota voit kopioida omaan pankkiisi. '
+      + 'Manifestival ei maksa laskuja eikä siirrä rahaa.'
+    : 'Nämä ovat tietoa, jota voit kopioida omaan pankkiisi. '
+      + 'Manifestival ei maksa laskuja eikä siirrä rahaa. '
+      + '<strong>Huom: maksutiedot eivät vielä säily sivun latauksen yli.</strong>';
 }
 
 export function openAddBillForm() {
@@ -616,17 +784,72 @@ async function submitSavings() {
   closeSavingsForm();
 }
 
+// ------------------------------------------------------- säästösiirto
+//
+// TÄMÄ EI SIIRRÄ RAHAA. Manifestivalilla ei ole pankkiyhteyttä eikä
+// valtuutta siirtää rahaa. Käyttäjä on tehnyt siirron itse omassa
+// pankissaan, ja tämä kirjaa sen: kertymä kasvaa ja tapahtumiin syntyy
+// SIIRTO — ei meno, koska säästöön siirretty raha on yhä omaa.
+
+/** Tavoite, johon siirtolomake on auki. Elää vain lomakkeen ajan. */
+let transferGoalId = null;
+
+const transferErrors = makeFormErrors('#savingsTransferForm', {
+  amountMinor: 'stAmount'
+});
+
+export function openSavingsTransferForm(id) {
+  const goal = findSavingsGoal(id);
+  if (!goal) return;
+
+  transferGoalId = id;
+  transferErrors.clear();
+  setText('savingsTransferTitle', `Kirjaa siirto: ${goal.name}`);
+  el('stAmount').value = '';
+  el('stDate').value = fmtISO(todayMidnight());
+  toggle('savingsTransferForm', true, 'flex');
+  toggle('addSavingsBtn', false, 'flex');
+  focus('stAmount');
+}
+
+export function closeSavingsTransferForm() {
+  transferGoalId = null;
+  // Kentät tyhjennetään, ei vain piiloteta.
+  const amount = maybe('stAmount');
+  if (amount) amount.value = '';
+  transferErrors.clear();
+  toggle('savingsTransferForm', false);
+  toggle('addSavingsBtn', true, 'flex');
+}
+
+async function submitSavingsTransfer() {
+  if (!transferGoalId) return;
+
+  const amountMinor = readMoney('stAmount');
+  if (amountMinor === null || amountMinor <= 0) {
+    transferErrors.show({ amountMinor: 'Anna siirretty summa, esimerkiksi 50 tai 50,00.' });
+    return;
+  }
+
+  const result = await recordSavingsTransfer(
+    transferGoalId, amountMinor, el('stDate').value || null);
+
+  if (!result || !result.ok) {
+    if (result && result.errors) transferErrors.show(result.errors);
+    return;
+  }
+
+  closeSavingsTransferForm();
+  success('Siirto kirjattu.');
+}
+
 // ------------------------------------------------------------- kytkennät
 
 /** Kytke talousnäkymän tapahtumat. Kutsutaan kerran. */
 export function initFinanceForms() {
-  const segments = {
-    bills: maybe('segmentBills'),
-    expenses: maybe('segmentExpenses'),
-    savings: maybe('segmentSavings')
-  };
-  for (const [key, node] of Object.entries(segments)) {
-    if (node) node.addEventListener('click', () => setFinanceSegment(key));
+  for (const { key } of FINANCE_SEGMENTS) {
+    const { tab } = segmentElements(key);
+    if (tab) tab.addEventListener('click', () => setFinanceSegment(key));
   }
 
   if (!maybe('addBillBtn')) return;
@@ -648,6 +871,8 @@ export function initFinanceForms() {
   });
 
   el('addSavingsBtn').addEventListener('click', openAddSavingsForm);
+  el('stCancel').addEventListener('click', closeSavingsTransferForm);
+  el('stSave').addEventListener('click', submitSavingsTransfer);
   el('sfCancel').addEventListener('click', closeSavingsForm);
   el('sfSave').addEventListener('click', submitSavings);
   el('sfDelete').addEventListener('click', async () => {
@@ -658,7 +883,8 @@ export function initFinanceForms() {
   for (const [formId, close] of [
     ['billForm', closeBillForm],
     ['expenseForm', closeExpenseForm],
-    ['savingsForm', closeSavingsForm]
+    ['savingsForm', closeSavingsForm],
+    ['savingsTransferForm', closeSavingsTransferForm]
   ]) {
     el(formId).addEventListener('keydown', event => {
       if (event.key === 'Escape') close();

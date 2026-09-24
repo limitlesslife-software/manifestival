@@ -259,10 +259,33 @@ test('KRIITTINEN: perustilan hyväksyntäpaketti kattaa jokaisen osion', () => {
   // huomaamatta.
   const paketti = read('docs/acceptance/BASE-FIX.md');
 
+  // RAJAUS AALTOIHIN A-E.
+  //
+  // Perustilan korjaus on deployattu commit, ja sen hyväksyntäpaketti
+  // on tietue siitä mitä silloin testattiin. Myöhempi työ ei voi
+  // lisätä siihen osioita jälkikäteen -- yritys tekisi paketista
+  // väitteen hyväksynnästä, jota ei tehty.
+  //
+  // Uudemmat domainit kuuluvat oman aaltonsa pakettiin, ja testi
+  // "paketti kertoo oikeat portit" vartioi sitä.
+  const perustilanPortit = new Set(cumulativeGates('E'));
+
   for (const row of REACHABILITY) {
     if (row.reach !== REACH.REACHABLE) continue;
+    if (!perustilanPortit.has(row.gate)) continue;
     assert.ok(paketti.includes(row.label),
       `BASE-FIX.md ei ohjaa tarkistamaan osiota "${row.label}"`);
+  }
+
+  // Ja uudemmat domainit ovat oman aaltonsa paketissa.
+  for (const row of REACHABILITY) {
+    if (row.reach !== REACH.REACHABLE) continue;
+    if (perustilanPortit.has(row.gate)) continue;
+
+    const wave = WAVES.find(w => w.gates.includes(row.gate));
+    assert.ok(wave, `${row.gate} ei ole missään aallossa`);
+    assert.ok(read(`docs/acceptance/WAVE-${wave.id}.md`).includes(row.label),
+      `WAVE-${wave.id}.md ei ohjaa tarkistamaan osiota "${row.label}"`);
   }
 
   // Ja se kertoo mitä EI pidä odottaa: portit ovat kiinni, joten uusi
@@ -274,7 +297,10 @@ test('KRIITTINEN: perustilan hyväksyntäpaketti kattaa jokaisen osion', () => {
 });
 
 test('kumulatiiviset portit kattavat kaikki tavoitettavuusrivit', () => {
-  const kaikki = new Set(cumulativeGates('E'));
+  // Junan VIIMEINEN aalto luetaan määrittelystä eikä kirjoiteta tähän
+  // kirjaimena. Aallon lisääminen olisi muuten muutos kahteen paikkaan,
+  // ja tämä testi kertoisi vanhentuneen totuuden hiljaa.
+  const kaikki = new Set(cumulativeGates(WAVES[WAVES.length - 1].id));
   for (const row of REACHABILITY) {
     assert.ok(kaikki.has(row.gate), `${row.gate} ei ole missään aallossa`);
   }

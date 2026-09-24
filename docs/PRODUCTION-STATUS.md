@@ -46,8 +46,15 @@ Automaattinen testi vartioi, että tämä dokumentti pysyy ajan tasalla.
 | 0006 | `0006_wellbeing.sql` | **AJETTU** | PASS |
 | 0007 | `0007_finance.sql` | **AJETTU** | PASS |
 | 0008 | `0008_ai_audit.sql` | **AJETTU** | PASS |
+| 0009 | `0009_finance_2.sql` | **EI AJETTU** | — |
 
-> **Yhtäkään ei saa ajaa uudelleen.** Jokainen on fail-closed ja
+> **Migraatio 0009 on suunniteltu, ei ajettu.** Se luo taulut
+> `transactions` ja `investments` sekä lisää `bills`-tauluun kolme
+> maksutietosaraketta. Talous 2.0:n sovelluskoodi toimii ilman sitä:
+> portit ovat kiinni, jolloin tieto elää istunnon muistissa. Ajaminen
+> vaatii Panun erillisen hyväksynnän.
+
+> **Yhtäkään ajettua ei saa ajaa uudelleen.** Jokainen on fail-closed ja
 > keskeytyy itse, mutta älä luota siihen — ne on tarkoitettu ajettaviksi
 > kerran.
 
@@ -105,7 +112,6 @@ vertaa niihin.
 
 | Portti | Migraatio | Tuotannon tila |
 |---|---|---|
-| `TASK_EXTENDED_FIELDS` | 0002 | **AKTIVOITU** |
 | `routines` | 0003 | **AKTIVOITU** |
 | `routineExceptions` | 0003 | **AKTIVOITU** |
 | `goals` | 0004 | **AKTIVOITU** |
@@ -116,6 +122,16 @@ vertaa niihin.
 | `recurringExpenses` | 0007 | **AKTIVOITU** |
 | `savingsGoals` | 0007 | **AKTIVOITU** |
 | `aiAudit` | 0008 | **AKTIVOITU** |
+| `transactions` | 0009 | kiinni |
+| `investments` | 0009 | kiinni |
+| `BILL_PAYMENT_FIELDS` | 0009 | kiinni |
+
+`BILL_PAYMENT_FIELDS` on **sarakeportti**, ei taulu. `bills`-taulu on
+ollut olemassa migraatiosta 0007, mutta sarakkeet `payee`, `iban` ja
+`reference` syntyvät vasta migraatiossa 0009 — joten taulun portin
+avaaminen ei kerro sarakkeista mitään, ja niillä on oltava oma portti.
+Ilman sitä `bills`-portin avaaminen ennen migraatiota 0009 kaataisi
+jokaisen laskun tallennuksen tuntemattomaan sarakkeeseen.
 
 Lähde: `src/data/schema.js`. Portit ovat käännösaikaisia vakioita —
 niiden muuttaminen vaatii deployn.
@@ -127,9 +143,10 @@ aaltocommitti muuttaa kaikkia kolmea, ja
 
 ---
 
-## Julkaisujuna 0003–0008
+## Julkaisujuna 0003–0009
 
-Kymmenen porttia avataan viidessä aallossa. Ohje ja aaltokohtaiset
+Kaksitoista porttia avataan kuudessa aallossa (A–E porteille 0003–0008,
+F migraation 0009 porteille). Ohje ja aaltokohtaiset
 hyväksyntäpaketit: `docs/RELEASE-TRAIN-0003-0008.md`.
 
 | Vaihe | Portit | Cache | Valmius | Suunniteltu | Deployattu | Selain | Kanta | Turva |
@@ -141,6 +158,28 @@ hyväksyntäpaketit: `docs/RELEASE-TRAIN-0003-0008.md`.
 | **C** | `routines`, `routineExceptions` | `v16` | VALMIS | `cf259d0` | — | — | — | — |
 | **D** | `recurringExpenses`, `savingsGoals`, `bills` | `v17` | VALMIS | `091e73c` | — | — | — | — |
 | **E** | `aiAudit` | `v18` | VALMIS | `2b947cc` | — | — | — | — |
+| **F** | `transactions`, `investments` | `v19` | **ESTETTY** | — | — | — | — | — |
+
+**Aalto F on estetty, ei kesken.** Sen sovelluskoodi on valmis ja
+testattu porttien ollessa kiinni. Este on yksi ja nimetty: migraatiota
+`0009_finance_2.sql` **ei ole ajettu tuotantoon**. Portteja ei voi
+avata tauluihin, joita ei ole.
+
+Aalto muuttuu VALMIIKSI vasta kun
+
+1. Panu on hyväksynyt migraation 0009,
+2. migraatio on ajettu tuotantoon, ja
+3. `supabase/verify/verify_0009.sql` antaa 0 poikkeavaa.
+
+> **HUOM. Talous 2.0:n tuotantoversiota ei ole vielä valittu.**
+>
+> Aallon F cache-versio `v19` koskee porttien avaamista. Talous 2.0:n
+> *tuotekoodi* on eri asia: se on uusi julkaisu, joka ei muuta yhtään
+> porttia mutta muuttaa sovelluskuorta — ja siksi vaatii oman
+> cache-version bumpin deployhetkellä. Sitä ei ole annettu tässä
+> haarassa, koska oikea numero riippuu siitä, missä järjestyksessä
+> aallot C–E ja Talous 2.0 deployataan. Ks.
+> `docs/FINANCE-2.0.md`, kohta "Julkaisujärjestys".
 
 Aaltojen commit-SHA:t: `docs/activation-0003-0008-release-manifest.json`.
 

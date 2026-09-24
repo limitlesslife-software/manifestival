@@ -34,14 +34,15 @@
 // johdonmukaisesti — eli täsmälleen sen mitä kelvollinen aaltocommit
 // tekee.
 
-/** Kaikki kymmenen porttia siinä järjestyksessä kuin ne ovat schema.js:ssä. */
+/** Kaikki portit siinä järjestyksessä kuin ne ovat schema.js:ssä. */
 export const ALL_GATES = Object.freeze([
   'routines', 'routineExceptions',
   'goals', 'projects',
   'notificationPreferences',
   'wellbeing',
   'bills', 'recurringExpenses', 'savingsGoals',
-  'aiAudit'
+  'aiAudit',
+  'transactions', 'investments'
 ]);
 
 /**
@@ -150,8 +151,77 @@ export const WAVES = Object.freeze([
       'Ei vierasavaimia. Viimeisenä, koska se kirjaa muiden toimintaa — '
       + 'sen kannattaa olla käytössä vasta kun kirjattavaa on.',
     tables: Object.freeze(['ai_action_audit'])
+  }),
+  Object.freeze({
+    id: 'F',
+    cacheVersion: 'v19',
+
+    // READY KOSKEE KÄYTTÖLIITTYMÄÄ, `blockedBy` KANTAA.
+    //
+    // Nämä ovat kaksi eri asiaa, ja niiden sekoittaminen olisi ollut
+    // helppoa: `readiness` JOHDETAAN käyttöliittymän
+    // tavoitettavuudesta (`tests/ui-reachability.test.mjs`), eikä sitä
+    // voi kirjoittaa käsin. Talous 2.0:n näkymät ovat olemassa, joten
+    // se on READY siinä merkityksessä.
+    //
+    // Aallon este on toisaalla eikä se näy tavoitettavuudessa
+    // lainkaan: migraatiota 0009 EI OLE AJETTU tuotantoon, eikä
+    // porttia voi avata tauluun jota ei ole.
+    //
+    // Deployattavuus on siksi molempien ehtojen konjunktio. Ks.
+    // `isDeployable()`.
+    readiness: 'READY',
+    blockedBy: 'supabase/migrations/0009_finance_2.sql — EI AJETTU',
+    gates: Object.freeze(['transactions', 'investments']),
+    title: 'Talous 2.0: tapahtumat ja sijoitukset',
+    rationale:
+      'Kumpikaan taulu ei viittaa mihinkään sovellustauluun, joten '
+      + 'riippuvuusjärjestys ei pakota tätä mihinkään kohtaan. Viimeisenä '
+      + 'siksi, että se on ainoa aalto, jonka migraatiota ei ole ajettu — '
+      + 'ja aalto jonka kanta puuttuu ei saa olla minkään toisen edellä.',
+    tables: Object.freeze(['transactions', 'investments'])
   })
 ]);
+
+/**
+ * Sarakeportit: portteja, jotka eivät ole tauluja.
+ *
+ * `BILL_PAYMENT_FIELDS` on `bills`-taulun kolme uutta saraketta
+ * (payee, iban, reference). Taulu on olemassa migraatiosta 0007, mutta
+ * sarakkeet syntyvät vasta migraatiossa 0009 — joten taulun portin
+ * avaaminen EI riitä, ja sarakeportti on erillinen.
+ *
+ * Se kuuluu samaan aaltoon F kuin taulutkin: sama migraatio, sama
+ * hyväksyntä, sama peruutus.
+ */
+export const COLUMN_GATES = Object.freeze({
+  BILL_PAYMENT_FIELDS: 'F'
+});
+
+/**
+ * Onko aalto deployattavissa juuri nyt?
+ *
+ * KAKSI RIIPPUMATONTA EHTOA:
+ *
+ *   readiness === 'READY'   käyttöliittymä on olemassa (johdettu)
+ *   blockedBy == null       kanta on valmis (julistettu)
+ *
+ * Kumpikin voi estää yksin. Aalto, jonka domainilta puuttuu näkymä, ei
+ * ole hyväksyttävissä; aalto, jonka taulua ei ole, kaataa jokaisen
+ * kirjoituksen. Yhteen lukuun puristettuna toinen niistä katoaisi.
+ */
+export function isDeployable(id) {
+  const wave = waveById(id);
+  if (!wave) return false;
+  if (id === 'BASE') return true;
+  return wave.readiness === 'READY' && !wave.blockedBy;
+}
+
+/** Aallot, joilla on julistettu este. */
+export function blockedWaves() {
+  return WAVES.filter(wave => wave.blockedBy)
+    .map(wave => Object.freeze({ id: wave.id, blockedBy: wave.blockedBy }));
+}
 
 /** Aaltotunnisteet järjestyksessä. */
 export const WAVE_IDS = Object.freeze(WAVES.map(w => w.id));
@@ -224,8 +294,8 @@ export function rollbackTargetOf(id) {
  * Palauttaa aaltotunnisteen ('BASE', 'A', ...) tai null, jos matriisi
  * ei vastaa YHTÄKÄÄN sallittua tilaa.
  *
- * TÄMÄ ON KOKO TYÖKALUN YDIN. Yksitoista porttia tuottaisi 1024
- * yhdistelmää; niistä vain kuusi on sallittuja. Kaikki muut ovat
+ * TÄMÄ ON KOKO TYÖKALUN YDIN. Kaksitoista porttia tuottaa 4096
+ * yhdistelmää; niistä vain seitsemän on sallittuja. Kaikki muut ovat
  * virheitä — joko portti on avattu liian aikaisin, portti on jäänyt
  * avaamatta tai jokin on sulkeutunut vahingossa. Jokainen näistä on
  * tuotantovirhe, ja jokainen niistä kaatuu tässä.

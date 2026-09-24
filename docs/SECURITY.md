@@ -19,7 +19,57 @@ Oletamme, että:
 3. **Ainoa todellinen pääsynvalvonta on tietokannassa.** Selainkoodiin ei voi
    luottaa: kuka tahansa voi kutsua Supabasen REST-rajapintaa suoraan ilman
    sovellusta.
-4. **`/api/parse` on julkinen päätepiste**, jota kuka tahansa voi kutsua.
+4. **`/api/parse` ja `/api/extract` ovat julkisia päätepisteitä**, joita
+   kuka tahansa voi kutsua. Molemmat vaativat kirjautumisen ja
+   rajoittavat pyyntöjä, mutta reitti itsessään on avoin.
+
+---
+
+## Kuitin kuva
+
+**Kuvaa ei tallenneta mihinkään.**
+
+`/api/extract` vastaanottaa kuitin tai laskun kuvan, lähettää sen
+Anthropicille luettavaksi ja unohtaa sen. Kuvaa **ei** kirjoiteta
+levylle, **ei** tallenneta Supabaseen, **ei** lokiteta eikä palauteta
+vastauksessa. Se elää yhden pyynnön keston.
+
+Kuittitaulua ei ole eikä sitä ole suunniteltu. Migraatio 0009 ei luo
+sellaista. Taulu jota ei ole, ei voi vahingossa täyttyä.
+
+Ketju kokonaisuudessaan:
+
+| Vaihe | Missä | Mitä kuvalle tapahtuu |
+|---|---|---|
+| Valinta | selain | `<input type="file">`, tyhjennetään heti käytön jälkeen |
+| Pienennys | selain | canvas, **riisuu EXIF-metatiedot ja GPS-koordinaatit** |
+| Lähetys | selain → palvelin | base64, enintään 5 MB |
+| Luenta | palvelin → Anthropic | kuva mukana pyynnössä |
+| Vapautus | molemmat | `revokeObjectURL`, `input.value = ''`, base64 nollataan |
+| Jäljelle jää | selain | luenta — **ei kuvaa** |
+
+Luennan tietomallissa (`src/domain/receipts.js`) **ei ole kuvakenttää**,
+joten kuvaa ei voi vahingossakaan tallentaa. Tämä on lukittu testillä
+`tests/finance-2-domain.test.mjs`.
+
+Virheviestit eivät koskaan sisällä kuvadataa: base64-pätkä lokissa
+olisi juuri se kuitti, jota ei ollut tarkoitus säilyttää. Lukittu
+testillä `tests/api-extract-validation.test.cjs`.
+
+---
+
+## Maksaminen
+
+**Manifestivalilla ei ole pankkiyhteyttä eikä valtuutta siirtää rahaa.**
+
+- Skannattu lasku syntyy aina tilassa `open`. `toBill()` pakottaa sen
+  riippumatta siitä, mitä luennassa lukee.
+- `iban` ja `reference` ovat tietoa, jonka käyttäjä kopioi omaan
+  pankkiinsa. Ne eivät käynnistä mitään.
+- Säästösiirto on kirjaus siitä, että käyttäjä siirsi rahaa itse.
+
+Jos sovellukseen joskus lisätään maksuominaisuus, se on oma
+turvallisuusarvionsa — ei tämän laajennus.
 
 ---
 
@@ -27,7 +77,7 @@ Oletamme, että:
 
 | Arvo | Sijainti | Julkinen? | Huomiot |
 |---|---|---|---|
-| `ANTHROPIC_API_KEY` | Vercelin ympäristömuuttuja | **EI** | Vain palvelinpuolen `api/parse.js` lukee. Ei koskaan selaimeen. |
+| `ANTHROPIC_API_KEY` | Vercelin ympäristömuuttuja | **EI** | Vain palvelinpuolen `api/parse.js` ja `api/extract.js` lukevat. Ei koskaan selaimeen. |
 | Supabase URL | `index.html` | Kyllä | Julkinen projektin osoite |
 | Supabase anon-avain | `index.html` | Kyllä | Suunniteltu julkiseksi. Turva perustuu RLS:ään. |
 | Supabase `service_role` | **Ei missään** | **EI KOSKAAN** | Ohittaa RLS:n. Ei saa päätyä repoon, selaimeen eikä `api/`-koodiin. |

@@ -15,5 +15,12 @@ export const SUPABASE_ANON_KEY =
 
 /** Sovelluksen oman palvelinpuolen päätepisteet. */
 export const API = Object.freeze({
-  parse: '/api/parse'
+  parse: '/api/parse',
+  /**
+   * Kuitin ja laskun kuvan luenta.
+   *
+   * KUVA KULKEE LÄPI, EI TALTEEN. Päätepiste ei tallenna kuvaa
+   * mihinkään. Ks. api/extract.js ja src/app/receiptCapture.js.
+   */
+  extract: '/api/extract'
 });
