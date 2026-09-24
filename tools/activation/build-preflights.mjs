@@ -1,0 +1,172 @@
+// Generoi supabase/preflight/preflight_0009.sql ... preflight_0013.sql.
+//
+//   node tools/activation/build-preflights.mjs          kirjoita tiedostot
+//   node tools/activation/build-preflights.mjs --check  vertaa levyyn (testit)
+//
+// Jokainen esitarkistus on VAIN LUKEVA yksi SELECT (Supabasen editori
+// näyttää vain viimeisen tuloksen), samaa muotoa kuin preflight_0003–0008:
+// check_no, section, check_name, status (PASS/FAIL/INFO), details,
+// poikkeavia_yhteensa. Odotus: 0 FAIL.
+//
+// MIKSI GENEROIDAAN: "migraation objekteja on 0" on luotettava vain, jos
+// se laskee täsmälleen samat objektit kuin migraation oma esitarkistus.
+// Lista poimitaan migraatiosta itsestään, kuten inventaariossa.
+
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { EXPECTED } from './build-inventory.mjs';
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+const OWNER = '2cc00622-f927-4604-a518-361a4328481b';
+
+const FILES = Object.freeze({
+  '0008': '0008_ai_audit.sql', '0009': '0009_finance_2.sql', '0010': '0010_goal_to_action.sql',
+  '0011': '0011_personal_assistant.sql', '0012': '0012_life_alignment.sql',
+  '0013': '0013_alignment_reality.sql'
+});
+
+const WAVE = Object.freeze({ '0009': 'F', '0010': 'G', '0011': 'H', '0012': 'I', '0013': 'J' });
+
+function detection(number) {
+  const src = fs.readFileSync(path.join(ROOT, 'supabase/migrations', FILES[number]), 'utf8').replace(/\r\n/g, '\n');
+  const m = /select count\(\*\) into olemassa from \(\n([\s\S]*?)\n\s*\) kaikki;/.exec(src);
+  if (!m) throw new Error(`${number}: tunnistuslohkoa ei löytynyt`);
+  return m[1].replace(/'(public\.\w+)'::regclass/g, "to_regclass('$1')")
+    .split('\n').map(line => '           ' + line.trim()).join('\n');
+}
+
+const count = sql => `(select count(*)::text from (\n${sql}\n           ) kaikki)`;
+
+/** Migraatiokohtaiset lisätarkistukset: [osio, nimi, odotus, arvo-SQL]. */
+const SPECIFIC = Object.freeze({
+  '0009': [
+    ['0009', 'bills-taulu on olemassa (0007)', '1', "(select count(*)::text from pg_tables where schemaname = 'public' and tablename = 'bills')"],
+    ['0009', 'bills: maksutietosarakkeita ei vielä ole', '0',
+      "(select count(*)::text from information_schema.columns where table_schema = 'public' and table_name = 'bills' and column_name in ('payee', 'iban', 'reference'))"]
+  ],
+  '0010': [
+    ['0010', 'Omistajan rivin avaimet goals, projects, tasks', '3',
+      "(select count(*)::text from pg_constraint where contype = 'u' and conname in ('goals_owner_row_key', 'projects_owner_row_key', 'tasks_owner_row_key'))"],
+    ['0010', 'Jokainen tavoitteen tila kelpaa uudelle goals_status_check-rajoitteelle', '0',
+      "(select count(*)::text from public.goals where status not in ('active', 'paused', 'maintenance', 'completed', 'abandoned', 'archived'))"],
+    ['0010', 'goals_status_check on olemassa (korvataan)', '1', "(select count(*)::text from pg_constraint where conname = 'goals_status_check')"],
+    ['0010', 'profile-taulu on olemassa (saa kaksi saraketta)', '1', "(select count(*)::text from pg_tables where schemaname = 'public' and tablename = 'profile')"],
+    ['kirjattavat', 'Tavoitteita (muutetaan: 7 saraketta + rajoite)', 'INFO', '(select count(*)::text from public.goals)'],
+    ['kirjattavat', 'Projekteja (muutetaan: 1 sarake)', 'INFO', '(select count(*)::text from public.projects)'],
+    ['kirjattavat', 'Profiileja (muutetaan: 2 saraketta)', 'INFO', '(select count(*)::text from public.profile)']
+  ],
+  '0011': [
+    ['0011', 'tasks_owner_row_key on olemassa (matka- ja sijaintiviitteet)', '1',
+      "(select count(*)::text from pg_constraint where conname = 'tasks_owner_row_key')"]
+  ],
+  '0012': [
+    ['0012', 'Omistajan rivin avaimet goals ja tasks', '2',
+      "(select count(*)::text from pg_constraint where contype = 'u' and conname in ('goals_owner_row_key', 'tasks_owner_row_key'))"],
+    ['0012', 'goals.life_area_id -saraketta ei vielä ole', '0',
+      "(select count(*)::text from information_schema.columns where table_schema = 'public' and table_name = 'goals' and column_name = 'life_area_id')"],
+    ['kirjattavat', 'Tavoitteita (saavat nullable-sarakkeen, ei täyttöä)', 'INFO', '(select count(*)::text from public.goals)']
+  ],
+  '0013': [
+    ['0013', '0012:n alkuperäinen lähderajoite on olemassa (korvataan)', '1',
+      "(select count(*)::text from pg_constraint where conname = 'time_entries_source_check')"],
+    ['0013', 'Omistajan rivin avaimet life_areas, goals, tasks, projects, routines', '5',
+      "(select count(*)::text from pg_constraint where contype = 'u' and conname in ('life_areas_owner_row_key', 'goals_owner_row_key', 'tasks_owner_row_key', 'projects_owner_row_key', 'routines_owner_row_key'))"],
+    ['kirjattavat', 'Kirjattuja aikoja (saavat 6 nullable-saraketta)', 'INFO',
+      "(select case when to_regclass('public.time_entries') is null then 'puuttuu' else (xpath('/row/c/text()', query_to_xml('select count(*) as c from public.time_entries', false, true, '')))[1]::text end)"]
+  ]
+});
+
+function previous(number) {
+  return String(Number(number) - 1).padStart(4, '0');
+}
+
+export function buildPreflight(number) {
+  const prev = previous(number);
+  const rows = [];
+  let n = 1;
+  const add = (section, name, expected, valueSql) => {
+    const no = String(n++).padStart(2, '0');
+    rows.push(`  select '${no}'::text as check_no, '${section}'::text as section,\n         '${name.replace(/'/g, "''")}'::text as check_name, '${expected}'::text as odotus,\n         ${valueSql} as toteutui`);
+  };
+
+  add('0001', 'Omistajasarake tasks.user_id on olemassa', '1',
+    "(select count(*)::text from information_schema.columns where table_schema = 'public' and table_name = 'tasks' and column_name = 'user_id')");
+  add('0001', 'RLS on päällä taulussa tasks', '1',
+    "(select count(*)::text from pg_class where relnamespace = 'public'::regnamespace and relname = 'tasks' and relrowsecurity)");
+  add('esiehto', 'Hyväksytty omistaja löytyy auth.users-taulusta', '1',
+    `(select count(*)::text from auth.users where id = '${OWNER}'::uuid)`);
+  add('esiehto', 'PostgreSQL 15 tai uudempi', 'true',
+    "(current_setting('server_version_num')::int >= 150000)::text");
+  add('esiehto', 'touch_updated_at on INVOKER ja search_path kiinnitetty', '1',
+    `(select count(*)::text from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+           where n.nspname = 'public' and p.proname = 'touch_updated_at' and not p.prosecdef
+             and exists (select 1 from unnest(p.proconfig) a where a like 'search\\_path=%'))`);
+  add('järjestys', `Edellinen migraatio ${prev} on ajettu kokonaan (${EXPECTED[prev]} objektia)`, String(EXPECTED[prev]).split('|').pop(),
+    count(detection(prev)));
+  for (const [section, name, expected, sql] of SPECIFIC[number]) add(section, name, expected, sql);
+  add(number, `Migraation ${number} objekteja ei vielä ole (0/${EXPECTED[number]})`, '0', count(detection(number)));
+  add('esteet', 'Avoimia idle in transaction -istuntoja ei ole', '0',
+    `(select count(*)::text from pg_stat_activity where datname = current_database()
+             and state in ('idle in transaction', 'idle in transaction (aborted)') and pid <> pg_backend_pid())`);
+  add('esteet', 'Yli minuutin kestäneitä kyselyitä ei ole käynnissä', '0',
+    `(select count(*)::text from pg_stat_activity where datname = current_database() and state = 'active'
+             and pid <> pg_backend_pid() and now() - query_start > interval '1 minute')`);
+  add('esteet', 'Odottavia lukkoja ei ole', '0', '(select count(*)::text from pg_locks where not granted and pid <> pg_backend_pid())');
+  add('kirjattavat', 'Tehtävien lukumäärä', 'INFO', '(select count(*)::text from public.tasks)');
+  add('kirjattavat', 'Tietokanta', 'INFO', 'current_database()');
+  add('kirjattavat', 'Palvelimen versio', 'INFO', "current_setting('server_version')");
+  add('kirjattavat', 'Tarkistuksen hetki (UTC)', 'INFO', "to_char(now() at time zone 'UTC', 'YYYY-MM-DD HH24:MI:SS')");
+
+  return `-- Preflight: ENNEN migraatiota ${FILES[number].replace('.sql', '')} (aalto ${WAVE[number]})
+-- VAIN LUKEVA. Yksi lause, yksi taulukko, yksi kopiointi.
+--
+-- GENEROITU: node tools/activation/build-preflights.mjs. ÄLÄ MUOKKAA
+-- KÄSIN — testi vertaa tiedostoa generaattoriin.
+--
+-- MILLOIN: juuri ennen kuin ${number} ajetaan, samassa SQL-editorin
+-- välilehdessä ja ilman muita avoimia välilehtiä.
+--
+-- ODOTUS: jokaisen PASS/FAIL-rivin status = 'PASS' ja
+-- poikkeavia_yhteensa = 0. INFO-rivit ovat kirjattavia lukuja.
+--
+-- YKSIKIN FAIL = MIGRAATIOTA ${number} EI AJETA.
+--
+-- Objektilistat on poimittu migraatioiden omista esitarkistuksista:
+-- "0 objektia" tarkoittaa samaa kuin migraation oma tarkistus.
+-- Harjoiteltu oikealla PostgreSQL 17:llä: tools/pg-rehearsal.
+--
+-- Tämä tiedosto EI lue käyttäjän sisältöä.
+
+select c.check_no, c.section, c.check_name,
+       case when c.odotus = 'INFO' then 'INFO'
+            when c.toteutui = c.odotus then 'PASS' else 'FAIL' end as status,
+       case when c.odotus = 'INFO' then c.toteutui
+            else 'odotus ' || c.odotus || ', toteutui ' || coalesce(c.toteutui, 'null') end as details,
+       count(*) filter (where c.odotus <> 'INFO' and c.toteutui is distinct from c.odotus)
+         over () as poikkeavia_yhteensa
+from (
+${rows.join('\n\n  union all\n')}
+) c
+order by c.check_no;
+`;
+}
+
+export const PREFLIGHT_NUMBERS = Object.freeze(['0009', '0010', '0011', '0012', '0013']);
+
+if (process.argv[1] && process.argv[1].endsWith('build-preflights.mjs')) {
+  let stale = 0;
+  for (const number of PREFLIGHT_NUMBERS) {
+    const rel = `supabase/preflight/preflight_${number}.sql`;
+    const sql = buildPreflight(number);
+    const full = path.join(ROOT, rel);
+    if (process.argv.includes('--check')) {
+      const onDisk = fs.existsSync(full) ? fs.readFileSync(full, 'utf8').replace(/\r\n/g, '\n') : '';
+      if (onDisk !== sql) { console.error(`${rel} ei vastaa generaattoria`); stale++; }
+    } else {
+      fs.writeFileSync(full, sql);
+      console.log(`kirjoitettu ${rel}`);
+    }
+  }
+  if (stale) process.exit(1);
+}
