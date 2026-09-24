@@ -576,6 +576,18 @@ test('lasku ilman eräpäivää hylätään', () => {
   assert.match(result.reason, /eräpäivä/i);
 });
 
+test('KRIITTINEN: lasku ilman summaa hylätään ehdotusvaiheessa, ei vasta suorituksessa', () => {
+  // domain/finance.js:n validateBill() vaatii amountMinor:n aina. Ilman
+  // tätä tarkistusta resolveCommand() olisi hyväksynyt ehdotuksen, käyttäjä
+  // olisi vahvistanut sen, ja createBill() olisi vasta silloin epäonnistunut
+  // äänettömästi validointivirheeseen jota vahvistusnäkymä ei koskaan näyttänyt.
+  const result = resolveCommand({
+    intent: INTENT.CREATE_BILL, name: 'Sähkölasku', dueDate: '2026-09-30'
+  }, context);
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /summa/i);
+});
+
 test('valuutta normalisoidaan isoiksi kirjaimiksi', () => {
   const result = resolveCommand({
     intent: INTENT.CREATE_BILL, name: 'X', amount: 1, dueDate: TODAY, currency: 'eur'

@@ -35,7 +35,7 @@ export const REACH = Object.freeze({
 });
 
 /**
- * Kolmetoista domainia ja se, miten käyttäjä pääsee niihin.
+ * Kahdeksantoista domainia ja se, miten käyttäjä pääsee niihin.
  *
  * `evidence` on koneellisesti tarkistettava todiste:
  *   html      id, jonka on oltava index.html:ssä
@@ -187,6 +187,66 @@ export const REACHABILITY = Object.freeze([
         + 'ei. Poisto ei vie liitettyjä tehtäviä mukanaan, vaan katkaisee '
         + 'liitoksen — työ on tehty tai tekemättä riippumatta siitä, onko '
         + 'sen tarkistuspiste yhä olemassa.'
+  }),
+  Object.freeze({
+    gate: 'inboxItems',
+    reach: REACH.REACHABLE,
+    label: 'Saapuvat',
+    nav: 'Tänään -> kirjauspalkki; Tekeminen -> Saapuvat',
+    evidence: { html: 'inboxListContainer', view: 'src/app/views/inbox.js' },
+    crud: 'kirjaus, tulkinta, hyväksyntä, hylkäys, palautus, poisto',
+    note: 'Kirjauspalkki on päivänäkymän yläreunassa, koska kirjaus on '
+        + 'se teko joka tapahtuu useimmin. RIVI SYNTYY ENNEN TULKINTAA: '
+        + 'verkkokatko ei syö käyttäjän ajatusta. Tulkinta on ehdotus, '
+        + 'ja mitään ei synny ilman hyväksyntää.'
+  }),
+  Object.freeze({
+    gate: 'reminders',
+    reach: REACH.REACHABLE,
+    label: 'Muistutukset',
+    nav: 'Tekeminen -> Muistutukset',
+    evidence: { html: 'remindersListContainer', view: 'src/app/views/reminders.js' },
+    crud: 'luonti, luku, muokkaus, torkutus, kuittaus, peruutus, poisto',
+    note: 'Näkymä sanoo ääneen, että muistutukset lasketaan kun '
+        + 'sovellus on auki: taustaherätystä ei ole eikä sitä luvata. '
+        + 'Torkutus siirtää muistutusta EIKÄ kohteen määräaikaa. '
+        + 'Orpo muistutus perutaan näkyvästi, ei poisteta hiljaa.'
+  }),
+  Object.freeze({
+    gate: 'notices',
+    reach: REACH.REACHABLE,
+    label: 'Ilmoitukset',
+    nav: 'Tänään -> Ilmoitukset (avattava lohko)',
+    evidence: { html: 'noticeCenterContainer', view: 'src/app/views/notices.js' },
+    crud: 'luku, kuittaus, torkutus, hylkäys, poisto',
+    note: 'Tämä EI ole tausta-aineistoa kuten aiAudit: ilmoitus '
+        + 'kirjoitetaan nimenomaan käyttäjän luettavaksi, ja ilmoitus '
+        + 'jota ei näytetä ei ole ilmoitus. Toimintolista tulee '
+        + 'domainista, joten ristiriidalle ei tarjota torkutusta.'
+  }),
+  Object.freeze({
+    gate: 'travelPlans',
+    reach: REACH.REACHABLE,
+    label: 'Matkat',
+    nav: 'Tekeminen -> Matka',
+    evidence: { html: 'travelListContainer', view: 'src/app/views/travel.js' },
+    crud: 'luonti, luku, muokkaus, matka-ajan käsin kirjaus, poisto',
+    note: 'TUNTEMATON NÄYTETÄÄN TUNTEMATTOMANA. Jos matka-aikaa ei '
+        + 'tiedetä, lähtöaikaa ei näytetä kellonaikana vaan syy '
+        + 'kerrotaan ja kesto voi kirjata itse. Reittipalvelua ei ole, '
+        + 'eikä koordinaatteja tallenneta missään vaiheessa.'
+  }),
+  Object.freeze({
+    gate: 'locationRules',
+    reach: REACH.REACHABLE,
+    label: 'Paikkamuistutukset',
+    nav: 'Tekeminen -> Matka -> Paikkamuistutukset',
+    evidence: { html: 'locationRulesContainer', view: 'src/app/views/travel.js' },
+    crud: 'luonti, luku, muokkaus, päälle/pois, poisto',
+    note: 'SÄÄNTÖ ON DATAA, EI TOTEUTUS. Geoaitaa ei ole eikä sitä voi '
+        + 'luvata ilman laitehyväksyntää; säännön voi kirjata, nähdä '
+        + 'ja testata. Uusi sääntö on oletuksena POIS PÄÄLTÄ, ja '
+        + 'päälle kytkeminen kysyy vahvistuksen.'
   })
 ]);
 

@@ -21,9 +21,12 @@ import {
   routinesRepo, routineExceptionsRepo, goalsRepo, projectsRepo, wellbeingRepo,
   billsRepo, recurringExpensesRepo, savingsGoalsRepo, aiAuditRepo,
   transactionsRepo, investmentsRepo, milestonesRepo,
+  inboxRepo, remindersRepo, noticesRepo, travelPlansRepo, locationRulesRepo,
   volatileCollections, clearAllCollections
 } from '../data/collectionsRepo.js';
 import { newTaskId } from '../lib/rows.js';
+import { offline, isOnlineNow } from './offline.js';
+import { classifyError, ERROR_CLASS } from '../domain/offlineQueue.js';
 import { fmtISO, todayMidnight } from '../lib/datetime.js';
 import { normalizeTask, validateTask, SCHEDULING } from '../domain/task.js';
 import { normalizeRoutine, validateRoutine, normalizeException, EXCEPTION } from '../domain/routine.js';
@@ -75,7 +78,8 @@ import {
   setMilestones, addMilestoneToState, replaceMilestoneInState,
   removeMilestoneFromState, findMilestone, replaceMilestonesInState,
   setPendingReplan, clearPendingReplan,
-  setAiAudit
+  setInboxItems, setReminders, setNotices, setTravelPlans, setLocationRules,
+  setAiAudit, setDomainLoadStatus
 } from './state.js';
 import {
   loadPreferences as loadNotificationPreferences,
@@ -84,6 +88,7 @@ import {
 import { sessionSnapshot, isSameSession } from '../data/session.js';
 import { showError, success, notify } from '../ui/toast.js';
 import { confirmDelete, confirmAction } from '../ui/confirm.js';
+import { logError } from '../lib/result.js';
 
 /** Kertaalleen näytettävä huomautus kentistä, jotka eivät vielä tallennu. */
 let volatileWarningShown = false;
@@ -118,9 +123,39 @@ function warnAboutVolatileCollections() {
 }
 
 /**
+ * Ota yhden kokoelman hakutulos vastaan.
+ *
+ * VIIMEKSI ONNISTUNUT TILA EI SAA KADOTA TRANSIENTISSA VIRHEESSÄ. Aiemmin
+ * epäonnistunut haku kirjoitti tyhjän listan tilalle — turvallista
+ * ENSIMMÄISELLÄ latauksella (tilassa ei ollut mitään menetettävää), mutta
+ * väärin heti kun loadUserData() ajetaan uudelleen esim. verkon
+ * palautuessa: hetkellinen virhe olisi näyttänyt käyttäjän jo nähneen
+ * tiedon poistettuna.
+ *
+ * Onnistunut haku korvaa kokoelman aina, myös tyhjällä listalla — se on
+ * legitiimi tulos, ei virhe. Epäonnistunut haku EI KOSKAAN kutsu
+ * asettajaa: mahdollinen aiemmin ladattu tila jää näkyviin, ja
+ * epäonnistuminen näkyy vain dataLoadStatus-kentässä.
+ *
+ * @param {string} domain esim. 'routines', 'goals'
+ * @param {{ok:boolean, value?:*, error?:*}} result
+ * @param {(value:*) => void} setter
+ */
+function applyLoadResult(domain, result, setter) {
+  if (result.ok) {
+    setter(result.value);
+    setDomainLoadStatus(domain, true);
+    return true;
+  }
+  setDomainLoadStatus(domain, false, result.error);
+  logError(result.error);
+  return false;
+}
+
+/**
  * Lataa kirjautuneen käyttäjän kaikki tiedot.
  *
- * VANHENTUNUT VASTAUS HYLÄTÄÄN. Lataus on kaksitoista rinnakkaista
+ * VANHENTUNUT VASTAUS HYLÄTÄÄN. Lataus on parikymmentä rinnakkaista
  * verkkokutsua, ja käyttäjä ehtii kirjautua ulos niiden aikana. Ilman
  * tarkistusta vastaus kirjoittaisi edellisen käyttäjän rivit tilaan
  * uloskirjautumisen JÄLKEEN — ja jos seuraava käyttäjä ehti jo kirjautua
@@ -129,6 +164,11 @@ function warnAboutVolatileCollections() {
  * Tarkistus tehdään istunnon TILANNEKUVASTA eikä pelkästä tunnisteesta:
  * ketju "A ulos -> A takaisin sisään" jättää tunnisteen ennalleen, mutta
  * kesken jäänyt lataus on siitä huolimatta vanhentunut.
+ *
+ * KUTSUTTAVISSA USEAMMIN KUIN KERRAN. Tätä kutsutaan kirjautuessa ja myös
+ * uudelleenlataukseen (esim. verkon palautuessa, ks. reconnect.js) —
+ * jälkimmäisellä kertaa mikä tahansa yksittäinen epäonnistuminen ei saa
+ * hävittää jo ladattua kokoelmaa, ks. applyLoadResult().
  */
 export async function loadUserData() {
   const startedIn = sessionSnapshot();
@@ -136,7 +176,9 @@ export async function loadUserData() {
   const [tasksResult, profileResult, routinesResult, exceptionsResult,
     goalsResult, projectsResult, wellbeingResult, preferencesResult,
     billsResult, expensesResult, savingsResult, transactionsResult,
-    investmentsResult, milestonesResult, auditResult] = await Promise.all([
+    investmentsResult, milestonesResult, auditResult,
+    inboxResult, remindersResult, noticesResult, travelResult,
+    locationResult] = await Promise.all([
     tasksRepo.listTasks(),
     profileRepo.loadProfile(),
     routinesRepo.list(),
@@ -151,7 +193,12 @@ export async function loadUserData() {
     transactionsRepo.list(),
     investmentsRepo.list(),
     milestonesRepo.list(),
-    aiAuditRepo.list()
+    aiAuditRepo.list(),
+    inboxRepo.list(),
+    remindersRepo.list(),
+    noticesRepo.list(),
+    travelPlansRepo.list(),
+    locationRulesRepo.list()
   ]);
 
   // Istunto on voinut vaihtua odotuksen aikana.
@@ -159,33 +206,57 @@ export async function loadUserData() {
     return { tasksOk: false, profileOk: false, discarded: true };
   }
 
-  if (tasksResult.ok) setTasks(tasksResult.value);
-  else { setTasks([]); showError(tasksResult.error); }
+  // Jokainen kokoelma kulkee applyLoadResult():n läpi: onnistunut haku
+  // korvaa kokoelman (myös tyhjällä listalla — se on kelvollinen tulos),
+  // epäonnistunut haku EI KOSKAAN tyhjennä jo ladattua tilaa. Virhe
+  // näytetään käyttäjälle, mutta sovellus ei kaadu eikä väitä tiedon
+  // kadonneen.
+  // Lähettämättömät offline-muutokset lisätään palvelimen listan päälle:
+  // muuten lataus korvaisi paikallisen tilan ja odottava tehtävä katoaisi näkyvistä.
+  if (!applyLoadResult('tasks', tasksResult, list => setTasks(offline.overlay(list)))) showError(tasksResult.error);
 
-  if (profileResult.ok) setProfile(profileResult.value.profile, profileResult.value.exists);
-  else showError(profileResult.error);
+  if (profileResult.ok) {
+    setProfile(profileResult.value.profile, profileResult.value.exists);
+    setDomainLoadStatus('profile', true);
+  } else {
+    setDomainLoadStatus('profile', false, profileResult.error);
+    showError(profileResult.error);
+  }
 
-  // Kokoelmien lataus ei saa estää sovelluksen käyttöä: virhe näytetään,
-  // mutta tila jää tyhjäksi eikä sovellus kaadu.
-  setRoutines(routinesResult.ok ? routinesResult.value : []);
-  setRoutineExceptions(exceptionsResult.ok ? exceptionsResult.value : []);
-  setGoals(goalsResult.ok ? goalsResult.value : []);
-  setProjects(projectsResult.ok ? projectsResult.value : []);
-  setWellbeing(wellbeingResult.ok ? wellbeingResult.value : []);
+  // Muistutusasetukset: alkutila on jo hiljainen oletus (normalizePreferences({})),
+  // joten epäonnistuessa ensimmäisellä latauksella ei tarvita erillistä
+  // fallbackia; uudelleenlatauksella jo ladatut asetukset säilyvät samalla
+  // applyLoadResult()-periaatteella.
+  const collectionsOk = [
+    applyLoadResult('routines', routinesResult, setRoutines),
+    applyLoadResult('routineExceptions', exceptionsResult, setRoutineExceptions),
+    applyLoadResult('goals', goalsResult, setGoals),
+    applyLoadResult('projects', projectsResult, setProjects),
+    applyLoadResult('wellbeing', wellbeingResult, setWellbeing),
+    applyLoadResult('notificationPreferences', preferencesResult, setNotificationPreferences),
+    applyLoadResult('bills', billsResult, setBills),
+    applyLoadResult('recurringExpenses', expensesResult, setRecurringExpenses),
+    applyLoadResult('savingsGoals', savingsResult, setSavingsGoals),
+    applyLoadResult('transactions', transactionsResult, setTransactions),
+    applyLoadResult('investments', investmentsResult, setInvestments),
+    applyLoadResult('milestones', milestonesResult, setMilestones),
+    applyLoadResult('aiAudit', auditResult, setAiAudit),
+    // Avustajan kokoelmat. Nämä ladataan VAIKKA käyttöliittymää ei vielä
+    // olisi — muuten tieto katoaisi sinä hetkenä kun näkymä rakennetaan.
+    applyLoadResult('inboxItems', inboxResult, setInboxItems),
+    applyLoadResult('reminders', remindersResult, setReminders),
+    applyLoadResult('notices', noticesResult, setNotices),
+    applyLoadResult('travelPlans', travelResult, setTravelPlans),
+    applyLoadResult('locationRules', locationResult, setLocationRules)
+  ];
 
-  // Muistutusasetukset: virhe ei saa estää sovelluksen käyttöä, ja
-  // epäonnistuessa palataan hiljaiseen oletukseen.
-  setNotificationPreferences(preferencesResult.ok ? preferencesResult.value : {});
-
-  // Talous ja kirjausketju. Sama periaate: virhe ei estä sovelluksen
-  // käyttöä, vaan tila jää tyhjäksi.
-  setBills(billsResult.ok ? billsResult.value : []);
-  setRecurringExpenses(expensesResult.ok ? expensesResult.value : []);
-  setSavingsGoals(savingsResult.ok ? savingsResult.value : []);
-  setTransactions(transactionsResult.ok ? transactionsResult.value : []);
-  setInvestments(investmentsResult.ok ? investmentsResult.value : []);
-  setMilestones(milestonesResult.ok ? milestonesResult.value : []);
-  setAiAudit(auditResult.ok ? auditResult.value : []);
+  // Yksittäiset kokoelmavirheet kirjautuvat konsoliin (applyLoadResult) ja
+  // dataLoadStatus-kenttään, mutta eivät yksitellen ilmoituksena — kaksi
+  // tusinaa toastia yhdellä verkkokatkolla olisi pahempi kuin hyödyllinen.
+  // Yksi kooste riittää, ja se kertoo suoraan, ettei näkyvä tieto katoa.
+  if (collectionsOk.includes(false)) {
+    notify('Osa tiedoista ei päivittynyt. Aiemmin ladattu tieto pysyy näkyvissä.', 6000);
+  }
 
   return { tasksOk: tasksResult.ok, profileOk: profileResult.ok, discarded: false };
 }
@@ -196,7 +267,33 @@ export async function loadUserData() {
  * Luo uusi tehtävä.
  * @returns {Promise<{ok:boolean, errors?:object, task?:object}>}
  */
-export async function createTask(input) {
+/**
+ * Verkko- tai istuntovirheen jälkeen muutos jonotetaan eikä peruta.
+ * Palvelimen hylkäys (validointi, RLS) EI jonoteta: sen toisto ei auttaisi.
+ */
+function canQueueAfter(error) {
+  const kind = classifyError(error, { offline: !isOnlineNow() });
+  return kind === ERROR_CLASS.NETWORK || kind === ERROR_CLASS.AUTH;
+}
+
+let queuedNoticeAt = 0;
+
+/** Kerro jonotuksesta, mutta ei jokaisella muutoksella (ei toast-ryöppyä). */
+function announceQueued() {
+  const at = Date.now();
+  if (at - queuedNoticeAt < 60000) return;
+  queuedNoticeAt = at;
+  notify('Ei yhteyttä: muutos tallennettiin laitteelle ja lähetetään kun yhteys palaa.', 5000);
+}
+
+/**
+ * Luo tehtävä.
+ *
+ * @param {object} input
+ * @param {{queueOffline?: boolean}} [options] queueOffline:false estää
+ *   offline-jonotuksen (AI-komennon suoritusta ei koskaan jonoteta)
+ */
+export async function createTask(input, options = {}) {
   const task = normalizeTask({
     ...input,
     id: newTaskId(),
@@ -211,10 +308,22 @@ export async function createTask(input) {
   if (task.isWake) clearOtherWakeFlagsInState(task.date, task.id);
   warnAboutVolatileFields(task);
 
-  const result = await tasksRepo.insertTask(task);
+  const mayQueue = options.queueOffline !== false && offline.isActive();
+  // Tiedossa oleva offline-tila: ei odoteta verkkokutsun aikakatkaisua.
+  const result = mayQueue && !isOnlineNow()
+    ? { ok: false, error: null, skipped: true }
+    : await tasksRepo.insertTask(task);
+
   if (!result.ok) {
+    if (mayQueue && (result.skipped || canQueueAfter(result.error))) {
+      const queued = offline.enqueueTaskCreate(task);
+      if (queued.ok) {
+        announceQueued();
+        return { ok: true, task, queued: true };
+      }
+    }
     removeTaskFromState(task.id); // peruutus
-    showError(result.error);
+    showError(result.error || 'Tehtävää ei voitu tallentaa: ei verkkoyhteyttä eikä tilaa offline-jonossa.');
     return { ok: false };
   }
 
@@ -226,7 +335,7 @@ export async function createTask(input) {
  * Muokkaa olemassa olevaa tehtävää.
  * @returns {Promise<{ok:boolean, errors?:object}>}
  */
-export async function editTask(id, changes) {
+export async function editTask(id, changes, options = {}) {
   const previous = findTask(id);
   if (!previous) return { ok: false };
 
@@ -261,10 +370,21 @@ export async function editTask(id, changes) {
   if (updated.isWake) clearOtherWakeFlagsInState(updated.date, id);
   warnAboutVolatileFields(updated);
 
-  const result = await tasksRepo.updateTask(updated);
+  const mayQueue = options.queueOffline !== false && offline.isActive();
+  const result = mayQueue && !isOnlineNow()
+    ? { ok: false, error: null, skipped: true }
+    : await tasksRepo.updateTask(updated);
+
   if (!result.ok) {
+    if (mayQueue && (result.skipped || canQueueAfter(result.error))) {
+      const queued = offline.enqueueTaskUpdate({ id, previous, updated });
+      if (queued.ok) {
+        if (queued.queued !== false) announceQueued();
+        return { ok: true, queued: queued.queued !== false };
+      }
+    }
     replaceTaskInState(id, previous); // peruutus
-    showError(result.error);
+    showError(result.error || 'Muutosta ei voitu tallentaa: ei verkkoyhteyttä eikä tilaa offline-jonossa.');
     return { ok: false };
   }
 
@@ -280,10 +400,23 @@ export async function toggleComplete(id) {
   const nextCompleted = !task.completed;
   patchTaskInState(id, { completed: nextCompleted });
 
-  const result = await tasksRepo.setCompleted(id, nextCompleted);
+  const mayQueue = offline.isActive();
+  const result = mayQueue && !isOnlineNow()
+    ? { ok: false, error: null, skipped: true }
+    : await tasksRepo.setCompleted(id, nextCompleted);
+
   if (!result.ok) {
+    if (mayQueue && (result.skipped || canQueueAfter(result.error))) {
+      const queued = offline.enqueueTaskUpdate({
+        id, previous: task, updated: { ...task, completed: nextCompleted }
+      });
+      if (queued.ok) {
+        announceQueued();
+        return true;
+      }
+    }
     patchTaskInState(id, { completed: task.completed }); // peruutus
-    showError(result.error);
+    showError(result.error || 'Merkintää ei voitu tallentaa: ei verkkoyhteyttä.');
     return false;
   }
   return true;

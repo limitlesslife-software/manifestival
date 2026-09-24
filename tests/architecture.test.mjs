@@ -300,6 +300,14 @@ test('tunnistegeneraattori pysyy sovelluskerroksessa', () => {
     // parametrina), joten generaattori kuuluu tänne — samaan
     // kerrokseen kuin muutkin sivuvaikutukset.
     'src/app/planning.js',
+    // Avustajan toiminnot ja kirjaus luovat tunnisteet muistutuksille,
+    // ilmoituksille, matkasuunnitelmille ja saapuville riveille. Sama
+    // perustelu kuin suunnittelulla: domain ei tuota tunnisteita.
+    'src/app/assistantActions.js', 'src/app/capture.js',
+    // Offline-jono luo operaatiotunnisteet (idempotenssiavaimet). Domain
+    // (offlineQueue.js) ei tuota niitä: `createOperation` ottaa tunnisteen
+    // parametrina.
+    'src/app/offline.js',
     'src/data/schema.js', 'src/data/tasksRepo.js', 'src/lib/rows.js'
   ]);
 

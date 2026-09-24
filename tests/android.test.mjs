@@ -44,6 +44,29 @@ test('koontiskriptit ovat olemassa ja oikeassa järjestyksessä', () => {
   assert.ok(packageJson.scripts['build:android'].includes('sync:android'));
 });
 
+test('KRIITTINEN: vanhentuneet Android-assetit paikataan automaattisesti ennen testejä', () => {
+  // android/app/src/main/assets/public on gitignorattu (android/.gitignore),
+  // joten se syntyy vain kun joku on ajanut sync:androidin paikallisesti.
+  // Jos web-lähdettä muutetaan sen jälkeen synkronoimatta uudelleen, "npm
+  // test" ei saa enää vain kaataa yhtä testiä 1600+ muun joukossa --
+  // pretest-koukun on korjattava tilanne AUTOMAATTISESTI ennen kuin
+  // tests/android.test.mjs edes ehtii nähdä vanhentuneen tilan.
+  assert.ok(packageJson.scripts.pretest,
+    'package.jsonista puuttuu "pretest" -- Android-assettien vanhentuminen '
+    + 'näkyisi erottamattomana FAILina muun testijoukon seassa');
+  assert.ok(packageJson.scripts.pretest.includes('pretest-android-sync.mjs'),
+    'pretest ei aja Android-assettien paikkausskriptiä');
+  assert.ok(fs.existsSync(path.join(ROOT, 'scripts/pretest-android-sync.mjs')),
+    'pretest-android-sync.mjs puuttuu, vaikka package.json viittaa siihen');
+
+  const skripti = read('scripts/pretest-android-sync.mjs');
+  assert.match(skripti, /sync:android/,
+    'paikkausskripti ei aja sync:android-komentoa');
+  assert.match(skripti, /existsSync/,
+    'paikkausskripti ei tarkista, onko assets/public ylipäätään olemassa -- '
+    + 'ilman sitä se pakottaisi Android-koonnin myös fressissä kloonissa');
+});
+
 // ------------------------------------------------- yksi koodikanta
 
 test('SÄÄNTÖ: Android-hakemistossa ei ole sovelluslogiikkaa', { skip: !hasAndroid }, () => {
@@ -127,8 +150,8 @@ test('natiivikuoressa API-kutsu osoittaa tuotantoon', async () => {
 });
 
 test('AI-kutsu käyttää alustakohtaista osoitetta', () => {
-  const source = readCode('src/ai/parseClient.js');
-  assert.ok(source.includes('apiUrl(API.parse)'),
+  const source = readCode('src/ai/commandClient.js');
+  assert.ok(source.includes('apiUrl(API.command)'),
     'kutsun pitää kulkea alustasovittimen kautta');
 });
 
@@ -249,18 +272,26 @@ test('selväkielinen liikenne on nimenomaisesti kielletty', { skip: !hasAndroid 
 });
 
 test('luvat rajoittuvat siihen, mitä toteutetut ominaisuudet vaativat', { skip: !hasAndroid }, () => {
-  // Oma manifesti pyytää vain INTERNETin. Loput tulevat
-  // ilmoituslisäosasta yhdistämisen kautta, eikä niitä lisätä käsin.
+  // Oma manifesti pyytää INTERNETin ja etualan sijainnin (kertahaku,
+  // src/platform/geolocation.js; Capacitor-liitännäinen ei julista niitä
+  // itse). Loput tulevat ilmoituslisäosasta yhdistämisen kautta, eikä niitä
+  // lisätä käsin.
   const manifest = appManifest();
   const permissions = [...manifest.matchAll(/uses-permission android:name="([^"]+)"/g)]
     .map(m => m[1]);
 
-  assert.deepEqual(permissions, ['android.permission.INTERNET'],
-    'omaan manifestiin lisättiin lupa: ' + permissions.join(', '));
+  assert.deepEqual(permissions, [
+    'android.permission.INTERNET',
+    'android.permission.ACCESS_COARSE_LOCATION',
+    'android.permission.ACCESS_FINE_LOCATION'
+  ], 'omaan manifestiin lisättiin lupa: ' + permissions.join(', '));
 
-  // Sijaintia ei ole toteutettu. Lupaa ei saa pyytää suunnitelman takia.
-  for (const forbidden of ['ACCESS_FINE_LOCATION', 'ACCESS_COARSE_LOCATION',
-    'ACCESS_BACKGROUND_LOCATION', 'CAMERA', 'RECORD_AUDIO',
+  // GPS ei saa rajata jakelua: laite ilman GPS:ää käyttää käyttäjän antamaa matka-aikaa.
+  assert.match(manifest, /uses-feature android:name="android\.hardware\.location\.gps" android:required="false"/);
+
+  // Taustasijaintia ei ole eikä tule: vain etualan kertahaku.
+  for (const forbidden of ['ACCESS_BACKGROUND_LOCATION', 'FOREGROUND_SERVICE_LOCATION',
+    'CAMERA', 'RECORD_AUDIO',
     'READ_EXTERNAL_STORAGE', 'READ_CONTACTS']) {
     assert.equal(manifest.includes(forbidden), false,
       'lupa ilman toteutusta: ' + forbidden);

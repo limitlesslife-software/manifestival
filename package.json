@@ -4,8 +4,9 @@
   "private": true,
   "description": "Manifestival - suunnittele elama, jota haluat elaa.",
   "scripts": {
+    "pretest": "node scripts/pretest-android-sync.mjs",
     "test": "node --test",
-    "check": "node --check api/parse.js && node --check api/_validate.js && node --check api/extract.js && node --check api/_validateExtract.js && node --check api/plan.js && node --check api/_validatePlan.js",
+    "check": "node --check api/parse.js && node --check api/_validate.js && node --check api/extract.js && node --check api/_validateExtract.js && node --check api/plan.js && node --check api/_validatePlan.js && node --check api/capture.js && node --check api/_validateCapture.js && node --check api/command.js && node --check api/_validateCommand.js",
     "serve": "node scripts/serve.mjs",
     "smoke": "node scripts/smoke.mjs",
     "build:web": "node scripts/build-web.mjs",
@@ -18,7 +19,9 @@
   },
   "dependencies": {
     "@capacitor/android": "^8.5.0",
+    "@capacitor/app": "^8.1.1",
     "@capacitor/core": "^8.5.1",
+    "@capacitor/geolocation": "^8.2.2",
     "@capacitor/local-notifications": "^8.3.1"
   },
   "devDependencies": {

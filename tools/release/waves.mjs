@@ -43,7 +43,8 @@ export const ALL_GATES = Object.freeze([
   'bills', 'recurringExpenses', 'savingsGoals',
   'aiAudit',
   'transactions', 'investments',
-  'milestones'
+  'milestones',
+  'inboxItems', 'reminders', 'notices', 'travelPlans', 'locationRules'
 ]);
 
 /**
@@ -202,6 +203,37 @@ export const WAVES = Object.freeze([
       + 'taulua vaan MUUTTAA goals-, tasks- ja projects-tauluja, joissa on '
       + 'käyttäjän oikeaa dataa ja joiden portit ovat auki tuotannossa.',
     tables: Object.freeze(['milestones'])
+  }),
+  Object.freeze({
+    id: 'H',
+    cacheVersion: 'v21',
+
+    // READY koskee käyttöliittymää, `blockedBy` kantaa. Ks. aalto F.
+    //
+    // Aalto oli hetken ESTETTY MOLEMMISTA SYISTÄ: migraatio oli
+    // ajamatta JA näkymät rakentamatta. Näkymät on nyt rakennettu, ja
+    // valmiustila muuttui samassa committissa kuin tavoitettavuusmatriisi.
+    //
+    // Valmiustilaa ei kirjoiteta käsin — `tests/ui-reachability.test.mjs`
+    // johtaa sen matriisista ja kaataa tämän, jos arvo ei vastaa.
+    //
+    // `blockedBy` on yhä voimassa: käyttöliittymä on olemassa, kantaa ei.
+    readiness: 'READY',
+    blockedBy: 'supabase/migrations/0011_personal_assistant.sql — EI AJETTU',
+    gates: Object.freeze(['inboxItems', 'reminders', 'notices',
+                          'travelPlans', 'locationRules']),
+    title: 'Henkilökohtainen avustaja: kirjaus, muistutukset ja matka',
+    rationale:
+      'Viisi uutta taulua, jotka eivät muuta yhtäkään olemassa olevaa. '
+      + 'travel_plans ja location_rules viittaavat tasks-tauluun '
+      + 'yhdistelmävierasavaimella, ja tasks on tuotannossa. '
+      + 'Muut kolme eivät viittaa mihinkään sovellustauluun: muistutuksen '
+      + 'ja ilmoituksen kohdetunniste EI OLE vierasavain, koska kohde saa '
+      + 'kadota ilman että tietue muistuttamisen aikeesta katoaa. '
+      + 'Aalto on siksi riippumaton A–G:stä ja voi tulla vasta viimeisenä '
+      + 'ilman että mikään pakottaa siihen.',
+    tables: Object.freeze(['inbox_items', 'reminders', 'notices',
+                           'travel_plans', 'location_rules'])
   })
 ]);
 

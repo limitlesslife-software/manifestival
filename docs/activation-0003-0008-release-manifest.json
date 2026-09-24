@@ -29,7 +29,12 @@
     "aiAudit": [],
     "transactions": [],
     "investments": [],
-    "milestones": []
+    "milestones": [],
+    "inboxItems": [],
+    "reminders": [],
+    "notices": [],
+    "travelPlans": [],
+    "locationRules": []
   },
   "waves": [
     {
@@ -57,7 +62,12 @@
         "aiAudit",
         "transactions",
         "investments",
-        "milestones"
+        "milestones",
+        "inboxItems",
+        "reminders",
+        "notices",
+        "travelPlans",
+        "locationRules"
       ],
       "tables": [
         "notification_preferences",
@@ -101,7 +111,12 @@
         "aiAudit",
         "transactions",
         "investments",
-        "milestones"
+        "milestones",
+        "inboxItems",
+        "reminders",
+        "notices",
+        "travelPlans",
+        "locationRules"
       ],
       "tables": [
         "goals",
@@ -145,7 +160,12 @@
         "aiAudit",
         "transactions",
         "investments",
-        "milestones"
+        "milestones",
+        "inboxItems",
+        "reminders",
+        "notices",
+        "travelPlans",
+        "locationRules"
       ],
       "tables": [
         "routines",
@@ -192,7 +212,12 @@
         "aiAudit",
         "transactions",
         "investments",
-        "milestones"
+        "milestones",
+        "inboxItems",
+        "reminders",
+        "notices",
+        "travelPlans",
+        "locationRules"
       ],
       "tables": [
         "recurring_expenses",
@@ -236,7 +261,12 @@
       "gatesDisabled": [
         "transactions",
         "investments",
-        "milestones"
+        "milestones",
+        "inboxItems",
+        "reminders",
+        "notices",
+        "travelPlans",
+        "locationRules"
       ],
       "tables": [
         "ai_action_audit"
@@ -279,7 +309,12 @@
         "investments"
       ],
       "gatesDisabled": [
-        "milestones"
+        "milestones",
+        "inboxItems",
+        "reminders",
+        "notices",
+        "travelPlans",
+        "locationRules"
       ],
       "tables": [
         "transactions",
@@ -322,7 +357,13 @@
         "investments",
         "milestones"
       ],
-      "gatesDisabled": [],
+      "gatesDisabled": [
+        "inboxItems",
+        "reminders",
+        "notices",
+        "travelPlans",
+        "locationRules"
+      ],
       "tables": [
         "milestones"
       ],
@@ -338,6 +379,60 @@
         "supabase/acceptance/verify_0003_0008_post_activation.sql"
       ],
       "rationale": "Välitavoite viittaa tavoitteeseen yhdistelmävierasavaimella, joten aallon B (goals) on oltava ensin — ja se on tuotannossa. MIGRAATIO 0010 ON VAARALLISEMPI KUIN AIEMMAT: se ei vain luo uutta taulua vaan MUUTTAA goals-, tasks- ja projects-tauluja, joissa on käyttäjän oikeaa dataa ja joiden portit ovat auki tuotannossa."
+    },
+    {
+      "id": "H",
+      "title": "Henkilökohtainen avustaja: kirjaus, muistutukset ja matka",
+      "commitSha": null,
+      "cacheVersion": "v21",
+      "readiness": "READY",
+      "gatesEnabled": [
+        "inboxItems",
+        "reminders",
+        "notices",
+        "travelPlans",
+        "locationRules"
+      ],
+      "gatesCumulative": [
+        "notificationPreferences",
+        "wellbeing",
+        "goals",
+        "projects",
+        "routines",
+        "routineExceptions",
+        "recurringExpenses",
+        "savingsGoals",
+        "bills",
+        "aiAudit",
+        "transactions",
+        "investments",
+        "milestones",
+        "inboxItems",
+        "reminders",
+        "notices",
+        "travelPlans",
+        "locationRules"
+      ],
+      "gatesDisabled": [],
+      "tables": [
+        "inbox_items",
+        "reminders",
+        "notices",
+        "travel_plans",
+        "location_rules"
+      ],
+      "dependencies": [],
+      "rollbackTarget": "G",
+      "rollbackSha": null,
+      "acceptancePack": "docs/acceptance/WAVE-H.md",
+      "requiredAcceptance": [
+        "npm run activation:verify-wave -- H",
+        "npm run activation:preflight -- --wave=H",
+        "npm run production:verify-assets -- --wave=H",
+        "selainhyväksyntä: luonti, muokkaus, poisto, säilyvyys sivun latauksen yli",
+        "supabase/acceptance/verify_0003_0008_post_activation.sql"
+      ],
+      "rationale": "Viisi uutta taulua, jotka eivät muuta yhtäkään olemassa olevaa. travel_plans ja location_rules viittaavat tasks-tauluun yhdistelmävierasavaimella, ja tasks on tuotannossa. Muut kolme eivät viittaa mihinkään sovellustauluun: muistutuksen ja ilmoituksen kohdetunniste EI OLE vierasavain, koska kohde saa kadota ilman että tietue muistuttamisen aikeesta katoaa. Aalto on siksi riippumaton A–G:stä ja voi tulla vasta viimeisenä ilman että mikään pakottaa siihen."
     }
   ]
 }

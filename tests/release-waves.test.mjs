@@ -187,7 +187,8 @@ test('KRIITTINEN: yhdenkin portin poikkeama muuttaa tai mitätöi tilan', () => 
     }
   }
 
-  assert.equal(mutaatioita, 104, `mutaatioita ajettiin ${mutaatioita}, odotettiin 104`);
+  // Yhdeksän tilaa (BASE + A-H) kertaa kahdeksantoista porttia.
+  assert.equal(mutaatioita, 162, `mutaatioita ajettiin ${mutaatioita}, odotettiin 162`);
 
   // Ainoat sallitut siirtymät ovat niiden aaltojen välillä, jotka
   // eroavat tasan yhdellä portilla. Jos tähän ilmestyisi uusi pari,
@@ -197,7 +198,7 @@ test('KRIITTINEN: yhdenkin portin poikkeama muuttaa tai mitätöi tilan', () => 
     ['D->E (aiAudit)', 'E->D (aiAudit)',
      'F->G (milestones)', 'G->F (milestones)'],
     `odottamattomia siirtymiä sallittujen tilojen välillä: ${siirtymät.join(', ')}`);
-  // 104 mutaatiota, joista NELJÄ tuottaa toisen kelvollisen aallon.
+  // 162 mutaatiota, joista NELJÄ tuottaa toisen kelvollisen aallon.
   //
   // Kaksi paria eroaa tasan yhdellä portilla:
   //   D <-> E  (aiAudit)
@@ -206,7 +207,10 @@ test('KRIITTINEN: yhdenkin portin poikkeama muuttaa tai mitätöi tilan', () => 
   // Aalto F avaa kaksi porttia, joten E <-> F ei ole yhden käännöksen
   // päässä. Uusi pari on odotettu eikä merkki viasta — se on
   // seuraus siitä, että aalto G avaa tasan yhden portin.
-  assert.equal(mitättömiä, 100);
+  //
+  // Aalto H avaa VIISI porttia, joten se ei tuo uutta paria: G:stä
+  // H:hon on viiden käännöksen matka.
+  assert.equal(mitättömiä, 158);
 });
 
 test('KRIITTINEN: puuttuva tai ylimääräinen portti hylätään', () => {
@@ -253,9 +257,10 @@ test('KRIITTINEN: vierasavaimet luetaan molemmista ilmoitusmuodoista', () => {
   // aallossa.
   const viitteet = ownershipForeignKeys();
 
-  // Yhdeksän erästä 0003-0008 ja kolme migraatiosta 0010.
-  assert.equal(viitteet.length, 12,
-    `omistajuusviitteitä löytyi ${viitteet.length}, odotettiin 12`);
+  // Yhdeksän erästä 0003-0008, kolme migraatiosta 0010 ja kaksi
+  // migraatiosta 0011.
+  assert.equal(viitteet.length, 14,
+    `omistajuusviitteitä löytyi ${viitteet.length}, odotettiin 14`);
 
   const parit = viitteet.map(v => `${v.child}->${v.parent}`);
   assert.ok(parit.includes('routine_exceptions->routines'),
@@ -333,7 +338,9 @@ test('KRIITTINEN: aallon taulut vastaavat sen portteja', () => {
     recurring_expenses: 'recurringExpenses', savings_goals: 'savingsGoals',
     ai_action_audit: 'aiAudit',
     transactions: 'transactions', investments: 'investments',
-    milestones: 'milestones'
+    milestones: 'milestones',
+    inbox_items: 'inboxItems', reminders: 'reminders', notices: 'notices',
+    travel_plans: 'travelPlans', location_rules: 'locationRules'
   };
 
   for (const wave of WAVES) {
@@ -607,7 +614,8 @@ test('KRIITTINEN: varmistuksen odotusluvut vastaavat migraatioita', () => {
     .map(v => `${v.child}->${v.parent}`)
     .sort();
   assert.deepEqual(ulkopuoliset,
-    ['milestones->goals', 'projects->milestones', 'tasks->milestones'],
+    ['location_rules->tasks', 'milestones->goals', 'projects->milestones',
+     'tasks->milestones', 'travel_plans->tasks'],
     'erän ulkopuolisten omistajuusviitteiden joukko muuttui');
 
   // 10 porttitaulua.

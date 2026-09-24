@@ -20,6 +20,7 @@
 //   4 Kriittinen hoputus myöhästymisen tai unohtamisen riski on korkea
 
 import { fmtISO, parseISO, addDays } from '../lib/datetime.js';
+import { departureSchedule, leaveAtMinus, TRAVEL_SOURCE } from './travel.js';
 import {
   toMinutes, fromMinutes, isIsoDate, isTimeOfDay,
   deadlineUrgency, isOverdue, URGENCY
@@ -29,7 +30,11 @@ export const NOTIFICATION_TYPE = Object.freeze({
   TASK_REMINDER: 'task_reminder',
   ROUTINE_REMINDER: 'routine_reminder',
   DEADLINE_WARNING: 'deadline_warning',
-  /** Vaatii sijaintikyvykkyyden. PLANNED — ks. docs/ROADMAP.md WP11. */
+  /**
+   * Lähtömuistutus: matkasuunnitelman (päivä, saapumisaika, tiedossa oleva
+   * kesto) perusteella. EI vaadi sijaintia. Ilman tiedossa olevaa kestoa
+   * mitään ei synny -- ks. planNotifications ja src/domain/travel.js.
+   */
   DEPARTURE_REMINDER: 'departure_reminder',
   DAILY_PLAN: 'daily_plan',
   EVENING_REVIEW: 'evening_review'
@@ -38,7 +43,10 @@ export const NOTIFICATION_TYPE = Object.freeze({
 export const NOTIFICATION_TYPES = Object.freeze(Object.values(NOTIFICATION_TYPE));
 
 /** Tyypit, joita ei vielä voi toteuttaa millään alustalla. */
-export const PLANNED_TYPES = Object.freeze([NOTIFICATION_TYPE.DEPARTURE_REMINDER]);
+export const PLANNED_TYPES = Object.freeze([]);
+
+/** Kuinka monta minuuttia ennen lähtöä lähtömuistutus näytetään. */
+export const DEPARTURE_ALERT_LEAD_MINUTES = 10;
 
 /** Eskalaatiotasot. */
 export const LEVEL = Object.freeze({
@@ -248,6 +256,7 @@ function makeIntent({ type, level, dateIso, time, title, body, targetId, reason,
 export function planNotifications({
   tasks = [],
   routineOccurrences = [],
+  travelPlans = [],
   dateIso,
   todayIso = null,
   preferences = {}
@@ -343,6 +352,38 @@ export function planNotifications({
     }
   }
 
+  // 4b. Lähtömuistutukset
+  //
+  // VAIN PÄIVÄLLISILLE SUUNNITELMILLE JA VAIN TIEDOSSA OLEVALLA KESTOLLA.
+  // Päivätön suunnitelma tulkitaan "tänään", ja sen ajastaminen toistuisi
+  // joka päivä (vanhentunut suunnitelma herättäisi joka aamu). Tuntematon
+  // kesto ei tuota lähtöaikaa (departureSchedule known:false), joten se
+  // ei tuota myöskään ilmoitusta -- valelähtöaika olisi vaarallisempi kuin
+  // hiljaisuus. Käsin annettu kesto kelpaa.
+  for (const plan of travelPlans) {
+    if (!plan || !plan.arrivalDate) continue;
+    const schedule = departureSchedule(plan, { todayIso: reference });
+    if (!schedule.known) continue;
+
+    const alert = leaveAtMinus(schedule, DEPARTURE_ALERT_LEAD_MINUTES);
+    if (!alert || alert.date !== dateIso) continue;
+
+    const source = plan.travelSource === TRAVEL_SOURCE.MANUAL ? 'itse arvioitu'
+      : plan.travelSource === TRAVEL_SOURCE.PROVIDER ? 'reittipalvelusta' : '';
+    intents.push(makeIntent({
+      type: NOTIFICATION_TYPE.DEPARTURE_REMINDER,
+      level: LEVEL.ACTION,
+      dateIso,
+      time: alert.time,
+      title: 'Lähde ' + DEPARTURE_ALERT_LEAD_MINUTES + ' min kuluttua',
+      body: `Lähde noin ${schedule.leave.time} kohteeseen ${plan.destination || 'perille'}, `
+        + `jotta ehdit klo ${plan.arrivalTime} (matka ${schedule.parts.travel} min${source ? ', ' + source : ''}).`,
+      targetId: plan.id,
+      reason: 'Lähtöaika lähestyy',
+      extra: { travelPlanId: plan.id }
+    }));
+  }
+
   // 5. Illan katsaus
   if (prefs.eveningReviewEnabled) {
     intents.push(makeIntent({
@@ -378,8 +419,13 @@ export function applyLimits(intents, preferences) {
     unique.push(intent);
   }
 
+  // Lähtömuistutus läpäisee rauhoitusajan: käyttäjä on itse kirjannut
+  // matkan ja saapumisajan, ja hiljaa pudonnut aamuvarhaisen lähtö-
+  // ilmoitus olisi pahempi kuin häiriö. (Omistajan päätös, jos halutaan toisin.)
   const allowed = unique.filter(intent =>
-    intent.level >= LEVEL.CRITICAL || !isQuietTime(intent.time, prefs.quietHours));
+    intent.level >= LEVEL.CRITICAL
+    || intent.type === NOTIFICATION_TYPE.DEPARTURE_REMINDER
+    || !isQuietTime(intent.time, prefs.quietHours));
 
   // Järjestys: aika, sitten taso (kiireellisin ensin), sitten tunniste.
   allowed.sort((a, b) => {
@@ -426,7 +472,7 @@ export function summarizeIntents(intents) {
  * Ilmoitukset useammalle päivälle.
  * Käytetään esimerkiksi silloin, kun natiivikerros ajastaa etukäteen.
  */
-export function planRange({ tasks, routineOccurrences, from, days = 1, todayIso, preferences }) {
+export function planRange({ tasks, routineOccurrences, travelPlans = [], from, days = 1, todayIso, preferences }) {
   if (!isIsoDate(from)) return [];
   const limit = Math.max(1, Math.min(days, 14));
   const all = [];
@@ -434,7 +480,7 @@ export function planRange({ tasks, routineOccurrences, from, days = 1, todayIso,
   for (let i = 0; i < limit; i++) {
     const dateIso = fmtISO(addDays(parseISO(from), i));
     all.push(...planNotifications({
-      tasks, routineOccurrences, dateIso, todayIso: todayIso || from, preferences
+      tasks, routineOccurrences, travelPlans, dateIso, todayIso: todayIso || from, preferences
     }));
   }
   return all;

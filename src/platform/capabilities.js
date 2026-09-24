@@ -99,6 +99,50 @@ export function resetNativePermission() {
   nativePermissionState = PERMISSION.PROMPT;
 }
 
+/**
+ * Sijaintiluvan tila. Rikas tila (not_requested, prompt, granted, denied,
+ * blocked, error, unsupported) elää src/platform/geolocation.js:ssä; sieltä
+ * se työnnetään tänne, koska capability() on synkroninen eikä tämä
+ * moduuli saa tuoda geolocation.js:ää (se tuo tämän -- sykli).
+ *
+ * Alkuarvo on "ei pyydetty", ei koskaan "myönnetty".
+ */
+const LOCATION_STATES = Object.freeze(['unsupported', 'not_requested', 'prompt', 'granted', 'denied', 'blocked', 'error']);
+let locationPermissionState = 'not_requested';
+
+/** Päivitä sijaintiluvan välimuisti. Kutsuu vain geolocation.js. */
+export function setLocationPermissionState(state) {
+  locationPermissionState = LOCATION_STATES.includes(state) ? state : 'error';
+}
+
+function locationSupport() {
+  if (isNativeShell()) {
+    const plugins = globalThis.Capacitor && globalThis.Capacitor.Plugins;
+    const available = Boolean(plugins && plugins.Geolocation);
+    return {
+      supported: true,
+      reason: available ? '' : 'Sijaintiliitännäistä ei ole rekisteröity tähän kuoreen',
+      implemented: available
+    };
+  }
+  const geolocation = typeof navigator !== 'undefined' ? navigator.geolocation : null;
+  if (geolocation && typeof geolocation.getCurrentPosition === 'function') {
+    return { supported: true, reason: '', implemented: true };
+  }
+  return {
+    supported: false,
+    reason: 'Selain ei tue sijaintia. ' + NATIVE_REQUIRED,
+    implemented: false
+  };
+}
+
+function locationPermission() {
+  if (!locationSupport().supported) return PERMISSION.UNSUPPORTED;
+  if (locationPermissionState === 'granted') return PERMISSION.GRANTED;
+  if (locationPermissionState === 'denied' || locationPermissionState === 'blocked') return PERMISSION.DENIED;
+  return PERMISSION.PROMPT;
+}
+
 function notificationsSupport() {
   if (isNativeShell()) {
     // Android tukee ilmoituksia aina. Toteutus riippuu siitä, onko Local
@@ -188,9 +232,9 @@ const REGISTRY = Object.freeze({
   },
   [CAPABILITY.LOCATION]: {
     label: 'Sijainti',
-    support: () => ({ supported: isNativeShell(), reason: NATIVE_REQUIRED, implemented: false }),
-    permission: () => PERMISSION.UNSUPPORTED,
-    plannedNote: 'Lähtöajan ennakointi (WP11)'
+    support: locationSupport,
+    permission: locationPermission,
+    plannedNote: 'Kertaluonteinen etualan sijainti (ei taustaseurantaa)'
   },
   [CAPABILITY.BACKGROUND]: {
     label: 'Taustatoiminta',

@@ -305,7 +305,12 @@ test('KRIITTINEN: vain tasksRepo kirjoittaa tasks-tauluun', () => {
     // tai osittainen kirjoitus yhteen tunnettuun sarakkeeseen.
     const kokoRivi = arg.startsWith('payloadFor(');
     const osittainen = /^\{ ?(completed|is_wake)/.test(arg);
-    assert.ok(kokoRivi || osittainen,
+    // Kolmas muoto: ehdollinen osittainen kirjoitus (offline-jonon toisto).
+    // `diff` on erotus kahdesta payloadFor-tuloksesta (partialPayloadFor),
+    // joten se ei voi sisältää saraketta, jota koko rivin kirjoitus ei saisi.
+    const erotus = arg === 'diff' && /function partialPayloadFor\(/.test(repo)
+      && /const \{ diff, guards \} = partialPayloadFor\(/.test(repo);
+    assert.ok(kokoRivi || osittainen || erotus,
       `${op}(${arg}) ei kulje payloadForin kautta eikä ole osittainen kirjoitus`);
   }
 });

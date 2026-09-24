@@ -41,6 +41,32 @@ import { apiUrl } from '../platform/index.js';
 import { API } from '../data/config.js';
 import { logError } from '../lib/result.js';
 
+/**
+ * `prepareImage`-viestit, jotka on kirjoitettu käyttäjälle näytettäviksi.
+ *
+ * MUU VIRHE (esim. selaimen oma "tainted canvas" -poikkeus) EI PÄÄDY
+ * KÄYTTÄJÄLLE SELLAISENAAN — se jäisi ainoaksi kohdaksi tässä
+ * tiedostossa, joka rikkoisi result.js:n periaatetta erottaa
+ * käyttäjäviesti diagnostiikasta.
+ */
+const KNOWN_IMAGE_ERRORS = new Set([
+  'Kuvaa ei valittu.',
+  'Valitse kuvatiedosto.',
+  'Kuva on liian suuri.',
+  'Kuvan käsittely ei onnistunut.',
+  'Kuvaa ei voitu lukea.'
+]);
+
+const GENERIC_IMAGE_ERROR = 'Kuvan käsittely ei onnistunut.';
+
+/** Turvallinen käyttäjäviesti kuvan käsittelyn virheestä. */
+function imageErrorMessage(cause) {
+  const message = cause && cause.message;
+  if (message && KNOWN_IMAGE_ERRORS.has(message)) return message;
+  logError(cause);
+  return GENERIC_IMAGE_ERROR;
+}
+
 /** Pitkän sivun enimmäispituus pikseleinä. */
 const MAX_DIMENSION = 1600;
 
@@ -160,7 +186,7 @@ export async function extractFromImage({ file, subject, todayIso, id }) {
   try {
     prepared = await prepareImage(file);
   } catch (cause) {
-    return { ok: false, error: cause.message || 'Kuvaa ei voitu lukea.' };
+    return { ok: false, error: imageErrorMessage(cause) };
   }
 
   try {

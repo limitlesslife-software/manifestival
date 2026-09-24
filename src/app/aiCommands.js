@@ -39,6 +39,9 @@ import {
   AUDIT_RESULT, summarizeInput, appendAuditEntry, completeAuditEntry
 } from '../domain/audit.js';
 import { formatMoney } from '../domain/money.js';
+import { categoryLabel } from '../domain/categories.js';
+import { priorityLabel } from '../domain/priority.js';
+import { weekdayShort } from '../domain/routine.js';
 import { getState, setAiAudit } from './state.js';
 import { aiAuditRepo } from '../data/collectionsRepo.js';
 import { logError } from '../lib/result.js';
@@ -112,12 +115,76 @@ function fieldLabel(field) {
   return labels[field] || field;
 }
 
+/** Laskun tilan luettavat nimet. Muut tilat (tavoite, projekti) näytetään sellaisenaan. */
+const BILL_STATUS_LABELS = Object.freeze({ open: 'avoin', paid: 'maksettu', cancelled: 'peruttu' });
+
+const RECURRENCE_LABELS = Object.freeze({
+  daily: 'päivittäin', weekdays: 'arkipäivisin', weekly: 'viikoittain', custom_weekdays: 'valittuina viikonpäivinä'
+});
+
 function formatValue(field, value, entity) {
   if (value === null || value === undefined || value === '') return '—';
+  if (field === 'status' && Object.prototype.hasOwnProperty.call(BILL_STATUS_LABELS, value)) {
+    return BILL_STATUS_LABELS[value];
+  }
+  if (field === 'category') return categoryLabel(value);
+  if (field === 'priority') return priorityLabel(value);
+  if (field === 'recurrence' && Object.prototype.hasOwnProperty.call(RECURRENCE_LABELS, value)) return RECURRENCE_LABELS[value];
+  if (field === 'weekdays' && Array.isArray(value)) return value.map(weekdayShort).filter(Boolean).join(', ');
   if (field === 'amountMinor') return formatMoney(value, (entity && entity.currency) || 'EUR');
   if (field === 'completed' || field === 'active') return value ? 'kyllä' : 'ei';
   if (Array.isArray(value)) return value.join(', ');
   return String(value);
+}
+
+/**
+ * Muutokset komennoille, joiden payload ei kanna valmista `changes`-oliota.
+ *
+ * Ilman tätä siirto, valmiiksi merkintä ja maksun merkintä näkyisivät
+ * vahvistuksessa pelkkänä kuvauksena ilman "nykyinen -> uusi" -rivejä, ja
+ * käyttäjä hyväksyisi muutoksen näkemättä mitä se tekee. Johdetaan
+ * samasta payloadista jonka käsittelijä suorittaa: esikatselu ja suoritus
+ * eivät voi erota toisistaan.
+ */
+/** Vain ne kentät, joilla on arvo. Tyhjä lista -> null (ei rivejä). */
+function presentFields(payload, fields) {
+  const out = {};
+  for (const field of fields) {
+    const value = payload[field];
+    if (value === null || value === undefined || value === '') continue;
+    if (Array.isArray(value) && value.length === 0) continue;
+    out[field] = value;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+function derivedChanges(command, entity) {
+  const payload = command.payload || {};
+  switch (command.intent) {
+    case 'reschedule_task': {
+      if (payload.shiftMinutes != null) {
+        const shifted = applyShift(entity, payload.shiftMinutes);
+        return shifted ? { date: shifted.date, time: shifted.time } : null;
+      }
+      const changes = {};
+      if (payload.date) changes.date = payload.date;
+      if (payload.time) changes.time = payload.time;
+      return Object.keys(changes).length ? changes : null;
+    }
+    case 'complete_task': return { completed: true };
+    case 'uncomplete_task': return { completed: false };
+    case 'mark_bill_paid': return { status: 'paid' };
+    // Luonti: näytetään mitä syntyy. Otsikko on jo kuvauksessa; muut asetetut
+    // kentät (päivä, aika, kesto ...) muuten jäisivät käyttäjältä näkemättä.
+    case 'create_task':
+      return presentFields(payload, ['date', 'time', 'endTime', 'durationMinutes', 'deadline', 'category', 'priority', 'note']);
+    case 'create_routine':
+      return presentFields(payload, ['recurrence', 'weekdays', 'preferredTime', 'durationMinutes', 'category', 'priority']);
+    case 'create_goal': return presentFields(payload, ['targetDate', 'category', 'priority']);
+    case 'create_project': return presentFields(payload, ['deadline', 'category', 'priority']);
+    case 'create_bill': return presentFields(payload, ['amountMinor', 'dueDate']);
+    default: return null;
+  }
 }
 
 /**
@@ -127,7 +194,7 @@ function formatValue(field, value, entity) {
  * Pelkkä "Muuta tehtävää: Hammaslääkäri" ei riitä päätöksen pohjaksi.
  */
 export function buildChangeRows(command, entity) {
-  const changes = (command.payload && command.payload.changes) || null;
+  const changes = (command.payload && command.payload.changes) || derivedChanges(command, entity);
   if (!changes) return [];
 
   return Object.entries(changes).map(([field, next]) => ({
@@ -146,46 +213,47 @@ export function buildChangeRows(command, entity) {
  * @param {object} raw       AI:n tuottama objekti
  * @param {object} [options] { inputText, now }
  */
-export function buildProposal(raw, options = {}) {
-  const now = options.now instanceof Date ? options.now : new Date();
-  const todayIso = fmtISO(todayMidnight());
-  const inputSummary = summarizeInput(options.inputText);
-
-  const resolved = resolveCommand(raw, { today: todayIso });
-
-  if (!resolved.ok) {
-    return {
-      status: PROPOSAL_STATUS.REJECTED,
-      reason: resolved.reason,
-      audit: {
-        id: newTaskId(),
-        timestamp: now.toISOString(),
-        inputSummary,
-        intent: resolved.intent || 'unknown',
-        risk: RISK.LOW,
-        result: AUDIT_RESULT.REJECTED,
-        proposal: resolved.reason
-      }
-    };
-  }
-
-  const command = resolved.command;
+/**
+ * Ratkaise kohde ja rakenna READY- tai NEEDS_CHOICE-ehdotus jo
+ * validoidusta komennosta.
+ *
+ * EROTETTU buildProposal():sta, jotta epäselvän kohteen jälkeinen
+ * uudelleenyritys (buildProposalForChosenTarget) voi käyttää TÄSMÄLLEEN
+ * saman esikatselun rakennuslogiikan kuin ensimmäinen ehdotus, sen
+ * sijaan että se kopioisi sen.
+ */
+function resolveAndPreview(command, { now, inputSummary, forcedTargetId } = {}) {
   const state = getState();
 
   let target = null;
   if (needsTarget(command)) {
-    const resolution = resolveTarget({
-      entities: collectionFor(command.targetType, state),
-      id: command.payload.targetId,
-      name: command.payload.targetName,
-      entityType: command.targetType,
-      filter: filterFor(command.intent, command.targetType)
-    });
+    // KÄYTTÄJÄ ON JO VALINNUT: forcedTargetId tulee vain
+    // ui/confirm.js:n chooseTarget()-valitsimesta, jonka vaihtoehdot
+    // olivat juuri tämän saman resolveTarget()-kutsun tuottamia
+    // candidateOf()-olioita. Tunnisteperustainen haku ei enää tarvitse
+    // eikä käytä suodatinta (ks. entityResolver.js `id` voittaa aina).
+    const resolution = forcedTargetId
+      ? resolveTarget({
+        entities: collectionFor(command.targetType, state),
+        id: forcedTargetId,
+        entityType: command.targetType
+      })
+      : resolveTarget({
+        entities: collectionFor(command.targetType, state),
+        id: command.payload.targetId,
+        name: command.payload.targetName,
+        entityType: command.targetType,
+        filter: filterFor(command.intent, command.targetType)
+      });
 
     if (resolution.status !== RESOLUTION.EXACT) {
       // EPÄSELVÄ TAI PUUTTUVA KOHDE EI KOSKAAN ETENE. Tämä on koko
       // resolverin olemassaolon syy: arvaus mutaatiossa muuttaisi väärää
       // tietoa, eikä käyttäjä huomaisi sitä ennen kuin on myöhäistä.
+      //
+      // (forcedTargetId-polulla NOT_FOUND on mahdollinen jos kohde
+      // ehti kadota valinnan ja vahvistuksen välissä -- silloinkin
+      // vastaus on rehellinen "ei löydy", ei arvaus.)
       return {
         status: PROPOSAL_STATUS.NEEDS_CHOICE,
         command,
@@ -239,6 +307,55 @@ export function buildProposal(raw, options = {}) {
       proposal: command.description
     }
   };
+}
+
+export function buildProposal(raw, options = {}) {
+  const now = options.now instanceof Date ? options.now : new Date();
+  const todayIso = fmtISO(todayMidnight());
+  const inputSummary = summarizeInput(options.inputText);
+
+  const resolved = resolveCommand(raw, { today: todayIso });
+
+  if (!resolved.ok) {
+    return {
+      status: PROPOSAL_STATUS.REJECTED,
+      reason: resolved.reason,
+      audit: {
+        id: newTaskId(),
+        timestamp: now.toISOString(),
+        inputSummary,
+        intent: resolved.intent || 'unknown',
+        risk: RISK.LOW,
+        result: AUDIT_RESULT.REJECTED,
+        proposal: resolved.reason
+      }
+    };
+  }
+
+  return resolveAndPreview(resolved.command, { now, inputSummary });
+}
+
+/**
+ * Rakenna ehdotus uudelleen, kun käyttäjä on JO valinnut kohteen
+ * epäselvästä joukosta (NEEDS_CHOICE-tilan `candidates`, ks.
+ * ui/confirm.js `chooseTarget`).
+ *
+ * EI PALAA raw-tekstiin eikä resolveCommand():iin. `proposal.command`
+ * on jo validoitu kertaalleen -- vain kohde puuttui. Uudelleenajo
+ * `resolveCommand`:n läpi hylkäisi UPDATE_*-komennot, joiden payload
+ * sisältää jo koostetun `changes`-olion (ei enää mallin raakakenttiä).
+ *
+ * @param {object} proposal NEEDS_CHOICE-tilainen buildProposal()-tulos
+ * @param {string} candidateId valitun ehdokkaan id (candidates[i].id)
+ * @param {object} [options] { inputText, now }
+ */
+export function buildProposalForChosenTarget(proposal, candidateId, options = {}) {
+  if (!proposal || proposal.status !== PROPOSAL_STATUS.NEEDS_CHOICE) {
+    return { status: PROPOSAL_STATUS.REJECTED, reason: 'Ei ratkaistavaa valintaa.' };
+  }
+  const now = options.now instanceof Date ? options.now : new Date();
+  const inputSummary = summarizeInput(options.inputText);
+  return resolveAndPreview(proposal.command, { now, inputSummary, forcedTargetId: candidateId });
 }
 
 // -------------------------------------------------------------- kirjaus
@@ -326,6 +443,33 @@ export function applyShift(entity, shiftMinutes) {
 }
 
 /**
+ * Hae kohteen TUORE tila juuri ennen suoritusta.
+ *
+ * `proposal.target` on jäädytetty kuva ehdotuksen RAKENNUSHETKELTÄ.
+ * Käyttäjä saattaa katsoa vahvistusdialogia sekunteja tai minuutteja --
+ * sinä aikana toinen komento, toinen välilehti tai reconnect-synkronointi
+ * on voinut muuttaa tai poistaa juuri sen rivin. Suoritus EI SAA käyttää
+ * jäädytettyä kopiota: "siirrä kahdella tunnilla" laskettuna vanhentuneesta
+ * kellonajasta siirtäisi tehtävän väärään aikaan, hiljaa.
+ *
+ * Palauttaa tuoreen `{id, type, label, date, entity}`-kandidaatin tai
+ * `null`, jos kohdetta ei enää löydy -- jälkimmäinen EI KOSKAAN johda
+ * arvaukseen, vaan suoritus epäonnistuu rehellisesti (ks. executeProposal).
+ */
+function refreshTarget(target, targetType) {
+  if (!target) return { ok: true, target: null };
+
+  const resolution = resolveTarget({
+    entities: collectionFor(targetType, getState()),
+    id: target.id,
+    entityType: targetType
+  });
+
+  if (resolution.status !== RESOLUTION.EXACT) return { ok: false };
+  return { ok: true, target: resolution.match };
+}
+
+/**
  * Suorita vahvistettu ehdotus.
  *
  * @param {object} proposal buildProposal-tulos
@@ -338,7 +482,12 @@ export async function executeProposal(proposal, handlers = {}) {
   }
 
   const { command, target } = proposal;
-  const handler = handlers[command.intent];
+  // OMA ominaisuus, ei prototyypistä peritty: handlers['constructor'] tai
+  // handlers['toString'] olisi muuten "kytketty" funktio. Allowlist estää
+  // nämä jo aiemmin, tämä on toinen, itsenäinen kerros.
+  const handler = Object.prototype.hasOwnProperty.call(handlers, command.intent)
+    ? handlers[command.intent]
+    : undefined;
 
   if (typeof handler !== 'function') {
     // Komento on skeemassa mutta sitä ei ole kytketty. Rehellinen
@@ -347,17 +496,67 @@ export async function executeProposal(proposal, handlers = {}) {
     return { ok: false, reason: 'Tätä komentoa ei ole vielä kytketty käyttöön.' };
   }
 
+  const fresh = refreshTarget(target, command.targetType);
+  if (!fresh.ok) {
+    // Kohde ehti muuttua tunnistamattomaksi (poistettu, tai nimen
+    // perusteella tunnistettu rivi ei enää täsmää) ehdotuksen ja
+    // vahvistuksen välissä. Vanhentunutta mutaatiota ei suoriteta.
+    return { ok: false, reason: 'Kohde on ehtinyt muuttua tai kadota. Yritä uudelleen.' };
+  }
+
+  // SUORITUSTUNNISTE: sama vahvistettu ehdotus suoritetaan enintään kerran.
+  // Tuplaklikkaus, verkkouudelleenyritys, käyttöliittymän kilpa-ajo tai
+  // resume-tapahtuma voi kutsua samaa suoritusta kahdesti -- ilman tätä
+  // kaksi "luo tehtävä" -kutsua loisi kaksi riviä. Tunnisteena on ehdotuksen
+  // audit.id (yksi per buildProposal-kutsu); uusi ehdotus saa uuden.
+  const executionId = proposal.audit && proposal.audit.id;
+  if (executionId != null) {
+    if (executionLedger.has(executionId)) {
+      logWarn('AI-komento oli jo suoritettu tai kesken', { intent: command.intent });
+      return { ok: false, duplicate: true, reason: 'Komento on jo suoritettu.' };
+    }
+    claimExecution(executionId);
+  }
+
   try {
     const result = await handler({
       payload: command.payload,
-      target,
-      entity: target ? target.entity : null
+      target: fresh.target,
+      entity: fresh.target ? fresh.target.entity : null
     });
-    return result && typeof result === 'object' ? result : { ok: true };
+    const normalized = result && typeof result === 'object' ? result : { ok: true };
+    // Selvästi epäonnistunut suoritus vapauttaa tunnisteen: käyttäjä saa
+    // yrittää uudelleen. Onnistunut PYSYY kirjattuna.
+    if (executionId != null && normalized.ok === false) executionLedger.delete(executionId);
+    return normalized;
   } catch (error) {
+    // Poikkeus on epäselvä (rivi on voinut ehtiä muuttua), joten tunniste
+    // PYSYY kirjattuna: automaattinen uudelleenyritys voisi tuplata luonnin.
     logWarn('AI-komennon suoritus epäonnistui', { intent: command.intent });
     return { ok: false, reason: 'Komennon suoritus epäonnistui.', cause: error };
   }
+}
+
+/**
+ * Suoritettujen (tai kesken olevien) ehdotusten tunnisteet.
+ *
+ * Rajattu FIFO: vain viimeisimmät tunnisteet muistetaan, jotta pitkään
+ * auki oleva sovellus ei kasvata muistia loputtomasti. Tunniste on
+ * satunnainen eikä sisällä käyttäjädataa.
+ */
+const LEDGER_LIMIT = 500;
+const executionLedger = new Set();
+
+function claimExecution(id) {
+  executionLedger.add(id);
+  if (executionLedger.size > LEDGER_LIMIT) {
+    executionLedger.delete(executionLedger.values().next().value);
+  }
+}
+
+/** Tyhjennä suoritusmuisti (uloskirjautuminen, testit). */
+export function resetExecutionLedger() {
+  executionLedger.clear();
 }
 
 /**
@@ -392,6 +591,7 @@ export async function runAiCommand(raw, { inputText, confirm, handlers, now } = 
   }
 
   const result = await executeProposal(proposal, handlers);
+  if (result.duplicate) return { ok: false, status: 'duplicate', reason: result.reason };
 
   completeAudit(auditId, {
     confirmed: true,

@@ -48,6 +48,24 @@ Viimeinen on tärkein. Se on automaattitestattu, mutta laitteella
 elinkaari on eri: prosessi voi jäädä henkiin taustalle tavalla, jota
 selain ei tunne.
 
+### Natiivi resume/pause (`src/platform/lifecycle.js`)
+
+Työpöydällä testattu vain Capacitorin App-liitännäisen
+kaksoiskappaleella (`tests/platform-lifecycle.test.mjs`). Sitä, laukeaako
+oikea `resume`-tapahtuma oikeissa OS-tilanteissa, ei voi todentaa
+selaimesta.
+
+- [ ] Sovelluksen tuominen taustalta etualalle laukaisee NYT/MYÖHÄSSÄ-
+      päivityksen ja muistutusten synkronoinnin **heti**, ei vasta
+      30 sekunnin ajastimen kohdalla
+- [ ] Sama toimii myös kun sovellus on ollut Doze-tilassa tai
+      akunsäästössä pitkään taustalla
+- [ ] `resume` ei laukea kahdesti samasta palaamisesta (ei
+      kaksinkertaista synkronointia — vertaa `visibilitychange`-
+      varajärjestelmän kanssa)
+- [ ] Sovelluksen tappaminen kokonaan ja uudelleenavaus toimii kuin
+      kylmäkäynnistys, ei kuin resume
+
 ### Aallottain
 
 **A — muistutusasetukset, hyvinvointi**
@@ -243,3 +261,307 @@ Taso on **laitekohtainen** kunnes migraatio 0010 on ajettu.
 - [ ] Sovelluksen sulkeminen **hukkaa** ehdotuksen — ja se on
       tarkoitus. Tarkista että käyttäjälle ei jää vaikutelmaa, että se
       olisi tallessa.
+
+---
+
+# Henkilökohtainen avustaja — laitehyväksyntä
+
+**Tila: AVOIN. Ei ole ajettu laitteella, eikä yhtäkään kohtaa saa
+merkitä hyväksytyksi ennen ajoa.**
+
+Tämä osio on pidempi kuin muut, ja syy on yksi: avustaja lupaa
+ajoituksia, ja ajoitus on juuri se asia jonka selain tekee eri tavalla
+kuin puhelin.
+
+---
+
+## ⚠ Neljä asiaa, joita EI VOI todentaa selaimessa
+
+Nämä eivät ole "pitäisi vielä testata" -kohtia. Ne ovat kohtia, joissa
+selaimen ja puhelimen käyttäytyminen **eroaa rakenteellisesti**.
+
+### 1. Taustaherätys — sitä ei ole
+
+Muistutukset lasketaan, kun sovellus on auki: kirjautumisen jälkeen ja
+30 sekunnin välein. Suljetusta sovelluksesta tulevaa hälytystä **ei ole
+toteutettu**, eikä sitä luvata käyttöliittymässä.
+
+Laitteella on todennettava, ettei käyttäjä silti oleta toisin:
+
+- [ ] Muistutusnäkymän rivi "Muistutukset lasketaan, kun sovellus on
+      auki" näkyy kokonaan puhelimen leveydellä
+- [ ] Rivi näkyy myös silloin kun muistutuksia ei ole yhtään
+- [ ] Sovelluksen sulkeminen ja avaaminen tunnin päästä näyttää
+      erääntyneen muistutuksen — **avaamisen jälkeen**, ei ennen
+- [ ] Yhtään ilmoitusta EI tule suljettuun sovellukseen
+
+Viimeinen on se, joka on tarkistettava. Jos ilmoituksia tulisi, ne
+tulisivat migraatiosta 0005 (`notification_preferences`) eivätkä tästä
+paketista — ja silloin kaksi järjestelmää lupaisi samaa asiaa.
+
+### 2. Puheentunnistus — tuki vaihtelee alustoittain
+
+`src/app/speechInput.js` käyttää selaimen `SpeechRecognition`-rajapintaa.
+Tuki vaihtelee selaimittain ja WebView-versioittain, ja
+Capacitor-kuoressa se voi puuttua kokonaan.
+
+- [ ] Mikrofonipainike **piilotetaan**, jos tunnistusta ei ole
+      (`speechAvailable()` palauttaa epätoden)
+- [ ] Mikrofoniluvan kysyminen toimii ja luvan epääminen antaa
+      luettavan virheilmoituksen
+- [ ] Luvan epääminen EI riko kirjauskenttää — tekstillä pääsee yhä
+      eteenpäin
+- [ ] Sanelu suomeksi tuottaa tekstin kenttään
+- [ ] Teksti näkyy kentässä **ennen** kuin mitään lähetetään
+- [ ] Hiljaisuus tuottaa "En kuullut mitään" eikä jää roikkumaan
+- [ ] Sovelluksen siirtäminen taustalle kesken kuuntelun ei jätä
+      mikrofonia päälle
+- [ ] Aikakatkaisu (15 s) laukeaa, jos `onend` ei tule lainkaan
+
+Viimeinen on nimenomaan WebView-ongelma: osa alustoista ei laukaise
+`onend`-tapahtumaa, ja ilman aikakatkaisua mikrofonipainike jäisi
+ikuisesti aktiiviseksi.
+
+**Ääntä ei tallenneta.** Sitä ei voi todentaa käyttöliittymästä, mutta
+sen voi todentaa lähdekoodista — ja `tests/assistant-ui.test.mjs` tekee
+sen jokaisella ajolla.
+
+### 3. Sijaintilupa — sääntö on olemassa, geoaita ei
+
+Paikkamuistutus on **sääntö, ei toteutus**. Sääntö voidaan kirjata,
+nähdä ja kytkeä päälle, mutta mikään ei seuraa sijaintia.
+
+- [ ] Uusi sääntö on listassa **Pois päältä**
+- [ ] "Kytke päälle" avaa vahvistusdialogin
+- [ ] Dialogin teksti mahtuu puhelimen leveydelle
+- [ ] Peruutus jättää säännön pois päältä
+- [ ] Hyväksyntä kytkee säännön päälle ja tila säilyy latauksen yli
+- [ ] "Kytke pois" **ei** kysy mitään
+- [ ] Päälle kytketty sääntö EI tuota ilmoituksia — koska seurantaa ei
+      ole
+
+Viimeinen on se, joka on helpoin ymmärtää väärin. Kytkin ei valehtele:
+se kirjaa käyttäjän aikeen. Jos laitteella syntyy vaikutelma, että
+sovellus alkaa seurata sijaintia, teksti on korjattava.
+
+### 4. Kellonaika, aikavyöhyke ja kesäaika
+
+Kaikki muistutus- ja lähtöaikalaskenta on **päivä + minuutit**, ei
+aikaleima. Se on tietoinen valinta: aikaleima siirtäisi suomalaisen
+aamun edelliselle päivälle UTC:ssä.
+
+Laitteella on todennettava, että laitteen kello ja vyöhyke eivät riko
+sitä:
+
+- [ ] Muistutus klo 09:00 hälyttää klo 09:00 laitteen paikallista aikaa
+- [ ] Aikavyöhykkeen vaihto laitteen asetuksista ei siirrä olemassa
+      olevien muistutusten kellonaikoja
+- [ ] Keskiyön yli menevä torkku siirtää päivää oikein
+- [ ] Kesäajan vaihtopäivä ei kadota eikä kahdenna muistutusta
+
+---
+
+## Kirjaus ja saapuvat
+
+- [ ] Kirjauskenttä on käytettävissä yhdellä peukalolla
+- [ ] Näppäimistön avautuminen ei peitä Kirjaa-painiketta
+- [ ] Enter kirjaa
+- [ ] Pitkä teksti (yli 1000 merkkiä) katkaistaan eikä hylätä
+- [ ] Kirjaus onnistuu **ilman verkkoa** — rivi menee saapuviin
+- [ ] Verkoton kirjaus kertoo, ettei tulkinta onnistunut
+- [ ] Tulkinta ei kaada kirjausta: rivi on saapuvissa joka tapauksessa
+- [ ] Tulkinnan tarkistuskortti mahtuu näytölle ilman vaakavieritystä
+- [ ] "Luo" luo rivin ja merkitsee saapuvan muunnetuksi
+- [ ] **"Luo" kahdesti nopeasti luo VAIN YHDEN rivin**
+- [ ] Hylätty rivi voidaan palauttaa
+- [ ] Muunnetulle riville ei tarjota palautusta
+
+Toiseksi viimeinen on tärkein. Puhelimella kaksoisnapautus on
+tavallista, ei virhe.
+
+## Muistutukset
+
+- [ ] Tehtävän ajan muokkaus synkronoi laitteen ajastetun ilmoituksen
+      uudelleen n. 2 sekunnin kuluttua (`scheduleNotificationResync`) —
+      vanha kellonaika ei enää herätä
+- [ ] Tehtävän poisto perii laitteelta ajastetun ilmoituksen samassa
+      ikkunassa
+- [ ] Useita nopeita muokkauksia peräkkäin ei ajasta useaa
+      päällekkäistä synkronointia laitteelle
+- [ ] Muistutuksen luonti ilman tehtävää toimii
+- [ ] Muistutuksen liittäminen tehtävään toimii
+- [ ] Torkkupainikkeet (+5 / +15 / +30 / +60) ovat erotettavissa
+      toisistaan peukalolla
+- [ ] Torkutus siirtää muistutusta — **tehtävän päivämäärä ei muutu**
+- [ ] Tehtävän poisto peruu sen muistutuksen näkyvästi
+- [ ] Peruttu muistutus näkyy listassa, ei katoa
+
+## Matka ja lähtöaika
+
+- [ ] Matka ilman kestoa näyttää **kentän** eikä kellonaikaa
+- [ ] Keston kirjaaminen listasta päivittää lähtöajan heti
+- [ ] Lähtöajan erittely (matka + valmistautuminen + pysäköinti) mahtuu
+      riville
+- [ ] Myöhässä oleva lähtö näkyy punaisena ja sanoo "myöhässä"
+- [ ] Numerokenttä avaa numeronäppäimistön
+
+## Ilmoituskeskus
+
+- [ ] Avattava lohko avautuu ja sulkeutuu kosketuksella
+- [ ] Lukumäärämerkki näkyy suljettunakin
+- [ ] Toimintopainikkeet mahtuvat riville kääntymättä päällekkäin
+- [ ] "Avaa" vie oikeaan osioon
+
+## Verkon palautuminen ja taustalta paluu (src/app/reconnect.js)
+
+Deterministisesti testattu ilman oikeaa verkkoa tai ajastimia
+(`tests/reconnect.test.mjs`). Laitteella jää: oikea radion tilan
+vaihtuminen, oikea taustalle jääminen ja niiden yhteisvaikutus.
+
+- [P0] Lentotila päälle ja pois palauttaa datan ja poistaa
+      offline-bannerin **kerran**, ei useaan kertaan peräkkäin
+- [P0] Heikko/katkeileva verkko (wifi-tuen reunalla) ei laukaise
+      useaa rinnakkaista täyttä latausta
+- [P1] Sovelluksen tuominen taustalta etualalle SAMAAN AIKAAN kuin
+      verkko palautuu ei tuota kahta rinnakkaista latausta
+      (`reconnect.isRefreshing()` on ollut väärässä tilassa yksikkö-
+      testien ulkopuolella aiemminkin natiivikuorissa)
+- [P1] Uloskirjautuminen kesken odottavan verkon-palautuksen debouncen
+      ei kirjoita mitään edellisen käyttäjän näytölle
+
+## AI-komennot (src/app/commandBar.js, haun komentopainike)
+
+Putki lauseesta suoritukseen on yksikkötestattu injektoiduilla
+vahvistus-/valintafunktioilla (`tests/command-bar.test.mjs`). Laitteella
+jää: oikea dialogi, oikea kosketus, oikea /api/command-verkkokutsu.
+
+- [P0] Tuhoisa komento ("poista X") näyttää AINA vahvistusdialogin
+      ennen suoritusta — ei koskaan suoraan
+- [P0] Epäselvä kohde näyttää valintalistan, ei arvaa ensimmäistä
+- [P1] Komentopainike hakupaneelissa näkyy vain kun kentässä on
+      tekstiä, eikä laukea automaattisesti kirjoittaessa
+- [P1] Verkkovirhe komentoa luokitellessa näyttää virheen, ei jää
+      pyörimään loputtomiin
+- [P2] Komennon suomenkielinen tulkinta on käytännössä riittävän
+      tarkka yleisimmille lauseille (tuotelaatuasia, ei turva-asia)
+- Puheohjattu komento on toteutettu (MEGA BUILD III) samalla putkella;
+  laitehyväksyntä on osiossa "MEGA BUILD III" alla.
+
+## Tilin poiston esikatselu (src/app/views/profile.js)
+
+- [P1] "Näytä mitä poistettaisiin" näyttää oikeat rivimäärät laitteen
+      omasta, jo ladatusta tilasta
+- [P2] "Poista tili pysyvästi" -painike pysyy pois päältä ja selittää
+      miksi (`ACCOUNT_DELETION.endpointEnabled = false`) — **tätä ei pidä
+      koskaan merkitä hyväksytyksi ennen kuin Edge Function on deployattu ja
+      kontrolloitu oikea poisto on tehty testitilillä.** Ks. "MEGA BUILD III".
+
+---
+
+## MEGA BUILD III — laitehyväksyntä (EI SUORITETTU)
+
+Kaikki alla oleva on koodattu ja testattu paikallisesti (selain-/mock-ympäristö,
+`node --test`). **Mitään ei ole ajettu fyysisellä laitteella, ADB:llä eikä
+tuotannossa.** Yhtäkään kohtaa ei saa merkitä hyväksytyksi ilman laiteajoa.
+
+### Puhekomennot (P0)
+
+- [P0] Mikrofonilupa pyydetään vasta kun käyttäjä avaa puhepaneelin; luvan
+      epäys näyttää selityksen ja "Kirjoita sen sijaan" -tilan
+- [P0] Puhuttu luontikomento ("lisää tehtävä pestä auto huomenna") näyttää
+      tunnistetun tekstin muokattavana, sitten vahvistuksen esikatselun;
+      mitään ei tallenneta ennen vahvistusta
+- [P0] Puhuttu muutoskomento ("siirrä auton pesu perjantaille") näyttää
+      "nykyinen → uusi" ja vaatii vahvistuksen
+- [P0] Epäselvä kohde (kaksi samannimistä) näyttää valintalistan
+- [P0] Peruutus jokaisessa vaiheessa (kuuntelu, teksti, vahvistus) ei muuta dataa
+- [P0] Sovelluksen vienti taustalle / näytön sammutus kuuntelun aikana
+      sammuttaa mikrofonin (Android-järjestelmän mikrofoni-ilmaisin sammuu)
+- [P0] Puhelu / toinen ääntä käyttävä sovellus keskeyttää kuuntelun siististi
+- [P1] "Etsi kaikki rengastilaukseen liittyvät tehtävät" avaa haun sanalla
+      "rengastilaukseen" (ei virhettä)
+- [P1] Tunnistuksen virhe ("ei puhetta", verkkovirhe) näyttää selkeän viestin
+      ja uudelleenyritys toimii; fokus palaa avaajapainikkeeseen suljettaessa
+- [P2] Suomen kielen tunnistuslaatu (`fi-FI`) arkilauseilla riittää
+
+### Sijainti (P1)
+
+- [P1] Sijaintilupa pyydetään vasta kun käyttäjä painaa "käytä sijaintia";
+      ei käynnistyksessä
+- [P1] Lupa evätty → selitys ja käyttäjän antama matka-aika toimii
+- [P1] Lupa evätty pysyvästi (`blocked`) → ohjaus järjestelmäasetuksiin, ei
+      toistuvaa kysymistä
+- [P1] Laitteen sijainti pois päältä → selkeä viesti, ei jumia
+- [P1] Kertahaku onnistuu; Androidin sijaintikuvake ei jää päälle haun jälkeen
+- [P0] **Koordinaatteja ei löydy** localStoragesta, IndexedDB:stä, lokeista,
+      viennistä eikä tilin inventaarioista (tarkista selaimen/WebView:n
+      tallennus etätarkastajalla)
+- [P0] Asetuksissa/luvissa **ei ole taustasijaintia** (vain "vain käytön aikana")
+
+### Lähtöaika ja ilmoitukset (P1)
+
+- [P1] Matka, jolla käyttäjän antama kesto → lähtöaika oikein; ilman kestoa
+      ei lähtöaikaa eikä ilmoitusta
+- [P1] Lähtöilmoitus (10 min ennen) saapuu ajallaan: sovellus auki, taustalla,
+      tapettuna, näyttö lukittuna, Doze-tilassa
+- [P1] Ilmoitus säilyy / ajastuu uudelleen laitteen uudelleenkäynnistyksen jälkeen
+- [P1] Lähtöajan muutos (kesto tai tehtävän aika muuttuu) siirtää ilmoituksen
+      eikä jätä vanhaa
+- [P1] Yön yli -matka, kesäajan vaihtuminen ja aikavyöhykkeen vaihto antavat
+      oikean lähtöhetken
+- [P1] Lähtöilmoitus saapuu hiljaisten tuntien aikana (omistajan päätös: kyllä)
+- [P2] Ilmoituskanavan asetukset (ääni/värinä) noudattavat käyttäjän valintoja
+
+### Offline-kirjausjono (P1)
+
+- [P0] Lentotila: tehtävän lisäys näkyy heti listassa merkittynä "odottaa
+      synkronointia"; ei häviä sovelluksen uudelleenkäynnistyksessä
+- [P0] Yhteyden palautuessa jono toistuu **kerran** (ei tuplia), merkintä poistuu
+- [P0] Tehtävän muokkaus offline + sama tehtävä muokattu toisella laitteella →
+      ristiriita ratkeaa ilman datan häviämistä (kenttäkohtainen yhdistäminen)
+- [P0] Uloskirjautuminen / käyttäjän vaihto: edellisen käyttäjän jono ei
+      näy eikä toistu toiselle käyttäjälle
+- [P1] Heikko/katkeileva verkko ei tuota rinnakkaisia toistoja
+- [P1] Jonoon **ei** päädy poistoja, taloutta, AI-komentoja eikä tilin toimintoja
+      (offline-tilassa niiden painikkeet kertovat miksi ne ovat pois päältä)
+- [P2] Suuri jono (50+) toistuu ilman jäätymistä
+
+### Tilin poisto (P0/P2)
+
+- [P0] Esikatselu (kuiva-ajo) näyttää oikeat rivimäärät ja **ei poista mitään**
+- [P0] Vahvistus vaatii sähköpostin ja lauseen; väärä syöte estää painikkeen
+- [P0] Poistopainike on pois käytöstä niin kauan kuin `endpointEnabled = false`
+- [ ] **Vasta omistajan päätöksellä, testitilillä:** kontrolloitu oikea poisto
+      (deploy → kuiva-ajo → poisto → kirjautuminen epäonnistuu → tiedot poissa)
+      — EI SUORITETTU, EI SAA SUORITTAA tuotantotilillä
+
+### Kesto ja ympäristö (P2)
+
+- [P2] Sovellus tapettu / Doze / uudelleenkäynnistys / kesäaika / aikavyöhyke
+      edellä oleville virroille (ks. ilmoitukset ja jono)
+- [P2] Puhe- ja jonopolut TalkBackilla: fokus, live-alueet, kosketuskohteet ≥ 48 dp
+- [P2] Puhepaneelin avaus ja tilanvaihdot pitkällä listalla ilman kuroutumista
+
+---
+
+## Suorituskyky laitteella
+
+Hälytyskierros ajetaan **30 sekunnin välein** niin kauan kuin sovellus
+on auki. Se on ainoa tämän paketin koodi, joka ajetaan toistuvasti
+ilman käyttäjän tekoa.
+
+- [ ] Sadan muistutuksen ja sadan tehtävän kierros ei näy viiveenä
+      käyttöliittymässä
+- [ ] Sovellus tunnin taustalla ei kuluta akkua havaittavasti
+- [ ] Kierros ei estä vieritystä
+
+Kasvun muoto on testattu deterministisesti
+(`tests/assistant-performance.test.mjs`), mutta akku on laiteasia.
+
+---
+
+## Muistutus siitä, mitä nämä ovat
+
+> **Yhtäkään tämän osion kohtaa ei saa merkitä hyväksytyksi ilman
+> laiteajoa.** Merkitty ruutu on väite, ja väärä väite
+> hyväksyntälistassa on pahempi kuin tyhjä ruutu.

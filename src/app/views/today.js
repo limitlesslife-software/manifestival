@@ -23,6 +23,7 @@ import { todayFocus, describeFocus } from '../../domain/focus.js';
 import { buildEveningReview, summarizeReview } from '../../domain/review.js';
 import { entryForDate, planningLoadSuggestion, loadStateLabel, assessLoadState } from '../../domain/wellbeing.js';
 import { dayGroupLabel } from '../../domain/week.js';
+import { nowNext, explainRanking, CANDIDATE_KIND } from '../../domain/assistant.js';
 import { el, maybe, setText, toggle } from '../../ui/dom.js';
 import { getState, setViewDate } from '../state.js';
 import {
@@ -523,6 +524,82 @@ function attachHandlers(root, dateIso) {
 
 // ---------------------------------------------------------- renderöinti
 
+/**
+ * Komentokeskus: NYT ja SEURAAVA.
+ *
+ * =====================================================================
+ * TYHJÄ ON KELVOLLINEN VASTAUS
+ * =====================================================================
+ *
+ * Jos mitään ei ole käsillä, lohko kertoo sen eikä näytä ensimmäistä
+ * mahdollista tehtävää. Keksitty "nyt" opettaisi käyttäjän epäilemään
+ * kaikkia vastauksia.
+ *
+ * =====================================================================
+ * TÄMÄ EI KORVAA FOKUSLOHKOA
+ * =====================================================================
+ *
+ * Fokus vastaa kysymykseen "mihin keskityn tänään". Tämä vastaa
+ * kysymykseen "mitä juuri nyt". Ne ovat eri kysymyksiä, ja siksi ne
+ * ovat eri lohkoja: lähtöaika, erääntynyt muistutus ja käsittelemättömät
+ * saapuvat eivät ole fokusta — ne ovat asioita jotka eivät odota.
+ *
+ * Lohko näkyy VAIN kuluvana päivänä. Eilisen "nyt" olisi merkityksetön.
+ */
+function renderNowNext(container, state, plan, dateIso, todayIso, isToday) {
+  if (!container) return;
+
+  if (!isToday) {
+    container.innerHTML = '';
+    return;
+  }
+
+  const minutes = nowMinutes();
+  const result = nowNext({
+    tasks: state.tasks,
+    reminders: state.reminders,
+    travelPlans: state.travelPlans,
+    routineOccurrences: plan.routineOccurrences,
+    inboxItems: state.inboxItems,
+    todayIso,
+    nowMinutes: minutes
+  });
+
+  if (result.empty) {
+    container.innerHTML = `
+      <div class="assist-empty" id="nowNextEmpty">
+        Mitään ei ole juuri nyt käsillä.
+      </div>`;
+    return;
+  }
+
+  const kortti = (otsikko, entry) => {
+    if (!entry) return '';
+    const kiire = entry.kind === CANDIDATE_KIND.DEPARTURE
+      || entry.kind === CANDIDATE_KIND.OVERDUE;
+
+    return `
+      <div class="assist-row${kiire ? ' is-urgent' : ''}">
+        <div class="assist-meta"><span class="assist-tag${kiire ? ' tone-late' : ''}">${escapeHtml(otsikko)}</span></div>
+        <div class="assist-title">${escapeHtml(entry.title)}</div>
+        <div class="assist-reason">${escapeHtml(entry.reason)}</div>
+        <div class="assist-reason">${escapeHtml(explainRanking(entry, minutes))}</div>
+      </div>`;
+  };
+
+  const pian = result.upcoming.length === 0 ? '' : `
+    <div class="assist-row">
+      <div class="assist-meta"><span class="assist-tag">Pian</span></div>
+      ${result.upcoming.map(entry =>
+        `<div class="assist-reason">${escapeHtml(entry.title)} — `
+        + `${escapeHtml(explainRanking(entry, minutes))}</div>`).join('')}
+    </div>`;
+
+  container.innerHTML = kortti('Nyt', result.now)
+    + kortti('Seuraava', result.next)
+    + pian;
+}
+
 /** Renderöi koko päivänäkymä nykytilan perusteella. */
 export function renderToday() {
   const state = getState();
@@ -568,6 +645,7 @@ export function renderToday() {
 
   const nowState = resolveNowState(plan.timeline, plan.nowMinutes);
 
+  renderNowNext(maybe('todayNowNext'), state, plan, dateIso, todayIso, isToday);
   renderFocus(el('todayFocus'), state, dateIso, todayIso);
   renderOverdue(el('todayOverdue'), plan);
   renderTimeline(el('todayTimelineContainer'), plan.timeline, nowState, todayIso);

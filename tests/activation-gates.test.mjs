@@ -44,11 +44,13 @@ import * as prefsRepo from '../src/data/notificationPrefsRepo.js';
 
 const NEWLINE = String.fromCharCode(10);
 
-/** Kaikki kolmetoista porttia, jotka odottavat aktivointia. */
+/** Kaikki kahdeksantoista porttia, jotka odottavat aktivointia. */
 const PORTIT = ['routines', 'routineExceptions', 'goals', 'projects',
                 'notificationPreferences', 'wellbeing',
                 'bills', 'recurringExpenses', 'savingsGoals', 'aiAudit',
-                'transactions', 'investments', 'milestones'];
+                'transactions', 'investments', 'milestones',
+                'inboxItems', 'reminders', 'notices',
+                'travelPlans', 'locationRules'];
 
 // =====================================================================
 // PORTTIEN LÄHTÖTILA
@@ -61,8 +63,9 @@ test('KRIITTINEN: porttimatriisi on tasan yksi suunniteltu aalto', () => {
   // testi, joka kaatuu oikeasta tyosta, poistetaan ennen pitkaa
   // kokonaan.
   //
-  // Korvaava vaatimus on TIUKEMPI, ei loysempi. Kolmetoista porttia
-  // tuottaa 8192 yhdistelmaa; niista tasan kahdeksan on suunniteltuja.
+  // Korvaava vaatimus on TIUKEMPI, ei loysempi. Kahdeksantoista
+  // porttia tuottaa 262144 yhdistelmaa; niista tasan yhdeksan on
+  // suunniteltuja.
   // Kaikki muut ovat virheita: portti on avattu liian aikaisin,
   // jaanyt avaamatta tai sulkeutunut vahingossa. Yksikaan niista ei
   // mene tasta lapi.
@@ -79,16 +82,16 @@ test('KRIITTINEN: porttien joukko vastaa migraatioiden tauluja', () => {
   // taulua, kaataisi jokaisen tallennuksen aktivoinnin jälkeen.
   const taulut = new Set();
   for (const nimi of fs.readdirSync(path.join(ROOT, 'supabase/migrations'))
-                       .filter(n => /^00(0[3-9]|10)/.test(n))) {
+                       .filter(n => /^00(0[3-9]|1[01])/.test(n))) {
     for (const m of read(`supabase/migrations/${nimi}`)
       .matchAll(/create table public\.(\w+)/g)) {
       taulut.add(m[1]);
     }
   }
 
-  assert.equal(taulut.size, 13,
-    `migraatiot 0003-0010 luovat ${taulut.size} taulua, portteja on ${PORTIT.length}`);
-  assert.equal(Object.keys(TABLES).length, 13,
+  assert.equal(taulut.size, 18,
+    `migraatiot 0003-0011 luovat ${taulut.size} taulua, portteja on ${PORTIT.length}`);
+  assert.equal(Object.keys(TABLES).length, 18,
     'porttien määrä ei vastaa migraatioiden taulujen määrää');
   assert.deepEqual(Object.keys(TABLES).sort(), [...PORTIT].sort());
 });
@@ -423,31 +426,41 @@ test('KRIITTINEN: tilannedokumentti luettelee jokaisen migraation', () => {
 
   const migraatiot = fs.readdirSync(path.join(ROOT, 'supabase/migrations'))
     .filter(n => n.endsWith('.sql')).sort();
-  assert.equal(migraatiot.length, 10, `migraatioita on ${migraatiot.length}`);
+  assert.ok(migraatiot.length >= 11, `migraatioita on ${migraatiot.length}`);
 
   for (const nimi of migraatiot) {
     assert.ok(doc.includes(nimi),
       `tilannedokumentti ei mainitse migraatiota ${nimi}`);
   }
 
-  // AALTOCOMMIT G: KYMMENEN AJETTUA.
+  // 0001–0008 on ajettu ja hyväksytty tuotannossa.
   //
-  // Migraatiot 0009 (aalto F) ja 0010 (tämä aalto) ovat deployn
-  // EDELLYTYKSIÄ. Rivi saa sanoa AJETTU vain, jos se samalla nimeää
-  // ehdon. Pelkkä "AJETTU" ilman ehtoa väittäisi tuotannosta jotain,
-  // mitä commitin valmisteluhetkellä ei ollut tapahtunut.
-  assert.equal((doc.match(/\*\*AJETTU\*\*/g) || []).length, 10,
-    'tilannedokumentti ei merkitse kymmentä ajetuksi');
-
-  const rivi0009 = doc.split(NEWLINE).find(r => r.includes('0009_finance_2.sql'));
-  assert.ok(rivi0009, 'tilannedokumentti ei mainitse migraatiota 0009');
-  assert.match(rivi0009, /EDELLYTYS \(aalto F, e05c54b\): `verify_0009\.sql` 0 poikkeavaa/,
-    'migraation 0009 rivi ei nimeä edellytystä');
-
-  const rivi0010 = doc.split(NEWLINE).find(r => r.includes('0010_goal_to_action.sql'));
-  assert.ok(rivi0010, 'tilannedokumentti ei mainitse migraatiota 0010');
-  assert.match(rivi0010, /EDELLYTYS: `verify_0010\.sql` 0 poikkeavaa ennen tämän commitin deployta/,
-    'migraation 0010 rivi ei nimeä deployn edellytystä');
+  // 0009 ALKAEN aallot on valmisteltu etukäteen harjoitteluhaaroissa.
+  // Rivi saa sanoa AJETTU vain, jos se samalla nimeää EDELLYTYKSEN ja
+  // oman varmistuksensa. Pelkkä "AJETTU" ilman ehtoa väittäisi
+  // tuotannosta jotain, mitä commitin valmisteluhetkellä ei ollut
+  // tapahtunut. Muuten rivin on sanottava EI AJETTU.
+  const rivit = doc.split(NEWLINE);
+  let ajettuja = 0;
+  for (const nimi of migraatiot) {
+    const numero = nimi.slice(0, 4);
+    const rivi = rivit.find(r => r.includes('|') && r.includes('`' + nimi + '`'));
+    assert.ok(rivi, `tilannedokumentin migraatiotaulukossa ei ole riviä ${nimi}`);
+    if (numero <= '0008') {
+      assert.match(rivi, /\*\*AJETTU\*\*/, `${nimi} ei ole merkitty ajetuksi`);
+      ajettuja += 1;
+      continue;
+    }
+    if (/\*\*AJETTU\*\*/.test(rivi)) {
+      assert.match(rivi, new RegExp(`EDELLYTYS[^|]*\`verify_${numero}\\.sql\` 0 poikkeavaa`),
+        `${nimi}: AJETTU ilman edellytystä ja omaa varmistusta`);
+      ajettuja += 1;
+    } else {
+      assert.match(rivi, /\*\*EI AJETTU\*\*/, `${nimi}: tila puuttuu`);
+    }
+  }
+  assert.equal((doc.match(/\*\*AJETTU\*\*/g) || []).length, ajettuja,
+    'dokumentissa on AJETTU-merkintöjä migraatiotaulukon ulkopuolella');
 });
 
 test('KRIITTINEN: tilannedokumentin porttitaulukko vastaa koodia', () => {

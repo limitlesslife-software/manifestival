@@ -2,10 +2,17 @@
 
 **AI ehdottaa. Sovellus päättää. Käyttäjä vahvistaa.**
 
-Toteutus: `src/ai/intentSchema.js` (turvamalli), `src/ai/parseClient.js`
-(kutsu), `api/parse.js` (palvelinvälitys), `src/app/voice.js` (käyttöliittymä)
-Testit: `tests/ai-intent.test.mjs`, `tests/ai-proposal.test.mjs`,
-`tests/api-security.test.cjs`
+Toteutus: `src/ai/intentSchema.js` (turvamalli), `src/ai/commandClient.js`
+(kutsu), `api/command.js` (palvelinvälitys), `src/app/commandBar.js`
+(putki: luokittelu → ehdotus → vahvistus → suoritus), `src/app/voice.js`
+(puheen käyttöliittymä, ohut sovitin commandBar.js:n päällä),
+`src/app/search.js` (kirjoitetun komennon käyttöliittymä)
+Testit: `tests/ai-command-client.test.mjs`, `tests/ai-command-handlers.test.mjs`,
+`tests/api-command-validation.test.mjs`, `tests/app-ai-commands.test.mjs`,
+`tests/command-bar.test.mjs`, `tests/voice-command-pipeline.test.mjs`,
+`tests/voice-flow.test.mjs`, `tests/fi-temporal.test.mjs`,
+`tests/temporal-reconcile.test.mjs`, `tests/ai-command-prompt.test.mjs`,
+`tests/ai-command-adversarial.test.mjs`, `tests/ai-command-idempotency.test.mjs`
 
 ---
 
@@ -15,15 +22,20 @@ Testit: `tests/ai-intent.test.mjs`, `tests/ai-proposal.test.mjs`,
 |---|---|
 | Puheentunnistus selaimessa | IMPLEMENTED (Web Speech API, Chrome/Edge) |
 | Kirjoitettu varasyöte | IMPLEMENTED — toimii kaikkialla |
-| Tehtävän luonti puheesta | IMPLEMENTED, käytössä |
+| Yksi tulkintaputki tekstille ja puheelle | IMPLEMENTED — `runTypedCommand({source})` |
+| Kaikki 20 komentoa (ei vain luonti) puheessa | IMPLEMENTED, käytössä |
 | Intent-skeema ja komentorekisteri | IMPLEMENTED, testattu |
-| Muut intentit kuin luonti käyttöliittymässä | **PLANNED** — skeema valmis, kytkentä puuttuu |
 | Palvelinvälitys ja avainsuojaus | IMPLEMENTED |
 
-Skeema kattaa seitsemän intenttiä. Käyttöliittymä käyttää tällä hetkellä
-vain tehtävän luontia. Loput ovat valmiina ja testattuina, mutta niitä ei ole
-vielä kytketty puhenäkymään — kytkentä vaatii oman käyttöliittymäsuunnittelun
-sille, miltä "muuta hammaslääkäri kolmeen" näyttää vahvistusnäkymässä.
+Puhe ja kirjoitettu teksti kulkevat nyt **täsmälleen saman** putken läpi
+(`src/app/commandBar.js` `runTypedCommand`): sama allowlist, sama
+kohteentunnistus, sama vahvistusdialogi (`ui/confirm.js`), sama kirjausketju.
+Ainoa ero on `source`-kenttä palvelinkutsussa (`'text'` tai `'voice'`), joka
+on puhtaasti diagnostinen — se ei muuta turvamallia millään tavalla.
+Aiempi erillinen "vain luo tehtävä puheesta" -putki (`parseClient.js`,
+`api/parse.js`) on poistettu käytöstä puheen käyttöliittymästä; `api/parse.js`
+säilyy palvelimella muuta käyttöä varten, mutta puhekomennot eivät enää
+kutsu sitä.
 
 ---
 
@@ -77,18 +89,24 @@ näkyy vain lokissa. Käyttäjälle molemmat ovat "tuntematon komento".
 
 ## Sallitut komennot
 
+Kaksikymmentä intenttiä, tehtäville, rutiineille, tavoitteille, projekteille,
+laskuille ja asetuksille — täydellinen, ajantasainen lista ja jokaisen riski
+on `src/ai/intentSchema.js`:n `COMMANDS`-rekisterissä (yksi lähde, ei kahta
+listaa jotka erkanevat). Poimintoja:
+
 | Intentti | Riski | Vahvistus | Mitä tekee |
 |---|---|---|---|
-| `create_task` | matala | kyllä | Luo tehtävän |
-| `update_task` | keskitaso | kyllä | Muuttaa olemassa olevaa |
-| `complete_task` | keskitaso | kyllä | Merkitsee tehdyksi |
-| `create_routine` | matala | kyllä | Luo rutiinin |
-| `create_goal` | matala | kyllä | Luo tavoitteen |
-| `show_day` | vain luku | ei | Vaihtaa näkymän |
-| `show_week` | vain luku | ei | Vaihtaa näkymän |
+| `create_task` | keskitaso | kyllä | Luo tehtävän |
+| `update_task` / `reschedule_task` | keskitaso | kyllä | Muuttaa olemassa olevaa |
+| `delete_task` / `delete_routine` / `delete_goal` / `delete_project` | **korkea** | kyllä, ei ohitettavissa | Poistaa pysyvästi |
+| `complete_task` / `uncomplete_task` | keskitaso | kyllä | Merkitsee tehdyksi / avaa uudelleen |
+| `mark_bill_paid` | keskitaso | kyllä | Merkitsee laskun maksetuksi |
+| `show_day_plan` / `show_week_plan` | matala (vain luku) | ei | Vaihtaa näkymän |
 
 Vain lukevat komennot ohittavat vahvistuksen. Ne eivät muuta mitään, joten
-vahvistuksen kysyminen olisi pelkkää kitkaa.
+vahvistuksen kysyminen olisi pelkkää kitkaa. Korkean riskin (poisto)
+komennon vahvistusta ei voi ohittaa millään asetuksella — ks.
+`needsConfirmation()` ja `isDestructive()`.
 
 ---
 
@@ -147,8 +165,8 @@ rakenteeseen.
 ```
 Selain                     Vercel                    Anthropic
   │                          │                           │
-  │  POST /api/parse         │                           │
-  │  { text, today }         │                           │
+  │  POST /api/command       │                           │
+  │  { text, today, source } │                           │
   ├─────────────────────────>│                           │
   │                          │  Messages API             │
   │                          │  Authorization: <avain>   │
@@ -158,7 +176,8 @@ Selain                     Vercel                    Anthropic
   │  { intent, payload }     │                           │
 ```
 
-`api/parse.js` lukee avaimen ympäristömuuttujasta. Avain ei ole missään
+`source` on `'text'` tai `'voice'` — puhtaasti diagnostinen kenttä, ei
+turvarajaus. `api/command.js` lukee avaimen ympäristömuuttujasta. Avain ei ole missään
 selaimeen ladattavassa tiedostossa. Tämä on lukittu testillä
 (`tests/security-invariants.test.mjs`), joka lukee kaikki selainmoduulit ja
 etsii avainkuvioita.
@@ -181,12 +200,75 @@ virhetila vaan tasavertainen tapa: sama tulkintaputki, sama vahvistus, sama
 lopputulos. Sovellus ei saa olla käyttökelvoton siksi, että selain ei osaa
 kuunnella.
 
+Kun mikrofoni tuottaa tuloksen, käyttäjä näkee tunnistetun tekstin
+muokattavana ennen kuin mitään tulkitaan (`voiceState-transcript`,
+`src/app/voice.js`) — puheentunnistus erehtyy säännöllisesti, ja virhe on
+halvin korjata ennen luokittelua.
+
+### Tilakone (`src/domain/voiceFlow.js`)
+
+Puheen käyttöliittymä ei aseta paneelia tapahtumakäsittelijöistä käsin: jokainen
+tapahtuma kulkee puhtaan reducerin `nextVoiceState(state, event)` läpi, ja vasta
+uusi tila piirretään (`applyState`). Kielletty siirtymä palauttaa saman tilan.
+
+```
+IDLE → REQUESTING_PERMISSION → LISTENING → TRANSCRIPT_READY ──SUBMIT──▶ CLASSIFYING
+        │ (ei tukea)                          ▲ (kirjoitettu: TYPE_FALLBACK ─SUBMIT─┘)
+        └▶ TYPE_FALLBACK                      │
+CLASSIFYING → [TARGET_SELECTION] → REVIEW → [CONFIRMATION] → EXECUTING → SUCCESS | ERROR | IDLE
+```
+
+Takuut (testattu `tests/voice-flow.test.mjs`):
+
+- Litterointi ei etene tulkintaan ilman käyttäjän SUBMIT-toimintoa.
+- Mikrofoni on päällä vain tiloissa `REQUESTING_PERMISSION` ja `LISTENING`;
+  jokaisessa muussa tilassa tunnistus sammutetaan.
+- `visibilitychange` (piilotettu) ja `pagehide` sammuttavat mikrofonin
+  (`HIDDEN`); ei taustakuuntelua, `continuous = false`, ääntä ei tallenneta
+  (ei `getUserMedia`/`MediaRecorder`).
+- Peruutus onnistuu joka tilasta; suljetun paneelin myöhäinen tulos ei avaa
+  paneelia uudelleen.
+- Vaiheet CLASSIFYING/REVIEW/TARGET_SELECTION/CONFIRMATION/EXECUTING tulevat
+  `commandBar.js`:n `onPhase`-kutsusta — samat vaiheet kuin kirjoitetulla
+  komennolla, ei omaa rinnakkaista logiikkaa.
+- Tilasiirtymät lokitetaan vain tilojen nimillä (`voice.state`), ei litterointia.
+
+### Alkureititys (`src/domain/utteranceRoute.js`)
+
+Selvä haku ("etsi …", "löydä …") ohjataan suoraan hakupaneeliin hakusanalla
+(täytesanat kuten "kaikki", "liittyvät", "tehtävät" poistetaan) eikä sitä lähetetä
+mallille. "Hae" jätetään tarkoituksella pois: "hae lapset koulusta klo 15" on
+tehtävä. Pelkkä "etsi" ilman hakusanaa, "etsimään", "etsin" jne. menevät mallille.
+
+### Luonti vs. komento ja suomen aikailmaisut
+
+- Palvelinkehote (`api/command.js` `buildPrompt`) erottaa LUONNIN ("lisää
+  tehtävä …", "muistuta minua …") olemassa olevan kohteen KOMENNOSTA ("siirrä …",
+  "merkitse … maksetuksi") ja sisältää validoidut esimerkit (`PROMPT_EXAMPLES`).
+- Deterministinen jäsennin `src/domain/fiTemporal.js` tunnistaa suomen aikailmaisut
+  (huomenna, ylihuomenna, ensi viikon perjantaina, viikonpäivät, klo 8, puoli
+  yhdeksältä = 08:30 (ei 09:30)) ja `src/ai/temporalReconcile.js` korjaa mallin päivämäärän tai
+  kellonajan VAIN kun jäsennin on yksiselitteinen; muuten mallin arvo jää
+  ennalleen. Korjaus kirjataan (`command.reconciled`, vain kenttien nimet).
+- Luonnin esikatselu ja muutoskomentojen "nykyinen → uusi" -rivit näytetään
+  vahvistusdialogissa (`derivedChanges`).
+- Rajoitus: mallin luokittelun tarkkuutta (create vs. command) ei voi testata
+  ilman oikeaa mallia; testit kattavat kehotteen sisällön, esimerkit ja koko
+  putken mallia matkivilla vastauksilla.
+
 ---
 
 ## Rajoitukset
 
-- Vain tehtävän luonti on kytketty käyttöliittymään
+- Haku ei ole komento: `COMMANDS`-rekisterissä ei ole hakuintenttiä. Selvä
+  "etsi/löydä …" -lause ohjataan paikallisesti hakupaneeliin hakusanalla
+  (`utteranceRoute.js`); muut hakumuotoiset lauseet ("hae …") menevät mallille.
 - Ei monivaiheista keskustelua ("mihin aikaan?" → vastaus → jatka)
 - Ei kohdetehtävän tunnistusta epämääräisestä viittauksesta ("se eilinen")
 - Ei offline-tulkintaa — vaatii verkkoyhteyden
 - Ei äänipalautetta
+- Puheella luotu tehtävä ei tarjoa erillistä kenttäkohtaista muokkauslomaketta
+  ennen tallennusta (toisin kuin ennen yhtenäistystä) — vahvistusdialogi
+  näyttää otsikon ja tarvittaessa muutosrivit; väärin tunnistetun ajan tms.
+  korjaa peruuttamalla ja yrittämällä uudelleen, tai muokkaamalla tehtävää
+  tallennuksen jälkeen.

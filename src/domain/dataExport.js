@@ -72,7 +72,39 @@ export const EXPORTED_COLLECTIONS = Object.freeze([
   // väliaikaisia: hyväksytystä ehdotuksesta jää tavoite,
   // välitavoitteet, projektit ja tehtävät, ja ehdotus itse katoaa.
   // Hylätty ehdotus on roskaa, joka ei koskaan katoaisi viennistä.
-  'milestones'
+  'milestones',
+
+  // Henkilökohtainen avustaja.
+  //
+  // `inboxItems` on KÄYTTÄJÄN OMAA TEKSTIÄ — se on sisältöä, ei lokia.
+  // Puheesta tullut rivi kantaa litteroinnin; ÄÄNTÄ EI OLE MISSÄÄN,
+  // koska sitä ei tallenneta minnekään.
+  //
+  // Käsitellyn rivin `proposal` on nolla, joten mallin tuotosta ei
+  // päädy vientiin. Ks. `markConverted` ja `dismissItem`
+  // tiedostossa src/domain/inbox.js.
+  'inboxItems',
+
+  // Muistutukset. Tietue siitä, mistä käyttäjä halusi muistutettavan
+  // — myös silloin kun kohde on poistettu ja muistutus on peruttu.
+  'reminders',
+
+  // Ilmoitushistoria. Tämä on SNAPSHOT eikä täydellinen historia:
+  // ilmoitukset karsitaan 30 vuorokauden jälkeen (lukemattomat 60),
+  // joten vienti sisältää sen mitä on jäljellä.
+  //
+  // Mukana siitä huolimatta: "mitä minulle kerrottiin ja milloin" on
+  // käyttäjän omaa tietoa, eikä sen hiljainen pois jättäminen olisi
+  // rehellisempää kuin osittainen vienti.
+  'notices',
+
+  // Matkasuunnitelmat ja paikkamuistutukset.
+  //
+  // TÄSSÄ EI OLE KOORDINAATTEJA, koska niitä ei ole missään: `origin`,
+  // `destination` ja `place` ovat käyttäjän kirjoittamia nimiä.
+  // Koordinaatti kannassa olisi koordinaatti juuri tässä viennissä.
+  'travelPlans',
+  'locationRules'
 ]);
 
 /**
@@ -87,7 +119,11 @@ export const REDACTED_FIELDS = Object.freeze([
   'password', 'passwordHash', 'salt',
   'token', 'accessToken', 'refreshToken', 'idToken', 'sessionToken',
   'apiKey', 'anonKey', 'serviceRoleKey', 'secret', 'clientSecret',
-  'authorization', 'session', 'credentials'
+  'authorization', 'session', 'credentials',
+  // Koordinaatit eivät kuulu mihinkään vientiin. Ks. src/platform/geolocation.js:
+  // sijainti on vain muistissa, mutta jos koordinaatti jostain syystä päätyisi
+  // dataan, se putoaa pois nimen perusteella.
+  'latitude', 'longitude', 'lat', 'lng', 'lon', 'coords', 'coordinates', 'position', 'geolocation'
 ]);
 
 const REDACTED_LOWER = new Set(REDACTED_FIELDS.map(field => field.toLowerCase()));

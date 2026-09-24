@@ -67,6 +67,18 @@ kaatuu, jos järjestys rikkoo yhtäkään.
 | **E** | `aiAudit` | Ei vierasavaimia. Viimeisenä, koska se kirjaa muiden toimintaa — sen kannattaa olla käytössä vasta kun kirjattavaa on |
 | **F** | `transactions`, `investments` | Talous 2.0. Kumpikaan ei viittaa mihinkään sovellustauluun, joten riippuvuudet eivät pakota sijaintia. **ESTETTY:** migraatiota 0009 ei ole ajettu |
 | **G** | `milestones` | Tavoitteesta tekemiseksi. `milestones.goal_id` viittaa tavoitteeseen, joten aalto B on oltava ensin — ja se on tuotannossa. **ESTETTY:** migraatiota 0010 ei ole ajettu |
+| **H** | `inboxItems`, `reminders`, `notices`, `travelPlans`, `locationRules` | Henkilökohtainen avustaja. `travel_plans.task_id` ja `location_rules.task_id` viittaavat tehtävään, joka on tuotannossa; muut kolme eivät viittaa mihinkään sovellustauluun. Riippuvuudet eivät siis pakota sijaintia. **ESTETTY KAHDESTI:** migraatiota 0011 ei ole ajettu EIKÄ yhdelläkään viidestä domainista ole näkymää |
+
+> **Aalto H on ainoa, jolla on KAKSINKERTAINEN este.** Migraatiota
+> `0011_personal_assistant.sql` ei ole ajettu, eikä yhdelläkään sen
+> viidestä domainista ole käyttöliittymää. Jälkimmäinen on tässä
+> junassa uusi lajityyppi: portti avaisi tallennuksen paikkaan, jota
+> käyttäjä ei näe. Kirjaus ilman lukemista on tiedon nielu.
+>
+> Migraatio itse on **vähemmän vaarallinen kuin 0010**: viisi uutta
+> tyhjää taulua, ei yhtäkään muutosta olemassa olevaan. Sitä ei silti
+> saa ajaa ilman hyväksyntää ja varmuuskopiota.
+> Hyväksyntäpaketti: `docs/acceptance/WAVE-H.md`.
 
 > **⚠ Aalto G on estetty, ja sen migraatio on vaarallisempi kuin
 > aiemmat.** `0010_goal_to_action.sql` on ensimmäinen migraatio, joka

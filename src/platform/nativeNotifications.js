@@ -213,7 +213,9 @@ export async function schedule(intents = [], now = new Date()) {
       title: intent.title,
       body: intent.body,
       channelId: CHANNEL_ID,
-      schedule: { at, allowWhileIdle: intent.level >= 4 },
+      // Lähtömuistutus saa herättää laitteen lepotilasta (Doze): myöhästynyt
+      // lähtöilmoitus on vahinko, ei mukavuushaitta. Laitehyväksyntä kesken.
+      schedule: { at, allowWhileIdle: intent.level >= 4 || intent.type === 'departure_reminder' },
       extra: { intentId: intent.id, type: intent.type }
     });
   }

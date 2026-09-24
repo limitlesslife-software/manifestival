@@ -12,11 +12,13 @@
 
 import { todayMidnight, startOfWeek } from '../lib/datetime.js';
 import { getDevicePreference, clearDevicePreferences } from '../data/preferences.js';
-import { subscribe, resetState, setViewDate, setWeekStart } from './state.js';
+import { subscribe, resetState, setViewDate, setWeekStart, getState } from './state.js';
 import { loadUserData, clearLocalUserData } from './actions.js';
+import { createReconnectController } from './reconnect.js';
 import { initAuth, showAuthGate, hideAuthGate } from './auth.js';
 import { initNavigation, restoreLastScreen } from './navigation.js';
 import { initVoice } from './voice.js';
+import { initSearch, closeSearch } from './search.js';
 import { initOnboarding, maybeShowOnboarding } from './onboarding.js';
 import { renderToday, initTodayNavigation } from './views/today.js';
 import { renderWeek, initWeekNavigation } from './views/week.js';
@@ -37,14 +39,60 @@ import { initPlanning, resetPlanning } from './views/planning.js';
 import { clearIdempotencyKeys } from './planning.js';
 import { renderProfile, initProfileForm, fillProfileForm } from './views/profile.js';
 import { renderNotificationSettings } from './views/notificationSettings.js';
-import { refreshNotificationPermission, syncNotifications } from './notifications.js';
+import { initInbox, closeCaptureReview } from './views/inbox.js';
+import { initReminderForm, closeReminderForm } from './views/reminders.js';
+import { initTravelForms, closeTravelForm, closeLocationRuleForm }
+  from './views/travel.js';
+import { renderNotices, initNotices, closeNoticeCenter } from './views/notices.js';
+import {
+  runReminderSweep, runDepartureSweep, pruneNoticeHistory, runReplanCheck
+} from './assistantActions.js';
+import {
+  refreshNotificationPermission, syncNotifications,
+  scheduleNotificationResync, cancelScheduledResync
+} from './notifications.js';
+import { lifecycle, location as platformLocation } from '../platform/index.js';
 import { clearToasts } from '../ui/toast.js';
 import { maybe } from '../ui/dom.js';
+import { getUser } from '../data/session.js';
+import { offline, setSyncedHandler } from './offline.js';
+import { initOfflineStatus, refreshSyncStatus } from './offlineStatus.js';
 
 /** Kuinka usein NYT-tila päivitetään ilman sivun uudelleenlatausta. */
 const NOW_REFRESH_MS = 30000;
 
 let signedIn = false;
+
+/**
+ * Päivitä data verkon palautuessa tai sovelluksen palatessa etualalle.
+ *
+ * EI KUTSU renderAll():ia SUORAAN. loadUserData() kirjoittaa uudet
+ * kokoelmat tilaan setX()-toiminnoilla, ja tila on tilattu (subscribe)
+ * jo käynnistyksessä — sama automaattinen renderöinti joka tapahtuu
+ * kirjautuessa hoitaa myös tämän, eikä näytä tai käyttäjän sijaintia
+ * näkymässä tarvitse koskea erikseen.
+ */
+let reconnectRefreshing = false;
+
+async function refreshAfterReconnect() {
+  if (!signedIn) return;
+  // LÄHETÄ ENSIN, LATAA VASTA SITTEN: lataus korvaisi muuten paikallisen tilan
+  // ennen kuin odottavat offline-muutokset ovat lähteneet (overlay kattaa
+  // näkymän, mutta palvelimen tila on oikea vasta lähetyksen jälkeen).
+  reconnectRefreshing = true;
+  try {
+    await offline.replay();
+  } catch (error) {
+    console.warn('Manifestival: offline-jonon toisto ei onnistunut', error);
+  } finally {
+    reconnectRefreshing = false;
+  }
+  const result = await loadUserData();
+  if (result.discarded) return;
+  runAssistantSweeps();
+}
+
+const reconnect = createReconnectController({ onRefresh: refreshAfterReconnect });
 
 /**
  * Rekisteröi service worker.
@@ -75,11 +123,75 @@ function renderAll() {
   renderFinance();
   renderProfile();
   renderNotificationSettings();
+  renderNotices();
+}
+
+/**
+ * Viimeksi nähdyt viittaukset ajastukseen vaikuttaviin kokoelmiin.
+ *
+ * Viittausvertailu (ei syväkopiointi) riittää: jokainen tilaa muuttava
+ * toiminto (src/app/actions.js) korvaa taulukon uudella, koskaan ei
+ * mutatoida paikallaan. Sama viittaus tarkoittaa siis varmasti samaa
+ * sisältöä.
+ */
+let lastNotifiableRefs = { tasks: null, routines: null, routineExceptions: null, travelPlans: null };
+
+/**
+ * Pyydä muistutusten uudelleensynkronointi, kun ajastukseen vaikuttava
+ * tila muuttuu.
+ *
+ * TÄMÄ ON AINOA PAIKKA JOKA VAHTII SITÄ. Ilman tätä laitteelle ajastetut
+ * ilmoitukset synkronoituisivat vain kirjautuessa, ja tehtävän muokkaus
+ * tai poisto kesken istunnon jättäisi vanhentuneen ilmoituksen elämään
+ * laitteelle seuraavaan kirjautumiseen asti.
+ */
+function watchNotifiableChanges() {
+  if (!signedIn) return;
+  const state = getState();
+  const changed = state.tasks !== lastNotifiableRefs.tasks
+    || state.routines !== lastNotifiableRefs.routines
+    || state.routineExceptions !== lastNotifiableRefs.routineExceptions
+    // Matkasuunnitelman muutos siirtää lähtömuistutuksen aikaa: sama
+    // tunniste, uusi aika -> uudelleenajastus korvaa vanhan.
+    || state.travelPlans !== lastNotifiableRefs.travelPlans;
+
+  lastNotifiableRefs = {
+    tasks: state.tasks,
+    routines: state.routines,
+    routineExceptions: state.routineExceptions,
+    travelPlans: state.travelPlans
+  };
+
+  if (changed) scheduleNotificationResync();
+}
+
+/**
+ * Muistutus-, lahto- ja karsintakierros.
+ *
+ * EI KAADA MITAAN. Verkkovirhe halytyskierroksella ei saa estaa
+ * sovelluksen kayttoa: kierros yritetaan uudelleen kolmenkymmenen
+ * sekunnin paasta, ja siihen asti kayttoliittyma toimii normaalisti.
+ */
+function runAssistantSweeps() {
+  Promise.all([
+    runReminderSweep(),
+    runDepartureSweep(),
+    runReplanCheck(),
+    pruneNoticeHistory()
+  ]).catch(error => {
+    console.warn('Manifestival: halytyskierros ei onnistunut', error);
+  });
 }
 
 async function onSignedIn() {
   signedIn = true;
   hideAuthGate();
+
+  // Käyttäjän oma odottava jono ladataan ENNEN ensimmäistä latausta, jotta
+  // sen muutokset näkyvät heti (overlay) eikä toisen käyttäjän jono
+  // koskaan osu tähän (avain on käyttäjäkohtainen).
+  const current = getUser();
+  offline.activate(current && current.id ? current.id : null);
 
   // Päivä ja viikko nollataan kirjautuessa: sovellus avautuu aina tähän
   // päivään, ei siihen mihin edellinen istunto jäi.
@@ -94,6 +206,11 @@ async function onSignedIn() {
   // uudempi onSignedIn on jo ottanut vastuun näkymästä.
   const loaded = await loadUserData();
   if (loaded.discarded) return;
+
+  // Lähetä kirjautumisen aikana odottaneet muutokset (jos verkko on).
+  offline.replay().catch(error => {
+    console.warn('Manifestival: offline-jonon toisto ei onnistunut', error);
+  });
 
   fillProfileForm();
 
@@ -110,11 +227,25 @@ async function onSignedIn() {
     console.warn('Manifestival: muistutusten synkronointi ei onnistunut', error);
   });
 
+  // HALYTYSKIERROS AJETAAN KUN SOVELLUS ON AUKI.
+  //
+  // Tama EI OLE AJASTIN suljetulle sovellukselle. Taustaheratysta ei
+  // ole eika sita voi luvata ilman laitehyvaksyntaa. Kierros on siksi
+  // tassa: kirjautumisen jalkeen ja `NOW_REFRESH_MS` valein.
+  //
+  // Kaksoiskappaleiden esto on kolminkertainen (istunnon avaimet,
+  // tilan avaintarkistus, kannan `notices_key_unique`), joten kierros
+  // voidaan ajaa niin usein kuin halutaan.
+  runAssistantSweeps();
+
   maybeShowOnboarding();
 }
 
 function onSignedOut() {
   signedIn = false;
+  cancelScheduledResync();
+  reconnect.cancelPending();
+  lastNotifiableRefs = { tasks: null, routines: null, routineExceptions: null, travelPlans: null };
   closeForm();
   closeRoutineForm();
   closeGoalForm();
@@ -125,6 +256,23 @@ function onSignedOut() {
   closeSavingsTransferForm();
   closeInvestmentForm();
   closeMilestoneForm();
+  closeReminderForm();
+  closeTravelForm();
+  closeLocationRuleForm();
+
+  // Kesken oleva kirjaus ja ilmoituskeskuksen tila eivat saa vuotaa
+  // seuraavalle kayttajalle samalla selaimella. Kirjauskentta voi
+  // sisaltaa mita tahansa, mita edellinen kayttaja oli kirjoittamassa.
+  closeCaptureReview();
+  closeNoticeCenter();
+  closeSearch();
+
+  // Muistissa oleva sijainti unohtuu uloskirjautuessa (ei koskaan levylle).
+  platformLocation.forget();
+
+  // Offline-jono vapautetaan muistista; tallennus säilyy käyttäjäkohtaisella
+  // avaimella eikä koskaan lähetetä toisen käyttäjän tilillä.
+  offline.deactivate();
 
   // Nollaa myös kesken olevan kuvan luennan ja tyhjentää
   // tiedostovalitsimen. Seuraava käyttäjä samalla selaimella ei saa
@@ -162,11 +310,17 @@ async function start() {
   initGoalDetail();
   initPlanning();
   initProfileForm();
+  initInbox();
+  initReminderForm();
+  initTravelForms();
+  initNotices();
   initVoice();
+  initSearch();
   initOnboarding();
 
   // 2. Näkymät seuraavat tilaa.
   subscribe(renderAll);
+  subscribe(watchNotifiableChanges);
 
   // 3. Istunnon palautus.
   const session = await initAuth({ onSignedIn, onSignedOut });
@@ -177,10 +331,39 @@ async function start() {
   if (!session || !session.user) showAuthGate();
 
   // 4. NYT/MYÖHÄSSÄ/ETUAJASSA pysyy ajan tasalla ilman sivun päivitystä.
-  setInterval(() => { if (signedIn) renderToday(); }, NOW_REFRESH_MS);
+  setInterval(() => {
+    if (!signedIn) return;
+    renderToday();
+    runAssistantSweeps();
+  }, NOW_REFRESH_MS);
 
-  document.addEventListener('visibilitychange', () => {
-    if (!document.hidden && signedIn) renderToday();
+  // Paluu etualalle: sama kolmikko kuin ajastimessa, mutta heti eikä
+  // vasta seuraavassa NOW_REFRESH_MS-kierroksessa. Sovellus on voinut
+  // olla taustalla kauemmin kuin yksi kierros, ja käyttäjä odottaa
+  // ajantasaista tilaa heti kun hän palaa.
+  //
+  // KÄYTTÄÄ platform/lifecycle.js:ÄÄ EIKÄ OMAA visibilitychange-KUUNTELIJAA.
+  // Natiivikuoressa `document.visibilitychange` ei ole luotettava korvike
+  // käyttöjärjestelmän omalle resume/pause-tapahtumalle (ks. lifecycle.js:n
+  // kommentti); web-kuori saa silti visibilitychange-varajärjestelmän, koska
+  // bindLifecycle kytkee molemmat.
+  lifecycle.bind({
+    onResume: () => {
+      if (!signedIn) return;
+      renderToday();
+      runAssistantSweeps();
+      syncNotifications().catch(error => {
+        console.warn('Manifestival: muistutusten synkronointi paluulla ei onnistunut', error);
+      });
+      // Sovellus on voinut olla taustalla pitkään: data on voinut vanhentua
+      // (esim. muokattu toisella laitteella). refreshNow() on limitelty
+      // reconnect.js:ssä, joten tämä ei koskaan käynnisty rinnakkain
+      // samanaikaisen online-palautuksen kanssa.
+      reconnect.refreshNow();
+    },
+    onPause: () => {
+      reconnect.cancelPending();
+    }
   });
 
   // 5. Service worker: sovelluskuori toimii offline.
@@ -189,16 +372,32 @@ async function start() {
   //    ilman sitäkin, vain ilman offline-tukea.
   registerServiceWorker();
 
+  // Offline-jonon tila näkyviin, ja synkronoinnin jälkeinen uudelleenlataus.
+  initOfflineStatus();
+  setSyncedHandler(() => {
+    if (!signedIn || reconnectRefreshing) return;
+    loadUserData().catch(error => {
+      console.warn('Manifestival: lataus synkronoinnin jälkeen ei onnistunut', error);
+    });
+  });
+
   // 6. Verkon tilan ilmaisu. Palvelinta vaativat toiminnot eivät saa
   //    valehdella onnistuneensa, joten offline-tila kerrotaan näkyvästi.
   const updateOnlineState = () => {
-    const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
-    document.body.classList.toggle('is-offline', offline);
+    const isOffline = typeof navigator !== 'undefined' && navigator.onLine === false;
+    document.body.classList.toggle('is-offline', isOffline);
     const banner = maybe('offlineBanner');
-    if (banner) banner.style.display = offline ? 'block' : 'none';
+    if (banner) banner.style.display = isOffline ? 'block' : 'none';
+    refreshSyncStatus();
   };
-  window.addEventListener('online', updateOnlineState);
-  window.addEventListener('offline', updateOnlineState);
+  window.addEventListener('online', () => {
+    updateOnlineState();
+    reconnect.notifyOnline();
+  });
+  window.addEventListener('offline', () => {
+    updateOnlineState();
+    reconnect.notifyOffline();
+  });
   updateOnlineState();
 }
 

@@ -136,7 +136,7 @@ src/
     preferences.js             Laitekohtaiset asetukset (localStorage)
   ai/
     proposalSchema.js          AI-ehdotuksen tiukka validointi (jaettu palvelimen kanssa)
-    parseClient.js             /api/parse -kutsu
+    commandClient.js           /api/command -kutsu (teksti JA puhe, ks. commandBar.js)
   ui/
     dom.js                     el, on, show, hide, setBusy
     toast.js                   Keskitetty ilmoitus käyttäjälle

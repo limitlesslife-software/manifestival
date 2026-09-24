@@ -3,9 +3,18 @@
 **Päivitetty:** 2026-09-08 (julkaisujuna valmisteltu)
 **Lähde:** ajetut migraatiot, varmistusten tulokset ja live-hyväksyntätesti
 
-Tämä on repositorion **auktoritatiivinen** tieto siitä, mikä on ajettu
-tuotantoon ja mikä ei. Jos jokin muu tiedosto on ristiriidassa tämän
-kanssa, tämä on oikeassa.
+> **⚠ TÄMÄ ON TÄMÄN HAARAN KEHITYSNÄKYMÄ, EI VARMISTETUSTI AJANTASAINEN
+> TUOTANNON TILA.** Tämä haara erkani junasta ennen aaltoja A ja B.
+> `origin/main` on saattanut edetä sen jälkeen ilman että tämä tiedosto
+> on seurannut mukana — katso `docs/RELEASE-SEQUENCING.md`, kohta
+> "ACTUAL PRODUCTION STATE", elävä totuus luetaan sieltä suoraan
+> gitistä, ei tästä dokumentista.
+
+Tämä on **tämän haaran** auktoritatiivinen tieto siitä, mikä oli ajettu
+tuotantoon haaran erkaantumishetkellä ja mikä ei. Jos jokin muu tiedosto
+**tässä puussa** on ristiriidassa tämän kanssa, tämä on oikeassa —
+mutta tämä dokumentti EI itsessään todista mitään siitä, mikä
+`origin/main`issa on juuri nyt. Sen todistaa vain git.
 
 ---
 
@@ -47,13 +56,15 @@ Automaattinen testi vartioi, että tämä dokumentti pysyy ajan tasalla.
 | 0007 | `0007_finance.sql` | **AJETTU** | PASS |
 | 0008 | `0008_ai_audit.sql` | **AJETTU** | PASS |
 | 0009 | `0009_finance_2.sql` | **AJETTU** | EDELLYTYS (aalto F, e05c54b): `verify_0009.sql` 0 poikkeavaa |
-| 0010 | `0010_goal_to_action.sql` | **AJETTU** | EDELLYTYS: `verify_0010.sql` 0 poikkeavaa ennen tämän commitin deployta |
+| 0010 | `0010_goal_to_action.sql` | **AJETTU** | EDELLYTYS (aalto G, f362e1a): `verify_0010.sql` 0 poikkeavaa |
+| 0011 | `0011_personal_assistant.sql` | **EI AJETTU** | — |
 
-> **Aaltocommit G.** 0010-rivi on tämän commitin EDELLYTYS, ei
-> historiallinen havainto: commit on valmisteltu etukäteen ja se
-> deployataan vasta, kun aalto F on hyväksytty, Panu on ERIKSEEN
-> hyväksynyt migraation 0010, se on ajettu tuotantoon ja
-> `supabase/verify/verify_0010.sql` antaa 0 poikkeavaa.
+> **EDELLYTYS-merkintä (0009 alkaen).** Aallot F–J on valmisteltu
+> etukäteen harjoitteluhaaroissa. Rivi, jossa lukee AJETTU ja
+> EDELLYTYS, ei ole historiallinen havainto vaan deployn ehto: aallon
+> commit deployataan vasta, kun edellinen aalto on hyväksytty, Panu on
+> erikseen hyväksynyt migraation, se on ajettu tuotantoon ja sen
+> `supabase/verify/verify_XXXX.sql` antaa 0 poikkeavaa.
 >
 > **⚠ 0010 on vaarallisempi kuin aiemmat.** Se MUUTTAA tauluja, joissa
 > on käyttäjän dataa ja joiden portit ovat auki tuotannossa (`goals`,
@@ -139,6 +150,11 @@ vertaa niihin.
 | `milestones` | 0010 | **AKTIVOITU** |
 | `GOAL_PLANNING_FIELDS` | 0010 | **AKTIVOITU** |
 | `GOAL_MAINTENANCE_MODE` | 0010 | **AKTIVOITU** |
+| `inboxItems` | 0011 | kiinni |
+| `reminders` | 0011 | kiinni |
+| `notices` | 0011 | kiinni |
+| `travelPlans` | 0011 | kiinni |
+| `locationRules` | 0011 | kiinni |
 
 `GOAL_PLANNING_FIELDS` on **sarakeportti** ja `GOAL_MAINTENANCE_MODE`
 **arvoportti**. Ne ovat erillisiä, koska niiden viat ovat erilaisia:
@@ -180,7 +196,8 @@ hyväksyntäpaketit: `docs/RELEASE-TRAIN-0003-0008.md`.
 | **D** | `recurringExpenses`, `savingsGoals`, `bills` | `v17` | VALMIS | `091e73c` | — | — | — | — |
 | **E** | `aiAudit` | `v18` | VALMIS | `2b947cc` | — | — | — | — |
 | **F** | `transactions`, `investments`, `BILL_PAYMENT_FIELDS` | `v19` | VALMIS (edellyttää 0009) | `e05c54b` | — | — | — | — |
-| **G** | `milestones`, `GOAL_PLANNING_FIELDS`, `GOAL_MAINTENANCE_MODE` | `v20` | VALMIS (edellyttää 0010) | tämä commit | — | — | — | — |
+| **G** | `milestones`, `GOAL_PLANNING_FIELDS`, `GOAL_MAINTENANCE_MODE` | `v20` | VALMIS (edellyttää 0010) | `f362e1a` | — | — | — | — |
+| **H** | `inboxItems`, `reminders`, `notices`, `travelPlans`, `locationRules` | `v21` | **ESTETTY** | — | — | — | — | — |
 
 **Aalto F = Talous 2.0:n tuotekoodi + migraatio 0009 + sen portit
 yhtenä hyväksyntätapahtumana** (lukittu päätös,

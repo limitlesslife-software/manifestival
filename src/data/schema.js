@@ -77,7 +77,20 @@ export const TABLES = Object.freeze({
   transactions: true,
   investments: true,
   /** Migraatio 0010 — EI AJETTU. Ks. supabase/migrations/0010_goal_to_action.sql. */
-  milestones: true
+  milestones: true,
+  /**
+   * Migraatio 0011 — EI AJETTU.
+   * Ks. supabase/migrations/0011_personal_assistant.sql.
+   *
+   * Nämä viisi ovat kaikki UUSIA TAULUJA. Toisin kuin migraatio 0010,
+   * 0011 ei muuta yhtäkään olemassa olevaa taulua — se on siksi
+   * selvästi vähemmän vaarallinen, ja se on syytä sanoa ääneen.
+   */
+  inboxItems: false,
+  reminders: false,
+  notices: false,
+  travelPlans: false,
+  locationRules: false
 });
 
 /**

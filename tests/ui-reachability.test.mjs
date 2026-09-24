@@ -34,8 +34,9 @@ function uiSource() {
   // on tarkoituksellista: näkymä joka ei ole tässä listassa ei ole
   // mukana tavoitettavuuden tarkistuksessa, ja juuri sellainen näkymä
   // jäi aiemmin löytymättä.
-  const views = ['goals', 'goalDetail', 'notificationSettings', 'planning',
-                 'profile', 'routines', 'tasks', 'today', 'week'];
+  const views = ['goals', 'goalDetail', 'inbox', 'notices',
+                 'notificationSettings', 'planning', 'profile', 'reminders',
+                 'routines', 'tasks', 'today', 'travel', 'week'];
   return [read('index.html'), ...views.map(v => read(`src/app/views/${v}.js`))]
     .join(NEWLINE);
 }
@@ -44,7 +45,7 @@ function uiSource() {
 // MATRIISI KATTAA KAIKEN
 // =====================================================================
 
-test('KRIITTINEN: jokaisella kymmenellä portilla on tavoitettavuusrivi', () => {
+test('KRIITTINEN: jokaisella portilla on tavoitettavuusrivi', () => {
   assert.equal(REACHABILITY.length, ALL_GATES.length);
   for (const gate of ALL_GATES) {
     const row = reachabilityOf(gate);
@@ -145,12 +146,22 @@ test('KRIITTINEN: puuttuvaksi merkittyä domainia ei ole käyttöliittymässä',
     }
   }
 
-  // JOKAINEN KYMMENESTÄ DOMAINISTA ON NYT TAVOITETTAVISSA.
+  // PUUTTUVIEN JOUKKO LUETELLAAN NIMELTÄ.
   //
-  // Aiemmin tässä oli neljä puuttuvaa: projektit ja talouden kolme.
-  // Ne rakennettiin olemassa olevan domain-mallin päälle. Jos joukko
-  // muuttuu kumpaan tahansa suuntaan, tämä kaatuu ja pakottaa
-  // päivittämään aaltojen valmiustilan ja dokumentaation.
+  // Joukko on ollut tyhjä kahdesti ja ei-tyhjä kahdesti:
+  //
+  //   1. Perustilaa ennen puuttui neljä: projektit ja talouden kolme.
+  //   2. Ne rakennettiin, ja joukko tyhjeni.
+  //   3. Aallon H viisi domainia toivat sen takaisin — domain ja
+  //      migraatio olivat olemassa, näkymä ei.
+  //   4. Näkymät rakennettiin, ja joukko tyhjeni uudelleen.
+  //
+  // Vaihe 3 ei ollut taantuma vaan rehellinen välitila, ja se näkyi
+  // aallon H valmiustilassa ESTETTYNÄ.
+  //
+  // Joukko luetellaan nimeltä eikä sen kokoa lasketa: uusi näkymätön
+  // domain kaataa tämän, ja se on oikea hetki päivittää matriisi,
+  // valmiustila ja dokumentaatio yhdessä.
   assert.deepEqual([...unreachableGates()].sort(), [],
     'puuttuvien joukko muuttui — päivitä dokumentaatio ja aaltojen valmius');
 });

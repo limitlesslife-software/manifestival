@@ -45,6 +45,7 @@ import {
   ALL_GATES, WAVE_IDS, cacheVersionOf, cumulativeGates, describeMatrix
 } from '../tools/release/waves.mjs';
 import { matrixDifferences, parseCacheVersion, parseStatusDoc } from '../tools/release/state.mjs';
+import { isDetachedHead, waveOfCommit } from '../tools/release/lineage.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const NEWLINE = String.fromCharCode(10);
@@ -70,9 +71,18 @@ if (ODOTETTU_AALTO !== 'BASE' && !WAVE_IDS.includes(ODOTETTU_AALTO)) {
 
 const tulokset = [];
 
-/** Kirjaa yhden tarkistuksen tuloksen. */
-function tarkista(osuus, nimi, ehto, selite = '') {
-  tulokset.push({ osuus, nimi, ok: Boolean(ehto), selite });
+/**
+ * Kirjaa yhden tarkistuksen tuloksen.
+ *
+ * `blocking = false` merkitsee tarkistuksen sellaiseksi, joka ei saa
+ * pysäyttää aktivointia epäonnistuessaan -- vain kertoa tilan. Ks.
+ * "Haara on tiedossa" alla: haaran NIMEN puuttuminen (irrallinen HEAD)
+ * on kelvollinen tila, ei este, ja sen käsittely esteenä oli juuri se
+ * virhe joka teki esitarkistuksesta epäluotettavan irrallisella
+ * HEADilla -- FAIL, joka näytti samalta kuin oikea porttivika.
+ */
+function tarkista(osuus, nimi, ehto, selite = '', blocking = true) {
+  tulokset.push({ osuus, nimi, ok: Boolean(ehto), selite, blocking });
 }
 
 /** Tiedoston sisältö, tai tyhjä jos sitä ei ole. */
@@ -92,19 +102,58 @@ function lue(suhteellinen) {
 
 let haara = '';
 let työpuuPuhdas = false;
+let irrallinen = null;
 try {
   haara = execFileSync('git', ['branch', '--show-current'],
     { cwd: ROOT, encoding: 'utf8' }).trim();
   const tila = execFileSync('git', ['status', '--porcelain'],
     { cwd: ROOT, encoding: 'utf8' }).trim();
   työpuuPuhdas = tila.length === 0;
+  irrallinen = isDetachedHead(ROOT);
 } catch {
   // Git puuttuu tai hakemisto ei ole repositorio. Ei este.
 }
 
 tarkista('haara', 'Työpuu on puhdas', työpuuPuhdas,
   työpuuPuhdas ? '' : 'committoimattomia muutoksia — deployattu koodi ei olisi testattu koodi');
-tarkista('haara', 'Haara on tiedossa', haara.length > 0, haara);
+
+// HUOM. Irrallinen HEAD (detached) ON KELVOLLINEN TILA -- esimerkiksi
+// julkaisuautomaatio, joka tarkistaa nimenomaisen commitin eikä
+// mitään haaraa. `git branch --show-current` palauttaa silloin
+// tyhjän merkkijonon, mikä EI ole itsessään virhe. Tämä tarkistus ei
+// siis saa PYSÄYTTÄÄ esitarkistusta pelkästä nimen puuttumisesta --
+// se olisi juuri se vika, jota tämä korjaa: FAIL joka näyttää
+// samalta kuin oikea porttivirhe, riippumatta siitä oliko matriisi
+// oikea. Aallon TUNNISTUS vahvistetaan sen sijaan commitin omasta
+// sisällöstä alempana (`waveOfCommit`) -- se toimii identtisesti
+// haaralla tai irrallisena.
+tarkista('haara', 'HEAD-tila on tunnistettu',
+  haara.length > 0 || irrallinen === true,
+  haara.length > 0 ? haara : (irrallinen === true ? 'irrallinen HEAD' : 'tuntematon'),
+  false);
+
+// =====================================================================
+// AALLON TUNNISTUS COMMITISTA -- EI HAARAN NIMESTÄ
+// =====================================================================
+//
+// `--wave=`-parametri (tai BASE-oletus) on operaattorin VÄITE siitä,
+// mitä aaltoa tämä commit deployaa. Tämä tarkistus varmistaa väitteen
+// KESTÄVÄSTÄ, riippumattomasta lähteestä: jos NYKYINEN commit kantaa
+// `Release-Wave:`-trailerin (ks. tools/release/manifest.mjs), sen on
+// täsmättävä väitettyyn aaltoon. Tämä toimii TÄSMÄLLEEN SAMOIN
+// irrallisella HEADilla kuin haaralla, koska se ei koskaan lue haaran
+// nimeä -- vain commitin oman sisällön.
+//
+// Commit, joka EI kanna trailería (esim. kesken oleva kehitystyö), ei
+// ole virhe: silloin tämä tarkistus ei ota kantaa, ja aalto todennetaan
+// yhä porttimatriisista alla. AMBIGUITEETTI -- ts. commit väittää yhtä
+// ja operaattori toista -- on sitä vastoin AINA este, ei arvaus.
+const commitinAalto = waveOfCommit('HEAD', ROOT);
+tarkista('haara', 'Commitin oma aaltomerkintä (jos on) täsmää pyydettyyn',
+  commitinAalto === null || commitinAalto === ODOTETTU_AALTO,
+  commitinAalto === null
+    ? 'commitissa ei ole Release-Wave-trailería (tavallista kesken olevassa työssä)'
+    : `commit on merkitty aalloksi ${commitinAalto}, esitarkistus ajettiin aallolle ${ODOTETTU_AALTO}`);
 
 // =====================================================================
 // 2. PORTIT
@@ -338,16 +387,18 @@ tarkista('testit', 'Web-kaannos onnistuu', build.ok,
 
 const leveys = Math.max(...tulokset.map(t => t.nimi.length)) + 2;
 let edellinen = '';
-for (const { osuus, nimi, ok, selite } of tulokset) {
+for (const { osuus, nimi, ok, selite, blocking } of tulokset) {
   if (osuus !== edellinen) {
     process.stdout.write(`${NEWLINE}  ${osuus.toUpperCase()}${NEWLINE}`);
     edellinen = osuus;
   }
-  const merkki = ok ? 'PASS' : 'FAIL';
+  // WARN: tarkistus epäonnistui mutta on merkitty ei-estäväksi -- tila
+  // kerrotaan silti näkyvästi, mutta se ei pysäytä aktivointia.
+  const merkki = ok ? 'PASS' : (blocking === false ? 'WARN' : 'FAIL');
   process.stdout.write(`    ${merkki}  ${nimi.padEnd(leveys)}${selite}${NEWLINE}`);
 }
 
-const esteet = tulokset.filter(t => !t.ok);
+const esteet = tulokset.filter(t => !t.ok && t.blocking !== false);
 process.stdout.write(NEWLINE);
 
 if (esteet.length === 0) {

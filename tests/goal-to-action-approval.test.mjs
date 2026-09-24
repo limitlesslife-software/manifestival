@@ -155,16 +155,31 @@ test('KRIITTINEN: ehdotusta ei tallenneta mihinkään pysyvään', () => {
 
   // Eikä ehdotuksille ole taulua.
   assert.equal(TABLES.plans, undefined, 'suunnitelmaehdotuksille on portti');
-  assert.equal(ALL_REPOSITORIES.some(repo => /plan/i.test(repo.table)), false,
+  // `travel_plans` sisaltaa sanan "plan" mutta EI OLE ehdotus: se on
+  // kayttajan itse kirjaama matka, jolla on oma porttinsa, oma
+  // nakymansa ja oma taulunsa. Se luetellaan NIMELTA -- laveampi
+  // hahmo pysyy voimassa, ja mika tahansa muu plan-niminen taulu
+  // kaataa taman yha.
+  const SALLITUT_PLAN_TAULUT = ['travel_plans'];
+  const ehdotusRepot = ALL_REPOSITORIES
+    .filter(repo => /plan/i.test(repo.table))
+    .map(repo => repo.table)
+    .filter(table => !SALLITUT_PLAN_TAULUT.includes(table));
+  assert.deepEqual(ehdotusRepot, [],
     'suunnitelmaehdotuksille on repositorio');
 
-  const migraatio = read('supabase/migrations/0010_goal_to_action.sql')
-    .split(NEWLINE)
-    .filter(rivi => !rivi.trim().startsWith('--'))
-    .join(NEWLINE);
+  for (const tiedosto of ['supabase/migrations/0010_goal_to_action.sql',
+    'supabase/migrations/0011_personal_assistant.sql']) {
+    const migraatio = read(tiedosto)
+      .split(NEWLINE)
+      .filter(rivi => !rivi.trim().startsWith('--'))
+      .join(NEWLINE);
 
-  assert.equal(/create table public\.plans/i.test(migraatio), false,
-    'migraatio luo taulun suunnitelmaehdotuksille');
+    assert.equal(/create table public\.plans/i.test(migraatio), false,
+      `${tiedosto}: migraatio luo taulun suunnitelmaehdotuksille`);
+    assert.equal(/create table public\.\w*proposals?/i.test(migraatio), false,
+      `${tiedosto}: migraatio luo taulun ehdotuksille`);
+  }
 });
 
 test('KRIITTINEN: ehdotus ei päädy vientiin', () => {

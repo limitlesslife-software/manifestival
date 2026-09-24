@@ -86,35 +86,21 @@ export const INTENT = Object.freeze({
 export const INTENTS = Object.freeze(Object.values(INTENT));
 
 /**
- * Intentit, joita EI ole eikä tule ilman erillistä suunnittelua.
- * Lista on dokumentaatiota ja testattava invariantti.
+ * Riskitasot ja kielletyt toimenpiteet asuvat DOMAINISSA.
  *
- * Huomaa ero yksittäisen rivin poistoon: `delete_task` on olemassa ja
- * suojattu, mutta `delete_all` ei ole olemassa lainkaan. Massapoistoa ei
- * voi vahvistaa mielekkäästi yhdellä dialogilla.
- */
-export const FORBIDDEN_INTENTS = Object.freeze([
-  'delete_all', 'delete_account', 'delete_everything',
-  'drop_table', 'truncate', 'execute_sql', 'run_query',
-  'change_owner', 'transfer_data',
-  'disable_security', 'grant_access', 'read_secrets', 'export_all'
-]);
-
-/**
- * Riskitasot.
+ * Ne olivat aiemmin täällä, koska tekoäly oli ensimmäinen joka niitä
+ * tarvitsi. Universaali kirjaus tarvitsee ne myös, eikä domain saa
+ * riippua AI-kerroksesta — riippuvuussuunta on domain <- ai.
  *
- *   LOW     ei muuta mitään. Vahvistusta ei kysytä — se olisi pelkkää kitkaa.
- *   MEDIUM  luo tai muuttaa. Vahvistus kysytään.
- *   HIGH    poistaa tai on muuten peruuttamaton. Eksplisiittinen vahvistus,
- *           jota EI voi kytkeä pois asetuksista.
+ * Uudelleenvienti pitää olemassa olevat kutsupaikat ennallaan: yksi
+ * lähde, ei kahta luetteloa jotka erkanevat.
  */
-export const RISK = Object.freeze({
-  LOW: 'low',
-  MEDIUM: 'medium',
-  HIGH: 'high'
-});
+// HUOM. `export ... from` EI luo paikallista sidosta, ja tämä tiedosto
+// käyttää `RISK`-vakiota itse alempana. Siksi tuonti ja vienti ovat
+// erikseen.
+import { RISK, RISK_LEVELS, FORBIDDEN_INTENTS } from '../domain/risk.js';
 
-export const RISK_LEVELS = Object.freeze(Object.values(RISK));
+export { RISK, RISK_LEVELS, FORBIDDEN_INTENTS };
 
 export const MAX_NOTE_LENGTH = 300;
 
@@ -136,8 +122,22 @@ function cleanString(value, maxLength) {
   return trimmed.slice(0, maxLength);
 }
 
+/**
+ * Tiukka luku: numero tai numeromerkkijono, ei muuta.
+ *
+ * Number(true) on 1, Number(['5']) on 5 ja Number([]) on 0 -- pelkkä
+ * Number()-muunnos päästäisi läpi totuusarvot ja taulukot, jotka mallin
+ * ei ole tarkoitus lähettää lukuina. Palauttaa NaN, jos arvo ei ole
+ * yksiselitteinen luku; kutsuja tarkistaa Number.isFinite.
+ */
+function strictNumber(value) {
+  if (typeof value === 'number') return value;
+  if (typeof value === 'string' && /^\s*-?\d+(\.\d+)?\s*$/.test(value)) return Number(value);
+  return NaN;
+}
+
 function cleanMinutes(value, max = 1440) {
-  const n = Number(value);
+  const n = strictNumber(value);
   if (!Number.isFinite(n) || n <= 0) return null;
   return Math.min(Math.round(n), max);
 }
@@ -151,7 +151,7 @@ function cleanMinutes(value, max = 1440) {
  */
 function cleanAmountMinor(value) {
   if (value === null || value === undefined || value === '') return null;
-  const n = Number(value);
+  const n = strictNumber(value);
   if (!Number.isFinite(n) || n < 0) return null;
   return Math.round(n * 100);
 }
@@ -411,7 +411,7 @@ export const COMMANDS = Object.freeze({
       const raw_shift = raw.shiftMinutes;
       let shiftMinutes = null;
       if (raw_shift != null) {
-        const n = Number(raw_shift);
+        const n = strictNumber(raw_shift);
         if (Number.isFinite(n) && n !== 0 && Math.abs(n) <= 1440) shiftMinutes = Math.round(n);
         else rejected.push('shiftMinutes');
       }
@@ -609,7 +609,7 @@ export const COMMANDS = Object.freeze({
       }
 
       if (raw.manualProgress != null) {
-        const value = Number(raw.manualProgress);
+        const value = strictNumber(raw.manualProgress);
         if (Number.isFinite(value) && value >= 0 && value <= 100) {
           changes.manualProgress = Math.round(value);
         } else rejected.push('manualProgress');
@@ -733,8 +733,13 @@ export const COMMANDS = Object.freeze({
       const name = cleanString(raw.name ?? raw.title, MAX_TITLE_LENGTH);
       if (!name) return { ok: false, reason: 'Laskun nimi puuttuu' };
 
+      // domain/finance.js:n validateBill() vaatii amountMinor:n aina —
+      // ilman tätä tarkistusta ehdotus näyttäisi käyttäjälle valmiilta
+      // ja hyväksyttävältä, mutta epäonnistuisi äänettömästi vasta
+      // suorituksessa, kun createBill() palauttaisi validointivirheen
+      // jota vahvistusnäkymä ei ole vielä näyttänyt.
       const amountMinor = cleanAmountMinor(raw.amount);
-      if (raw.amount != null && amountMinor === null) rejected.push('amount');
+      if (amountMinor === null) return { ok: false, reason: 'Summa puuttuu' };
 
       let dueDate = cleanString(raw.dueDate ?? raw.date ?? raw.deadline, 10);
       if (dueDate && !isIsoDate(dueDate)) { rejected.push('dueDate'); dueDate = null; }
@@ -827,13 +832,13 @@ export const COMMANDS = Object.freeze({
 
       for (const field of ['taskLeadMinutes', 'routineLeadMinutes']) {
         if (raw[field] == null) continue;
-        const value = Number(raw[field]);
+        const value = strictNumber(raw[field]);
         if (Number.isFinite(value) && value >= 0 && value <= 240) changes[field] = Math.round(value);
         else rejected.push(field);
       }
 
       if (raw.maxPerDay != null) {
-        const value = Number(raw.maxPerDay);
+        const value = strictNumber(raw.maxPerDay);
         if (Number.isFinite(value) && value >= 1 && value <= 50) changes.maxPerDay = Math.round(value);
         else rejected.push('maxPerDay');
       }

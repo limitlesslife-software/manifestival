@@ -29,5 +29,39 @@ export const API = Object.freeze({
    * PALAUTTAA EHDOTUKSEN, EI KIRJOITA MITÄÄN. Hyväksyntä on
    * domain-sääntö (src/domain/plan.js). Ks. api/plan.js.
    */
-  plan: '/api/plan'
+  plan: '/api/plan',
+  /**
+   * Vapaan kirjauksen tulkinta.
+   *
+   * PALAUTTAA TULKINNAN, EI RIVIÄ. Reitti lasketaan domainissa
+   * (src/domain/capture.js) eikä mitään synny ilman käyttäjän
+   * hyväksyntää. Ks. api/capture.js.
+   */
+  capture: '/api/capture',
+  /**
+   * Komennon luokittelu lauseesta ("siirrä X perjantaille").
+   *
+   * PALAUTTAA RAAKAEHDOTUKSEN, EI SUORITA MITÄÄN. Turvallinen
+   * sovelluskomento syntyy vasta src/ai/intentSchema.js:n
+   * resolveCommand()-funktiossa selaimessa. Ks. api/command.js ja
+   * src/app/aiCommands.js.
+   */
+  command: '/api/command'
+});
+
+/**
+ * Tilin poiston palvelinfunktio (Supabase Edge Function).
+ *
+ * `endpointEnabled` ON TOTUUSLIPPU, EI TOIVE: se on false kunnes
+ * funktio on OIKEASTI deployattu, sen origin-lista on asetettu ja
+ * kertakäyttöinen testitili on läpäissyt poiston. Niin kauan sovellus
+ * ei väitä poistoa mahdolliseksi eikä lähetä verkkokutsua.
+ * Ks. supabase/functions/README.md ja docs/ACCOUNT-DELETION.md.
+ *
+ * Funktion korotettu avain ei ole täällä eikä missään selaimeen
+ * menevässä tiedostossa -- se elää vain Supabasen puolella.
+ */
+export const ACCOUNT_DELETION = Object.freeze({
+  endpointEnabled: false,
+  functionName: 'delete-account'
 });

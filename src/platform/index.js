@@ -18,6 +18,8 @@ import {
   isNativeShell, platformName
 } from './capabilities.js';
 import * as notificationPlatform from './notifications.js';
+import { bindLifecycle, isNativeLifecycleAvailable } from './lifecycle.js';
+import * as geolocation from './geolocation.js';
 
 export {
   CAPABILITY, CAPABILITIES, PERMISSION, NATIVE_REQUIRED,
@@ -80,18 +82,31 @@ export const notifications = Object.freeze({
   showNow: notificationPlatform.showNow,
   schedule: notificationPlatform.schedule,
   cancel: notificationPlatform.cancelAll,
-  describeSupport: notificationPlatform.describeSupport
+  describeSupport: notificationPlatform.describeSupport,
+  /** Montako ilmoitusta on tällä hetkellä ajastettuna laitteelle. */
+  pendingCount: notificationPlatform.pendingCount
 });
 
 // ------------------------------------------------------------- sijainti
 
 export const location = Object.freeze({
   capability: () => capability(CAPABILITY.LOCATION),
-  /** PLANNED (WP11). */
-  async current() {
-    return { ok: false, ...NOT_IMPLEMENTED };
-  },
-  /** PLANNED (WP11). */
+  /** Rikas lupatila (not_requested, prompt, granted, denied, blocked, ...). Synkroninen, ei pyydä lupaa. */
+  permissionState: geolocation.locationPermissionState,
+  describePermission: geolocation.describeLocationState,
+  /** Lue lupatila laitteelta. EI pyydä lupaa. */
+  refreshPermission: geolocation.checkLocationPermission,
+  /** Pyydä lupa. VAIN käyttäjän omasta eleestä. */
+  requestPermission: geolocation.requestLocationPermission,
+  /**
+   * Hae sijainti kerran (etualalla). Ei taustaseurantaa, ei historiaa;
+   * koordinaatit vain muistissa. Ks. src/platform/geolocation.js.
+   */
+  current: geolocation.getCurrentLocation,
+  cached: geolocation.getCachedLocation,
+  /** Unohda muistissa oleva sijainti. Uloskirjautuminen. */
+  forget: geolocation.clearLocationCache,
+  /** Geoaidat ja taustaseuranta: EI TOTEUTETTU eikä luvattu. */
   async watchArrival() {
     return { ok: false, ...NOT_IMPLEMENTED };
   }
@@ -118,6 +133,22 @@ export const background = Object.freeze({
   async register() {
     return { ok: false, ...NOT_IMPLEMENTED };
   }
+});
+
+// -------------------------------------------------------- elinkaari
+
+/**
+ * Sovelluksen etu-/taustatilan kuuntelu.
+ *
+ * Ei ole oma kyvykkyys `capabilities()`-mielessä — tämä on sisäistä
+ * putkitusta, ei käyttäjän lupaa vaativa ominaisuus. Natiivissa
+ * Capacitorin App-liitännäinen antaa oikean tapahtuman; selaimessa
+ * ainoa vastine on `visibilitychange`, joka kytketään aina mukaan.
+ */
+export const lifecycle = Object.freeze({
+  isNativeAvailable: isNativeLifecycleAvailable,
+  /** Kytke kerran käynnistyksessä. Toinen kutsu ei tee mitään. */
+  bind: bindLifecycle
 });
 
 // ---------------------------------------------------------- yhteenveto
