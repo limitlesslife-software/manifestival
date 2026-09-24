@@ -163,6 +163,9 @@ const SCENARIOS = [
   ['nopea kirjaus: dialogi, alue, 30 min yhdellä napautuksella', `(async () => {
     H.click('#dirQuickLog');
     const dialog = await H.waitFor(() => document.querySelector('#timeLogDialog[open]'), 'dialogi auki');
+    // Toinen kehote auki olevan päälle hylätään: ei kahta kuuntelijaa, ei väärää kohdetta.
+    const second = await window.__e2e.timeLog.openGeneralLog();
+    if (second.action !== 'busy') throw new Error('toinen dialogi avautui: ' + JSON.stringify(second));
     const perhe = H.s().lifeAreas.find(a => a.name === 'Perhe');
     H.fill('#timeLogArea', perhe.id);
     H.click('#timeLogDialog button[value="m:30"]');

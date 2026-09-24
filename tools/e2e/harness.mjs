@@ -85,7 +85,7 @@ async function boot() {
     todayIso: () => datetime.fmtISO(new Date()),
     state: () => state.getState(),
     setTasks: tasks => state.setTasks(tasks.map(t => task.normalizeTask(t))),
-    alignment, tracking, render,
+    alignment, tracking, timeLog, render,
     errors: []
   };
 }

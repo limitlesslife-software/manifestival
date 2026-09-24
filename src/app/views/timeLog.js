@@ -139,6 +139,9 @@ export function openTimeLogDialog(options) {
     chooseArea = false, operationId = null, skipLabel = 'Peruuta', offerMute = false, entryDate = null
   } = options;
   const dialog = dialogElement();
+  // Auki olevaa dialogia EI korvata: sen sulkeutuminen laukaisisi myös
+  // edellisen kuuntelijan, ja aika kirjautuisi väärälle kohteelle.
+  if (dialog.open) return Promise.resolve({ action: 'busy' });
   const presets = suggestions || TIMER_RULES.QUICK_MINUTES.map(minutes => ({ minutes, label: formatMinutes(minutes) }));
   // Dialogikohtainen tunniste: sama dialogi = sama kirjaus.
   const operation = operationId || newOperationId();
@@ -228,6 +231,9 @@ export async function startTimerFor(target, { confirmFn = confirmAction } = {}) 
 /** Tarkistus pitkälle ajastukselle: vahvista tai korjaa kesto. */
 function openStopReview(totalMinutes) {
   const dialog = dialogElement();
+  // Sama sääntö kuin kirjausdialogissa: auki olevaa ei korvata. Ajastin
+  // jää käyntiin, eikä mitään kirjata.
+  if (dialog.open) return Promise.resolve(null);
   dialog.innerHTML = `
     <form method="dialog" class="confirm-body">
       <h2 class="confirm-title" id="timeLogTitle">Tarkista ajastettu aika</h2>
