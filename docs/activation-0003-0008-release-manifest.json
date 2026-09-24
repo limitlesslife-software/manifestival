@@ -251,7 +251,7 @@
     {
       "id": "F",
       "title": "Talous 2.0: tapahtumat ja sijoitukset",
-      "commitSha": null,
+      "commitSha": "e05c54bd4fa7d5afffe3efd6ca7a176b0162008e",
       "cacheVersion": "v19",
       "readiness": "READY",
       "gatesEnabled": [
