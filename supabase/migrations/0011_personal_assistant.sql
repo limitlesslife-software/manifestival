@@ -79,11 +79,16 @@
 -- Orpo muistutus tunnistetaan sovelluksessa ja perutaan näkyvästi.
 --
 -- =====================================================================
--- OBJEKTIEN MÄÄRÄ: 63
+-- OBJEKTIEN MÄÄRÄ: 72
 -- =====================================================================
 --
+-- KORJATTU 63 -> 72 (todennettu oikealla PostgreSQL 17:llä,
+-- tools/pg-rehearsal). Aiempi luku ei vastannut alla olevaa
+-- erittelyä eikä tunnistuslistaa, joten täysin ajetun migraation
+-- uudelleenajo ilmoitti "kesken: 72 objektia 63:sta" eikä "JO AJETTU".
+--
 --    5  taulua
---   26  CHECK-rajoitetta
+--   25  CHECK-rajoitetta
 --    5  owner_row_key -avainta
 --    1  uniikkirajoite  (notices: kaksoiskappaleiden esto)
 --    2  vierasavainta   (travel_plans, location_rules -> tasks)
@@ -167,7 +172,7 @@ begin
     raise exception 'Hyvaksyttya omistajaa % ei loydy auth.users-taulusta. Vaara projekti?', omistaja;
   end if;
 
-  -- 6. OSITTAISEN TAI AIEMMAN AJON TUNNISTUS — 63 objektia.
+  -- 6. OSITTAISEN TAI AIEMMAN AJON TUNNISTUS — 72 objektia.
   --
   --    Funktio touch_updated_at EI ole listassa: sen luo migraatio
   --    0002. Tama migraatio ei luo sita eika korvaa sita.
@@ -218,7 +223,7 @@ begin
                           'travel_plans', 'location_rules')
   ) kaikki;
 
-  if olemassa = 63 then
+  if olemassa = 72 then
     raise exception 'Migraatio 0011 on JO AJETTU. Ala aja uudelleen — aja supabase/verify/verify_0011.sql.';
   end if;
 
@@ -270,11 +275,11 @@ begin
                             'travel_plans', 'location_rules')
     ) loydetyt;
 
-    raise exception 'Migraatio 0011 on kesken: % objektia 63:sta on jo olemassa (%).',
+    raise exception 'Migraatio 0011 on kesken: % objektia 72:sta on jo olemassa (%).',
       olemassa, nimet;
   end if;
 
-  raise notice 'Esiehdot kunnossa. Omistaja %, 0011:n objekteja 0/63.', omistaja;
+  raise notice 'Esiehdot kunnossa. Omistaja %, 0011:n objekteja 0/72.', omistaja;
 end $$;
 
 -- ---------------------------------------------------------------------

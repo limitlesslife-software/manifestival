@@ -200,6 +200,14 @@ begin
     raise exception 'Migraatio 0012 on JO AJETTU. Ala aja uudelleen — aja supabase/verify/verify_0012.sql.';
   end if;
 
+  -- 0013 korvaa 0012:n rajoitteen time_entries_source_check, joten
+  -- 0013:n jälkeen luku on 57 eikä 58. Se EI ole keskeneräinen 0012 —
+  -- ilman tätä haaraa uudelleenajo ohjaisi palautuspolulle turhaan.
+  if olemassa = 57
+     and exists (select 1 from pg_constraint where conname = 'time_entries_source_v2_check') then
+    raise exception 'Migraatiot 0012 JA 0013 on JO AJETTU. Ala aja uudelleen — aja supabase/verify/verify_0013.sql.';
+  end if;
+
   if olemassa > 0 then
     select string_agg(nimi, ', ' order by nimi) into nimet from (
       select tablename::text as nimi from pg_tables
