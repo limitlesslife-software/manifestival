@@ -99,10 +99,10 @@ export const TABLES = Object.freeze({
    * elämänalueet, kapasiteetti, kirjattu aika ja katsaukset elävät
    * istunnon muistissa, ja Suunta-näkymä kertoo sen käyttäjälle.
    */
-  lifeAreas: false,
-  weeklyCapacities: false,
-  timeEntries: false,
-  alignmentReviews: false
+  lifeAreas: true,
+  weeklyCapacities: true,
+  timeEntries: true,
+  alignmentReviews: true
 });
 
 /**
@@ -176,7 +176,7 @@ export const GOAL_MAINTENANCE_MODE = true;
  * false = tavoitteen elämänalue elää istunnon muistissa.
  * true  = se tallentuu. Vasta kun 0012 on ajettu ja varmistettu.
  */
-export const GOAL_LIFE_AREA_FIELD = false;
+export const GOAL_LIFE_AREA_FIELD = true;
 
 /** Onko taulu käytettävissä tietokannassa? */
 export function hasTable(name) {

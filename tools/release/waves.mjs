@@ -244,7 +244,9 @@ export const WAVES = Object.freeze([
 
     // READY koskee käyttöliittymää, `blockedBy` kantaa. Ks. aalto F.
     readiness: 'READY',
-    blockedBy: 'supabase/migrations/0012_life_alignment.sql — EI AJETTU',
+    // Este poistettu aaltocommitissa: 0012_life_alignment.sql on tämän commitin
+    // EDELLYTYS. Deploy vasta kun verify_0012.sql = 0 poikkeavaa.
+    blockedBy: null,
     gates: Object.freeze(['lifeAreas', 'weeklyCapacities', 'timeEntries', 'alignmentReviews']),
     title: 'Suunta: elämänalueet, kapasiteetti, toteuma ja viikkokatsaus',
     rationale:

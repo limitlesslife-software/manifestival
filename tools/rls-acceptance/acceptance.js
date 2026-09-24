@@ -1771,7 +1771,9 @@ export function goalRow(id, title, { parentGoalId = null, projectId = null } = {
     current_value: null,
     target_value: null,
     measured_on: null,
-    savings_goal_id: null
+    savings_goal_id: null,
+    // Migraatio 0012 (aalto I): GOAL_LIFE_AREA_FIELD.
+    life_area_id: null
   };
 }
 
