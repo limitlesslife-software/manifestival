@@ -77,7 +77,7 @@ export const TABLES = Object.freeze({
   transactions: true,
   investments: true,
   /** Migraatio 0010 — EI AJETTU. Ks. supabase/migrations/0010_goal_to_action.sql. */
-  milestones: false
+  milestones: true
 });
 
 /**
@@ -123,7 +123,7 @@ export const BILL_PAYMENT_FIELDS = true;
  *
  * Tämä saa mennä arvoon true VASTA kun migraatio 0010 on ajettu.
  */
-export const GOAL_PLANNING_FIELDS = false;
+export const GOAL_PLANNING_FIELDS = true;
 
 /**
  * Onko `maintenance` sallittu tavoitteen tilaksi?
@@ -137,7 +137,7 @@ export const GOAL_PLANNING_FIELDS = false;
  * paikallaan. Sarakkeen puuttuminen ja arvon kieltäminen ovat eri
  * vikoja, ja niillä on eri oire.
  */
-export const GOAL_MAINTENANCE_MODE = false;
+export const GOAL_MAINTENANCE_MODE = true;
 
 /** Onko taulu käytettävissä tietokannassa? */
 export function hasTable(name) {

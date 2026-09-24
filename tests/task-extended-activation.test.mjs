@@ -27,9 +27,15 @@ import {
 } from '../src/domain/task.js';
 import {
   toRow, fromRow, assertClientSafe,
-  TASK_COLUMNS_CORE, TASK_COLUMNS_EXTENDED, SERVER_OWNED_FIELDS
+  TASK_COLUMNS_CORE, TASK_COLUMNS_EXTENDED, TASK_COLUMNS_PLANNING, SERVER_OWNED_FIELDS
 } from '../src/lib/rows.js';
-import { TASK_EXTENDED_FIELDS, taskColumns, volatileFields, isPersisted } from '../src/data/schema.js';
+import {
+  TASK_EXTENDED_FIELDS, GOAL_PLANNING_FIELDS, taskColumns, volatileFields, isPersisted
+} from '../src/data/schema.js';
+
+// Aallosta G alkaen (migraatio 0010) tehtävä kirjoittaa myös
+// suunnittelukentät. Kirjoitettava joukko riippuu portista, ei testistä.
+const KIRJOITETTAVAT = GOAL_PLANNING_FIELDS ? TASK_COLUMNS_PLANNING : TASK_COLUMNS_EXTENDED;
 import { PRIORITY_KEYS, DEFAULT_PRIORITY } from '../src/domain/priority.js';
 import { setClient } from '../src/data/client.js';
 import { setUser, clearUser } from '../src/data/session.js';
@@ -365,12 +371,12 @@ test('aikaleimat puuttuvat siististi, jos migraatiota ei ole ajettu', () => {
 test('TILA B: lippu on päällä ja kirjoitetaan täsmälleen laajennetut sarakkeet', () => {
   // Migraatio 0002 on ajettu ja todennettu, joten lippu on true.
   assert.equal(TASK_EXTENDED_FIELDS, true, 'lippu ei ole päällä');
-  assert.deepEqual([...taskColumns()], [...TASK_COLUMNS_EXTENDED]);
+  assert.deepEqual([...taskColumns()], [...KIRJOITETTAVAT]);
 
   const rivi = toRow(normalizeTask({ id: 'x', date: '2026-09-05', time: '09:00', title: 'x',
     description: 'kuvaus', durationMinutes: 30, priority: 'korkea' }), taskColumns());
 
-  assert.deepEqual(Object.keys(rivi).sort(), [...TASK_COLUMNS_EXTENDED].sort());
+  assert.deepEqual(Object.keys(rivi).sort(), [...KIRJOITETTAVAT].sort());
   for (const laajennettu of ['description', 'duration_minutes', 'priority', 'scheduling_state']) {
     assert.ok(laajennettu in rivi, `${laajennettu} ei lähde kantaan, vaikka lippu on päällä`);
   }
@@ -844,7 +850,7 @@ test('LUONTI: jokainen laajennettu kenttä lähtee kantaan', async () => {
         + ', odotettiin ' + JSON.stringify(arvo));
     }
     // Sarakejoukko on täsmälleen laajennettu — ei enempää eikä vähempää.
-    assert.deepEqual(Object.keys(payload).sort(), [...TASK_COLUMNS_EXTENDED].sort(),
+    assert.deepEqual(Object.keys(payload).sort(), [...KIRJOITETTAVAT].sort(),
       nimi + ': väärä sarakejoukko');
   }
 });

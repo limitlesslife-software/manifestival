@@ -46,23 +46,23 @@ Automaattinen testi vartioi, että tämä dokumentti pysyy ajan tasalla.
 | 0006 | `0006_wellbeing.sql` | **AJETTU** | PASS |
 | 0007 | `0007_finance.sql` | **AJETTU** | PASS |
 | 0008 | `0008_ai_audit.sql` | **AJETTU** | PASS |
-| 0009 | `0009_finance_2.sql` | **AJETTU** | EDELLYTYS: `verify_0009.sql` 0 poikkeavaa ennen tämän commitin deployta |
-| 0010 | `0010_goal_to_action.sql` | **EI AJETTU** | — |
+| 0009 | `0009_finance_2.sql` | **AJETTU** | EDELLYTYS (aalto F, e05c54b): `verify_0009.sql` 0 poikkeavaa |
+| 0010 | `0010_goal_to_action.sql` | **AJETTU** | EDELLYTYS: `verify_0010.sql` 0 poikkeavaa ennen tämän commitin deployta |
 
-> **⚠ Migraatio 0010 on suunniteltu, ei ajettu — ja se on
-> vaarallisempi kuin aiemmat.** Se on ensimmäinen migraatio, joka
-> MUUTTAA tauluja joissa on käyttäjän dataa ja joiden portit ovat auki
-> tuotannossa (`goals`, `projects`, `tasks`). Se myös korvaa
-> `goals_status_check` -rajoitteen. Varmuuskopio ei ole muodollisuus.
-> Ks. `docs/GOAL-TO-ACTION.md`.
-
-> **Aaltocommit F.** Tämä rivi on tämän commitin EDELLYTYS, ei
+> **Aaltocommit G.** 0010-rivi on tämän commitin EDELLYTYS, ei
 > historiallinen havainto: commit on valmisteltu etukäteen ja se
-> deployataan vasta, kun Panu on hyväksynyt migraation 0009, se on
-> ajettu tuotantoon ja `supabase/verify/verify_0009.sql` antaa 0
-> poikkeavaa. Migraatio luo
-> taulut `transactions` ja `investments` sekä lisää `bills`-tauluun
-> kolme maksutietosaraketta.
+> deployataan vasta, kun aalto F on hyväksytty, Panu on ERIKSEEN
+> hyväksynyt migraation 0010, se on ajettu tuotantoon ja
+> `supabase/verify/verify_0010.sql` antaa 0 poikkeavaa.
+>
+> **⚠ 0010 on vaarallisempi kuin aiemmat.** Se MUUTTAA tauluja, joissa
+> on käyttäjän dataa ja joiden portit ovat auki tuotannossa (`goals`,
+> `projects`, `tasks`, `profile`), ja korvaa `goals_status_check`
+> -rajoitteen. Se on harjoiteltu oikealla PostgreSQL 17:llä tuotannon
+> muotoista dataa vasten (`tools/pg-rehearsal`, tuotehaara): olemassa
+> olevat rivit säilyvät, uudelleenajo ja lukon aikakatkaisu kaatuvat
+> kiinni jättämättä jälkeä. Varmuuskopio ennen ajoa ei silti ole
+> muodollisuus. Ks. `docs/GOAL-TO-ACTION.md`.
 
 > **Yhtäkään ajettua ei saa ajaa uudelleen.** Jokainen on fail-closed ja
 > keskeytyy itse, mutta älä luota siihen — ne on tarkoitettu ajettaviksi
@@ -136,9 +136,9 @@ vertaa niihin.
 | `transactions` | 0009 | **AKTIVOITU** |
 | `investments` | 0009 | **AKTIVOITU** |
 | `BILL_PAYMENT_FIELDS` | 0009 | **AKTIVOITU** |
-| `milestones` | 0010 | kiinni |
-| `GOAL_PLANNING_FIELDS` | 0010 | kiinni |
-| `GOAL_MAINTENANCE_MODE` | 0010 | kiinni |
+| `milestones` | 0010 | **AKTIVOITU** |
+| `GOAL_PLANNING_FIELDS` | 0010 | **AKTIVOITU** |
+| `GOAL_MAINTENANCE_MODE` | 0010 | **AKTIVOITU** |
 
 `GOAL_PLANNING_FIELDS` on **sarakeportti** ja `GOAL_MAINTENANCE_MODE`
 **arvoportti**. Ne ovat erillisiä, koska niiden viat ovat erilaisia:
@@ -180,7 +180,7 @@ hyväksyntäpaketit: `docs/RELEASE-TRAIN-0003-0008.md`.
 | **D** | `recurringExpenses`, `savingsGoals`, `bills` | `v17` | VALMIS | `091e73c` | — | — | — | — |
 | **E** | `aiAudit` | `v18` | VALMIS | `2b947cc` | — | — | — | — |
 | **F** | `transactions`, `investments`, `BILL_PAYMENT_FIELDS` | `v19` | VALMIS (edellyttää 0009) | `e05c54b` | — | — | — | — |
-| **G** | `milestones`, `GOAL_PLANNING_FIELDS`, `GOAL_MAINTENANCE_MODE` | `v20` | **ESTETTY** | — | — | — | — | — |
+| **G** | `milestones`, `GOAL_PLANNING_FIELDS`, `GOAL_MAINTENANCE_MODE` | `v20` | VALMIS (edellyttää 0010) | tämä commit | — | — | — | — |
 
 **Aalto F = Talous 2.0:n tuotekoodi + migraatio 0009 + sen portit
 yhtenä hyväksyntätapahtumana** (lukittu päätös,

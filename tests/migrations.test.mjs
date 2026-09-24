@@ -4582,10 +4582,13 @@ test('KRIITTINEN: yksikään portti ei ole auki ilman ajettua migraatiota', () =
   const dokumentinPortit = parseStatusDoc(read('docs/PRODUCTION-STATUS.md'));
   assert.ok(dokumentinPortit, 'PRODUCTION-STATUS.md:n porttitaulukkoa ei voitu lukea');
 
-  // Sarakeportit (BILL_PAYMENT_FIELDS, aalto F) eivät ole tauluportteja,
-  // joten parseStatusDoc ei lue niitä: ne luetaan omilta riveiltään.
+  // Sarakeportit (BILL_PAYMENT_FIELDS, GOAL_PLANNING_FIELDS, ...) eivät
+  // ole tauluportteja, joten parseStatusDoc ei lue niitä: ne luetaan
+  // omilta riveiltään. Lista johdetaan portit-oliosta, ei kirjoiteta käsin.
   const statusRivit = read('docs/PRODUCTION-STATUS.md').split(NEWLINE);
-  const sarakeportitAuki = ['BILL_PAYMENT_FIELDS'].filter(portti =>
+  const sarakeportit = Object.keys(portit)
+    .filter(k => k !== 'TASK_EXTENDED_FIELDS' && !(k in TABLES));
+  const sarakeportitAuki = sarakeportit.filter(portti =>
     statusRivit.some(r => r.includes('|') && r.includes('`' + portti + '`') && /AKTIVOITU/.test(r)));
   const dokumentinAuki = ['TASK_EXTENDED_FIELDS', ...sarakeportitAuki,
     ...Object.entries(dokumentinPortit).filter(([, v]) => v).map(([k]) => k)];

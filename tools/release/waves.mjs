@@ -190,7 +190,9 @@ export const WAVES = Object.freeze([
 
     // READY koskee käyttöliittymää, `blockedBy` kantaa. Ks. aalto F.
     readiness: 'READY',
-    blockedBy: 'supabase/migrations/0010_goal_to_action.sql — EI AJETTU',
+    // Este poistettu aaltocommitissa: 0010_goal_to_action.sql on tämän commitin
+    // EDELLYTYS. Deploy vasta kun verify_0010.sql = 0 poikkeavaa.
+    blockedBy: null,
     gates: Object.freeze(['milestones']),
     title: 'Tavoitteesta tekemiseksi: välitavoitteet',
     rationale:

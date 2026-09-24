@@ -430,24 +430,24 @@ test('KRIITTINEN: tilannedokumentti luettelee jokaisen migraation', () => {
       `tilannedokumentti ei mainitse migraatiota ${nimi}`);
   }
 
-  // AALTOCOMMIT F: YHDEKSÄN AJETTUA.
+  // AALTOCOMMIT G: KYMMENEN AJETTUA.
   //
-  // Migraatio 0009 on tämän commitin EDELLYTYS. Rivi saa sanoa AJETTU
-  // vain, jos se samalla nimeää ehdon: verify_0009.sql 0 poikkeavaa
-  // ENNEN deployta. Pelkkä "AJETTU" ilman ehtoa väittäisi tuotannosta
-  // jotain, mitä commitin valmisteluhetkellä ei ollut tapahtunut.
-  assert.equal((doc.match(/\*\*AJETTU\*\*/g) || []).length, 9,
-    'tilannedokumentti ei merkitse yhdeksää ajetuksi');
+  // Migraatiot 0009 (aalto F) ja 0010 (tämä aalto) ovat deployn
+  // EDELLYTYKSIÄ. Rivi saa sanoa AJETTU vain, jos se samalla nimeää
+  // ehdon. Pelkkä "AJETTU" ilman ehtoa väittäisi tuotannosta jotain,
+  // mitä commitin valmisteluhetkellä ei ollut tapahtunut.
+  assert.equal((doc.match(/\*\*AJETTU\*\*/g) || []).length, 10,
+    'tilannedokumentti ei merkitse kymmentä ajetuksi');
 
   const rivi0009 = doc.split(NEWLINE).find(r => r.includes('0009_finance_2.sql'));
   assert.ok(rivi0009, 'tilannedokumentti ei mainitse migraatiota 0009');
-  assert.match(rivi0009, /EDELLYTYS: `verify_0009\.sql` 0 poikkeavaa ennen tämän commitin deployta/,
-    'migraation 0009 rivi ei nimeä deployn edellytystä');
+  assert.match(rivi0009, /EDELLYTYS \(aalto F, e05c54b\): `verify_0009\.sql` 0 poikkeavaa/,
+    'migraation 0009 rivi ei nimeä edellytystä');
 
   const rivi0010 = doc.split(NEWLINE).find(r => r.includes('0010_goal_to_action.sql'));
   assert.ok(rivi0010, 'tilannedokumentti ei mainitse migraatiota 0010');
-  assert.match(rivi0010, /EI AJETTU/,
-    'migraatio 0010 ei ole merkitty ajamattomaksi');
+  assert.match(rivi0010, /EDELLYTYS: `verify_0010\.sql` 0 poikkeavaa ennen tämän commitin deployta/,
+    'migraation 0010 rivi ei nimeä deployn edellytystä');
 });
 
 test('KRIITTINEN: tilannedokumentin porttitaulukko vastaa koodia', () => {

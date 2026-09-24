@@ -1762,7 +1762,16 @@ export function goalRow(id, title, { parentGoalId = null, projectId = null } = {
     progress_mode: 'task_based',
     manual_progress: 0,
     parent_goal_id: parentGoalId,
-    project_id: projectId
+    project_id: projectId,
+    // Migraatio 0010 (aalto G): sovellus kirjoittaa mittarikentät, kun
+    // GOAL_PLANNING_FIELDS on auki. Testirivin on vastattava sitä.
+    metric: null,
+    unit: null,
+    baseline_value: null,
+    current_value: null,
+    target_value: null,
+    measured_on: null,
+    savings_goal_id: null
   };
 }
 
@@ -1782,7 +1791,9 @@ export function projectRow(id, name, { goalId = null } = {}) {
     status: 'active',
     goal_id: goalId,
     start_date: null,
-    deadline: null
+    deadline: null,
+    // Migraatio 0010 (aalto G).
+    milestone_id: null
   };
 }
 
