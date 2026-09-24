@@ -29,12 +29,16 @@ import {
   startTimer, pauseTimer, resumeTimer, stopTimer, timerStatus, TIMER_TARGET
 } from '../domain/timer.js';
 import { formatMinutes } from '../domain/lifeArea.js';
-import { entriesForOccurrence, entriesForTask, sumMinutes, OPERATION } from '../domain/timeEntry.js';
+import {
+  entriesForOccurrence, entriesForTask, entriesForOperation, sumMinutes, OPERATION
+} from '../domain/timeEntry.js';
 import { classifyError, ERROR_CLASS } from '../domain/offlineQueue.js';
 import {
   normalizeItemSettings, validateItemSettings, isEmptySettings, settingsKey, indexItemSettings
 } from '../domain/alignmentItemSettings.js';
-import { currentTimer, persistTimerLocally } from './timerState.js';
+import { currentTimer, persistTimerLocally, setTimerStateRepo } from './timerState.js';
+import { getUser, sessionSnapshot, isSameSession } from '../data/session.js';
+import { addTombstone, clearTombstone } from '../data/timerStore.js';
 import { logTime } from './alignment.js';
 
 export { currentTimer } from './timerState.js';
@@ -133,6 +137,12 @@ let timerRepo = runningTimersRepo;
 
 export function setTimerRepoForTests(repo) {
   timerRepo = repo || runningTimersRepo;
+  setTimerStateRepo(repo);
+}
+
+function sessionUserId() {
+  const user = getUser();
+  return user && user.id ? String(user.id) : null;
 }
 
 async function syncTimerToRepo(action, timer) {
@@ -140,6 +150,15 @@ async function syncTimerToRepo(action, timer) {
   const result = action === 'insert' ? await timerRepo.insert(timer)
     : action === 'update' ? await timerRepo.update(timer)
       : await timerRepo.remove(timer.id);
+  if (action === 'remove') {
+    // Poisto ei ehtinyt kantaan (verkko): muistetaan laitteella, ettei
+    // latauksessa palaava rivi herätä pysäytettyä ajastinta henkiin.
+    const id = sessionUserId();
+    if (id) {
+      if (result && result.ok) clearTombstone(id, timer.id);
+      else addTombstone(id, timer.id);
+    }
+  }
   return result;
 }
 
@@ -210,7 +229,17 @@ export async function stopTracking({ now = nowMs(), overrideMinutes = null } = {
   const timer = currentTimer();
   if (!timer) return { ok: false, code: 'timer.none' };
 
+  // Istunto talteen: jos käyttäjä vaihtuu kesken pysäytyksen, loppuja
+  // osia ei kirjata toisen käyttäjän nimiin eikä hänen ajastintaan poisteta.
+  const session = sessionSnapshot();
   stopping = (async () => {
+    // Sama ajastin on jo pysäytetty (esim. kannasta palannut rivi):
+    // aika on kirjattu, ajastin vain siivotaan. Ei toista kirjausta.
+    if (entriesForOperation(getState().timeEntries, OPERATION.timer(timer.id)).length > 0) {
+      persistTimerLocally(null);
+      await syncTimerToRepo('remove', timer);
+      return { ok: true, duplicate: true, entries: [], totalMinutes: 0 };
+    }
     const result = stopTimer(timer, now, { overrideMinutes });
     if (!result.ok) return { ok: false, code: 'timer.invalid' };
     if (result.needsReview) {
@@ -224,6 +253,7 @@ export async function stopTracking({ now = nowMs(), overrideMinutes = null } = {
 
     const saved = [];
     for (const entry of result.entries) {
+      if (!isSameSession(session)) return { ok: false, code: 'timer.session_changed', entries: saved };
       const one = await logTime(entry, { silent: true });
       if (!one.ok) {
         // Kirjaus ei tallentunut eikä jonottunut: ajastin jää, jotta
@@ -234,6 +264,7 @@ export async function stopTracking({ now = nowMs(), overrideMinutes = null } = {
       }
       saved.push(one.entry);
     }
+    if (!isSameSession(session)) return { ok: false, code: 'timer.session_changed', entries: saved };
     persistTimerLocally(null);
     await syncTimerToRepo('remove', timer);
     logEvent('alignment.timer_stopped', { minutes: result.totalMinutes, parts: saved.length });
@@ -302,8 +333,12 @@ export function loggedMinutesForOccurrence(routineId, dateIso) {
  */
 export function occurrenceOperationId(routineId, dateIso) {
   const base = OPERATION.routineOccurrence(routineId, dateIso);
-  const count = entriesForOccurrence(getState().timeEntries, routineId, dateIso).length;
-  return count === 0 ? base : `${base}:${count}`;
+  const already = entriesForOccurrence(getState().timeEntries, routineId, dateIso)
+    .some(entry => entry.operationId === base);
+  // Tietoinen lisäys saa yksilöllisen tunnisteen. Laskurista johdettu
+  // tunniste törmäisi aiempaan, jos jokin kirjaus on välillä poistettu,
+  // ja uusi aika katoaisi hiljaa "kaksoiskappaleena".
+  return already ? `${base}:${newTaskId()}`.slice(0, 100) : base;
 }
 
 // --------------------------------------------------- kohdeasetukset

@@ -282,8 +282,9 @@ test('selitys: ilman palvelua deterministinen selitys näkyy, eikä tekoälyä v
   await setupWeek();
   initDirection();
   renderDirection();
-  assert.match(html('dirSignals'), /data-explain="energy_overload:week"/);
-  node('dirSignals').dispatch('click', clickOn('[data-explain]', { explain: 'energy_overload:week' }));
+  const key = /data-explain="(energy_overload:week:[a-z0-9]+)"/.exec(html('dirSignals'));
+  assert.ok(key, 'selityspainike sidottu havainnon lukuihin');
+  node('dirSignals').dispatch('click', clickOn('[data-explain]', { explain: key[1] }));
   await flush();
   const signals = html('dirSignals');
   assert.match(signals, /<strong>Selitys:<\/strong>/);
@@ -394,4 +395,34 @@ test('tavoitteen liitos kohdistuksessa: vain oman tilan avoimet tavoitteet, joil
   assert.match(markup, /Lapset \(Perhe\)/);
   assert.equal(markup.includes('Ilman aluetta'), false);
   assert.equal(markup.includes('Saavutettu'), false);
+});
+
+// ================================================================ KATSELMOINNIN LÖYDÖKSET
+
+test('REGRESSIO: uloskirjautumisen jälkeen valmistuva selitys ei näy seuraavalle käyttäjälle', async (t) => {
+  freezeLocalDate(t, THURSDAY);
+  await setupWeek();
+  initDirection();
+  renderDirection();
+  const key = /data-explain="(energy_overload:week:[a-z0-9]+)"/.exec(html('dirSignals'))[1];
+  node('dirSignals').dispatch('click', clickOn('[data-explain]', { explain: key }));
+  resetDirectionView(); // uloskirjautuminen ennen kuin selitys valmistuu
+  await flush();
+  renderDirection();
+  assert.equal(html('dirSignals').includes('<strong>Selitys:</strong>'), false);
+});
+
+test('REGRESSIO: kehitys ei hyppää tyhjän viikon yli', async (t) => {
+  freezeLocalDate(t, '2026-09-24');
+  await createLifeArea({ name: 'Työ', importance: 3, targetMinutesPerWeek: 600, categoryKey: 'tyo' });
+  const areaId = getState().lifeAreas[0].id;
+  // Viikot 31.8., 7.9. ja 21.9. aineistolla; 14.9. tyhjä.
+  for (const [date, minutes] of [['2026-09-01', 300], ['2026-09-08', 420], ['2026-09-22', 540]]) {
+    await logTime({ entryDate: date, minutes, lifeAreaId: areaId });
+  }
+  const { recentTrends } = await import('../src/app/alignment.js');
+  const trends = recentTrends('2026-09-21');
+  assert.equal(trends.weeks, 1, 'vain viimeisin yhtenäinen jakso');
+  assert.equal(trends.enough, false);
+  assert.equal(trends.statements.some(s => /kasvoi/.test(s)), false);
 });

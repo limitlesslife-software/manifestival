@@ -61,7 +61,9 @@ export function normalizeTimeEntry(input = {}) {
     taskId: optionalId(input.taskId),
     projectId: optionalId(input.projectId),
     routineId: optionalId(input.routineId),
-    occurrenceDate: isIsoDate(input.occurrenceDate) ? input.occurrenceDate : null,
+    // Esiintymän päivä on merkityksellinen vain rutiinille. Kun rutiini
+    // poistuu (kanta nollaa routine_id:n), päivä ei jää orvoksi.
+    occurrenceDate: optionalId(input.routineId) && isIsoDate(input.occurrenceDate) ? input.occurrenceDate : null,
     source: TIME_SOURCES.includes(input.source) ? input.source : TIME_SOURCE.MANUAL,
     operationId: isOperationId(operationId) ? operationId : null,
     startedAt: optionalTimestamp(input.startedAt),

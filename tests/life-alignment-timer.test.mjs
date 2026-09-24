@@ -140,7 +140,8 @@ test('keskiyön ylittävä ajastus jaetaan päiville paikallisen keskiyön kohda
   assert.deepEqual(stop.entries.map(e => [e.entryDate, e.minutes]), [['2026-09-20', 30], ['2026-09-21', 45]]);
   assert.equal(weekStartOf(stop.entries[0].entryDate), '2026-09-14');
   assert.equal(weekStartOf(stop.entries[1].entryDate), '2026-09-21', 'maanantain aika menee uudelle viikolle');
-  assert.deepEqual(stop.entries.map(e => e.operationId), ['timer:tmr1.0', 'timer:tmr1.1']);
+  // Ensimmäinen osa on aina `timer:<id>` osien määrästä riippumatta.
+  assert.deepEqual(stop.entries.map(e => e.operationId), ['timer:tmr1', 'timer:tmr1.1']);
 });
 
 test('tauot jaetaan päiville suhteessa, ja osien summa on tasan kokonaiskesto', () => {
@@ -233,8 +234,12 @@ test('normalisointi ja validointi: kohde, tauko ja kelvoton syöte', () => {
   assert.equal(timer.targetKind, TIMER_TARGET.NONE);
   assert.equal(timer.pausedSeconds, 0);
   assert.equal(normalizeTimer({ pausedSeconds: 10 ** 9 }).pausedSeconds, 7 * 24 * 3600);
-  assert.equal(validateTimer(normalizeTimer({ id: 'a', startedAt: '2026-09-21T06:00:00Z', targetKind: 'task' })).valid, false,
-    'tehtäväajastin ilman tehtävää ei kelpaa');
+  // Poistettu kohde (kanta nollasi sarakkeen): ajastin putoaa yleiseksi
+  // eikä juutu näkymättömiin. Uutta ajastinta ilman kohdetta ei aloiteta.
+  const orphan = normalizeTimer({ id: 'a', startedAt: '2026-09-21T06:00:00Z', targetKind: 'task', taskId: null });
+  assert.equal(orphan.targetKind, TIMER_TARGET.NONE);
+  assert.equal(validateTimer(orphan).valid, true);
+  assert.equal(startTimer({ id: 'b', target: { kind: 'task' }, nowMs: Date.now() }).ok, false);
   const fields = timerTargetFields({ kind: 'routine', id: 'r1', occurrenceDate: '2026-09-21' });
   assert.equal(fields.routineId, 'r1');
   assert.equal(fields.occurrenceDate, '2026-09-21');
@@ -253,6 +258,32 @@ test('aikaväli ei voi loppua ennen alkua eikä olla puolikas', () => {
   assert.equal(validateTimeEntry(normalizeTimeEntry({
     ...base, startedAt: '2026-09-21T10:00:00Z', endedAt: '2026-09-21T09:00:00Z'
   })).valid, false);
-  assert.equal(validateTimeEntry(normalizeTimeEntry({ ...base, occurrenceDate: '2026-09-21' })).valid, false,
+  // Esiintymän päivä ilman rutiinia: normalisointi pudottaa sen (rutiini
+  // poistui, kanta nollasi routine_id:n), ja raaka syöte hylätään.
+  assert.equal(normalizeTimeEntry({ ...base, occurrenceDate: '2026-09-21' }).occurrenceDate, null);
+  assert.equal(validateTimeEntry({ ...normalizeTimeEntry(base), occurrenceDate: '2026-09-21' }).valid, false,
     'esiintymän päivä ilman rutiinia');
+});
+
+// ================================================================ KATSELMOINNIN LÖYDÖKSET
+
+test('REGRESSIO: yli viikon tauko ei muutu työajaksi (kulunut aika säilyy tarkasti)', () => {
+  const t0 = local(2026, 9, 1, 9, 0);
+  let timer = started(t0);
+  timer = pauseTimer(timer, t0 + 60 * MIN);
+  timer = resumeTimer(timer, t0 + 60 * MIN + 10 * 24 * 60 * MIN);
+  assert.ok(timer.pausedSeconds <= 7 * 24 * 3600, 'kannan raja pitää');
+  const stop = stopTimer(timer, t0 + 61 * MIN + 10 * 24 * 60 * MIN);
+  assert.equal(stop.totalMinutes, 61);
+  assert.equal(stop.needsReview, false);
+});
+
+test('REGRESSIO: sama ajastin pysäytettynä yhtenä tai jaettuna jakaa ensimmäisen operaation', () => {
+  const timer = started(local(2026, 9, 20, 22, 0), { kind: 'none' }, 'X');
+  const before = stopTimer(timer, local(2026, 9, 20, 23, 50));
+  const after = stopTimer(timer, local(2026, 9, 21, 0, 30));
+  assert.equal(before.entries.length, 1);
+  assert.equal(after.entries.length, 2);
+  assert.equal(before.entries[0].operationId, after.entries[0].operationId,
+    'kanta hylkää toisen pysäytyksen ensimmäisen osan (23505)');
 });

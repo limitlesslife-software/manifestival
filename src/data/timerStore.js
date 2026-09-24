@@ -23,6 +23,9 @@ import { normalizeTimeEntry, validateTimeEntry } from '../domain/timeEntry.js';
 
 const TIMER_PREFIX = 'manifestival.timer.v1.';
 const OUTBOX_PREFIX = 'manifestival.timeOutbox.v1.';
+const TOMBSTONE_PREFIX = 'manifestival.timerTombstones.v1.';
+/** Poistettuja ajastimia muistetaan enintään näin monta. */
+const MAX_TOMBSTONES = 20;
 const USER_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 /** Lähettämättömiä kirjauksia enintään. Ylimääräinen hylätään näkyvästi. */
 export const MAX_OUTBOX_ENTRIES = 200;
@@ -44,6 +47,7 @@ function keyFor(prefix, userId) {
 
 export const timerKey = userId => keyFor(TIMER_PREFIX, userId);
 export const outboxKey = userId => keyFor(OUTBOX_PREFIX, userId);
+export const tombstoneKey = userId => keyFor(TOMBSTONE_PREFIX, userId);
 
 function readText(key) {
   if (!key) return null;
@@ -112,10 +116,32 @@ export function saveOutbox(userId, entries) {
   return writeText(key, JSON.stringify({ v: 1, userId: String(userId), entries: list }));
 }
 
-/** Tilin poisto: ajastin ja lähettämättömät kirjaukset pois laitteelta. */
+/**
+ * "Hautakivet": ajastimet, jotka tällä laitteella pysäytettiin tai
+ * hylättiin, mutta joiden poisto ei ehtinyt kantaan (verkko). Latauksessa
+ * kannasta palaava sama ajastin ohitetaan ja poisto yritetään uudelleen,
+ * jottei pysäytetty ajastin herää henkiin eikä aikaa kirjata kahdesti.
+ */
+export function loadTombstones(userId) {
+  const value = parse(readText(tombstoneKey(userId)), userId);
+  return value && Array.isArray(value.ids) ? value.ids.filter(id => typeof id === 'string') : [];
+}
+
+export function addTombstone(userId, timerId) {
+  const ids = [...loadTombstones(userId).filter(id => id !== timerId), String(timerId)].slice(-MAX_TOMBSTONES);
+  return writeText(tombstoneKey(userId), JSON.stringify({ v: 1, userId: String(userId), ids }));
+}
+
+export function clearTombstone(userId, timerId) {
+  const ids = loadTombstones(userId).filter(id => id !== timerId);
+  return writeText(tombstoneKey(userId), ids.length ? JSON.stringify({ v: 1, userId: String(userId), ids }) : null);
+}
+
+/** Tilin poisto: ajastin, hautakivet ja lähettämättömät kirjaukset pois laitteelta. */
 export function purgeTimerData(userId) {
   writeText(timerKey(userId), null);
   writeText(outboxKey(userId), null);
+  writeText(tombstoneKey(userId), null);
 }
 
 /** Testejä varten. */

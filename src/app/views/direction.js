@@ -60,6 +60,8 @@ let skippedUnassigned = new Set();
 let explanations = new Map();
 /** Viimeisin analyysi (selitys käyttää samaa aineistoa, ei laske uudelleen). */
 let lastAnalysis = null;
+/** Kasvaa uloskirjautuessa: sen jälkeen valmistuva selitys hylätään. */
+let viewGeneration = 0;
 /** Kehitys lasketaan vasta pyydettäessä (kahdeksan viikon analyysi). */
 let trendsRequested = false;
 /** Kuinka monta luokittelematonta/arvioimatonta näytetään kerralla. */
@@ -146,8 +148,15 @@ function qualityHtml(analysis) {
     + `${escapeHtml(reasons.join(', '))}. Havainnot perustuvat vain siihen mitä on tiedossa.</p>`;
 }
 
+/**
+ * Havainnon avain selitykselle. Sisältää mittareiden tiivisteen: kun
+ * luvut muuttuvat, vanha selitys ei enää vastaa havaintoa eikä näy.
+ */
 function signalKey(signal) {
-  return `${signal.kind}:${signal.areaId || 'week'}`;
+  const metrics = JSON.stringify(signal.metrics || {});
+  let hash = 0;
+  for (let i = 0; i < metrics.length; i++) hash = ((hash * 31) + metrics.charCodeAt(i)) >>> 0;
+  return `${signal.kind}:${signal.areaId || 'week'}:${hash.toString(36)}`;
 }
 
 function signalHtml(signal, areas) {
@@ -1139,7 +1148,11 @@ async function onExplain(key) {
   if (!lastAnalysis) return;
   const signal = lastAnalysis.signals.find(entry => signalKey(entry) === key);
   if (!signal) return;
+  const generation = viewGeneration;
   const result = await explainSignalOptionally(signal, lastAnalysis);
+  // Käyttäjä kirjautui ulos (tai vaihtui) odotuksen aikana: selitys ei
+  // kuulu seuraavalle käyttäjälle.
+  if (generation !== viewGeneration) return;
   explanations.set(key, { source: result.source, text: result.text });
   renderDirection();
 }
@@ -1295,6 +1308,7 @@ export function initDirection() {
 
 /** Uloskirjautuminen: näkymän oma tila pois. */
 export function resetDirectionView() {
+  viewGeneration += 1;
   viewWeek = null;
   editingAreaId = null;
   shownProposals = [];

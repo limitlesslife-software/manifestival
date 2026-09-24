@@ -28,8 +28,10 @@ import {
 import { createTimeEntryWriter } from '../src/app/timeEntryWriter.js';
 import {
   loadTimer, saveTimer, loadOutbox, saveOutbox, purgeTimerData, timerKey, outboxKey,
-  resetTimerStoreForTests, MAX_OUTBOX_ENTRIES
+  resetTimerStoreForTests, MAX_OUTBOX_ENTRIES, loadTombstones, tombstoneKey
 } from '../src/data/timerStore.js';
+import { clearUser as signOut } from '../src/data/session.js';
+import { deleteTimeEntry } from '../src/app/alignment.js';
 import { normalizeTask } from '../src/domain/task.js';
 import { normalizeRoutine } from '../src/domain/routine.js';
 import { normalizeProject } from '../src/domain/project.js';
@@ -315,7 +317,8 @@ function persistentFakeRepo(script) {
       calls.push(entry.operationId);
       const step = script.shift() || 'ok';
       if (step === 'network') return { ok: false, error: { cause: { message: 'Failed to fetch' } } };
-      if (step === 'reject') return { ok: false, error: { cause: { code: '23503', message: 'fk' } } };
+      if (step === 'reject') return { ok: false, error: { cause: { code: '23514', message: 'check' } } };
+      if (step === 'fk') return { ok: false, error: { cause: { code: '23503', message: 'fk' } } };
       if ([...rows.values()].some(row => row.operationId === entry.operationId)) {
         return { ok: false, error: { cause: { code: '23505' } } };
       }
@@ -420,4 +423,144 @@ test('valmistuminen tarjoaa kirjausta mutta EI kirjaa aikaa itse', async () => {
   assert.equal(getState().timeEntries.length, 0, 'valmis != toteutunut aika');
   await toggleComplete('t1'); // takaisin kesken: ei kysytä
   assert.deepEqual(offered, ['t1']);
+});
+
+// ================================================================ KATSELMOINNIN LÖYDÖKSET
+
+function persistentTimerRepo({ removeFails = false, updateFails = false } = {}) {
+  const rows = new Map();
+  return {
+    rows, removed: [], removeFails, updateFails,
+    isPersistent: () => true,
+    async insert(timer) { rows.set(timer.id, timer); return { ok: true }; },
+    async update(timer) {
+      if (this.updateFails) return { ok: false, error: { cause: { message: "Failed to fetch" } } };
+      rows.set(timer.id, timer); return { ok: true };
+    },
+    async remove(id) {
+      this.removed.push(id);
+      if (this.removeFails) return { ok: false, error: { cause: { message: "Failed to fetch" } } };
+      rows.delete(id); return { ok: true };
+    }
+  };
+}
+
+test('REGRESSIO: offline-pysäytetty ajastin ei herää henkiin kannasta latauksessa', async () => {
+  const repo = persistentTimerRepo({ removeFails: true });
+  setTimerRepoForTests(repo);
+  await startTracking({ kind: 'none' }, { now: T0 });
+  const timer = currentTimer();
+  await stopTracking({ now: T0 + 30 * MIN });
+  assert.deepEqual(loadTombstones(USER_A.id), [timer.id], 'poisto ei mennyt perille: hautakivi laitteelle');
+  resetState(); // uudelleenlataus
+  repo.removeFails = false;
+  adoptLoadedTimers([...repo.rows.values()]);
+  assert.equal(currentTimer(), null, 'kannasta palannut, jo pysäytetty ajastin ohitetaan');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.ok(repo.removed.filter(id => id === timer.id).length >= 2, 'poisto yritetään uudelleen');
+  assert.equal(repo.rows.has(timer.id), false, 'uusinta poisti rivin kannasta');
+  assert.deepEqual(loadTombstones(USER_A.id), [], 'hautakivi siivotaan onnistuneen poiston jälkeen');
+});
+
+test('REGRESSIO: offline-tauko ei muutu työajaksi latauksessa (laitteen kopio voittaa samalle ajastimelle)', async () => {
+  const repo = persistentTimerRepo({ updateFails: true });
+  setTimerRepoForTests(repo);
+  await startTracking({ kind: 'none' }, { now: T0 });
+  await pauseTracking({ now: T0 + 10 * MIN });
+  resetState();
+  const adopted = adoptLoadedTimers([...repo.rows.values()]);
+  assert.ok(adopted.pausedAt, 'laitteen tauko säilyy');
+  const stop = await stopTracking({ now: T0 + 90 * MIN });
+  assert.equal(stop.totalMinutes, 10);
+});
+
+test('REGRESSIO: jo pysäytetty ajastin (sama operaatio tilassa) ei kirjaa uudelleen, vaikka osia olisi eri määrä', async () => {
+  const start = new Date(2026, 8, 20, 22, 0).getTime();
+  await startTracking({ kind: 'none' }, { now: start });
+  const timer = currentTimer();
+  await stopTracking({ now: start + 110 * MIN }); // 23.50, yksi osa
+  saveTimer(USER_A.id, timer);
+  restoreLocalTimer();
+  const again = await stopTracking({ now: start + 150 * MIN }); // 00.30, kaksi osaa
+  assert.equal(again.duplicate, true);
+  assert.equal(getState().timeEntries.length, 1);
+  assert.equal(getState().timeEntries[0].minutes, 110);
+});
+
+test('REGRESSIO: uloskirjautuminen kesken pysäytyksen ei kirjaa A:n aikaa B:lle', async () => {
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const repo = {
+    isPersistent: () => true,
+    async insert(entry) { await gate; return { ok: true, value: entry }; }
+  };
+  setTimeEntryWriterForTests(createTimeEntryWriter({
+    repo, loadOutbox, saveOutbox, userId: () => USER_A.id
+  }));
+  const start = new Date(2026, 8, 20, 23, 30).getTime();
+  await startTracking({ kind: 'none' }, { now: start });
+  const pending = stopTracking({ now: start + 75 * MIN }); // kaksi osaa
+  signOut();
+  resetState();
+  setUser(USER_B);
+  release();
+  const result = await pending;
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'timer.session_changed');
+  assert.ok(loadTimer(USER_A.id), 'A:n ajastin säilyy A:n avaimella');
+});
+
+test('REGRESSIO: rutiinin lisäkirjaus poiston jälkeen ei katoa kaksoiskappaleena', async () => {
+  setRoutines([normalizeRoutine({
+    id: 'r1', title: 'Juoksu', recurrence: { type: 'daily' }, durationMinutes: 30, active: true, startDate: '2026-01-01'
+  })]);
+  const target = { kind: 'routine', id: 'r1', occurrenceDate: '2026-09-21' };
+  await logQuickTime({ target, minutes: 30, operationId: occurrenceOperationId('r1', '2026-09-21') });
+  const second = await logQuickTime({ target, minutes: 10, operationId: occurrenceOperationId('r1', '2026-09-21') });
+  assert.equal(second.ok && !second.duplicate, true);
+  const first = getState().timeEntries.find(e => e.minutes === 30);
+  await deleteTimeEntry(first.id);
+  const third = await logQuickTime({ target, minutes: 20, operationId: occurrenceOperationId('r1', '2026-09-21') });
+  assert.equal(third.duplicate, undefined, 'uusi kirjaus ei törmää');
+  assert.equal(loggedMinutesForOccurrence('r1', '2026-09-21'), 30);
+});
+
+test('REGRESSIO: kohde poistui ennen lähetystä (23503) -> minuutit säilyvät ilman kohdetta', async () => {
+  const repo = persistentFakeRepo(['network', 'fk']);
+  setTimeEntryWriterForTests(writerFor(repo));
+  setTasks([task('t1')]);
+  const queued = await logTime({ entryDate: '2026-09-21', minutes: 25, taskId: 't1', operationId: 'log:fk-1' });
+  assert.equal(queued.queued, true);
+  const flushed = await flushTimeOutbox();
+  assert.equal(flushed.sent, 1);
+  const stored = [...repo.rows.values()][0];
+  assert.equal(stored.minutes, 25);
+  assert.equal(stored.taskId, null, 'kohde irrotettiin, aika säilyi');
+  assert.equal(getState().timeEntries[0].taskId, null, 'tila vastaa kantaa');
+});
+
+test('REGRESSIO: kannan kaksoiskappale (23505) ei jätä paikallista kopiota tilaan', async () => {
+  const repo = persistentFakeRepo([]);
+  repo.rows.set('db-row', { id: 'db-row', operationId: 'log:same' });
+  setTimeEntryWriterForTests(writerFor(repo));
+  const result = await logTime({ entryDate: '2026-09-21', minutes: 5, operationId: 'log:same' });
+  assert.equal(result.duplicate, true);
+  assert.equal(getState().timeEntries.length, 0);
+});
+
+test('REGRESSIO: poistetun kohteen ajastin palaa näkyväksi yleisenä, ei juutu piiloon', () => {
+  const repo = persistentTimerRepo();
+  setTimerRepoForTests(repo);
+  const adopted = adoptLoadedTimers([{ id: 'orphan', targetKind: 'task', taskId: null, startedAt: new Date(T0).toISOString() }]);
+  assert.equal(adopted.id, 'orphan');
+  assert.equal(adopted.targetKind, 'none');
+});
+
+test('hautakivet ovat käyttäjäkohtaisia ja poistuvat tilin poistossa', () => {
+  globalThis.localStorage.setItem(tombstoneKey(USER_A.id), JSON.stringify({ v: 1, userId: USER_A.id, ids: ['x'] }));
+  assert.deepEqual(loadTombstones(USER_B.id), []);
+  globalThis.localStorage.setItem(tombstoneKey(USER_B.id), globalThis.localStorage.getItem(tombstoneKey(USER_A.id)));
+  assert.deepEqual(loadTombstones(USER_B.id), [], 'toisen käyttäjän sisältö hylätään');
+  purgeTimerData(USER_A.id);
+  assert.equal(globalThis.localStorage.getItem(tombstoneKey(USER_A.id)), null);
 });

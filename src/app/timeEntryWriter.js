@@ -22,6 +22,22 @@
 
 import { classifyError, ERROR_CLASS } from '../domain/offlineQueue.js';
 
+/** Vierasavainrikkomus: viitattu kohde (tehtävä, rutiini, ...) on poistettu. */
+function isMissingTarget(error) {
+  const cause = (error && error.cause) || error || {};
+  return String(cause.code || '') === '23503';
+}
+
+/**
+ * Kohde poistui ennen kuin kirjaus ehti kantaan. Minuutit ovat silti
+ * käyttäjän aikaa: kirjaus tallennetaan ilman kohdetta (ensin alue
+ * säilyttäen, sitten ilman aluettakin) eikä sitä hylätä.
+ */
+function detachedVariants(entry) {
+  const noItem = { ...entry, taskId: null, goalId: null, projectId: null, routineId: null, occurrenceDate: null };
+  return entry.lifeAreaId ? [noItem, { ...noItem, lifeAreaId: null }] : [noItem];
+}
+
 export function createTimeEntryWriter({
   repo, loadOutbox, saveOutbox, userId, isSameSession = () => true, snapshot = () => null,
   isOffline = () => false, maxOutbox = 200
@@ -40,10 +56,23 @@ export function createTimeEntryWriter({
     return saveOutbox(id, [...outbox, entry]).ok;
   }
 
+  async function insertOnce(entry) {
+    let result = await repo.insert(entry);
+    if (!result.ok && isMissingTarget(result.error)) {
+      for (const variant of detachedVariants(entry)) {
+        result = await repo.insert(variant);
+        if (result.ok || !isMissingTarget(result.error)) {
+          return { result, entry: variant, detached: true };
+        }
+      }
+    }
+    return { result, entry, detached: false };
+  }
+
   return {
     async insert(entry) {
-      const result = await repo.insert(entry);
-      if (result.ok) return { ok: true };
+      const { result, entry: stored, detached } = await insertOnce(entry);
+      if (result.ok) return detached ? { ok: true, detached: true, entry: stored } : { ok: true };
       if (classifyError(result.error) === ERROR_CLASS.DUPLICATE) return { ok: true, duplicate: true };
       if (repo.isPersistent() && retryable(result.error) && queue(entry)) return { ok: true, queued: true };
       return { ok: false, error: result.error };
@@ -61,13 +90,15 @@ export function createTimeEntryWriter({
       const outbox = loadOutbox(id);
       const left = [];
       const rejected = [];
+      const detachedEntries = [];
       let sent = 0;
       for (const [index, entry] of outbox.entries()) {
         // Istunto vaihtui kesken: ei lähetetä toisen käyttäjän nimissä.
-        if (!isSameSession(started)) return { sent, left: outbox.length - index, rejected, aborted: true };
-        const result = await repo.insert(entry);
+        if (!isSameSession(started)) return { sent, left: outbox.length - index, rejected, detached: detachedEntries, aborted: true };
+        const { result, entry: stored, detached } = await insertOnce(entry);
         if (result.ok || classifyError(result.error) === ERROR_CLASS.DUPLICATE) {
           sent += 1;
+          if (detached && result.ok) detachedEntries.push(stored);
           continue;
         }
         if (retryable(result.error)) {
@@ -77,7 +108,7 @@ export function createTimeEntryWriter({
         rejected.push({ entry, error: result.error });
       }
       saveOutbox(id, left);
-      return { sent, left: left.length, rejected };
+      return { sent, left: left.length, rejected, detached: detachedEntries };
     }
   };
 }

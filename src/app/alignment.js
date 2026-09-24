@@ -18,7 +18,7 @@ import {
   getState, addLifeAreaToState, replaceLifeAreaInState, removeLifeAreaFromState,
   restoreLifeAreaInState,
   findLifeArea, upsertWeeklyCapacityInState, removeWeeklyCapacityFromState,
-  addTimeEntryToState, removeTimeEntryFromState, upsertAlignmentReviewInState,
+  addTimeEntryToState, removeTimeEntryFromState, replaceTimeEntryInState, upsertAlignmentReviewInState,
   findGoal, findTask, findProject, findRoutine
 } from './state.js';
 import {
@@ -198,13 +198,20 @@ export function compareWithPreviousWeek(weekStart, { analysis = null } = {}, clo
 /** Kehitys viimeisiltä viikoilta (vanhin ensin). Tyhjät viikot pois. */
 export function recentTrends(weekStart, clock = clockNow()) {
   const monday = weekStartOf(weekStart);
-  const summaries = [];
-  for (let back = TREND_RULES.WEEKS - 1; back >= 0; back--) {
+  // Viimeisin YHTENÄINEN jakso aineistollisia viikkoja: kehitys ei saa
+  // hypätä tyhjän viikon yli ("kasvoi kolmen viikon aikana" koskisi
+  // silloin neljää tai useampaa viikkoa).
+  const newestFirst = [];
+  for (let back = 0; back < TREND_RULES.WEEKS; back++) {
     const summary = weekSummaryFor(addDaysIso(monday, -7 * back), clock);
     const empty = !summary.capacityMinutes && !summary.plannedMinutes && !summary.actualMinutes;
-    if (!empty) summaries.push(summary);
+    if (empty) {
+      if (newestFirst.length > 0) break;
+      continue;
+    }
+    newestFirst.push(summary);
   }
-  return alignmentTrends(summaries);
+  return alignmentTrends(newestFirst.reverse());
 }
 
 /** Tekoälyselitys varapolulla. Palauttaa aina selityksen. */
@@ -414,7 +421,17 @@ export async function logTime(input, { silent = false } = {}) {
       if (!silent) showError(result.error);
       return { ok: false };
     }
-    if (result.duplicate) return { ok: true, duplicate: true, entry };
+    if (result.duplicate) {
+      // Sama operaatio on jo kannassa eri tunnisteella: paikallista
+      // kopiota ei jätetä tilaan (se näkyisi kahdesti eikä sitä voisi
+      // poistaa). Kannan rivi tulee seuraavassa latauksessa.
+      removeTimeEntryFromState(entry.id);
+      return { ok: true, duplicate: true, entry };
+    }
+    if (result.detached) {
+      replaceTimeEntryInState(entry.id, result.entry);
+      return { ok: true, detached: true, entry: result.entry };
+    }
     if (result.queued) {
       if (!silent) notify('Ei yhteyttä: kirjaus tallennetaan, kun yhteys palaa.', 5000);
       return { ok: true, queued: true, entry };
@@ -440,6 +457,9 @@ export function pendingTimeEntryCount() {
  */
 export async function flushTimeOutbox() {
   const result = await writer.flush();
+  for (const entry of result.detached || []) {
+    if (getState().timeEntries.some(e => e.id === entry.id)) replaceTimeEntryInState(entry.id, entry);
+  }
   for (const { entry, error } of result.rejected || []) {
     // Palvelin hylkäsi (esim. kohde poistettu): ei uusita loputtomiin.
     removeTimeEntryFromState(entry.id);

@@ -73,9 +73,14 @@ function msOf(iso) {
 export function normalizeTimer(input = {}) {
   const paused = Number(input.pausedSeconds);
   const note = input.note == null ? null : String(input.note).trim().slice(0, MAX_TIMER_NOTE_LENGTH) || null;
+  let targetKind = TIMER_TARGETS.includes(input.targetKind) ? input.targetKind : TIMER_TARGET.NONE;
+  // Kohde on poistettu (kanta nollasi sarakkeen, laji jäi): ajastin
+  // säilyy näkyvänä ja pysäytettävänä "yleisenä" eikä juutu piiloon.
+  const field = TARGET_FIELD[targetKind];
+  if (field && optionalId(input[field]) === null) targetKind = TIMER_TARGET.NONE;
   return {
     id: input.id != null ? String(input.id) : null,
-    targetKind: TIMER_TARGETS.includes(input.targetKind) ? input.targetKind : TIMER_TARGET.NONE,
+    targetKind,
     lifeAreaId: optionalId(input.lifeAreaId),
     goalId: optionalId(input.goalId),
     taskId: optionalId(input.taskId),
@@ -97,10 +102,6 @@ export function validateTimer(timer) {
   if (!timer || !timer.startedAt) errors.startedAt = 'Aloitusaika puuttuu.';
   if (timer && timer.pausedAt && timer.startedAt && msOf(timer.pausedAt) < msOf(timer.startedAt)) {
     errors.pausedAt = 'Tauko ei voi alkaa ennen ajastinta.';
-  }
-  if (timer && timer.targetKind !== TIMER_TARGET.NONE) {
-    const field = TARGET_FIELD[timer.targetKind];
-    if (field && !timer[field]) errors.target = 'Ajastettava kohde puuttuu.';
   }
   return { valid: Object.keys(errors).length === 0, errors };
 }
@@ -144,6 +145,10 @@ export function startTimer({ id, target = {}, nowMs, existing = null, startedAtM
   if (start > nowMs + TIMER_RULES.MAX_FUTURE_SKEW_MS) {
     return { ok: false, code: 'timer.future_start', message: 'Ajastin ei voi alkaa tulevaisuudessa.' };
   }
+  const kind = TIMER_TARGETS.includes(target.kind) ? target.kind : TIMER_TARGET.NONE;
+  if (TARGET_FIELD[kind] && !optionalId(target.id)) {
+    return { ok: false, code: 'timer.invalid', message: 'Ajastettava kohde puuttuu.' };
+  }
   const timer = normalizeTimer({ id, ...timerTargetFields(target), startedAt: start, note });
   const { valid, errors } = validateTimer(timer);
   if (!valid) {
@@ -165,10 +170,17 @@ export function resumeTimer(timer, nowMs) {
   if (!timer || !timer.pausedAt) return timer;
   const pausedMs = msOf(timer.pausedAt);
   const extra = Number.isFinite(pausedMs) ? Math.max(0, (nowMs - pausedMs) / 1000) : 0;
+  const total = Math.round(timer.pausedSeconds + extra);
+  if (total <= MAX_PAUSED_SECONDS) return { ...timer, pausedAt: null, pausedSeconds: total };
+  // Taukoja yli kannan rajan (7 vrk): alku siirtyy ylityksen verran
+  // eteenpäin, jolloin kulunut aika pysyy täsmälleen samana eikä pitkä
+  // tauko muutu työajaksi.
+  const shift = total - MAX_PAUSED_SECONDS;
   return {
     ...timer,
+    startedAt: new Date(msOf(timer.startedAt) + shift * 1000).toISOString(),
     pausedAt: null,
-    pausedSeconds: Math.min(Math.round(timer.pausedSeconds + extra), MAX_PAUSED_SECONDS)
+    pausedSeconds: MAX_PAUSED_SECONDS
   };
 }
 
@@ -305,12 +317,11 @@ export function stopTimer(timer, nowMs, { overrideMinutes = null, calendar = LOC
     }
   });
 
-  const single = parts.length === 1;
   const entries = parts.map((part, index) => ({
     entryDate: part.segment.date,
     minutes: part.minutes,
     source: TIME_SOURCE.TIMER,
-    operationId: single ? operationId : `${operationId}.${index}`,
+    operationId: index === 0 ? operationId : `${operationId}.${index}`,
     startedAt: new Date(part.segment.fromMs).toISOString(),
     endedAt: new Date(part.segment.toMs).toISOString(),
     lifeAreaId: timer.lifeAreaId,
