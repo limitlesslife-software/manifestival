@@ -63,6 +63,15 @@ export function fileAtCommit(sha, relativePath) {
 }
 
 /**
+ * `Release-Wave:`-trailer. Tunnisteet luetaan `WAVES`-määrittelystä eikä
+ * kirjoiteta käsin: aiempi `[A-E]` jätti aallot F–J tunnistamatta, joten
+ * yhtäkään migraatioaallon committia ei olisi voitu kirjata manifestiin
+ * (todettu rakentamalla aallon F harjoittelukandidaatti).
+ */
+export const RELEASE_WAVE_TRAILER = new RegExp(
+  `^Release-Wave:\\s*(BASE|${WAVES.map(w => w.id).join('|')})\\s*$`, 'm');
+
+/**
  * Aaltojen commitit `Release-Wave:`-trailerin perusteella.
  *
  * Etsitään perustilasta HEADiin. Jos aallolla on useampi commit,
@@ -84,7 +93,7 @@ export function discoverWaveCommits(from = PRODUCTION.sha, to = 'HEAD') {
   for (const commit of commits) {
     const [sha, body] = commit.split(String.fromCharCode(31));
     if (!sha || !body) continue;
-    const match = /^Release-Wave:\s*(BASE|[A-E])\s*$/m.exec(body);
+    const match = RELEASE_WAVE_TRAILER.exec(body);
     if (match) shas[match[1]] = sha.trim();
   }
   return shas;
