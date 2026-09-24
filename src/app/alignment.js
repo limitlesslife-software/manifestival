@@ -178,19 +178,21 @@ export function currentDailyAlignment(clock = clockNow()) {
  * Viikon yhteenveto vertailuun ja kehitykseen. Tallennettu katsaus on
  * historiaa ja voittaa: sitä ei lasketa uudelleen nykyisillä säännöillä.
  */
-export function weekSummaryFor(weekStart, clock = clockNow()) {
+export function weekSummaryFor(weekStart, clock = clockNow(), { analysis = null } = {}) {
   const monday = weekStartOf(weekStart);
   const saved = getState().alignmentReviews.find(review => review.weekStart === monday);
   if (saved && saved.snapshot && saved.snapshot.version !== undefined) {
     return weekSummary({ ...saved.snapshot, weekStart: monday }, { origin: 'snapshot' });
   }
-  return weekSummary(analyzeCurrentWeek(monday, clock), { origin: 'live' });
+  // Näkymä on jo laskenut tämän viikon: sitä ei lasketa uudelleen.
+  const live = analysis && analysis.weekStart === monday ? analysis : analyzeCurrentWeek(monday, clock);
+  return weekSummary(live, { origin: 'live' });
 }
 
 /** Tämä viikko vs. edellinen. */
-export function compareWithPreviousWeek(weekStart, clock = clockNow()) {
+export function compareWithPreviousWeek(weekStart, { analysis = null } = {}, clock = clockNow()) {
   const monday = weekStartOf(weekStart);
-  return compareWeeks(weekSummaryFor(monday, clock), weekSummaryFor(addDaysIso(monday, -7), clock));
+  return compareWeeks(weekSummaryFor(monday, clock, { analysis }), weekSummaryFor(addDaysIso(monday, -7), clock));
 }
 
 /** Kehitys viimeisiltä viikoilta (vanhin ensin). Tyhjät viikot pois. */

@@ -756,7 +756,7 @@ export function renderDirection() {
 
   el('dirReview').innerHTML = reviewHtml(analysis, areas);
   const compare = maybe('dirReviewCompare');
-  if (compare) compare.innerHTML = areas.length > 0 ? compareHtml(compareWithPreviousWeek(analysis.weekStart)) : '';
+  if (compare) compare.innerHTML = areas.length > 0 ? compareHtml(compareWithPreviousWeek(analysis.weekStart, { analysis })) : '';
   const existingReview = state.alignmentReviews.find(review => review.weekStart === analysis.weekStart);
   const reflection = el('dirReflection');
   if (document.activeElement !== reflection && existingReview && !reflection.dataset.dirty) {
@@ -1159,6 +1159,8 @@ async function onProposalClick(event) {
   }
   const result = await applyAdjustment(proposal, { overrides });
   if (result.navigate === 'estimate') {
+    // Ehdotus koskee ensi viikkoa: näytetään se viikko, jonka asiat arvioidaan.
+    if (proposal.payload && proposal.payload.weekStart) viewWeek = weekStartOf(proposal.payload.weekStart);
     openWorkflow('estimate');
     return;
   }
