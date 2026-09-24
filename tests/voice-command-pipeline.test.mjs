@@ -16,6 +16,7 @@ import { clearLocalUserData, createBill } from '../src/app/actions.js';
 import { resetState, getState, setTasks } from '../src/app/state.js';
 import { setClient } from '../src/data/client.js';
 import { fakeClient } from './helpers/gates.mjs';
+import { freezeLocalDate } from './helpers/clock.mjs';
 import { normalizeTask } from '../src/domain/task.js';
 
 import { runTypedCommand } from '../src/app/commandBar.js';
@@ -313,8 +314,14 @@ const CORPUS = [
   }
 ];
 
+// Korpuksen mallivastaukset on kirjoitettu päivälle la 2026-09-19
+// ("huomenna" = 2026-09-20). Kello jäädytetään siihen, koska
+// temporalReconcile korjaa mallin päivän ajopäivän mukaan.
+const CORPUS_TODAY = '2026-09-19';
+
 for (const entry of CORPUS) {
-  test(`KORPUS (${entry.phrase === CORPUS[0].phrase ? 'puhe' : 'teksti'}): "${entry.phrase}"`, async () => {
+  test(`KORPUS (${entry.phrase === CORPUS[0].phrase ? 'puhe' : 'teksti'}): "${entry.phrase}"`, async (t) => {
+    freezeLocalDate(t, CORPUS_TODAY);
     if (entry.setup) await entry.setup();
     const runner = entry === CORPUS[0] ? runVoiceCommand : runTypedCommand;
     const result = await runner(entry.phrase, {
