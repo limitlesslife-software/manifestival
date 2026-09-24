@@ -242,18 +242,20 @@ test('matkasuunnitelma tallentaa nimet eikä pisteitä', () => {
 // PORTIT
 // =====================================================================
 
-test('KRIITTINEN: viisi uutta porttia on kiinni', () => {
-  for (const gate of ['inboxItems', 'reminders', 'notices', 'travelPlans',
-    'locationRules']) {
-    assert.equal(TABLES[gate], false, `portti ${gate} on auki`);
-  }
+test('KRIITTINEN: viisi avustajan porttia ovat yhdessä: kaikki kiinni tai kaikki auki', () => {
+  // Sama migraatio (0011), sama aalto (H). Osittain avattu joukko
+  // tarkoittaisi, että jokin kirjoitus menee tauluun jota ei ole.
+  const tilat = ['inboxItems', 'reminders', 'notices', 'travelPlans', 'locationRules']
+    .map(gate => TABLES[gate] === true);
+  assert.ok(tilat.every(Boolean) || tilat.every(t => !t), `osittain auki: ${tilat}`);
 });
 
-test('kiinni oleva portti näkyy odottavien listalla', () => {
+test('kiinni oleva portti näkyy odottavien listalla, auki oleva ei', () => {
   const odottavat = new Set(pendingTables());
   for (const gate of ['inboxItems', 'reminders', 'notices', 'travelPlans',
     'locationRules']) {
-    assert.ok(odottavat.has(gate), `portti ${gate} puuttuu odottavista`);
+    assert.equal(odottavat.has(gate), TABLES[gate] !== true,
+      `portti ${gate}: odottavien lista ei vastaa porttia`);
   }
 });
 
@@ -261,10 +263,11 @@ test('kiinni oleva kokoelma on haihtuvien listalla', () => {
   const haihtuvat = new Set(volatileCollections());
   for (const repo of [inboxRepo, remindersRepo, noticesRepo, travelPlansRepo,
     locationRulesRepo]) {
-    assert.ok(haihtuvat.has(repo.table),
-      `${repo.table} puuttuu haihtuvien listalta`);
-    assert.equal(repo.isPersistent(), false,
-      `${repo.table} väittää säilyvänsä vaikka portti on kiinni`);
+    const auki = TABLES[repo.schemaKey] === true;
+    assert.equal(haihtuvat.has(repo.table), !auki,
+      `${repo.table}: haihtuvien lista ei vastaa porttia`);
+    assert.equal(repo.isPersistent(), auki,
+      `${repo.table}: säilyvyysväite ei vastaa porttia`);
   }
 });
 

@@ -32,6 +32,8 @@ import {
 import { setClient } from '../src/data/client.js';
 import { setUser, clearUser } from '../src/data/session.js';
 import { TABLES } from '../src/data/schema.js';
+import { createMultiTableServer } from './helpers/multiTableServer.mjs';
+import { getUser } from '../src/data/session.js';
 
 import {
   MAX_ALERTS_PER_REMINDER, MAX_SNOOZE_COUNT, MAX_SNOOZE_MINUTES,
@@ -85,6 +87,9 @@ beforeEach(() => {
 test('KRIITTINEN: avustajan kokoelmat eivät vuoda seuraavalle käyttäjälle', async () => {
   // Portin ollessa kiinni palvelimelle ei mennä lainkaan, joten RLS ei
   // ole edes mukana kuvassa. Suojaus on yksinomaan asiakaspuolella.
+  // Portin ollessa auki (aalto H) haku rajataan käyttäjään (.eq user_id);
+  // muistinvarainen palvelin jäljittelee omistajuutta kuten kanta.
+  setClient(createMultiTableServer(() => getUser()?.id ?? null));
   setUser(A);
 
   for (const repo of ASSISTANT_REPOS) {
@@ -112,15 +117,22 @@ test('KRIITTINEN: avustajan kokoelmat eivät vuoda seuraavalle käyttäjälle', 
 
 test('KRIITTINEN: yksikään avustajan kokoelma ei jää tyhjennyksen ulkopuolelle', async () => {
   // Osittainen tyhjennys olisi pahin mahdollinen lopputulos: se
-  // näyttäisi toimivan ja vuotaisi silti.
+  // näyttäisi toimivan ja vuotaisi silti. Tyhjennys koskee laitteen
+  // muistia: portin ollessa auki kannan rivit ovat käyttäjän tallennettua
+  // tietoa eivätkä saa kadota uloskirjautumisessa.
+  setClient(createMultiTableServer(() => getUser()?.id ?? null));
   setUser(A);
   for (const repo of ASSISTANT_REPOS) await repo.insert(ROWS[repo.table]);
 
   clearAllCollections();
 
   for (const repo of ASSISTANT_REPOS) {
-    const list = await repo.list();
-    assert.equal(list.value.length, 0, `${repo.table} ei tyhjentynyt`);
+    const memory = await repo.memory.list();
+    assert.equal(memory.value.length, 0, `${repo.table}: muisti ei tyhjentynyt`);
+    if (!repo.isPersistent()) {
+      const list = await repo.list();
+      assert.equal(list.value.length, 0, `${repo.table} ei tyhjentynyt`);
+    }
   }
 });
 
@@ -138,27 +150,32 @@ test('viisi uutta repositoriota on mukana kokonaislistassa', () => {
 // OFFLINE JA VERKKOVIRHE
 // =====================================================================
 
-test('KRIITTINEN: kirjaus ei katoa kun kanta on saavuttamattomissa', async () => {
-  // Portti on kiinni, joten kirjoitus menee muistivarastoon eikä
-  // verkkoon. Se on tarkoitus: kirjaus ei saa epäonnistua siksi että
-  // verkko on poikki.
-  assert.equal(TABLES.inboxItems, false,
-    'tämä testi olettaa portin olevan kiinni');
-
+test('KRIITTINEN: kirjaus ilman kantayhteyttä ei katoa eikä väitä tallentuneensa', async () => {
   setUser(A);
   setClient(null);   // ei asiakasta lainkaan
 
   const result = await inboxRepo.insert(ROWS.inbox_items);
-  assert.equal(result.ok, true, 'kirjaus epäonnistui ilman verkkoa');
-
-  const list = await inboxRepo.list();
-  assert.equal(list.value.length, 1, 'kirjattu rivi ei näy');
+  if (!TABLES.inboxItems) {
+    // Portti kiinni: kirjoitus menee muistivarastoon eikä verkkoon.
+    // Kirjaus ei saa epäonnistua siksi että verkko on poikki.
+    assert.equal(result.ok, true, 'kirjaus epäonnistui ilman verkkoa');
+    const list = await inboxRepo.list();
+    assert.equal(list.value.length, 1, 'kirjattu rivi ei näy');
+  } else {
+    // Portti auki (aalto H): kirjaus vaatii kannan. TUNNETTU RAJOITUS:
+    // offline-jono kattaa vain tehtävät, joten kirjaus ilman yhteyttä
+    // EPÄONNISTUU NÄKYVÄSTI. Se ei saa väittää tallentuneensa eikä
+    // kirjoittaa hiljaa muistiin, josta se katoaisi uudelleenlatauksessa.
+    assert.equal(result.ok, false, 'kirjaus väitti tallentuneensa ilman kantaa');
+    assert.equal((await inboxRepo.memory.list()).value.length, 0,
+      'kirjaus meni hiljaa muistiin');
+  }
 });
 
-test('kiinni oleva kokoelma kertoo rehellisesti, ettei tieto säily', () => {
+test('kokoelma kertoo rehellisesti, säilyykö tieto (portin mukaan)', () => {
   for (const repo of ASSISTANT_REPOS) {
-    assert.equal(repo.isPersistent(), false,
-      `${repo.table} väittää säilyvänsä vaikka portti on kiinni`);
+    assert.equal(repo.isPersistent(), TABLES[repo.schemaKey] === true,
+      `${repo.table}: säilyvyysväite ei vastaa porttia`);
   }
 });
 
