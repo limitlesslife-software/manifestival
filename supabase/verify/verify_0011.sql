@@ -166,7 +166,11 @@ from (
            where table_schema = 'public'
              and table_name in ('inbox_items', 'reminders', 'notices',
                                 'travel_plans', 'location_rules')
-             and column_name ~ '(lat|lon|coord|geo|gps|point|sijainti)')
+             -- Nimen OSA (alaviivojen valissa), ei mika tahansa alimerkkijono:
+             -- pelkka '(lat|...)' osui sarakkeeseen reminders.escalate
+             -- (esca-LAT-e) ja antoi vaaran FAIL-tuloksen. Todettu oikealla
+             -- PostgreSQL:lla, ks. tools/pg-rehearsal.
+             and column_name ~ '(^|_)(lat|lon|coord|coords|coordinates|latitude|longitude|lng|geo|geom|geography|geometry|gps|point|sijainti)(_|$)')
 
   union all
   -- NIMI ON TEKSTIA. Jos naista tulisi joskus numeerisia tai
