@@ -383,7 +383,7 @@
     {
       "id": "H",
       "title": "Henkilökohtainen avustaja: kirjaus, muistutukset ja matka",
-      "commitSha": null,
+      "commitSha": "b7be37752bb38ce8186c5fc68448df0a82e7a261",
       "cacheVersion": "v21",
       "readiness": "READY",
       "gatesEnabled": [
