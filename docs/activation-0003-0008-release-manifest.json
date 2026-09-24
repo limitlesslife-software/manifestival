@@ -474,7 +474,7 @@
     {
       "id": "I",
       "title": "Suunta: elämänalueet, kapasiteetti, toteuma ja viikkokatsaus",
-      "commitSha": null,
+      "commitSha": "d418b79e6f4a3a79f3e743bcf8c375c0ef5c55e8",
       "cacheVersion": "v22",
       "readiness": "READY",
       "gatesEnabled": [
