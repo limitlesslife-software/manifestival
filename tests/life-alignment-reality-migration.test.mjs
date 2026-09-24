@@ -226,30 +226,40 @@ test('MUTAATIO: rikottu politiikka havaitaan', () => {
 
 // ================================================================ PORTIT JA REPOSITORIOT
 
-test('portit kiinni: ajastin ja kohdeasetukset elävät muistissa, eivät kannassa', () => {
-  assert.equal(TABLES.runningTimers, false);
-  assert.equal(TABLES.alignmentItemSettings, false);
-  assert.equal(ALIGNMENT_REALITY_FIELDS, false);
-  assert.equal(runningTimersRepo.isPersistent(), false);
-  assert.equal(alignmentItemSettingsRepo.isPersistent(), false);
-  assert.ok(volatileAlignmentRealityFields().includes('timeEntry.operationId'));
+test('0013:n portit avautuvat yhdessä ja säilyvyysväite vastaa porttia', () => {
+  // Tuotehaaralla kiinni: ajastin ja kohdeasetukset elävät laitteella ja
+  // muistissa. Aallossa J kaikki kolme aukeavat yhdessä (sama migraatio).
+  const auki = TABLES.runningTimers === true;
+  assert.equal(TABLES.alignmentItemSettings === true, auki);
+  assert.equal(ALIGNMENT_REALITY_FIELDS, auki);
+  assert.equal(runningTimersRepo.isPersistent(), auki);
+  assert.equal(alignmentItemSettingsRepo.isPersistent(), auki);
+  assert.equal(volatileAlignmentRealityFields().includes('timeEntry.operationId'), !auki);
 });
 
-test('KRIITTINEN: sarakeportti kiinni -> 0013:n sarakkeita ei lähetetä 0012:n tauluihin', () => {
+test('KRIITTINEN: 0013:n sarakkeet lähetetään 0012:n tauluihin vain sarakeportin ollessa auki', () => {
   const entry = normalizeTimeEntry({
     id: 'e', entryDate: '2026-09-21', minutes: 30, source: 'timer', operationId: 'timer:x', projectId: 'p',
     routineId: 'r', occurrenceDate: '2026-09-21', startedAt: '2026-09-21T06:00:00Z', endedAt: '2026-09-21T06:30:00Z'
   });
   const row = timeEntriesRepo.mapping.toRow(entry);
+  const auki = ALIGNMENT_REALITY_FIELDS;
   for (const column of ['project_id', 'routine_id', 'occurrence_date', 'operation_id', 'started_at', 'ended_at']) {
-    assert.equal(Object.prototype.hasOwnProperty.call(row, column), false, column);
+    assert.equal(Object.prototype.hasOwnProperty.call(row, column), auki, column);
   }
-  assert.equal(row.source, 'manual', '0012 sallii vain manual: ajastimen minuutit säilyvät, lähde odottaa 0013:a');
+  if (auki) {
+    // Aalto J: 0013 sallii lähteen 'timer', ja operation_id tekee
+    // kirjauksesta idempotentin (uniikki per käyttäjä).
+    assert.equal(row.source, 'timer');
+    assert.equal(row.operation_id, 'timer:x');
+  } else {
+    assert.equal(row.source, 'manual', '0012 sallii vain manual: ajastimen minuutit säilyvät, lähde odottaa 0013:a');
+  }
   const capacity = weeklyCapacitiesRepo.mapping.toRow(normalizeWeeklyCapacity({ id: 'c', weekStart: '2026-09-21', availableMinutes: 600, energyBudgetMinutes: 120 }));
-  assert.equal('energy_budget_minutes' in capacity, false);
+  assert.equal('energy_budget_minutes' in capacity, auki);
   const review = alignmentReviewsRepo.mapping.toRow(alignmentReviewsRepo.mapping.normalize({ id: 'r', weekStart: '2026-09-21', snapshot: { version: 2 } }));
-  assert.equal('policy_version' in review, false);
-  assert.equal('reflection_answers' in review, false);
+  assert.equal('policy_version' in review, auki);
+  assert.equal('reflection_answers' in review, auki);
 });
 
 test('repositoriot: palvelimen kentät eivät lähde, paluumuunnos palauttaa saman', () => {
