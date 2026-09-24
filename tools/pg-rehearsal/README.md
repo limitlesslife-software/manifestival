@@ -16,7 +16,9 @@ ja jokaisen jälkeen sen oman `supabase/verify/verify_XXXX.sql`:n.
 |---|---|
 | `upgrade:text` / `upgrade:typed` | Ketju kahdella lähtötilalla: `tasks.date/time` tekstinä tai omina tyyppeinään (tuotannon tyyppiä ei ole todennettu, `docs/SCHEMA.md`). Sovellusdata siemennetään kahdelle käyttäjälle **roolina `authenticated`** heti kunkin taulun synnyttyä, joten myöhemmät migraatiot ajetaan olemassa olevaa dataa vasten. Todennetaan, ettei yksikään migraatio muuta vanhojen taulujen rivimääriä, alkuperäiset 36 tehtävää säilyvät ja 0012 ei liitä yhtään tavoitetta alueeseen. |
 | `rls` | Jokaiselle 26 taululle: A ei voi lukea, päivittää, poistaa, lisätä B:n nimissä, siirtää omaa riviään B:lle eikä viitata B:n riviin yhdistelmävierasavaimella; `anon` ei pääse mihinkään; `authenticated` ilman `sub`-väitettä ei näe mitään; PUBLIC/anon-oikeuksia ei ole. |
-| `lifecycle` | Poistosäännöt (tavoite, alue, tehtävä), yksi ajastin per käyttäjä, `operation_id`-idempotenssi, rajat (0 min, > 1440 min, maanantai, nimen pituus, ajastimen loppu ennen alkua) ja tilin poiston cascade kaikkiin tauluihin. |
+| `lifecycle` | Poistosäännöt (tavoite, alue, tehtävä), yksi ajastin per käyttäjä, `operation_id`-idempotenssi, rajat (0 min, > 1440 min, maanantai, nimen pituus, ajastimen loppu ennen alkua) ja tilin poiston cascade kaikkiin tauluihin. Lisäksi taaksepäin yhteensopivuus: vanhojen aaltojen rivimuodot (ilman myöhempien migraatioiden sarakkeita) ovat yhä kirjoitettavissa 0013:n jälkeen — migraatio ajetaan aina edellisen aallon koodin ollessa tuotannossa. |
+| `preflight` | Jokainen `supabase/preflight/preflight_0009…0013.sql` jokaisessa tilassa 0007–0013: PASS vain juuri ennen omaa migraatiotaan (35 tapausta). Upgrade-ketjussa 0009+ esitarkistuksen FAIL on hylkäys. |
+| `inventory` | `activation_readonly_inventory.sql` jokaisessa junan tilassa molemmilla lähtötiloilla READ ONLY -transaktiossa + `score-inventory.mjs`:n päätös (GO/STOP, seuraava migraatio), keskeneräinen 0012 ja puuttuva omistaja -> STOP. `--fixtures=DIR` kirjoittaa tulokset yksikkötesteille. |
 | `failure` | Uudelleenajo heti ja koko ketjun jälkeen (viestin on oltava "JO AJETTU"), puuttuva esiehto, osittainen tila (yksi objekti etukäteen), lukon aikakatkaisu avoimen transaktion takia (5 s) ja uudelleenajo lukon vapauduttua, myöhäinen esiehto. Jokaisessa todennetaan katalogin sormenjäljellä, ettei epäonnistunut ajo jättänyt **mitään** jälkeä. |
 
 ## Mitä tämä EI todista (tunnetut erot Supabaseen)
@@ -63,6 +65,7 @@ Pysäytys: sama komento `stop`-sanalla. Poisto: poista `.claude/pg-local`.
 ```sh
 node tools/pg-rehearsal/rehearse.mjs                    # kaikki skenaariot (~1 min)
 node tools/pg-rehearsal/rehearse.mjs --only=failure     # vain virhetilanteet
+node tools/pg-rehearsal/rehearse.mjs --only=inventory --fixtures=tests/fixtures/activation-inventory
 node tools/pg-rehearsal/rehearse.mjs --json=raportti.json
 node tools/pg-rehearsal/chain.mjs text                  # pelkkä ketju + verify
 ```
@@ -79,3 +82,6 @@ Poistumiskoodi on 0 vain, jos yksikään tarkistus ei hylätty.
    Korjattu; `tests/migration-rerun-detection.test.mjs`.
 3. 0012:n uudelleenajo 0013:n jälkeen ilmoitti "kesken 57/58", koska 0013
    korvaa yhden 0012:n rajoitteen. Korjattu omalla haaralla.
+4. `supabase/acceptance/life_alignment_readonly_inventory.sql` kaatui
+   kokonaan (`date_trunc(text)`), jos `tasks.date` on tekstiä. Korjattu;
+   uusi yksilauseinen `activation_readonly_inventory.sql` korvaa sen.

@@ -15,9 +15,10 @@
 //
 // Jokainen kanta on kertakäyttöinen (mv_rehearsal_*) ja poistetaan lopuksi.
 
-import { writeFileSync } from 'node:fs';
+import fs, { writeFileSync } from 'node:fs';
+import path from 'node:path';
 import {
-  connect, createDatabase, dropDatabase, runSql, readSql, asUser, tryAs,
+  connect, createDatabase, dropDatabase, runSql, runVerify, readSql, asUser, tryAs,
   catalogFingerprint, scalar, OWNER, USER_B
 } from './lib.mjs';
 import { MIGRATIONS, numberOf, prepareBaseline, applyMigration } from './chain.mjs';
@@ -91,6 +92,14 @@ async function upgradeScenario(variant) {
         for (const f of record.verify.fail) fail(scenario, `verify_${n}: ${f}`);
       }
       if (record.verify?.error) fail(scenario, `verify_${n} kaatui: ${record.verify.error}`);
+      // 0009+ esitarkistukset (tools/activation/build-preflights.mjs) on
+      // ajettava puhtaasti juuri ennen omaa migraatiotaan. (0003:n
+      // "yksi auth-käyttäjä" on tuotantokohtainen eikä koske tätä.)
+      if (n >= '0009') {
+        if (!record.preflight) fail(scenario, `preflight_${n}.sql puuttuu`);
+        else if (record.preflight.error) fail(scenario, `preflight_${n} kaatui: ${record.preflight.error}`);
+        else for (const f of record.preflight.fail) fail(scenario, `preflight_${n}: ${f}`);
+      }
       if (n >= '0003') {
         const after = await dataFingerprint(client, Object.keys(before));
         const changed = Object.keys(before).filter(t => before[t].split(':')[0] !== after[t].split(':')[0]);
@@ -332,6 +341,30 @@ async function lifecycleScenario(client) {
     `insert into public.time_entries (id, entry_date, minutes, started_at, ended_at) values ('a-te-rev', '2026-09-23', 5, '2026-09-23T10:00Z', '2026-09-23T09:00Z')`);
   check('timer_end_before_start_rejected', !timerEnds.ok && timerEnds.code === '23514', JSON.stringify(timerEnds));
 
+  // Taaksepäin yhteensopivuus: migraatio ajetaan aina SILLOIN kun
+  // edellisen aallon koodi on tuotannossa (0010 ajetaan aallon F aikana
+  // jne.). Vanhan koodin rivimuoto — ilman yhtäkään myöhemmän
+  // migraation saraketta — on siis voitava kirjoittaa ja päivittää
+  // 0013:n jälkeenkin. Muodot vastaavat src/lib/rows.js:n ja
+  // collectionsRepo.js:n sarakejoukkoja kunkin aallon aikaan.
+  const legacyShapes = [
+    ['tasks (aalto C, 0002-sarakkeet)', `insert into public.tasks (id, date, time, end_time, title, category, note, completed, is_wake, description, duration_minutes, priority, scheduling_state)
+       values ('a-old-task', '2026-09-24', '10:00', null, 'Vanha muoto', 'tyo', null, false, false, null, 30, 'normaali', 'manual')`],
+    ['tasks päivitys vanhalla sarakejoukolla', `update public.tasks set title = 'Vanha muoto 2', duration_minutes = 45 where id = 'a-old-task'`],
+    ['goals (aalto B, 0004-sarakkeet)', `insert into public.goals (id, title, description, category, priority, status, target_date, progress_mode, manual_progress, parent_goal_id, project_id)
+       values ('a-old-goal', 'Vanha tavoite', null, 'kehitys', 'normaali', 'active', null, 'task_based', 0, null, null)`],
+    ['projects (aalto B, 0004-sarakkeet)', `insert into public.projects (id, name, description, category, priority, status, goal_id, start_date, deadline)
+       values ('a-old-proj', 'Vanha projekti', null, 'muu', 'normaali', 'active', 'a-old-goal', null, null)`],
+    ['routines (aalto C)', `insert into public.routines (id, title, duration_minutes, recurrence_type, goal_id) values ('a-old-rout', 'Vanha rutiini', 20, 'daily', 'a-old-goal')`],
+    ['bills (aalto D, 0007-sarakkeet)', `insert into public.bills (id, name, amount_minor, currency, due_date, status, paid_date, category, task_id, recurring_expense_id, note)
+       values ('a-old-bill', 'Vanha lasku', 500, 'EUR', '2026-10-10', 'open', null, 'talous', null, null, null)`],
+    ['profile upsert vanhoilla sarakkeilla', `update public.profile set age = 41, sleep_target_hours = 7.5 where id = '${OWNER}'`]
+  ];
+  for (const [label, sql] of legacyShapes) {
+    const r = await tryAs(client, OWNER, sql);
+    check(`legacy_shape_after_0013: ${label}`, r.ok && r.rowCount === 1, JSON.stringify(r));
+  }
+
   // Tilin poisto: kaikki B:n rivit kaikista tauluista katoavat (cascade).
   const tables = (await client.query(
     `select c.relname from pg_class c where c.relnamespace = 'public'::regnamespace and c.relkind = 'r'`)).rows
@@ -522,8 +555,128 @@ async function failureScenario() {
 }
 
 // ---------------------------------------------------------------------
+// Aktivoinnin inventaario ja pisteytys jokaisessa junan tilassa
+// ---------------------------------------------------------------------
+
+async function runInventory(client) {
+  // Vain luku todennetaan kannalla, ei lupauksena: READ ONLY -transaktio
+  // kaataa minkä tahansa kirjoituksen.
+  const before = await catalogFingerprint(client);
+  await client.query('begin read only');
+  let result;
+  try {
+    result = await client.query(readSql('supabase/acceptance/activation_readonly_inventory.sql'));
+  } finally {
+    await client.query('rollback');
+  }
+  const after = await catalogFingerprint(client);
+  const cell = result.rows.find(r => r.nro === '00').arvo;
+  return { cell, table: result.rows, unchanged: before.hash === after.hash };
+}
+
+async function inventoryScenario(fixtureDir) {
+  const { parseInventory, scoreInventory } = await import('../activation/score-inventory.mjs');
+  const results = [];
+  const check = (label, pass, detail) => {
+    results.push({ label, pass, detail });
+    if (!pass) fail('inventory', `${label}: ${detail}`);
+  };
+  const cases = [
+    ['0008', 'GO', '0009'], ['0009', 'GO', '0010'], ['0010', 'GO', '0011'],
+    ['0011', 'GO', '0012'], ['0012', 'GO', '0013'], ['0013', 'GO', null]
+  ];
+  for (const variant of ['text', 'typed']) {
+    for (const [state, decision, next] of cases) {
+      const db = `mv_rehearsal_inv_${variant}_${state}`;
+      const client = await freshAt(db, state, variant);
+      try {
+        const inv = await runInventory(client);
+        check(`${variant}@${state}: inventaario ei muuta kantaa`, inv.unchanged, 'katalogi muuttui');
+        const scored = scoreInventory(parseInventory(inv.cell));
+        check(`${variant}@${state}: päätös ${decision}, seuraava ${next}`,
+          scored.decision === decision && scored.nextMigration === next,
+          JSON.stringify({ decision: scored.decision, next: scored.nextMigration, stops: scored.stops }));
+        // Myös koko taulukko liitettynä (sarkainerotettuna) antaa saman.
+        const tsv = inv.table.map(r => [r.nro, r.osio, r.tarkistus, r.arvo].join('\t')).join('\n');
+        const fromTable = scoreInventory(parseInventory(tsv));
+        check(`${variant}@${state}: taulukkosyöte = tiivistesyöte`,
+          fromTable.decision === scored.decision && fromTable.nextMigration === scored.nextMigration,
+          JSON.stringify(fromTable.stops));
+        if (fixtureDir && variant === 'text') {
+          fs.writeFileSync(path.join(fixtureDir, `state-${state}.json`), inv.cell + '\n');
+        }
+      } finally { await client.end(); await dropDatabase(db); }
+    }
+  }
+  // Keskeneräinen 0012 -> STOP.
+  {
+    const db = 'mv_rehearsal_inv_partial';
+    const client = await freshAt(db, '0011');
+    try {
+      await client.query('create table public.life_areas (id text primary key)');
+      const inv = await runInventory(client);
+      const scored = scoreInventory(parseInventory(inv.cell));
+      check('keskeneräinen 0012: STOP', scored.decision === 'STOP' && scored.facts.migrations['0012'] === 'partial',
+        JSON.stringify(scored));
+      if (fixtureDir) fs.writeFileSync(path.join(fixtureDir, 'state-0011-partial-0012.json'), inv.cell + '\n');
+    } finally { await client.end(); await dropDatabase(db); }
+  }
+  // Omistaja puuttuu (väärä projekti) -> STOP.
+  {
+    const db = 'mv_rehearsal_inv_noowner';
+    const client = await freshAt(db, '0008');
+    try {
+      await client.query(`alter table public.tasks disable trigger all`);
+      await client.query(`set session_replication_role = replica`);
+      await client.query(`delete from auth.users where id = '${OWNER}'`);
+      await client.query(`set session_replication_role = default`);
+      const inv = await runInventory(client);
+      const scored = scoreInventory(parseInventory(inv.cell));
+      check('omistaja puuttuu: STOP', scored.decision === 'STOP' && scored.facts.ownerPresent === false,
+        JSON.stringify(scored.stops));
+      if (fixtureDir) fs.writeFileSync(path.join(fixtureDir, 'state-0008-no-owner.json'), inv.cell + '\n');
+    } finally { await client.end(); await dropDatabase(db); }
+  }
+  return results;
+}
+
+// ---------------------------------------------------------------------
+// Esitarkistusmatriisi: jokainen preflight jokaisessa tilassa
+// ---------------------------------------------------------------------
+
+async function preflightScenario() {
+  const results = [];
+  const numbers = ['0009', '0010', '0011', '0012', '0013'];
+  for (const state of ['0007', '0008', '0009', '0010', '0011', '0012', '0013']) {
+    const db = `mv_rehearsal_pre_${state}`;
+    const client = await freshAt(db, state);
+    try {
+      for (const n of numbers) {
+        const out = await runVerify(client, `supabase/preflight/preflight_${n}.sql`);
+        const shouldPass = Number(state) === Number(n) - 1;
+        const passed = out.ok && out.failed.length === 0;
+        const pass = out.ok && passed === shouldPass;
+        results.push({ state, preflight: n, expected: shouldPass ? 'PASS' : 'FAIL', pass,
+                       failed: out.ok ? out.failed.map(r => r.check_name) : [out.error.message] });
+        if (!pass) {
+          fail('preflight', `preflight_${n} tilassa ${state}: odotus ${shouldPass ? 'PASS' : 'FAIL'}, `
+            + (out.ok ? `hylättyjä ${out.failed.length}: ${out.failed.map(r => r.check_name).join('; ')}` : out.error.message));
+        }
+      }
+    } finally { await client.end(); await dropDatabase(db); }
+  }
+  return results;
+}
+
+// ---------------------------------------------------------------------
 
 try {
+  if (want('preflight')) report.scenarios.preflight = await preflightScenario();
+  if (want('inventory')) {
+    const dir = args.fixtures ? String(args.fixtures) : null;
+    if (dir) fs.mkdirSync(dir, { recursive: true });
+    report.scenarios.inventory = await inventoryScenario(dir);
+  }
   for (const variant of ['text', 'typed']) {
     if (want(`upgrade:${variant}`) || (variant === 'text' && (want('rls') || want('lifecycle')))) {
       report.scenarios[`upgrade:${variant}`] = await upgradeScenario(variant);
@@ -547,6 +700,10 @@ for (const [name, value] of Object.entries(report.scenarios)) {
   } else if (name === 'lifecycle') {
     const vals = Object.entries(value).filter(([k]) => k !== 'userBRowsBeforeDelete');
     summary.push(`lifecycle: ${vals.filter(([, v]) => v === 'PASS').length}/${vals.length} PASS`);
+  } else if (name === 'preflight') {
+    summary.push(`preflight: ${value.filter(r => r.pass).length}/${value.length} odotetusti (PASS vain omassa tilassaan)`);
+  } else if (name === 'inventory') {
+    summary.push(`inventory: ${value.filter(r => r.pass).length}/${value.length} PASS`);
   } else if (name === 'failure') {
     summary.push(`failure: ${value.filter(r => r.pass).length}/${value.length} kaatui kiinni/odotetusti`);
   }
