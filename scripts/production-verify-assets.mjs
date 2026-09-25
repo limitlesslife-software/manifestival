@@ -139,7 +139,13 @@ tarkista(`CACHE_VERSION on ${cacheVersionOf(aalto)}`,
 const schema = await hae('/src/data/schema.js');
 tarkista('schema.js vastaa HTTP 200', schema.status === 200, `status ${schema.status}`);
 
-const portit = parseGates(schema.text);
+// allowMissing: tuotannossa oleva commit voi olla VANHEMPI kuin tämä
+// työkalu (esim. tuotanto aallossa C, työkalu tuntee aallot C–J). Portti,
+// jota tuotannon commit ei tunne, on kiinni — sama tulkinta kuin
+// julkaisumanifestissa. Ilman tätä uudempi haara ei voinut todentaa
+// vanhempaa tuotantoa lainkaan ("porttilohkoa ei voitu jäsentää").
+// Tuntematon YLIMÄÄRÄINEN portti kaatuu yhä (parseGates palauttaa null).
+const portit = parseGates(schema.text, { allowMissing: true });
 tarkista('schema.js:n porttilohko on luettavissa', Boolean(portit),
   portit ? '' : 'porttilohkoa ei voitu jäsentää');
 
