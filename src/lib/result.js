@@ -32,11 +32,38 @@ export class AppError extends Error {
     if (this.cause) {
       const c = this.cause;
       parts.push(String((c && c.message) || c));
-      if (c && c.details) parts.push(String(c.details));
+      if (c && c.details) parts.push(redactDbDetail(c.details));
       if (c && c.hint) parts.push(String(c.hint));
     }
     return parts.join(' | ');
   }
+}
+
+/**
+ * Poista käyttäjän arvot PostgreSQL:n virhetiedoista ennen lokitusta.
+ *
+ * PostgRESTin `details` sisältää rivin arvot: uniikkirikkomus
+ * "Key (user_id, name)=(<uuid>, <elämänalueen nimi>) already exists",
+ * tarkistusrikkomus "Failing row contains (… muistiinpano, pohdinta …)".
+ * Rakenne (sarakkeiden nimet, rajoite) säilyy diagnostiikkaa varten,
+ * arvot korvataan. Löydös yön Suunta-tietoturvakatselmoinnissa:
+ * console.error tulosti ne tuotannossakin.
+ */
+export function redactDbDetail(detail) {
+  return String(detail)
+    .replace(/\)=\((?:[^()]|\([^()]*\))*\)/g, ')=(…)')
+    .replace(/(Failing row contains )\(.*\)/g, '$1(…)');
+}
+
+/** Syyolio lokitukseen ilman käyttäjän arvoja. */
+function redactedCause(cause) {
+  if (!cause || typeof cause !== 'object') return cause ?? '';
+  const out = {};
+  for (const key of ['code', 'message', 'hint', 'status', 'name']) {
+    if (cause[key] !== undefined) out[key] = cause[key];
+  }
+  if (cause.details !== undefined) out.details = redactDbDetail(cause.details);
+  return out;
 }
 
 /** Onnistunut tulos. */
@@ -55,7 +82,7 @@ export function fail(userMessage, options = {}) {
  * Erotettu omaksi funktiokseen, jotta lokitus voidaan myöhemmin ohjata muualle.
  */
 export function logError(error) {
-  if (error instanceof AppError) console.error('Manifestival:', error.toDiagnostic(), error.cause ?? '');
+  if (error instanceof AppError) console.error('Manifestival:', error.toDiagnostic(), redactedCause(error.cause));
   else console.error('Manifestival:', error);
 }
 
