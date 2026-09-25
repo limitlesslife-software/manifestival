@@ -19,6 +19,7 @@ import {
   restoreLifeAreaInState,
   findLifeArea, upsertWeeklyCapacityInState, removeWeeklyCapacityFromState,
   addTimeEntryToState, removeTimeEntryFromState, replaceTimeEntryInState, upsertAlignmentReviewInState,
+  removeAlignmentReviewFromState,
   findGoal, findTask, findProject, findRoutine
 } from './state.js';
 import {
@@ -513,7 +514,12 @@ export async function saveWeeklyReview({
   upsertAlignmentReviewInState(review);
   const result = existing ? await alignmentReviewsRepo.update(review) : await alignmentReviewsRepo.insert(review);
   if (!result.ok) {
+    // Palautus MOLEMMISSA tapauksissa. Ennen korjausta epäonnistunut
+    // ENSIMMÄINEN tallennus jätti katsauksen tilaan, seuraava tallennus
+    // piti sitä olemassa olevana, päivitti nollaa riviä ja ilmoitti
+    // "tallennettu" — pohdinta katosi seuraavassa latauksessa.
     if (existing) upsertAlignmentReviewInState(existing);
+    else removeAlignmentReviewFromState(review.id);
     showError(result.error);
     return { ok: false };
   }

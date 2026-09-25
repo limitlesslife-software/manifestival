@@ -35,7 +35,7 @@ import {
   applySelectedAdjustments, previewSelectedAdjustments, compareWithPreviousWeek, recentTrends,
   currentDailyAlignment, explainSignalOptionally, pendingTimeEntryCount
 } from '../alignment.js';
-import { saveItemSettings, itemSettingsFor, currentTimer } from '../timeTracking.js';
+import { saveItemSettings, itemSettingsFor, currentTimer, newOperationId } from '../timeTracking.js';
 import { editTask, editRoutine } from '../actions.js';
 import { startTimerFor, openGeneralLog } from './timeLog.js';
 
@@ -196,6 +196,30 @@ function qualityActionsHtml(analysis) {
           + `${escapeHtml(QUALITY_ACTION_LABELS[issue.action])}</button>` : ''}
       </div>`).join('')}
   </div>`;
+}
+
+/**
+ * Suunnan kokoelmat, joiden haku epäonnistui. Epäonnistunut haku EI
+ * tyhjennä tilaa (actions.js applyLoadResult), mutta ENSIMMÄISELLÄ
+ * latauksella tila on tyhjä — ja ilman tätä näkymä sanoisi "elämänalueita
+ * ei ole määritelty", vaikka ne ovat tallessa kannassa. Käyttäjä voisi
+ * silloin luoda alueet uudelleen tai kirjata aikaa kahteen kertaan.
+ */
+const ALIGNMENT_DOMAINS = Object.freeze([
+  'lifeAreas', 'weeklyCapacities', 'timeEntries', 'alignmentReviews',
+  'runningTimers', 'alignmentItemSettings'
+]);
+
+export function alignmentLoadProblems(state = getState()) {
+  const status = state.dataLoadStatus || {};
+  return ALIGNMENT_DOMAINS.filter(domain => status[domain] && status[domain].ok === false);
+}
+
+function loadProblemHtml(problems) {
+  if (problems.length === 0) return '';
+  return '<p class="hint" role="alert"><strong>Osa Suunnan tiedoista ei latautunut.</strong> '
+    + 'Tallennettu tieto on tallessa, mutta tämä näkymä voi olla vajaa. Älä luo alueita '
+    + 'tai kirjaa aikaa uudelleen — päivitä, kun yhteys toimii.</p>';
 }
 
 function signalsHtml(analysis, areas) {
@@ -716,8 +740,12 @@ export function renderDirection() {
 
   setText('dirWeekLabel', weekLabel(analysis.weekStart));
   toggle('dirThisWeek', analysis.weekStart !== currentWeekStart());
-  el('dirPersistNote').innerHTML = persistNoteHtml();
-  el('dirSignals').innerHTML = signalsHtml(analysis, areas);
+  const problems = alignmentLoadProblems(state);
+  const areasUnknown = problems.includes('lifeAreas') && areas.length === 0;
+  el('dirPersistNote').innerHTML = loadProblemHtml(problems) + persistNoteHtml();
+  // Ei tyhjän tilan kehotusta ("aloita elämänalueista"), kun alueita ei
+  // saatu ladattua: niitä voi olla kannassa.
+  el('dirSignals').innerHTML = areasUnknown ? '' : signalsHtml(analysis, areas);
   const quality = maybe('dirQuality');
   if (quality) quality.innerHTML = areas.length > 0 ? qualityActionsHtml(analysis) : '';
   el('dirWeekSummary').innerHTML = weekSummaryHtml(analysis);
@@ -737,7 +765,7 @@ export function renderDirection() {
     unassignedSection.hidden = !unassignedOpen;
     if (unassignedOpen) el('dirUnassigned').innerHTML = unassignedHtml(analysis);
   }
-  el('dirAreaSuggestions').innerHTML = suggestionsHtml(areas);
+  el('dirAreaSuggestions').innerHTML = areasUnknown ? '' : suggestionsHtml(areas);
   el('dirAreasList').innerHTML = areasHtml(areas, analysis);
   el('dirGoalsList').innerHTML = goalsHtml(areas, state.goals);
 
@@ -800,6 +828,12 @@ export function renderTodayDirection() {
   const container = maybe('todayDirection');
   if (!container) return;
   const state = getState();
+  if (state.lifeAreas.length === 0 && alignmentLoadProblems(state).includes('lifeAreas')) {
+    container.innerHTML = `<div class="dir-today">
+      <div class="dir-today-title">Suunta</div>
+      <p class="dir-line" role="status">Suunnan tietoja ei voitu ladata. Ne ovat tallessa — päivitä, kun yhteys toimii.</p></div>`;
+    return;
+  }
   if (state.lifeAreas.length === 0) {
     container.innerHTML = `<div class="dir-today">
       <div class="dir-today-title">Suunta</div>
@@ -950,23 +984,47 @@ async function submitCapacity() {
   }
 }
 
+// Yksi kirjaus per lomakkeen täyttö. Kaksoisnapautus (tai uusinta
+// verkkovirheen jälkeen) käyttää SAMAA operaatiotunnistetta, jolloin
+// logTime ja kannan uniikkiavain (user_id, operation_id) tekevät siitä
+// yhden rivin. Tunniste vaihtuu vasta onnistuneen kirjauksen jälkeen.
+let timeFormOperation = null;
+let timeSubmitting = false;
+
+export function resetTimeFormForTests() {
+  timeFormOperation = null;
+  timeSubmitting = false;
+}
+
 async function submitTime() {
-  setError('dirTimeDateError', '');
-  setError('dirTimeMinutesError', '');
-  const result = await logTime({
-    entryDate: el('dirTimeDate').value || null,
-    minutes: Number(el('dirTimeMinutes').value),
-    lifeAreaId: el('dirTimeArea').value || null,
-    note: el('dirTimeNote').value || null
-  });
-  if (!result.ok) {
-    const errors = result.errors || {};
-    if (errors.entryDate) setError('dirTimeDateError', errors.entryDate);
-    if (errors.minutes) setError('dirTimeMinutesError', errors.minutes);
-    return;
+  if (timeSubmitting) return;
+  timeSubmitting = true;
+  const button = maybe('dirTimeSave');
+  if (button) button.disabled = true;
+  try {
+    setError('dirTimeDateError', '');
+    setError('dirTimeMinutesError', '');
+    if (!timeFormOperation) timeFormOperation = newOperationId();
+    const result = await logTime({
+      entryDate: el('dirTimeDate').value || null,
+      minutes: Number(el('dirTimeMinutes').value),
+      lifeAreaId: el('dirTimeArea').value || null,
+      note: el('dirTimeNote').value || null,
+      operationId: timeFormOperation
+    });
+    if (!result.ok) {
+      const errors = result.errors || {};
+      if (errors.entryDate) setError('dirTimeDateError', errors.entryDate);
+      if (errors.minutes) setError('dirTimeMinutesError', errors.minutes);
+      return;
+    }
+    timeFormOperation = null;
+    el('dirTimeMinutes').value = '';
+    el('dirTimeNote').value = '';
+  } finally {
+    timeSubmitting = false;
+    if (button) button.disabled = false;
   }
-  el('dirTimeMinutes').value = '';
-  el('dirTimeNote').value = '';
 }
 
 async function submitReview() {

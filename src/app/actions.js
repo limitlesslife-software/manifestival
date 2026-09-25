@@ -56,7 +56,8 @@ import {
   toTransaction as extractionToTransaction, toBill as extractionToBill
 } from '../domain/receipts.js';
 import { extractFromImage } from './receiptCapture.js';
-import { volatileFields } from '../data/schema.js';
+import { volatileFields, hasTable } from '../data/schema.js';
+import { loadOutbox } from '../data/timerStore.js';
 import {
   getState, findTask, addTaskToState, removeTaskFromState,
   replaceTaskInState, patchTaskInState, setTasks, setProfile,
@@ -90,7 +91,7 @@ import {
   loadPreferences as loadNotificationPreferences,
   clearPreferences as clearNotificationPreferences
 } from '../data/notificationPrefsRepo.js';
-import { sessionSnapshot, isSameSession } from '../data/session.js';
+import { sessionSnapshot, isSameSession, getUser } from '../data/session.js';
 import { showError, success, notify } from '../ui/toast.js';
 import { confirmDelete, confirmAction } from '../ui/confirm.js';
 import { logError } from '../lib/result.js';
@@ -263,7 +264,7 @@ export async function loadUserData() {
     // Suunta (0012).
     applyLoadResult('lifeAreas', areasResult, setLifeAreas),
     applyLoadResult('weeklyCapacities', capacitiesResult, setWeeklyCapacities),
-    applyLoadResult('timeEntries', entriesResult, setTimeEntries),
+    applyLoadResult('timeEntries', entriesResult, list => setTimeEntries(withPendingTimeEntries(list))),
     applyLoadResult('alignmentReviews', reviewsResult, setAlignmentReviews),
     // Suunta 2 (0013). Ajastin: kannan rivi voittaa laitteen kopion
     // (src/app/timeTracking.js adoptTimer), joten lataus vain asettaa listan.
@@ -276,10 +277,33 @@ export async function loadUserData() {
   // tusinaa toastia yhdellä verkkokatkolla olisi pahempi kuin hyödyllinen.
   // Yksi kooste riittää, ja se kertoo suoraan, ettei näkyvä tieto katoa.
   if (collectionsOk.includes(false)) {
-    notify('Osa tiedoista ei päivittynyt. Aiemmin ladattu tieto pysyy näkyvissä.', 6000);
+    // Sama viesti pätee myös ensimmäiseen lataukseen: tieto on tallessa
+    // kannassa, vaikka sitä ei nyt näy (aiempaa "pysyy näkyvissä" ei ole).
+    notify('Osa tiedoista ei latautunut. Mitään ei kadonnut — päivitä, kun yhteys toimii.', 6000);
   }
 
   return { tasksOk: tasksResult.ok, profileOk: profileResult.ok, discarded: false };
+}
+
+/**
+ * Palvelimen aikakirjaukset + tämän laitteen lähettämättömät (lähtökori).
+ *
+ * Sama periaate kuin tehtävien offline.overlay: ilman tätä offline-tilassa
+ * kirjattu aika katosi näkymästä sovelluksen uudelleenkäynnistyksessä
+ * (lataus korvasi tilan palvelimen listalla) — ja käyttäjä, joka kirjasi
+ * sen uudelleen, sai todellisen kaksoiskappaleen uudella
+ * operaatiotunnisteella. Kori on käyttäjäkohtainen (timerStore), ja jo
+ * palvelimella oleva operaatio ei tule kahdesti.
+ */
+export function withPendingTimeEntries(list, {
+  persistent = hasTable('timeEntries'), userId = getUser()?.id
+} = {}) {
+  const serverList = Array.isArray(list) ? list : [];
+  if (!persistent || !userId) return serverList;
+  const known = new Set(serverList.flatMap(entry => [entry.id, entry.operationId]).filter(Boolean));
+  const pending = loadOutbox(userId)
+    .filter(entry => !known.has(entry.id) && !known.has(entry.operationId));
+  return pending.length ? [...serverList, ...pending] : serverList;
 }
 
 // ----------------------------------------------------------------- tehtävät

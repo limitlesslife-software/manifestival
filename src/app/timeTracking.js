@@ -252,6 +252,7 @@ export async function stopTracking({ now = nowMs(), overrideMinutes = null } = {
     }
 
     const saved = [];
+    let queued = false;
     for (const entry of result.entries) {
       if (!isSameSession(session)) return { ok: false, code: 'timer.session_changed', entries: saved };
       const one = await logTime(entry, { silent: true });
@@ -263,12 +264,13 @@ export async function stopTracking({ now = nowMs(), overrideMinutes = null } = {
         return { ok: false, entries: saved, totalMinutes: result.totalMinutes };
       }
       saved.push(one.entry);
+      if (one.queued) queued = true;
     }
     if (!isSameSession(session)) return { ok: false, code: 'timer.session_changed', entries: saved };
     persistTimerLocally(null);
     await syncTimerToRepo('remove', timer);
     logEvent('alignment.timer_stopped', { minutes: result.totalMinutes, parts: saved.length });
-    return { ok: true, entries: saved, totalMinutes: result.totalMinutes };
+    return { ok: true, entries: saved, totalMinutes: result.totalMinutes, queued };
   })();
 
   try {

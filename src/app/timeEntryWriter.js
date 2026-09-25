@@ -107,8 +107,13 @@ export function createTimeEntryWriter({
         }
         rejected.push({ entry, error: result.error });
       }
-      saveOutbox(id, left);
-      return { sent, left: left.length, rejected, detached: detachedEntries };
+      // Kori luetaan UUDELLEEN ennen tallennusta: lähetyksen aikana
+      // (awaitien välissä) jonoon lisätty kirjaus ei ollut alkuperäisessä
+      // listassa, ja pelkkä saveOutbox(left) olisi pyyhkinyt sen.
+      const original = new Set(outbox.map(entry => entry.operationId));
+      const added = loadOutbox(id).filter(entry => !original.has(entry.operationId));
+      saveOutbox(id, [...left, ...added]);
+      return { sent, left: left.length + added.length, rejected, detached: detachedEntries };
     }
   };
 }
