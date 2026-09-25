@@ -3,7 +3,7 @@
   "originMain": "cf259d0ef755f7e875cc9cd9c15405eba632e408",
   "productBranch": {
     "ref": "feature/life-alignment-foundation",
-    "sha": "96f35fe3dca3c403ad4313ce62e6c83a78e5c455"
+    "sha": "b4e3cec68c66f4724e38a5a7ef2d11fad176202d"
   },
   "waves": [
     {
@@ -392,7 +392,7 @@
     },
     {
       "wave": "J",
-      "deployTarget": "7194f2e1e7588024da8206e9193776661f974904",
+      "deployTarget": "5df40b20cee4f35279a79888959d49c9af88bcc7",
       "ref": "rehearsal/wave-j-v1",
       "waveCommit": "e96942c296944b4ac1a86d96563f2a1370678d97",
       "parentWave": "I",
