@@ -241,6 +241,40 @@ const SCENARIOS = [
     return 'vahvistettu: ' + id + ' — dialogi: ' + message.split('\\n')[0];
   })()`],
 
+  // Löydös yön katselmoinnissa: "Muu"-kentässä oli min="1" step="5", jolloin
+  // selain hylkäsi 30 min (kelvolliset 1, 6, 11, ... 31) ja esti koko
+  // dialogin. Aiempi skenaario käytti pikavalintaa kenttä tyhjänä.
+  ['muu-kenttä: kirjoitettu 30 min kelpaa selaimelle ja kirjautuu', `(async () => {
+    const before = H.s().timeEntries.length;
+    H.click('#dirQuickLog');
+    const dialog = await H.waitFor(() => document.querySelector('#timeLogDialog[open]'), 'dialogi auki');
+    const tyo = H.s().lifeAreas.find(a => a.name === 'Työ');
+    H.fill('#timeLogArea', tyo.id);
+    H.fill('#timeLogMinutes', '30');
+    const input = document.querySelector('#timeLogMinutes');
+    if (!input.checkValidity()) throw new Error('selain hylkää 30 min: ' + input.validationMessage);
+    H.click('#timeLogDialog button[value="custom"]');
+    await H.waitFor(() => H.s().timeEntries.length === before + 1, 'kirjaus muu-kentästä');
+    const entry = H.s().timeEntries[H.s().timeEntries.length - 1];
+    if (entry.minutes !== 30 || entry.lifeAreaId !== tyo.id) throw new Error(JSON.stringify(entry));
+    if (dialog.open) throw new Error('dialogi jäi auki');
+    return '30 min kirjoitettuna kirjautui alueelle Työ; dialogi suljettu';
+  })()`],
+
+  ['kaksoisnapautus "Kirjaa aikaa": yksi kirjaus', `(async () => {
+    const before = H.s().timeEntries.length;
+    H.fill('#dirTimeDate', window.__e2e.todayIso());
+    H.fill('#dirTimeMinutes', '20');
+    const button = document.querySelector('#dirTimeSave');
+    button.click();
+    button.click();
+    await H.waitFor(() => H.s().timeEntries.length > before, 'kirjaus');
+    await new Promise(resolve => setTimeout(resolve, 300));
+    const added = H.s().timeEntries.length - before;
+    if (added !== 1) throw new Error('kaksoisnapautus loi ' + added + ' kirjausta');
+    return 'yksi 20 min kirjaus kahdesta napautuksesta';
+  })()`],
+
   ['saavutettavuus: jokaisella painikkeella ja kentällä on nimi', `(async () => {
     const problems = [];
     for (const button of document.querySelectorAll('#screen-direction button, #timerBar button')) {
