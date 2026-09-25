@@ -153,19 +153,21 @@ export function openTimeLogDialog(options) {
       ${introHtml}
       ${chooseArea ? areaSelectHtml() : ''}
       <div class="time-log-presets" role="group" aria-label="Kirjattava aika">
-        ${presets.map(preset => `<button type="submit" class="form-btn secondary time-log-preset" value="m:${preset.minutes}">
+        ${presets.map(preset => `<button type="submit" formnovalidate class="form-btn secondary time-log-preset" value="m:${preset.minutes}">
             ${escapeHtml(preset.label)}${preset.hint ? `<span class="time-log-hint">${escapeHtml(preset.hint)}</span>` : ''}
           </button>`).join('')}
       </div>
       <div class="time-log-custom">
         <label class="field-label" for="timeLogMinutes">Muu (minuuttia)</label>
-        <input type="number" id="timeLogMinutes" min="1" max="1440" step="5" inputmode="numeric">
+        <!-- step="1": step lasketaan min-arvosta, joten min="1" step="5" hyväksyi
+             vain 1, 6, 11, ... 26, 31 — tavallinen 30 min esti koko lomakkeen. -->
+        <input type="number" id="timeLogMinutes" min="1" max="1440" step="1" inputmode="numeric">
         <button type="submit" class="form-btn secondary" value="custom">Kirjaa</button>
       </div>
       ${offerMute ? `<label class="checkbox-row" for="timeLogMute"><input type="checkbox" id="timeLogMute"> Älä kysy tätä tällä laitteella</label>` : ''}
       <div class="confirm-actions">
-        <button type="submit" class="form-btn secondary" value="cancel">${escapeHtml(skipLabel)}</button>
-        ${allowTimer ? '<button type="submit" class="form-btn primary" value="timer">Aloita ajastin</button>' : ''}
+        <button type="submit" formnovalidate class="form-btn secondary" value="cancel">${escapeHtml(skipLabel)}</button>
+        ${allowTimer ? '<button type="submit" formnovalidate class="form-btn primary" value="timer">Aloita ajastin</button>' : ''}
       </div>
     </form>`;
 
@@ -240,9 +242,13 @@ function openStopReview(totalMinutes) {
       <p class="confirm-message">Ajastin on ollut käynnissä ${escapeHtml(formatMinutes(totalMinutes))}.
         Jos se unohtui päälle, korjaa kesto ennen kirjausta.</p>
       <label class="field-label" for="timeLogReviewMinutes">Kirjattava aika (minuuttia)</label>
-      <input type="number" id="timeLogReviewMinutes" min="1" max="10080" step="5" value="${escapeHtml(String(totalMinutes))}">
+      <!-- Ei ylärajaa eikä 5 min askelta: esitäytetty kesto on mikä tahansa
+           kokonaisluku, ja yli viikon unohtunut ajastin ylitti max-arvon —
+           silloin kumpikaan painike ei toiminut. Pitkä kesto pilkotaan
+           päiväkohtaisiin kirjauksiin (src/domain/timer.js). -->
+      <input type="number" id="timeLogReviewMinutes" min="1" step="1" value="${escapeHtml(String(totalMinutes))}">
       <div class="confirm-actions">
-        <button type="submit" class="form-btn secondary" value="cancel">Takaisin</button>
+        <button type="submit" formnovalidate class="form-btn secondary" value="cancel">Takaisin</button>
         <button type="submit" class="form-btn primary" value="confirm">Kirjaa</button>
       </div>
     </form>`;
@@ -271,7 +277,9 @@ export async function stopAndLog({ reviewFn = openStopReview } = {}) {
   if (result.ok && result.tooShort) {
     notify('Alle minuutin ajastusta ei kirjattu.', 3000);
   } else if (result.ok && !result.duplicate) {
-    announceLogged(result.totalMinutes);
+    // Ilman yhteyttä kirjaus on lähtökorissa: ei väitetä kirjatuksi ennen
+    // kuin se on kannassa.
+    announceLogged(result.totalMinutes, { queued: Boolean(result.queued) });
   }
   return result;
 }
