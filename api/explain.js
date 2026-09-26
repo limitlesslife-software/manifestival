@@ -36,6 +36,7 @@
 const { validateExplainRequest } = require('./_validateExplain.js');
 const { authenticate } = require('./_auth.js');
 const { checkRateLimit } = require('./_ratelimit.js');
+const { applyCors } = require('./_cors.js');
 
 const UPSTREAM_TIMEOUT_MS = 20000;
 const MODEL = 'claude-haiku-4-5-20251001';
@@ -65,6 +66,9 @@ Vastaa pelkalla selitystekstilla, ilman otsikoita, listoja tai koodilohkoja.`;
 }
 
 module.exports = async (req, res) => {
+  // 0. CORS: natiivikuoren esikysely ennen metoditarkistusta (api/_cors.js).
+  if (applyCors(req, res)) return;
+
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
     res.status(405).json({ error: 'Method not allowed' });

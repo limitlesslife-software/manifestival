@@ -179,21 +179,53 @@ test('remaining vähenee pyyntöjen myötä', () => {
 
 // -------------------------------------------------- päätepisteen rakenne
 
-test('parse.js kutsuu todennusta ja rajoitinta ennen Anthropicia', () => {
-  const source = fs.readFileSync(path.join(__dirname, '..', 'api', 'parse.js'), 'utf8');
-  const authIndex = source.indexOf('await authenticate(');
-  const rateIndex = source.indexOf('checkRateLimit(');
-  const anthropicIndex = source.indexOf('api.anthropic.com');
+// Tarkistukset käyvät läpi JOKAISEN api/-tiedoston. Kiinteä lista jäi
+// aiemmin jälkeen: explain, capture ja command lisättiin, mutta vain
+// parse.js oli testattu.
 
-  assert.ok(authIndex > -1, 'todennus puuttuu');
-  assert.ok(rateIndex > -1, 'rajoitin puuttuu');
-  assert.ok(authIndex < anthropicIndex, 'todennuksen pitää tapahtua ennen maksullista kutsua');
-  assert.ok(rateIndex < anthropicIndex, 'rajoituksen pitää tapahtua ennen maksullista kutsua');
+const API_DIR = path.join(__dirname, '..', 'api');
+const API_FILES = fs.readdirSync(API_DIR).filter(name => name.endsWith('.js')).sort();
+const ROUTE_FILES = API_FILES.filter(name => !name.startsWith('_'));
+const readApi = file => fs.readFileSync(path.join(API_DIR, file), 'utf8');
+/** Käsittelijän runko ilman kokonaisia kommenttirivejä. */
+function handlerBody(file) {
+  const source = readApi(file).replace(/^\s*\/\/.*$/gm, '');
+  const start = source.indexOf('module.exports = async');
+  assert.ok(start > -1, file + ': käsittelijää ei löytynyt');
+  return source.slice(start);
+}
+
+test('api/-hakemistossa ovat odotetut julkiset päätepisteet', () => {
+  for (const route of ['parse.js', 'extract.js', 'plan.js', 'capture.js', 'command.js', 'explain.js']) {
+    assert.ok(ROUTE_FILES.includes(route), 'päätepiste puuttuu: ' + route);
+  }
+});
+
+test('jokainen päätepiste: CORS, POST, todennus ja rajoitin ennen Anthropicia', () => {
+  for (const file of ROUTE_FILES) {
+    const body = handlerBody(file);
+    const corsIndex = body.indexOf('applyCors(req, res)');
+    const methodIndex = body.indexOf("req.method !== 'POST'");
+    const authIndex = body.indexOf('await authenticate(');
+    const rateIndex = body.indexOf('checkRateLimit(');
+    const anthropicIndex = body.indexOf('api.anthropic.com');
+
+    assert.ok(corsIndex > -1, file + ': CORS puuttuu');
+    assert.ok(methodIndex > -1, file + ': metoditarkistus puuttuu');
+    assert.ok(authIndex > -1, file + ': todennus puuttuu');
+    assert.ok(rateIndex > -1, file + ': rajoitin puuttuu');
+    assert.ok(anthropicIndex > -1, file + ': Anthropic-kutsua ei löytynyt');
+    assert.ok(corsIndex < methodIndex, file + ': esikysely pitää käsitellä ennen POST-tarkistusta');
+    assert.ok(methodIndex < authIndex, file + ': metodi ennen todennusta');
+    assert.ok(authIndex < anthropicIndex, file + ': todennuksen pitää tapahtua ennen maksullista kutsua');
+    assert.ok(rateIndex < anthropicIndex, file + ': rajoituksen pitää tapahtua ennen maksullista kutsua');
+    assert.ok(readApi(file).includes("require('./_cors.js')"), file + ': _cors.js puuttuu');
+  }
 });
 
 test('TURVA: palvelinkoodissa ei ole kovakoodattua Anthropic-avainta', () => {
-  for (const file of ['parse.js', '_auth.js', '_ratelimit.js', '_validate.js']) {
-    const source = fs.readFileSync(path.join(__dirname, '..', 'api', file), 'utf8');
+  for (const file of API_FILES) {
+    const source = readApi(file);
     assert.equal(/sk-ant-[A-Za-z0-9_-]{10}/.test(source), false, 'avain tiedostossa ' + file);
     assert.equal(source.includes('service_role'), false, 'service_role tiedostossa ' + file);
   }
@@ -201,8 +233,14 @@ test('TURVA: palvelinkoodissa ei ole kovakoodattua Anthropic-avainta', () => {
 
 test('apufunktiotiedostot eivät ole julkisia reittejä', () => {
   // Vercelissä api/-hakemiston alaviivalla alkavat tiedostot eivät muutu
-  // HTTP-päätepisteiksi. Tämä testi muistuttaa nimeämiskäytännöstä.
-  for (const file of ['_auth.js', '_ratelimit.js', '_validate.js']) {
-    assert.ok(file.startsWith('_'), 'apumoduulin nimen pitää alkaa alaviivalla: ' + file);
+  // HTTP-päätepisteiksi. Jokainen tiedosto, joka ei vie käsittelijää,
+  // on apumoduuli ja sen nimen pitää alkaa alaviivalla.
+  for (const file of API_FILES) {
+    const exported = require(path.join(API_DIR, file));
+    if (typeof exported !== 'function') {
+      assert.ok(file.startsWith('_'), 'apumoduulin nimen pitää alkaa alaviivalla: ' + file);
+    } else {
+      assert.equal(file.startsWith('_'), false, 'käsittelijä alaviivatiedostossa ei ole reitti: ' + file);
+    }
   }
 });

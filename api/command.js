@@ -42,6 +42,7 @@
 const { validateCommandRequest } = require('./_validateCommand.js');
 const { authenticate } = require('./_auth.js');
 const { checkRateLimit } = require('./_ratelimit.js');
+const { applyCors } = require('./_cors.js');
 
 /** Aikakatkaisu. Luokittelu on yksi olio, ei rakenne. */
 const UPSTREAM_TIMEOUT_MS = 15000;
@@ -145,6 +146,9 @@ function buildPrompt({ text, today, weekday }) {
 }
 
 module.exports = async (req, res) => {
+  // 0. CORS: natiivikuoren esikysely ennen metoditarkistusta (api/_cors.js).
+  if (applyCors(req, res)) return;
+
   // 1. Metodivalidointi
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');

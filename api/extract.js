@@ -40,6 +40,7 @@
 const { validateExtractRequest } = require('./_validateExtract.js');
 const { authenticate } = require('./_auth.js');
 const { checkRateLimit } = require('./_ratelimit.js');
+const { applyCors } = require('./_cors.js');
 
 /**
  * Aikakatkaisu. Pidempi kuin /api/parse:ssa, koska kuvan lukeminen
@@ -130,6 +131,9 @@ function buildPrompt({ subject, today }) {
 }
 
 module.exports = async (req, res) => {
+  // 0. CORS: natiivikuoren esikysely ennen metoditarkistusta (api/_cors.js).
+  if (applyCors(req, res)) return;
+
   // 1. Metodivalidointi
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');

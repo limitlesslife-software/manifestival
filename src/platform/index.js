@@ -53,7 +53,7 @@ const NOT_IMPLEMENTED = Object.freeze({
  *
  * Webissä sovellus tarjoillaan samasta originista kuin /api/parse, joten
  * suhteellinen polku riittää. Natiivikuoressa sivu ladataan laitteen omasta
- * tiedostojärjestelmästä (capacitor://localhost), jolloin suhteellinen polku
+ * tiedostojärjestelmästä (Android: https://localhost, api/_cors.js), jolloin suhteellinen polku
  * osuisi paikalliseen kuoreen eikä koskaan palvelimeen — puheohjaus
  * lakkaisi toimimasta hiljaa.
  */

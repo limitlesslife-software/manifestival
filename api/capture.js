@@ -37,6 +37,7 @@
 const { validateCaptureRequest } = require('./_validateCapture.js');
 const { authenticate } = require('./_auth.js');
 const { checkRateLimit } = require('./_ratelimit.js');
+const { applyCors } = require('./_cors.js');
 
 /**
  * Aikakatkaisu. Lyhyempi kuin suunnittelussa: luokittelu on yksi olio,
@@ -127,6 +128,9 @@ Vastaa VAIN JSON-objektilla, ei muuta tekstiä eikä koodilohkomerkintöjä:
 }
 
 module.exports = async (req, res) => {
+  // 0. CORS: natiivikuoren esikysely ennen metoditarkistusta (api/_cors.js).
+  if (applyCors(req, res)) return;
+
   // 1. Metodivalidointi
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
