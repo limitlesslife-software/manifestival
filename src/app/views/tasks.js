@@ -18,6 +18,9 @@ import { offline } from '../offline.js';
 import { renderInbox } from './inbox.js';
 import { renderReminders } from './reminders.js';
 import { renderTravel } from './travel.js';
+import { ESTIMATE_PRESETS } from '../../domain/alignmentPolicy.js';
+import { formatMinutes } from '../../domain/lifeArea.js';
+import { estimateQueueCount, openEstimateQueue } from './direction.js';
 
 /**
  * Osion painike ja lohko.
@@ -48,6 +51,14 @@ export function populateSelects() {
   for (const id of ['afPriority', 'vfPriority']) {
     const node = maybe(id);
     if (node) node.innerHTML = priorityOptions;
+  }
+
+  // Kestoarvion pikavalinnat (F11): samat kuin Suunnan arviojonossa.
+  // Valinta vain täyttää kentän; tallennus tapahtuu lomakkeen tallennuksella.
+  const presets = maybe('afDurationPresets');
+  if (presets) {
+    presets.innerHTML = ESTIMATE_PRESETS.map(minutes =>
+      `<button class="assist-btn" type="button" data-duration-preset="${minutes}">${escapeHtml(formatMinutes(minutes))}</button>`).join('');
   }
 }
 
@@ -148,7 +159,22 @@ export function renderTasks() {
   else if (segment === 'inbox') renderInbox();
   else if (segment === 'reminders') renderReminders();
   else if (segment === 'travel') renderTravel();
-  else renderList(el('tasksListContainer'), state.tasks);
+  else {
+    renderList(el('tasksListContainer'), state.tasks);
+    renderEstimateButton();
+  }
+}
+
+/**
+ * "Arvioi kestot (N)" (F4): näkyy vain, kun Suunnan arviojonossa on
+ * jotain (tämä ja ensi viikko, ei rästejä). Avaa jonon, ei pakota mitään.
+ */
+function renderEstimateButton() {
+  const button = maybe('tasksEstimateBtn');
+  if (!button) return;
+  const count = estimateQueueCount();
+  button.hidden = count === 0;
+  button.textContent = `Arvioi kestot (${count})`;
 }
 
 // ----------------------------------------------------------------- lomake
@@ -241,6 +267,8 @@ function syncDurationField() {
   input.title = hasRange
     ? 'Kesto lasketaan alku- ja loppuajasta'
     : 'Kesto minuutteina, jos tarkkaa kellonaikaa ei ole';
+  // Pikavalinnat piiloon, kun kesto johdetaan välistä: niitä ei voisi käyttää.
+  toggle('afDurationPresets', !hasRange, 'flex');
 
   // Väli on tosiasia, kestokenttä on arvio. Kun väli on olemassa,
   // kenttä näyttää välin — ei omaa vanhaa arvoaan.
@@ -402,6 +430,16 @@ export function initTaskForm() {
   }
 
   el('addRowBtn').addEventListener('click', openAddForm);
+  const estimateButton = maybe('tasksEstimateBtn');
+  if (estimateButton) estimateButton.addEventListener('click', () => openEstimateQueue());
+  const durationPresets = maybe('afDurationPresets');
+  if (durationPresets) {
+    durationPresets.addEventListener('click', event => {
+      const preset = event.target.closest('[data-duration-preset]');
+      if (!preset || el('afDuration').disabled) return;
+      el('afDuration').value = preset.dataset.durationPreset;
+    });
+  }
   el('afCancel').addEventListener('click', closeForm);
   el('afSave').addEventListener('click', submitForm);
   el('afDelete').addEventListener('click', removeCurrent);

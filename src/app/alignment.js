@@ -33,7 +33,7 @@ import { fmtISO, todayMidnight } from '../lib/datetime.js';
 import { logEvent } from '../lib/logger.js';
 import { showError, notify } from '../ui/toast.js';
 import { confirmAction } from '../ui/confirm.js';
-import { normalizeLifeArea, validateLifeArea, formatMinutes } from '../domain/lifeArea.js';
+import { normalizeLifeArea, validateLifeArea, formatMinutes, importanceChoiceError } from '../domain/lifeArea.js';
 import {
   normalizeWeeklyCapacity, validateWeeklyCapacity, capacityForWeek, weekStartOf, nextWeekStart
 } from '../domain/weeklyCapacity.js';
@@ -318,6 +318,9 @@ export function alignmentPersistence() {
 // ------------------------------------------------------ elämänalueet
 
 export async function createLifeArea(input) {
+  // Tärkeys on käyttäjän oma valinta: ei hiljaista oletusta (F7).
+  const importanceMissing = importanceChoiceError(input);
+  if (importanceMissing) return { ok: false, errors: { importance: importanceMissing } };
   const state = getState();
   const nextOrder = state.lifeAreas.reduce((max, area) => Math.max(max, area.sortOrder + 1), 0);
   // Luontihetki tilaan heti (kanta asettaa oman created_at-arvonsa, joka
@@ -843,6 +846,53 @@ export async function deleteTimeEntry(id) {
     return false;
   }
   return true;
+}
+
+/**
+ * Liitä kirjattu aika elämänalueeseen jälkikäteen (tai irrota: null).
+ *
+ * Ainoa muokattava kenttä on alue: minuutit, päivä ja lähde ovat
+ * kirjaushetken tosiasioita. Ilman tätä ajastimella "Ei aluetta"
+ * kirjattu aika jäi pysyvästi kohdistamattomaksi (F6).
+ *
+ * Kirjaus, joka odottaa vielä lähetystä (lähtökori tai kesken oleva
+ * tallennus), ei ole kannassa: päivitys osuisi nollaan riviin ja korin
+ * myöhempi lähetys palauttaisi vanhan arvon. Se liitetään vasta, kun se
+ * on tallentunut.
+ *
+ * @param {string} id
+ * @param {{lifeAreaId: string|null}} changes
+ * @returns {Promise<{ok: boolean, errors?: object, pending?: boolean, entry?: object}>}
+ */
+export async function editTimeEntry(id, changes = {}) {
+  const entry = getState().timeEntries.find(e => e.id === id);
+  if (!entry) return { ok: false, errors: { id: 'Kirjausta ei löytynyt.' } };
+  const unsupported = Object.keys(changes || {}).filter(key => key !== 'lifeAreaId');
+  if (unsupported.length > 0) return { ok: false, errors: { [unsupported[0]]: 'Vain alueen voi vaihtaa.' } };
+  const lifeAreaId = changes.lifeAreaId || null;
+  if (lifeAreaId && !findLifeArea(lifeAreaId)) return { ok: false, errors: { lifeAreaId: 'Aluetta ei löytynyt.' } };
+  if (entry.operationId && (inFlightOperations.has(entry.operationId) || pendingTimeEntryOperations().has(entry.operationId))) {
+    return { ok: false, pending: true, errors: { id: 'Kirjaus odottaa lähetystä. Liitä se alueeseen, kun se on tallentunut.' } };
+  }
+  if ((entry.lifeAreaId || null) === lifeAreaId) return { ok: true, entry };
+
+  const updated = normalizeTimeEntry({ ...entry, lifeAreaId });
+  const { valid, errors } = validateTimeEntry(updated);
+  if (!valid) return { ok: false, errors };
+
+  replaceTimeEntryInState(id, updated);
+  const session = sessionSnapshot();
+  const result = await timeEntriesRepo.update(updated);
+  // Käyttäjä vaihtui odotuksen aikana: tila kuuluu jo toiselle.
+  if (!isSameSession(session)) return { ok: false, sessionChanged: true };
+  if (!result.ok) {
+    // Palautus vain, jos kirjaus on yhä tilassa (poisto tai lataus ehti väliin).
+    if (getState().timeEntries.some(e => e.id === id)) replaceTimeEntryInState(id, entry);
+    showError(result.error);
+    return { ok: false };
+  }
+  logEvent('alignment.time_entry_assigned', { assigned: Boolean(lifeAreaId) });
+  return { ok: true, entry: updated };
 }
 
 // ------------------------------------------------------- katsaus

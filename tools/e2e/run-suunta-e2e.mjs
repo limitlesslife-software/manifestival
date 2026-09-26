@@ -10,8 +10,11 @@
 //     yritys tuotantoon kaataa ajon
 //   - profiili on projektin tmp/-hakemistossa ja poistetaan lopuksi
 //
-// Skenaariot: ensikäyttö (alue, tärkeys, tavoite, kapasiteetti),
-// ajastin (käynnistä, kello eteen, pysäytä), nopea kirjaus dialogista,
+// Skenaariot: aloitus (vaihe 1/7, ei mitään ennen tallennusta),
+// ensikäyttö (alue, tärkeys, tavoite, kapasiteetti), ajastin (alue
+// kysytään, käynnistä, kello eteen, pysäytä), nopea kirjaus dialogista,
+// Enter "Muu"-kentässä (oikea näppäily), kirjatun ajan alue jälkikäteen,
+// arviojono (yksi kortti, viiveellä heräävä seuraava),
 // kuormitus + energia, huomiotta jääminen, poikkeama, päivän kortti,
 // selitys (varapolku), viikkokatsaus, ehdotuksen esikatselu ja
 // ryhmävahvistus, mobiilileveys ilman vaakavieritystä, saavutettava nimi
@@ -130,7 +133,54 @@ window.H = {
 };
 true;`;
 
+// F2: aloituksen tarkistukset (ajetaan 360 px leveydellä, ks. SCENARIOS).
+const SETUP_SCENARIO = `(async () => {
+    const setup = H.el('#dirSetup');
+    if (setup.hidden || !H.text('#dirSetup').includes('Vaihe 1/7')) throw new Error('aloitus ei näy: ' + H.text('#dirSetup'));
+    if (getComputedStyle(H.el('#dirQuickActions')).display !== 'none') throw new Error('pikatoiminnot eivät väisty');
+    if (setup.querySelector('[data-setup="skip"]')) throw new Error('aluetta voi ohittaa');
+    H.click('#dirSetup [data-setup-draft="Perhe"]');
+    H.click('#dirSetup [data-setup-draft="Työ"]');
+    H.click('#dirSetup [data-setup="to-importance"]');
+    await H.waitFor(() => H.text('#dirSetup').includes('Vaihe 2/7'), 'vaihe 2');
+    if (setup.querySelector('input[type="radio"]:checked')) throw new Error('tärkeys valittu valmiiksi');
+    if (!H.el('#dirSetup [data-setup="save-areas"]').disabled) throw new Error('tallennus sallittu ilman tärkeyttä');
+    const problems = [];
+    for (const button of setup.querySelectorAll('button')) {
+      if (!(button.textContent.trim() || button.getAttribute('aria-label'))) problems.push('painike ilman nimeä');
+      if (button.getBoundingClientRect().height < 43.5) problems.push('alle 44 px: ' + button.textContent.trim());
+    }
+    for (const input of setup.querySelectorAll('input')) {
+      if (!input.closest('label') && !(input.id && document.querySelector('label[for="' + input.id + '"]'))) problems.push('kenttä ilman nimeä');
+    }
+    for (const label of setup.querySelectorAll('label.dir-setup-choice')) {
+      if (label.getBoundingClientRect().height < 43.5) problems.push('valinta alle 44 px');
+    }
+    if (problems.length) throw new Error(problems.slice(0, 4).join('; '));
+    if (document.documentElement.scrollWidth > window.innerWidth + 1) throw new Error('vaakavieritys aloituksessa');
+    if (H.s().lifeAreas.length !== 0) throw new Error('luonnos loi alueen');
+    H.click('#dirSetup [data-setup="back"]');
+    await H.waitFor(() => H.text('#dirSetup').includes('Vaihe 1/7'), 'takaisin vaiheeseen 1');
+    H.click('#dirSetup [data-setup-draft="Perhe"]');
+    H.click('#dirSetup [data-setup-draft="Työ"]');
+    return 'vaihe 1/7 ja 2/7 näkyvät, tärkeyttä ei valittu, ei alueita ennen tallennusta; '
+      + 'leveys ' + window.innerWidth + ' px, sivu ' + document.documentElement.scrollWidth + ' px';
+  })()`;
+
 const SCENARIOS = [
+  // F2: ilman alueita Suunta avautuu aloitukseen (vaihe 1/7) ja muu näkymä
+  // väistyy. Skenaario ei tallenna mitään: seuraava skenaario luo alueet
+  // tavallisella lomakkeella, joka toimii yhä (ohjelmallinen napautus).
+  // Ajetaan 360 px leveydellä: aloitus on puhelimen ensinäkymä.
+  ['aloitus: vaihe 1/7, muu Suunta väistyy, ohjaimet nimetty, mitään ei luoda ennen tallennusta (360 px)', async ({ evaluate, cdp }) => {
+    await cdp.send('Emulation.setDeviceMetricsOverride', { width: 360, height: 740, deviceScaleFactor: 3, mobile: true });
+    try {
+      return await evaluate(SETUP_SCENARIO);
+    } finally {
+      await cdp.send('Emulation.setDeviceMetricsOverride', { width: 412, height: 915, deviceScaleFactor: 2, mobile: true });
+    }
+  }],
+
   ['ensikäyttö: elämänalueet, tärkeys, tavoite ja kapasiteetti', `(async () => {
     H.click('#dirAddArea');
     H.fill('#dirAreaName', 'Perhe'); H.fill('#dirAreaImportance', '5'); H.fill('#dirAreaTarget', '10');
@@ -154,7 +204,13 @@ const SCENARIOS = [
   })()`],
 
   ['ajastin: käynnistä, 45 min kellossa, pysäytä -> ajastinkirjaus', `(async () => {
+    // F6: "Aloita ajanseuranta" kysyy alueen ennen käynnistystä ("Ei aluetta"
+    // on yhä sallittu, ja tämä skenaario käyttää sitä kuten ennenkin).
     H.click('#dirStartTimer');
+    const chooser = await H.waitFor(() => document.querySelector('#timeLogDialog[open]'), 'aluevalinta');
+    if (!chooser.querySelector('#timeLogArea')) throw new Error('aluevalinta puuttuu');
+    if (chooser.querySelector('.time-log-preset')) throw new Error('käynnistysdialogissa kirjausvalintoja');
+    H.click('#timeLogDialog button[value="timer"]');
     await H.waitFor(() => !H.el('#timerBar').hidden && H.text('#timerBar').includes('Käynnissä'), 'ajastinpalkki');
     window.__e2e.advance(45 * 60 * 1000);
     if (!H.text('#timerBar').includes('0:45')) throw new Error('palkki: ' + H.text('#timerBar'));
@@ -281,6 +337,32 @@ const SCENARIOS = [
     return '30 min kirjoitettuna kirjautui alueelle Työ; dialogi suljettu';
   })()`],
 
+  // CRIT-04: Enter tekstikentässä lähettää lomakkeen ENSIMMÄISELLÄ submit-
+  // painikkeella. Ennen se oli pikavalinta "15 min". Synteettinen
+  // KeyboardEvent ei laukaise implisiittistä lähetystä, joten Enter
+  // lähetetään oikeana näppäilynä CDP:n kautta.
+  ['näppäimistö: Enter "Muu"-kentässä kirjaa kirjoitetun arvon; alkufokus otsikossa', async ({ evaluate, cdp }) => {
+    const before = await evaluate(`(async () => {
+      H.click('#dirQuickLog');
+      await H.waitFor(() => document.querySelector('#timeLogDialog[open]'), 'dialogi auki');
+      const focused = document.activeElement && document.activeElement.id;
+      if (focused !== 'timeLogTitle') throw new Error('alkufokus: ' + focused);
+      H.el('#timeLogMinutes').focus();
+      return H.s().timeEntries.length;
+    })()`);
+    await cdp.send('Input.insertText', { text: '25' });
+    const enter = { key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 };
+    await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', text: '\r', ...enter });
+    await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', ...enter });
+    return evaluate(`(async () => {
+      await H.waitFor(() => H.s().timeEntries.length === ${before} + 1, 'kirjaus Enterillä');
+      const entry = H.s().timeEntries[H.s().timeEntries.length - 1];
+      if (entry.minutes !== 25) throw new Error('Enter kirjasi ' + entry.minutes + ' min');
+      if (document.querySelector('#timeLogDialog[open]')) throw new Error('dialogi jäi auki');
+      return 'Enter kirjasi kirjoitetut 25 min; alkufokus otsikossa, ei pikavalinnassa';
+    })()`);
+  }],
+
   ['kaksoisnapautus "Kirjaa aikaa": yksi kirjaus', `(async () => {
     const before = H.s().timeEntries.length;
     H.fill('#dirTimeDate', window.__e2e.todayIso());
@@ -293,6 +375,40 @@ const SCENARIOS = [
     const added = H.s().timeEntries.length - before;
     if (added !== 1) throw new Error('kaksoisnapautus loi ' + added + ' kirjausta');
     return 'yksi 20 min kirjaus kahdesta napautuksesta';
+  })()`],
+
+  ['kohdistus jälkikäteen (F6): alueeton kirjaus liitetään alueeseen listasta', `(async () => {
+    const select = await H.waitFor(() => document.querySelector('#dirTimeList select[data-time-area]'), 'liitä alueeseen');
+    const id = select.dataset.timeArea;
+    if (!document.querySelector('label[for="' + select.id + '"]')) throw new Error('valinnalla ei nimeä');
+    const tyo = H.s().lifeAreas.find(a => a.name === 'Työ');
+    const minutes = H.s().timeEntries.find(e => e.id === id).minutes;
+    H.fill('#dirTimeList select[data-time-area="' + id + '"]', tyo.id);
+    await H.waitFor(() => H.s().timeEntries.find(e => e.id === id).lifeAreaId === tyo.id, 'alue tallentui');
+    if (H.s().timeEntries.find(e => e.id === id).minutes !== minutes) throw new Error('minuutit muuttuivat');
+    return minutes + ' min kirjaus liitettiin alueeseen Työ';
+  })()`],
+
+  ['arviojono (F4): yksi kortti, seuraava herää viiveellä, ohitus ei kirjoita', `(async () => {
+    const today = window.__e2e.todayIso();
+    window.__e2e.setTasks([...H.s().tasks,
+      { id: 'q1', title: 'Arvioitava yksi', date: today, category: 'tyo' },
+      { id: 'q2', title: 'Arvioitava kaksi', date: today, category: 'tyo' }]);
+    H.click('#dirOpenEstimate');
+    await H.waitFor(() => document.querySelector('#dirEstimate [data-queue-card="task:q1"]'), 'kortti q1');
+    if (document.querySelectorAll('#dirEstimate [data-queue-card]').length !== 1) throw new Error('useampi kortti');
+    H.click('#dirEstimate [data-queue-estimate="task:q1"][data-minutes="30"]');
+    await H.waitFor(() => H.s().tasks.find(t => t.id === 'q1').durationMinutes === 30, 'arvio tallentui');
+    await H.waitFor(() => document.querySelector('#dirEstimate [data-queue-card="task:q2"]'), 'kortti q2');
+    const early = document.querySelector('#dirEstimate [data-queue-estimate="task:q2"][data-minutes="10"]');
+    if (!early.disabled) throw new Error('seuraava kortti heti napautettavissa (kaksoisnapautus)');
+    await H.waitFor(() => !document.querySelector('#dirEstimate [data-queue-estimate="task:q2"][data-minutes="10"]').disabled, 'kortti herää');
+    H.click('#dirEstimate [data-queue-skip="task:q2"]');
+    await H.waitFor(() => H.text('#dirEstimate').includes('Jonon asiat on käyty läpi'), 'jono läpi');
+    if (H.s().tasks.find(t => t.id === 'q2').durationMinutes !== null) throw new Error('ohitus kirjoitti');
+    H.click('#dirEstimate [data-queue-finish]');
+    await H.waitFor(() => H.el('#dirEstimateSection').hidden, 'osio kiinni');
+    return 'q1 = 30 min, q2 ohitettu kirjoittamatta; seuraavan kortin painikkeet heräsivät viiveellä';
   })()`],
 
   ['saavutettavuus: jokaisella painikkeella ja kentällä on nimi', `(async () => {
@@ -312,8 +428,13 @@ const SCENARIOS = [
 
 const MOBILE = `(async () => {
   window.__e2e.render();
+  // F6: käynnistys kysyy alueen ensin; dialogin leveys tarkistetaan samalla.
   H.click('#dirStartTimer');
+  const chooser = await H.waitFor(() => document.querySelector('#timeLogDialog[open]'), 'aluevalinta');
+  if (Math.round(chooser.getBoundingClientRect().width) > window.innerWidth) throw new Error('aluevalinta ei mahdu');
+  H.click('#timeLogDialog button[value="timer"]');
   await H.waitFor(() => !H.el('#timerBar').hidden, 'ajastin');
+  await H.waitFor(() => !document.querySelector('#timeLogDialog[open]'), 'aluevalinta kiinni');
   const widths = { page: document.documentElement.scrollWidth, viewport: window.innerWidth };
   H.click('#dirQuickLog');
   const dialog = await H.waitFor(() => document.querySelector('#timeLogDialog[open]'), 'dialogi');
@@ -388,7 +509,9 @@ async function main() {
 
     for (const [name, script] of SCENARIOS) {
       try {
-        results.push({ name, ok: true, detail: await evaluate(script) });
+        // Funktio-skenaario tarvitsee CDP:tä (oikeat näppäilyt); muut ajetaan sivulla.
+        const detail = typeof script === 'function' ? await script({ evaluate, cdp }) : await evaluate(script);
+        results.push({ name, ok: true, detail });
       } catch (error) {
         results.push({ name, ok: false, detail: error.message.split('\n')[0] });
       }

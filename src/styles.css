@@ -716,6 +716,56 @@ body.is-offline .offline-banner { display:block; }
 .time-log-custom input, .time-log-body select { font-family:'Manrope',sans-serif; font-size:14px; border:1px solid var(--border);
   border-radius:10px; padding:9px 11px; min-height:44px; flex:1 1 120px; box-sizing:border-box; max-width:100%; }
 .time-log-body select { width:100%; margin-bottom:8px; }
+.time-log-body .confirm-title:focus-visible { outline:2px solid var(--gold); outline-offset:2px; border-radius:6px; }
+
+/* ============================================================
+   SUUNNAN ALOITUS (F2) ja ARVIOJONO (F4).
+   Aloituksen ollessa auki muu Suunta väistyy; valinnat ovat oikeita
+   valintanappeja (näppäimistö, ruudunlukija), valinta näkyy myös merkkinä
+   eikä vain värinä. Kaikki kohteet vähintään 44 px; kapealla näytöllä
+   rivitys, ei vaakavieritystä.
+   ============================================================ */
+.dir-setup-active .dir-section:not(.dir-setup), .dir-setup-active #dirQuickActions { display:none; }
+.dir-setup { background:var(--cream-card); border:1px solid var(--border); border-radius:16px; padding:12px 14px; margin:8px 0 12px; }
+.dir-setup[hidden] { display:none; }
+.dir-setup-step { font-size:11px; font-weight:800; letter-spacing:.8px; text-transform:uppercase; color:var(--text-3); margin-bottom:4px; }
+.dir-setup-title { font-family:'Fraunces',serif; font-size:18px; font-weight:500; color:var(--forest); line-height:1.3; margin:2px 0 6px; overflow-wrap:anywhere; }
+.dir-setup-title:focus-visible, .dir-queue-title:focus-visible { outline:2px solid var(--gold); outline-offset:2px; border-radius:6px; }
+.dir-setup-body { margin-top:8px; }
+.dir-setup-fieldset { border:1px solid var(--border); border-radius:12px; padding:8px 10px 10px; margin:8px 0; min-width:0; }
+.dir-setup-fieldset legend { font-weight:700; color:var(--forest); font-size:13.5px; padding:0 4px; overflow-wrap:anywhere; }
+.dir-setup-choices { display:flex; flex-wrap:wrap; gap:6px; }
+.dir-setup-choice { display:flex; align-items:center; gap:6px; min-height:44px; padding:6px 10px; border:1px solid var(--border);
+  border-radius:10px; background:var(--cream); font-size:13px; color:var(--text-1); cursor:pointer; max-width:100%; }
+.dir-setup-choice:has(input:checked) { border-color:var(--forest); background:var(--sage-soft); font-weight:700; }
+.dir-setup-choice:focus-within { outline:2px solid var(--gold); outline-offset:2px; }
+.dir-setup-choice input { flex-shrink:0; width:18px; height:18px; }
+.dir-setup-chips { margin:6px 0 10px; }
+.dir-setup-chip[aria-pressed="true"] { border-color:var(--forest); background:var(--sage-soft); }
+.dir-setup-inline { display:flex; flex-wrap:wrap; gap:6px; align-items:stretch; margin-bottom:8px; }
+.dir-setup-inline input { flex:1 1 160px; min-width:0; }
+.dir-setup input[type="text"], .dir-setup input[type="number"], .dir-setup select { font-family:'Manrope',sans-serif; font-size:13.5px;
+  border:1px solid var(--border); border-radius:10px; padding:9px 11px; min-height:44px; box-sizing:border-box; max-width:100%;
+  background:var(--cream); color:var(--text-1); }
+.dir-setup select { width:100%; }
+.dir-setup-nav { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; }
+.dir-setup-nav .assist-btn { flex:1 1 110px; }
+.dir-setup-dismiss { appearance:none; -webkit-appearance:none; background:none; border:none; min-height:44px; padding:0 4px; margin-top:6px;
+  color:var(--forest); text-decoration:underline; cursor:pointer; font-family:'Manrope',sans-serif; font-size:12.5px; font-weight:700; }
+.dir-setup-dismiss:focus-visible { outline:2px solid var(--gold); outline-offset:2px; border-radius:6px; }
+.dir-setup-error { display:block; margin-top:6px; }
+.dir-setup-list { padding-left:18px; font-size:13px; line-height:1.6; }
+.dir-legacy { color:var(--text-2); }
+.dir-queue-title { margin:4px 0; }
+.dir-queue-custom { align-items:flex-end; }
+.dir-queue-done { list-style:none; margin:8px 0; padding:0; }
+.dir-queue-done li { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:6px; font-size:12.5px;
+  padding:4px 0; border-bottom:1px solid var(--border); }
+.dir-queue-done li span { min-width:0; overflow-wrap:anywhere; }
+.tasks-estimate-btn { margin-bottom:10px; }
+.dir-time-assign { margin-top:6px; }
+.dir-time-assign select { font-family:'Manrope',sans-serif; font-size:13.5px; border:1px solid var(--border); border-radius:10px;
+  padding:9px 11px; min-height:44px; width:100%; box-sizing:border-box; background:var(--cream-card); }
 
 @media (prefers-reduced-motion:reduce) {
   .fab-ring, .now-pulse-ring, .voice-orb::before { animation:none; }

@@ -37,7 +37,12 @@ test('E2E: valjas ei lataa supabase-js:ää eikä kirjaudu oikeasti', () => {
 
 test('E2E: skenaariot kattavat pyydetyt polut', () => {
   for (const scenario of ['ensikäyttö', 'ajastin', 'nopea kirjaus', 'kuormitus ja energia', 'huomiotta jääminen',
-    'viikkokatsaus', 'esikatselu', 'mobiili 360 px', 'saavutettavuus']) {
+    'viikkokatsaus', 'esikatselu', 'mobiili 360 px', 'saavutettavuus',
+    // Day 1: aloitus (F2), Enter "Muu"-kentässä (CRIT-04), kirjatun ajan
+    // alue jälkikäteen (F6) ja arviojono (F4).
+    'aloitus: vaihe 1/7', 'näppäimistö: Enter', 'kohdistus jälkikäteen', 'arviojono']) {
     assert.ok(RUNNER.includes(scenario), scenario);
   }
+  // Oikea Enter-näppäily (synteettinen tapahtuma ei laukaise lomakkeen lähetystä).
+  assert.match(RUNNER, /Input\.dispatchKeyEvent/);
 });

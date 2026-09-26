@@ -170,18 +170,48 @@ test('elämänalueen luonti, tärkeyden muokkaus ja aikatavoite', async (t) => {
 });
 
 test('elämänalueen virheet: tyhjä nimi, kaksoiskappale, kategoria toisella alueella', async () => {
-  assert.equal((await createLifeArea({ name: '' })).errors.name !== undefined, true);
-  await createLifeArea({ name: 'Työ', categoryKey: 'tyo' });
-  assert.ok((await createLifeArea({ name: 'työ' })).errors.name);
-  assert.ok((await createLifeArea({ name: 'Ura', categoryKey: 'tyo' })).errors.categoryKey);
+  // Tärkeys annetaan aina: käyttäjän luoma alue ilman sitä hylätään (F7).
+  assert.equal((await createLifeArea({ name: '', importance: 3 })).errors.name !== undefined, true);
+  await createLifeArea({ name: 'Työ', importance: 3, categoryKey: 'tyo' });
+  assert.ok((await createLifeArea({ name: 'työ', importance: 3 })).errors.name);
+  assert.ok((await createLifeArea({ name: 'Ura', importance: 3, categoryKey: 'tyo' })).errors.categoryKey);
   assert.equal(getState().lifeAreas.length, 1);
+});
+
+test('F7: uuden alueen tärkeyttä ei valita puolesta — puuttuva tärkeys hylätään, luettu rivi saa oletuksen', async () => {
+  const missing = await createLifeArea({ name: 'Perhe' });
+  assert.equal(missing.ok, false);
+  assert.equal(missing.errors.importance, 'Valitse kuinka tärkeä alue on.');
+  assert.equal((await createLifeArea({ name: 'Perhe', importance: '' })).errors.importance, 'Valitse kuinka tärkeä alue on.');
+  assert.equal(getState().lifeAreas.length, 0, 'mitään ei luotu');
+  // Kannasta luettu rivi ilman arvoa: normalisointi antaa yhä oletuksen.
+  assert.equal(lifeAreasRepo.mapping.fromRow({ id: 'x', name: 'Vanha' }).importance, 3);
+});
+
+test('F7: lomake — uusi alue ilman tärkeyttä ei tallennu, virhe kerrotaan; muokkaus näyttää oman arvon', async (t) => {
+  freezeLocalDate(t, THURSDAY);
+  initDirection();
+  openAreaForm(null, { name: 'Perhe', categoryKey: 'perhe' });
+  assert.equal(document.getElementById('dirAreaImportance').value, '', 'ei valmiiksi valittua tärkeyttä');
+  document.getElementById('dirAreaSave').dispatch('click');
+  for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve));
+  const error = document.getElementById('dirAreaImportanceError');
+  assert.equal(error.textContent, 'Valitse kuinka tärkeä alue on.');
+  assert.equal(error.style.display, 'block');
+  assert.equal(getState().lifeAreas.length, 0);
+  const { area } = await createLifeArea({ name: 'Työ', importance: 4 });
+  openAreaForm(area.id);
+  assert.equal(document.getElementById('dirAreaImportance').value, '4');
+  const html = read('index.html');
+  assert.match(html, /<option value="" selected disabled>Valitse tärkeys<\/option>/);
+  assert.doesNotMatch(html, /<option value="3" selected>/);
 });
 
 test('tallennusvirhe perutaan: alue ei jää tilaan', async () => {
   const original = lifeAreasRepo.insert;
   lifeAreasRepo.insert = async () => ({ ok: false, error: 'Tallennus ei onnistunut.' });
   try {
-    const result = await createLifeArea({ name: 'Perhe' });
+    const result = await createLifeArea({ name: 'Perhe', importance: 4 });
     assert.equal(result.ok, false);
     assert.equal(getState().lifeAreas.length, 0);
   } finally {

@@ -54,6 +54,8 @@ export const QUALITY_ACTION = Object.freeze({
   SET_CAPACITY: 'set_capacity',
   ESTIMATE: 'estimate',
   ASSIGN: 'assign',
+  /** Kirjattu aika ilman aluetta: näytä kirjaukset, joille alueen voi valita. */
+  ASSIGN_TIME: 'assign_time',
   LOG_TIME: 'log_time',
   RATE_ENERGY: 'rate_energy'
 });
@@ -64,6 +66,7 @@ export const QUALITY_ACTION_LABELS = Object.freeze({
   set_capacity: 'Aseta kapasiteetti',
   estimate: 'Arvioi tehtäviä',
   assign: 'Kohdista luokittelemattomat',
+  assign_time: 'Kohdista kirjattu aika',
   log_time: 'Kirjaa aikaa',
   rate_energy: 'Arvioi kuormittavuus'
 });
@@ -142,7 +145,7 @@ export function qualityIssues(analysis) {
   } else if (Number.isFinite(quality.actualAssignedPercent)
       && quality.actualAssignedPercent < QUALITY_RULES.ACTUAL_ASSIGNED_WARN * 100) {
     issues.push({
-      code: 'unassigned_actual', percent: quality.actualAssignedPercent, action: QUALITY_ACTION.ASSIGN,
+      code: 'unassigned_actual', percent: quality.actualAssignedPercent, action: QUALITY_ACTION.ASSIGN_TIME,
       text: `Vain ${quality.actualAssignedPercent} % kirjatusta ajasta on yhdistetty elämänalueisiin.`
     });
   }

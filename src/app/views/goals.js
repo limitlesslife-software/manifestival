@@ -20,6 +20,7 @@ import {
   GOALS_SEGMENTS
 } from '../state.js';
 import { volatileGoalFields, columnGateOpen } from '../../data/schema.js';
+import { compareLifeAreas } from '../../domain/lifeArea.js';
 import { formatNumber as formatMetricNumber } from '../../domain/goalTarget.js';
 import { renderGoalDetail } from './goalDetail.js';
 import { renderPlanning } from './planning.js';
@@ -337,12 +338,38 @@ function syncProgressMode() {
   group.style.display = select.value === PROGRESS_MODE.MANUAL ? 'block' : 'none';
 }
 
+/**
+ * Suunnan elämänalue tavoitteelle (F8). Kategoria ja elämänalue ovat eri
+ * asioita: kategoria on tehtävien luokka, alue käyttäjän oma määritelmä
+ * siitä mikä on tärkeää. Käytössä olevat alueet ensin. Nykyinen alue, jota
+ * ei ole tilassa (lataus epäonnistui), pidetään valittuna: muuten tallennus
+ * katkaisisi liitoksen huomaamatta.
+ */
+function fillLifeAreaSelect(goal) {
+  const select = maybe('gfLifeArea');
+  if (!select) return;
+  const areas = [...getState().lifeAreas].sort(compareLifeAreas);
+  const current = goal && goal.lifeAreaId ? goal.lifeAreaId : '';
+  let options = '<option value="">Ei elämänaluetta</option>'
+    + areas.map(area => `<option value="${escapeHtml(area.id)}">${escapeHtml(area.name)}`
+      + `${area.active ? '' : ' (pois käytöstä)'}</option>`).join('');
+  if (current && !areas.some(area => area.id === current)) {
+    options += `<option value="${escapeHtml(current)}">Nykyinen alue (ei näkyvissä)</option>`;
+  }
+  select.innerHTML = options;
+  select.value = current;
+  const hint = maybe('gfLifeAreaHint');
+  if (hint) hint.hidden = areas.length > 0;
+}
+
 function readForm() {
   const manual = el('gfManualProgress').value;
+  const lifeArea = maybe('gfLifeArea');
   return {
     title: el('gfTitle').value.trim(),
     description: el('gfDescription').value.trim() || null,
     category: el('gfCategory').value,
+    ...(lifeArea ? { lifeAreaId: lifeArea.value || null } : {}),
     priority: el('gfPriority').value,
     status: el('gfStatus').value,
     targetDate: el('gfTargetDate').value || null,
@@ -366,6 +393,7 @@ function fillForm(goal) {
   el('gfTitle').value = goal ? goal.title : '';
   el('gfDescription').value = goal && goal.description ? goal.description : '';
   el('gfCategory').value = goal ? goal.category : 'kehitys';
+  fillLifeAreaSelect(goal);
   el('gfPriority').value = goal ? goal.priority : 'normaali';
   fillStatusSelect(goal ? goal.status : null);
   el('gfStatus').value = goal ? goal.status : GOAL_STATUS.ACTIVE;

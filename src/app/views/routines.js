@@ -15,7 +15,8 @@ import {
 } from '../../domain/routine.js';
 import { dayGroupLabel } from '../../domain/week.js';
 import { el, maybe, setText, toggle, setBusy, singleFlight, focus } from '../../ui/dom.js';
-import { getState, findRoutine, setEditingRoutineId } from '../state.js';
+import { getState, findRoutine, findGoal, setEditingRoutineId } from '../state.js';
+import { goalStatusLabel } from '../../domain/goal.js';
 import { createRoutine, editRoutine, deleteRoutine, toggleRoutineActive } from '../actions.js';
 
 const WEEKDAY_ORDER = [1, 2, 3, 4, 5, 6, 7];
@@ -221,10 +222,34 @@ function writeWeekdays(weekdays) {
  *   kytkintä käytössäololle — se on listassa — joten muokkaus ei saa
  *   herättää pois kytkettyä rutiinia takaisin henkiin.
  */
+/**
+ * Rutiinin tavoite (F11): sama valikkomalli kuin projektilla. Vain avoimet
+ * tavoitteet; jo liitetty suljettu tavoite lisätään takaisin, jottei
+ * tallennus katkaise liitosta huomaamatta. Tavoitteen kautta rutiinin aika
+ * lasketaan tavoitteen elämänalueeseen (src/domain/alignment.js).
+ */
+function fillGoalPicker(selectedGoalId) {
+  const picker = maybe('rfGoal');
+  if (!picker) return;
+  const open = getState().goals
+    .filter(goal => ['active', 'paused', 'maintenance'].includes(goal.status))
+    .sort((a, b) => String(a.title).localeCompare(String(b.title), 'fi'));
+  let options = '<option value="">Ei tavoitetta</option>'
+    + open.map(goal => `<option value="${escapeHtml(goal.id)}">${escapeHtml(goal.title)}</option>`).join('');
+  if (selectedGoalId && !open.some(goal => goal.id === selectedGoalId)) {
+    const goal = findGoal(selectedGoalId);
+    if (goal) options += `<option value="${escapeHtml(goal.id)}">${escapeHtml(goal.title)} (${escapeHtml(goalStatusLabel(goal.status))})</option>`;
+  }
+  picker.innerHTML = options;
+  picker.value = selectedGoalId || '';
+}
+
 function readForm(active) {
   const duration = el('rfDuration').value;
   const time = el('rfTime').value;
+  const goalPicker = maybe('rfGoal');
   return {
+    ...(goalPicker ? { goalId: goalPicker.value || null } : {}),
     title: el('rfTitle').value.trim(),
     description: el('rfDescription').value.trim() || null,
     recurrence: { type: el('rfRecurrence').value, weekdays: readWeekdays() },
@@ -251,6 +276,7 @@ function fillForm(routine) {
   el('rfFlexible').checked = routine ? routine.scheduling === ROUTINE_SCHEDULING.FLEXIBLE : false;
   el('rfStartDate').value = routine && routine.startDate ? routine.startDate : '';
   el('rfEndDate').value = routine && routine.endDate ? routine.endDate : '';
+  fillGoalPicker(routine ? routine.goalId : null);
   syncWeekdayVisibility();
   const energy = maybe('rfEnergy');
   if (energy) {

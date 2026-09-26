@@ -24,7 +24,7 @@
 import { el, maybe, toggle, setText, focus } from '../../ui/dom.js';
 import { escapeHtml, formatShortDate } from '../../lib/format.js';
 import {
-  getState, findGoal, findMilestone, setOpenGoalId, setEditingMilestoneId
+  getState, findGoal, findMilestone, setOpenGoalId, setEditingMilestoneId, findLifeArea
 } from '../state.js';
 import { goalStatusLabel, tasksForGoal, projectsForGoal } from '../../domain/goal.js';
 import {
@@ -116,9 +116,16 @@ export function renderGoalDetail() {
   const kuvaus = goal.description
     ? `<p class="hint">${escapeHtml(goal.description)}</p>` : '';
 
+  // Suunnan elämänalue näkyy otsikon alla (F8): muuten liitos jäi näkymättä
+  // kaikkialla muualla kuin Suunnassa.
+  const area = goal.lifeAreaId ? findLifeArea(goal.lifeAreaId) : null;
+  const alue = `<p class="hint goal-life-area">Elämänalue: ${area
+    ? escapeHtml(area.name) : 'ei valittu'}</p>`;
+
   container.innerHTML = `
     <div class="eyebrow">TAVOITE</div>
     <h2 class="title" style="margin-bottom:6px;">${escapeHtml(goal.title)}</h2>
+    ${alue}
     ${kuvaus}
 
     ${renderProgress(goal, progress, context)}

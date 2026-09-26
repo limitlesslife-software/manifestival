@@ -20,7 +20,11 @@ import {
 } from '../../domain/lifeArea.js';
 import { weekDates, weekStartOf, capacityWarnings, capacityForWeek } from '../../domain/weeklyCapacity.js';
 import { entriesInRange } from '../../domain/timeEntry.js';
-import { SIGNAL, SEVERITY, SEVERITY_LABELS, QUALITY, TRACKING } from '../../domain/alignment.js';
+import {
+  SIGNAL, SEVERITY, SEVERITY_LABELS, QUALITY, TRACKING, buildAttributionIndex, areaForTimeEntry
+} from '../../domain/alignment.js';
+import { estimateCandidates, ESTIMATE_BUCKET_LABELS } from '../../domain/estimateQueue.js';
+import { categoryImpact } from '../../domain/alignmentSetup.js';
 import {
   explainSignal, REVIEW_QUESTIONS, ADJUSTMENT, REFLECTION_CODES, NON_WRITING_ADJUSTMENTS,
   ADJUSTMENT_NAVIGATION, BASIS_LABELS, timeSourceSplit
@@ -32,6 +36,7 @@ import {
 import { POLICY_VERSIONS, ESTIMATE_PRESETS } from '../../domain/alignmentPolicy.js';
 import { energyDemandLabel } from '../../domain/alignmentItemSettings.js';
 import { addDaysIso } from '../../domain/fiTemporal.js';
+import { durationOf } from '../../domain/task.js';
 import {
   analyzeCurrentWeek, currentProposals, currentWeekStart, alignmentPersistence,
   createLifeArea, editLifeArea, deleteLifeArea, assignGoalToLifeArea,
@@ -39,11 +44,15 @@ import {
   applySelectedAdjustments, previewSelectedAdjustments, compareWithPreviousWeek, recentTrends,
   currentDailyAlignment, explainSignalOptionally, aiExplanationAvailable, pendingTimeEntryCount,
   pendingTimeEntryOperations, isAdjustmentDone, failedTimeEntries, failedTimeEntryOperations,
-  retryFailedTimeEntries, discardFailedTimeEntries, analysisLoadProblems
+  retryFailedTimeEntries, discardFailedTimeEntries, analysisLoadProblems, editTimeEntry, clockNow
 } from '../alignment.js';
 import { saveItemSettings, itemSettingsFor, currentTimer, newOperationId } from '../timeTracking.js';
 import { editTask, editRoutine } from '../actions.js';
-import { startTimerFor, openGeneralLog } from './timeLog.js';
+import { openGeneralLog, openTimerChooser } from './timeLog.js';
+import {
+  renderDirectionSetup, initDirectionSetup, resetDirectionSetup, openDirectionSetup,
+  dismissDirectionSetup, currentLegacySummary, legacyNoticeText
+} from './directionSetup.js';
 
 /** Näytettävä viikko (maanantai). null = tämä viikko. Näkymän oma tila. */
 let viewWeek = null;
@@ -68,6 +77,20 @@ let estimateMode = 'duration';
 let unassignedOpen = false;
 /** Tällä kertaa ohitetut luokittelemattomat (ei tallenneta: ei nalkutusta, ei päätöstä). */
 let skippedUnassigned = new Set();
+/**
+ * Arviojono (F4). Jono KIINNITETÄÄN avattaessa: uudelleenpiirto (joka
+ * tallennuksen jälkeen) ei vaihda järjestystä eikä tuo uutta asiaa juuri
+ * napautetun kohdalle. Aktiivinen kortti on jonon ensimmäinen asia, jota
+ * ei ole arvioitu tai ohitettu.
+ *
+ * { scope, weekStart, items, done: Map(avain -> {minutes, previous}),
+ *   skipped: Set, saving, armed, customOpen, approximate, overdueAdded }
+ */
+let estimateQueue = null;
+/** Seuraavan kortin painikkeet heräävät vasta tämän jälkeen (kaksoisnapautus). */
+export const ESTIMATE_REARM_MS = 300;
+/** Toteuma-lista vain alueettomiin kirjauksiin ("Kohdista kirjattu aika"). */
+let timeListUnassignedOnly = false;
 /** Havaintojen selitykset: `kind:areaId` -> { source, text }. */
 let explanations = new Map();
 /** Kesken olevat selityshaut: painike pysyy estettynä uudelleenrenderöinnin yli. */
@@ -453,6 +476,13 @@ function weekSummaryHtml(analysis) {
     parts.push(`<p class="dir-line dir-unknown">${countOf(doneUnknown, 'valmiiksi merkitty', 'valmiiksi merkittyä')} `
       + 'ilman arviota (ei lasketa kuormaan).</p>');
   }
+  // Rästit eivät kuulu viikon suunnitelmaan (päivätty ennen viikkoa):
+  // kerrotaan, ettei tyhjältä näyttävä viikko ole koko totuus (F9).
+  const overdue = analysis.weekStart === currentWeekStart() ? currentLegacySummary().overdueOpen : 0;
+  if (overdue > 0) {
+    parts.push(`<p class="dir-line dir-unknown">${countOf(overdue, 'rästissä oleva avoin tehtävä ei ole',
+      'rästissä olevaa avointa tehtävää ei ole')} tämän viikon suunnitelmassa.</p>`);
+  }
   parts.push(actual.entryCount > 0
     ? `<p class="dir-line">Kirjattu toteuma ${escapeHtml(hours(actual.minutes))}, ${actual.daysWithEntries} päivänä.</p>`
     : '<p class="dir-line">Toteutunutta aikaa ei ole kirjattu tälle viikolle.</p>');
@@ -553,44 +583,311 @@ function energyRateHtml(analysis) {
     + (rest > 0 ? `<p class="hint">+ ${countOf(rest, 'asia', 'asiaa')} lisää.</p>` : '');
 }
 
-/** Arvioimattomat viikon asiat: nopea karkea arvio, ei pakotettua tarkkuutta. */
-function estimateHtml(analysis) {
-  if (estimateMode === 'energy') return energyRateHtml(analysis);
-  // Rutiinin esiintymät ovat samaa sääntöä: arvio annetaan kerran rutiinille.
-  const seenRoutines = new Set();
-  const items = analysis.items.filter(item => item.minutes === null && !item.completed).filter(item => {
-    if (item.kind !== 'routine') return true;
-    if (seenRoutines.has(item.routineId)) return false;
-    seenRoutines.add(item.routineId);
-    return true;
+// ------------------------------------------------ arviojono (F4)
+//
+// Yksi kortti kerrallaan, järjestys src/domain/estimateQueue.js:stä
+// (tänään -> muu viikko -> ensi viikko; rästit vain pyydettäessä).
+// Painikkeet ovat pois käytöstä tallennuksen ajan ja heräävät seuraavalla
+// kortilla vasta ESTIMATE_REARM_MS jälkeen: nopea toinen napautus ei
+// arvioi asiaa, jota käyttäjä ei ehtinyt lukea. "Ohita" ei tallenna
+// mitään, eikä ohitusta muisteta istunnon yli (ei nalkutusta). Jono ei
+// koskaan vaadi arvioimaan kaikkea.
+
+function queueCandidates({ weekStart, includeNextWeek, includeOverdue = false }) {
+  const state = getState();
+  return estimateCandidates({
+    tasks: state.tasks, routines: state.routines, exceptions: state.routineExceptions,
+    todayIso: clockNow().todayIso, weekStart, includeNextWeek, includeOverdue
   });
-  if (items.length === 0) {
-    return '<div class="assist-empty">Kaikilla tämän viikon asioilla on kestoarvio.</div>';
+}
+
+function startEstimateQueue({ scope, weekStart, includeNextWeek }) {
+  estimateQueue = {
+    scope, weekStart, includeNextWeek,
+    items: queueCandidates({ weekStart, includeNextWeek }),
+    done: new Map(), skipped: new Set(), saving: false, savingKey: null, armed: true,
+    customOpen: false, customValue: '', approximate: true, overdueAdded: false, error: ''
+  };
+  return estimateQueue;
+}
+
+/** Aloituksen vaihe 6 (vain tämä viikko) ja työnkulku kiinnittävät kumpikin omansa. */
+function ensureEstimateQueue(scope) {
+  if (estimateQueue && estimateQueue.scope === scope) return estimateQueue;
+  return scope === 'setup'
+    ? startEstimateQueue({ scope, weekStart: currentWeekStart(), includeNextWeek: false })
+    : startEstimateQueue({ scope, weekStart: shownWeek(), includeNextWeek: true });
+}
+
+function overdueForQueue(queue) {
+  if (!queue || queue.overdueAdded) return [];
+  const known = new Set(queue.items.map(item => item.key));
+  return queueCandidates({ weekStart: queue.weekStart, includeNextWeek: false, includeOverdue: true })
+    .filter(item => item.bucket === 'overdue' && !known.has(item.key));
+}
+
+/** Arvioitu muualla, merkitty valmiiksi tai poistettu -> ei enää jonossa. */
+function stillNeedsEstimate(item) {
+  if (item.kind === 'task') {
+    const task = findTask(item.id);
+    return Boolean(task) && !task.completed && !(durationOf(task) > 0);
   }
-  const rows = items.slice(0, WORKFLOW_BATCH).map(item => {
-    const key = item.kind === 'task' ? `task:${item.id}` : `routine:${item.routineId}`;
-    const title = itemTitle(item);
-    return `
-      <div class="assist-row dir-estimate-row">
-        <div class="assist-title">${escapeHtml(title)}${item.kind === 'routine' ? ' <span class="routine-tag">RUTIINI</span>' : ''}</div>
-        <div class="assist-meta">${escapeHtml(itemDateLabel(item))}</div>
-        <div class="dir-presets" role="group" aria-label="Arvio: ${escapeHtml(title)}">
-          ${ESTIMATE_PRESETS.map(minutes => `<button class="assist-btn" type="button" data-estimate="${escapeHtml(key)}"
-            data-minutes="${minutes}">${escapeHtml(formatMinutes(minutes))}</button>`).join('')}
+  const routine = findRoutine(item.routineId);
+  return Boolean(routine) && !(Number.isFinite(routine.durationMinutes) && routine.durationMinutes > 0);
+}
+
+function activeQueueItem(queue = estimateQueue) {
+  if (!queue) return null;
+  // Tallennuksen ajan kortti pysyy paikallaan, vaikka tila päivittyi jo.
+  if (queue.saving && queue.savingKey) return queue.items.find(item => item.key === queue.savingKey) || null;
+  return queue.items.find(item => !queue.done.has(item.key) && !queue.skipped.has(item.key)
+    && stillNeedsEstimate(item)) || null;
+}
+
+function queueItemTitle(item) {
+  return item.kind === 'task' ? (findTask(item.id)?.title || 'Tehtävä') : (findRoutine(item.routineId)?.title || 'Rutiini');
+}
+
+function activeQueueCardHtml(item, host, queue) {
+  const key = escapeHtml(item.key);
+  const title = queueItemTitle(item);
+  const blocked = queue.saving || !queue.armed;
+  const off = blocked ? ' disabled data-armed="0"' : ' data-armed="1"';
+  return `
+    <div class="assist-row dir-estimate-row dir-queue-card" data-queue-card="${key}">
+      <div class="assist-meta">${escapeHtml(ESTIMATE_BUCKET_LABELS[item.bucket] || '')} · ${escapeHtml(shortDate(item.date))}`
+        + `${item.kind === 'routine' ? ' · <span class="routine-tag">RUTIINI</span>' : ''}</div>
+      <h3 class="assist-title dir-queue-title" id="dirQueueTitle-${host}" tabindex="-1">${escapeHtml(title)}</h3>
+      <div class="dir-presets" role="group" aria-labelledby="dirQueueTitle-${host}">
+        ${ESTIMATE_PRESETS.map(minutes => `<button class="assist-btn" type="button" data-queue-estimate="${key}"`
+          + ` data-minutes="${minutes}"${off}>${escapeHtml(formatMinutes(minutes))}</button>`).join('')}
+        <button class="assist-btn" type="button" data-queue-custom="${key}" aria-expanded="${queue.customOpen ? 'true' : 'false'}"${off}>Muu…</button>
+        <button class="assist-btn" type="button" data-queue-skip="${key}"${off}>Ohita</button>
+      </div>
+      ${queue.customOpen ? `<div class="form-row dir-queue-custom">
+        <div>
+          <label class="field-label" for="dirQueueCustom-${host}">Kesto minuutteina</label>
+          <input type="number" min="1" max="1440" step="1" inputmode="numeric" id="dirQueueCustom-${host}"
+            data-queue-input="${key}" value="${escapeHtml(queue.customValue || '')}">
         </div>
-        <div class="form-row">
-          <div>
-            <label class="field-label" for="dirEst-${escapeHtml(key)}">Muu (min)</label>
-            <input type="number" min="1" max="1440" step="5" id="dirEst-${escapeHtml(key)}" data-estimate-input="${escapeHtml(key)}">
-          </div>
-          <button class="assist-btn" type="button" data-estimate="${escapeHtml(key)}" data-minutes="custom">Tallenna arvio</button>
-        </div>
-        ${item.kind === 'task' ? `<label class="checkbox-row" for="dirApprox-${escapeHtml(key)}">
-          <input type="checkbox" id="dirApprox-${escapeHtml(key)}" data-estimate-approx="${escapeHtml(key)}" checked> Karkea arvio</label>` : ''}
-      </div>`;
-  }).join('');
-  const rest = items.length - Math.min(items.length, WORKFLOW_BATCH);
-  return rows + (rest > 0 ? `<p class="hint">+ ${countOf(rest, 'asia', 'asiaa')} lisää, kun nämä on arvioitu.</p>` : '');
+        <button class="assist-btn" type="button" data-queue-estimate="${key}" data-minutes="custom"${off}>Tallenna arvio</button>
+      </div>` : ''}
+      ${item.kind === 'task' ? `<label class="checkbox-row" for="dirQueueApprox-${host}">
+        <input type="checkbox" id="dirQueueApprox-${host}" data-queue-approx="1"${queue.approximate ? ' checked' : ''}> Karkea arvio</label>` : ''}
+      ${queue.error ? `<p class="field-error dir-setup-error" role="alert">${escapeHtml(queue.error)}</p>` : ''}
+    </div>`;
+}
+
+/**
+ * Arviojonon merkintä. `host` erottaa tunnisteet: 'main' (työnkulku) tai
+ * 'setup' (aloituksen vaihe 6).
+ */
+function estimateQueueHtml(host) {
+  const queue = ensureEstimateQueue(host === 'setup' ? 'setup' : 'workflow');
+  const total = queue.items.length;
+  const doneCount = queue.items.filter(item => queue.done.has(item.key)).length;
+  const active = activeQueueItem(queue);
+  const overdue = host === 'main' ? overdueForQueue(queue) : [];
+  const parts = [];
+  if (total > 0) parts.push(`<p class="dir-line dir-queue-progress" role="status">Arvioitu ${doneCount}/${total}</p>`);
+  if (total === 0) {
+    parts.push(`<div class="assist-empty">${host === 'setup'
+      ? 'Tämän viikon avoimilla asioilla on kestoarvio.'
+      : 'Tämän ja ensi viikon avoimilla asioilla on kestoarvio.'}</div>`);
+  } else if (!active) {
+    parts.push('<div class="assist-empty">Jonon asiat on käyty läpi.'
+      + (queue.skipped.size > 0 ? ` Ohitit ${countOf(queue.skipped.size, 'asian', 'asiaa')}; voit arvioida ne myöhemmin.` : '')
+      + '</div>');
+  } else {
+    parts.push(activeQueueCardHtml(active, host, queue));
+    const upcoming = queue.items.filter(item => item.key !== active.key && !queue.done.has(item.key)
+      && !queue.skipped.has(item.key) && stillNeedsEstimate(item)).slice(0, 3);
+    if (upcoming.length > 0) {
+      parts.push(`<p class="hint">Seuraavaksi: ${upcoming.map(item => escapeHtml(queueItemTitle(item))).join(' · ')}</p>`);
+    }
+  }
+  const done = queue.items.filter(item => queue.done.has(item.key)).slice(-5).reverse();
+  if (done.length > 0) {
+    parts.push(`<ul class="dir-queue-done" aria-label="Arvioidut">${done.map(item => {
+      const title = queueItemTitle(item);
+      return `<li><span>${escapeHtml(title)} · ${escapeHtml(formatMinutes(queue.done.get(item.key).minutes))}</span>
+        <button class="assist-btn" type="button" data-queue-undo="${escapeHtml(item.key)}"
+          aria-label="Kumoa arvio: ${escapeHtml(title)}"${queue.saving ? ' disabled' : ''}>Kumoa</button></li>`;
+    }).join('')}</ul>`);
+  }
+  const actions = [];
+  if (overdue.length > 0) {
+    actions.push(`<button class="assist-btn" type="button" data-queue-overdue="1">Näytä myös rästit (${overdue.length})</button>`);
+  }
+  if (host === 'main') actions.push('<button class="assist-btn primary" type="button" data-queue-finish="1">Valmis tältä erää</button>');
+  if (actions.length > 0) parts.push(`<div class="assist-actions">${actions.join('')}</div>`);
+  return parts.join('');
+}
+
+/** Arvio ennen jonoa: "Kumoa" palauttaa sen. */
+function previousEstimateOf(item) {
+  if (item.kind === 'task') {
+    const task = findTask(item.id);
+    const settings = itemSettingsFor('task', item.id);
+    return { durationMinutes: task ? task.durationMinutes ?? null : null,
+      approximate: Boolean(settings && settings.estimateApproximate) };
+  }
+  const routine = findRoutine(item.routineId);
+  return { durationMinutes: routine ? routine.durationMinutes : null, approximate: false };
+}
+
+function rearmQueue(queue) {
+  queue.armed = false;
+  setTimeout(() => {
+    if (estimateQueue !== queue) return;
+    queue.armed = true;
+    if (typeof document !== 'undefined') renderDirection();
+  }, ESTIMATE_REARM_MS);
+}
+
+function focusQueueTitle() {
+  const host = estimateQueue && estimateQueue.scope === 'setup' ? 'setup' : 'main';
+  focus(`dirQueueTitle-${host}`);
+}
+
+async function saveQueueEstimate(key, minutes) {
+  const queue = estimateQueue;
+  if (!queue || queue.saving || !queue.armed) return;
+  const active = activeQueueItem(queue);
+  // Vanhentunut painike (edellinen kortti) ei arvioi seuraavaa asiaa.
+  if (!active || active.key !== key) return;
+  if (!Number.isInteger(minutes) || minutes <= 0 || minutes > 1440) {
+    queue.error = 'Anna kesto minuutteina, 1–1440.';
+    renderDirection();
+    return;
+  }
+  const previous = previousEstimateOf(active);
+  queue.saving = true;
+  queue.savingKey = key;
+  queue.error = '';
+  renderDirection();
+  let ok = false;
+  try {
+    ok = await saveEstimate(key, minutes, active.kind === 'task' ? queue.approximate : false);
+  } finally {
+    queue.saving = false;
+    queue.savingKey = null;
+  }
+  if (estimateQueue !== queue) return;
+  if (ok) {
+    queue.done.set(key, { minutes, previous });
+    queue.customOpen = false;
+    queue.customValue = '';
+    rearmQueue(queue);
+  }
+  renderDirection();
+  if (ok) focusQueueTitle();
+}
+
+async function undoQueueEstimate(key) {
+  const queue = estimateQueue;
+  const record = queue && queue.done.get(key);
+  if (!record || queue.saving) return;
+  const { kind, id } = splitKey(key);
+  queue.saving = true;
+  renderDirection();
+  let ok = false;
+  try {
+    if (kind === 'task') {
+      const result = await editTask(id, { durationMinutes: record.previous.durationMinutes ?? null });
+      ok = Boolean(result && result.ok);
+      if (ok) await saveItemSettings('task', id, { estimateApproximate: Boolean(record.previous.approximate) });
+    } else {
+      const result = await editRoutine(id, { durationMinutes: record.previous.durationMinutes });
+      ok = Boolean(result && result.ok);
+    }
+  } finally {
+    queue.saving = false;
+  }
+  if (estimateQueue !== queue) return;
+  if (ok) queue.done.delete(key);
+  renderDirection();
+}
+
+function closeEstimateWorkflow() {
+  estimateOpen = false;
+  estimateQueue = null;
+  renderDirection();
+  focus('dirOpenEstimate');
+}
+
+/**
+ * Arviojonon tapahtumat (työnkulku ja aloitus). Palauttaa true, jos
+ * tapahtuma kuului jonolle.
+ */
+function handleQueueEvent(type, event) {
+  const target = event && event.target;
+  if (!target || typeof target.closest !== 'function') return false;
+  const queue = estimateQueue;
+  if (type === 'click') {
+    const button = target.closest('[data-queue-estimate], [data-queue-skip], [data-queue-custom], '
+      + '[data-queue-undo], [data-queue-finish], [data-queue-overdue]');
+    if (!button) return false;
+    if (!queue || button.disabled) return true;
+    const data = button.dataset;
+    if (data.queueFinish) {
+      if (queue.scope === 'workflow') closeEstimateWorkflow();
+    } else if (data.queueOverdue) {
+      queue.items.push(...overdueForQueue(queue));
+      queue.overdueAdded = true;
+      renderDirection();
+    } else if (data.queueUndo) {
+      undoQueueEstimate(data.queueUndo);
+    } else if (data.queueSkip) {
+      const active = activeQueueItem(queue);
+      if (queue.saving || !queue.armed || !active || active.key !== data.queueSkip) return true;
+      queue.skipped.add(active.key);
+      queue.customOpen = false;
+      queue.customValue = '';
+      queue.error = '';
+      rearmQueue(queue);
+      renderDirection();
+      focusQueueTitle();
+    } else if (data.queueCustom) {
+      queue.customOpen = !queue.customOpen;
+      renderDirection();
+      if (queue.customOpen) focus(`dirQueueCustom-${queue.scope === 'setup' ? 'setup' : 'main'}`);
+    } else if (data.queueEstimate) {
+      const minutes = data.minutes === 'custom'
+        ? Math.round(Number(String(queue.customValue || '').replace(',', '.')))
+        : Number(data.minutes);
+      saveQueueEstimate(data.queueEstimate, minutes);
+    }
+    return true;
+  }
+  if (type === 'change' && target.closest('[data-queue-approx]')) {
+    if (queue) queue.approximate = Boolean(target.checked);
+    return true;
+  }
+  if (type === 'input' && target.closest('[data-queue-input]')) {
+    if (queue) queue.customValue = target.value;
+    return true;
+  }
+  if (type === 'keydown' && event.key === 'Enter' && target.closest('[data-queue-input]')) {
+    if (typeof event.preventDefault === 'function') event.preventDefault();
+    if (queue) {
+      queue.customValue = target.value;
+      saveQueueEstimate(target.dataset.queueInput, Math.round(Number(String(target.value).replace(',', '.'))));
+    }
+    return true;
+  }
+  return false;
+}
+
+/** Tekeminen-näkymän laskuri: sama oletusjono kuin Suunnan arvioinnissa. */
+export function estimateQueueCount() {
+  return queueCandidates({ weekStart: currentWeekStart(), includeNextWeek: true }).length;
+}
+
+/** Avaa arviojono toisesta näkymästä (Tekeminen, Tänään): tämän päivän viikko. */
+export function openEstimateQueue() {
+  switchTab('screen-direction');
+  openWorkflow('estimate', 'duration', { weekStart: currentWeekStart() });
 }
 
 function goalOptionsForAssign() {
@@ -613,8 +910,16 @@ function mappedCategoryOptions() {
 
 /** Luokittelemattomat yksi kerrallaan: liitä, kytke kategoria tai jätä tarkoituksella. */
 function unassignedHtml(analysis) {
+  // Ilman alueita ei ole mihin liittää (F3). Pysyvää "jätä ilman aluetta"
+  // -valintaa ei tarjota ennen kuin käyttäjä on edes voinut valita alueen.
+  if (!getState().lifeAreas.some(area => area.active)) {
+    return '<div class="assist-empty">Luo ensin elämänalue, niin voit liittää tekemistä siihen.</div>'
+      + `<div class="assist-actions"><button class="assist-btn primary" type="button" data-quality-action="${QUALITY_ACTION.ADD_AREAS}">`
+      + `${escapeHtml(QUALITY_ACTION_LABELS[QUALITY_ACTION.ADD_AREAS])}</button></div>`;
+  }
   const seenRoutines = new Set();
-  const items = analysis.items.filter(item => !item.areaId && !item.optedOut).filter(item => {
+  // Valmiiksi merkitty tehtävä ei ole enää kohdistettavaa tekemistä (F3).
+  const items = analysis.items.filter(item => !item.areaId && !item.optedOut && !item.completed).filter(item => {
     const key = item.kind === 'task' ? `task:${item.id}` : `routine:${item.routineId}`;
     if (skippedUnassigned.has(key)) return false;
     if (item.kind !== 'routine') return true;
@@ -633,6 +938,10 @@ function unassignedHtml(analysis) {
   const rows = items.slice(0, WORKFLOW_BATCH).map(item => {
     const key = item.kind === 'task' ? `task:${item.id}` : `routine:${item.routineId}`;
     const title = itemTitle(item);
+    const offerCategory = Boolean(categories) && item.kind === 'task';
+    // Pysyvä opt-out vain, kun liittäminen olisi ollut mahdollista: muuten
+    // käyttäjä päättäisi "ei koskaan" ennen kuin vaihtoehtoja on (F3).
+    const canAssign = Boolean(goals) || offerCategory;
     return `
       <div class="assist-row dir-assign-row">
         <div class="assist-title">${escapeHtml(title)}${item.kind === 'routine' ? ' <span class="routine-tag">RUTIINI</span>' : ''}</div>
@@ -640,11 +949,12 @@ function unassignedHtml(analysis) {
         ${goals ? `<label class="field-label" for="dirAssignGoal-${escapeHtml(key)}">Liitä tavoitteeseen</label>
           <select id="dirAssignGoal-${escapeHtml(key)}" data-assign-goal="${escapeHtml(key)}">
             <option value="">Valitse tavoite</option>${goals}</select>` : ''}
-        ${categories && item.kind === 'task' ? `<label class="field-label" for="dirAssignCat-${escapeHtml(key)}">Tai kategoria, joka kuuluu alueeseen</label>
+        ${offerCategory ? `<label class="field-label" for="dirAssignCat-${escapeHtml(key)}">Tai kategoria, joka kuuluu alueeseen</label>
           <select id="dirAssignCat-${escapeHtml(key)}" data-assign-category="${escapeHtml(key)}">
             <option value="">Valitse kategoria</option>${categories}</select>` : ''}
+        ${canAssign ? '' : '<p class="hint">Liitä ensin jokin tavoite alueeseen tai kytke alueeseen kategoria, niin voit liittää tämän.</p>'}
         <div class="assist-actions">
-          <button class="assist-btn" type="button" data-assign-optout="${escapeHtml(key)}">Jätä tarkoituksella ilman aluetta</button>
+          ${canAssign ? `<button class="assist-btn" type="button" data-assign-optout="${escapeHtml(key)}">Jätä tarkoituksella ilman aluetta</button>` : ''}
           <button class="assist-btn" type="button" data-assign-skip="${escapeHtml(key)}">Ohita nyt</button>
         </div>
       </div>`;
@@ -657,8 +967,11 @@ function suggestionsHtml(areas) {
   const chips = SUGGESTED_AREAS.map(suggestion =>
     `<button class="assist-btn" type="button" data-area-suggest="${escapeHtml(suggestion.name)}"`
     + ` data-category="${escapeHtml(suggestion.categoryKey || '')}">+ ${escapeHtml(suggestion.name)}</button>`).join('');
+  // Vanha data kuitataan (F9): luvut, ei ehdotuksia eikä automaattista liittämistä.
+  const legacy = legacyNoticeText(currentLegacySummary());
   return `<p class="hint">Mitkä elämäsi alueet ovat sinulle tärkeitä? Valitse valmis nimi tai kirjoita oma. `
     + 'Mitään ei luoda ennen kuin tallennat.</p>'
+    + (legacy ? `<p class="dir-line dir-legacy">${escapeHtml(legacy)}</p>` : '')
     + `<div class="assist-actions dir-chips">${chips}</div>`;
 }
 
@@ -748,7 +1061,7 @@ function entryTargetLabel(entry, byId) {
 }
 
 function timeListHtml(entries, areas) {
-  if (entries.length === 0) return '';
+  const state = getState();
   const byId = new Map(areas.map(area => [area.id, area]));
   // Laitteen lähtökorissa odottavat merkitään: ne eivät ole vielä kannassa.
   const pending = pendingTimeEntryOperations();
@@ -756,7 +1069,35 @@ function timeListHtml(entries, areas) {
   const tag = entry => (failed.has(entry.operationId)
     ? ' · <span class="assist-tag">Lähetys epäonnistui</span>'
     : pending.has(entry.operationId) ? ' · <span class="assist-tag">Odottaa lähetystä</span>' : '');
-  return [...entries].sort((a, b) => b.entryDate.localeCompare(a.entryDate)).map(entry => `
+  // Alue päätellään samalla säännöllä kuin analyysissa: kirjaus, jonka
+  // tehtävä kuuluu alueeseen kategorian kautta, EI ole alueeton (F6).
+  const index = buildAttributionIndex({
+    areas: state.lifeAreas, goals: state.goals, projects: state.projects, routines: state.routines
+  });
+  const tasksById = new Map(state.tasks.map(task => [task.id, task]));
+  const activeAreas = areas.filter(area => area.active);
+  const unassigned = entry => !areaForTimeEntry(entry, index, tasksById).areaId;
+  const shown = timeListUnassignedOnly ? entries.filter(unassigned) : entries;
+  const filterNote = timeListUnassignedOnly
+    ? `<div class="dir-quality-row"><p class="dir-line">Näytetään vain kirjaukset ilman aluetta (${shown.length}).</p>
+        <button class="assist-btn" type="button" data-time-show-all="1">Näytä kaikki kirjaukset</button></div>`
+    : '';
+  if (shown.length === 0) {
+    return timeListUnassignedOnly ? filterNote + '<div class="assist-empty">Kaikki tämän viikon kirjaukset kuuluvat alueeseen.</div>' : '';
+  }
+  return filterNote + [...shown].sort((a, b) => b.entryDate.localeCompare(a.entryDate)).map(entry => {
+    // Odottava tai epäonnistunut kirjaus ei ole kannassa: siihen ei voi vielä liittää aluetta.
+    const waiting = pending.has(entry.operationId) || failed.has(entry.operationId);
+    const label = `${shortDate(entry.entryDate)} ${hours(entry.minutes)}`;
+    // Liitä alueeseen: vain alueettomille, ja vasta kun kirjaus on kannassa.
+    const assign = unassigned(entry) && activeAreas.length > 0 && !waiting
+      ? `<div class="dir-time-assign">
+          <label class="field-label" for="dirTimeAssign-${escapeHtml(entry.id)}">Liitä alueeseen (${escapeHtml(label)})</label>
+          <select id="dirTimeAssign-${escapeHtml(entry.id)}" data-time-area="${escapeHtml(entry.id)}">
+            ${areaOptions(activeAreas, null, 'Valitse alue')}</select>
+        </div>`
+      : '';
+    return `
     <div class="assist-row">
       <div class="assist-meta">
         ${escapeHtml(shortDate(entry.entryDate))} · ${escapeHtml(hours(entry.minutes))}
@@ -764,11 +1105,13 @@ function timeListHtml(entries, areas) {
         · ${entry.source === 'timer' ? 'Ajastin' : 'Käsin'}${tag(entry)}
       </div>
       ${entry.note ? `<div class="assist-reason">${escapeHtml(entry.note)}</div>` : ''}
+      ${assign}
       <div class="assist-actions">
         <button class="assist-btn danger" type="button" data-time-delete="${escapeHtml(entry.id)}"
-          aria-label="Poista kirjaus ${escapeHtml(shortDate(entry.entryDate))} ${escapeHtml(hours(entry.minutes))}">Poista</button>
+          aria-label="Poista kirjaus ${escapeHtml(label)}">Poista</button>
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
 
 function signalsOfKind(analysis, kind, areas) {
@@ -1080,6 +1423,16 @@ export function renderDirection() {
   // lataamatta: havainnot, laatu ja ehdotukset korvataan ilmoituksella.
   const incomplete = analysisLoadProblems(state).length > 0;
   el('dirPersistNote').innerHTML = loadProblemHtml(problems) + persistNoteHtml();
+  // Aloitus (F2) ensin. Tuntematon ei ole nolla: jos Suunnan tietoja ei
+  // saatu ladattua (tai lataus on kesken eikä alueita vielä tunneta),
+  // aloitusta ei näytetä — alueet voivat olla kannassa.
+  const loadStatus = state.dataLoadStatus || {};
+  const areasPending = Object.keys(loadStatus).length > 0 && !loadStatus.lifeAreas;
+  // Aloituksen vaiheet luetaan myös tehtävistä ja tavoitteista.
+  const setupSourcesFailed = ['tasks', 'goals'].some(domain => loadStatus[domain] && loadStatus[domain].ok === false);
+  const setupActive = renderDirectionSetup({
+    unknown: problems.length > 0 || areasPending || setupSourcesFailed, queueHtml: estimateQueueHtml
+  });
   // Ei tyhjän tilan kehotusta ("aloita elämänalueista"), kun alueita ei
   // saatu ladattua: niitä voi olla kannassa.
   el('dirSignals').innerHTML = incomplete ? analysisLoadNoticeHtml() : areasUnknown ? '' : signalsHtml(analysis, areas);
@@ -1095,7 +1448,10 @@ export function renderDirection() {
   const estimateSection = maybe('dirEstimateSection');
   if (estimateSection) {
     estimateSection.hidden = !estimateOpen;
-    if (estimateOpen) el('dirEstimate').innerHTML = estimateHtml(analysis);
+    // Aloituksen ollessa auki osio on piilossa, ja jono kuuluu aloitukselle.
+    if (estimateOpen && !setupActive) {
+      el('dirEstimate').innerHTML = estimateMode === 'energy' ? energyRateHtml(analysis) : estimateQueueHtml('main');
+    }
   }
   const unassignedSection = maybe('dirUnassignedSection');
   if (unassignedSection) {
@@ -1181,10 +1537,11 @@ export function renderTodayDirection() {
     return;
   }
   if (state.lifeAreas.length === 0) {
+    // "Aloita Suunta" avaa aloituksen vaiheesta 1 (F2).
     container.innerHTML = `<div class="dir-today">
       <div class="dir-today-title">Suunta</div>
       <p class="dir-line">Kerro mikä elämässäsi on tärkeää, niin näet elääkö viikko sen mukaan.</p>
-      <button class="assist-btn" type="button" data-open-direction="1">Avaa Suunta</button></div>`;
+      <button class="assist-btn primary" type="button" data-open-setup="1">Aloita Suunta</button></div>`;
     return;
   }
   // Jokin analyysin syöte jäi lataamatta: vajaista luvuista ei tehdä
@@ -1269,15 +1626,41 @@ function clearAreaErrors() {
   }
 }
 
+/**
+ * Kategorian vaikutus näkyviin ENNEN tallennusta (F9): kytkentä tuo
+ * alueeseen kaikki kategorian tehtävät, joilla ei ole tavoitteen kautta
+ * omaa aluetta. Ehdotuksen esivalitsema kategoria ei saa yllättää.
+ */
+function renderCategoryImpact() {
+  const node = maybe('dirAreaCategoryImpact');
+  if (!node) return;
+  const key = maybe('dirAreaCategory') ? el('dirAreaCategory').value : '';
+  if (!key) {
+    node.textContent = '';
+    return;
+  }
+  const state = getState();
+  const impact = categoryImpact(state.tasks, state.routines, key, {
+    goals: state.goals, projects: state.projects, areas: state.lifeAreas, todayIso: clockNow().todayIso
+  });
+  const label = CATEGORIES.find(c => c.key === key)?.label || key;
+  node.textContent = `Kategoria ${label}: ${countOf(impact.tasks, 'avoin tehtävä', 'avointa tehtävää')}`
+    + ` (${impact.thisWeek} tällä viikolla)`
+    + (impact.routines > 0 ? ` ja ${countOf(impact.routines, 'rutiini', 'rutiinia')}` : '')
+    + ' lasketaan tähän alueeseen.';
+}
+
 export function openAreaForm(id = null, prefill = {}) {
   const area = id ? findLifeArea(id) : null;
   editingAreaId = area ? area.id : null;
   clearAreaErrors();
   setText('dirAreaFormTitle', area ? 'Muokkaa elämänaluetta' : 'Uusi elämänalue');
   el('dirAreaName').value = area ? area.name : (prefill.name || '');
-  el('dirAreaImportance').value = String(area ? area.importance : 3);
+  // Uudella alueella ei ole valmiiksi valittua tärkeyttä (F7).
+  el('dirAreaImportance').value = area ? String(area.importance) : '';
   el('dirAreaTarget').value = area ? toHoursInput(area.targetMinutesPerWeek) : '';
   fillCategorySelect(area ? area.categoryKey : (prefill.categoryKey || ''));
+  renderCategoryImpact();
   el('dirAreaDescription').value = area && area.description ? area.description : '';
   el('dirAreaActive').checked = area ? area.active : true;
   toggle('dirAreaDelete', Boolean(area));
@@ -1295,6 +1678,11 @@ export function closeAreaForm() {
 
 async function submitAreaForm() {
   clearAreaErrors();
+  if (el('dirAreaImportance').value === '') {
+    setError('dirAreaImportanceError', 'Valitse kuinka tärkeä alue on.');
+    focus('dirAreaImportance');
+    return;
+  }
   const target = toMinutesFromHours(el('dirAreaTarget').value);
   if (Number.isNaN(target)) {
     setError('dirAreaTargetError', 'Anna tavoite tunteina, esim. 5 tai 2,5.');
@@ -1577,14 +1965,19 @@ async function onApplySelected() {
   renderDirection();
 }
 
+/** Tallenna kestoarvio. Palauttaa, onnistuiko (jono etenee vain onnistuessa). */
 async function saveEstimate(key, minutes, approximate) {
   const [kind, id] = [key.slice(0, key.indexOf(':')), key.slice(key.indexOf(':') + 1)];
   if (kind === 'task') {
     const result = await editTask(id, { durationMinutes: minutes });
     if (result && result.ok) await saveItemSettings('task', id, { estimateApproximate: Boolean(approximate) });
-  } else if (kind === 'routine') {
-    await editRoutine(id, { durationMinutes: minutes });
+    return Boolean(result && result.ok);
   }
+  if (kind === 'routine') {
+    const result = await editRoutine(id, { durationMinutes: minutes });
+    return Boolean(result && result.ok);
+  }
+  return false;
 }
 
 async function onEstimateClick(event) {
@@ -1595,18 +1988,7 @@ async function onEstimateClick(event) {
     await saveItemSettings(kind, id, { energyDemand: Number(rate.dataset.level) });
     return;
   }
-  const button = event.target.closest('[data-estimate]');
-  if (!button) return;
-  const key = button.dataset.estimate;
-  let minutes = Number(button.dataset.minutes);
-  if (button.dataset.minutes === 'custom') {
-    const input = el('dirEstimate').querySelector(`[data-estimate-input="${CSS.escape(key)}"]`);
-    minutes = Math.round(Number(input ? input.value : NaN));
-  }
-  if (!Number.isInteger(minutes) || minutes <= 0 || minutes > 1440) return;
-  const approx = el('dirEstimate').querySelector(`[data-estimate-approx="${CSS.escape(key)}"]`);
-  button.disabled = true;
-  await saveEstimate(key, minutes, approx ? approx.checked : true);
+  handleQueueEvent('click', event);
 }
 
 function splitKey(key) {
@@ -1644,24 +2026,50 @@ async function onAssignClick(event) {
   }
 }
 
-function openWorkflow(which, mode = 'duration') {
+function openWorkflow(which, mode = 'duration', { weekStart = null } = {}) {
   if (which === 'estimate') {
     estimateOpen = true;
     estimateMode = mode;
+    // Jono kiinnitetään avattaessa (F4): järjestys ei muutu piirrosta toiseen.
+    if (mode === 'duration') startEstimateQueue({ scope: 'workflow', weekStart: weekStart || shownWeek(), includeNextWeek: true });
   }
   if (which === 'assign') unassignedOpen = true;
+  // Käyttäjä pyysi tiettyä työkalua: aloitus väistyy tämän istunnon ajaksi,
+  // muuten avattu osio jäisi aloituksen alle piiloon.
+  dismissDirectionSetup();
   renderDirection();
   const target = which === 'estimate' ? 'dirEstimateTitle' : 'dirUnassignedTitle';
   const node = maybe(target);
   if (node && typeof node.scrollIntoView === 'function') node.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
+/**
+ * "Kohdista kirjattu aika" (F6): toteumalista näyttää vain alueettomat
+ * kirjaukset, ja fokus siirtyy ensimmäiseen aluevalintaan. Aiemmin
+ * toimenpide avasi suunniteltujen asioiden listan, jossa kirjattua aikaa
+ * ei ollut lainkaan.
+ */
+function showUnassignedTime() {
+  timeListUnassignedOnly = true;
+  renderDirection();
+  const title = maybe('dirActualTitle');
+  if (title && typeof title.scrollIntoView === 'function') title.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  const list = maybe('dirTimeList');
+  const first = list && typeof list.querySelector === 'function' ? list.querySelector('[data-time-area]') : null;
+  if (first && typeof first.focus === 'function') first.focus();
+}
+
 function onQualityAction(action) {
   switch (action) {
     case QUALITY_ACTION.ESTIMATE: openWorkflow('estimate'); break;
     case QUALITY_ACTION.ASSIGN: openWorkflow('assign'); break;
+    case QUALITY_ACTION.ASSIGN_TIME: showUnassignedTime(); break;
     case QUALITY_ACTION.LOG_TIME: openGeneralLog(); break;
-    case QUALITY_ACTION.ADD_AREAS: openAreaForm(null); break;
+    case QUALITY_ACTION.ADD_AREAS:
+      // Ilman yhtään aluetta aloitus on oikea paikka (vaihe 1); muuten lomake.
+      if (getState().lifeAreas.some(area => area.active)) openAreaForm(null);
+      else openDirectionSetup();
+      break;
     case QUALITY_ACTION.SET_CAPACITY: focus('dirCapacityHours'); break;
     case QUALITY_ACTION.SET_TARGETS: {
       const first = [...getState().lifeAreas].sort(compareLifeAreas).find(area => area.active);
@@ -1792,7 +2200,18 @@ export function initDirection() {
   el('dirTimeList').addEventListener('click', event => {
     const remove = event.target.closest('[data-time-delete]');
     if (remove) deleteTimeEntry(remove.dataset.timeDelete);
+    if (event.target.closest('[data-time-show-all]')) {
+      timeListUnassignedOnly = false;
+      renderDirection();
+    }
   });
+  // Kirjatun ajan alue jälkikäteen (F6).
+  el('dirTimeList').addEventListener('change', event => {
+    const select = event.target.closest('[data-time-area]');
+    if (select && select.value) editTimeEntry(select.dataset.timeArea, { lifeAreaId: select.value });
+  });
+  const category = maybe('dirAreaCategory');
+  if (category) category.addEventListener('change', renderCategoryImpact);
 
   el('dirReflection').addEventListener('input', event => markDirty(event.target));
   el('dirProposals').addEventListener('click', onProposalClick);
@@ -1800,7 +2219,8 @@ export function initDirection() {
 
   // --- Suunta 2 ---
   const on = (id, type, handler) => { const node = maybe(id); if (node) node.addEventListener(type, handler); };
-  on('dirStartTimer', 'click', () => startTimerFor({ kind: 'none' }));
+  // Ajanseuranta kysyy alueen ennen käynnistystä (F6); "Ei aluetta" on sallittu.
+  on('dirStartTimer', 'click', () => openTimerChooser());
   on('dirQuickLog', 'click', () => openGeneralLog());
   on('dirOpenEstimate', 'click', () => openWorkflow('estimate'));
   on('dirOpenUnassigned', 'click', () => openWorkflow('assign'));
@@ -1810,8 +2230,15 @@ export function initDirection() {
   });
   on('dirWeekSummary', 'click', onFailedEntriesClick);
   on('dirEstimate', 'click', onEstimateClick);
+  for (const type of ['change', 'input', 'keydown']) on('dirEstimate', type, event => handleQueueEvent(type, event));
   on('dirUnassigned', 'change', onAssignChange);
   on('dirUnassigned', 'click', onAssignClick);
+  on('dirUnassigned', 'click', event => {
+    // "Luo ensin elämänalue" (F3): sama toimenpide kuin laatulistassa.
+    const button = event.target.closest('[data-quality-action]');
+    if (button) onQualityAction(button.dataset.qualityAction);
+  });
+  initDirectionSetup({ rerender: renderDirection, queueEvent: handleQueueEvent });
   on('dirQuality', 'click', event => {
     const button = event.target.closest('[data-quality-action]');
     if (button) onQualityAction(button.dataset.qualityAction);
@@ -1854,6 +2281,11 @@ export function initDirection() {
   const today = maybe('todayDirection');
   if (today) {
     today.addEventListener('click', event => {
+      if (event.target.closest('[data-open-setup]')) {
+        switchTab('screen-direction');
+        openDirectionSetup();
+        return;
+      }
       if (event.target.closest('[data-open-direction]')) {
         switchTab('screen-direction');
         return;
@@ -1863,7 +2295,7 @@ export function initDirection() {
       switch (action.dataset.todayAction) {
         case 'log_time': openGeneralLog(); break;
         case 'open_unassigned': switchTab('screen-direction'); openWorkflow('assign'); break;
-        case 'open_estimate': switchTab('screen-direction'); openWorkflow('estimate'); break;
+        case 'open_estimate': openEstimateQueue(); break;
         default: switchTab('screen-direction');
       }
     });
@@ -1881,6 +2313,9 @@ export function resetDirectionView() {
   lastPreview = null;
   estimateOpen = false;
   estimateMode = 'duration';
+  estimateQueue = null;
+  timeListUnassignedOnly = false;
+  resetDirectionSetup();
   unassignedOpen = false;
   skippedUnassigned = new Set();
   explanations = new Map();

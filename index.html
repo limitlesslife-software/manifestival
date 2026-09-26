@@ -187,6 +187,10 @@
       </div>
       <button class="jump-link" id="dirThisWeek" type="button" style="display:none;">← Palaa tähän viikkoon</button>
       <div id="dirPersistNote"></div>
+      <!-- Aloitus: vaihe kerrallaan, johdettu tallennetuista tiedoista
+           (src/domain/alignmentSetup.js, src/app/views/directionSetup.js).
+           Mitään ei luoda ennen kuin käyttäjä tallentaa. -->
+      <div class="dir-section dir-setup" id="dirSetup" aria-labelledby="dirSetupTitle" hidden></div>
       <div class="dir-quick" id="dirQuickActions" role="group" aria-label="Suunnan pikatoiminnot">
         <button class="assist-btn primary" id="dirStartTimer" type="button">Aloita ajanseuranta</button>
         <button class="assist-btn" id="dirQuickLog" type="button">Kirjaa aikaa</button>
@@ -268,10 +272,13 @@
           </div>
           <div>
             <label class="field-label" for="dirAreaImportance">Kuinka tärkeä tämä on elämässä, jota haluat?</label>
+            <!-- Ei valmiiksi valittua tärkeyttä: oletus 3 sulki alueen
+                 huomiotta jäämisen havainnon ulkopuolelle (vaatii 4–5). -->
             <select id="dirAreaImportance">
+              <option value="" selected disabled>Valitse tärkeys</option>
               <option value="1">1 — Vähän tärkeä</option>
               <option value="2">2 — Jonkin verran tärkeä</option>
-              <option value="3" selected>3 — Tärkeä</option>
+              <option value="3">3 — Tärkeä</option>
               <option value="4">4 — Hyvin tärkeä</option>
               <option value="5">5 — Erittäin tärkeä</option>
             </select>
@@ -289,6 +296,7 @@
             <select id="dirAreaCategory"></select>
             <div class="field-error" id="dirAreaCategoryError" role="alert"></div>
             <p class="hint">Tehtävä ilman tavoitetta kuuluu alueeseen kategoriansa kautta.</p>
+            <p class="hint" id="dirAreaCategoryImpact" aria-live="polite"></p>
           </div>
           <div>
             <label class="field-label" for="dirAreaDescription">Mitä tämä tarkoittaa sinulle? (valinnainen)</label>
@@ -326,7 +334,7 @@
             </div>
             <div>
               <label class="field-label" for="dirTimeMinutes">Minuutteja</label>
-              <input type="number" id="dirTimeMinutes" min="1" max="1440" step="5" inputmode="numeric">
+              <input type="number" id="dirTimeMinutes" min="1" max="1440" step="1" inputmode="numeric">
               <div class="dir-presets" id="dirTimePresets" role="group" aria-label="Pikavalinnat">
                 <button class="assist-btn" type="button" data-preset-minutes="15">15 min</button>
                 <button class="assist-btn" type="button" data-preset-minutes="30">30 min</button>
@@ -433,6 +441,8 @@
 
       <!-- ---- Tehtävät ---- -->
       <div id="tasksSection">
+        <!-- Näkyy vain, kun arvioitavaa on: avaa Suunnan arviojonon. -->
+        <button class="assist-btn tasks-estimate-btn" id="tasksEstimateBtn" type="button" hidden>Arvioi kestot</button>
         <button class="add-row" id="addRowBtn" type="button"><svg aria-hidden="true"><use href="#i-plus"/></svg>Lisää tehtävä</button>
 
         <div class="add-form" id="addForm" style="display:none;" role="group" aria-labelledby="addFormTitle">
@@ -480,14 +490,15 @@
             </div>
             <div>
               <label class="field-label" for="afDuration">Kesto (min)</label>
-              <input type="number" id="afDuration" min="1" max="1440" step="5" placeholder="esim. 45">
+              <input type="number" id="afDuration" min="1" max="1440" step="1" placeholder="esim. 45">
+              <div class="dir-presets" id="afDurationPresets" role="group" aria-label="Kestoarvion pikavalinnat"></div>
               <div class="field-error" id="afDurationError"></div>
             </div>
           </div>
 
           <div class="form-row">
             <div>
-              <label class="field-label" for="afCategory">Elämänalue</label>
+              <label class="field-label" for="afCategory">Kategoria</label>
               <select id="afCategory"></select>
             </div>
             <div>
@@ -570,7 +581,7 @@
             </div>
             <div>
               <label class="field-label" for="rfDuration">Kesto (min)</label>
-              <input type="number" id="rfDuration" min="1" max="1440" step="5" placeholder="30">
+              <input type="number" id="rfDuration" min="1" max="1440" step="1" placeholder="30">
               <div class="field-error" id="rfDurationError"></div>
             </div>
           </div>
@@ -581,13 +592,18 @@
 
           <div class="form-row">
             <div>
-              <label class="field-label" for="rfCategory">Elämänalue</label>
+              <label class="field-label" for="rfCategory">Kategoria</label>
               <select id="rfCategory"></select>
             </div>
             <div>
               <label class="field-label" for="rfPriority">Prioriteetti</label>
               <select id="rfPriority"></select>
             </div>
+          </div>
+
+          <div>
+            <label class="field-label" for="rfGoal">Liittyy tavoitteeseen</label>
+            <select id="rfGoal"><option value="">Ei tavoitetta</option></select>
           </div>
 
           <div class="form-row">
@@ -855,13 +871,19 @@
 
         <div class="form-row">
           <div>
-            <label class="field-label" for="gfCategory">Elämänalue</label>
+            <label class="field-label" for="gfCategory">Kategoria</label>
             <select id="gfCategory"></select>
           </div>
           <div>
             <label class="field-label" for="gfPriority">Prioriteetti</label>
             <select id="gfPriority"></select>
           </div>
+        </div>
+
+        <div>
+          <label class="field-label" for="gfLifeArea">Elämänalue (Suunta)</label>
+          <select id="gfLifeArea"><option value="">Ei elämänaluetta</option></select>
+          <p class="hint" id="gfLifeAreaHint" hidden>Ei elämänalueita — luo ne Suunnassa</p>
         </div>
 
         <div>
@@ -970,7 +992,7 @@
           </div>
 
           <div>
-            <label class="field-label" for="prfCategory">Elämänalue</label>
+            <label class="field-label" for="prfCategory">Kategoria</label>
             <select id="prfCategory"></select>
           </div>
 

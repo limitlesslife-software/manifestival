@@ -145,6 +145,20 @@ test('Suunta: pikatoiminnot, energia omana rivinään ja aineiston laatu toimenp
   assert.match(quality, /Arvioi tehtäviä/);
 });
 
+/**
+ * Tapahtuma arviojonolle: jono etsii kohteen yhdistetyllä valitsimella
+ * ('[data-queue-estimate], [data-queue-skip], ...'), joten tynkä vastaa
+ * jokaiseen osaan, jonka data-attribuutti kohteella on.
+ */
+function queueClick(dataset) {
+  const target = { dataset, disabled: false };
+  const matches = selector => selector.split(',').some(part => {
+    const match = /\[data-([a-z-]+)\]/.exec(part.trim());
+    return Boolean(match) && dataset[match[1].replace(/-([a-z])/g, (_, c) => c.toUpperCase())] !== undefined;
+  });
+  return { target: { closest: selector => (matches(selector) ? target : null), dataset } };
+}
+
 test('arviointi: karkea arvio yhdellä napautuksella; tuntematon ei muutu nollaksi', async (t) => {
   freezeLocalDate(t, THURSDAY);
   await setupWeek();
@@ -152,9 +166,10 @@ test('arviointi: karkea arvio yhdellä napautuksella; tuntematon ei muutu nollak
   node('dirOpenEstimate').dispatch('click');
   assert.equal(node('dirEstimateSection').hidden, false);
   assert.match(html('dirEstimate'), /Tehtävä w2/);
-  assert.match(html('dirEstimate'), /data-estimate="task:w2"/);
+  // Arviojono (F4): yksi kortti kerrallaan, data-queue-estimate.
+  assert.match(html('dirEstimate'), /data-queue-estimate="task:w2"/);
   assert.equal(/Tehtävä w1/.test(html('dirEstimate')), false, 'arvioitua ei kysytä');
-  node('dirEstimate').dispatch('click', clickOn('[data-estimate]', { estimate: 'task:w2', minutes: '30' }));
+  node('dirEstimate').dispatch('click', queueClick({ queueEstimate: 'task:w2', minutes: '30' }));
   await flush();
   const w2 = getState().tasks.find(x => x.id === 'w2');
   assert.equal(w2.durationMinutes, 30);
