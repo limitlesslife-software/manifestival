@@ -185,6 +185,39 @@ kaatuu, jos uusi moduuli unohtuu listalta.
 
 ---
 
+## supabase-js omasta originista (vendor/)
+
+Aiemmin `index.html` latasi supabase-js:n osoitteesta
+`https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2` (versioalue, ei
+tiivistettä). Service worker ei välimuistita vieraita origineja, joten
+offline-kylmäkäynnistys saattoi kaatua ennen kuin ajastin tai lähettämättömät
+aikakirjaukset ehtivät näkyviin (`getClient()` heitti, `start()` näytti
+käynnistysvirheen). Paketti tarjoillaan nyt omasta originista ja on
+sovelluskuoressa (`sw.js` SHELL) sekä Android-koonnissa (`scripts/build-web.mjs`
+kopioi `vendor/`-hakemiston).
+
+| | |
+|---|---|
+| Tiedosto | `vendor/supabase-js-2.117.2.min.js` |
+| Versio | `@supabase/supabase-js` **2.117.2** (paketin `dist/umd/supabase.js`, määrittää `globalThis.supabase`) |
+| SHA-256 | `59d39487c3589843b410322d8a3d562ce022aba1e5ccb16898ef3fb2a0da2ecd` |
+| npm-paketin shasum | `2e3fc984e81bead71f5513e0bc2ebc4343491f59` (`npm pack @supabase/supabase-js@2.117.2`) |
+| Lisenssi | MIT, `vendor/supabase-js-LICENSE.txt` |
+
+Tiedosto on tavu tavulta sama kuin npm-paketissa ja sama, jonka jsDelivr
+tarjoili `@2`-osoitteesta 2026-09-26 (`x-jsd-version: 2.117.2`).
+`vendor/.gitattributes` estää rivinvaihtomuunnokset, jotta tiiviste pysyy
+samana Windows-koneellakin. `tests/vendor-supabase.test.mjs` tarkistaa
+tiivisteen, polun ja kytkennät.
+
+**Päivitys:** `npm pack @supabase/supabase-js@<versio>` repon ulkopuolelle,
+kopioi `package/dist/umd/supabase.js` nimellä `vendor/supabase-js-<versio>.min.js`,
+poista vanha, päivitä polku `index.html`:ään ja `sw.js`:n SHELL-listaan sekä
+versio ja tiiviste tähän taulukkoon ja testiin. CSP:n `script-src` on pelkkä
+`'self'` (`vercel.json`).
+
+---
+
 ## Preview-deployt
 
 Vercel voi luoda preview-deployn jokaisesta haarasta. Tämä on hyödyllistä

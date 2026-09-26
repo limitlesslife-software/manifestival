@@ -1,0 +1,4 @@
+# Kolmannen osapuolen tiedostot tarjoillaan tavu tavulta sellaisenaan.
+# Ei rivinvaihtomuunnoksia: Windows-koneen core.autocrlf=true muuttaisi
+# muuten tiedoston sisällön ja SHA-256-tiivisteen (docs/DEPLOYMENT.md).
+* -text

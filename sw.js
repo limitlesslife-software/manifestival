@@ -43,6 +43,9 @@ const SHELL = [
   '/icon-192.png',
   '/icon-512.png',
   '/apple-touch-icon.png',
+  // supabase-js omasta originista. Ilman tätä offline-kylmäkäynnistys
+  // kaatui ennen kuin ajastin tai lähtökori ehti näkyviin (index.html).
+  '/vendor/supabase-js-2.117.2.min.js',
   '/src/ai/captureSchema.js',
   '/src/ai/alignmentContext.js',
   '/src/ai/alignmentExplainClient.js',
