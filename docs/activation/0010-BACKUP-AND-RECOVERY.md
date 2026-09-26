@@ -103,14 +103,20 @@ hetkiltä. Tulos:
   istunnon aikavyöhyke, rooli ja sen BYPASSRLS, omistajan olemassaolo,
   auth-käyttäjien lukumäärä ja taulukohtaisesti rivit, md5, tavut,
   sarakkeet tyyppeineen, pääavain, vierasavaimet, liipaisimet,
-  taulun omistaja ja RLS/FORCE RLS;
+  taulun omistaja, RLS/FORCE RLS ja palvelimen laskema RLS-suodatus
+  (`rlsFiltered`: suodattiko rivitason suojaus ottavan roolin näkymää);
 - rivit `01`–`14` = yksi rivi per taulu: koko taulu tekstinä
   (`jsonb_agg(to_jsonb(x))::text`) ja sen md5.
 
 `restore-snapshot.mjs check` todentaa MANIFESTin ja jokaisen taulun
 tiivisteen, rivimäärät, tavumäärät ja viite-eheyden (jokainen
 tilannekuvan sisäinen viittaus osuu tilannekuvaan). Katkennut, muokattu
-tai repeytynyt kuva hylätään.
+tai repeytynyt kuva hylätään. Samoin kuva, jonka **RLS suodatti**: rooli
+ei ollut superuser eikä BYPASSRLS, ja taululla oli FORCE RLS tai rooli ei
+ollut taulun omistaja. Sellainen kuva on sisäisesti eheä (tiivisteet ja
+viitteet täsmäävät näkyviin riveihin) mutta vajaa — ota kuva
+`postgres`-roolilla. Vanhasta viennistä ilman `rlsFiltered`-kenttää sama
+päätellään roolista ja taulun omistajasta (epävarma = hylätään).
 
 ### L2 — Supabasen oma varmuuskopio (VALINNAINEN)
 
@@ -401,6 +407,8 @@ node tools/activation/restore-snapshot.mjs restore .local-backups/db/<UTC>_state
 node tools/activation/restore-snapshot.mjs restore .local-backups/db/<UTC>_state_0009/vienti.csv
 node tools/activation/restore-snapshot.mjs compare .local-backups/db/<UTC>_state_0009/vienti.csv
 # valinnat: --prune (poista myös kuvan jälkeen luodut rivit), --tables=goals,projects
+# --prune --tables: kieltäytyy, ellei jokainen valittuun tauluun viittaava taulu ole mukana
+#   (esim. goals -> myös projects, tasks, routines, bills, routine_exceptions)
 ```
 
 2. **Kuivaharjoitus:** aja `restore.dry-run.sql` kokonaan uudessa
@@ -432,6 +440,8 @@ nullable-viittaukset (`goals` ↔ `projects` -kehä) → lopputarkistus →
 | `ei omista tauluja` / `FORCE ROW LEVEL SECURITY` | rooli ei ole taulujen omistaja / FORCE RLS ilman BYPASSRLS:ää | aja `postgres`-roolilla |
 | `PALAUTUS EI TÄSMÄÄ` | lopputulos ei vastaa kuvaa (esim. muokattu skripti) | älä muokkaa skriptiä; generoi uudelleen |
 | `duplicate key value` (23505) | kuvan jälkeen luotu rivi varaa kuvan rivin uniikkiavaimen | `--prune`-versio (kuivaharjoitus ensin) |
+| `KARSINTA ESTETTY` (tai työkalun `KIELTÄYDYN: --prune --tables`) | valitsematon taulu viittaa valittuun: karsinta poistaisi tai muuttaisi sen rivejä | lisää luetellut taulut `--tables`-listaan tai jätä `--prune` pois |
+| `check`: `RLS suodatti rivit` / `RLS-suodatusta ei voida todentaa` | kuva otettiin roolilla, joka ei ohita RLS:ää (tai vanha vienti ilman tietoa) | ota kuva uudelleen `postgres`-roolilla nykyisellä `snapshot_state_00NN.sql`:llä |
 | `lock timeout` / `canceling statement` | sovellus piti lukkoa | sulje sovellus, aja uudelleen |
 
 Jokainen näistä on transaktion sisällä: ERROR = mitään ei muuttunut.
@@ -452,7 +462,8 @@ Aja samassa välilehdessä `rollback;`.
 - Älä muokkaa tilannekuvaa tai palautusskriptiä: tiiviste hylkää sen.
 - Älä käytä `--prune`-valintaa kevyesti: se poistaa kuvan jälkeen luodut
   rivit (ja niiden vierasavaimien mukaiset riippuvat rivit muista
-  tauluista).
+  tauluista). Siksi `--prune --tables` kieltäytyy, ellei jokainen
+  valittuun tauluun viittaava taulu ole valittu.
 - Älä palauta sovelluksen ollessa auki.
 - Älä palaa aallosta G aaltoon F tekemättä ensin §7 C:n kohtia 1 ja 2.
 
@@ -482,6 +493,13 @@ molemmille lähtötiloille (`text`, `typed`), P = N−1. **231/231 PASS.**
 | B12 | väärä kanta, puuttuva käyttäjä, puuttuva omistaja, väärä saraketyyppi hylätään | 35/35 |
 | B13 | ei-superuser (NOBYPASSRLS) taulujen omistajana onnistuu; FORCE RLS ja ei-omistaja kaatuvat kiinni | 30/30 |
 | B14 | kuivaharjoitus: onnistuu, päättyy `rollback;`iin, katalogi ja sisältö ennallaan | 10/10 |
+| B15 | RLS:n suodattama kuva hylätään (FORCE RLS omistajalle, ei-omistaja ilman BYPASSRLS:ää); omistaja ja BYPASSRLS kelpaavat | lisätty 2026-09-26, ei vielä ajettu |
+
+Ajo: `PG_REHEARSAL_PORT=54349 node tools/pg-rehearsal/rehearse-backup.mjs`
+tai `node tools/pg-rehearsal/rehearse.mjs --only=backup`. Ennen yhtäkään
+kantaa vahti vaatii nimenomaisen portin (ei 54329), PostgreSQL 17:n ja
+data-hakemiston projektin pääkansion `.claude/pg-local/`-hakemistossa
+(`tools/pg-rehearsal/README.md`).
 
 Yksikkötestit ilman kantaa: `tests/activation-backup.test.mjs` ja
 `tests/activation-backup-docs.test.mjs`.
@@ -523,7 +541,7 @@ Yksikkötestit ilman kantaa: `tests/activation-backup.test.mjs` ja
 - `tools/activation/build-snapshots.mjs` — tilannekuvien generaattori
 - `tools/activation/snapshot-core.mjs` — jäsennys, palautus, vertailu
 - `tools/activation/restore-snapshot.mjs` — `check` / `compare` / `restore`
-- `tools/pg-rehearsal/backup-scenario.mjs`, `tools/pg-rehearsal/rehearse-backup.mjs` — harjoittelu B1–B14
+- `tools/pg-rehearsal/backup-scenario.mjs`, `tools/pg-rehearsal/rehearse-backup.mjs` — harjoittelu B1–B15
 - `tests/activation-backup.test.mjs`, `tests/activation-backup-docs.test.mjs`
 - `docs/acceptance/WAVE-G.md` — aalto G ja sen peruutus (§6)
 - `docs/activation/MIGRATION-BUNDLES.md` — migraatiopaketit 0009–0013
