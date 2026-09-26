@@ -18,7 +18,7 @@ import {
 import { clearLocalUserData } from '../src/app/actions.js';
 import {
   saveWeeklyReview, saveWeeklyCapacity, applyAdjustment, isAdjustmentDone, deleteLifeArea,
-  resetAppliedAdjustments, resetTimeEntrySync, setTimeEntryWriterForTests
+  resetAppliedAdjustments, resetTimeEntrySync, setTimeEntryWriterForTests, logTime
 } from '../src/app/alignment.js';
 import { alignmentReviewsRepo, weeklyCapacitiesRepo, lifeAreasRepo } from '../src/data/collectionsRepo.js';
 import { createTimeEntryWriter } from '../src/app/timeEntryWriter.js';
@@ -411,6 +411,28 @@ test('RACE-15: alueen poiston palautus lukee tilan vahvistuksen JÄLKEEN', async
   assert.equal(findGoal('g1').lifeAreaId, 'a1');
   assert.equal(findGoal('g2').lifeAreaId, 'a1', 'palautus rakennettiin vanhasta tilannekuvasta');
   assert.equal(getState().lifeAreas.length, 1);
+});
+
+// ================================================================ F9 merkintä
+
+test('F9: lähtökorissa odottava kirjaus on merkitty listaan, lähetetty ei', async () => {
+  let online = false;
+  setTimeEntryWriterForTests(createTimeEntryWriter({
+    repo: {
+      isPersistent: () => true,
+      insert: async e => (online ? { ok: true, value: e } : { ok: false, error: { cause: { message: 'Failed to fetch' } } })
+    },
+    loadOutbox, saveOutbox, userId: () => USER.id
+  }));
+  await logTime({ entryDate: WEEK, minutes: 25, operationId: 'log:marker-a' }, { silent: true });
+  online = true;
+  await logTime({ entryDate: WEEK, minutes: 10, operationId: 'log:marker-b' }, { silent: true });
+  initDirection();
+  renderDirection();
+  const rows = doc('dirTimeList').innerHTML.split('class="assist-row"').slice(1);
+  assert.equal(rows.length, 2);
+  assert.equal(rows.filter(row => row.includes('Odottaa lähetystä')).length, 1);
+  assert.ok(rows.find(row => row.includes('25 min')).includes('Odottaa lähetystä'));
 });
 
 // ================================================================ RACE-12

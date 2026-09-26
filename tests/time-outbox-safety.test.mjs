@@ -138,6 +138,7 @@ test('F10 KRIITTINEN: kirjaus on lähtökorissa koko lähetyksen ajan, eikä sam
   const pending = logTime({ entryDate: DAY, minutes: 25, operationId: 'log:wa-1' });
   assert.deepEqual(loadOutbox(USER_A.id).map(e => e.operationId), ['log:wa-1'], 'ei ennakkokirjausta');
   assert.equal(pendingTimeEntryCount(), 0, 'oma kesken oleva lähetys ei "odota yhteyttä"');
+  assert.equal(pendingTimeEntryOperations().has('log:wa-1'), false);
   // Lataus, jonka palvelinlista haettiin ennen INSERTiä, korvaa tilan.
   setTimeEntries(withPendingTimeEntries([], { persistent: true, userId: USER_A.id }));
   assert.deepEqual(getState().timeEntries.map(e => e.operationId), ['log:wa-1'], 'kirjaus katosi näkyvistä');

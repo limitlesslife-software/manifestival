@@ -195,10 +195,10 @@ export function createTimeEntryWriter({
       return id ? loadOutbox(id).filter(entry => !sending.has(entry.operationId)).length : 0;
     },
 
-    /** Korissa odottavien operaatiotunnisteet (näkymän merkintä). */
+    /** Korissa yhteyttä odottavien operaatiotunnisteet (näkymän merkintä). */
     pendingOperations() {
       const id = userId();
-      return new Set(id ? loadOutbox(id).map(entry => entry.operationId) : []);
+      return new Set(id ? loadOutbox(id).map(entry => entry.operationId).filter(op => !sending.has(op)) : []);
     },
 
     /** Yksi lähetys kerrallaan: rinnakkainen kutsu saa käynnissä olevan tuloksen. */
