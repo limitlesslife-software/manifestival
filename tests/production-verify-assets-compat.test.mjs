@@ -6,6 +6,9 @@
 // tuotannon schema.js:ssä — ja tuotannon commit (aalto C) tuntee niistä
 // vain osan. Junan jokainen deploy todennetaan tällä komennolla, joten
 // sen on toimittava uusimmalta haaralta vanhempaa tuotantoa vastaan.
+//
+// Logiikka on nyt tools/release/live-assets.mjs:ssä (ACT-06); komentorivi
+// scripts/production-verify-assets.mjs on sen ohut kääre.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -30,8 +33,10 @@ const WAVE_C_SCHEMA = `export const TABLES = Object.freeze({
 export function hasTable(name) {}`;
 
 test('KRIITTINEN: todennus jäsentää vanhemman tuotannon porttilohkon (puuttuva = kiinni)', () => {
+  assert.match(read('tools/release/live-assets.mjs'),
+    /parseGates\(schema, \{ allowMissing: true \}\)/);
   assert.match(read('scripts/production-verify-assets.mjs'),
-    /parseGates\(schema\.text, \{ allowMissing: true \}\)/);
+    /from '\.\.\/tools\/release\/live-assets\.mjs'/, 'CLI ei käytä yhteistä toteutusta');
   const gates = parseGates(WAVE_C_SCHEMA, { allowMissing: true });
   assert.ok(gates, 'aallon C lohko ei jäsenny');
   const expected = expectedMatrix('C');

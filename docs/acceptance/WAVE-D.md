@@ -6,7 +6,13 @@
 **Edellinen tuotanto:** aallon C commit (v16)
 **Peruutuskohde:** aalto C
 
-Aallon commit-SHA: ks. `docs/activation-0003-0008-release-manifest.json`.
+**Push-kohde (deployTarget):** junan lukon `docs/activation/release-train-c-j.json`
+aallon D `deployTarget` — täysi 40-merkkinen SHA, sama kuin kohdan
+"Deploy" push-rivillä. Manifestin (`docs/activation-0003-0008-release-manifest.json`)
+`commitSha` on aallon AALTOCOMMIT: peruutuksen ja diffin viite, EI push-kohde.
+Push tehdään orkestroijalla (`npm run activation:orchestrate -- --execute-deploy
+--approved-sha=<deployTarget>`), joka tarkistaa ensin, että `origin`in main on
+yhä odotettu edellinen SHA.
 
 ---
 
@@ -70,7 +76,7 @@ Vain `src/data/schema.js`, `sw.js`, `docs/PRODUCTION-STATUS.md`.
 ## 2. Deploy
 
 ```
-git push origin <WAVE-D-SHA>:main
+git push origin 091e73c0091e8f135641e3501742b998dbac8461:refs/heads/main
 ```
 
 ---

@@ -1,15 +1,47 @@
 {
   "generatedBy": "tools/activation/train-map.mjs",
-  "originMain": "cf259d0ef755f7e875cc9cd9c15405eba632e408",
-  "productBranch": {
-    "ref": "feature/life-alignment-foundation",
-    "sha": "b4e3cec68c66f4724e38a5a7ef2d11fad176202d"
+  "lockVersion": 2,
+  "note": "LUKKO: push-kohde on aina waves[].deployTarget (40 merkkiä). ref on vain alias, jolla lukko kirjoitettiin.",
+  "production": {
+    "source": "origin/main (paikallinen, luettu --write-hetkellä; ei osa lukkoa)",
+    "sha": "cf259d0ef755f7e875cc9cd9c15405eba632e408",
+    "cacheVersion": "v16",
+    "wave": "C"
+  },
+  "requiredPatches": [
+    {
+      "commit": "5aa0d53a2917db4a588aca91d92f5ed051259545",
+      "fromWave": "H",
+      "reason": "kellosta riippuvat testit (\"perjantaille\") kaatuvat ehdokkaan omassa patteristossa"
+    }
+  ],
+  "sqlSource": {
+    "wave": "J",
+    "ref": "rehearsal/wave-j-v1",
+    "sha": "5df40b20cee4f35279a79888959d49c9af88bcc7",
+    "files": {
+      "supabase/migrations/0009_finance_2.sql": "7a7d605de64616711ac0f63676c1822821dadfe9a10f6ebd31196cac0c61bd8c",
+      "supabase/preflight/preflight_0009.sql": "d4c327cb1b3a095c884f55b9790882412f6e13319396b13adeeb267ff550f1f6",
+      "supabase/verify/verify_0009.sql": "ab49b2997951a4f2762bd31087e6f81b0353b16a8d6c460c0027350e479a2fdf",
+      "supabase/migrations/0010_goal_to_action.sql": "a6ecdf3a227d8988b49adbee2fe3a011b208bf0a1958a62d8d56d969f8cb12a3",
+      "supabase/preflight/preflight_0010.sql": "384874204c9b4f307717a93dd55afd83740f573212877013b4291556a32af44d",
+      "supabase/verify/verify_0010.sql": "bd44ee216b31c682a7f93baca590b96ed6547f34599e45a7f62250f925e3e0de",
+      "supabase/migrations/0011_personal_assistant.sql": "a7c88ba6c133bb9608a48b79341be61f4608e1d154f911d852040d154449821a",
+      "supabase/preflight/preflight_0011.sql": "e414f0635a1e160fe6e95a134a62c1c2fc05db431fa76faf7652d834ca49310d",
+      "supabase/verify/verify_0011.sql": "a9dbb6aaa56ae6e8b7d46e38692195ba94292611ffb3261e7fdb568ce72cf4b8",
+      "supabase/migrations/0012_life_alignment.sql": "456f6f2d04829d20c8e3bc9d1e6e27b9f41954ae0c8731f4467ed74e33564658",
+      "supabase/preflight/preflight_0012.sql": "7676c526b82d0607b035ffd9fa6ee0d8c65f06b22b9bc03ebd6c8407de1d6a06",
+      "supabase/verify/verify_0012.sql": "92b093479aae3248d07b5b021b44df8e1a0722eb32ddd7feef021c68d14ca870",
+      "supabase/migrations/0013_alignment_reality.sql": "ef595727b2dbab4a212cab9a56b8ad71b63763966260f9dc3c2f7b3a1e7901fe",
+      "supabase/preflight/preflight_0013.sql": "a3cb1f38067582f6c172c3454fad1fc886995353fd6e71cea633e42152dfa7db",
+      "supabase/verify/verify_0013.sql": "fa25f15ba6756d8fc0e89f3c74c05f4cc2cebe744bcf994719a062ee32e70fc3"
+    }
   },
   "waves": [
     {
       "wave": "C",
       "deployTarget": "cf259d0ef755f7e875cc9cd9c15405eba632e408",
-      "ref": "origin/main",
+      "ref": "cf259d0ef755f7e875cc9cd9c15405eba632e408",
       "waveCommit": "cf259d0ef755f7e875cc9cd9c15405eba632e408",
       "parentWave": "B",
       "descendsFromParent": null,
@@ -28,8 +60,9 @@
       "preflight": null,
       "verify": null,
       "acceptance": "docs/acceptance/WAVE-C-OWNER-ACCEPTANCE.md",
-      "status": "DEPLOYED_NOT_ACCEPTED",
       "rollbackTarget": "B",
+      "risk": "low",
+      "backupRequired": false,
       "columnGates": {
         "BILL_PAYMENT_FIELDS": {
           "actual": false,
@@ -52,7 +85,9 @@
           "expected": false
         }
       },
-      "consistent": true
+      "missingPatches": [],
+      "consistent": true,
+      "problem": null
     },
     {
       "wave": "D",
@@ -79,8 +114,9 @@
       "preflight": null,
       "verify": null,
       "acceptance": "docs/acceptance/WAVE-D.md",
-      "status": "READY_FROZEN",
       "rollbackTarget": "C",
+      "risk": "low",
+      "backupRequired": false,
       "columnGates": {
         "BILL_PAYMENT_FIELDS": {
           "actual": false,
@@ -103,7 +139,9 @@
           "expected": false
         }
       },
-      "consistent": true
+      "missingPatches": [],
+      "consistent": true,
+      "problem": null
     },
     {
       "wave": "E",
@@ -131,8 +169,9 @@
       "preflight": null,
       "verify": null,
       "acceptance": "docs/acceptance/WAVE-E.md",
-      "status": "READY_FROZEN",
       "rollbackTarget": "D",
+      "risk": "low",
+      "backupRequired": false,
       "columnGates": {
         "BILL_PAYMENT_FIELDS": {
           "actual": false,
@@ -155,7 +194,9 @@
           "expected": false
         }
       },
-      "consistent": true
+      "missingPatches": [],
+      "consistent": true,
+      "problem": null
     },
     {
       "wave": "F",
@@ -185,8 +226,9 @@
       "preflight": "supabase/preflight/preflight_0009.sql",
       "verify": "supabase/verify/verify_0009.sql",
       "acceptance": "docs/acceptance/WAVE-F.md",
-      "status": "READY_AFTER_MIGRATION",
       "rollbackTarget": "E",
+      "risk": "low",
+      "backupRequired": false,
       "columnGates": {
         "BILL_PAYMENT_FIELDS": {
           "actual": true,
@@ -209,7 +251,9 @@
           "expected": false
         }
       },
-      "consistent": true
+      "missingPatches": [],
+      "consistent": true,
+      "problem": null
     },
     {
       "wave": "G",
@@ -240,8 +284,9 @@
       "preflight": "supabase/preflight/preflight_0010.sql",
       "verify": "supabase/verify/verify_0010.sql",
       "acceptance": "docs/acceptance/WAVE-G.md",
-      "status": "READY_AFTER_MIGRATION",
       "rollbackTarget": "F",
+      "risk": "high",
+      "backupRequired": true,
       "columnGates": {
         "BILL_PAYMENT_FIELDS": {
           "actual": true,
@@ -264,7 +309,9 @@
           "expected": false
         }
       },
-      "consistent": true
+      "missingPatches": [],
+      "consistent": true,
+      "problem": null
     },
     {
       "wave": "H",
@@ -300,8 +347,9 @@
       "preflight": "supabase/preflight/preflight_0011.sql",
       "verify": "supabase/verify/verify_0011.sql",
       "acceptance": "docs/acceptance/WAVE-H.md",
-      "status": "READY_AFTER_MIGRATION",
       "rollbackTarget": "G",
+      "risk": "low",
+      "backupRequired": false,
       "columnGates": {
         "BILL_PAYMENT_FIELDS": {
           "actual": true,
@@ -324,7 +372,11 @@
           "expected": false
         }
       },
-      "consistent": true
+      "missingPatches": [
+        "5aa0d53a2917db4a588aca91d92f5ed051259545"
+      ],
+      "consistent": true,
+      "problem": null
     },
     {
       "wave": "I",
@@ -364,8 +416,9 @@
       "preflight": "supabase/preflight/preflight_0012.sql",
       "verify": "supabase/verify/verify_0012.sql",
       "acceptance": "docs/acceptance/WAVE-I.md",
-      "status": "READY_AFTER_MIGRATION",
       "rollbackTarget": "H",
+      "risk": "medium",
+      "backupRequired": false,
       "columnGates": {
         "BILL_PAYMENT_FIELDS": {
           "actual": true,
@@ -388,7 +441,11 @@
           "expected": false
         }
       },
-      "consistent": true
+      "missingPatches": [
+        "5aa0d53a2917db4a588aca91d92f5ed051259545"
+      ],
+      "consistent": true,
+      "problem": null
     },
     {
       "wave": "J",
@@ -430,8 +487,9 @@
       "preflight": "supabase/preflight/preflight_0013.sql",
       "verify": "supabase/verify/verify_0013.sql",
       "acceptance": "docs/acceptance/WAVE-J.md",
-      "status": "READY_AFTER_MIGRATION",
       "rollbackTarget": "I",
+      "risk": "low",
+      "backupRequired": false,
       "columnGates": {
         "BILL_PAYMENT_FIELDS": {
           "actual": true,
@@ -454,7 +512,11 @@
           "expected": true
         }
       },
-      "consistent": true
+      "missingPatches": [
+        "5aa0d53a2917db4a588aca91d92f5ed051259545"
+      ],
+      "consistent": true,
+      "problem": null
     }
   ]
 }
