@@ -110,3 +110,118 @@ täytetty eikä kukaan ole päättänyt puolestasi, mikä sinulle on tärkeää.
 | Avustajan kirjaus (aalto H) vaatii yhteyden | Epäonnistuu näkyvästi, ei valehtele | tunnettu |
 | Puhe Android-sovelluksessa: aiemmissa APK:issa ei toimi (WebView'n tunnistimen mikrofonipyyntö menee `onPermissionRequest(AUDIO_CAPTURE)`-polkuun, Capacitor vaatii kaksi julistamatonta lupaa → `not-allowed`). Korjaus on koodissa: oma `ManifestivalSpeech`-liitännäinen, `RECORD_AUDIO` kysytään vasta napautuksesta. Ei laitetestattu | Suunta ei tarvitse puhetta; kirjoittaminen toimii aina | P1 |
 | AI-selitys (`/api/explain`) ei ole käytössä | Deterministinen selitys näkyy aina | OPTIONAL DAY-1 |
+
+## E2E: paikallinen selainajo (ennen puhelinta)
+
+**Mitä:** `npm run e2e:suunta` (tai `node tools/e2e/run-suunta-e2e.mjs`)
+ajaa Suunnan headless-Chromessa koneella. Vaatii Chromen tai Edgen
+(`CHROME_PATH`). Vain vanhan käyttäjän ryhmä: `E2E_GROUPS=legacy`.
+Kestää alle minuutin. Jos siivous kaatuu hetkelliseen EPERM-virheeseen,
+aja uudelleen (tulos on jo tulostettu).
+
+**Turvallisuus:** ei tuotantoa. `*.supabase.co` ja Anthropic estetään
+DNS-tasolla, jokainen pyyntö kirjataan (yksikin tuotantopyyntö kaataa
+ajon), debug-portti todennetaan vapaaksi ja profiili poistetaan.
+supabase-js:ää ei ladata: kanta on paikallinen korvike
+(`tools/e2e/fakeSupabase.mjs`), joka tallentaa rivit sivun
+sessionStorageen, rajaa ne käyttäjään kuten RLS ja noudattaa
+migraatioiden uniikki- ja viiteavaimia (23505, 23503, on delete set null).
+Istunnossa ei ole tokenia, joten tekoälykutsuja ei lähde.
+
+**Oikea käynnistys:** valjas liittää `index.html`:n rungon ja importoi
+`src/app/main.js`:n: istunnon palautus, skeematarkistus, `loadUserData`,
+`renderAll`, ensikäytön opastus — ei käsin kytkettyjä näkymiä.
+Uudelleenlataus on oikea sivun lataus (`Page.reload`): `main.js`
+käynnistyy uudelleen, laitteen ajastin ja lähtökori luetaan
+localStoragesta ja `loadUserData` lukee kannan rivit.
+
+**J-portit:** tämän haaran `src/data/schema.js`, jonka porttiliteraalit
+korvataan aallon J arvoilla (`tools/e2e/gates.mjs`). Arvot luetaan
+`rehearsal/wave-j-v1`:n schema.js:stä (tai `E2E_GATES_REF`) ja
+verrataan junan määrittelyyn (`tools/release/waves.mjs`); ristiriita
+keskeyttää ajon. Selain saa tiedoston import mapin kautta, eikä mikään
+`src/`-tiedosto muutu. Ehdokkaan tiedostoa ei tarjoilla sellaisenaan
+(siitä puuttuu tämän haaran ajonaikainen skeemakerros, jota repositoriot
+importoivat), eikä ajoa tehdä J-työpuusta (J on leikattu ennen Day 1
+-korjauksia, joten se ei ole koodi, jota tässä hyväksytään).
+
+**Ryhmät:**
+
+| Ryhmä | Kanta | Mitä todistaa |
+|---|---|---|
+| suljetut portit | tyhjä | aiemmat 17 skenaariota oikealla käynnistyksellä (Suunta muistissa) |
+| J-portit | tyhjä | samat skenaariot tallentuvalla Suunnalla |
+| J-portit, vanha käyttäjä | 36 tehtävää ilman kestoa (rästi / tämä / ensi viikko), 1 tavoite, 1 projekti tavoitteessa, profiili, ei alueita | tarkistuslistan kohdat 1–11 ja 15 koneella (alla) |
+
+Vanhan käyttäjän ajo (kello: tämän viikon keskiviikko klo 10):
+
+1. Lataus tuo 36 + 1 + 1 riviä; opastus suljetaan omalla painikkeellaan;
+   Suunta avautuu aloitukseen 1/7; kuittaus "Sinulla on jo 36 tehtävää,
+   1 tavoite ja 1 projekti"; ei huomiotta jäämis- eikä poikkeamaväitteitä;
+   ei yhtään kirjoitusta tehtäviin, tavoitteisiin, projekteihin eikä
+   Suunnan tauluihin (kohdat 1–2).
+2. Alue "Terveys": tärkeyttä ei valittu valmiiksi, kategoria ei kytkeydy
+   hiljaa, tallennus vasta valinnan jälkeen -> `life_areas` (kohta 3).
+3. Kapasiteetti ilman oletusarvoa -> `weekly_capacities` (kohta 5).
+4. Tavoite liitetään alueeseen vaiheessa 5 -> `goals.life_area_id`
+   (kohta 4).
+5. Arviojono: yksi tämän viikon tehtävä 30 min -> `duration_minutes`,
+   muut 35 ennallaan (kohta 6).
+6. Ajastin alueelle -> `running_timers`; kello +25 min; uudelleenlataus:
+   sama ajastin käynnissä (0:25), alue, kapasiteetti, tavoitteen alue ja
+   arvio tallessa, opastus ei palaa (kohdat 7–8).
+7. Toinen laite: laitteen ajastinkopio poistetaan, uudelleenlataus ->
+   ajastin palautuu kannasta.
+8. Pysäytys (+15 min): `time_entries` 40 min kerran, lähde timer,
+   0013-sarakkeet; Suunnan toteuma ja aluelista päivittyvät; ensimmäisen
+   viikon kirjaus ei tee alueesta huomiotta jäävää (kohdat 8, 10).
+9. Tehtävä liitetään tavoitteeseen tehtävälomakkeella, uudelleenlataus ->
+   `goal_id` säilyy ja tehtävä näkyy alueen luvuissa (kohta 4b, F1).
+10. Viikkokatsaus -> `alignment_reviews` (sääntöversio 3); ensi viikon
+    esikatselu ei kirjoita, vahvistus kirjoittaa (kohta 15).
+11. Enter "Muu"-kentässä kirjaa kirjoitetut 25 min kantaan (kohta 9).
+12. Offline: 10 min lähtökoriin -> uudelleenlataus offline-tilassa ->
+    kirjaus näkyy Toteuma-listassa -> yhteys palaa -> kannassa ja
+    näkyvissä kerran (kohta 11).
+13. Näppäimistö: Enter "Tauko"-painikkeella pitää fokuksen ajastinpalkissa.
+    **ODOTTAA** saavutettavuuspakettia (CRIT-03, `renderTimerBar`): ajo
+    näyttää rivin ODOTTAA eikä kaadu. Kun korjaus on integroitu, rivi
+    onnistuu ja ajo kaatuu viestiin "poista PENDING_ON-merkintä" —
+    poista merkintä `run-suunta-e2e.mjs`:stä.
+
+**Ensimmäisen ajon löydökset (korjattu tässä haarassa):**
+
+- Talousnäkymän yleiskatsaus heitti `ReferenceError`in jokaisessa
+  piirrossa (aallosta F alkaen): `renderAll` katkesi siihen, eikä
+  profiili, ilmoitusasetukset eikä ilmoituskeskus päivittynyt.
+  Regressiotesti: `tests/finance-overview-render.test.mjs`.
+- Aloituksen vaihe 4: "Tallenna" jäi pois käytöstä kapasiteettia
+  kirjoitettaessa; kosketuskäyttäjä ei päässyt vaiheesta eteenpäin.
+  Regressiotesti: `tests/suunta-setup-primary-button.test.mjs`.
+
+**Ajettu:** 2026-09-26, pohja 384a40e + 57f0a4f, dea9ca1, e4be4f2
+(E2E-paketin haara, ennen muiden pakettien integrointia), J-portit
+`rehearsal/wave-j-v1` (5df40b2): PASS 53/54, 1 ODOTTAA (Tauko,
+saavutettavuuspaketti). Aja uudelleen integroidulla haaralla ja
+aallon J ehdokkaalla ennen deployta, ja kirjaa tulos tähän.
+
+**Mitä E2E EI todista — LIVE_USE_VALIDATION_PENDING:**
+
+- Oikea Supabase: RLS-politiikat, CHECK-rajoitteet, liipaisimet,
+  PostgRESTin skeemavälimuisti ja virhemuodot (korvike mallintaa vain
+  uniikki- ja viiteavaimet; skeematarkistus saa aina "kunnossa").
+- Oikea verkko ja lentotila: viive, aikakatkaisut, puolikkaat vastaukset.
+  Offline on simuloitu sivulla (`navigator.onLine` + korvikkeen
+  verkkovirhe); sivu itse latautuu paikalliselta palvelimelta eikä
+  service workerin välimuistista.
+- Android-APK ja WebView: sovelluksen sulkeminen, natiivi resume/pause,
+  Capacitor-liitännäiset, puhelimen näppäimistö ja kosketus,
+  ruudunlukija.
+- Kirjautuminen, tokenin uusiutuminen, uloskirjautuminen ja toinen tili
+  (istunto on tekaistu), sekä kaksi oikeaa laitetta samanaikaisesti.
+- Omistajan oikea data (siemen vastaa sen muotoa, ei sisältöä) ja
+  aikavyöhykkeen tai kesäajan vaihde.
+- Tekoälyselitys ja avustajan kutsut (ei tokenia).
+
+Nämä kuitataan yllä olevilla kohdilla 1–15 oikealla laitteella aallon J
+jälkeen.
