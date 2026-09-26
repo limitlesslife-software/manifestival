@@ -16,11 +16,18 @@
 //                          + docs/activation/PRODUCTION-INVENTORY-*.md),
 //                          tai --inventory=<tiedosto>. Puuttuu ->
 //                          OWNER_READ_ONLY_SQL_REQUIRED ja poistumiskoodi 1.
-//   CURRENT_DB_WAVE, NEXT_ACTION, NEXT_MIGRATION, NEXT_DEPLOYMENT, RISK,
-//   REQUIRED_OWNER_GATE, EXPECTED_CANDIDATE_SHA (lukon deployTarget,
-//   ref == lukko, tuotanto on ehdokkaan esi-isä), EXPECTED_CACHE (git show
-//   <sha>:sw.js), EXPECTED_SCHEMA_GATE (git show <sha>:src/data/schema.js),
-//   SQL (sha256 ja lukittu lähde)
+//   CURRENT_DB_WAVE, TECHNICAL_ACCEPTANCE (tuotannon aallon
+//   AUTOMATED_TECHNICAL_ACCEPTANCE päiväkirjassa), NEXT_ACTION,
+//   NEXT_MIGRATION, NEXT_DEPLOYMENT, RISK,
+//   REQUIRED_OWNER_GATE     VAIN omistajan hyväksynnät ("hyväksyn D" …)
+//   REQUIRED_OWNER_INPUT    omistajan vain lukeva SQL (ei hyväksyntä)
+//   REQUIRED_TECHNICAL_GATE Clauden koneelliset askeleet
+//   LIVE_USE_VALIDATION_PENDING  tiedoksi: käsin tehtävä käyttötodennus,
+//                           ei estä junaa eikä ole koskaan PASS
+//   EXPECTED_CANDIDATE_SHA (lukon deployTarget, ref == lukko, tuotanto on
+//   ehdokkaan esi-isä), EXPECTED_CACHE (git show <sha>:sw.js),
+//   EXPECTED_SCHEMA_GATE (git show <sha>:src/data/schema.js),
+//   REPO_PREFLIGHT (repoChecks + tietoturvahaku), SQL (sha256 ja lukittu lähde)
 //
 // EI KIRJOITA MITÄÄN eikä muuta gitiä. Verkkoa käytetään vain LIVE-
 // tarkistukseen, ja silloinkin vain julkisiin staattisiin tiedostoihin.
