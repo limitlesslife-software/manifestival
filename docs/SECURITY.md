@@ -1,6 +1,7 @@
 # Tietoturva
 
-Päivitetty 31.8.2026 (WP1).
+Päivitetty 31.8.2026 (WP1); tietoturvan ja yksityisyyden loppukierros
+26.9.2026 (Suunta Day 1): ks. [Loppukierros](#loppukierros-suunta-day-1).
 
 ---
 
@@ -139,8 +140,8 @@ turvallisuusarvionsa — ei tämän laajennus.
 |---|---|---|---|
 | `ANTHROPIC_API_KEY` | Vercelin ympäristömuuttuja | **EI** | Vain palvelinpuolen `api/parse.js`, `api/extract.js`, `api/plan.js`, `api/capture.js`, `api/command.js` ja `api/explain.js` lukevat. Ei koskaan selaimeen. (`tests/api-explain-readiness.test.mjs` vertaa tätä listaa koodiin.) |
 | `EXPLAIN_ENABLED` | Vercelin ympäristömuuttuja | Ei (katkaisin, ei salaisuus) | Vain täsmälleen `true` avaa `/api/explain`in; muuten 503 ennen todennusta. **Oletus: ei asetettu = pois.** Käyttöönotto on omistajan päätös yhdessä selaimen lipun `AI_EXPLAIN_ENABLED` kanssa. |
-| Supabase URL | `index.html` | Kyllä | Julkinen projektin osoite |
-| Supabase anon-avain | `index.html` | Kyllä | Suunniteltu julkiseksi. Turva perustuu RLS:ään. |
+| Supabase URL | `src/data/config.js` (myös CSP:n `connect-src`) | Kyllä | Julkinen projektin osoite |
+| Supabase anon-avain | `src/data/config.js`, `api/_auth.js` | Kyllä | Suunniteltu julkiseksi. Turva perustuu RLS:ään. JWT, jonka `role` on `anon` — `tests/security-secrets.test.mjs` hylkää jokaisen muun JWT-literaalin. |
 | Supabase `service_role` | **Ei missään repossa, ei selaimessa, ei `api/`-koodissa** | **EI KOSKAAN** | Ohittaa RLS:n. Ainoa sallittu paikka on Supabasen oma Edge Function -salaisuusvarasto (alla). |
 | `SUPABASE_SECRET_KEYS` / `SUPABASE_SERVICE_ROLE_KEY` | Supabase Edge Function -salaisuudet (Supabase asettaa itse; **funktiota ei ole deployattu**) | **EI** | Vain `supabase/functions/delete-account`. `index.ts` välittää handlerille vain neljä nimettyä muuttujaa, ei koko ympäristöä. Repossa on vain muuttujien nimet. |
 | `DELETE_ACCOUNT_ALLOWED_ORIGINS` | Edge Function -salaisuus | Ei | Sallittujen selainlähteiden lista; tyhjä = kaikki selainpyynnöt hylätään. |
@@ -152,9 +153,14 @@ turvallisuusarvionsa — ei tämän laajennus.
 - `.env.example` sisältää vain muuttujien **nimet**.
 - Tuotannon salaisuudet elävät Vercelin projektiasetuksissa.
 - Salaisuuksia ei tallenneta työpöydälle tekstitiedostoihin.
-- Testit valvovat tätä automaattisesti: `tests/dom-integrity.test.mjs` hylkää
-  buildin, jos lähdekoodista löytyy `sk-ant-`-alkuinen merkkijono tai
-  `service_role`.
+- Testit valvovat tätä automaattisesti: `tests/security-invariants.test.mjs`
+  hylkää lähdekoodin, jossa on `sk-ant-`-alkuinen merkkijono tai
+  `service_role`, ja `tests/security-secrets.test.mjs` käy läpi **koko
+  versionhallinnan puun** (paitsi `node_modules/`, `.claude/`, `dist/`):
+  Anthropic- ja `sb_secret_`-avaimet, PEM-yksityisavaimet, AWS-, GitHub- ja
+  Google-tunnukset, avain- ja `.env`-tiedostot sekä jokainen JWT-literaali
+  (vain `role: anon` sallittu). Testien tekoavaimissa on oltava sana
+  `TEST` tai `LEAK`.
 
 ---
 
@@ -211,6 +217,12 @@ ilman autentikaatiota ei ole olemassa luotettavaa käyttäjäidentiteettiä, jot
 tällainen politiikka olisi ollut näennäisturvaa.
 
 ### Yllä kuvattu on migraation 0001 JÄLKEINEN tila
+
+> **HISTORIALLINEN (ennen 0001:tä).** 0001 on sittemmin ajettu, ja kahden
+> tilin eristystesti on hyväksytty 0001–0008:lle
+> ([`RLS-ACCEPTANCE.md`](RLS-ACCEPTANCE.md)). Migraatioiden 0009–0013
+> neljätoista taulua ovat **todentamatta oikeaa PostgRESTiä vasten**:
+> ks. [Loppukierros](#loppukierros-suunta-day-1).
 
 Mikään edellä kuvatuista politiikoista ei ole tällä hetkellä voimassa.
 `supabase/migrations/0001_auth_user_scoping.sql` on luonnos, jota ei ole
@@ -350,7 +362,7 @@ rakennetta. Molemmat on testattu.
 
 | # | Riski | Tila |
 |---|---|---|
-| 1 | RLS-tila tuotannossa todentamaton | **Avoin — korkein prioriteetti** |
+| 1 | RLS-tila tuotannossa todentamaton | 0001–0008 todennettu ([`RLS-ACCEPTANCE.md`](RLS-ACCEPTANCE.md)); **0009–0013 avoin**: työkalu valmis, ajo aalloissa I/J omistajan luvalla ja kertakäyttöisellä tilillä |
 | 2 | Anthropic-avain selkokielisenä työpöytätiedostossa | Avoin — kierrätysohje `docs/DEPLOYMENT.md` |
 | 3 | Poisto ilman vahvistusta | Korjattu — `src/ui/confirm.js` |
 | 4 | Kantavirheet vain `console.error`-lokiin | Korjattu — virhe näytetään ja muutos perutaan |
@@ -380,6 +392,103 @@ palvelinpuolen avaimen, ja se on tarkoituksella erillään `api/`-välityksestä
   virheilmoitukset eivät paljasta sisäistä tilaa.
 - **Käyttöönotto on omistajan erillinen päätös** (deploy, salaisuudet,
   lähdelista, `endpointEnabled = true`). Sitä ei ole tehty.
+
+---
+
+## Loppukierros (Suunta Day 1)
+
+Suunnan data — elämänalueiden nimet, viikkokatsausten pohdinnat,
+aikakirjausten muistiinpanot ja käynnissä oleva ajastin — on sovelluksen
+yksityisintä. Loppukierros sulki neljä aukkoa ja lukitsi invariantit
+testeihin. Taustana `CRIT-07`, `CRIT-09`, `ERR-15` ja `ERR-16`.
+
+### Content-Security-Policy: pakottava myös APK:ssa
+
+APK:ssa ei ollut CSP:tä lainkaan: Capacitorin paikallinen palvelin ei
+lähetä otsakkeita, ja `vercel.json`:n otsake oli vain raportoiva.
+`index.html` kantaa nyt **pakottavan** `<meta http-equiv>`-politiikan, joka
+kulkee APK:hon bittiverrannollisena kopiona (`scripts/build-web.mjs`).
+
+| Direktiivi | Arvo | Miksi |
+|---|---|---|
+| `script-src` | `'self'` | supabase-js on vendoroitu (`vendor/`); ei inline-skriptejä eikä evalia |
+| `connect-src` | `'self'`, Supabase-projekti, `https://manifestival-ten.vercel.app` | natiivikuori kutsuu `/api`:a tuotanto-originista (`apiUrl`) |
+| `img-src` | `'self' data: blob:` | kuitin esikäsittely lataa kuvan object-URL:sta |
+| `style-src` / `font-src` | `'unsafe-inline'` + Google Fonts | merkinnän `style`-attribuutit ja fonttipalvelu |
+| `object-src`, `base-uri`, `form-action` | `'none'`, `'self'`, `'self'` | |
+
+- Meta on ennen jokaista resurssia. Capacitorin silta ajetaan sitä ennen
+  (Capacitor 8: `addDocumentStartJavaScript` tai `<head>`-tagin perään
+  lisätty skripti, `JSInjector`), joten `script-src 'self'` ei estä sitä.
+  Natiivikutsujen vastaukset kulkevat `evaluateJavascript`- tai
+  WebMessage-kanavaa, jonka ei pitäisi olla sivun CSP:n alainen — tämä on
+  todennettava laitteella (alla).
+- `vercel.json`:n raportoiva otsake on sama politiikka + `frame-ancestors`
+  (meta ei tue sitä). `tests/security-csp.test.mjs` vertaa niitä, vaatii
+  jokaisen `<script src>`:n olevan omasta originista ja jokaisen koodissa
+  esiintyvän absoluuttisen osoitteen olevan `connect-src`:ssä.
+- Todennettu paikallisessa headless Chromessa (tuotanto DNS-estetty):
+  sovellus käynnistyy, service worker rekisteröityy, blob-kuva latautuu ja
+  vieras origin estyy. **Laitteella todentamatta:** avaa APK
+  `chrome://inspect`-näkymässä ja tarkista, ettei konsolissa ole
+  `Content Security Policy` -rikkomuksia kirjautumisessa, AI-komennossa,
+  kuitin luvussa eikä ajastimessa.
+
+### Lokitus ei vuoda sisältöä
+
+- `SENSITIVE_KEYS` kattaa Suunnan ja PostgRESTin kentät (`reflection`,
+  `reflectionAnswers`, `answer(s)`, `label`, `detail(s)`, `hint`, `message`,
+  `metric`, `unit`, `summary`, `content`, `body`, `query` sekä ennestään
+  `name`, `title`, `note`). Vertailu ilman kirjainkokoa ja ala-/väliviivoja.
+- `logEvent` pitää merkkijonon vain, jos se on koodin näköinen
+  (`/^[a-z0-9_.:-]{1,60}$/i`); muu teksti on `[teksti]`, pitkä `[pitkä]`.
+  Avain, jota ei ole listattu, ei siis päästä nimeä läpi.
+- `isDevEnvironment()` on epätosi natiivikuoressa, vaikka APK:n origin on
+  `https://localhost`: INFO- ja DEBUG-tapahtumat eivät päädy logcatiin.
+- `logFailure(event, error)` kirjaa vain virheen nimen, koodin ja
+  HTTP-tilan. Sovelluskerroksen raa'at `console.warn/error(…, error)`
+  -kutsut on korvattu sillä: PostgRESTin `details` kantaa rivin arvoja
+  (`Key (user_id, name)=(…, Terapia)`).
+- Testit: `tests/lib-logger-errors.test.mjs` (kentät, merkkijonopolitiikka,
+  natiivikuori, `logFailure`, ei raakoja virheolioita `src/app`:ssa) ja
+  `tests/life-alignment-privacy.test.mjs` (yksikään loki- tai konsolikutsu
+  koko `src/`:ssä ei lue sisältökenttää; Suunnan virrat alueesta
+  katsaukseen eivät vie sisältöä konsoliin edes virhepolulla).
+- Ulkoista telemetriaa ei ole (testattu).
+
+### Tekoäly ja laite
+
+- Suunnan selityskonteksti on tunnuksia (A1, A2 …) ja lukuja; suunnittelun
+  rajat (`buildPlanningConstraints`) ovat pelkkiä lukuja. Pohdinta ei
+  kulje tekoälylle millään reitillä.
+- Laitteelle jäävä käyttäjäkohtainen data (offline-jono, lähtökori,
+  ajastin, odottavat ajastimet, hautakivet, käyttäjäliput) on avaimeltaan
+  käyttäjän, säilyy uloskirjautumisen yli omistajalleen ja poistuu tilin
+  poistossa (`purgeDeviceDataForUser`); toisen käyttäjän avaimet säilyvät.
+- A → B samalla laitteella (`tests/cross-user-leak.test.mjs`): B ei näe
+  A:n Suunta-kokoelmia, ajastinta (ei palautuksessa, välilehtitapahtumassa
+  eikä väärennettynä B:n avaimella), lähtökoria eikä jonoa, eikä A:n
+  istunnon skeemakielto siirry B:lle; skeemavälimuistissa ei ole
+  tunnistetta.
+
+### RLS 0009–0013: todiste odottaa omistajan lupaa
+
+`tools/rls-acceptance` kattaa nyt migraatioiden 0009–0013 neljätoista
+taulua ja kuusitoista yhdistelmävierasavainta aalloittain (esim. B:n
+aikakirjaus A:n alueeseen → 23503, B:n päivitys A:n pohdintaan → 0 riviä,
+B ei näe A:n ajastinta). **Työkalua ei ole ajettu:** se puhuu tuotannolle,
+ja ajo on aaltojen I ja J hyväksyntävaihe, joka vaatii omistajan
+kertakäyttöisen toisen tilin ja nimenomaisen luvan. Ks.
+[`RLS-ACCEPTANCE.md`](RLS-ACCEPTANCE.md#aallot-i-ja-j-migraatiot-00090013).
+
+### Jäljelle jäävät
+
+| Puute | Tila |
+|---|---|
+| 0009–0013:n RLS oikeaa PostgRESTiä vasten | Omistajan päätös: kertakäyttöinen tili + ajo aalloissa I/J |
+| CSP laitteella | Laitehyväksyntä: `chrome://inspect`, ei rikkomuksia |
+| `src/lib/result.js` `logError` tulostaa virheen `message`- ja `hint`-kentät (details suodatetaan) ja ei-AppError-virheen sellaisenaan | Virhepaketin vastuulla; `logFailure` on valmis korvaaja |
+| `verify_acceptance.sql` ei tunne 0009–0013:n tauluja | Jäännöshaku ohjeessa (`RLS-ACCEPTANCE.md`); oma SQL-varmistus myöhemmin |
 
 ---
 
