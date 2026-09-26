@@ -132,4 +132,39 @@ export function emptySeed() {
   return { tables: {}, ids: {} };
 }
 
-export const SEEDS = Object.freeze({ legacy: legacyUserSeed, empty: emptySeed });
+// OMISTAJA (owner): käynnistyssavu (tools/e2e/boot-smoke.mjs) käynnistää
+// jokaisen junan ehdokkaan omalla koodillaan tällä kannalla. Sama vanha
+// käyttäjä kuin yllä, tuotannon omistajan tunnuksella, ja lisäksi rivit,
+// jotka omistajalla on tuotannossa: ilmoitusasetukset (0005; rivi on
+// olemassa, koska asetukset on tallennettu) ja yksi hyvinvointimerkintä
+// (0006). Sähköposti on tekaistu: savu ei kirjaudu eikä lähetä mitään.
+
+export const OWNER_USER_ID = '2cc00622-f927-4604-a518-361a4328481b';
+export const OWNER_EMAIL = 'omistaja-savu@example.invalid';
+export const OWNER_COUNTS = Object.freeze({ ...LEGACY_COUNTS, profile: 1, notificationPreferences: 1, wellbeing: 1 });
+
+/**
+ * Omistajan kanta käynnistyssavulle.
+ *
+ * @param {object} input
+ * @param {string} input.todayIso  selaimen paikallinen päivä
+ * @param {string} [input.userId]
+ */
+export function ownerSmokeSeed({ todayIso, userId = OWNER_USER_ID }) {
+  const { tables, ids } = legacyUserSeed({ todayIso, userId });
+  const created = tables.profile[0].created_at;
+  const notification_preferences = [{
+    id: userId, enabled: true, task_lead_minutes: 10, routine_lead_minutes: 5,
+    daily_plan_time: '07:30', evening_review_time: '21:00', daily_plan_enabled: true,
+    evening_review_enabled: true, deadline_warnings_enabled: true, max_per_day: 12,
+    quiet_hours_from: '22:00', quiet_hours_to: '06:30', created_at: created, updated_at: created
+  }];
+  const wellbeing_entries = [{
+    id: 'e2e-owner-wellbeing-01', user_id: userId, date: addDays(todayIso, -1),
+    energy: 3, mood: 4, stress: 2, sleep_hours: 7.5, note: 'Nukuin hyvin',
+    created_at: created, updated_at: created
+  }];
+  return { tables: { ...tables, notification_preferences, wellbeing_entries }, ids: { ...ids, userId } };
+}
+
+export const SEEDS = Object.freeze({ legacy: legacyUserSeed, empty: emptySeed, owner: ownerSmokeSeed });

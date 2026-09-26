@@ -48,6 +48,16 @@ aaltokohtaisen selainhyväksyntäportin** (`docs/acceptance/WAVE-X.md` kohta 4 j
 | 7 | Live-tiedostot = ehdokkaan sormenjälki (`liveAssets`) | orkestroijan `VERIFY_LIVE` (vain GET); käsin `npm run production:verify-assets -- --wave=X --sha=<deployTarget>` | päiväkirjan rivi |
 | 8 | Välimuisti ja porttimatriisi sarakeportteineen (`cacheAndGates`) | ehdokkaan `sw.js`/`schema.js` (git show) JA tuotanto: `vNN`, taulumatriisi ja `COLUMN_GATES` täsmälleen aallon mukaiset | päiväkirjan rivi |
 
+**Käynnistyssavu (jokainen aalto C–J):** `AUTOMATED_TECHNICAL_ACCEPTANCE`
+edellyttää lisäksi, että ehdokkaan oma koodi omilla porteillaan käynnistyy
+oikeassa selaimessa: `npm run e2e:boot-smoke -- --root .claude/worktrees/rc-X
+--label X --expect-sha <deployTarget>` (`tools/e2e/boot-smoke.mjs`: omistajan
+kaltainen kanta, tekaistu istunto, jokainen alapalkin ja osion välilehti,
+tuotanto estetty DNS- ja CDP-tasolla, ehdokkaan puu vain luku). Vain
+`KÄYNNISTYSSAVU [X]: PASS` kelpaa; FAIL = ei hyväksyntää (fail closed).
+Ajetaan ennen ehdon 3 kirjausta; päiväkirjassa savulla ei vielä ole omaa
+`checks`-avainta.
+
 **Kirjauspaikka:** `.claude/activation/journal.jsonl` — paikallinen,
 git-ignoroitu, projektikansion sisällä. Kirjaukset ovat vain paikallisia:
 mitään ei lähetetä minnekään. Rivityypit:
