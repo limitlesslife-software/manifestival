@@ -310,10 +310,89 @@ test('CRIT-02: main.js kertoo paluun ja skeeman syyn sekä kirjaa jokaisen täyd
   assert.match(main, /reconnect\.refreshNow\(\{ reason: REFRESH_REASON\.RESUME \}\)/);
   // Palautuskoukku herättää ensin odottavat osat ja päivittää sitten syyllä SCHEMA.
   assert.match(main, /initSchemaStatus\(\{\s*onRecovered: \(\) => \{?[\s\S]{0,240}?reconnect\.refreshNow\(\{ reason: REFRESH_REASON\.SCHEMA \}\)/);
+  // Alku kirjataan ENNEN lähetysvaihetta, ei latauksen alussa: ohjaimen oma
+  // päivitys kirjaa sen runRefreshissä, kirjautuminen ennen sendPendingiä ja
+  // synkronoinnin jälkeinen lataus ennen loadFreshiä.
   const loadFresh = main.slice(main.indexOf('async function loadFresh'), main.indexOf('\n}', main.indexOf('async function loadFresh')));
-  assert.ok(loadFresh.indexOf('reconnect.noteRefreshStarted()') > -1
-    && loadFresh.indexOf('reconnect.noteRefreshStarted()') < loadFresh.indexOf('await loadUserData()'));
+  assert.equal(loadFresh.includes('reconnect.noteRefreshStarted()'), false,
+    'latauksen alussa kirjattu alku kattaisi lähetyksen aikana palanneen verkon');
+  const signedIn = main.slice(main.indexOf('async function onSignedIn'), main.indexOf('function onSignedOut'));
+  assert.ok(signedIn.indexOf('reconnect.noteRefreshStarted()') > -1
+    && signedIn.indexOf('reconnect.noteRefreshStarted()') < signedIn.indexOf('await sendPending()'),
+    'kirjautuminen kirjaa alun ennen lähetysvaihetta');
+  const synced = main.slice(main.indexOf('setSyncedHandler('));
+  assert.ok(synced.indexOf('reconnect.noteRefreshStarted()') > -1
+    && synced.indexOf('reconnect.noteRefreshStarted()') < synced.indexOf('loadFresh()'));
   assert.equal((main.match(/reconnect\.refreshNow\(\)/g) || []).length, 0, 'jokaisella kutsulla on syy');
+});
+
+test('CRIT-02: verkko palaa kesken oman päivityksen lähetysvaiheen -> perään ajetaan vielä yksi kierros', async () => {
+  // refreshAfterReconnect: skeema -> sendPending -> loadFresh. Verkko katkeaa
+  // ja palaa lähetyksen aikana; lataus alkaa vasta sen jälkeen. Latauksen
+  // alussa kirjattu alku (noteRefreshStarted) ei saa kattaa palautumista:
+  // lähetys epäonnistui ilman verkkoa, ja jono lähtee vain perään ajettavalla.
+  const clock = fakeClock();
+  const c = controlledController(clock);
+  assert.equal(c.controller.refreshNow({ reason: REFRESH_REASON.MANUAL }), 'started');
+  await flush();
+  c.controller.notifyOffline(); // lähetysvaihe: verkko katkeaa...
+  c.controller.notifyOnline();  // ...ja palaa
+  clock.tick();                 // debounce laukeaa kesken päivityksen
+  c.controller.noteRefreshStarted(); // latausvaihe alkaa (loadFresh, synkronoinnin lataus)
+  await c.release();
+  assert.equal(c.calls(), 2, 'palautumisen jälkeen lähetetään ja ladataan vielä kerran');
+  await c.release();
+  assert.equal(c.controller.isRefreshing(), false);
+});
+
+test('CRIT-02: taustalle siirtyminen perui online-päivityksen -> paluu vähimmäisvälin sisällä päivittää silti', async () => {
+  const clock = fakeClock();
+  const c = controlledController(clock);
+  c.controller.refreshNow({ reason: REFRESH_REASON.RESUME });
+  await c.release();
+  assert.equal(c.calls(), 1);
+
+  clock.advance(5000);
+  c.controller.notifyOffline();
+  c.controller.notifyOnline();   // debounce odottaa
+  c.controller.cancelPending();  // onPause peruu sen
+  clock.advance(1000);           // 6 s edellisen alusta: alle MIN_REFRESH_INTERVAL_MS
+  assert.equal(c.controller.refreshNow({ reason: REFRESH_REASON.RESUME }), 'started',
+    'katettu vain, jos päivitys on alkanut palautumisen jälkeen');
+  await c.release();
+  assert.equal(c.calls(), 2);
+
+  // Palautuminen on nyt katettu: seuraava nopea paluu ohitetaan taas.
+  clock.advance(1000);
+  assert.equal(c.controller.refreshNow({ reason: REFRESH_REASON.RESUME }), 'skipped');
+  assert.equal(c.calls(), 2);
+});
+
+test('CRIT-02: offline-tilassa paluu noudattaa vähimmäisväliä, vaikka palautuminen olisi kattamatta', async () => {
+  const clock = fakeClock();
+  const c = controlledController(clock);
+  c.controller.refreshNow({ reason: REFRESH_REASON.RESUME });
+  await c.release();
+  clock.advance(5000);
+  c.controller.notifyOffline();
+  c.controller.notifyOnline();
+  c.controller.cancelPending();
+  c.controller.notifyOffline(); // taas verkotta: seuraava online ajastaa uuden
+  clock.advance(1000);
+  assert.equal(c.controller.refreshNow({ reason: REFRESH_REASON.RESUME }), 'skipped');
+  assert.equal(c.calls(), 1);
+});
+
+test('CRIT-02: taaksepäin hypännyt kello ei vaimenna paluun päivitystä', async () => {
+  const clock = fakeClock();
+  const c = controlledController(clock);
+  c.controller.refreshNow({ reason: REFRESH_REASON.RESUME });
+  await c.release();
+  clock.advance(-3_600_000); // kello korjataan tunnin taaksepäin
+  assert.equal(c.controller.refreshNow({ reason: REFRESH_REASON.RESUME }), 'started',
+    'negatiivinen kulunut aika on vanhentunut ikkuna, ei "juuri äsken"');
+  await c.release();
+  assert.equal(c.calls(), 2);
 });
 
 test('CRIT-02: kirjautumisen lähetys ei käynnistä toista täyttä latausta (sendPending-vahti)', () => {
@@ -384,6 +463,27 @@ test('CRIT-02 elinkaari: App resume + visibilitychange 50 ms:n sisällä = yksi 
     shell.visibility(true);
     shell.app('pause');
     assert.equal(paused, 2, 'pause-käsittely ennallaan');
+  } finally {
+    restoreLifecycleShell();
+  }
+});
+
+test('CRIT-02 elinkaari: taaksepäin hypännyt kello ei yhdistä myöhempää paluuta edelliseen', () => {
+  resetLifecycleBinding();
+  const shell = installLifecycleShell();
+  let now = 10_000_000;
+  let resumed = 0;
+  try {
+    bindLifecycle({ onResume: () => { resumed += 1; }, now: () => now });
+    shell.app('resume');
+    assert.equal(resumed, 1);
+    now -= 600_000; // kello korjataan 10 min taaksepäin
+    shell.visibility(true);
+    shell.visibility(false); // uusi oikea paluu
+    assert.equal(resumed, 2, 'negatiivinen kulunut aika ei ole "sama paluu"');
+    now += 50;
+    shell.app('resume'); // saman paluun toinen lähde yhdistyy edelleen
+    assert.equal(resumed, 2);
   } finally {
     restoreLifecycleShell();
   }
