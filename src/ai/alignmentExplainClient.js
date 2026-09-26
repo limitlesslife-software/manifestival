@@ -71,11 +71,22 @@ const REJECT_PATTERNS = Object.freeze([
 ]);
 
 /**
- * Pidempi suomenkielinen teksti sisältää käytännössä aina ä:n tai ö:n.
- * Ilman niitä vastaus on todennäköisesti muuta kieltä tai kirjoitettu
- * ilman ääkkösiä ("Ala" = "Älä"?), eikä sitä näytetä tekoälyn nimissä.
+ * Ääkköset kadottanut suomi ("Ala" = "Älä", "mita" = "mitä") on merkki
+ * rikkinäisestä vastauksesta, eikä sitä näytetä tekoälyn nimissä.
+ * Tunnistus nojaa tiettyihin sanoihin, ei pelkkään ääkkösten puuttumiseen:
+ * lyhyt, numeroita täynnä oleva suomi voi olla kokonaan ilman ääkkösiä
+ * ("A1 on saanut 2 tuntia, tavoite on 10 tuntia viikossa.").
+ * Sanat valittu niin, ettei oikea suomi osu niihin ("tarkemmin" ei osu).
+ * "Ala" on myös alkaa-verbin käskymuoto, mutta näissä selityksissä se on
+ * lähes aina kadonnut "Älä"; varapolku on silloin turvallinen valinta.
  */
-const PLAIN_ASCII_LIMIT = 80;
+const DEACCENTED_FINNISH = /\b(ala|alaka|mita|mitaan|etta|tama|taman|tassa|talla|enintaan|vahemman|enemman|lisaa|paiva\w*|nayt\w*|kayt\w*|tarkea\w*|tarkey\w*|tyo\w*)\b/i;
+
+/**
+ * Näin pitkä vastaus ilman yhtään ä:tä tai ö:tä on käytännössä muuta
+ * kieltä (tai ääkköset ovat kadonneet), eikä sitä näytetä.
+ */
+const PLAIN_ASCII_LIMIT = 200;
 
 function deterministic(signal, areas) {
   const text = explainSignal(signal, areas);
@@ -110,7 +121,8 @@ export function explanationContext(analysis, signal) {
 export function acceptableExplanation(text) {
   const clean = String(text ?? '').trim();
   if (clean.length < 20 || clean.length > MAX_EXPLANATION_LENGTH) return false;
-  if (clean.length > PLAIN_ASCII_LIMIT && !/[äöÄÖ]/.test(clean)) return false;
+  if (DEACCENTED_FINNISH.test(clean)) return false;
+  if (clean.length >= PLAIN_ASCII_LIMIT && !/[äöÄÖ]/.test(clean)) return false;
   return !REJECT_PATTERNS.some(pattern => pattern.test(clean));
 }
 

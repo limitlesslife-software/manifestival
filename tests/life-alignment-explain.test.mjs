@@ -238,9 +238,33 @@ test('REGRESSIO: liian pitkä vastaus hylätään, ei katkaista kesken lauseen',
   assert.equal(MAX_EXPLANATION_LENGTH, explainApi.MAX_TEXT_LENGTH, 'sama raja selaimella ja palvelimella');
 });
 
-test('pitkä vastaus ilman ääkkösiä hylätään (ei suomea tai ääkköset kadonneet)', () => {
-  assert.equal(acceptableExplanation('A1 has received less time than you wanted this week. Would you like to plan more?'), false);
-  assert.equal(acceptableExplanation('Ala lisaa tai poista mitaan, A1 on saanut vahemman aikaa kuin toivoit talla viikolla.'), false);
+test('ääkköset kadottanut suomi hylätään pituudesta riippumatta', () => {
+  for (const text of [
+    'Ala lisaa tai poista mitaan, A1 on saanut vahemman aikaa kuin toivoit talla viikolla.',
+    'Ala huolestu: A1 sai 2 tuntia.',
+    'A1:n tarkeys on 5, mutta aikaa oli vain 2 tuntia.',
+    'Nayttaa siltä, etta A1 jäi vajaaksi.'
+  ]) {
+    assert.equal(acceptableExplanation(text), false, text);
+  }
+});
+
+test('pitkä vastaus ilman yhtään ääkköstä hylätään (muuta kieltä)', () => {
+  const english = 'A1 has received less time than you wanted this week. Would you like to plan more time for it, '
+    + 'change the target, or keep things as they are? Nothing has been changed, and you can decide later on '
+    + 'when the week is clearer.';
+  assert.ok(english.length >= 200);
+  assert.equal(acceptableExplanation(english), false);
+});
+
+test('REGRESSIO: oikea suomi ilman ääkkösiä kelpaa (ei hylätä pelkän ä/ö-puutteen takia)', async () => {
+  const text = 'A1 on saanut 2 tuntia, tavoite on 10 tuntia viikossa. Haluatko varata sille aikaa torstaille?';
+  assert.ok(text.length > 80 && !/[äöÄÖ]/.test(text), 'esimerkki on yli 80 merkkiä ilman ääkkösiä');
+  assert.equal(acceptableExplanation(text), true);
+  // "tarkemmin", "tarkentaa" ovat oikeaa suomea: ne eivät osu ääkkösettömiin sanoihin.
+  assert.equal(acceptableExplanation('Voit tarkentaa tavoitetta: A1 on saanut 2 tuntia, tavoite on 10 tuntia.'), true);
+  const result = await explainWithFallback({ analysis, signal: neglect, areas, accessToken: 't', fetchImpl: async () => response(200, { text }) });
+  assert.equal(result.source, 'ai');
 });
 
 // ================================================================ NIMIEN PALAUTUS
