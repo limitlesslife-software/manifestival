@@ -227,15 +227,27 @@ test('useita muutoksia offline: yksi jono, ei kaksoiskappaleita replayssa', asyn
 
 test('main.js: aktivointi ennen latausta, lähetys ennen uudelleenlatausta ja vapautus uloskirjautuessa', () => {
   const main = readCode('src/app/main.js');
-  const signedIn = main.slice(main.indexOf('async function onSignedIn'));
+  // UUSI SÄÄNTÖ (F11): myös kirjautuminen LÄHETTÄÄ ENSIN ja lataa vasta
+  // sitten, samalla sendPending()-funktiolla kuin verkon palautuminen.
+  // Aiemmin kirjautuminen latasi ensin ja lähetti rinnakkain, jolloin
+  // ennen lähetystä haettu lista saattoi piilottaa juuri lähetetyn.
+  const send = main.slice(main.indexOf('async function sendPending'), main.indexOf('async function loadFresh'));
+  assert.ok(send.indexOf('offline.replay(') > -1);
+  assert.ok(send.indexOf('offline.replay(') < send.indexOf('await flushTimeOutbox()'), 'tehtäväjono, sitten aikakirjaukset');
+  const fresh = main.slice(main.indexOf('async function loadFresh'), main.indexOf('function hasLoadFailures'));
+  assert.ok(fresh.indexOf('beginDataLoad()') > -1 && fresh.indexOf('beginDataLoad()') < fresh.indexOf('await loadUserData()'),
+    'latauksen aikana valmistuneet tallennukset palautetaan (keepWritesSince)');
+
+  const signedIn = main.slice(main.indexOf('async function onSignedIn'), main.indexOf('function onSignedOut'));
   assert.ok(signedIn.indexOf('offline.activate(') > -1);
-  assert.ok(signedIn.indexOf('offline.activate(') < signedIn.indexOf('await loadUserData()'),
-    'jono aktivoidaan ennen ensimmäistä latausta (overlay)');
-  assert.ok(signedIn.indexOf('offline.replay()') > signedIn.indexOf('await loadUserData()'));
+  assert.ok(signedIn.indexOf('offline.activate(') < signedIn.indexOf('await sendPending()'),
+    'jono aktivoidaan ennen lähetystä ja ensimmäistä latausta (overlay)');
+  assert.ok(signedIn.indexOf('await sendPending()') < signedIn.indexOf('await loadFresh()'),
+    'kirjautuminen: lähetä ensin, lataa vasta sitten');
 
   const reconnect = main.slice(main.indexOf('async function refreshAfterReconnect'), main.indexOf('const reconnect = '));
-  assert.ok(reconnect.indexOf('offline.replay()') > -1);
-  assert.ok(reconnect.indexOf('offline.replay()') < reconnect.indexOf('loadUserData()'),
+  assert.ok(reconnect.indexOf('await sendPending()') > -1);
+  assert.ok(reconnect.indexOf('await sendPending()') < reconnect.indexOf('loadFresh()'),
     'lähetä ensin, lataa vasta sitten');
 
   assert.match(main, /offline\.deactivate\(\)/);

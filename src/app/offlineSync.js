@@ -67,6 +67,8 @@ export function createOfflineSync(deps) {
   let persistent = true;
   let replaying = false;
   let rerunRequested = false;
+  /** Käynnissä olevan ajon lupaus (replay({ waitForCurrent: true })). */
+  let currentRun = null;
 
   function status() {
     return {
@@ -237,15 +239,24 @@ export function createOfflineSync(deps) {
   /**
    * Aja jono. Yksi ajaja kerrallaan.
    *
+   * @param {{waitForCurrent?: boolean}} [options] waitForCurrent: jos ajo on
+   *   jo käynnissä, odota se (ja sen lisäkierros) loppuun eikä palaa heti
+   *   'busy'-tuloksella — "lähetä ensin, lataa sitten" pitää silloinkin
    * @returns {Promise<{ran:boolean, reason?:string, synced:number, conflicts:number, failed:number}>}
    */
-  async function replay() {
+  async function replay({ waitForCurrent = false } = {}) {
     const result = { ran: false, synced: 0, conflicts: 0, failed: 0 };
     if (owner == null || owner !== session.userId()) return { ...result, reason: 'no_session' };
-    if (replaying) { rerunRequested = true; return { ...result, reason: 'busy' }; }
+    if (replaying) {
+      rerunRequested = true;
+      if (waitForCurrent && currentRun) return currentRun;
+      return { ...result, reason: 'busy' };
+    }
     if (!isOnline()) return { ...result, reason: 'offline' };
 
     replaying = true;
+    let finishRun = () => {};
+    currentRun = new Promise(resolve => { finishRun = resolve; });
     result.ran = true;
     const snapshot = session.snapshot();
     const startedFor = owner;
@@ -311,6 +322,8 @@ export function createOfflineSync(deps) {
       if (result.synced > 0 || result.conflicts > 0) {
         try { onSynced(); } catch { /* lataus ei saa kaataa toistoa */ }
       }
+      currentRun = null;
+      finishRun(result);
     }
     return result;
   }

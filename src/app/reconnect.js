@@ -24,16 +24,21 @@ export const RECONNECT_DEBOUNCE_MS = 1500;
  *   kerran rinnakkain; jos se heittää tai hylkää, virhe kirjautuu mutta ei
  *   kaada kutsujaa.
  * @param {number} [options.debounceMs]
+ * @param {boolean} [options.initialOnline] verkon tila käynnistyshetkellä
+ *   (navigator.onLine). Offline-tilassa käynnistynyt sovellus ei muuten
+ *   reagoinut ensimmäiseen "online"-tapahtumaan lainkaan (F7): ohjain luuli
+ *   olleensa koko ajan verkossa, eikä lähetystä tai latausta tehty.
  * @param {typeof setTimeout} [options.setTimeoutFn] testeja varten
  * @param {typeof clearTimeout} [options.clearTimeoutFn] testeja varten
  */
 export function createReconnectController({
   onRefresh,
   debounceMs = RECONNECT_DEBOUNCE_MS,
+  initialOnline = true,
   setTimeoutFn = setTimeout,
   clearTimeoutFn = clearTimeout
 } = {}) {
-  let online = true;
+  let online = initialOnline !== false;
   let timer = null;
   let refreshing = false;
   let refreshAgainAfter = false;
@@ -63,12 +68,12 @@ export function createReconnectController({
       });
   }
 
-  function scheduleDebouncedRefresh() {
+  function scheduleDebouncedRefresh(delayMs = debounceMs) {
     if (timer) clearTimeoutFn(timer);
     timer = setTimeoutFn(() => {
       timer = null;
       runRefresh();
-    }, debounceMs);
+    }, delayMs);
   }
 
   return {
@@ -103,6 +108,17 @@ export function createReconnectController({
      */
     refreshNow() {
       runRefresh();
+    },
+
+    /**
+     * Yksi viivästetty päivitys (esim. ensimmäinen lataus epäonnistui,
+     * vaikka laite on verkossa). Ei kasaudu: odottava ajastus korvataan,
+     * offline-ilmoitus ja cancelPending() peruvat sen. Offline-tilassa
+     * ei ajasteta — seuraava "online" hoitaa päivityksen.
+     */
+    refreshLater(delayMs) {
+      if (!online) return;
+      scheduleDebouncedRefresh(Math.max(0, Number(delayMs) || 0));
     },
 
     /** Peruuta odottava ajastettu päivitys ilman tilan muutosta. Uloskirjautuminen. */

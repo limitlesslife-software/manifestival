@@ -11,6 +11,9 @@ import { setUser, clearUser, getUser } from '../data/session.js';
 import { el, setBusy, singleFlight } from '../ui/dom.js';
 import { confirmAction } from '../ui/confirm.js';
 import { offline } from './offline.js';
+// Suoraan tallennuksesta eikä alignment.js:n kautta: se importoi tämän
+// moduulin (currentAccessToken), ja sykli olisi arkkitehtuurivirhe.
+import { loadOutbox, loadTimer } from '../data/timerStore.js';
 
 export const MIN_PASSWORD_LENGTH = 8;
 
@@ -117,15 +120,46 @@ const submit = singleFlight(async () => {
   }
 });
 
+/**
+ * Uloskirjautumisen varoitusteksti, tai null jos varoitettavaa ei ole.
+ *
+ * Tehtäväjonon lisäksi (F14) lähettämättömät aikakirjaukset ja käynnissä
+ * oleva ajastin: nekin jäävät vain tälle laitteelle ja jatkuvat vasta, kun
+ * sama käyttäjä kirjautuu takaisin.
+ *
+ * @param {{tasks?: number, timeEntries?: number, timerRunning?: boolean}} counts
+ */
+export function signOutWarning({ tasks = 0, timeEntries = 0, timerRunning = false } = {}) {
+  const unsent = [];
+  if (tasks > 0) unsent.push(tasks + (tasks === 1 ? ' muutos' : ' muutosta'));
+  if (timeEntries > 0) unsent.push(timeEntries + (timeEntries === 1 ? ' aikakirjaus' : ' aikakirjausta'));
+  if (unsent.length === 0 && !timerRunning) return null;
+  const parts = [];
+  if (unsent.length > 0) {
+    parts.push(`Lähettämättä: ${unsent.join(' ja ')}. Ne säilyvät tällä laitteella ja lähetetään, `
+      + 'kun kirjaudut takaisin samalla tilillä.');
+  }
+  if (timerRunning) {
+    parts.push('Ajastin on käynnissä. Se jää tälle laitteelle ja jatkuu, kun kirjaudut takaisin samalla tilillä.');
+  }
+  return parts.join(' ') + ' Kirjaudutaanko ulos?';
+}
+
 const signOut = singleFlight(async () => {
   // Lähettämättömät offline-muutokset eivät katoa uloskirjautumisessa, mutta
   // käyttäjän on tiedettävä, ettei niitä ole vielä lähetetty.
   const { total } = offline.status();
-  if (total > 0) {
+  const user = getUser();
+  const counts = {
+    tasks: total,
+    timeEntries: user && user.id ? loadOutbox(user.id).length : 0,
+    timerRunning: Boolean(user && user.id && loadTimer(user.id))
+  };
+  const message = signOutWarning(counts);
+  if (message) {
     const sure = await confirmAction({
-      title: 'Lähettämättömiä muutoksia',
-      message: total + (total === 1 ? ' muutos' : ' muutosta')
-        + ' ei ole vielä lähetetty. Ne säilyvät tällä laitteella ja lähetetään, kun kirjaudut takaisin samalla tilillä. Kirjaudutaanko ulos?',
+      title: counts.tasks > 0 || counts.timeEntries > 0 ? 'Lähettämättömiä muutoksia' : 'Ajastin on käynnissä',
+      message,
       confirmLabel: 'Kirjaudu ulos',
       cancelLabel: 'Peruuta'
     });

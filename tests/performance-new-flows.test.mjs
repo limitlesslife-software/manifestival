@@ -186,7 +186,13 @@ test('offline-toisto ei pollaa: kutsujia on vain kirjautuminen, palautuminen ja 
   }
   assert.deepEqual(callers.sort(), ['src/app/main.js', 'src/app/offlineStatus.js']);
   const main = readCode('src/app/main.js');
-  assert.equal((main.match(/offline\.replay\(/g) || []).length, 2, 'kirjautuminen + reconnect');
+  // Kirjautuminen ja verkon palautuminen kutsuvat SAMAA sendPending()-
+  // funktiota (F11: lähetä ensin, lataa sitten), joten toistokutsu on yksi
+  // — ja sitä kutsutaan vain näistä kahdesta paikasta, ei ajastimesta.
+  assert.equal((main.match(/offline\.replay\(/g) || []).length, 1, 'yksi toistokutsu: sendPending');
+  assert.equal((main.match(/await sendPending\(\)/g) || []).length, 2, 'kirjautuminen + reconnect');
+  const interval = main.slice(main.indexOf('setInterval('), main.indexOf('NOW_REFRESH_MS);', main.indexOf('setInterval(')));
+  assert.equal(/offline\.replay|sendPending/.test(interval), false, 'tehtäväjonoa ei pollata ajastimella');
 });
 
 test('lähtöilmoituksen laskenta on puhdas: sama syöte, sama tulos, ei tilaa', async () => {

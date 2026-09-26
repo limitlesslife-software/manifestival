@@ -229,7 +229,12 @@ export async function loadUserData() {
   // kadonneen.
   // Lähettämättömät offline-muutokset lisätään palvelimen listan päälle:
   // muuten lataus korvaisi paikallisen tilan ja odottava tehtävä katoaisi näkyvistä.
-  if (!applyLoadResult('tasks', tasksResult, list => setTasks(offline.overlay(list)))) showError(tasksResult.error);
+  if (!applyLoadResult('tasks', tasksResult, list => setTasks(offline.overlay(list)))) {
+    // Epäonnistunut haku (esim. offline-kylmäkäynnistys): jonossa odottavat
+    // näkyvät silti (F6). overlay ei monista jo tilassa olevaa.
+    if (offline.pendingIds().size > 0) setTasks(offline.overlay(getState().tasks));
+    showError(tasksResult.error);
+  }
 
   if (profileResult.ok) {
     setProfile(profileResult.value.profile, profileResult.value.exists);
@@ -274,6 +279,16 @@ export async function loadUserData() {
     applyLoadResult('alignmentItemSettings', itemSettingsResult, setAlignmentItemSettings),
     applyLoadResult('runningTimers', timersResult, timers => adoptLoadedTimers(timers, { sinceSeq: timerSeq }))
   ];
+
+  // Aikakirjausten haku epäonnistui (F6): lähtökorin kirjaukset näkyvät
+  // silti. Muuten offline-kylmäkäynnistyksessä odottava kirjaus puuttui
+  // näkymästä, ja uudelleen kirjattu aika olisi ollut todellinen tupla.
+  // withPendingTimeEntries ei lisää tilassa jo olevaa uudelleen.
+  if (!entriesResult.ok) {
+    const current = getState().timeEntries;
+    const merged = withPendingTimeEntries(current);
+    if (merged !== current) setTimeEntries(merged);
+  }
 
   // Yksittäiset kokoelmavirheet kirjautuvat konsoliin (applyLoadResult) ja
   // dataLoadStatus-kenttään, mutta eivät yksitellen ilmoituksena — kaksi

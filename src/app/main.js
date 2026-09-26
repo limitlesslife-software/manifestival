@@ -16,7 +16,10 @@ import { subscribe, resetState, setViewDate, setWeekStart, getState } from './st
 import { loadUserData, clearLocalUserData } from './actions.js';
 import { renderTimerBar, initTimeLog, closeTimeLogDialog } from './views/timeLog.js';
 import { restoreLocalTimer, initTimerCrossTabSync, stopTimerCrossTabSync } from './timerState.js';
-import { flushTimeOutbox } from './alignment.js';
+import {
+  flushTimeOutbox, retryTimeOutbox, pendingTimeEntryCount, beginDataLoad, keepWritesSince,
+  resetTimeEntrySync
+} from './alignment.js';
 import { createReconnectController } from './reconnect.js';
 import { initAuth, showAuthGate, hideAuthGate } from './auth.js';
 import { initNavigation, restoreLastScreen } from './navigation.js';
@@ -60,15 +63,67 @@ import {
 } from './notifications.js';
 import { lifecycle, location as platformLocation, speech } from '../platform/index.js';
 import { clearToasts } from '../ui/toast.js';
+import { closeConfirmDialogs } from '../ui/confirm.js';
 import { maybe } from '../ui/dom.js';
-import { getUser } from '../data/session.js';
-import { offline, setSyncedHandler } from './offline.js';
+import { getUser, sessionSnapshot, isSameSession } from '../data/session.js';
+import { offline, setSyncedHandler, isOnlineNow } from './offline.js';
 import { initOfflineStatus, refreshSyncStatus } from './offlineStatus.js';
 
 /** Kuinka usein NYT-tila päivitetään ilman sivun uudelleenlatausta. */
 const NOW_REFRESH_MS = 30000;
 
+/** Ensimmäinen lataus epäonnistui verkossa ollessa: yksi uusi yritys näin pian. */
+const FIRST_LOAD_RETRY_MS = 10000;
+
 let signedIn = false;
+
+/**
+ * Odottavien muutosten lähetys käynnissä (kirjautuminen tai verkon
+ * palautuminen). Sillä aikaa synkronoinnin jälkeistä latausta
+ * (setSyncedHandler) ei tehdä erikseen: kutsuja lataa kerran lähetyksen
+ * jälkeen. Laskuri, koska kaksi lähetystä voi olla käynnissä yhtä aikaa.
+ */
+let sendingPending = 0;
+
+/**
+ * LÄHETÄ ENSIN, LATAA VASTA SITTEN: lataus korvaisi muuten paikallisen tilan
+ * ennen kuin odottavat offline-muutokset ovat lähteneet (overlay kattaa
+ * näkymän, mutta palvelimen tila on oikea vasta lähetyksen jälkeen).
+ *
+ * Odottaa myös toisen käynnistämän toiston ja lähetyksen loppuun
+ * (waitForCurrent, flushTimeOutbox on yksi kerrallaan): muuten lataus
+ * saattoi alkaa, kun edellinen lähetys oli vielä kesken (F11).
+ */
+async function sendPending() {
+  sendingPending += 1;
+  try {
+    await offline.replay({ waitForCurrent: true });
+    // Suunnan lähettämättömät aikakirjaukset (vain aikakirjaukset; uusinta
+    // on idempotentti operaatiotunnisteen ansiosta).
+    await flushTimeOutbox();
+  } catch (error) {
+    console.warn('Manifestival: offline-jonon toisto ei onnistunut', error);
+  } finally {
+    sendingPending -= 1;
+  }
+}
+
+/**
+ * Lataa käyttäjän data. Latauksen aikana valmistuneet tallennukset
+ * palautetaan tilaan (keepWritesSince): ennen lähetystä haettu lista ei
+ * piilota juuri lähetettyä aikakirjausta, katsausta tai kapasiteettia.
+ */
+async function loadFresh() {
+  const mark = beginDataLoad();
+  const result = await loadUserData();
+  if (!result.discarded) keepWritesSince(mark);
+  return result;
+}
+
+/** Jäikö jokin kokoelma lataamatta (dataLoadStatus)? */
+function hasLoadFailures() {
+  return Object.values(getState().dataLoadStatus || {}).some(status => status && status.ok === false);
+}
 
 /**
  * Päivitä data verkon palautuessa tai sovelluksen palatessa etualalle.
@@ -79,30 +134,20 @@ let signedIn = false;
  * kirjautuessa hoitaa myös tämän, eikä näytä tai käyttäjän sijaintia
  * näkymässä tarvitse koskea erikseen.
  */
-let reconnectRefreshing = false;
-
 async function refreshAfterReconnect() {
   if (!signedIn) return;
-  // LÄHETÄ ENSIN, LATAA VASTA SITTEN: lataus korvaisi muuten paikallisen tilan
-  // ennen kuin odottavat offline-muutokset ovat lähteneet (overlay kattaa
-  // näkymän, mutta palvelimen tila on oikea vasta lähetyksen jälkeen).
-  reconnectRefreshing = true;
-  try {
-    await offline.replay();
-    // Suunnan lähettämättömät aikakirjaukset (vain aikakirjaukset; uusinta
-    // on idempotentti operaatiotunnisteen ansiosta).
-    await flushTimeOutbox();
-  } catch (error) {
-    console.warn('Manifestival: offline-jonon toisto ei onnistunut', error);
-  } finally {
-    reconnectRefreshing = false;
-  }
-  const result = await loadUserData();
+  const session = sessionSnapshot();
+  await sendPending();
+  // Uloskirjautuminen lähetyksen aikana: ei ladata kenenkään nimissä.
+  if (!signedIn || !isSameSession(session)) return;
+  const result = await loadFresh();
   if (result.discarded) return;
   runAssistantSweeps();
 }
 
-const reconnect = createReconnectController({ onRefresh: refreshAfterReconnect });
+// Offline-tilassa käynnistynyt sovellus: ensimmäinen "online" käynnistää
+// lähetyksen ja latauksen (F7). Ennen tätä ohjain luuli olleensa verkossa.
+const reconnect = createReconnectController({ onRefresh: refreshAfterReconnect, initialOnline: isOnlineNow() });
 
 /**
  * Rekisteröi service worker.
@@ -198,6 +243,7 @@ function runAssistantSweeps() {
 
 async function onSignedIn() {
   signedIn = true;
+  const session = sessionSnapshot();
   hideAuthGate();
 
   // Käyttäjän oma odottava jono ladataan ENNEN ensimmäistä latausta, jotta
@@ -221,20 +267,24 @@ async function onSignedIn() {
 
   restoreLastScreen(getDevicePreference('lastScreen'));
 
+  // Kirjautumisen aikana odottaneet muutokset lähetetään ENNEN ensimmäistä
+  // latausta (F11). Aiemmin lataus ja lähetys kulkivat rinnakkain: ennen
+  // lähetystä haettu lista korvasi tilan, ja juuri lähetetty kirjaus katosi
+  // näkyvistä seuraavaan lataukseen asti. Tyhjällä jonolla ei odoteta.
+  if (offline.status().total > 0 || pendingTimeEntryCount() > 0) await sendPending();
+  if (!isSameSession(session)) return;
+
   // Lataus voi kestää, ja käyttäjä ehtii sinä aikana kirjautua ulos tai
   // vaihtaa tiliä. Silloin loadUserData hylkää vastauksen — eikä tämän
   // kirjautumisen jatko saa enää piirtää eikä ajastaa mitään. Toinen,
   // uudempi onSignedIn on jo ottanut vastuun näkymästä.
-  const loaded = await loadUserData();
+  const loaded = await loadFresh();
   if (loaded.discarded) return;
 
-  // Lähetä kirjautumisen aikana odottaneet muutokset (jos verkko on).
-  offline.replay().catch(error => {
-    console.warn('Manifestival: offline-jonon toisto ei onnistunut', error);
-  });
-  flushTimeOutbox().catch(error => {
-    console.warn('Manifestival: aikakirjausten lähetys ei onnistunut', error);
-  });
+  // Ensimmäinen lataus epäonnistui, vaikka laite on verkossa (esim.
+  // hetkellinen palvelinvirhe): yksi uusi yritys hetken päästä. Ilman tätä
+  // näkymä jäi vajaaksi seuraavaan paluuseen tai verkkotapahtumaan asti.
+  if (isOnlineNow() && hasLoadFailures()) reconnect.refreshLater(FIRST_LOAD_RETRY_MS);
 
   fillProfileForm();
 
@@ -314,8 +364,13 @@ function onSignedOut() {
   closeAreaForm();
   closeTimeLogDialog();
   stopTimerCrossTabSync();
+  // Edellisen käyttäjän avoin vahvistus (esim. "Pysäytetäänkö ja
+  // kirjataanko ...") ei jää kirjautumisportin päälle, eikä sen myöhempi
+  // hyväksyntä käynnistä mitään uudessa istunnossa (RACE-14).
+  closeConfirmDialogs();
   resetDirectionView();
   resetAppliedAdjustments();
+  resetTimeEntrySync();
   clearIdempotencyKeys();
   clearToasts();
 
@@ -370,6 +425,15 @@ async function start() {
     if (!signedIn) return;
     renderToday();
     runAssistantSweeps();
+    // Lähettämättömät aikakirjaukset uudelleen (F16): heikko kenttä tai
+    // kirjautumissivu ei välttämättä koskaan laukaise offline/online-
+    // tapahtumaa. Tyhjällä korilla ei tehdä mitään; epäonnistuminen
+    // harventaa yrityksiä (retryTimeOutbox), eikä lähetyksiä ole rinnakkain.
+    if (isOnlineNow()) {
+      retryTimeOutbox().catch(error => {
+        console.warn('Manifestival: aikakirjausten uusinta ei onnistunut', error);
+      });
+    }
   }, NOW_REFRESH_MS);
 
   // Paluu etualalle: sama kolmikko kuin ajastimessa, mutta heti eikä
@@ -415,8 +479,8 @@ async function start() {
   // Offline-jonon tila näkyviin, ja synkronoinnin jälkeinen uudelleenlataus.
   initOfflineStatus();
   setSyncedHandler(() => {
-    if (!signedIn || reconnectRefreshing) return;
-    loadUserData().catch(error => {
+    if (!signedIn || sendingPending > 0) return;
+    loadFresh().catch(error => {
       console.warn('Manifestival: lataus synkronoinnin jälkeen ei onnistunut', error);
     });
   });
@@ -439,6 +503,11 @@ async function start() {
     reconnect.notifyOffline();
   });
   updateOnlineState();
+  // Kuuntelijat kytketään vasta istunnon palautuksen jälkeen: sillä välin
+  // muuttunut verkon tila välitetään ohjaimelle nyt (F7). Offline -> online
+  // käynnistyksen aikana ajastaa lähetyksen ja latauksen.
+  if (isOnlineNow()) reconnect.notifyOnline();
+  else reconnect.notifyOffline();
 }
 
 start().catch(error => {
