@@ -242,10 +242,17 @@ function renderAccountDeletion() {
  * kopio ajautuisi siitä eroon ensimmäisellä unohtuneella tietotyypin
  * lisäyksellä, ja vienti näyttäisi onnistuneen vaikka jokin kokoelma
  * puuttuisi tiedostosta hiljaa.
+ *
+ * PROFIILI VAIN JOS RIVI ON OLEMASSA. Tilassa on aina profiili
+ * (oletusarvoin), mutta kannassa rivi on vasta kun käyttäjä on tallentanut
+ * sen. Oletusarvot eivät ole käyttäjän dataa: vienti ei väitä niitä hänen
+ * tiedoikseen, eikä poiston esikatselu laske riviä, jota ei ole.
+ * (Muistutusasetuksille vastaavaa olemassaolotietoa ei vielä ole tilassa.)
  */
-function collectExportData(state) {
+export function collectExportData(state) {
   const data = {};
   for (const name of EXPORTED_COLLECTIONS) data[name] = state[name];
+  if (state.profileExists !== true) data.profile = null;
   return data;
 }
 

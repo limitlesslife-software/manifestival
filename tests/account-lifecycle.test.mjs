@@ -14,8 +14,10 @@ import {
   ACCOUNT_OWNED_COLLECTIONS, STORED_FILE_CATEGORIES,
   authAccountDeletable, authAccountBlockedReason, dryRunDeletion, collectionCount
 } from '../src/domain/accountLifecycle.js';
-import { EXPORTED_COLLECTIONS } from '../src/domain/dataExport.js';
+import { EXPORTED_COLLECTIONS, buildUserDataExport } from '../src/domain/dataExport.js';
 import { ALL_REPOSITORIES } from '../src/data/collectionsRepo.js';
+import { resetState, getState, setProfile } from '../src/app/state.js';
+import { collectExportData } from '../src/app/views/profile.js';
 
 // Kokoelmat, joilla ei ole omaa repositoriota collectionsRepo.js:ssä --
 // ne käyttävät erillistä moduulia (tasksRepo.js, profileRepo.js,
@@ -61,6 +63,45 @@ test('inventaario kattaa perustaulut jotka eivät ole collectionsRepo.js:ssä', 
 
 test('collectionCount vastaa listan todellista pituutta', () => {
   assert.equal(collectionCount(), ACCOUNT_OWNED_COLLECTIONS.length);
+});
+
+// Olio-kokoelmat: yksi rivi per käyttäjä (id = auth.uid()), ei lista.
+const OBJECT_COLLECTIONS = ['profile', 'notificationPreferences'];
+
+test('KRIITTINEN: jokainen inventaarion nimi on sovelluksen tilan oma kenttä oikeaa muotoa', () => {
+  // Vienti ja poiston kuiva-ajo lukevat kokoelmat tilasta NIMELLÄ
+  // (collectExportData). Nimi, jota tilassa ei ole, vietäisiin aina
+  // tyhjänä ja kuiva-ajo näyttäisi nollaa -- vaikka kannassa on rivejä.
+  resetState();
+  const state = getState();
+  for (const name of ACCOUNT_OWNED_COLLECTIONS) {
+    assert.ok(Object.prototype.hasOwnProperty.call(state, name), `tilasta puuttuu kenttä ${name}`);
+    if (OBJECT_COLLECTIONS.includes(name)) {
+      assert.equal(typeof state[name], 'object', name);
+      assert.equal(Array.isArray(state[name]), false, name);
+    } else {
+      assert.ok(Array.isArray(state[name]), `${name} ei ole lista alkutilassa`);
+    }
+  }
+});
+
+test('KRIITTINEN: profiilia, jota ei ole tallennettu, ei lasketa eikä viedä käyttäjän tietona', () => {
+  resetState();
+  const initial = collectExportData(getState());
+  assert.equal(initial.profile, null, 'oletusprofiili ei ole käyttäjän riviä');
+  assert.equal(dryRunDeletion(initial).collections.find(c => c.name === 'profile').count, 0);
+  assert.deepEqual(buildUserDataExport(initial).data.profile, {});
+  // Muut kokoelmat kulkevat tilasta sellaisinaan.
+  assert.equal(initial.tasks, getState().tasks);
+
+  setProfile({ age: 40 }, true);
+  const saved = collectExportData(getState());
+  assert.equal(saved.profile.age, 40);
+  assert.equal(dryRunDeletion(saved).collections.find(c => c.name === 'profile').count, 1);
+
+  setProfile({ age: 41 }, false);
+  assert.equal(collectExportData(getState()).profile, null);
+  resetState();
 });
 
 // ============================================================ kuiva-ajo

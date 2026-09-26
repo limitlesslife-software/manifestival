@@ -49,6 +49,15 @@ test('KRIITTINEN: vientidata kootaan EXPORTED_COLLECTIONS-listasta, ei käsin ki
   assert.ok(EXPORTED_COLLECTIONS.length >= 15, 'EXPORTED_COLLECTIONS näyttää vaillinaiselta');
 });
 
+test('vienti ja poiston esikatselu ottavat profiilin vain, jos rivi on olemassa (profileExists)', () => {
+  // Tilassa on aina oletusprofiili. Ilman tätä ehtoa vienti väitti
+  // oletusarvoja käyttäjän tiedoiksi ja esikatselu laski "Profiili 1"
+  // tilille, jolla profiilia ei ole.
+  const start = profileSource.indexOf('function collectExportData');
+  const body = profileSource.slice(start, profileSource.indexOf('\n}', start));
+  assert.match(body, /state\.profileExists !== true\) data\.profile = null/);
+});
+
 test('KRIITTINEN: latauspainike on olemassa ja kytketty klikkaukseen', () => {
   assert.match(profileSource, /id="pfExportBtn"/);
   assert.match(profileSource, /pfExportBtn['"]\)/);
