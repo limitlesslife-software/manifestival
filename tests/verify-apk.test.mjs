@@ -29,7 +29,7 @@ import { ALL_GATES, expectedMatrix } from '../tools/release/waves.mjs';
 import {
   APK_DECLARED_PERMISSIONS, APK_FORBIDDEN_PERMISSIONS, APK_PERMISSION_ALLOWLIST, APP_ID,
   CAPACITOR_EXTRA_ASSETS, EXPECTED_CAPACITOR_PLUGINS, EXPECTED_SIGNER_CERT_SHA256,
-  REQUIRED_QUERY_INTENT_ACTIONS, WEB_ROOT_FILES,
+  REQUIRED_QUERY_INTENT_ACTIONS, WEB_ROOT_FILES, WEB_DIRECTORIES,
   checkBadging, checkCapacitorConfig, checkManifest, checkPermissions, checkPlugins, checkSigner,
   checkWebPayload, compareAssetTrees, expectedPermissions, isWebBuildPath, manifestFacts,
   parseApksigner, parseBadging, parsePermissionsDump, parseVariablesGradle, parseXmlTree
@@ -345,9 +345,13 @@ test('web-koonnin polkusäännöt vastaavat scripts/build-web.mjs:ää', () => {
   const source = read('scripts/build-web.mjs');
   const files = /const FILES = \[([\s\S]*?)\];/.exec(source)[1].match(/'([^']+)'/g).map(s => s.slice(1, -1));
   assert.deepEqual(files, [...WEB_ROOT_FILES], 'build-web.mjs:n FILES ja tools/android/apk.mjs:n WEB_ROOT_FILES erkanivat');
-  assert.match(source, /const DIRECTORIES = \['src'\];/);
+  const dirs = /const DIRECTORIES = \[([^\]]*)\];/.exec(source)[1].match(/'([^']+)'/g).map(s => s.slice(1, -1));
+  assert.deepEqual(dirs, [...WEB_DIRECTORIES], 'build-web.mjs:n DIRECTORIES ja tools/android/apk.mjs:n WEB_DIRECTORIES erkanivat');
   assert.equal(isWebBuildPath('index.html'), true);
   assert.equal(isWebBuildPath('src/app/main.js'), true);
+  // supabase-js ladataan omasta originista (vendor/), joten se kuuluu APK:hon.
+  assert.equal(isWebBuildPath('vendor/supabase-js-2.117.2.min.js'), true);
+  assert.equal(isWebBuildPath('vendor/.gitattributes'), false);
   assert.equal(isWebBuildPath('src/package.json'), false);
   assert.equal(isWebBuildPath('src/.eslintrc'), false);
   assert.equal(isWebBuildPath('api/parse.js'), false);

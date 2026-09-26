@@ -125,7 +125,7 @@ export const CAPACITOR_EXTRA_ASSETS = Object.freeze(['cordova.js', 'cordova_plug
 export const WEB_ROOT_FILES = Object.freeze([
   'index.html', 'manifest.json', 'sw.js', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png'
 ]);
-export const WEB_DIRECTORIES = Object.freeze(['src']);
+export const WEB_DIRECTORIES = Object.freeze(['src', 'vendor']);
 
 /** Polut, joita APK:n web-sisällössä ei saa olla. */
 const FORBIDDEN_WEB_PREFIXES = Object.freeze([
@@ -608,7 +608,7 @@ export function checkAssets({ apk, dist = null, git = null }) {
 
 /**
  * Onko polku scripts/build-web.mjs:n mukaan osa web-koontia?
- * (juuren kuusi tiedostoa + src/**, ei src/package.json, ei pistetiedostoja)
+ * (juuren kuusi tiedostoa + src/** + vendor/**, ei src/package.json, ei pistetiedostoja)
  */
 export function isWebBuildPath(relativePath) {
   const parts = relativePath.split('/');
