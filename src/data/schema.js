@@ -90,7 +90,19 @@ export const TABLES = Object.freeze({
   reminders: true,
   notices: true,
   travelPlans: true,
-  locationRules: true
+  locationRules: true,
+  /**
+   * Migraatio 0012 — EI AJETTU.
+   * Ks. supabase/migrations/0012_life_alignment.sql.
+   *
+   * Suunta (Life Alignment): neljä uutta taulua. Portin ollessa kiinni
+   * elämänalueet, kapasiteetti, kirjattu aika ja katsaukset elävät
+   * istunnon muistissa, ja Suunta-näkymä kertoo sen käyttäjälle.
+   */
+  lifeAreas: true,
+  weeklyCapacities: true,
+  timeEntries: true,
+  alignmentReviews: true
 });
 
 /**
@@ -152,6 +164,20 @@ export const GOAL_PLANNING_FIELDS = true;
  */
 export const GOAL_MAINTENANCE_MODE = true;
 
+/**
+ * Onko migraatio 0012 ajettu `goals.life_area_id`-sarakkeen osalta?
+ *
+ * PRODUCTION GATE, sarakeportti — sama kuvio kuin GOAL_PLANNING_FIELDS.
+ *
+ * `goals` on TUOTANNOSSA AUKI ja siinä on käyttäjän dataa. Sarakkeen
+ * lähettäminen ennen migraatiota — NULLINAKIN — kaataisi jokaisen
+ * tavoitteen tallennuksen koodilla 42703.
+ *
+ * false = tavoitteen elämänalue elää istunnon muistissa.
+ * true  = se tallentuu. Vasta kun 0012 on ajettu ja varmistettu.
+ */
+export const GOAL_LIFE_AREA_FIELD = true;
+
 /** Onko taulu käytettävissä tietokannassa? */
 export function hasTable(name) {
   return TABLES[name] === true;
@@ -205,6 +231,11 @@ export function volatileGoalFields() {
     ? []
     : ['metric', 'unit', 'baselineValue', 'currentValue', 'targetValue',
        'measuredOn', 'savingsGoalId'];
+}
+
+/** Tavoitteen elämänalue: säilyykö se tallennuksen yli? */
+export function volatileGoalAlignmentFields() {
+  return GOAL_LIFE_AREA_FIELD ? [] : ['lifeAreaId'];
 }
 
 /** Tehtävän kentät, jotka eivät vielä säily tallennuksen yli. */

@@ -27,6 +27,10 @@ import { normalizeInboxItem } from '../domain/inbox.js';
 import { normalizeReminder } from '../domain/reminder.js';
 import { normalizeNotice } from '../domain/notificationCenter.js';
 import { normalizeTravelPlan, normalizeLocationRule } from '../domain/travel.js';
+import { normalizeLifeArea } from '../domain/lifeArea.js';
+import { normalizeWeeklyCapacity } from '../domain/weeklyCapacity.js';
+import { normalizeTimeEntry } from '../domain/timeEntry.js';
+import { normalizeAlignmentReview } from '../domain/alignmentReview.js';
 import { getDevicePreference, setDevicePreference } from '../data/preferences.js';
 
 function initialState() {
@@ -104,6 +108,12 @@ function initialState() {
 
     /** Sijaintisäännöt. Ei säily ennen migraatiota 0011. */
     locationRules: [],
+
+    /** Suunta (0012). Ei säily ennen migraatiota 0012. */
+    lifeAreas: [],
+    weeklyCapacities: [],
+    timeEntries: [],
+    alignmentReviews: [],
 
     /**
      * Kirjaus, jonka tulkintaa käyttäjä parhaillaan tarkistaa.
@@ -265,7 +275,9 @@ export function removeTaskFromState(id) {
     travelPlans: state.travelPlans.map(
       p => (p.taskId === id ? { ...p, taskId: null } : p)),
     locationRules: state.locationRules.map(
-      r => (r.taskId === id ? { ...r, taskId: null } : r))
+      r => (r.taskId === id ? { ...r, taskId: null } : r)),
+    // Kirjattu aika säilyy; tehtäväliitos katkeaa (time_entries_task_fkey).
+    timeEntries: state.timeEntries.map(e => (e.taskId === id ? { ...e, taskId: null } : e))
   });
 }
 
@@ -347,7 +359,9 @@ export function removeGoalFromState(id) {
     goals: state.goals.filter(g => g.id !== id),
     // Tehtävät säilyvät, mutta niiden tavoiteyhteys katkeaa — tehtävää ei
     // koskaan poisteta tavoitteen mukana.
-    tasks: state.tasks.map(t => (t.goalId === id ? { ...t, goalId: null } : t))
+    tasks: state.tasks.map(t => (t.goalId === id ? { ...t, goalId: null } : t)),
+    // Kirjattu aika säilyy; tavoiteliitos katkeaa (time_entries_goal_fkey).
+    timeEntries: state.timeEntries.map(e => (e.goalId === id ? { ...e, goalId: null } : e))
   });
 }
 
@@ -1047,6 +1061,96 @@ export function setDomainLoadStatus(domain, ok, error = null) {
  * Kutsutaan uloskirjautumisessa: seuraava käyttäjä samalla laitteella ei saa
  * nähdä vilaustakaan edellisen datasta.
  */
+// ------------------------------------------------------------ Suunta
+
+export function setLifeAreas(areas) {
+  commit({ lifeAreas: (areas || []).map(normalizeLifeArea) });
+}
+
+export function addLifeAreaToState(area) {
+  commit({ lifeAreas: [...state.lifeAreas, normalizeLifeArea(area)] });
+}
+
+export function replaceLifeAreaInState(id, area) {
+  commit({ lifeAreas: state.lifeAreas.map(a => (a.id === id ? normalizeLifeArea(area) : a)) });
+}
+
+/**
+ * Poista alue. Tavoitteet ja kirjattu aika SÄILYVÄT, niiden alue vain
+ * tyhjenee — sama sääntö kuin kannassa (`on delete set null`).
+ */
+export function removeLifeAreaFromState(id) {
+  commit({
+    lifeAreas: state.lifeAreas.filter(a => a.id !== id),
+    goals: state.goals.map(g => (g.lifeAreaId === id ? { ...g, lifeAreaId: null } : g)),
+    timeEntries: state.timeEntries.map(e => (e.lifeAreaId === id ? { ...e, lifeAreaId: null } : e))
+  });
+}
+
+/** Peruutus epäonnistuneelle poistolle: alue ja sen kytkennät takaisin. */
+export function restoreLifeAreaInState(area, goalIds = [], entryIds = []) {
+  const goals = new Set(goalIds);
+  const entries = new Set(entryIds);
+  commit({
+    lifeAreas: [...state.lifeAreas.filter(a => a.id !== area.id), normalizeLifeArea(area)],
+    goals: state.goals.map(g => (goals.has(g.id) ? { ...g, lifeAreaId: area.id } : g)),
+    timeEntries: state.timeEntries.map(e => (entries.has(e.id) ? { ...e, lifeAreaId: area.id } : e))
+  });
+}
+
+export function findLifeArea(id) {
+  return state.lifeAreas.find(a => a.id === id) || null;
+}
+
+export function setWeeklyCapacities(capacities) {
+  commit({ weeklyCapacities: (capacities || []).map(normalizeWeeklyCapacity) });
+}
+
+/** Yksi rivi viikkoa kohti: sama viikko korvataan. */
+export function upsertWeeklyCapacityInState(capacity) {
+  const normalized = normalizeWeeklyCapacity(capacity);
+  commit({
+    weeklyCapacities: [
+      ...state.weeklyCapacities.filter(c => c.weekStart !== normalized.weekStart && c.id !== normalized.id),
+      normalized
+    ]
+  });
+}
+
+export function removeWeeklyCapacityFromState(id) {
+  commit({ weeklyCapacities: state.weeklyCapacities.filter(c => c.id !== id) });
+}
+
+export function setTimeEntries(entries) {
+  commit({ timeEntries: (entries || []).map(normalizeTimeEntry) });
+}
+
+export function addTimeEntryToState(entry) {
+  commit({ timeEntries: [...state.timeEntries, normalizeTimeEntry(entry)] });
+}
+
+export function removeTimeEntryFromState(id) {
+  commit({ timeEntries: state.timeEntries.filter(e => e.id !== id) });
+}
+
+export function setAlignmentReviews(reviews) {
+  commit({ alignmentReviews: (reviews || []).map(normalizeAlignmentReview) });
+}
+
+export function upsertAlignmentReviewInState(review) {
+  const normalized = normalizeAlignmentReview(review);
+  commit({
+    alignmentReviews: [
+      ...state.alignmentReviews.filter(r => r.weekStart !== normalized.weekStart && r.id !== normalized.id),
+      normalized
+    ]
+  });
+}
+
+export function removeAlignmentReviewFromState(id) {
+  commit({ alignmentReviews: state.alignmentReviews.filter(r => r.id !== id) });
+}
+
 export function resetState() {
   state = initialState();
   notify();

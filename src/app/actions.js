@@ -22,6 +22,7 @@ import {
   billsRepo, recurringExpensesRepo, savingsGoalsRepo, aiAuditRepo,
   transactionsRepo, investmentsRepo, milestonesRepo,
   inboxRepo, remindersRepo, noticesRepo, travelPlansRepo, locationRulesRepo,
+  lifeAreasRepo, weeklyCapacitiesRepo, timeEntriesRepo, alignmentReviewsRepo,
   volatileCollections, clearAllCollections
 } from '../data/collectionsRepo.js';
 import { newTaskId } from '../lib/rows.js';
@@ -79,7 +80,8 @@ import {
   removeMilestoneFromState, findMilestone, replaceMilestonesInState,
   setPendingReplan, clearPendingReplan,
   setInboxItems, setReminders, setNotices, setTravelPlans, setLocationRules,
-  setAiAudit, setDomainLoadStatus
+  setAiAudit, setDomainLoadStatus,
+  setLifeAreas, setWeeklyCapacities, setTimeEntries, setAlignmentReviews
 } from './state.js';
 import {
   loadPreferences as loadNotificationPreferences,
@@ -178,7 +180,8 @@ export async function loadUserData() {
     billsResult, expensesResult, savingsResult, transactionsResult,
     investmentsResult, milestonesResult, auditResult,
     inboxResult, remindersResult, noticesResult, travelResult,
-    locationResult] = await Promise.all([
+    locationResult, areasResult, capacitiesResult, entriesResult,
+    reviewsResult] = await Promise.all([
     tasksRepo.listTasks(),
     profileRepo.loadProfile(),
     routinesRepo.list(),
@@ -198,7 +201,11 @@ export async function loadUserData() {
     remindersRepo.list(),
     noticesRepo.list(),
     travelPlansRepo.list(),
-    locationRulesRepo.list()
+    locationRulesRepo.list(),
+    lifeAreasRepo.list(),
+    weeklyCapacitiesRepo.list(),
+    timeEntriesRepo.list(),
+    alignmentReviewsRepo.list()
   ]);
 
   // Istunto on voinut vaihtua odotuksen aikana.
@@ -247,7 +254,12 @@ export async function loadUserData() {
     applyLoadResult('reminders', remindersResult, setReminders),
     applyLoadResult('notices', noticesResult, setNotices),
     applyLoadResult('travelPlans', travelResult, setTravelPlans),
-    applyLoadResult('locationRules', locationResult, setLocationRules)
+    applyLoadResult('locationRules', locationResult, setLocationRules),
+    // Suunta (0012).
+    applyLoadResult('lifeAreas', areasResult, setLifeAreas),
+    applyLoadResult('weeklyCapacities', capacitiesResult, setWeeklyCapacities),
+    applyLoadResult('timeEntries', entriesResult, setTimeEntries),
+    applyLoadResult('alignmentReviews', reviewsResult, setAlignmentReviews)
   ];
 
   // Yksittäiset kokoelmavirheet kirjautuvat konsoliin (applyLoadResult) ja

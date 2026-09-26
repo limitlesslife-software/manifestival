@@ -247,6 +247,43 @@ export const REACHABILITY = Object.freeze([
         + 'luvata ilman laitehyväksyntää; säännön voi kirjata, nähdä '
         + 'ja testata. Uusi sääntö on oletuksena POIS PÄÄLTÄ, ja '
         + 'päälle kytkeminen kysyy vahvistuksen.'
+  }),
+  Object.freeze({
+    gate: 'lifeAreas',
+    reach: REACH.REACHABLE,
+    label: 'Elämänalueet',
+    nav: 'Suunta -> Elämänalueet',
+    evidence: { html: 'dirAreasList', view: 'src/app/views/direction.js' },
+    crud: 'luonti, luku, muokkaus, pois käytöstä, poisto',
+    note: 'Käyttäjä määrittelee alueet, tärkeyden ja viikon aikatavoitteen. '
+        + 'Oletusalueita ei luoda: ehdotukset ovat aloitusapu.'
+  }),
+  Object.freeze({
+    gate: 'weeklyCapacities',
+    reach: REACH.REACHABLE,
+    label: 'Kapasiteetti',
+    nav: 'Suunta -> Tämä viikko -> Kapasiteetti',
+    evidence: { html: 'dirCapacityHours', view: 'src/app/views/direction.js' },
+    crud: 'luku ja tallennus viikkoa kohti',
+    note: 'Yksi arvo viikkoa kohti. Yli 60 h tuottaa varoituksen, ei estä.'
+  }),
+  Object.freeze({
+    gate: 'timeEntries',
+    reach: REACH.REACHABLE,
+    label: 'Toteuma',
+    nav: 'Suunta -> Toteuma',
+    evidence: { html: 'dirTimeList', view: 'src/app/views/direction.js' },
+    crud: 'luonti, luku, poisto',
+    note: 'Käyttäjän kirjaama aika. Arviota ei kopioida toteumaksi.'
+  }),
+  Object.freeze({
+    gate: 'alignmentReviews',
+    reach: REACH.REACHABLE,
+    label: 'Viikkokatsaus',
+    nav: 'Suunta -> Viikkokatsaus',
+    evidence: { html: 'dirReviewHistory', view: 'src/app/views/direction.js' },
+    crud: 'luonti, luku, päivitys',
+    note: 'Tilannekuva on historiaa. Muutosehdotukset vaativat vahvistuksen yksitellen.'
   })
 ]);
 

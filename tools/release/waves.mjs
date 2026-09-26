@@ -44,7 +44,8 @@ export const ALL_GATES = Object.freeze([
   'aiAudit',
   'transactions', 'investments',
   'milestones',
-  'inboxItems', 'reminders', 'notices', 'travelPlans', 'locationRules'
+  'inboxItems', 'reminders', 'notices', 'travelPlans', 'locationRules',
+  'lifeAreas', 'weeklyCapacities', 'timeEntries', 'alignmentReviews'
 ]);
 
 /**
@@ -236,6 +237,26 @@ export const WAVES = Object.freeze([
       + 'ilman että mikään pakottaa siihen.',
     tables: Object.freeze(['inbox_items', 'reminders', 'notices',
                            'travel_plans', 'location_rules'])
+  }),
+  Object.freeze({
+    id: 'I',
+    cacheVersion: 'v22',
+
+    // READY koskee käyttöliittymää, `blockedBy` kantaa. Ks. aalto F.
+    readiness: 'READY',
+    // Este poistettu aaltocommitissa: 0012_life_alignment.sql on tämän commitin
+    // EDELLYTYS. Deploy vasta kun verify_0012.sql = 0 poikkeavaa.
+    blockedBy: null,
+    gates: Object.freeze(['lifeAreas', 'weeklyCapacities', 'timeEntries', 'alignmentReviews']),
+    title: 'Suunta: elämänalueet, kapasiteetti, toteuma ja viikkokatsaus',
+    rationale:
+      'Neljä uutta taulua ja yksi nullable sarake goals-tauluun (life_area_id). '
+      + 'goals.life_area_id ja time_entries viittaavat goals- ja tasks-tauluihin '
+      + 'yhdistelmävierasavaimella, joten aallon B (goals) on oltava tuotannossa. '
+      + 'Havaintoja (kuormitus, huomiotta jääminen, poikkeama) ei tallenneta: '
+      + 'ne lasketaan, joten aalto ei tuo johdettua dataa kantaan. '
+      + 'Riippumaton aalloista F–H: 0012 ei vaadi 0009–0011:tä.',
+    tables: Object.freeze(['life_areas', 'weekly_capacities', 'time_entries', 'alignment_reviews'])
   })
 ]);
 
@@ -255,7 +276,9 @@ export const COLUMN_GATES = Object.freeze({
   /** goals-, tasks- ja projects-taulujen uudet sarakkeet. */
   GOAL_PLANNING_FIELDS: 'G',
   /** `maintenance` sallittuna tavoitteen tilana. */
-  GOAL_MAINTENANCE_MODE: 'G'
+  GOAL_MAINTENANCE_MODE: 'G',
+  /** goals.life_area_id (migraatio 0012). */
+  GOAL_LIFE_AREA_FIELD: 'I'
 });
 
 /**

@@ -15,6 +15,7 @@ Tämä on junan yleisohje. Aaltokohtaiset tarkistuslistat ovat erikseen:
 | **F** | `transactions`, `investments` | `v19` | **ESTETTY** | [WAVE-F.md](acceptance/WAVE-F.md) |
 | **G** | `milestones` | `v20` | **ESTETTY** | [WAVE-G.md](acceptance/WAVE-G.md) |
 | **H** | `inboxItems`, `reminders`, `notices`, `travelPlans`, `locationRules` | `v21` | **ESTETTY** | [WAVE-H.md](acceptance/WAVE-H.md) |
+| **I** | `lifeAreas`, `weeklyCapacities`, `timeEntries`, `alignmentReviews` (+ sarakeportti `GOAL_LIFE_AREA_FIELD`) | `v22` | **ESTETTY** | [WAVE-I.md](acceptance/WAVE-I.md) |
 
 **Aalto F on estetty yhdestä nimetystä syystä:** migraatiota
 `0009_finance_2.sql` ei ole ajettu tuotantoon. Sen sovelluskoodi on
@@ -68,7 +69,9 @@ Aaltojen commit-SHA:t: `activation-0003-0008-release-manifest.json`.
    |
    +-- aalto G              v20   13/18   <- ESTETTY: migraatio 0010 ajamatta
    |
-   +-- aalto H              v21   18/18   <- ESTETTY: 0011 ajamatta JA näkymät puuttuvat
+   +-- aalto H              v21   18/22   <- ESTETTY: migraatio 0011 ajamatta
+   |
+   +-- aalto I              v22   22/22   <- ESTETTY: migraatio 0012 ajamatta
 ```
 
 **Perustila deployataan ensin, kaikki portit kiinni.** Se korjaa kolme

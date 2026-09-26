@@ -104,7 +104,16 @@ export const EXPORTED_COLLECTIONS = Object.freeze([
   // `destination` ja `place` ovat käyttäjän kirjoittamia nimiä.
   // Koordinaatti kannassa olisi koordinaatti juuri tässä viennissä.
   'travelPlans',
-  'locationRules'
+  'locationRules',
+
+  // Suunta (0012): elämänalueet, viikkokapasiteetit, kirjattu aika ja
+  // viikkokatsausten tilannekuvat. Kaikki käyttäjän omaa pohdintaa ja
+  // päätöksiä. Havaintoja EI ole kokoelmana: ne lasketaan, eikä
+  // laskettua tulosta viedä toisena totuutena.
+  'lifeAreas',
+  'weeklyCapacities',
+  'timeEntries',
+  'alignmentReviews'
 ]);
 
 /**

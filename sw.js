@@ -29,7 +29,7 @@
 // Versio pitää nostaa aina kun sovelluskuori muuttuu. Vanhat välimuistit
 // siivotaan activate-vaiheessa, joten nosto on turvallinen tapa pakottaa
 // päivitys. Ks. docs/DEPLOYMENT.md.
-const CACHE_VERSION = 'v21';
+const CACHE_VERSION = 'v22';
 const CACHE_NAME = `manifestival-shell-${CACHE_VERSION}`;
 
 /**
@@ -55,6 +55,7 @@ const SHELL = [
   '/src/app/aiCommandHandlers.js',
   '/src/app/aiCommands.js',
   '/src/app/assistantActions.js',
+  '/src/app/alignment.js',
   '/src/app/capture.js',
   '/src/app/auth.js',
   '/src/app/commandBar.js',
@@ -87,6 +88,7 @@ const SHELL = [
   '/src/app/views/today.js',
   '/src/app/views/transactions.js',
   '/src/app/views/travel.js',
+  '/src/app/views/direction.js',
   '/src/app/views/week.js',
   '/src/app/voice.js',
   '/src/data/accountDeletionClient.js',
@@ -144,6 +146,11 @@ const SHELL = [
   '/src/domain/travel.js',
   '/src/domain/utteranceRoute.js',
   '/src/domain/voiceFlow.js',
+  '/src/domain/lifeArea.js',
+  '/src/domain/weeklyCapacity.js',
+  '/src/domain/timeEntry.js',
+  '/src/domain/alignment.js',
+  '/src/domain/alignmentReview.js',
   '/src/domain/week.js',
   '/src/domain/wellbeing.js',
   '/src/lib/datetime.js',
