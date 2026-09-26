@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 
 import { ROOT, read } from './helpers/sources.mjs';
 import { shaOf, stubGit } from './helpers/activation-history.mjs';
-import { blockingFailures, repoChecks } from '../tools/release/preflight-checks.mjs';
+import { BROWSER_PATHSPEC, blockingFailures, preflightVerdict, repoChecks } from '../tools/release/preflight-checks.mjs';
 import { createGit } from '../tools/release/git-layer.mjs';
 
 const lock = JSON.parse(read('docs/activation/release-train-c-j.json'));
@@ -64,6 +64,31 @@ test('salaisuushaku: osuma -> FAIL, grep-virhe -> FAIL (ei hiljaista läpäisyä
   assert.ok(blockingFailures(found).some(r => /AI-avainta/.test(r.name)));
   const broken = repoChecks({ ref: shaOf('D'), wave: 'D', gitShow: stubShow(), gitGrep: () => null });
   assert.ok(blockingFailures(broken).some(r => /git grep epäonnistui/.test(r.detail)));
+});
+
+test('KRIITTINEN: service_role-haku kattaa selaimessa ajettavan RLS-hyväksyntäsivun (tools/rls-acceptance)', () => {
+  const calls = [];
+  const gitGrep = (ref, regex, opts = {}) => { calls.push({ regex, pathspec: opts.pathspec || [] }); return /service_role/.test(regex) && (opts.pathspec || []).includes('tools/rls-acceptance') ? ['tools/rls-acceptance/main.js'] : []; };
+  const results = repoChecks({ ref: shaOf('D'), wave: 'D', gitShow: stubShow(), gitGrep });
+  const serviceRole = calls.find(c => /service_role/.test(c.regex));
+  assert.deepEqual(serviceRole.pathspec, [...BROWSER_PATHSPEC]);
+  assert.deepEqual(BROWSER_PATHSPEC, ['src', 'tools/rls-acceptance']);
+  const failing = blockingFailures(results);
+  assert.ok(failing.some(r => /service_role ei esiinny selaimen koodissa \(src, tools\/rls-acceptance\)/.test(r.name) && /tools\/rls-acceptance\/main\.js/.test(r.detail)),
+    failing.map(r => `${r.name}: ${r.detail}`).join('; '));
+});
+
+test('KRIITTINEN: loppupäätös kertoo, jos testejä tai koontia EI ajettu', () => {
+  assert.equal(preflightVerdict({ wave: 'D', total: 30, blocking: 0, testsRun: false, buildRun: false }),
+    'AKTIVOINNIN ESITARKISTUS (D): PASS (testejä/koontia ei ajettu) — 30 tarkistusta');
+  assert.match(preflightVerdict({ wave: 'D', total: 30, blocking: 0, testsRun: true, buildRun: false }), /PASS \(koontia ei ajettu\)/);
+  assert.match(preflightVerdict({ wave: 'D', total: 30, blocking: 0, testsRun: false, buildRun: true }), /PASS \(testejä ei ajettu\)/);
+  assert.match(preflightVerdict({ wave: 'D', total: 30, blocking: 0, testsRun: true, buildRun: true }), /PASS \(testit ja koonti ajettu\)/);
+  assert.match(preflightVerdict({ wave: 'F', total: 30, blocking: 2, testsRun: false, buildRun: false }), /FAIL \(2\/30 estettä; testejä\/koontia ei ajettu\)/);
+  const cli = read('scripts/activation-preflight.mjs');
+  assert.match(cli, /preflightVerdict\(\{/, 'CLI ei käytä yhteistä päätöstekstiä');
+  assert.match(cli, /testsRun: testitAjettu, buildRun: käännösAjettu/);
+  assert.equal(/ESITARKISTUS \(\$\{ODOTETTU_AALTO\}\): PASS/.test(cli), false, 'CLI:ssä on yhä oma PASS-teksti');
 });
 
 test('oikea historia (ehdollinen): lukitut F..J läpäisevät esitarkistuksen ilman checkoutia', t => {

@@ -173,15 +173,38 @@ export function repoChecks({ ref, wave, gitShow, gitGrep = null, sqlRef = null, 
     const keys = gitGrep(ref, 'sk-ant-[A-Za-z0-9_-]{10,}');
     check('salaisuudet', 'Yhdessäkään commitin tiedostossa ei ole AI-avainta',
       Array.isArray(keys) && keys.length === 0, keys === null ? 'git grep epäonnistui' : keys.join(', '));
-    const serviceRole = gitGrep(ref, 'service_role', { ignoreCase: true, pathspec: ['src'] });
-    check('salaisuudet', 'service_role ei esiinny selaimen koodissa',
+    const serviceRole = gitGrep(ref, 'service_role', { ignoreCase: true, pathspec: [...BROWSER_PATHSPEC] });
+    check('salaisuudet', `service_role ei esiinny selaimen koodissa (${BROWSER_PATHSPEC.join(', ')})`,
       Array.isArray(serviceRole) && serviceRole.length === 0, serviceRole === null ? 'git grep epäonnistui' : serviceRole.join(', '));
   }
 
   return results;
 }
 
+/**
+ * Polut, jotka päätyvät selaimeen ja joissa palvelinroolin avain ei saa
+ * esiintyä: sovellus (src) ja RLS-hyväksyntäsivu (tools/rls-acceptance),
+ * joka ajetaan selaimessa anon-avaimella.
+ */
+export const BROWSER_PATHSPEC = Object.freeze(['src', 'tools/rls-acceptance']);
+
 /** Estävät epäonnistumiset. */
 export function blockingFailures(results) {
   return results.filter(r => !r.ok && r.blocking !== false);
+}
+
+/**
+ * Esitarkistuksen loppupäätös yhtenä rivinä. PASS kertoo AINA, jos
+ * testejä tai koontia ei ajettu: pelkkä "PASS" luettiin aiemmin "kaikki
+ * testattu" -merkityksessä, vaikka oletusajo tarkistaa vain commitin
+ * tiedostot.
+ *
+ * @param {{wave: string, total: number, blocking: number, testsRun: boolean, buildRun: boolean}} options
+ */
+export function preflightVerdict({ wave, total, blocking, testsRun, buildRun }) {
+  const notRun = [testsRun ? null : 'testejä', buildRun ? null : 'koontia'].filter(Boolean);
+  const scope = notRun.length ? `${notRun.join('/')} ei ajettu` : 'testit ja koonti ajettu';
+  return blocking === 0
+    ? `AKTIVOINNIN ESITARKISTUS (${wave}): PASS (${scope}) — ${total} tarkistusta`
+    : `AKTIVOINNIN ESITARKISTUS (${wave}): FAIL (${blocking}/${total} estettä; ${scope})`;
 }

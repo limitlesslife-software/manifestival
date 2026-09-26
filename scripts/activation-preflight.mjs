@@ -45,7 +45,7 @@ import { WAVE_IDS, cacheVersionOf, describeMatrix } from '../tools/release/waves
 import { currentState, matrixDifferences } from '../tools/release/state.mjs';
 import { isDetachedHead, waveOfCommit } from '../tools/release/lineage.mjs';
 import { createGit } from '../tools/release/git-layer.mjs';
-import { repoChecks } from '../tools/release/preflight-checks.mjs';
+import { preflightVerdict, repoChecks } from '../tools/release/preflight-checks.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const NEWLINE = String.fromCharCode(10);
@@ -252,20 +252,23 @@ for (const { osuus, nimi, ok, selite, blocking } of tulokset) {
 }
 
 const esteet = tulokset.filter(t => !t.ok && t.blocking !== false);
+const testitAjettu = AJA_TESTIT && onHead;
+const käännösAjettu = AJA_KÄÄNNÖS && onHead;
+const päätös = preflightVerdict({
+  wave: ODOTETTU_AALTO, total: tulokset.length, blocking: esteet.length, testsRun: testitAjettu, buildRun: käännösAjettu
+});
 process.stdout.write(NEWLINE);
 
 if (esteet.length === 0) {
   process.stdout.write(
-    `  AKTIVOINNIN ESITARKISTUS (${ODOTETTU_AALTO}): PASS`
-    + ` (${tulokset.length} tarkistusta)${NEWLINE}${NEWLINE}`
+    `  ${päätös}${NEWLINE}${NEWLINE}`
     + `  Commit ${sha.slice(0, 7)} on siina tilassa, josta aalto ${ODOTETTU_AALTO} voidaan deployata.${NEWLINE}`
+    + (testitAjettu && käännösAjettu ? '' : `  HUOM: PASS koskee commitin tiedostoja; testejä/koontia ei ajettu tässä ajossa.${NEWLINE}`)
     + `  Kannan tila todistetaan erikseen: npm run activation:dry-run${NEWLINE}`);
   process.exit(0);
 }
 
-process.stdout.write(
-  `  AKTIVOINNIN ESITARKISTUS (${ODOTETTU_AALTO}): FAIL`
-  + ` (${esteet.length}/${tulokset.length} estetta)${NEWLINE}${NEWLINE}`);
+process.stdout.write(`  ${päätös}${NEWLINE}${NEWLINE}`);
 for (const este of esteet) {
   process.stdout.write(`    ${este.osuus}: ${este.nimi}${este.selite ? ` — ${este.selite}` : ''}${NEWLINE}`);
 }
