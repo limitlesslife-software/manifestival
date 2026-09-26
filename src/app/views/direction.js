@@ -695,6 +695,14 @@ function activeQueueCardHtml(item, host, queue) {
     </div>`;
 }
 
+/** Arviojonon eteneminen tekstinä ("Arvioitu n/N"); tyhjä, kun jono on tyhjä. */
+function estimateQueueStatus(host) {
+  const queue = ensureEstimateQueue(host === 'setup' ? 'setup' : 'workflow');
+  const total = queue.items.length;
+  if (total === 0) return '';
+  return `Arvioitu ${queue.items.filter(item => queue.done.has(item.key)).length}/${total}`;
+}
+
 /**
  * Arviojonon merkintä. `host` erottaa tunnisteet: 'main' (työnkulku) tai
  * 'setup' (aloituksen vaihe 6).
@@ -702,11 +710,13 @@ function activeQueueCardHtml(item, host, queue) {
 function estimateQueueHtml(host) {
   const queue = ensureEstimateQueue(host === 'setup' ? 'setup' : 'workflow');
   const total = queue.items.length;
-  const doneCount = queue.items.filter(item => queue.done.has(item.key)).length;
   const active = activeQueueItem(queue);
   const overdue = host === 'main' ? overdueForQueue(queue) : [];
   const parts = [];
-  if (total > 0) parts.push(`<p class="dir-line dir-queue-progress" role="status">Arvioitu ${doneCount}/${total}</p>`);
+  // Aloituksessa eteneminen kuulutetaan pysyvästä elävästä alueesta
+  // (#dirSetupStatus), ei joka piirrolla uutena syntyvästä rivistä.
+  const live = host === 'setup' ? '' : ' role="status"';
+  if (total > 0) parts.push(`<p class="dir-line dir-queue-progress"${live}>${escapeHtml(estimateQueueStatus(host))}</p>`);
   if (total === 0) {
     parts.push(`<div class="assist-empty">${host === 'setup'
       ? 'Tämän viikon avoimilla asioilla on kestoarvio.'
@@ -1481,7 +1491,8 @@ export function renderDirection() {
   // Aloituksen vaiheet luetaan myös tehtävistä ja tavoitteista.
   const setupSourcesFailed = ['tasks', 'goals'].some(domain => loadStatus[domain] && loadStatus[domain].ok === false);
   const setupActive = renderDirectionSetup({
-    unknown: problems.length > 0 || !lifeAreasKnown(state) || setupSourcesFailed, queueHtml: estimateQueueHtml
+    unknown: problems.length > 0 || !lifeAreasKnown(state) || setupSourcesFailed,
+    queueHtml: estimateQueueHtml, queueStatus: estimateQueueStatus
   });
   // Ei tyhjän tilan kehotusta ("aloita elämänalueista"), kun alueita ei
   // saatu ladattua: niitä voi olla kannassa.

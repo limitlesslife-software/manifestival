@@ -117,7 +117,7 @@ function eventFor(dataset, props = {}) {
 const setup = () => node('dirSetup');
 const click = async dataset => { setup().dispatch('click', eventFor(dataset)); await flush(); };
 const change = async (dataset, props) => { setup().dispatch('change', eventFor(dataset, props)); await flush(); };
-const stepLine = () => (/Vaihe (\d)\/7/.exec(html('dirSetup')) || [])[1];
+const stepLine = () => (/Vaihe (\d)\/7/.exec(html('dirSetupCard')) || [])[1];
 
 let storage;
 let client;
@@ -227,7 +227,7 @@ test('F2 KRIITTINEN: 0 aluetta -> aloitus vaiheessa 1/7, muu Suunta väistyy; al
   assert.equal(setup().hidden, false);
   assert.equal(stepLine(), '1');
   assert.ok(node('screen-direction').classList.contains('dir-setup-active'));
-  const markup = html('dirSetup');
+  const markup = html('dirSetupCard');
   assert.match(markup, /<h2 class="dir-setup-title" id="dirSetupTitle" tabindex="-1">Mitkä elämäsi alueet ovat sinulle tärkeitä\?<\/h2>/);
   assert.equal((markup.match(/<h2/g) || []).length, 1, 'yksi otsikko');
   assert.equal((markup.match(/class="hint"/g) || []).length, 1, 'enintään yksi vihje');
@@ -246,21 +246,21 @@ test('F2 KRIITTINEN: valinnat eivät luo mitään ennen "Tallenna alueet"; tärk
   renderDirection();
   await click({ setupDraft: 'Perhe' });
   await click({ setupDraft: 'Työ' });
-  assert.match(html('dirSetup'), /aria-pressed="true">✓ Perhe<\/button>/, 'valinta näkyy merkkinä, ei vain värinä');
+  assert.match(html('dirSetupCard'), /aria-pressed="true">✓ Perhe<\/button>/, 'valinta näkyy merkkinä, ei vain värinä');
   await click({ setup: 'to-importance' });
   assert.equal(stepLine(), '2');
   assert.equal(getState().lifeAreas.length, 0, 'luonnos ei ole alue');
   assert.equal(client.calls.filter(c => c.table === 'life_areas' && c.operation !== 'select').length, 0);
-  let markup = html('dirSetup');
+  let markup = html('dirSetupCard');
   assert.doesNotMatch(markup, /checked/, 'ei valmiiksi valittua tärkeyttä');
   assert.match(markup, /data-setup="save-areas" data-focus="primary"\s+disabled>Tallenna alueet/);
   assert.match(markup, /<legend>Perhe<\/legend>/);
   // Kategorian kytkentä on erillinen valinta, jossa näkyy vaikutus (F9).
   assert.match(markup, /Laske alueeseen myös kategorian Työ tehtävät\s+\(25 avointa tehtävää\)/);
   await change({ setupImportance: '0' }, { value: '5' });
-  assert.match(html('dirSetup'), /data-setup="save-areas" data-focus="primary"\s+disabled>/, 'yksi puuttuu vielä');
+  assert.match(html('dirSetupCard'), /data-setup="save-areas" data-focus="primary"\s+disabled>/, 'yksi puuttuu vielä');
   await change({ setupImportance: '1' }, { value: '4' });
-  markup = html('dirSetup');
+  markup = html('dirSetupCard');
   assert.doesNotMatch(markup, /data-setup="save-areas" data-focus="primary"\s+disabled/);
   await click({ setup: 'save-areas' });
   const areas = getState().lifeAreas;
@@ -277,13 +277,53 @@ test('F2: kategorian kytkentä vain valittaessa; oma nimi lisätään luonnoksee
   await click({ setupDraft: 'Työ' });
   setup().dispatch('input', eventFor({ focus: 'custom-name' }, { value: 'Vapaaehtoistyö' }));
   await click({ setup: 'add-custom' });
-  assert.match(html('dirSetup'), /✓ Vapaaehtoistyö/);
+  assert.match(html('dirSetupCard'), /✓ Vapaaehtoistyö/);
   await click({ setup: 'to-importance' });
   await change({ setupImportance: '0' }, { value: '3' });
   await change({ setupImportance: '1' }, { value: '2' });
   await change({ setupCategory: '0' }, { checked: true });
   await click({ setup: 'save-areas' });
   assert.deepEqual(getState().lifeAreas.map(a => [a.name, a.categoryKey]), [['Työ', 'tyo'], ['Vapaaehtoistyö', null]]);
+});
+
+test('F2 saavutettavuus: aluevalinnat kuulutetaan yhdestä pysyvästä elävästä alueesta, samaa ei toisteta', async (t) => {
+  freezeLocalDate(t, THURSDAY);
+  initDirection();
+  renderDirection();
+  const live = node('dirSetupStatus');
+  assert.equal(live.textContent, 'Et ole vielä valinnut alueita.');
+  let writes = 0;
+  let text = live.textContent;
+  Object.defineProperty(live, 'textContent', {
+    configurable: true, get: () => text, set: value => { writes += 1; text = value; }
+  });
+  renderDirection();
+  assert.equal(writes, 0, 'uudelleenpiirto ei kuuluta samaa tekstiä uudelleen');
+  await click({ setupDraft: 'Perhe' });
+  assert.equal(live.textContent, 'Valittu: Perhe.');
+  assert.equal(writes, 1);
+  const markup = html('dirSetupCard');
+  assert.match(markup, /<p class="dir-line">Valittu: Perhe\.<\/p>/, 'näkyvä teksti säilyy');
+  assert.doesNotMatch(markup, /aria-live|role="status"/, 'kortti ei synnytä elävää aluetta joka piirrolla');
+  await click({ setup: 'dismiss' });
+  assert.equal(live.textContent, '', 'sivuun siirretty aloitus ei kuuluta');
+});
+
+test('F2 saavutettavuus: arviojonon "Arvioitu n/N" päivittyy pysyvään elävään alueeseen', async (t) => {
+  freezeLocalDate(t, THURSDAY);
+  await createLifeArea({ name: 'Perhe', importance: 5, targetMinutesPerWeek: 300 });
+  await saveWeeklyCapacity({ weekStart: '2026-09-14', availableMinutes: 1200 });
+  setTasks([normalizeTask({ id: 'x', title: 'Eka', date: THURSDAY }), normalizeTask({ id: 'y', title: 'Toka', date: THURSDAY })]);
+  initDirection();
+  renderDirection();
+  assert.equal(stepLine(), '6');
+  assert.equal(node('dirSetupStatus').textContent, 'Arvioitu 0/2');
+  assert.match(html('dirSetupCard'), /<p class="dir-line dir-queue-progress">Arvioitu 0\/2<\/p>/);
+  assert.doesNotMatch(html('dirSetupCard'), /role="status"|aria-live/);
+  const key = /data-queue-card="([^"]+)"/.exec(html('dirSetupCard'))[1];
+  await click({ queueEstimate: key, minutes: '30' });
+  assert.equal(stepLine(), '6');
+  assert.equal(node('dirSetupStatus').textContent, 'Arvioitu 1/2');
 });
 
 test('F2: viikkotavoitteet — "Ei tavoitetta" ja "0 – ei nyt" ovat eri asioita; ei esivalintaa', async (t) => {
@@ -293,14 +333,14 @@ test('F2: viikkotavoitteet — "Ei tavoitetta" ja "0 – ei nyt" ovat eri asioit
   initDirection();
   renderDirection();
   assert.equal(stepLine(), '3');
-  let markup = html('dirSetup');
+  let markup = html('dirSetupCard');
   for (const label of ['Ei tavoitetta', '0 – ei nyt', '1 h', '3 h', '5 h', '10 h', 'Muu']) assert.ok(markup.includes(label), label);
   assert.doesNotMatch(markup, /checked/);
   const [perhe, tyo] = getState().lifeAreas;
   await change({ setupTarget: perhe.id }, { value: 'custom' });
   setup().dispatch('input', eventFor({ setupTargetHours: perhe.id }, { value: '7,5' }));
   await change({ setupTarget: tyo.id }, { value: '0' });
-  markup = html('dirSetup');
+  markup = html('dirSetupCard');
   assert.match(markup, new RegExp(`<label class="field-label" for="dirSetupTargetHours-${perhe.id}">Tunteja viikossa: Perhe</label>`));
   await click({ setup: 'save-targets' });
   const [p, w] = getState().lifeAreas;
@@ -315,8 +355,8 @@ test('F2: kapasiteetilla ei ole oletusta; tallennus tälle viikolle', async (t) 
   initDirection();
   renderDirection();
   assert.equal(stepLine(), '4');
-  assert.match(html('dirSetup'), /<input type="number" id="dirSetupCapacity" min="0" max="168" step="0.5" inputmode="decimal"\s+data-focus="capacity" value="">/);
-  assert.match(html('dirSetup'), /data-setup="save-capacity" data-focus="primary"\s+disabled>Tallenna/);
+  assert.match(html('dirSetupCard'), /<input type="number" id="dirSetupCapacity" min="0" max="168" step="0.5" inputmode="decimal"\s+data-focus="capacity" value="">/);
+  assert.match(html('dirSetupCard'), /data-setup="save-capacity" data-focus="primary"\s+disabled>Tallenna/);
   setup().dispatch('input', eventFor({ focus: 'capacity' }, { value: '25' }));
   await click({ setup: 'save-capacity' });
   assert.equal(getState().weeklyCapacities[0].availableMinutes, 1500);
@@ -331,7 +371,7 @@ test('F2 + F9: vaihe 5 kuittaa vanhan datan oikeilla luvuilla ja liittää tavoi
   initDirection();
   renderDirection();
   assert.equal(stepLine(), '5', 'aalto I:n käyttäjä jatkaa ensimmäisestä keskeneräisestä');
-  const markup = html('dirSetup');
+  const markup = html('dirSetupCard');
   assert.match(markup, /Sinulla on jo 36 tehtävää, 1 tavoite ja 1 projekti\. Niitä ei tarvitse järjestää kerralla: kun liität tavoitteen alueeseen, sen tehtävät ja projektit seuraavat mukana\. Muut voit liittää vähitellen tai jättää ilman aluetta\./);
   assert.match(markup, new RegExp(`<label class="field-label" for="dirSetupGoal-${goal.id}">Oma tavoite</label>`));
   assert.equal(getState().goals[0].lifeAreaId, null, 'ei automaattista liittämistä');
@@ -350,7 +390,7 @@ test('F2: vaihe 5 — pois käytöstä olevan alueen tavoite on liitetty, ja tun
   initDirection();
   renderDirection();
   assert.equal(stepLine(), '5');
-  const markup = html('dirSetup');
+  const markup = html('dirSetupCard');
   const selectOf = id => new RegExp(`<select id="dirSetupGoal-${id}"[^>]*>([\\s\\S]*?)</select>`).exec(markup)[1];
   assert.match(selectOf(archived.id), new RegExp(`<option value="${old.id}" selected>Vanha \\(pois käytöstä\\)</option>`));
   assert.doesNotMatch(selectOf(archived.id), /<option value="" selected>/, 'ei "Ei elämänaluetta"');
@@ -450,13 +490,13 @@ test('F2: kaikki vaiheet käyty -> aloitus piiloon, eikä palaa seuraavalla viik
   initDirection();
   renderDirection();
   assert.equal(stepLine(), '6');
-  assert.match(html('dirSetup'), /data-queue-card="task:x"/, 'arviojono upotettuna');
+  assert.match(html('dirSetupCard'), /data-queue-card="task:x"/, 'arviojono upotettuna');
   await click({ setup: 'finish-step' });
   assert.equal(stepLine(), '7');
-  assert.match(html('dirSetup'), /data-setup="start-timer" data-focus="start-timer"\s+disabled>Aloita ajastin alueelle/);
+  assert.match(html('dirSetupCard'), /data-setup="start-timer" data-focus="start-timer"\s+disabled>Aloita ajastin alueelle/);
   await click({ setup: 'finish-step' });
   assert.equal(node('screen-direction').classList.contains('dir-setup-active'), false);
-  assert.match(html('dirSetup'), /Aloitus on valmis\./);
+  assert.match(html('dirSetupCard'), /Aloitus on valmis\./);
   assert.equal(getUserPreference(USER.id, 'suuntaSetup').completed, true);
   // Uusi arvioimaton tehtävä ei avaa aloitusta uudelleen.
   resetDirectionView();
@@ -472,14 +512,14 @@ test('F2: ajastin alueelle vaiheessa 7 vaatii alueen valinnan, ei oletusta', asy
   initDirection();
   renderDirection();
   assert.equal(stepLine(), '7');
-  assert.match(html('dirSetup'), /<option value="">Valitse alue<\/option>/);
+  assert.match(html('dirSetupCard'), /<option value="">Valitse alue<\/option>/);
   const area = getState().lifeAreas[0];
   await change({ setupTimerArea: '1' }, { value: area.id });
-  assert.doesNotMatch(html('dirSetup'), /data-setup="start-timer" data-focus="start-timer"\s+disabled/);
+  assert.doesNotMatch(html('dirSetupCard'), /data-setup="start-timer" data-focus="start-timer"\s+disabled/);
   await click({ setup: 'start-timer' });
   assert.equal(currentTimer().lifeAreaId, area.id);
   renderDirection();
-  assert.equal(setup().hidden === false && /Vaihe/.test(html('dirSetup')), false, 'käynnissä oleva ajastin täyttää vaiheen');
+  assert.equal(setup().hidden === false && /Vaihe/.test(html('dirSetupCard')), false, 'käynnissä oleva ajastin täyttää vaiheen');
 });
 
 test('F2: "Näytä koko Suunta" siirtää aloituksen sivuun tälle istunnolle; "Jatka aloitusta" palaa', async (t) => {
@@ -488,8 +528,8 @@ test('F2: "Näytä koko Suunta" siirtää aloituksen sivuun tälle istunnolle; "
   renderDirection();
   await click({ setup: 'dismiss' });
   assert.equal(node('screen-direction').classList.contains('dir-setup-active'), false);
-  assert.match(html('dirSetup'), /Aloitus on kesken: vaihe 1\/7\./);
-  assert.match(html('dirSetup'), /Jatka aloitusta/);
+  assert.match(html('dirSetupCard'), /Aloitus on kesken: vaihe 1\/7\./);
+  assert.match(html('dirSetupCard'), /Jatka aloitusta/);
   await click({ setup: 'resume' });
   assert.ok(node('screen-direction').classList.contains('dir-setup-active'));
   assert.equal(stepLine(), '1');
@@ -610,7 +650,11 @@ test('F9 KRIITTINEN: Suunnan, aloituksen ja työnkulkujen avaaminen ei kirjoita 
 // ================================================================ STAATTINEN
 
 test('F2 staattinen: #dirSetup on nimetty osio; kohteet 44 px; ei vaakavieritystä kapealla näytöllä', () => {
-  assert.match(HTML, /<div class="dir-section dir-setup" id="dirSetup" aria-labelledby="dirSetupTitle" hidden><\/div>/);
+  // Nimi ei riipu kortin sisällöstä: otsikko (dirSetupTitle) puuttuu mm. "Jatka aloitusta" -tilasta.
+  const section = /<div class="dir-section dir-setup" id="dirSetup" role="region" aria-label="Suunnan aloitus" hidden>\s*<div id="dirSetupCard"><\/div>([\s\S]*?)<\/div>/.exec(HTML);
+  assert.ok(section, '#dirSetup on nimetty alue, ja kortti piirretään sen sisälle omaan säiliöönsä');
+  assert.match(section[1], /<p class="visually-hidden" id="dirSetupStatus" role="status" aria-live="polite"><\/p>\s*$/,
+    'pysyvä elävä alue kortin ulkopuolella');
   assert.match(CSS, /\.dir-setup-choice \{[^}]*min-height:44px/);
   assert.match(CSS, /\.dir-setup-dismiss \{[^}]*min-height:44px/);
   assert.match(CSS, /\.dir-setup input\[type="text"\], \.dir-setup input\[type="number"\], \.dir-setup select \{[^}]*min-height:44px/);

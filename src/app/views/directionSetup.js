@@ -165,6 +165,8 @@ function chipsHtml(state) {
 
 function areasStep(state) {
   const existing = activeAreas(state);
+  const selection = draftAreas.length === 0 ? 'Et ole vielä valinnut alueita.'
+    : `Valittu: ${draftAreas.map(draft => draft.name).join(', ')}.`;
   return {
     title: 'Mitkä elämäsi alueet ovat sinulle tärkeitä?',
     hint: 'Valitse valmiista tai kirjoita oma. Mitään ei luoda ennen kuin tallennat.',
@@ -177,8 +179,9 @@ function areasStep(state) {
           placeholder="esim. Vapaaehtoistyö" value="${escapeHtml(customNameDraft)}" data-focus="custom-name">
         <button type="button" class="assist-btn" data-setup="add-custom" data-focus="add-custom">Lisää</button>
       </div>
-      <p class="dir-line" aria-live="polite">${draftAreas.length === 0 ? 'Et ole vielä valinnut alueita.'
-        : `Valittu: ${escapeHtml(draftAreas.map(draft => draft.name).join(', '))}.`}</p>`,
+      <p class="dir-line">${escapeHtml(selection)}</p>`,
+    // Kuulutus pysyvästä elävästä alueesta (#dirSetupStatus), ks. renderDirectionSetup.
+    status: selection,
     primary: { label: 'Seuraava', enabled: draftAreas.length > 0 || existing.length > 0, action: 'to-importance' }
   };
 }
@@ -361,6 +364,7 @@ function estimatesStep(context) {
     title: 'Arvioi tämän viikon tehtävien kestot',
     hint: 'Karkea arvio riittää, ja voit lopettaa milloin tahansa. Arvioimaton ei ole nolla.',
     controls: context.queueHtml ? context.queueHtml('setup') : '',
+    status: context.queueStatus ? context.queueStatus('setup') : '',
     primary: { label: 'Seuraava', enabled: true, action: 'finish-step' }
   };
 }
@@ -428,11 +432,13 @@ function cardHtml(index, content, progress) {
  * @param {object} context
  * @param {boolean} [context.unknown]  Suunnan tietoja ei saatu ladattua: ei aloitusta
  * @param {Function} [context.queueHtml] arviojonon merkintä (host) -> string
+ * @param {Function} [context.queueStatus] arviojonon eteneminen (host) -> "Arvioitu n/N"
  */
 export function renderDirectionSetup(context = {}) {
   const container = maybe('dirSetup');
+  const card = maybe('dirSetupCard');
   const screen = maybe('screen-direction');
-  if (!container) return false;
+  if (!container || !card) return false;
   const state = getState();
   const progress = setupProgress(setupFacts(state));
   const pref = setupPreference();
@@ -452,9 +458,12 @@ export function renderDirectionSetup(context = {}) {
   const active = !context.unknown && !dismissed && incomplete;
 
   let html = '';
+  let status = '';
   if (active) {
     const index = shownIndex(progress, state);
-    html = cardHtml(index, stepContent(SETUP_STEPS[index], state, progress, context), progress);
+    const content = stepContent(SETUP_STEPS[index], state, progress, context);
+    html = cardHtml(index, content, progress);
+    status = content.status || '';
   } else if (!context.unknown && dismissed && incomplete) {
     const index = shownIndex(progress, state);
     html = `<p class="dir-line">Aloitus on kesken: vaihe ${index + 1}/${SETUP_STEPS.length}.</p>
@@ -464,8 +473,12 @@ export function renderDirectionSetup(context = {}) {
   }
 
   const previous = captureFocus(container);
-  container.innerHTML = html;
+  card.innerHTML = html;
   container.hidden = html === '';
+  // Yksi pysyvä elävä alue: teksti vaihdetaan vain muuttuessaan, jottei
+  // uudelleenpiirto (esim. datan päivitys) kuuluta samaa uudelleen.
+  const live = maybe('dirSetupStatus');
+  if (live && live.textContent !== status) live.textContent = status;
   if (screen && screen.classList) screen.classList.toggle('dir-setup-active', active);
   if (focusTitleNext && html) {
     focusTitleNext = false;

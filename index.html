@@ -190,7 +190,13 @@
       <!-- Aloitus: vaihe kerrallaan, johdettu tallennetuista tiedoista
            (src/domain/alignmentSetup.js, src/app/views/directionSetup.js).
            Mitään ei luoda ennen kuin käyttäjä tallentaa. -->
-      <div class="dir-section dir-setup" id="dirSetup" aria-labelledby="dirSetupTitle" hidden></div>
+      <div class="dir-section dir-setup" id="dirSetup" role="region" aria-label="Suunnan aloitus" hidden>
+        <div id="dirSetupCard"></div>
+        <!-- Pysyvä elävä alue: "Valittu: …" ja "Arvioitu n/N" päivitetään
+             tekstinä. Kortti piirretään uudelleen, joten sen sisällä
+             oleva alue syntyisi joka kerta uutena. -->
+        <p class="visually-hidden" id="dirSetupStatus" role="status" aria-live="polite"></p>
+      </div>
       <div class="dir-quick" id="dirQuickActions" role="group" aria-label="Suunnan pikatoiminnot">
         <button class="assist-btn primary" id="dirStartTimer" type="button">Aloita ajanseuranta</button>
         <button class="assist-btn" id="dirQuickLog" type="button">Kirjaa aikaa</button>
