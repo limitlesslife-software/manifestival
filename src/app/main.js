@@ -65,6 +65,7 @@ import {
   scheduleNotificationResync, cancelScheduledResync, cancelDeviceNotifications
 } from './notifications.js';
 import { lifecycle, location as platformLocation, speech } from '../platform/index.js';
+import { logFailure, LOG_LEVEL } from '../lib/logger.js';
 import { clearToasts } from '../ui/toast.js';
 import { closeConfirmDialogs } from '../ui/confirm.js';
 import { maybe } from '../ui/dom.js';
@@ -107,7 +108,7 @@ async function sendPending() {
     // on idempotentti operaatiotunnisteen ansiosta).
     await flushTimeOutbox();
   } catch (error) {
-    console.warn('Manifestival: offline-jonon toisto ei onnistunut', error);
+    logFailure('offline.replay_failed', error);
   } finally {
     sendingPending -= 1;
   }
@@ -150,7 +151,7 @@ async function refreshAfterReconnect() {
   try {
     await ensureSchemaCompatibility({ onlyIfUnverified: true, timeoutMs: SCHEMA_PROBE_TIMEOUT_MS });
   } catch (error) {
-    console.warn('Manifestival: skeematarkistus ei onnistunut', error);
+    logFailure('schema.check_failed', error);
   }
   if (!signedIn || !isSameSession(session)) return;
   await sendPending();
@@ -178,7 +179,7 @@ function registerServiceWorker() {
   // omien latausten kanssa.
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js').catch(error => {
-      console.warn('Manifestival: service workerin rekisteröinti ei onnistunut', error);
+      logFailure('sw.register_failed', error);
     });
   });
 }
@@ -272,7 +273,7 @@ function runAssistantSweeps() {
     runReplanCheck(),
     pruneNoticeHistory()
   ]).catch(error => {
-    console.warn('Manifestival: halytyskierros ei onnistunut', error);
+    logFailure('assistant.sweep_failed', error);
   });
 }
 
@@ -342,7 +343,7 @@ async function onSignedIn() {
   // Muistutukset synkronoidaan vasta kun data on ladattu. Jos käyttäjä ei
   // ole kytkenyt niitä päälle, tämä peruu aiemmin ajastetut eikä tee muuta.
   syncNotifications().catch(error => {
-    console.warn('Manifestival: muistutusten synkronointi ei onnistunut', error);
+    logFailure('notifications.sync_failed', error);
   });
 
   // HALYTYSKIERROS AJETAAN KUN SOVELLUS ON AUKI.
@@ -497,7 +498,7 @@ async function start() {
     // harventaa yrityksiä (retryTimeOutbox), eikä lähetyksiä ole rinnakkain.
     if (isOnlineNow()) {
       retryTimeOutbox().catch(error => {
-        console.warn('Manifestival: aikakirjausten uusinta ei onnistunut', error);
+        logFailure('alignment.time_outbox_retry_failed', error);
       });
     }
   }, NOW_REFRESH_MS);
@@ -520,7 +521,7 @@ async function start() {
       renderToday();
       runAssistantSweeps();
       syncNotifications().catch(error => {
-        console.warn('Manifestival: muistutusten synkronointi paluulla ei onnistunut', error);
+        logFailure('notifications.resume_sync_failed', error);
       });
       // Sovellus on voinut olla taustalla pitkään: data on voinut vanhentua
       // (esim. muokattu toisella laitteella). refreshNow() on limitelty
@@ -550,7 +551,7 @@ async function start() {
   setSyncedHandler(() => {
     if (!signedIn || sendingPending > 0) return;
     loadFresh().catch(error => {
-      console.warn('Manifestival: lataus synkronoinnin jälkeen ei onnistunut', error);
+      logFailure('data.reload_after_sync_failed', error);
     });
   });
 
@@ -580,7 +581,7 @@ async function start() {
 }
 
 start().catch(error => {
-  console.error('Manifestival: käynnistys epäonnistui', error);
+  logFailure('app.startup_failed', error, LOG_LEVEL.ERROR);
   const splash = maybe('authSplash');
   if (splash) {
     splash.innerHTML = '<div class="startup-error">Sovelluksen käynnistys ei onnistunut. Päivitä sivu.</div>';

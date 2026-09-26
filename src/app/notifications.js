@@ -23,6 +23,7 @@ import { getState, setNotificationPreferences } from './state.js';
 import { savePreferences, isPersistent } from '../data/notificationPrefsRepo.js';
 import { sessionSnapshot, isSameSession } from '../data/session.js';
 import { showError, notify } from '../ui/toast.js';
+import { logFailure } from '../lib/logger.js';
 
 /**
  * Kuinka monta päivää eteenpäin muistutukset ajastetaan.
@@ -257,7 +258,7 @@ export function scheduleNotificationResync() {
   resyncTimer = setTimeout(() => {
     resyncTimer = null;
     syncNotifications().catch(error => {
-      console.warn('Manifestival: muistutusten synkronointi ei onnistunut', error);
+      logFailure('notifications.resync_failed', error);
     });
   }, RESYNC_DEBOUNCE_MS);
 }

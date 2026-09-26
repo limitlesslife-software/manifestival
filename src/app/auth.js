@@ -15,6 +15,7 @@ import { offline } from './offline.js';
 // moduulin (currentAccessToken), ja sykli olisi arkkitehtuurivirhe.
 import { loadOutbox, loadTimer } from '../data/timerStore.js';
 import { saveAuthNote, takeAuthNote } from '../data/deviceData.js';
+import { logFailure, LOG_LEVEL } from '../lib/logger.js';
 
 export const MIN_PASSWORD_LENGTH = 8;
 
@@ -172,7 +173,7 @@ const signOut = singleFlight(async () => {
   try {
     await getClient().auth.signOut();
   } catch (error) {
-    console.error('Manifestival: uloskirjautuminen epäonnistui', error);
+    logFailure('auth.sign_out_failed', error, LOG_LEVEL.ERROR);
   } finally {
     setBusy(button, false);
   }
@@ -328,7 +329,7 @@ export async function initAuth({ onSignedIn, onSignedOut }) {
     if (error) throw error;
     return data ? data.session : null;
   } catch (error) {
-    console.error('Manifestival: istunnon palautus epäonnistui', error);
+    logFailure('auth.session_restore_failed', error, LOG_LEVEL.ERROR);
     return null;
   }
 }

@@ -26,6 +26,8 @@
 // `onRefresh`-takaisinkutsuna, jotta ajastus- ja limittäly-logiikka on
 // testattavissa ilman oikeaa verkkoa, DOM:ia tai oikeita ajastimia.
 
+import { logFailure } from '../lib/logger.js';
+
 /** Debounce-ikkuna online-tapahtumalle, millisekuntteina. */
 export const RECONNECT_DEBOUNCE_MS = 1500;
 
@@ -135,7 +137,7 @@ export function createReconnectController({
     Promise.resolve()
       .then(() => onRefresh())
       .catch(error => {
-        console.warn('Manifestival: verkon palautumisen päivitys ei onnistunut', error);
+        logFailure('reconnect.refresh_failed', error);
       })
       .then(() => {
         refreshing = false;

@@ -91,6 +91,7 @@ import {
   loadPreferences as loadNotificationPreferences,
   clearPreferences as clearNotificationPreferences
 } from '../data/notificationPrefsRepo.js';
+import { logFailure } from '../lib/logger.js';
 import { sessionSnapshot, isSameSession, getUser } from '../data/session.js';
 import { showError, success, notify } from '../ui/toast.js';
 import { confirmDelete, confirmAction } from '../ui/confirm.js';
@@ -530,7 +531,7 @@ export async function toggleComplete(id) {
     try {
       completionHook(task);
     } catch (error) {
-      console.warn('Manifestival: valmistumisen koukku epäonnistui', error);
+      logFailure('tasks.completion_hook_failed', error);
     }
   }
   return done;

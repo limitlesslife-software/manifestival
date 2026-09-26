@@ -7,6 +7,7 @@
 // eikä yksikään toiminto joudu muistamaan kutsua renderAll().
 
 import { todayMidnight, startOfWeek, fmtISO } from '../lib/datetime.js';
+import { logFailure, LOG_LEVEL } from '../lib/logger.js';
 import { DEFAULT_PROFILE } from '../domain/scheduler.js';
 import { normalizeTask } from '../domain/task.js';
 import { normalizeRoutine, normalizeException } from '../domain/routine.js';
@@ -241,7 +242,7 @@ function notify() {
       listener(state);
     } catch (error) {
       // Yhden näkymän virhe ei saa estää muiden päivittymistä.
-      console.error('Manifestival: tilakuuntelija epäonnistui', error);
+      logFailure('state.listener_failed', error, LOG_LEVEL.ERROR);
     }
   }
 }
