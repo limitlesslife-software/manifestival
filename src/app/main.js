@@ -18,7 +18,7 @@ import { renderTimerBar, initTimeLog, closeTimeLogDialog } from './views/timeLog
 import { restoreLocalTimer, initTimerCrossTabSync, stopTimerCrossTabSync } from './timerState.js';
 import {
   flushTimeOutbox, retryTimeOutbox, pendingTimeEntryCount, beginDataLoad, keepWritesSince,
-  resetTimeEntrySync
+  resetAlignmentSession
 } from './alignment.js';
 import { createReconnectController } from './reconnect.js';
 import { initAuth, showAuthGate, hideAuthGate } from './auth.js';
@@ -370,7 +370,7 @@ function onSignedOut() {
   closeConfirmDialogs();
   resetDirectionView();
   resetAppliedAdjustments();
-  resetTimeEntrySync();
+  resetAlignmentSession();
   clearIdempotencyKeys();
   clearToasts();
 

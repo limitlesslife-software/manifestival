@@ -236,7 +236,7 @@ test('RACE-14: uloskirjautuminen sulkee vahvistusdialogit ja nollaa lähetysmuis
   const main = readCode('src/app/main.js');
   const signOut = main.slice(main.indexOf('function onSignedOut'), main.indexOf('async function start'));
   assert.match(signOut, /closeConfirmDialogs\(\);/);
-  assert.match(signOut, /resetTimeEntrySync\(\);/);
+  assert.match(signOut, /resetAlignmentSession\(\);/);
   assert.ok(signOut.indexOf('closeConfirmDialogs()') < signOut.indexOf('resetState()'));
 });
 

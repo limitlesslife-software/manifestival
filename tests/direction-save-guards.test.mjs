@@ -18,7 +18,7 @@ import {
 import { clearLocalUserData } from '../src/app/actions.js';
 import {
   saveWeeklyReview, saveWeeklyCapacity, applyAdjustment, isAdjustmentDone, deleteLifeArea,
-  resetAppliedAdjustments, resetTimeEntrySync, setTimeEntryWriterForTests, logTime
+  resetAppliedAdjustments, resetAlignmentSession, setTimeEntryWriterForTests, logTime
 } from '../src/app/alignment.js';
 import { alignmentReviewsRepo, weeklyCapacitiesRepo, lifeAreasRepo } from '../src/data/collectionsRepo.js';
 import { createTimeEntryWriter } from '../src/app/timeEntryWriter.js';
@@ -85,9 +85,12 @@ function installStorage() {
   };
 }
 
+/** Portit avataan viimeistään afterEachissa: kaatunut testi ei jätä tallennusta jumiin. */
+const openGates = [];
 function gate() {
   let release;
   const promise = new Promise(resolve => { release = resolve; });
+  openGates.push(() => release());
   return { promise, release };
 }
 
@@ -108,7 +111,7 @@ beforeEach(() => {
   resetState();
   resetTimerStoreForTests();
   resetAppliedAdjustments();
-  resetTimeEntrySync();
+  resetAlignmentSession();
   resetDirectionView();
   resetTimeFormForTests();
   setTimeEntryWriterForTests(null);
@@ -119,6 +122,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  while (openGates.length) openGates.pop()();
   while (restores.length) restores.pop()();
   mock.timers.reset();
   setTimeEntryWriterForTests(null);
@@ -277,6 +281,42 @@ test('RACE-05: sama kapasiteetille (23505 -> olemassa olevan rivin päivitys)', 
   assert.equal(result.ok, true);
   assert.deepEqual(calls, ['insert', 'list', 'update:db-c']);
   assert.deepEqual(getState().weeklyCapacities.map(c => [c.id, c.availableMinutes, c.energyLevel]), [['db-c', 1500, 3]]);
+});
+
+test('RACE-05/F5: käyttäjä vaihtuu kesken tallennuksen -> ei jatkokutsuja uuden käyttäjän tilille eikä tilamuutoksia', async () => {
+  const g = gate();
+  const calls = [];
+  stub(alignmentReviewsRepo, {
+    insert: async () => { calls.push('insert'); await g.promise; return fail('Tallennus ei onnistunut.', { cause: { code: '23505' } }); },
+    list: async () => { calls.push('list'); return { ok: true, value: [{ id: 'b-review', weekStart: WEEK }] }; },
+    update: async review => { calls.push('update'); return { ok: true, value: review }; }
+  });
+  const pending = saveWeeklyReview({ weekStart: WEEK, reflection: 'A:n pohdinta' });
+  clearUser();
+  resetState();
+  setUser({ id: 'bbbbbbbb-6262-4262-8262-000000000062', email: 'b@example.com' });
+  g.release();
+  const result = await pending;
+  assert.equal(result.ok, false);
+  assert.equal(result.sessionChanged, true);
+  assert.deepEqual(calls, ['insert'], 'A:n pohdinta olisi päivitetty B:n katsaukseen');
+  assert.deepEqual(getState().alignmentReviews, []);
+});
+
+test('RACE-04: uloskirjautuminen vapauttaa viikon tallennusjonon (jumittunut tallennus ei pidättele seuraavaa)', async () => {
+  const stuck = new Promise(() => {});
+  const calls = [];
+  stub(weeklyCapacitiesRepo, {
+    insert: async capacity => { calls.push(capacity.availableMinutes); if (calls.length === 1) await stuck; return { ok: true, value: capacity }; }
+  });
+  saveWeeklyCapacity({ weekStart: WEEK, availableMinutes: 600 }); // ei valmistu koskaan
+  resetAlignmentSession();
+  clearUser();
+  resetState();
+  setUser({ id: 'bbbbbbbb-6363-4363-8363-000000000063', email: 'c@example.com' });
+  const next = await saveWeeklyCapacity({ weekStart: WEEK, availableMinutes: 900 });
+  assert.equal(next.ok, true);
+  assert.deepEqual(calls, [600, 900]);
 });
 
 // ================================================================ RACE-06

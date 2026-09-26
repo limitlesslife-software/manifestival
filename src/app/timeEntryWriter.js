@@ -201,12 +201,17 @@ export function createTimeEntryWriter({
       return new Set(id ? loadOutbox(id).map(entry => entry.operationId).filter(op => !sending.has(op)) : []);
     },
 
-    /** Yksi lähetys kerrallaan: rinnakkainen kutsu saa käynnissä olevan tuloksen. */
+    /**
+     * Yksi lähetys kerrallaan: rinnakkainen kutsu saa käynnissä olevan
+     * tuloksen. Käyttäjäkohtainen: edellisen käyttäjän kesken oleva lähetys
+     * (joka keskeytyy istunnon vaihtuessa) ei korvaa uuden käyttäjän omaa.
+     */
     flush() {
-      if (flushing) return flushing;
+      const owner = userId();
+      if (flushing && flushing.owner === owner) return flushing.run;
       const run = runFlush();
-      flushing = run;
-      const done = () => { if (flushing === run) flushing = null; };
+      flushing = { owner, run };
+      const done = () => { if (flushing && flushing.run === run) flushing = null; };
       run.then(done, done);
       return run;
     },

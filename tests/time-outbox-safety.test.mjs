@@ -17,7 +17,7 @@ import { clearLocalUserData, withPendingTimeEntries } from '../src/app/actions.j
 import {
   logTime, deleteTimeEntry, flushTimeOutbox, retryTimeOutbox, pendingTimeEntryCount,
   pendingTimeEntryOperations, setTimeEntryWriterForTests, beginDataLoad, keepWritesSince,
-  resetTimeEntrySync, resetAppliedAdjustments
+  resetAlignmentSession, resetAppliedAdjustments
 } from '../src/app/alignment.js';
 import { createTimeEntryWriter } from '../src/app/timeEntryWriter.js';
 import { timeEntriesRepo } from '../src/data/collectionsRepo.js';
@@ -44,9 +44,12 @@ function installStorage({ failWrites = () => false } = {}) {
   return data;
 }
 
+/** Portit avataan viimeistään afterEachissa: kaatunut testi ei jätä lähetystä jumiin. */
+const openGates = [];
 function gate() {
   let release;
   const promise = new Promise(resolve => { release = resolve; });
+  openGates.push(() => release());
   return { promise, release };
 }
 
@@ -114,7 +117,7 @@ beforeEach(() => {
   resetState();
   resetTimerStoreForTests();
   resetQueueStoreForTests();
-  resetTimeEntrySync();
+  resetAlignmentSession();
   resetAppliedAdjustments();
   installStorage();
   setTimeEntryWriterForTests(null);
@@ -123,6 +126,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  while (openGates.length) openGates.pop()();
   restoreRemove();
   restoreRemove = () => {};
   setTimeEntryWriterForTests(null);
@@ -316,12 +320,32 @@ test('F11: suora kirjaus latauksen aikana säilyy, eikä toisen käyttäjän tal
   keepWritesSince(mark);
   assert.deepEqual(getState().timeEntries.map(e => e.id), [logged.entry.id]);
   // Uloskirjautuminen nollaa muistin; B ei saa A:n kirjausta.
-  resetTimeEntrySync();
+  resetAlignmentSession();
   clearUser();
   resetState();
   setUser(USER_B);
   keepWritesSince(mark);
   assert.equal(getState().timeEntries.length, 0);
+});
+
+test('F11/F5: käyttäjä vaihtuu kesken korin lähetyksen -> A:n lähetetyt eivät päädy B:n tilaan', async () => {
+  const g = gate();
+  const repo = scriptedRepo([{ wait: g.promise, then: 'ok' }]);
+  setTimeEntryWriterForTests(writerFor(repo));
+  saveOutbox(USER_A.id, [entry('a-private', { note: 'A:n muistiinpano' })]);
+  const mark = beginDataLoad();
+  const flushing = flushTimeOutbox();
+  clearUser();
+  resetState();
+  setUser(USER_B);
+  g.release();
+  await flushing;
+  keepWritesSince(mark);
+  assert.deepEqual(getState().timeEntries, [], 'A:n kirjaus näkyi B:lle');
+  // B:n oma lähetys ei jää A:n keskeytyneen lähetyksen varjoon.
+  saveOutbox(USER_B.id, [entry('b-own')]);
+  assert.deepEqual(await flushTimeOutbox(), { sent: 1, left: 0 });
+  assert.deepEqual(loadOutbox(USER_B.id), []);
 });
 
 test('F11: poistettu kirjaus ei palaa vanhentuneesta latauksesta', async () => {

@@ -397,23 +397,31 @@ async function saveWeeklyCapacityNow(input) {
   if (!valid) return { ok: false, errors };
 
   upsertWeeklyCapacityInState(capacity);
+  // Käyttäjä voi vaihtua odotusten välissä: silloin ei tehdä uusia
+  // kantakutsuja (ne menisivät uuden käyttäjän tilille) eikä kosketa tilaan.
+  const session = sessionSnapshot();
+  const sessionChanged = { ok: false, sessionChanged: true };
   let saved = capacity;
   let result = existing
     ? await weeklyCapacitiesRepo.update(capacity)
     : await weeklyCapacitiesRepo.insert(capacity);
+  if (!isSameSession(session)) return sessionChanged;
   if (!result.ok && existing && isNotFound(result.error)) {
     // Riviä ei ollut kannassa: luodaan se samalla tunnisteella.
     result = await weeklyCapacitiesRepo.insert(capacity);
+    if (!isSameSession(session)) return sessionChanged;
   }
   if (!result.ok && isDuplicate(result.error)) {
     // Viikolla on jo rivi kannassa, vaikka tila ei sitä tuntenut (lataus
     // pyyhki sen kesken tallennuksen, tai edellisen vastaus katosi).
     // Ilman tätä jokainen uusi yritys törmäsi uniikkiavaimeen (RACE-05).
     const listed = await weeklyCapacitiesRepo.list();
+    if (!isSameSession(session)) return sessionChanged;
     const stored = listed.ok ? capacityForWeek(listed.value, capacity.weekStart) : null;
     if (stored) {
       saved = normalizeWeeklyCapacity({ ...stored, ...input, id: stored.id, weekStart: capacity.weekStart });
       result = await weeklyCapacitiesRepo.update(saved);
+      if (!isSameSession(session)) return sessionChanged;
     }
   }
   if (!result.ok) {
@@ -636,7 +644,11 @@ export function flushTimeOutbox({ now = Date.now() } = {}) {
 }
 
 async function flushTimeOutboxOnce(now) {
+  const session = sessionSnapshot();
   const result = await writer.flush();
+  // Käyttäjä vaihtui lähetyksen aikana: tulos koskee edellistä käyttäjää,
+  // eikä sitä kirjata tämän käyttäjän tilaan tai tallennusmuistiin.
+  if (!isSameSession(session)) return { sent: result.sent, left: result.left };
   for (const entry of result.detached || []) {
     if (getState().timeEntries.some(e => e.id === entry.id)) replaceTimeEntryInState(entry.id, entry);
   }
@@ -666,10 +678,16 @@ export function retryTimeOutbox({ now = Date.now() } = {}) {
   return flushTimeOutbox({ now });
 }
 
-/** Uloskirjautuminen: istuntokohtainen lähetys- ja tallennusmuisti pois. */
-export function resetTimeEntrySync() {
+/**
+ * Uloskirjautuminen: istuntokohtainen lähetys- ja tallennusmuisti pois.
+ * Myös viikkokohtaiset tallennusjonot: edellisen käyttäjän jumittunut
+ * tallennus ei saa pidätellä seuraavan käyttäjän saman viikon tallennusta.
+ */
+export function resetAlignmentSession() {
   outboxRetry = { failures: 0, notBefore: 0 };
+  outboxFlush = null;
   recentWrites.length = 0;
+  weekSaves.clear();
 }
 
 /**
@@ -736,11 +754,17 @@ async function saveWeeklyReviewNow({
   if (!valid) return { ok: false, errors };
 
   upsertAlignmentReviewInState(review);
+  // Käyttäjä voi vaihtua odotusten välissä: silloin ei tehdä uusia
+  // kantakutsuja (A:n pohdinta B:n katsaukseen) eikä kosketa tilaan.
+  const session = sessionSnapshot();
+  const sessionChanged = { ok: false, sessionChanged: true };
   let saved = review;
   let result = existing ? await alignmentReviewsRepo.update(review) : await alignmentReviewsRepo.insert(review);
+  if (!isSameSession(session)) return sessionChanged;
   if (!result.ok && existing && isNotFound(result.error)) {
     // Riviä ei ollut kannassa: luodaan se samalla tunnisteella.
     result = await alignmentReviewsRepo.insert(review);
+    if (!isSameSession(session)) return sessionChanged;
   }
   if (!result.ok && isDuplicate(result.error)) {
     // Viikolla on jo katsaus kannassa, vaikka tila ei sitä tuntenut
@@ -748,6 +772,7 @@ async function saveWeeklyReviewNow({
     // tätä jokainen uusi yritys törmäsi uniikkiavaimeen (RACE-05).
     // Käyttäjän kirjoittama voittaa; tallennettu täydentää.
     const listed = await alignmentReviewsRepo.list();
+    if (!isSameSession(session)) return sessionChanged;
     const stored = listed.ok ? listed.value.find(row => row.weekStart === review.weekStart) : null;
     if (stored) {
       saved = normalizeAlignmentReview({
@@ -758,6 +783,7 @@ async function saveWeeklyReviewNow({
         adjustments: [...new Set([...(stored.adjustments || []), ...review.adjustments])]
       });
       result = await alignmentReviewsRepo.update(saved);
+      if (!isSameSession(session)) return sessionChanged;
     }
   }
   if (!result.ok) {
