@@ -64,6 +64,10 @@ export function openRepositories() {
  * tyhjää listaa, ei "päivitys ei osunut", joten päivitys vastaa
  * lähetetyllä rivillä. Nollan rivin päivitys: `{ updateData: [] }`.
  *
+ * YKSI RIVI (`maybeSingle`) ON RIVI TAI null, EI LISTA. Oletusvastauksen
+ * tyhjä lista olisi "rivi löytyi": muistutusasetusten tallennus torjui
+ * silloin muutoksen (palvelimella on jo rivi), kun portti oli auki.
+ *
  * @param {object} response { data, error, updateData? } tai { throws: Error }
  */
 export function fakeClient(response = { data: [], error: null }) {
@@ -74,7 +78,9 @@ export function fakeClient(response = { data: [], error: null }) {
       if (response.updateData !== undefined) return response.updateData;
       return [{ ...(entry.payload || {}) }];
     }
-    return response.data === undefined ? [] : response.data;
+    const data = response.data === undefined ? [] : response.data;
+    if (entry.maybeSingle && Array.isArray(data)) return data[0] ?? null;
+    return data;
   };
 
   const chain = (entry) => {
