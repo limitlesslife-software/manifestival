@@ -13,28 +13,38 @@
       "commit": "5aa0d53a2917db4a588aca91d92f5ed051259545",
       "fromWave": "H",
       "reason": "kellosta riippuvat testit (\"perjantaille\") kaatuvat ehdokkaan omassa patteristossa"
+    },
+    {
+      "commit": "5ceb37135581f4bbda3e010cb4305461e9cdbe06",
+      "fromWave": "F",
+      "reason": "talouden yleiskatsaus kaatui ReferenceErroriin (key -> avain) jokaisella piirrolla ja pysäytti koko sovelluksen tilakuuntelijan"
+    },
+    {
+      "commit": "aaefa4dfd9bca8f01170a8114257278b15afd4cb",
+      "fromWave": "I",
+      "reason": "kannan virhetiedot (elämänalueiden nimet, pohdinnat) kulkivat konsoliin suodattamatta"
     }
   ],
   "sqlSource": {
     "wave": "J",
-    "ref": "rehearsal/wave-j-v1",
-    "sha": "5df40b20cee4f35279a79888959d49c9af88bcc7",
+    "ref": "rehearsal/wave-j-v2",
+    "sha": "cba9463155c823a24d0fdb4632ab18a1fcbd01d0",
     "files": {
       "supabase/migrations/0009_finance_2.sql": "7a7d605de64616711ac0f63676c1822821dadfe9a10f6ebd31196cac0c61bd8c",
-      "supabase/preflight/preflight_0009.sql": "d4c327cb1b3a095c884f55b9790882412f6e13319396b13adeeb267ff550f1f6",
-      "supabase/verify/verify_0009.sql": "ab49b2997951a4f2762bd31087e6f81b0353b16a8d6c460c0027350e479a2fdf",
-      "supabase/migrations/0010_goal_to_action.sql": "a6ecdf3a227d8988b49adbee2fe3a011b208bf0a1958a62d8d56d969f8cb12a3",
-      "supabase/preflight/preflight_0010.sql": "384874204c9b4f307717a93dd55afd83740f573212877013b4291556a32af44d",
-      "supabase/verify/verify_0010.sql": "bd44ee216b31c682a7f93baca590b96ed6547f34599e45a7f62250f925e3e0de",
+      "supabase/preflight/preflight_0009.sql": "be1eb6092a43690bd707f315f88f052ea432087733430bab4709a935444c214c",
+      "supabase/verify/verify_0009.sql": "6dfbffab31b9f7b0b905c5dbe54087b7c7caf2daea4df7069b1a05dc05909163",
+      "supabase/migrations/0010_goal_to_action.sql": "a718bfe2c172dddf5bce8671a29d24262588b8cb90d63209cdaea740a652b7af",
+      "supabase/preflight/preflight_0010.sql": "859a10fdc5799d3f3dcb9fcea0cf242901504082e5b40f4890931b939743e984",
+      "supabase/verify/verify_0010.sql": "dd097adccb7696dff1d34b876989b7faaf86d6b54c9d4e2c1e15478c760a31a6",
       "supabase/migrations/0011_personal_assistant.sql": "a7c88ba6c133bb9608a48b79341be61f4608e1d154f911d852040d154449821a",
-      "supabase/preflight/preflight_0011.sql": "e414f0635a1e160fe6e95a134a62c1c2fc05db431fa76faf7652d834ca49310d",
-      "supabase/verify/verify_0011.sql": "a9dbb6aaa56ae6e8b7d46e38692195ba94292611ffb3261e7fdb568ce72cf4b8",
-      "supabase/migrations/0012_life_alignment.sql": "456f6f2d04829d20c8e3bc9d1e6e27b9f41954ae0c8731f4467ed74e33564658",
-      "supabase/preflight/preflight_0012.sql": "7676c526b82d0607b035ffd9fa6ee0d8c65f06b22b9bc03ebd6c8407de1d6a06",
-      "supabase/verify/verify_0012.sql": "92b093479aae3248d07b5b021b44df8e1a0722eb32ddd7feef021c68d14ca870",
-      "supabase/migrations/0013_alignment_reality.sql": "ef595727b2dbab4a212cab9a56b8ad71b63763966260f9dc3c2f7b3a1e7901fe",
-      "supabase/preflight/preflight_0013.sql": "a3cb1f38067582f6c172c3454fad1fc886995353fd6e71cea633e42152dfa7db",
-      "supabase/verify/verify_0013.sql": "fa25f15ba6756d8fc0e89f3c74c05f4cc2cebe744bcf994719a062ee32e70fc3"
+      "supabase/preflight/preflight_0011.sql": "d3fa310fd24cff1dda486fda72da9fe50df4fd65d6b0ad3ba93db8622f19744d",
+      "supabase/verify/verify_0011.sql": "c9ff53d779ab15452268663a22920496e64d4abd609685eaf7a2ba36c2eca9c6",
+      "supabase/migrations/0012_life_alignment.sql": "eb9848024784b4ec20e4149677be06289ca1607f7045708ad2570768c7de91d7",
+      "supabase/preflight/preflight_0012.sql": "1ecad5739b5a11baa01f4829837cf1ef82d139c003b58f5d7e024c9db9ada85e",
+      "supabase/verify/verify_0012.sql": "5859fedb6dbddb284e4e541264dc889352837f596d6d5b761f1213a161a3d514",
+      "supabase/migrations/0013_alignment_reality.sql": "b6d1a14468b096baf779c39248c6e24d2d12d3990f443f56e3b17710f38d802a",
+      "supabase/preflight/preflight_0013.sql": "3624909f1b6b2ea0fee6fab9aac925849f1afd55805da9f00c11385b59ec3eda",
+      "supabase/verify/verify_0013.sql": "d4716ef31fe44fde78b1fb65ee8e6e4a64018b1a4b9bc78763963a8ddb1887bc"
     }
   },
   "waves": [
@@ -200,8 +210,8 @@
     },
     {
       "wave": "F",
-      "deployTarget": "5e4e7cf50e40fe1e0ba7b4543b147767e3a0eb32",
-      "ref": "rehearsal/wave-f-v3",
+      "deployTarget": "2c8e230f8864ce0df1529718fb17ae265fb5d82b",
+      "ref": "rehearsal/wave-f-v4",
       "waveCommit": "e05c54bd4fa7d5afffe3efd6ca7a176b0162008e",
       "parentWave": "E",
       "descendsFromParent": true,
@@ -257,8 +267,8 @@
     },
     {
       "wave": "G",
-      "deployTarget": "173afd5dc01d16e244ec07e72fb6e29918415e81",
-      "ref": "rehearsal/wave-g-v3",
+      "deployTarget": "4eb93a9e386123042485881fad9aa91b862069c7",
+      "ref": "rehearsal/wave-g-v5",
       "waveCommit": "f362e1aed58557e6ad0fd13cf671145f3b7b1ee6",
       "parentWave": "F",
       "descendsFromParent": true,
@@ -315,8 +325,8 @@
     },
     {
       "wave": "H",
-      "deployTarget": "48b2cad8bc62362dbe371d08f36b32677df270f6",
-      "ref": "rehearsal/wave-h-v3",
+      "deployTarget": "388cd990a1f764d08e9596bcb0c874451bcb21a9",
+      "ref": "rehearsal/wave-h-v5",
       "waveCommit": "b7be37752bb38ce8186c5fc68448df0a82e7a261",
       "parentWave": "G",
       "descendsFromParent": true,
@@ -372,16 +382,14 @@
           "expected": false
         }
       },
-      "missingPatches": [
-        "5aa0d53a2917db4a588aca91d92f5ed051259545"
-      ],
+      "missingPatches": [],
       "consistent": true,
       "problem": null
     },
     {
       "wave": "I",
-      "deployTarget": "4cfb4bcfea649146fb0bc9202d309aea8d1ffd9e",
-      "ref": "rehearsal/wave-i-v1",
+      "deployTarget": "4a24fdf3e2cb74473c4066329a0b693862a0e019",
+      "ref": "rehearsal/wave-i-v3",
       "waveCommit": "d418b79e6f4a3a79f3e743bcf8c375c0ef5c55e8",
       "parentWave": "H",
       "descendsFromParent": true,
@@ -441,17 +449,15 @@
           "expected": false
         }
       },
-      "missingPatches": [
-        "5aa0d53a2917db4a588aca91d92f5ed051259545"
-      ],
+      "missingPatches": [],
       "consistent": true,
       "problem": null
     },
     {
       "wave": "J",
-      "deployTarget": "5df40b20cee4f35279a79888959d49c9af88bcc7",
-      "ref": "rehearsal/wave-j-v1",
-      "waveCommit": "e96942c296944b4ac1a86d96563f2a1370678d97",
+      "deployTarget": "cba9463155c823a24d0fdb4632ab18a1fcbd01d0",
+      "ref": "rehearsal/wave-j-v2",
+      "waveCommit": "783cfc1c45643d227ec4be0deff35f2a709f358a",
       "parentWave": "I",
       "descendsFromParent": true,
       "cacheVersion": "v23",
@@ -512,9 +518,7 @@
           "expected": true
         }
       },
-      "missingPatches": [
-        "5aa0d53a2917db4a588aca91d92f5ed051259545"
-      ],
+      "missingPatches": [],
       "consistent": true,
       "problem": null
     }

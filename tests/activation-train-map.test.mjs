@@ -152,6 +152,20 @@ test('tynkä: puuttuva pakollinen korjaus kirjataan H:sta alkaen, ei aiemmille',
   }
 });
 
+test('tynkä: talouskorjaus vaaditaan F:stä ja tietosuojakorjaus I:stä alkaen, ei aiemmille', () => {
+  const finance = REQUIRED_PATCHES.find(p => p.commit.startsWith('5ceb371'));
+  const privacy = REQUIRED_PATCHES.find(p => p.commit.startsWith('aaefa4d'));
+  assert.equal(finance.fromWave, 'F');
+  assert.equal(privacy.fromWave, 'I');
+  const lock = buildTrainMap({ git: stubGit({ missingPatches: { '5ceb371': ['E', 'F', 'J'], aaefa4d: ['H', 'I'] } }) });
+  const of = wave => lock.waves.find(w => w.wave === wave).missingPatches;
+  assert.deepEqual(of('E'), [], 'E ei tarvitse talouskorjausta');
+  assert.deepEqual(of('F'), [finance.commit]);
+  assert.deepEqual(of('J'), [finance.commit]);
+  assert.deepEqual(of('H'), [], 'H ei tarvitse tietosuojakorjausta');
+  assert.deepEqual(of('I'), [privacy.commit]);
+});
+
 test('oikea historia (ehdollinen): lukko vastaa gitiä ja aliakset osoittavat lukittuihin SHA:ihin', t => {
   if (!refsPresent()) { t.skip('ehdokashaarat eivät ole paikallisesti saatavilla'); return; }
   const fresh = buildTrainMap({ git: realGit });
@@ -194,6 +208,20 @@ for (const wave of ['H', 'I', 'J']) {
       `${wave} ${record.deployTarget.slice(0, 7)} ei sisällä korjausta ${patch.commit.slice(0, 7)}`);
     assert.deepEqual(record.missingPatches, []);
   });
+}
+
+for (const patch of REQUIRED_PATCHES.filter(p => !p.commit.startsWith('5aa0d53'))) {
+  for (const wave of TRAIN.map(e => e.wave).filter(w => w >= patch.fromWave)) {
+    test(`pakollinen korjaus ${patch.commit.slice(0, 7)}: aallon ${wave} deployTarget sisältää sen`, t => {
+      const record = map.waves.find(w => w.wave === wave);
+      if (!realGit.revParse(record.deployTarget) || !realGit.revParse(patch.commit)) {
+        t.skip('ehdokashistoria ei ole paikallisesti saatavilla'); return;
+      }
+      assert.equal(realGit.containsPatch(record.deployTarget, patch.commit), true,
+        `${wave} ${record.deployTarget.slice(0, 7)} ei sisällä korjausta ${patch.commit.slice(0, 7)}: ${patch.reason}`);
+      assert.ok(!record.missingPatches.includes(patch.commit));
+    });
+  }
 }
 
 test('ACT-02: lukko ja hylkylista ovat samaa mieltä: esileikatuilla on missingPatches', () => {

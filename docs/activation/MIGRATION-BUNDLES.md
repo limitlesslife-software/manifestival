@@ -24,13 +24,15 @@ taulukko on päivitetty). Tarkista ennen ajoa:
 git hash-object supabase/migrations/0010_goal_to_action.sql   # = taulukon arvo
 ```
 
-**Älä kopioi aaltojen ehdokashaaroista** (`rehearsal/wave-g-v3`,
-`rehearsal/wave-i-v1`, `rehearsal/wave-j-v1`): niissä on 0010:n, 0012:n ja
-0013:n vanhempi versio (blobit `7e16f52d…`, `59061f2e…`, `b7ae23e9…` —
-0010 ilman lukitusjärjestystä, 0012/0013 ilman peruutusvartijoita), eikä
-haaroissa `wave-f-v3` … `wave-i-v1` ole preflight-tiedostoja lainkaan
-(`wave-j-v1`:n preflightit ovat vanhempia). Aallon *sovelluskoodi*
-deployataan ehdokashaarasta; SQL ajetaan aina tästä taulukosta.
+**Älä kopioi aaltojen ehdokashaaroista** (`rehearsal/wave-f-v4` …
+`rehearsal/wave-i-v3`): niissä aallon OMA migraatiotiedosto on tavu
+tavulta sama kuin lukon SQL-lähteessä (`rehearsal/wave-j-v2`,
+orkestroijan esitarkistus vertaa), mutta 0009–0013:n preflight- ja
+verify-tiedostot puuttuvat niistä tai ovat vanhempia. Vanhat leikkaukset
+(`wave-g-v3`/`-v4`, `wave-i-v1`/`-v2`, `wave-j-v1`) sisältävät 0010:n,
+0012:n ja 0013:n vanhemman version (blobit `7e16f52d…`, `59061f2e…`,
+`b7ae23e9…`). Aallon *sovelluskoodi* deployataan ehdokashaarasta; SQL
+ajetaan aina tästä taulukosta.
 
 <!-- blob-taulukko:alku (node tools/pg-rehearsal/bundle-hashes.mjs --write) -->
 | Migraatio | Tiedosto | git-blob (`git hash-object <polku>`) |
@@ -115,7 +117,7 @@ tulostaa ajettavat tiedostot tiivisteineen.
 | 1 Preflight | `supabase/preflight/preflight_0010.sql` → 0 FAIL (sisältää: jokaisen tavoitteen tila kelpaa, `goals_status_check` olemassa (rivi 09), omistaja-avaimet, lukitut taulut) |
 | 2 Ajo | `supabase/migrations/0010_goal_to_action.sql` — **Panun erillinen hyväksyntä juuri tälle ajolle** |
 | 3 Verify | `supabase/verify/verify_0010.sql` → 0 (harjoitus: 40 PASS / 0 FAIL; rivi 20 = tilarajoite olemassa) |
-| 4 Deploy | aalto G (`rehearsal/wave-g-v3`) |
+| 4 Deploy | aalto G (`rehearsal/wave-g-v5`) |
 | Hyväksyntädata | 1 tavoite mittarilla (esim. paino 90→75 kg) + 1 välitavoite; 1 tehtävä, joka riippuu toisesta → F5 → säilyy; tavoitteen tila "Ylläpito" → F5 → säilyy |
 | Peruutus | ROLLBACK-osio, vasta kun 0011 on peruttu. **Kieltäytyy heti**, jos jokin tavoite on tilassa `maintenance` (aalto G kirjoittaa niitä): viesti kertoo korjauslauseen `update public.goals set status = 'active' where status = 'maintenance';` — päätä ensin tila. Poistaa välitavoitteet ja tehtävien riippuvuudet |
 
@@ -129,7 +131,7 @@ tulostaa ajettavat tiedostot tiivisteineen.
 | 1 Preflight | `supabase/preflight/preflight_0011.sql` → 0 FAIL (sisältää: tasks/goals/projects = 12 politiikkaa, jonka migraatio vaatii ennen committia) |
 | 2 Ajo | `supabase/migrations/0011_personal_assistant.sql` |
 | 3 Verify | `supabase/verify/verify_0011.sql` → 0 (harjoitus: 55 PASS / 0 FAIL) |
-| 4 Deploy | aalto H (`rehearsal/wave-h-v3`) |
+| 4 Deploy | aalto H (`rehearsal/wave-h-v5`) |
 | Hyväksyntädata | 1 kirjaus (inbox), 1 muistutus → F5 → säilyy; ilmoitus näkyy |
 | Tunnettu rajoitus | Avustajan kirjaus vaatii yhteyden (offline-jono kattaa vain tehtävät) — epäonnistuu näkyvästi, ei valehtele |
 | Peruutus | ROLLBACK-osio (poistaa 5 taulua), vasta kun 0012 on peruttu |
@@ -145,7 +147,7 @@ tulostaa ajettavat tiedostot tiivisteineen.
 | 1 Preflight | `supabase/preflight/preflight_0012.sql` → 0 FAIL (sisältää: tasks/goals/projects = 12 politiikkaa) |
 | 2 Ajo | `supabase/migrations/0012_life_alignment.sql` |
 | 3 Verify | `supabase/verify/verify_0012.sql` → 0 (harjoitus: 45 PASS / 0 FAIL). **Tämä on ajettava ennen 0013:a** |
-| 4 Deploy | aalto I (`rehearsal/wave-i-v1`) |
+| 4 Deploy | aalto I (`rehearsal/wave-i-v3`) |
 | Hyväksyntädata | 1 elämänalue, 1 viikkokapasiteetti, 1 tavoite liitettynä alueeseen, 1 kirjattu aika → F5 → säilyy |
 | Peruutus | ROLLBACK-osio, **vasta kun 0013 on peruttu** — vartija kieltäytyy muuten (todennettu). Poistaa 4 taulua ja sarakkeen — kirjattu aika katoaa; sulje portit ja ota varmuuskopio ensin. Tavoitteiden muut sarakkeet säilyvät täsmälleen (todennettu liitetyllä tavoitteella) |
 
@@ -159,7 +161,7 @@ tulostaa ajettavat tiedostot tiivisteineen.
 | 1 Preflight | `supabase/preflight/preflight_0013.sql` → 0 FAIL (sisältää: 8 taulun 32 politiikkaa) |
 | 2 Ajo | `supabase/migrations/0013_alignment_reality.sql` |
 | 3 Verify | `supabase/verify/verify_0013.sql` → 0 (harjoitus: 30 PASS / 0 FAIL) |
-| 4 Deploy | aalto J (`rehearsal/wave-j-v1`) |
+| 4 Deploy | aalto J (`rehearsal/wave-j-v2`) |
 | Hyväksyntädata | 1 nopea kirjaus, 1 ajastinistunto (käynnistä → F5 → yhä käynnissä → pysäytä), 1 energia-arvio, 1 viikkokatsaus |
 | Peruutus | ROLLBACK-osio, **aina ensimmäisenä**. Aja ensin osion vain lukeva ennakkokysely ja kirjaa luvut. Ajastinkirjausten lähde palautetaan `manual`:ksi, **kirjattu aika säilyy** (minuutit, päivä, alue-, tavoite- ja tehtäväkytkentä; todennettu rivi riviltä). **Kohdistus katoaa osittain:** projekti-, rutiini- ja esiintymäkytkentä sekä ajastimen alku/loppu ja `operation_id` pudotetaan; kirjaus, jonka ainoa kohde oli projekti tai rutiini, menettää kohdistuksensa kokonaan (ennakkokyselyn `menettaa_kohteen_kokonaan`) |
 

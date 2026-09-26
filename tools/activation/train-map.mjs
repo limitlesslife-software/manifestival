@@ -58,18 +58,19 @@ export const LOCK_PATH = 'docs/activation/release-train-c-j.json';
 /**
  * Aallot ja niiden ALIAKSET. Alias ratkaistaan vain --write:ssa; lukossa
  * on SHA. C:n alias on sen oma SHA (tuotannossa oleva lattia), D:n
- * samoin (jäädytetty aaltocommit). H, I ja J leikataan uudelleen: päivitä
- * aliakset uusiin haaroihin ja aja --write — SHA:ita EI kirjoiteta tänne.
+ * samoin (jäädytetty aaltocommit). F-J on leikattu uudelleen (F v4, G v5,
+ * H v5, I v3, J v2): uusi leikkaus = päivitä aliakset uusiin haaroihin ja
+ * aja --write — SHA:ita EI kirjoiteta tänne.
  */
 export const TRAIN = Object.freeze([
   Object.freeze({ wave: 'C', ref: 'cf259d0ef755f7e875cc9cd9c15405eba632e408', acceptance: 'docs/acceptance/WAVE-C-OWNER-ACCEPTANCE.md' }),
   Object.freeze({ wave: 'D', ref: '091e73c0091e8f135641e3501742b998dbac8461', acceptance: 'docs/acceptance/WAVE-D.md' }),
   Object.freeze({ wave: 'E', ref: 'release/activation-0003-0008', acceptance: 'docs/acceptance/WAVE-E.md' }),
-  Object.freeze({ wave: 'F', ref: 'rehearsal/wave-f-v3', acceptance: 'docs/acceptance/WAVE-F.md' }),
-  Object.freeze({ wave: 'G', ref: 'rehearsal/wave-g-v3', acceptance: 'docs/acceptance/WAVE-G.md' }),
-  Object.freeze({ wave: 'H', ref: 'rehearsal/wave-h-v3', acceptance: 'docs/acceptance/WAVE-H.md' }),
-  Object.freeze({ wave: 'I', ref: 'rehearsal/wave-i-v1', acceptance: 'docs/acceptance/WAVE-I.md' }),
-  Object.freeze({ wave: 'J', ref: 'rehearsal/wave-j-v1', acceptance: 'docs/acceptance/WAVE-J.md' })
+  Object.freeze({ wave: 'F', ref: 'rehearsal/wave-f-v4', acceptance: 'docs/acceptance/WAVE-F.md' }),
+  Object.freeze({ wave: 'G', ref: 'rehearsal/wave-g-v5', acceptance: 'docs/acceptance/WAVE-G.md' }),
+  Object.freeze({ wave: 'H', ref: 'rehearsal/wave-h-v5', acceptance: 'docs/acceptance/WAVE-H.md' }),
+  Object.freeze({ wave: 'I', ref: 'rehearsal/wave-i-v3', acceptance: 'docs/acceptance/WAVE-I.md' }),
+  Object.freeze({ wave: 'J', ref: 'rehearsal/wave-j-v2', acceptance: 'docs/acceptance/WAVE-J.md' })
 ]);
 
 /**
@@ -83,6 +84,16 @@ export const REQUIRED_PATCHES = Object.freeze([
     commit: '5aa0d53a2917db4a588aca91d92f5ed051259545',
     fromWave: 'H',
     reason: 'kellosta riippuvat testit ("perjantaille") kaatuvat ehdokkaan omassa patteristossa'
+  }),
+  Object.freeze({
+    commit: '5ceb37135581f4bbda3e010cb4305461e9cdbe06',
+    fromWave: 'F',
+    reason: 'talouden yleiskatsaus kaatui ReferenceErroriin (key -> avain) jokaisella piirrolla ja pysäytti koko sovelluksen tilakuuntelijan'
+  }),
+  Object.freeze({
+    commit: 'aaefa4dfd9bca8f01170a8114257278b15afd4cb',
+    fromWave: 'I',
+    reason: 'kannan virhetiedot (elämänalueiden nimet, pohdinnat) kulkivat konsoliin suodattamatta'
   })
 ]);
 

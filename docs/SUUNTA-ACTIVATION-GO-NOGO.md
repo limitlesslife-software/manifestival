@@ -34,11 +34,11 @@ tuotannon muotoisesta datasta: ketju, RLS (311 tarkistusta), virheet
 | **C** v16 | rutiinit, poikkeukset | `cf259d0ef755f7e875cc9cd9c15405eba632e408` (tuotannossa) | — | **DEPLOYATTU**; tekninen hyväksyntä kirjataan live-todennuksesta | ei hyväksyntää (Claude kirjaa `AUTOMATED_TECHNICAL_ACCEPTANCE`); käyttö `LIVE_USE_VALIDATION_PENDING` | matala | revert (vie v17:n → numerointi siirtyy) |
 | **D** v17 | laskut, menot, säästöt | `091e73c0091e8f135641e3501742b998dbac8461` | — | READY (jäädytetty; ehdokkaan testiajo kirjattava vihreänä — 2026-09-25: 1595/1596) | "hyväksyn D" | matala | aalto C |
 | **E** v18 | AI-kirjausketju | `86c4325b00e8d58913afebdd0f1eca95d430174e` (`release/activation-0003-0008`) | — | READY | "hyväksyn E" (E:ssä ei ole kirjoituspolkua käyttöliittymästä: taulu pysyy tyhjänä) | matala | D |
-| **F** v19 | Talous 2.0 | `5e4e7cf50e40fe1e0ba7b4543b147767e3a0eb32` (`rehearsal/wave-f-v3`) | **0009** | READY 0009:n jälkeen | "hyväksyn 0009/F" (migraatio + deploy, kun verify_0009 = 0) | matala | E + 0009 ROLLBACK |
-| **G** v20 | Tavoitteesta tekemiseksi | `173afd5dc01d16e244ec07e72fb6e29918415e81` (`rehearsal/wave-g-v3`) | **0010** | READY 0010:n jälkeen | **erillinen** "hyväksyn 0010/G" + **varmuuskopio** ensin ([`0010-BACKUP-AND-RECOVERY.md`](activation/0010-BACKUP-AND-RECOVERY.md)) | **KORKEA** (muuttaa goals/tasks/projects/profile) | F + 0010 ROLLBACK |
-| **H** v21 | Henkilökohtainen avustaja | `48b2cad8bc62362dbe371d08f36b32677df270f6` (`rehearsal/wave-h-v3`; leikataan uudelleen) | **0011** | READY 0011:n jälkeen | "hyväksyn 0011/H" | matala | G |
-| **I** v22 | **Suunta 1** | `4cfb4bcfea649146fb0bc9202d309aea8d1ffd9e` (`rehearsal/wave-i-v1`; leikataan uudelleen) | **0012** | READY 0012:n jälkeen | "hyväksyn 0012/I" (välivaihe) | keski (goals + sarake) | H |
-| **J** v23 | **Suunta 2** (ajastin, energia, katsaus v2) + yön korjaukset | `5df40b20cee4f35279a79888959d49c9af88bcc7` (`rehearsal/wave-j-v1`; leikataan uudelleen) | **0013** | READY 0013:n jälkeen | "hyväksyn 0013/J", sitten APK (vasta kun verify_0013 = 0 ja J on tuotannossa) | matala | I (aika säilyy) |
+| **F** v19 | Talous 2.0 | `2c8e230f8864ce0df1529718fb17ae265fb5d82b` (`rehearsal/wave-f-v4`) | **0009** | READY 0009:n jälkeen | "hyväksyn 0009/F" (migraatio + deploy, kun verify_0009 = 0) | matala | E + 0009 ROLLBACK |
+| **G** v20 | Tavoitteesta tekemiseksi | `4eb93a9e386123042485881fad9aa91b862069c7` (`rehearsal/wave-g-v5`) | **0010** | READY 0010:n jälkeen | **erillinen** "hyväksyn 0010/G" + **varmuuskopio** ensin ([`0010-BACKUP-AND-RECOVERY.md`](activation/0010-BACKUP-AND-RECOVERY.md)) | **KORKEA** (muuttaa goals/tasks/projects/profile) | F + 0010 ROLLBACK |
+| **H** v21 | Henkilökohtainen avustaja | `388cd990a1f764d08e9596bcb0c874451bcb21a9` (`rehearsal/wave-h-v5`) | **0011** | READY 0011:n jälkeen | "hyväksyn 0011/H" | matala | G |
+| **I** v22 | **Suunta 1** | `4a24fdf3e2cb74473c4066329a0b693862a0e019` (`rehearsal/wave-i-v3`) | **0012** | READY 0012:n jälkeen | "hyväksyn 0012/I" (välivaihe) | keski (goals + sarake) | H |
+| **J** v23 | **Suunta 2** (ajastin, energia, katsaus v2) + yön korjaukset | `cba9463155c823a24d0fdb4632ab18a1fcbd01d0` (`rehearsal/wave-j-v2`) | **0013** | READY 0013:n jälkeen | "hyväksyn 0013/J", sitten APK (vasta kun verify_0013 = 0 ja J on tuotannossa) | matala | I (aika säilyy) |
 
 Deploykohde on **lukon** `docs/activation/release-train-c-j.json` täysi SHA
 (`deployTarget`) — ei haaran nimi eikä manifestin aaltocommit. Lukon
@@ -96,11 +96,11 @@ Deploy-komennot lukosta (ensisijainen askel; `--sync-docs` päivittää ne):
 ```
 npm run activation:orchestrate -- --execute-deploy --approved-sha=091e73c0091e8f135641e3501742b998dbac8461   # D v17
 npm run activation:orchestrate -- --execute-deploy --approved-sha=86c4325b00e8d58913afebdd0f1eca95d430174e   # E v18
-npm run activation:orchestrate -- --execute-deploy --approved-sha=5e4e7cf50e40fe1e0ba7b4543b147767e3a0eb32 --verify-result=<verify_0009-tulos>   # F v19
-npm run activation:orchestrate -- --execute-deploy --approved-sha=173afd5dc01d16e244ec07e72fb6e29918415e81 --verify-result=<verify_0010-tulos>   # G v20
-# STOP H — TRAIN_RECUT_REQUIRED: lukon deployTarget 48b2cad ei sisällä pakollista korjausta 5aa0d53; ei push- eikä deploy-komentoa ennen uudelleenleikkausta (leikkaa, sitten node tools/activation/train-map.mjs --write ja --sync-docs) [deploy --verify-result=<verify_0011-tulos>   # H v21]
-# STOP I — TRAIN_RECUT_REQUIRED: lukon deployTarget 4cfb4bc ei sisällä pakollista korjausta 5aa0d53; ei push- eikä deploy-komentoa ennen uudelleenleikkausta (leikkaa, sitten node tools/activation/train-map.mjs --write ja --sync-docs) [deploy --verify-result=<verify_0012-tulos>   # I v22]
-# STOP J — TRAIN_RECUT_REQUIRED: lukon deployTarget 5df40b2 ei sisällä pakollista korjausta 5aa0d53; ei push- eikä deploy-komentoa ennen uudelleenleikkausta (leikkaa, sitten node tools/activation/train-map.mjs --write ja --sync-docs) [deploy --verify-result=<verify_0013-tulos>   # J v23]
+npm run activation:orchestrate -- --execute-deploy --approved-sha=2c8e230f8864ce0df1529718fb17ae265fb5d82b --verify-result=<verify_0009-tulos>   # F v19
+npm run activation:orchestrate -- --execute-deploy --approved-sha=4eb93a9e386123042485881fad9aa91b862069c7 --verify-result=<verify_0010-tulos>   # G v20
+npm run activation:orchestrate -- --execute-deploy --approved-sha=388cd990a1f764d08e9596bcb0c874451bcb21a9 --verify-result=<verify_0011-tulos>   # H v21
+npm run activation:orchestrate -- --execute-deploy --approved-sha=4a24fdf3e2cb74473c4066329a0b693862a0e019 --verify-result=<verify_0012-tulos>   # I v22
+npm run activation:orchestrate -- --execute-deploy --approved-sha=cba9463155c823a24d0fdb4632ab18a1fcbd01d0 --verify-result=<verify_0013-tulos>   # J v23
 ```
 
 Push-kohteet (viitteeksi — orkestroija ajaa nämä compare-and-swapin jälkeen;
@@ -109,11 +109,11 @@ Push-kohteet (viitteeksi — orkestroija ajaa nämä compare-and-swapin jälkeen
 ```
 git push origin 091e73c0091e8f135641e3501742b998dbac8461:refs/heads/main   # D v17
 git push origin 86c4325b00e8d58913afebdd0f1eca95d430174e:refs/heads/main   # E v18
-git push origin 5e4e7cf50e40fe1e0ba7b4543b147767e3a0eb32:refs/heads/main   # F v19
-git push origin 173afd5dc01d16e244ec07e72fb6e29918415e81:refs/heads/main   # G v20
-# STOP H — TRAIN_RECUT_REQUIRED: lukon deployTarget 48b2cad ei sisällä pakollista korjausta 5aa0d53; ei push- eikä deploy-komentoa ennen uudelleenleikkausta (leikkaa, sitten node tools/activation/train-map.mjs --write ja --sync-docs) [push   # H v21]
-# STOP I — TRAIN_RECUT_REQUIRED: lukon deployTarget 4cfb4bc ei sisällä pakollista korjausta 5aa0d53; ei push- eikä deploy-komentoa ennen uudelleenleikkausta (leikkaa, sitten node tools/activation/train-map.mjs --write ja --sync-docs) [push   # I v22]
-# STOP J — TRAIN_RECUT_REQUIRED: lukon deployTarget 5df40b2 ei sisällä pakollista korjausta 5aa0d53; ei push- eikä deploy-komentoa ennen uudelleenleikkausta (leikkaa, sitten node tools/activation/train-map.mjs --write ja --sync-docs) [push   # J v23]
+git push origin 2c8e230f8864ce0df1529718fb17ae265fb5d82b:refs/heads/main   # F v19
+git push origin 4eb93a9e386123042485881fad9aa91b862069c7:refs/heads/main   # G v20
+git push origin 388cd990a1f764d08e9596bcb0c874451bcb21a9:refs/heads/main   # H v21
+git push origin 4a24fdf3e2cb74473c4066329a0b693862a0e019:refs/heads/main   # I v22
+git push origin cba9463155c823a24d0fdb4632ab18a1fcbd01d0:refs/heads/main   # J v23
 ```
 
 **6.** J:n jälkeen: APK puhelimeen (`docs/activation/ANDROID-ACCEPTANCE-BUILD.md`)

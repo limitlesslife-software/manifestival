@@ -2,13 +2,13 @@
 //
 // MIKSI EI TARJOILLA J-EHDOKKAAN schema.js:ÄÄ SELLAISENAAN
 //
-// `git show rehearsal/wave-j-v1:src/data/schema.js` on vanhempi tiedosto:
+// J-ehdokkaan schema.js voi olla vanhempi tiedosto (näin oli J v1:ssä):
 // siitä puuttuu ajonaikainen skeemakerros (isTableAvailable,
 // columnGateOpen, writeRefusal, SCHEMA_REQUIREMENTS, ...), jota tämän
 // haaran repositoriot importoivat. Sellaisenaan tarjoiltuna jokainen
 // moduuli kaatuisi linkitykseen. EIKÄ valjasta ajeta J-ehdokkaan
-// työpuusta: J on leikattu ennen Day 1 -korjauksia (aloitus, arviojono,
-// tehtävän liitokset), joten se ei ole se koodi, jota omistaja käyttää.
+// työpuusta: ehdokas voi olla leikattu ennen tämän haaran uusimpia
+// korjauksia, ja E2E testaa tämän haaran koodia J:n porteilla.
 //
 // Siksi: TÄMÄN haaran schema.js, jonka porttiliteraalit (TABLES-lohko ja
 // sarakeportit) korvataan aallon J arvoilla. Arvot luetaan J-ehdokkaan
@@ -27,7 +27,7 @@ import { parseGates } from '../release/state.mjs';
 import { ALL_GATES, COLUMN_GATES, expectedMatrix, waveIndex } from '../release/waves.mjs';
 
 export const GATE_MODES = Object.freeze(['closed', 'J']);
-export const DEFAULT_GATES_REF = 'rehearsal/wave-j-v1';
+export const DEFAULT_GATES_REF = 'rehearsal/wave-j-v2';
 /** Kyselyparametri, jolla selain pyytää korvatun schema.js:n. */
 export const GATES_QUERY = 'e2e-gates';
 
@@ -116,7 +116,7 @@ function gitSha(ref, cwd) {
  * @param {object} options
  * @param {string} options.cwd  repositorion juuri
  * @param {string} options.schemaSource  työpuun src/data/schema.js
- * @param {string} [options.ref]  J-ehdokkaan ref (oletus E2E_GATES_REF tai rehearsal/wave-j-v1)
+ * @param {string} [options.ref]  J-ehdokkaan ref (oletus E2E_GATES_REF tai rehearsal/wave-j-v2)
  * @returns {{ mode: string, source: string|null, provenance: string, matrix: object|null }}
  */
 export function resolveGateMode(mode, { cwd, schemaSource, ref = process.env.E2E_GATES_REF || DEFAULT_GATES_REF,

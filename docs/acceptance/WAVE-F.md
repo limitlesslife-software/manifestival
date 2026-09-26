@@ -129,14 +129,14 @@ hyväksynnän, ehdokkaan kirjatun testiajon ja käynnistyssavun sekä julkaisun 
 tekee compare-and-swapin, pushaa ja todentaa tuotannon:
 
 ```
-npm run activation:orchestrate -- --execute-deploy --approved-sha=5e4e7cf50e40fe1e0ba7b4543b147767e3a0eb32 --verify-result=<verify_0009-tulos>
+npm run activation:orchestrate -- --execute-deploy --approved-sha=2c8e230f8864ce0df1529718fb17ae265fb5d82b --verify-result=<verify_0009-tulos>
 ```
 
 Viitteeksi (älä aja käsin): orkestroija ajaa compare-and-swapin jälkeen
 täsmälleen tämän — ei koskaan forcea:
 
 ```
-git push origin 5e4e7cf50e40fe1e0ba7b4543b147767e3a0eb32:refs/heads/main
+git push origin 2c8e230f8864ce0df1529718fb17ae265fb5d82b:refs/heads/main
 ```
 
 ---

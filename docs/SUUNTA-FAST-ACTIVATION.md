@@ -16,7 +16,7 @@ Säännöt joka askeleella:
   SHA:t tulevat lukosta `docs/activation/release-train-c-j.json`; tämän
   dokumentin SHA:t päivittää `node tools/activation/train-map.mjs --sync-docs`.
 - SQL-tiedostot ajetaan **lukon SQL-lähteestä**, ei tuotehaaran työpuusta.
-  SQL-lähde (lukon sqlSource): `rehearsal/wave-j-v1` @ `5df40b20cee4f35279a79888959d49c9af88bcc7`.
+  SQL-lähde (lukon sqlSource): `rehearsal/wave-j-v2` @ `cba9463155c823a24d0fdb4632ab18a1fcbd01d0`.
   Claude kirjoittaa ne omistajalle `git show` -komennolla hakemistoon
   `.claude/activation/sql/` (git-ignoroitu) ja tarkistaa sha256:n
   dry-runin `SQL:`-riviltä.
@@ -113,12 +113,12 @@ npm run activation:orchestrate -- --execute-deploy --approved-sha=86c4325b00e8d5
   (työpuut ja komennot dry-runista kuten D), SQL-tiedostot lukon lähteestä:
 
 ```
-npm run activation:orchestrate -- --record-candidate-tests=F --sha=5e4e7cf50e40fe1e0ba7b4543b147767e3a0eb32 --tests-result=.claude/activation/tests-F.txt
-npm run e2e:boot-smoke -- --root .claude/worktrees/rc-F-smoke --label F --expect-sha 5e4e7cf50e40fe1e0ba7b4543b147767e3a0eb32 > .claude/activation/smoke-F.txt
-npm run activation:orchestrate -- --record-boot-smoke=F --sha=5e4e7cf50e40fe1e0ba7b4543b147767e3a0eb32 --smoke-result=.claude/activation/smoke-F.txt
-git show 5df40b20cee4f35279a79888959d49c9af88bcc7:supabase/preflight/preflight_0009.sql > .claude/activation/sql/preflight_0009.sql
-git show 5df40b20cee4f35279a79888959d49c9af88bcc7:supabase/migrations/0009_finance_2.sql > .claude/activation/sql/0009_finance_2.sql
-git show 5df40b20cee4f35279a79888959d49c9af88bcc7:supabase/verify/verify_0009.sql > .claude/activation/sql/verify_0009.sql
+npm run activation:orchestrate -- --record-candidate-tests=F --sha=2c8e230f8864ce0df1529718fb17ae265fb5d82b --tests-result=.claude/activation/tests-F.txt
+npm run e2e:boot-smoke -- --root .claude/worktrees/rc-F-smoke --label F --expect-sha 2c8e230f8864ce0df1529718fb17ae265fb5d82b > .claude/activation/smoke-F.txt
+npm run activation:orchestrate -- --record-boot-smoke=F --sha=2c8e230f8864ce0df1529718fb17ae265fb5d82b --smoke-result=.claude/activation/smoke-F.txt
+git show cba9463155c823a24d0fdb4632ab18a1fcbd01d0:supabase/preflight/preflight_0009.sql > .claude/activation/sql/preflight_0009.sql
+git show cba9463155c823a24d0fdb4632ab18a1fcbd01d0:supabase/migrations/0009_finance_2.sql > .claude/activation/sql/0009_finance_2.sql
+git show cba9463155c823a24d0fdb4632ab18a1fcbd01d0:supabase/verify/verify_0009.sql > .claude/activation/sql/verify_0009.sql
 ```
 
 1. **Omistaja (vain luku):** `supabase/acceptance/activation_readonly_inventory.sql`
@@ -132,7 +132,7 @@ git show 5df40b20cee4f35279a79888959d49c9af88bcc7:supabase/verify/verify_0009.sq
 5. **Claude:** `score-sql-result.mjs --sql=supabase/verify/verify_0009.sql <tulos>` → GO, sitten:
 
 ```
-npm run activation:orchestrate -- --execute-deploy --approved-sha=5e4e7cf50e40fe1e0ba7b4543b147767e3a0eb32 --inventory=<uusi-inventaario> --verify-result=<verify_0009-tulos>   # F v19
+npm run activation:orchestrate -- --execute-deploy --approved-sha=2c8e230f8864ce0df1529718fb17ae265fb5d82b --inventory=<uusi-inventaario> --verify-result=<verify_0009-tulos>   # F v19
 ```
 
 - **ODOTUS:** preflight 0 FAIL; migraatio `COMMIT`; verify 0 poikkeavaa;
@@ -153,12 +153,12 @@ npm run activation:orchestrate -- --execute-deploy --approved-sha=5e4e7cf50e40fe
   (työpuut ja komennot dry-runista kuten D), SQL-tiedostot:
 
 ```
-npm run activation:orchestrate -- --record-candidate-tests=G --sha=173afd5dc01d16e244ec07e72fb6e29918415e81 --tests-result=.claude/activation/tests-G.txt
-npm run e2e:boot-smoke -- --root .claude/worktrees/rc-G-smoke --label G --expect-sha 173afd5dc01d16e244ec07e72fb6e29918415e81 > .claude/activation/smoke-G.txt
-npm run activation:orchestrate -- --record-boot-smoke=G --sha=173afd5dc01d16e244ec07e72fb6e29918415e81 --smoke-result=.claude/activation/smoke-G.txt
-git show 5df40b20cee4f35279a79888959d49c9af88bcc7:supabase/preflight/preflight_0010.sql > .claude/activation/sql/preflight_0010.sql
-git show 5df40b20cee4f35279a79888959d49c9af88bcc7:supabase/migrations/0010_goal_to_action.sql > .claude/activation/sql/0010_goal_to_action.sql
-git show 5df40b20cee4f35279a79888959d49c9af88bcc7:supabase/verify/verify_0010.sql > .claude/activation/sql/verify_0010.sql
+npm run activation:orchestrate -- --record-candidate-tests=G --sha=4eb93a9e386123042485881fad9aa91b862069c7 --tests-result=.claude/activation/tests-G.txt
+npm run e2e:boot-smoke -- --root .claude/worktrees/rc-G-smoke --label G --expect-sha 4eb93a9e386123042485881fad9aa91b862069c7 > .claude/activation/smoke-G.txt
+npm run activation:orchestrate -- --record-boot-smoke=G --sha=4eb93a9e386123042485881fad9aa91b862069c7 --smoke-result=.claude/activation/smoke-G.txt
+git show cba9463155c823a24d0fdb4632ab18a1fcbd01d0:supabase/preflight/preflight_0010.sql > .claude/activation/sql/preflight_0010.sql
+git show cba9463155c823a24d0fdb4632ab18a1fcbd01d0:supabase/migrations/0010_goal_to_action.sql > .claude/activation/sql/0010_goal_to_action.sql
+git show cba9463155c823a24d0fdb4632ab18a1fcbd01d0:supabase/verify/verify_0010.sql > .claude/activation/sql/verify_0010.sql
 ```
 
 1. **Omistaja:** sulje sovellus kaikilta laitteilta.
@@ -179,7 +179,7 @@ git show 5df40b20cee4f35279a79888959d49c9af88bcc7:supabase/verify/verify_0010.sq
    `node tools/activation/score-sql-result.mjs --sql=supabase/verify/verify_0010.sql <tulos>` → GO, sitten:
 
 ```
-npm run activation:orchestrate -- --execute-deploy --approved-sha=173afd5dc01d16e244ec07e72fb6e29918415e81 --inventory=<uusi-inventaario> --verify-result=<verify_0010-tulos>   # G v20
+npm run activation:orchestrate -- --execute-deploy --approved-sha=4eb93a9e386123042485881fad9aa91b862069c7 --inventory=<uusi-inventaario> --verify-result=<verify_0010-tulos>   # G v20
 ```
 
 - **ODOTUS:** tilannekuva kunnossa; verify 0 poikkeavaa; `compare.sql` →
@@ -203,12 +203,12 @@ npm run activation:orchestrate -- --execute-deploy --approved-sha=173afd5dc01d16
   (työpuut ja komennot dry-runista kuten D), SQL-tiedostot:
 
 ```
-npm run activation:orchestrate -- --record-candidate-tests=H --sha=48b2cad8bc62362dbe371d08f36b32677df270f6 --tests-result=.claude/activation/tests-H.txt
-npm run e2e:boot-smoke -- --root .claude/worktrees/rc-H-smoke --label H --expect-sha 48b2cad8bc62362dbe371d08f36b32677df270f6 > .claude/activation/smoke-H.txt
-npm run activation:orchestrate -- --record-boot-smoke=H --sha=48b2cad8bc62362dbe371d08f36b32677df270f6 --smoke-result=.claude/activation/smoke-H.txt
-git show 5df40b20cee4f35279a79888959d49c9af88bcc7:supabase/preflight/preflight_0011.sql > .claude/activation/sql/preflight_0011.sql
-git show 5df40b20cee4f35279a79888959d49c9af88bcc7:supabase/migrations/0011_personal_assistant.sql > .claude/activation/sql/0011_personal_assistant.sql
-git show 5df40b20cee4f35279a79888959d49c9af88bcc7:supabase/verify/verify_0011.sql > .claude/activation/sql/verify_0011.sql
+npm run activation:orchestrate -- --record-candidate-tests=H --sha=388cd990a1f764d08e9596bcb0c874451bcb21a9 --tests-result=.claude/activation/tests-H.txt
+npm run e2e:boot-smoke -- --root .claude/worktrees/rc-H-smoke --label H --expect-sha 388cd990a1f764d08e9596bcb0c874451bcb21a9 > .claude/activation/smoke-H.txt
+npm run activation:orchestrate -- --record-boot-smoke=H --sha=388cd990a1f764d08e9596bcb0c874451bcb21a9 --smoke-result=.claude/activation/smoke-H.txt
+git show cba9463155c823a24d0fdb4632ab18a1fcbd01d0:supabase/preflight/preflight_0011.sql > .claude/activation/sql/preflight_0011.sql
+git show cba9463155c823a24d0fdb4632ab18a1fcbd01d0:supabase/migrations/0011_personal_assistant.sql > .claude/activation/sql/0011_personal_assistant.sql
+git show cba9463155c823a24d0fdb4632ab18a1fcbd01d0:supabase/verify/verify_0011.sql > .claude/activation/sql/verify_0011.sql
 ```
 
 1. **Omistaja (vain luku):** inventaario ja `preflight_0011.sql` → liitä. **Claude:**
@@ -219,7 +219,7 @@ git show 5df40b20cee4f35279a79888959d49c9af88bcc7:supabase/verify/verify_0011.sq
    `node tools/activation/score-sql-result.mjs --sql=supabase/verify/verify_0011.sql <tulos>` → GO, sitten:
 
 ```
-# STOP H — TRAIN_RECUT_REQUIRED: lukon deployTarget 48b2cad ei sisällä pakollista korjausta 5aa0d53; ei push- eikä deploy-komentoa ennen uudelleenleikkausta (leikkaa, sitten node tools/activation/train-map.mjs --write ja --sync-docs) [deploy --inventory=<uusi-inventaario> --verify-result=<verify_0011-tulos>   # H v21]
+npm run activation:orchestrate -- --execute-deploy --approved-sha=388cd990a1f764d08e9596bcb0c874451bcb21a9 --inventory=<uusi-inventaario> --verify-result=<verify_0011-tulos>   # H v21
 ```
 
 - **ODOTUS:** `DEPLOYED_TECHNICALLY_ACCEPTED` (v21).
@@ -235,12 +235,12 @@ git show 5df40b20cee4f35279a79888959d49c9af88bcc7:supabase/verify/verify_0011.sq
   (työpuut ja komennot dry-runista kuten D), SQL-tiedostot:
 
 ```
-npm run activation:orchestrate -- --record-candidate-tests=I --sha=4cfb4bcfea649146fb0bc9202d309aea8d1ffd9e --tests-result=.claude/activation/tests-I.txt
-npm run e2e:boot-smoke -- --root .claude/worktrees/rc-I-smoke --label I --expect-sha 4cfb4bcfea649146fb0bc9202d309aea8d1ffd9e > .claude/activation/smoke-I.txt
-npm run activation:orchestrate -- --record-boot-smoke=I --sha=4cfb4bcfea649146fb0bc9202d309aea8d1ffd9e --smoke-result=.claude/activation/smoke-I.txt
-git show 5df40b20cee4f35279a79888959d49c9af88bcc7:supabase/preflight/preflight_0012.sql > .claude/activation/sql/preflight_0012.sql
-git show 5df40b20cee4f35279a79888959d49c9af88bcc7:supabase/migrations/0012_life_alignment.sql > .claude/activation/sql/0012_life_alignment.sql
-git show 5df40b20cee4f35279a79888959d49c9af88bcc7:supabase/verify/verify_0012.sql > .claude/activation/sql/verify_0012.sql
+npm run activation:orchestrate -- --record-candidate-tests=I --sha=4a24fdf3e2cb74473c4066329a0b693862a0e019 --tests-result=.claude/activation/tests-I.txt
+npm run e2e:boot-smoke -- --root .claude/worktrees/rc-I-smoke --label I --expect-sha 4a24fdf3e2cb74473c4066329a0b693862a0e019 > .claude/activation/smoke-I.txt
+npm run activation:orchestrate -- --record-boot-smoke=I --sha=4a24fdf3e2cb74473c4066329a0b693862a0e019 --smoke-result=.claude/activation/smoke-I.txt
+git show cba9463155c823a24d0fdb4632ab18a1fcbd01d0:supabase/preflight/preflight_0012.sql > .claude/activation/sql/preflight_0012.sql
+git show cba9463155c823a24d0fdb4632ab18a1fcbd01d0:supabase/migrations/0012_life_alignment.sql > .claude/activation/sql/0012_life_alignment.sql
+git show cba9463155c823a24d0fdb4632ab18a1fcbd01d0:supabase/verify/verify_0012.sql > .claude/activation/sql/verify_0012.sql
 ```
 
 1. **Omistaja (vain luku):** inventaario ja `preflight_0012.sql` → liitä. **Claude:**
@@ -251,7 +251,7 @@ git show 5df40b20cee4f35279a79888959d49c9af88bcc7:supabase/verify/verify_0012.sq
    `node tools/activation/score-sql-result.mjs --sql=supabase/verify/verify_0012.sql <tulos>` → GO, sitten:
 
 ```
-# STOP I — TRAIN_RECUT_REQUIRED: lukon deployTarget 4cfb4bc ei sisällä pakollista korjausta 5aa0d53; ei push- eikä deploy-komentoa ennen uudelleenleikkausta (leikkaa, sitten node tools/activation/train-map.mjs --write ja --sync-docs) [deploy --inventory=<uusi-inventaario> --verify-result=<verify_0012-tulos>   # I v22]
+npm run activation:orchestrate -- --execute-deploy --approved-sha=4a24fdf3e2cb74473c4066329a0b693862a0e019 --inventory=<uusi-inventaario> --verify-result=<verify_0012-tulos>   # I v22
 ```
 
 - **ODOTUS:** `DEPLOYED_TECHNICALLY_ACCEPTED` (v22). Säilytä `verify_0012`-tulos:
@@ -268,12 +268,12 @@ git show 5df40b20cee4f35279a79888959d49c9af88bcc7:supabase/verify/verify_0012.sq
   (työpuut ja komennot dry-runista kuten D), SQL-tiedostot:
 
 ```
-npm run activation:orchestrate -- --record-candidate-tests=J --sha=5df40b20cee4f35279a79888959d49c9af88bcc7 --tests-result=.claude/activation/tests-J.txt
-npm run e2e:boot-smoke -- --root .claude/worktrees/rc-J-smoke --label J --expect-sha 5df40b20cee4f35279a79888959d49c9af88bcc7 > .claude/activation/smoke-J.txt
-npm run activation:orchestrate -- --record-boot-smoke=J --sha=5df40b20cee4f35279a79888959d49c9af88bcc7 --smoke-result=.claude/activation/smoke-J.txt
-git show 5df40b20cee4f35279a79888959d49c9af88bcc7:supabase/preflight/preflight_0013.sql > .claude/activation/sql/preflight_0013.sql
-git show 5df40b20cee4f35279a79888959d49c9af88bcc7:supabase/migrations/0013_alignment_reality.sql > .claude/activation/sql/0013_alignment_reality.sql
-git show 5df40b20cee4f35279a79888959d49c9af88bcc7:supabase/verify/verify_0013.sql > .claude/activation/sql/verify_0013.sql
+npm run activation:orchestrate -- --record-candidate-tests=J --sha=cba9463155c823a24d0fdb4632ab18a1fcbd01d0 --tests-result=.claude/activation/tests-J.txt
+npm run e2e:boot-smoke -- --root .claude/worktrees/rc-J-smoke --label J --expect-sha cba9463155c823a24d0fdb4632ab18a1fcbd01d0 > .claude/activation/smoke-J.txt
+npm run activation:orchestrate -- --record-boot-smoke=J --sha=cba9463155c823a24d0fdb4632ab18a1fcbd01d0 --smoke-result=.claude/activation/smoke-J.txt
+git show cba9463155c823a24d0fdb4632ab18a1fcbd01d0:supabase/preflight/preflight_0013.sql > .claude/activation/sql/preflight_0013.sql
+git show cba9463155c823a24d0fdb4632ab18a1fcbd01d0:supabase/migrations/0013_alignment_reality.sql > .claude/activation/sql/0013_alignment_reality.sql
+git show cba9463155c823a24d0fdb4632ab18a1fcbd01d0:supabase/verify/verify_0013.sql > .claude/activation/sql/verify_0013.sql
 ```
 
 1. **Omistaja (vain luku):** inventaario, `verify_0012.sql` (edellytys) ja
@@ -286,7 +286,7 @@ git show 5df40b20cee4f35279a79888959d49c9af88bcc7:supabase/verify/verify_0013.sq
    `node tools/activation/score-sql-result.mjs --sql=supabase/verify/verify_0013.sql <tulos>` → GO, sitten:
 
 ```
-# STOP J — TRAIN_RECUT_REQUIRED: lukon deployTarget 5df40b2 ei sisällä pakollista korjausta 5aa0d53; ei push- eikä deploy-komentoa ennen uudelleenleikkausta (leikkaa, sitten node tools/activation/train-map.mjs --write ja --sync-docs) [deploy --inventory=<uusi-inventaario> --verify-result=<verify_0013-tulos>   # J v23]
+npm run activation:orchestrate -- --execute-deploy --approved-sha=cba9463155c823a24d0fdb4632ab18a1fcbd01d0 --inventory=<uusi-inventaario> --verify-result=<verify_0013-tulos>   # J v23
 ```
 
 4. **Claude:** AI-selitys suljettu (`WAVE-J.md` kohta 3: `GET /api/explain` 405,

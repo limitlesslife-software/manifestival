@@ -2,7 +2,7 @@
 //
 //   node tools/e2e/run-suunta-e2e.mjs            kaikki ryhmät
 //   E2E_GROUPS=legacy node tools/e2e/run-...     vain vanhan käyttäjän ryhmä
-//   E2E_GATES_REF=<ref>                          J-porttien lähde (oletus rehearsal/wave-j-v1)
+//   E2E_GATES_REF=<ref>                          J-porttien lähde (oletus rehearsal/wave-j-v2)
 //
 // TURVASÄÄNNÖT (ks. aiempi havainto vieraasta Chrome-prosessista):
 //   - debug-portti valitaan vapaaksi JA todennetaan vapaaksi ennen

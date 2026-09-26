@@ -136,14 +136,14 @@ hyväksynnän, ehdokkaan kirjatun testiajon ja käynnistyssavun sekä julkaisun 
 tekee compare-and-swapin, pushaa ja todentaa tuotannon:
 
 ```
-# STOP J — TRAIN_RECUT_REQUIRED: lukon deployTarget 5df40b2 ei sisällä pakollista korjausta 5aa0d53; ei push- eikä deploy-komentoa ennen uudelleenleikkausta (leikkaa, sitten node tools/activation/train-map.mjs --write ja --sync-docs) [deploy --verify-result=<verify_0013-tulos>]
+npm run activation:orchestrate -- --execute-deploy --approved-sha=cba9463155c823a24d0fdb4632ab18a1fcbd01d0 --verify-result=<verify_0013-tulos>
 ```
 
 Viitteeksi (älä aja käsin): orkestroija ajaa compare-and-swapin jälkeen
 täsmälleen tämän — ei koskaan forcea:
 
 ```
-# STOP J — TRAIN_RECUT_REQUIRED: lukon deployTarget 5df40b2 ei sisällä pakollista korjausta 5aa0d53; ei push- eikä deploy-komentoa ennen uudelleenleikkausta (leikkaa, sitten node tools/activation/train-map.mjs --write ja --sync-docs) [push]
+git push origin cba9463155c823a24d0fdb4632ab18a1fcbd01d0:refs/heads/main
 ```
 
 ---

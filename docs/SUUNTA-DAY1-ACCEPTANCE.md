@@ -137,7 +137,7 @@ localStoragesta ja `loadUserData` lukee kannan rivit.
 
 **J-portit:** tämän haaran `src/data/schema.js`, jonka porttiliteraalit
 korvataan aallon J arvoilla (`tools/e2e/gates.mjs`). Arvot luetaan
-`rehearsal/wave-j-v1`:n schema.js:stä (tai `E2E_GATES_REF`) ja
+`rehearsal/wave-j-v2`:n schema.js:stä (tai `E2E_GATES_REF`) ja
 verrataan junan määrittelyyn (`tools/release/waves.mjs`); ristiriita
 keskeyttää ajon. Selain saa tiedoston import mapin kautta, eikä mikään
 `src/`-tiedosto muutu. Ehdokkaan tiedostoa ei tarjoilla sellaisenaan
@@ -199,11 +199,11 @@ Vanhan käyttäjän ajo (kello: tämän viikon keskiviikko klo 10):
   kirjoitettaessa; kosketuskäyttäjä ei päässyt vaiheesta eteenpäin.
   Regressiotesti: `tests/suunta-setup-primary-button.test.mjs`.
 
-**Ajettu:** 2026-09-26, pohja 384a40e + 57f0a4f, dea9ca1, e4be4f2
-(E2E-paketin haara, ennen muiden pakettien integrointia), J-portit
-`rehearsal/wave-j-v1` (5df40b2): PASS 53/54, 1 ODOTTAA (Tauko,
-saavutettavuuspaketti). Aja uudelleen integroidulla haaralla ja
-aallon J ehdokkaalla ennen deployta, ja kirjaa tulos tähän.
+**Ajettu:** 2026-09-26, integroitu tuotehaara (kaikki paketit ja
+katselmoinnin korjaukset), J-portit `rehearsal/wave-j-v2` (cba9463):
+PASS 54/54 (18 suljetuilla porteilla, 18 J-porteilla, 16 J-porteilla
+vanhana käyttäjänä), 0 pyyntöä tuotantoon, 0 konsolivirhettä. Aja
+uudelleen, jos tuotehaara tai J-ehdokas muuttuu, ja kirjaa tulos tähän.
 
 **Mitä E2E EI todista — LIVE_USE_VALIDATION_PENDING:**
 

@@ -101,13 +101,14 @@ function sqlFiles() {
  * @param {object} [options.refOverrides] alias -> SHA (siirtynyt viite)
  * @param {string[]} [options.missingRefs] aliakset, joita ei ole
  * @param {string[]} [options.missingPatchWaves] aallot, joilta 5aa0d53 puuttuu
+ * @param {object} [options.missingPatches] muut korjaukset: 7 merkin SHA -> aallot, joilta se puuttuu
  * @param {string|null} [options.remoteMain] ls-remote-vastaus (oletus: tuotanto)
  * @param {object} [options.extraCommits] sha -> tiedostot (esim. peruutus)
  * @param {object} [options.sqlOverrides] polku -> SQL lukon SQL-lähteessä (J) ja HEADissa
  * @param {boolean} [options.pushOk]
  */
 export function stubGit({
-  production = 'C', productionSha = null, refOverrides = {}, missingRefs = [], missingPatchWaves = [],
+  production = 'C', productionSha = null, refOverrides = {}, missingRefs = [], missingPatchWaves = [], missingPatches = {},
   remoteMain, extraCommits = {}, sqlOverrides = {}, pushOk = true, throwOn = null
 } = {}) {
   const calls = [];
@@ -176,7 +177,10 @@ export function stubGit({
     containsPatch(target, commit) {
       record('containsPatch', [target, commit]);
       const i = order(resolve(target));
-      return !(i !== -1 && missingPatchWaves.includes(TRAIN_WAVES[i]));
+      if (i === -1) return true;
+      const key = String(commit).slice(0, 7);
+      const missing = key === '5aa0d53' ? missingPatchWaves : (missingPatches[key] || []);
+      return !missing.includes(TRAIN_WAVES[i]);
     },
     fetchHeadTime() { return new Date('2026-09-26T12:00:00Z'); },
     lsRemoteMain() { record('lsRemoteMain', []); return remoteMain === undefined ? originSha : remoteMain; },
