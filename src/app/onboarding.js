@@ -18,7 +18,11 @@ const STEPS = [
   },
   {
     title: 'Lisää ensimmäinen asia',
-    body: 'Paina alhaalta kultaista mikrofonipainiketta ja sano se ääneen — tai kirjoita se Tehtävät-näkymässä. Tarkistat ehdotuksen ennen tallennusta.'
+    body: 'Paina alhaalta kultaista mikrofonipainiketta ja sano se ääneen — tai kirjoita se Tehtävät-näkymässä. Mikrofonin lupaa kysytään vasta, kun painat painiketta. Tarkistat ehdotuksen ennen tallennusta.',
+    // Ilman puheentunnistusta (selain ei tue, tai Android-sovellus ilman
+    // puheliitännäistä) sama painike avaa kirjoituskentän. Ei lupausta
+    // puheesta, jota ei ole.
+    typedBody: 'Paina alhaalta kultaista painiketta ja kirjoita, mitä haluat lisätä — tai lisää se Tehtävät-näkymässä. Tarkistat ehdotuksen ennen tallennusta.'
   },
   {
     title: 'Päivä rakentuu ympärille',
@@ -33,9 +37,9 @@ function render() {
   const isLast = step === STEPS.length - 1;
 
   el('onboardingTitle').textContent = current.title;
-  el('onboardingBody').textContent = speechSupported() || step !== 1
-    ? current.body
-    : current.body.replace('sano se ääneen — tai kirjoita', 'kirjoita');
+  el('onboardingBody').textContent = current.typedBody && !speechSupported()
+    ? current.typedBody
+    : current.body;
 
   el('onboardingNext').textContent = isLast ? 'Aloita' : 'Seuraava';
 

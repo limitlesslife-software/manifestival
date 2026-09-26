@@ -40,7 +40,7 @@ import {
   captureAndInterpret, reviewItem, closeReview, approveItem,
   interpretItem, dismissItemById, restoreItemById, deleteInboxItem
 } from '../capture.js';
-import { listenOnce, speechAvailable } from '../speechInput.js';
+import { listenOnce, speechAvailable, isDictating, cancelDictation } from '../speechInput.js';
 
 /** Näytetäänkö myös käsitellyt rivit? Näkymän oma tila, ei sovelluksen. */
 let showClosed = false;
@@ -118,27 +118,47 @@ async function submitCapture(source = CAPTURE_SOURCE.TEXT) {
   }
 }
 
+/** Monesko sanelu: vanhentunut sanelu ei saa päivittää uudemman tilaa. */
+let dictationRun = 0;
+
 /**
- * Sanele kirjauskenttään.
+ * Sanele kirjauskenttään. Painike on KYTKIN (aria-pressed): toinen
+ * napautus kesken kuuntelun peruu sanelun eikä käynnistä toista
+ * tunnistinta.
  *
  * ÄÄNTÄ EI TALLENNETA. Tunnistin palauttaa tekstin, teksti menee
  * kenttään, ja käyttäjä näkee sen ennen kuin mitään lähtee eteenpäin.
  * Äänitallennetta ei kirjoiteta mihinkään missään vaiheessa.
  */
-async function startDictation() {
+export async function toggleDictation() {
   const button = maybe('captureMicBtn');
   if (!button) return;
 
+  if (isDictating()) {
+    cancelDictation();
+    return;
+  }
+
+  const run = ++dictationRun;
+  const current = () => run === dictationRun;
+
   setCaptureError('');
   button.setAttribute('aria-pressed', 'true');
-  setCaptureStatus('Kuuntelen…');
+  setCaptureStatus('Käynnistetään mikrofonia…');
 
   try {
-    const result = await listenOnce();
+    const result = await listenOnce({
+      onPermission: () => { if (current()) setCaptureStatus('Salli mikrofoni, jos laite kysyy lupaa.'); },
+      onStart: () => { if (current()) setCaptureStatus('Kuuntelen… Napauta mikrofonia uudelleen lopettaaksesi.'); }
+    });
+    if (!current()) return;
 
     if (!result.ok) {
       setCaptureStatus('');
-      setCaptureError(result.error || 'Puheentunnistus ei onnistunut. Kirjoita sen sijaan.');
+      // Peruttu (toinen napautus, sovellus taustalle) ei ole virhe.
+      if (result.code !== 'aborted') {
+        setCaptureError(result.error || 'Puheentunnistus ei onnistunut. Kirjoita sen sijaan.');
+      }
       return;
     }
 
@@ -146,7 +166,7 @@ async function startDictation() {
     if (input) input.value = result.text;
     setCaptureStatus('Tarkista teksti ja paina Kirjaa.');
   } finally {
-    button.setAttribute('aria-pressed', 'false');
+    if (current()) button.setAttribute('aria-pressed', 'false');
   }
 }
 
@@ -297,7 +317,7 @@ export function initInbox() {
   if (send) send.addEventListener('click', () => submitCapture());
 
   const mic = maybe('captureMicBtn');
-  if (mic) mic.addEventListener('click', startDictation);
+  if (mic) mic.addEventListener('click', toggleDictation);
 
   const input = maybe('captureInput');
   if (input) {
@@ -397,6 +417,8 @@ async function onListClick(event) {
 
 /** Sulje kesken oleva tarkistus. Kutsutaan uloskirjautuessa. */
 export function closeCaptureReview() {
+  // Kesken oleva sanelu ei saa kirjoittaa seuraavan käyttäjän kenttään.
+  cancelDictation();
   closeReview();
   showClosed = false;
   const input = maybe('captureInput');

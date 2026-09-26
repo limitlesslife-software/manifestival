@@ -58,7 +58,7 @@ import {
   refreshNotificationPermission, syncNotifications,
   scheduleNotificationResync, cancelScheduledResync, cancelDeviceNotifications
 } from './notifications.js';
-import { lifecycle, location as platformLocation } from '../platform/index.js';
+import { lifecycle, location as platformLocation, speech } from '../platform/index.js';
 import { clearToasts } from '../ui/toast.js';
 import { maybe } from '../ui/dom.js';
 import { getUser } from '../data/session.js';
@@ -398,6 +398,11 @@ async function start() {
     },
     onPause: () => {
       reconnect.cancelPending();
+      // EI TAUSTAMIKROFONIA: sovelluksen siirtyminen taustalle katkaisee
+      // puheohjauksen ja sanelun kuuntelun. Natiivissa pause-tapahtuma tulee
+      // App-liitännäiseltä myös silloin, kun visibilitychange ei laukea.
+      // (Androidin oma lupadialogi ei katkaise: ks. src/platform/speech.js.)
+      speech.cancelActiveListening({ reason: 'pause' });
     }
   });
 

@@ -96,6 +96,37 @@ test('virhe ja uudelleenyritys: FAIL vain kuuntelusta, RETRY virheestä/tekstist
   assert.equal(next(VOICE.ERROR, VOICE_EVENT.TYPE_INSTEAD), VOICE.TYPE_FALLBACK);
 });
 
+test('VOICE-AND-5: pysyvä virhe (lupa estetty) -> MIC_DENIED, josta ei yritetä uudelleen', () => {
+  assert.equal(next(VOICE.REQUESTING_PERMISSION, VOICE_EVENT.FAIL_PERMANENT), VOICE.MIC_DENIED);
+  assert.equal(next(VOICE.LISTENING, VOICE_EVENT.FAIL_PERMANENT), VOICE.MIC_DENIED);
+  // Vain mikrofonitiloista: pysyvä virhe ei keskeytä käsittelyä tai tekstiä.
+  for (const state of [VOICE.IDLE, VOICE.TRANSCRIPT_READY, ...PROCESSING_STATES, VOICE.ERROR, VOICE.TYPE_FALLBACK]) {
+    assert.equal(next(state, VOICE_EVENT.FAIL_PERMANENT), state, state);
+  }
+  // Uusi yritys epäonnistuisi samalla tavalla: RETRY ei tee mitään.
+  assert.equal(next(VOICE.MIC_DENIED, VOICE_EVENT.RETRY), VOICE.MIC_DENIED);
+  assert.equal(next(VOICE.MIC_DENIED, VOICE_EVENT.RETRY, { micSupported: false }), VOICE.MIC_DENIED);
+  // Kirjoittaminen ja sulkeminen toimivat aina.
+  assert.equal(next(VOICE.MIC_DENIED, VOICE_EVENT.TYPE_INSTEAD), VOICE.TYPE_FALLBACK);
+  assert.equal(next(VOICE.MIC_DENIED, VOICE_EVENT.CANCEL), VOICE.IDLE);
+  assert.equal(next(VOICE.MIC_DENIED, VOICE_EVENT.HIDDEN), VOICE.MIC_DENIED);
+  assert.equal(micActive(VOICE.MIC_DENIED), false, 'mikrofoni ei ole auki estetyssä tilassa');
+  // Tavallinen virhe sallii yhä uuden yrityksen.
+  assert.equal(next(VOICE.ERROR, VOICE_EVENT.RETRY), VOICE.REQUESTING_PERMISSION);
+});
+
+test('VOICE-AND-5: luvan odotus näyttää oman paneelinsa, ei "Kuuntelen…"', () => {
+  const voice = readCode('src/app/voice.js');
+  assert.match(voice, /\[VOICE\.REQUESTING_PERMISSION\]: 'permission'/);
+  assert.match(voice, /\[VOICE\.LISTENING\]: 'listening'/);
+  assert.match(voice, /\[VOICE\.MIC_DENIED\]: 'error'/);
+  const html = read('index.html');
+  const panel = html.slice(html.indexOf('id="voiceState-permission"'), html.indexOf('id="voiceState-listening"'));
+  assert.ok(panel.length > 0, 'luvan odotuspaneeli puuttuu');
+  assert.equal(panel.includes('Kuuntelen'), false);
+  assert.match(panel, /Ääntä ei tallenneta/);
+});
+
 test('komennon lopputulokset: OK -> SUCCESS, peruttu -> IDLE, virhe -> ERROR; vain käsittelystä', () => {
   for (const state of PROCESSING_STATES) {
     assert.equal(next(state, VOICE_EVENT.DONE_OK), VOICE.SUCCESS);
@@ -265,13 +296,24 @@ test('KRIITTINEN: mikrofoni sammutetaan sivun piilotuksessa ja sulkemisessa; ei 
   assert.match(voice, /window\.addEventListener\('pagehide'/);
   assert.match(voice, /VOICE_EVENT\.HIDDEN/);
   assert.equal(/continuous = true/.test(voice), false, 'jatkuva kuuntelu kielletty');
-  assert.match(voice, /continuous = false/);
   assert.equal(/MediaRecorder|getUserMedia/.test(voice), false, 'ääntä ei tallenneta');
+
+  // Tunnistin rakennetaan nyt alustasovittimessa (src/platform/speech.js),
+  // jotta natiivikuori ei koskaan rakenna WebView'n SpeechRecognitionia.
+  // continuous = false -vaatimus siirtyi sinne tunnistimen mukana.
+  assert.equal(/SpeechRecognition/.test(voice), false, 'voice.js rakentaa tunnistimen itse');
+  const speech = readCode('src/platform/speech.js');
+  assert.match(speech, /recognition\.continuous = false/);
+  assert.equal(/continuous = true/.test(speech), false, 'jatkuva kuuntelu kielletty');
 });
 
 test('selvä haku puhuttuna avaa hakupaneelin hakusanalla eikä kutsu komentoputkea', () => {
   const voice = readCode('src/app/voice.js');
-  const submit = voice.slice(voice.indexOf('const submitTranscript'), voice.indexOf('function setupRecognition'));
+  // Loppumerkki oli ennen `function setupRecognition`; tunnistin siirtyi
+  // src/platform/speech.js:ään, ja submitTranscriptin jälkeen tulee nyt
+  // kuuntelun tuloksen käsittelijä.
+  const submit = voice.slice(voice.indexOf('const submitTranscript'), voice.indexOf('function onListenResult'));
+  assert.ok(voice.indexOf('function onListenResult') > voice.indexOf('const submitTranscript'));
   assert.ok(submit.indexOf('routeUtterance(clean)') > -1);
   assert.ok(submit.indexOf('openSearch(route.query)') > submit.indexOf('routeUtterance(clean)'));
   assert.ok(submit.indexOf('openSearch(route.query)') < submit.indexOf('runVoiceCommand(clean'),
@@ -284,7 +326,7 @@ test('selvä haku puhuttuna avaa hakupaneelin hakusanalla eikä kutsu komentoput
 
 test('tyhjä muokattu teksti ei lähde tulkittavaksi eikä tuota virhettä', () => {
   const voice = readCode('src/app/voice.js');
-  const submit = voice.slice(voice.indexOf('const submitTranscript'), voice.indexOf('function setupRecognition'));
+  const submit = voice.slice(voice.indexOf('const submitTranscript'), voice.indexOf('function onListenResult'));
   assert.ok(submit.indexOf('if (!clean)') < submit.indexOf('transition(VOICE_EVENT.SUBMIT)'));
 });
 

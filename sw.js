@@ -181,6 +181,7 @@ const SHELL = [
   '/src/platform/lifecycle.js',
   '/src/platform/nativeNotifications.js',
   '/src/platform/notifications.js',
+  '/src/platform/speech.js',
   '/src/styles.css',
   '/src/ui/confirm.js',
   '/src/ui/dom.js',

@@ -71,7 +71,10 @@ test('KRIITTINEN: vanhentuneet Android-assetit paikataan automaattisesti ennen t
 
 test('SÄÄNTÖ: Android-hakemistossa ei ole sovelluslogiikkaa', { skip: !hasAndroid }, () => {
   // Capacitorin generoima kuori sisältää yhden Java-tiedoston (MainActivity).
-  // Jos niitä on enemmän, natiivipuolelle on alkanut kertyä omaa logiikkaa.
+  // Ainoa hyväksytty lisäys on puheliitännäinen (SpeechPlugin): se on
+  // alustarajapinta (mikrofoni -> teksti), ei sovelluslogiikkaa, ja sen
+  // ainoa kuluttaja on src/platform/speech.js. Lista on TÄSMÄLLINEN:
+  // jokainen uusi natiivitiedosto on omistajan päätös, ei sivutuote.
   const javaRoot = path.join(ROOT, 'android', 'app', 'src', 'main', 'java');
   if (!fs.existsSync(javaRoot)) return;
 
@@ -85,8 +88,8 @@ test('SÄÄNTÖ: Android-hakemistossa ei ole sovelluslogiikkaa', { skip: !hasAnd
   };
   walk(javaRoot);
 
-  assert.ok(javaFiles.length <= 1,
-    'natiivipuolella on ' + javaFiles.length + ' lähdetiedostoa: ' + javaFiles.join(', ')
+  assert.deepEqual(javaFiles.sort(), ['MainActivity.java', 'SpeechPlugin.java'],
+    'natiivipuolen lähdetiedostot: ' + javaFiles.join(', ')
     + ' — logiikan pitää olla src/platform/-sovittimen takana');
 });
 
@@ -272,25 +275,30 @@ test('selväkielinen liikenne on nimenomaisesti kielletty', { skip: !hasAndroid 
 });
 
 test('luvat rajoittuvat siihen, mitä toteutetut ominaisuudet vaativat', { skip: !hasAndroid }, () => {
-  // Oma manifesti pyytää vain INTERNETin. Sijaintilupaa EI ole: mikään
-  // toteutettu ominaisuus ei käytä sijaintia (NATIVE_LOCATION_ENABLED =
-  // false). Loput luvat tulevat lisäosista yhdistämisen kautta, eikä niitä
-  // lisätä käsin.
+  // Oma manifesti pyytää INTERNETin ja mikrofonin (puheentunnistus,
+  // SpeechPlugin.java; lupa kysytään vasta napautuksesta). Sijaintilupaa
+  // EI ole: mikään toteutettu ominaisuus ei käytä sijaintia
+  // (NATIVE_LOCATION_ENABLED = false). Loput luvat tulevat lisäosista
+  // yhdistämisen kautta, eikä niitä lisätä käsin.
   const manifest = appManifest();
   const permissions = [...manifest.matchAll(/uses-permission android:name="([^"]+)"/g)]
     .map(m => m[1]);
 
   assert.deepEqual(permissions, [
-    'android.permission.INTERNET'
+    'android.permission.INTERNET',
+    'android.permission.RECORD_AUDIO'
   ], 'omaan manifestiin lisättiin lupa: ' + permissions.join(', '));
 
   // Kielletyt. includes() koko tiedostoon, joten nimet eivät saa esiintyä
-  // edes kommentissa. Sijaintia ei julisteta ennen kuin jokin ominaisuus
-  // käyttää sitä; taustasijaintia ja etualapalvelua ei ole eikä tule.
-  for (const forbidden of ['ACCESS_BACKGROUND_LOCATION', 'FOREGROUND_SERVICE',
-    'ACCESS_COARSE_LOCATION', 'ACCESS_FINE_LOCATION',
-    'CAMERA', 'RECORD_AUDIO',
-    'READ_EXTERNAL_STORAGE', 'READ_CONTACTS']) {
+  // edes kommentissa.
+  //   - Äänen asetusten muokkauslupa: ilman sitä Capacitor hylkää WebView'n
+  //     omat mikrofonipyynnöt, joten web-koodi ei avaa mikrofonia
+  //     liitännäisen ohi.
+  //   - Etualapalvelu (mikrofoni, sijainti): ei taustakuuntelua, ei seurantaa.
+  //   - Sijainti: ei julisteta ennen kuin jokin ominaisuus käyttää sitä.
+  for (const forbidden of ['MODIFY_AUDIO_SETTINGS', 'FOREGROUND_SERVICE', 'CAPTURE_AUDIO_OUTPUT',
+    'ACCESS_BACKGROUND_LOCATION', 'ACCESS_COARSE_LOCATION', 'ACCESS_FINE_LOCATION',
+    'CAMERA', 'READ_EXTERNAL_STORAGE', 'READ_CONTACTS']) {
     assert.equal(manifest.includes(forbidden), false,
       'lupa ilman toteutusta: ' + forbidden);
   }
@@ -317,6 +325,125 @@ test('LOC-1: natiivisijainnin lippu ja manifesti ovat samaa mieltä', { skip: !h
   } else {
     assert.equal(declares, false, 'natiivisijainti pois päältä, mutta manifesti julistaa sijaintiluvan');
   }
+});
+
+test('puheentunnistuspalvelu on näkyvissä Android 11+:ssa (<queries>)', { skip: !hasAndroid }, () => {
+  const manifest = appManifest();
+  const queries = /<queries>([\s\S]*?)<\/queries>/.exec(manifest);
+  assert.ok(queries, 'manifestista puuttuu <queries>: SpeechRecognizer ei näkisi tunnistinpalvelua');
+  assert.match(queries[1], /<action android:name="android\.speech\.RecognitionService" \/>/);
+  // <queries> on <manifest>-tason elementti, ei <application>in sisällä.
+  assert.ok(manifest.indexOf('<queries>') > manifest.indexOf('</application>'));
+});
+
+// ---------------------------------------------------- puheliitännäinen
+
+const JAVA_DIR = 'android/app/src/main/java/fi/limitlesslife/manifestival';
+
+/** Java-lähde ilman kommentteja: kiellot koskevat koodia, eivät selityksiä. */
+function javaCode(file) {
+  return read(`${JAVA_DIR}/${file}`)
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n').filter(line => !line.trim().startsWith('//')).join('\n');
+}
+
+test('MainActivity rekisteröi puheliitännäisen ENNEN super.onCreatea', { skip: !hasAndroid }, () => {
+  const source = javaCode('MainActivity.java');
+  const register = source.indexOf('registerPlugin(SpeechPlugin.class)');
+  const superCreate = source.indexOf('super.onCreate(');
+  assert.ok(register > -1, 'SpeechPlugin-liitännäistä ei rekisteröidä');
+  assert.ok(superCreate > -1, 'onCreate ei kutsu super.onCreatea');
+  assert.ok(register < superCreate,
+    'rekisteröinti super.onCreaten jälkeen ei päädy siltaan (BridgeActivity.load)');
+});
+
+test('puheliitännäisen nimi on sama Javassa ja JS:ssä', { skip: !hasAndroid }, async () => {
+  const java = javaCode('SpeechPlugin.java');
+  const name = /@CapacitorPlugin\(\s*name\s*=\s*"([^"]+)"/.exec(java);
+  assert.ok(name, 'SpeechPlugin.java: @CapacitorPlugin(name = ...) puuttuu');
+  const { NATIVE_SPEECH_PLUGIN } = await import('../src/platform/speech.js');
+  assert.equal(name[1], NATIVE_SPEECH_PLUGIN,
+    'eri nimi -> window.Capacitor.Plugins[nimi] olisi undefined ja puhe "ei käytettävissä"');
+  assert.equal(name[1], 'ManifestivalSpeech');
+
+  // Tilatapahtuman nimi on sama molemmin puolin.
+  const { NATIVE_STATE_EVENT } = await import('../src/platform/speech.js');
+  assert.match(java, new RegExp(`STATE_EVENT = "${NATIVE_STATE_EVENT}"`));
+});
+
+test('KRIITTINEN: puheliitännäinen kysyy mikrofoniluvan vain listen()-polussa', { skip: !hasAndroid }, () => {
+  const java = javaCode('SpeechPlugin.java');
+
+  // Lupa-alias on vain RECORD_AUDIO.
+  assert.match(java, /@Permission\(alias = SpeechPlugin\.MICROPHONE, strings = \{ Manifest\.permission\.RECORD_AUDIO \}\)/);
+  assert.match(java, /MICROPHONE = "microphone"/);
+  assert.equal((java.match(/Manifest\.permission\./g) || []).length, 1, 'liitännäinen julistaa muitakin lupia');
+
+  // Pyyntö on täsmälleen yhdessä paikassa: listen() -> listenOnMain.
+  const requests = [...java.matchAll(/requestPermissionFor\w*\(/g)];
+  assert.equal(requests.length, 1, 'lupaa pyydetään useammassa kohdassa');
+  const listenOnMain = java.slice(java.indexOf('private void listenOnMain'), java.indexOf('@PermissionCallback'));
+  assert.match(listenOnMain, /requestPermissionForAlias\(MICROPHONE, call, "onMicrophonePermission"\)/);
+  assert.match(java, /public void listen\(PluginCall call\) \{\s*main\.post\(\(\) -> listenOnMain\(call\)\);/);
+
+  // Takaisinkutsun nimi vastaa metodia (muuten Capacitor HYLKÄISI kutsun).
+  assert.match(java, /@PermissionCallback\s+private void onMicrophonePermission\(PluginCall call\)/);
+
+  // Ei load()-ylikirjoitusta, joka voisi pyytää käynnistyksessä.
+  assert.equal(/void load\(\)/.test(java), false, 'load() ylikirjoitettu: lupa voisi lähteä käynnistyksessä');
+
+  // requestPermissions() EI pyydä: se vain lukee tilan.
+  const request = java.slice(java.indexOf('public void requestPermissions'), java.indexOf('handleOnPause'));
+  assert.match(request, /checkPermissions\(call\);/);
+  assert.equal(/requestPermissionFor/.test(request), false);
+});
+
+test('KRIITTINEN: puheliitännäinen sammuttaa mikrofonin taustalle siirryttäessä', { skip: !hasAndroid }, () => {
+  const java = javaCode('SpeechPlugin.java');
+  const between = (from, to) => java.slice(java.indexOf(from), java.indexOf(to, java.indexOf(from)));
+
+  assert.match(between('protected void handleOnPause', 'protected void handleOnStop'), /stopInternal\("aborted"\)/);
+  assert.match(between('protected void handleOnStop', 'protected void handleOnDestroy'), /cancelPermissionWait\(\);\s*stopInternal\("aborted"\)/);
+  assert.match(between('protected void handleOnDestroy', 'private void listenOnMain'), /cancelPermissionWait\(\);\s*stopInternal\("aborted"\)/);
+
+  // Tunnistin perutaan JA tuhotaan (muuten palveluyhteys ja mikrofoni jäävät auki).
+  const destroy = between('private void destroyRecognizer', 'private void done');
+  assert.match(destroy, /current\.cancel\(\)/);
+  assert.match(destroy, /current\.destroy\(\)/);
+
+  // Tunnistin on olemassa ennen kuin sitä käytetään.
+  assert.match(java, /SpeechRecognizer\.isRecognitionAvailable\(getContext\(\)\)/);
+  // Pääsäie: SpeechRecognizer toimii vain siellä.
+  assert.match(java, /new Handler\(Looper\.getMainLooper\(\)\)/);
+  assert.match(java, /main\.post\(\(\) -> \{\s*cancelPermissionWait\(\);\s*stopInternal\("aborted"\);/);
+});
+
+test('KRIITTINEN: puheliitännäinen ei tallenna ääntä eikä kuuntele taustalla', { skip: !hasAndroid }, () => {
+  const java = javaCode('SpeechPlugin.java');
+  for (const forbidden of ['MediaRecorder', 'AudioRecord', 'EXTRA_AUDIO_SOURCE', 'FileOutputStream',
+    'startForeground', 'ForegroundService', 'getExternalFilesDir',
+    'SharedPreferences', 'EXTRA_SEGMENTED_SESSION']) {
+    assert.equal(java.includes(forbidden), false, 'SpeechPlugin.java: ' + forbidden);
+  }
+  assert.equal(/EXTRA_PARTIAL_RESULTS,\s*true/.test(java), false, 'väliaikatuloksia ei pyydetä');
+  assert.match(java, /EXTRA_PARTIAL_RESULTS, false/);
+
+  // Äänipuskuria ei käsitellä.
+  assert.match(java, /public void onBufferReceived\(byte\[\] buffer\) \{\}/);
+});
+
+test('puheliitännäinen ratkaisee kutsut eikä koskaan hylkää niitä', { skip: !hasAndroid }, () => {
+  const java = javaCode('SpeechPlugin.java');
+  assert.equal(/\.reject\(/.test(java), false, 'call.reject rikkoisi JS-puolen "EI HEITÄ" -sopimuksen');
+
+  // Jokainen virhekoodi, jonka Java voi palauttaa, on JS-puolen tuntema.
+  const javaCodes = new Set([...java.matchAll(/return "([a-z-]+)";/g)].map(m => m[1]));
+  for (const [, literal] of java.matchAll(/(?:done|finish|stopInternal)\([^;]*?"([a-z-]+)"/g)) javaCodes.add(literal);
+  const speechSource = read('src/platform/speech.js');
+  for (const code of javaCodes) {
+    assert.ok(speechSource.includes(`'${code}'`), `Javan virhekoodi ${code} puuttuu speech.js:n taulukosta`);
+  }
+  assert.ok(javaCodes.has('blocked') && javaCodes.has('not-allowed') && javaCodes.has('unavailable'));
 });
 
 test('vain käynnistysaktiviteetti on ulospäin avoin', { skip: !hasAndroid }, () => {

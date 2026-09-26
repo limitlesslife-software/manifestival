@@ -1,7 +1,8 @@
 // Puheohjaus: yksi tulkintaputki tekstille ja puheelle.
 //
 // Virta:
-//   mikrofoni -> selaimen puheentunnistus -> teksti
+//   mikrofoni -> puheentunnistus (src/platform/speech.js: selain tai
+//                Android-sovelluksen oma liitännäinen) -> teksti
 //     -> KÄYTTÄJÄ TARKISTAA/MUOKKAA TEKSTIÄ
 //     -> selvä haku ("etsi ...") -> hakupaneeli (ei komentoa)
 //     -> muuten runTypedCommand({source:'voice'})  (src/app/commandBar.js)
@@ -22,14 +23,21 @@
 // SUCCESS | ERROR). Tämä moduuli vain toteuttaa sivuvaikutukset:
 //
 //   - MIKROFONI on päällä vain kun tila sitä sallii (micActive). Jokainen
-//     siirtymä muuhun tilaan sammuttaa tunnistuksen, myös sivun
-//     piilottaminen (visibilitychange/pagehide). Ei taustamikrofonia.
+//     siirtymä muuhun tilaan KATKAISEE tunnistuksen (abort, ei stop), myös
+//     sivun piilottaminen (visibilitychange/pagehide) ja sovelluksen
+//     siirtyminen taustalle (main.js onPause). Katkaistun kuuntelun
+//     myöhäinen tulos ohitetaan. Ei taustamikrofonia.
+//   - Kuuntelulla on yläraja (15 s, speech.js): hiljainen tunnistin ei jätä
+//     paneelia "Kuuntelen…"-tilaan.
+//   - Pysyvä virhe (lupa estetty) ei tarjoa "Yritä uudelleen" -painiketta,
+//     joka epäonnistuisi samalla tavalla; Android-sovelluksessa tarjotaan
+//     "Avaa asetukset".
 //   - LITTEROINTI EI KOSKAAN mene suoraan tallennukseen: käyttäjä näkee ja
 //     voi muokata tekstin ennen kuin se lähtee tulkittavaksi.
 //   - Kohteenvalinta ja vahvistus näytetään ui/confirm.js:n jaetulla
 //     dialogilla, joka kerrostuu tämän paneelin päälle.
 //
-// Jos selain ei tue puheentunnistusta tai verkko pettää, käyttäjä voi aina
+// Jos alusta ei tue puheentunnistusta tai verkko pettää, käyttäjä voi aina
 // kirjoittaa saman asian tekstinä. Puheohjaus ei koskaan päädy umpikujaan.
 
 import { el, maybe, singleFlight } from '../ui/dom.js';
@@ -42,9 +50,14 @@ import {
 } from '../domain/voiceFlow.js';
 import { routeUtterance, ROUTE } from '../domain/utteranceRoute.js';
 
-/** Tila -> mikä paneelin osa näytetään. Käsittelyvaiheet (ja dialogit) näyttävät "tulkitsen". */
+/**
+ * Tila -> mikä paneelin osa näytetään. Käsittelyvaiheet (ja dialogit) näyttävät "tulkitsen".
+ *
+ * Luvan odotus on oma näkymänsä: "Kuuntelen…" järjestelmän lupadialogin
+ * aikana väittäisi mikrofonin olevan jo auki.
+ */
 const PANEL = Object.freeze({
-  [VOICE.REQUESTING_PERMISSION]: 'listening',
+  [VOICE.REQUESTING_PERMISSION]: 'permission',
   [VOICE.LISTENING]: 'listening',
   [VOICE.TRANSCRIPT_READY]: 'transcript',
   [VOICE.CLASSIFYING]: 'processing',
@@ -53,10 +66,11 @@ const PANEL = Object.freeze({
   [VOICE.CONFIRMATION]: 'processing',
   [VOICE.EXECUTING]: 'processing',
   [VOICE.ERROR]: 'error',
+  [VOICE.MIC_DENIED]: 'error',
   [VOICE.TYPE_FALLBACK]: 'typefallback'
 });
 
-const PANELS = ['listening', 'transcript', 'processing', 'error', 'typefallback'];
+const PANELS = ['permission', 'listening', 'transcript', 'processing', 'error', 'typefallback'];
 
 /** commandBar.js:n vaiheraportti -> tilakoneen tapahtuma. */
 const PHASE_EVENT = Object.freeze({
@@ -66,17 +80,23 @@ const PHASE_EVENT = Object.freeze({
   executing: VOICE_EVENT.PHASE_EXECUTE
 });
 
-const SpeechRecognitionCtor = typeof window !== 'undefined'
-  ? (window.SpeechRecognition || window.webkitSpeechRecognition)
-  : null;
-
-let recognition = null;
+/**
+ * Käynnissä oleva kuuntelu: `{ handle }`, jossa handle on
+ * speech.startListening():n paluuarvo. Vain TÄMÄN kuuntelun tulos
+ * käsitellään; katkaistun tai korvatun kuuntelun myöhäinen tulos ohitetaan.
+ */
+let session = null;
 let flow = initialVoiceState();
-/** Estää samasta tunnistuksesta useamman tuloksen käsittelyn (onresult voi
- *  laueta uudelleen, ja onend ei saa näyttää virhettä enää tuloksen jälkeen). */
-let resultHandled = false;
+/** Viimeisimmän kuuntelun virhekoodi: ratkaisee, tarjotaanko "Avaa asetukset". */
+let lastErrorCode = '';
 /** Elementti, joka avasi paneelin: sulkeminen palauttaa fokuksen sinne (näppäimistö- ja ruudunlukijakäyttäjä ei putoa sivun alkuun). */
 let opener = null;
+
+/** Voiko tällä alustalla kuunnella lainkaan? Natiivikuoressa vain omalla liitännäisellä. */
+function micSupported() {
+  const state = speech.capability();
+  return state.supported && state.implemented;
+}
 
 function showState(name) {
   for (const state of PANELS) {
@@ -103,14 +123,46 @@ function closeOverlay() {
   el('voiceOverlay').classList.remove('open');
   el('voiceOverlay').setAttribute('aria-hidden', 'true');
   stopRecognition();
-  resultHandled = false;
+  lastErrorCode = '';
   if (opener && typeof opener.focus === 'function') opener.focus();
   opener = null;
 }
 
+/**
+ * Katkaise kuuntelu. abort, ei stop: kesken jäänyt tulos hylätään eikä
+ * sitä käsitellä (ei tekstiä kenttään, ei fokusta, ei lokia).
+ */
 function stopRecognition() {
-  if (!recognition) return;
-  try { recognition.stop(); } catch { /* jo pysähtynyt */ }
+  if (!session) return;
+  const current = session;
+  session = null;
+  if (current.handle) current.handle.cancel();
+}
+
+/** Näytä tai piilota painike. style.display, koska .voice-mic-btn asettaa display:flex. */
+function showButton(id, visible) {
+  const node = maybe(id);
+  if (node) node.style.display = visible ? '' : 'none';
+}
+
+/**
+ * Virhepaneelin toiminnot. Pysyvä virhe (MIC_DENIED) ei tarjoa
+ * uudelleenyritystä, joka epäonnistuisi samalla tavalla; kirjoittaminen
+ * on aina tarjolla. Android-sovelluksen pysyvä kielto ('blocked') saa
+ * "Avaa asetukset" -painikkeen, koska vain järjestelmän asetukset auttavat.
+ */
+function showErrorActions() {
+  const denied = flow === VOICE.MIC_DENIED;
+  showButton('voiceErrorRetry', !denied);
+  showButton('voiceErrorSettings', denied && lastErrorCode === 'blocked' && speech.canOpenSettings());
+}
+
+/** Kirjoituspaneeli kertoo, miksi puhe ei ole käytettävissä (jos ei ole). */
+function showFallbackReason() {
+  const node = maybe('vfFallbackReason');
+  if (!node) return;
+  const state = speech.capability();
+  node.textContent = state.supported && state.implemented ? '' : (state.reason || '');
 }
 
 /** Ota tila käyttöön: mikrofoni, paneeli ja sulkeminen seuraavat tilasta. */
@@ -123,13 +175,15 @@ function applyState() {
     return;
   }
   const panel = PANEL[flow];
+  if (panel === 'error') showErrorActions();
+  if (panel === 'typefallback') showFallbackReason();
   if (panel) showState(panel);
 }
 
 /** Yksi ainoa paikka, jossa tila muuttuu. Kielletty siirtymä ei tee mitään. */
 function transition(event) {
   const before = flow;
-  flow = nextVoiceState(flow, event, { micSupported: Boolean(recognition) });
+  flow = nextVoiceState(flow, event, { micSupported: micSupported() });
   if (flow === before) return flow;
   logEvent('voice.state', { from: before, to: flow });
   applyState();
@@ -221,64 +275,56 @@ const submitTranscript = singleFlight(async (text, ui) => {
     : (result.reason || 'Komentoa ei ymmärretty.'), VOICE_EVENT.DONE_ERROR);
 });
 
-function setupRecognition() {
-  if (!SpeechRecognitionCtor) return null;
+/**
+ * Kuuntelun lopputulos. Käsitellään VAIN, jos tämä on yhä se kuuntelu,
+ * jonka paneeli aloitti: peruttu (X, Esc, piilotus) tai korvattu kuuntelu
+ * ei saa kirjoittaa tekstiä kenttään eikä siirtää fokusta.
+ */
+function onListenResult(current, result) {
+  if (session !== current) return;
+  session = null;
+  if (!micActive(flow)) return;
 
-  const instance = new SpeechRecognitionCtor();
-  instance.lang = 'fi-FI';
-  instance.continuous = false;
-  instance.interimResults = true;
+  if (result.ok) {
+    const clean = result.text;
+    // Vain pituus: litterointi on käyttäjän puhetta eikä kuulu lokiin.
+    logEvent('voice.transcript', { chars: clean.length });
+    // Tunnistus voi päättyä ennen onStart-kutsua: varmistetaan tila.
+    transition(VOICE_EVENT.MIC_STARTED);
+    transition(VOICE_EVENT.HEARD);
+    showTranscriptReview(clean);
+    return;
+  }
 
-  instance.onstart = () => transition(VOICE_EVENT.MIC_STARTED);
-
-  instance.onresult = event => {
-    let transcript = '';
-    for (let i = 0; i < event.results.length; i++) transcript += event.results[i][0].transcript;
-
-    const display = maybe('voiceTranscript');
-    if (display) display.textContent = transcript;
-
-    if (event.results[event.results.length - 1].isFinal) {
-      if (resultHandled) return;
-      const clean = transcript.trim();
-      if (!clean) { failWith('En kuullut mitään. Yritä uudelleen.'); return; }
-      resultHandled = true;
-      // Vain pituus: litterointi on käyttäjän puhetta eikä kuulu lokiin.
-      logEvent('voice.transcript', { chars: clean.length });
-      // Tunnistus voi päättyä ennen onstart-tapahtumaa: varmistetaan tila.
-      transition(VOICE_EVENT.MIC_STARTED);
-      transition(VOICE_EVENT.HEARD);
-      showTranscriptReview(clean);
-    }
-  };
-
-  instance.onerror = event => {
-    logEvent('voice.error', { code: String(event.error || 'unknown') });
-    if (event.error === 'no-speech') failWith('En kuullut mitään. Yritä uudelleen.');
-    else if (event.error === 'not-allowed' || event.error === 'service-not-allowed') failWith('Mikrofonin käyttö estetty. Salli mikrofoni selaimen asetuksista.');
-    else if (event.error === 'aborted') { /* käyttäjä sulki — ei virhe */ }
-    else failWith('Puheentunnistus ei onnistunut.');
-  };
-
-  instance.onend = () => {
-    if (micActive(flow) && !resultHandled) failWith('En kuullut mitään. Yritä uudelleen.');
-  };
-
-  return instance;
+  const code = String(result.code || 'unknown');
+  logEvent('voice.error', { code });
+  if (code === 'aborted') {
+    // Järjestelmä keskeytti (sovellus taustalle, toinen sovellus otti
+    // mikrofonin): ei virhe. Paneeli sulkeutuu hiljaa, kuten piilotuksessa.
+    transition(VOICE_EVENT.HIDDEN);
+    return;
+  }
+  lastErrorCode = code;
+  failWith(speech.errorMessage(code),
+    speech.isPermanentError(code) ? VOICE_EVENT.FAIL_PERMANENT : VOICE_EVENT.FAIL);
 }
 
-/** Aloita kuuntelu nykyisessä (avoimessa) tilassa. */
+/** Aloita kuuntelu nykyisessä (avoimessa) tilassa. Vain käyttäjän napautuksesta. */
 function beginListening() {
-  resultHandled = false;
+  stopRecognition();
+  lastErrorCode = '';
   const display = maybe('voiceTranscript');
   if (display) display.textContent = '';
 
-  try {
-    recognition.start();
-  } catch {
-    // start() heittää, jos tunnistus on jo käynnissä.
-    failWith('Mikrofonia ei voitu käynnistää.');
-  }
+  const current = { handle: null };
+  session = current;
+  current.handle = speech.startListening({
+    lang: 'fi-FI',
+    onStart: () => { if (session === current) transition(VOICE_EVENT.MIC_STARTED); },
+    // Väliaikainen teksti näytetään vain kuunnellessa (selain; natiivi ei anna sitä).
+    onInterim: interim => { if (session === current && display) display.textContent = interim; }
+  });
+  current.handle.result.then(result => onListenResult(current, result));
 }
 
 /** Avaa puhepaneeli ja aloita kuuntelu (tai uusi yritys, jos paneeli on jo auki). */
@@ -296,9 +342,15 @@ export function startVoiceFlow() {
   if (flow === VOICE.REQUESTING_PERMISSION) beginListening();
 }
 
-/** Kytke puheohjauksen tapahtumat. Kutsutaan kerran käynnistyksessä. */
+/**
+ * Kytke puheohjauksen tapahtumat. Kutsutaan kerran käynnistyksessä.
+ *
+ * EI KYSY MIKROFONILUPAA. Lupa kysytään vasta kun käyttäjä napauttaa
+ * mikrofonia (startVoiceFlow -> speech.startListening). Tässä vain luetaan
+ * nykyinen lupatila asetusnäkymää varten; luku ei avaa dialogia.
+ */
 export function initVoice() {
-  recognition = setupRecognition();
+  speech.refreshPermission().catch(() => { /* tila jää "ei kysytty" */ });
 
   el('fabBtn').addEventListener('click', startVoiceFlow);
   el('voiceErrorCloseBtn').addEventListener('click', () => transition(VOICE_EVENT.CANCEL));
@@ -307,6 +359,12 @@ export function initVoice() {
     transition(VOICE_EVENT.TYPE_INSTEAD);
     const input = maybe('vfFallbackInput');
     if (input) input.focus();
+  });
+  // Android: pysyvästi estetty mikrofoni. Asetuksista palattuaan käyttäjä
+  // napauttaa mikrofonia uudelleen; paneeli suljetaan, jottei vanha virhe jää näkyviin.
+  el('voiceErrorSettings').addEventListener('click', async () => {
+    const opened = await speech.openSettings();
+    if (opened) transition(VOICE_EVENT.CANCEL);
   });
   el('voiceCloseX').addEventListener('click', () => transition(VOICE_EVENT.CANCEL));
 
@@ -321,8 +379,11 @@ export function initVoice() {
 
   // EI TAUSTAMIKROFONIA: kun sivu piilotetaan tai suljetaan (välilehden vaihto,
   // sovellus taustalle, navigointi), mikrofoni sammuu ja kuunteleva paneeli sulkeutuu.
+  // Poikkeus: Androidin oma lupadialogi ei ole "taustalle siirtyminen", vaikka
+  // se keskeyttää aktiviteetin; liitännäinen perii odotuksen itse, jos
+  // sovellus oikeasti poistuu näkyvistä (ks. src/platform/speech.js).
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) transition(VOICE_EVENT.HIDDEN);
+    if (document.hidden && !speech.isAwaitingPermission()) transition(VOICE_EVENT.HIDDEN);
   });
   window.addEventListener('pagehide', () => transition(VOICE_EVENT.HIDDEN));
 
@@ -337,7 +398,7 @@ export function initVoice() {
     if (event.key === 'Enter') { event.preventDefault(); submitTranscript(transcriptInput.value, {}); }
   });
 
-  // Kirjoitettu varapolku (ei puheentunnistusta selaimessa): sama
+  // Kirjoitettu varapolku (ei puheentunnistusta tällä alustalla): sama
   // suoritusputki, suoraan ilman erillistä tarkistusvaihetta --
   // käyttäjä näki tekstin jo kirjoittaessaan sitä.
   const submitFallback = () => {
@@ -358,9 +419,9 @@ export function initVoice() {
  * Onko puheentunnistus käytettävissä.
  *
  * Kysytään alustasovittimelta, jotta tuen tarkistus on yhdessä paikassa.
- * Natiivikuoressa vastaus tulee myöhemmin natiivilta liitännäiseltä ilman
- * että tätä kutsupaikkaa tarvitsee muuttaa.
+ * Tuki ei yksin riitä: Android-kuori tukee puhetta, mutta vain jos
+ * puheliitännäinen on mukana (implemented).
  */
 export function speechSupported() {
-  return speech.capability().supported;
+  return micSupported();
 }

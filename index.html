@@ -1565,6 +1565,14 @@
     <div class="voice-sheet">
       <button class="voice-close-x" id="voiceCloseX" type="button" aria-label="Sulje"><svg class="icon" style="width:20px;height:20px;" aria-hidden="true"><use href="#i-x"/></svg></button>
 
+      <!-- Luvan odotus: laite voi nayttaa oman lupadialoginsa. "Kuuntelen"
+           vasta kun mikrofoni on oikeasti auki. -->
+      <div class="voice-state" id="voiceState-permission" style="display:none;">
+        <div class="voice-orb" aria-hidden="true"><svg aria-hidden="true"><use href="#i-mic"/></svg></div>
+        <div class="voice-label" role="status">Käynnistetään mikrofonia…</div>
+        <div class="hint" style="text-align:center;">Jos laite kysyy lupaa mikrofoniin, valitse Salli. Ääntä ei tallenneta, ja näet tekstin ennen kuin mitään tehdään.</div>
+      </div>
+
       <div class="voice-state" id="voiceState-listening">
         <div class="voice-orb" aria-hidden="true"><svg aria-hidden="true"><use href="#i-mic"/></svg></div>
         <div class="voice-label">Kuuntelen…</div>
@@ -1590,6 +1598,7 @@
       <div class="voice-state" id="voiceState-error" style="display:none;">
         <div class="voice-label" id="voiceErrorMsg" role="alert">Jotain meni pieleen</div>
         <button class="voice-mic-btn" id="voiceErrorRetry" type="button">Yritä uudelleen</button>
+        <button class="form-btn secondary" id="voiceErrorSettings" type="button" style="display:none; width:100%; margin-bottom:8px; padding:12px;">Avaa asetukset</button>
         <button class="form-btn secondary" id="voiceErrorTypeInstead" type="button" style="width:100%; margin-bottom:8px; padding:12px;">Kirjoita sen sijaan</button>
         <button class="form-btn secondary" id="voiceErrorCloseBtn" type="button" style="width:100%; padding:12px;">Sulje</button>
       </div>
@@ -1599,7 +1608,8 @@
         <label class="visually-hidden" for="vfFallbackInput">Tehtävän kuvaus</label>
         <input class="voice-field" id="vfFallbackInput" placeholder="esim. Muistuta perjantaina tilaamaan kanavat">
         <button class="voice-mic-btn" id="vfFallbackSubmit" type="button">Tulkitse</button>
-        <div class="hint" style="text-align:center;">Puheentunnistus toimii parhaiten Chromella tai Edgellä. Kirjoittaminen toimii kaikkialla.</div>
+        <div class="hint" id="vfFallbackReason" role="status" style="text-align:center;"></div>
+        <div class="hint" style="text-align:center;">Kirjoittaminen toimii kaikkialla.</div>
       </div>
     </div>
   </div>

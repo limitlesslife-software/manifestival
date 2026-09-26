@@ -59,10 +59,33 @@
     <uses-permission android:name="android.permission.INTERNET" />
 
     <!--
+        MIKROFONI: vain puheentunnistukseen (SpeechPlugin.java). Lupaa
+        kysytaan vasta kun kayttaja napauttaa mikrofonia, ei koskaan
+        kaynnistyksessa. Aanta ei tallenneta, eika taustakuuntelua ole:
+        kuuntelu perutaan, kun sovellus siirtyy taustalle.
+
+        Aaniasetusten muokkauslupaa EI julisteta tarkoituksella. Ilman sita
+        Capacitor hylkaa WebView'n omat mikrofonipyynnot, joten web-koodi ei
+        voi avata mikrofonia liitannaisen ohi. Testit (android.test)
+        vartioivat tata.
+    -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+    <!--
         SIJAINTI: lupaa ei julisteta, koska mikaan toteutettu ominaisuus ei
         kayta sijaintia (src/platform/capabilities.js NATIVE_LOCATION_ENABLED
         = false). Jos sijainti joskus palaa (reittipalvelu, WP11), vain
         likimaarainen etualan lupa lisataan, ja sen rinnalle
         android.hardware.location required="false", jottei jakelu rajaudu.
     -->
+
+    <!--
+        Android 11+ nayttaa sovellukselle vain julistetut palvelut: ilman tata
+        jarjestelman puheentunnistuspalvelu ei nay SpeechRecognizerille.
+    -->
+    <queries>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+    </queries>
 </manifest>

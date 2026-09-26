@@ -443,7 +443,35 @@ test('natiivikuori tunnistetaan ja nimetään', async () => {
   const summary = index.capabilities();
   assert.equal(summary.native, true);
   assert.equal(summary.platform, 'android');
-  assert.equal(index.speech.supportsBackgroundCapture(), true);
+  // AIEMMIN tämä väitti natiivikuoren kuuntelevan taustalla (true), vaikka
+  // taustakuuntelua ei ole koskaan ollut. Nyt se on tietoisesti kielletty:
+  // puheliitännäinen kuuntelee vain etualalla ja napautuksesta.
+  assert.equal(index.speech.supportsBackgroundCapture(), false);
+});
+
+test('natiivikuori ilman puheliitännäistä: puhe tuettu mutta ei toteutettu, lupa ei "kysymättä"', async () => {
+  fakeNative('android');
+  // WebView tarjoaa konstruktorin, mutta sitä EI lasketa tueksi natiivikuoressa.
+  globalThis.webkitSpeechRecognition = function Unused() {};
+  try {
+    const { index, capabilities } = await loadPlatform();
+    const state = index.speech.capability();
+    assert.equal(state.supported, true);
+    assert.equal(state.implemented, false);
+    assert.equal(state.available, false);
+    assert.equal(state.permission, capabilities.PERMISSION.UNSUPPORTED);
+    assert.match(state.reason, /Android/);
+    assert.equal(/tausta/i.test(state.plannedNote), false, 'taustakuuntelua ei luvata');
+  } finally {
+    delete globalThis.webkitSpeechRecognition;
+  }
+});
+
+test('selain ilman puheentunnistusta: lupa on "ei tuettu", ei "kysymättä"', async () => {
+  const { index, capabilities } = await loadPlatform();
+  const state = index.speech.capability();
+  assert.equal(state.supported, false);
+  assert.equal(state.permission, capabilities.PERMISSION.UNSUPPORTED);
 });
 
 test('taustakuuntelu ei ole mahdollista selaimessa', async () => {

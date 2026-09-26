@@ -5,14 +5,14 @@
 // Kielletty siirtymä ei heitä eikä tee mitään: se palauttaa saman tilan.
 //
 //   IDLE
-//    -> REQUESTING_PERMISSION   (avataan; selain kysyy mikrofonin luvan)
+//    -> REQUESTING_PERMISSION   (avataan; alusta voi kysyä mikrofonin luvan)
 //    -> LISTENING               (tunnistus käynnissä)
 //    -> TRANSCRIPT_READY        (käyttäjä näkee ja voi muokata tekstiä)
 //    -> CLASSIFYING             (teksti lähetetty tulkittavaksi)
 //    -> REVIEW / TARGET_SELECTION / CONFIRMATION / EXECUTING
 //                               (samat vaiheet kuin kirjoitetulla komennolla:
 //                                commandBar.js raportoi ne onPhase-kutsulla)
-//    -> SUCCESS | ERROR
+//    -> SUCCESS | ERROR | MIC_DENIED
 //
 // TAKUUT
 //   - Mikrofoni on päällä VAIN tiloissa REQUESTING_PERMISSION ja LISTENING
@@ -21,6 +21,9 @@
 //   - Litterointi ei koskaan mene suoraan tallennukseen: TRANSCRIPT_READY ->
 //     CLASSIFYING vaatii käyttäjän SUBMIT:n.
 //   - Peruutus (CANCEL/CLOSE) on mahdollinen joka tilasta ja palauttaa IDLE.
+//   - Pysyvä virhe (lupa estetty, tunnistin puuttuu) on oma tilansa
+//     MIC_DENIED, josta RETRY ei käynnistä uutta kuuntelua: sama pyyntö
+//     epäonnistuisi samalla tavalla. Tarjolla on kirjoittaminen.
 
 export const VOICE = Object.freeze({
   IDLE: 'idle',
@@ -34,6 +37,8 @@ export const VOICE = Object.freeze({
   EXECUTING: 'executing',
   SUCCESS: 'success',
   ERROR: 'error',
+  /** Mikrofonia ei sallittu tai tunnistinta ei ole: uusi yritys ei auta heti. */
+  MIC_DENIED: 'mic_denied',
   /** Selain ei tue puheentunnistusta tai käyttäjä valitsi kirjoittamisen. */
   TYPE_FALLBACK: 'type_fallback'
 });
@@ -44,6 +49,8 @@ export const VOICE_EVENT = Object.freeze({
   MIC_STARTED: 'mic_started',
   HEARD: 'heard',
   FAIL: 'fail',
+  /** Kuuntelu epäonnistui pysyvästi (lupa estetty, tunnistin puuttuu). */
+  FAIL_PERMANENT: 'fail_permanent',
   SUBMIT: 'submit',
   PHASE_REVIEW: 'phase_review',
   PHASE_TARGET: 'phase_target',
@@ -109,6 +116,9 @@ export function nextVoiceState(state, event, { micSupported = true } = {}) {
     case VOICE_EVENT.FAIL:
       return micActive(current) ? VOICE.ERROR : current;
 
+    case VOICE_EVENT.FAIL_PERMANENT:
+      return micActive(current) ? VOICE.MIC_DENIED : current;
+
     case VOICE_EVENT.SUBMIT:
       // Ainoa tie tulkintaan: käyttäjä on nähnyt tekstin (tai kirjoittanut sen itse).
       return current === VOICE.TRANSCRIPT_READY || current === VOICE.TYPE_FALLBACK
@@ -125,12 +135,14 @@ export function nextVoiceState(state, event, { micSupported = true } = {}) {
     case VOICE_EVENT.DONE_ERROR: return processing ? VOICE.ERROR : current;
 
     case VOICE_EVENT.RETRY:
+      // Ei MIC_DENIED-tilasta: estetty lupa ei muutu yrittämällä uudelleen.
       return current === VOICE.ERROR || current === VOICE.TRANSCRIPT_READY
         ? (micSupported ? VOICE.REQUESTING_PERMISSION : VOICE.TYPE_FALLBACK)
         : current;
 
     case VOICE_EVENT.TYPE_INSTEAD:
-      return current === VOICE.ERROR || current === VOICE.TRANSCRIPT_READY || micActive(current)
+      return current === VOICE.ERROR || current === VOICE.MIC_DENIED
+        || current === VOICE.TRANSCRIPT_READY || micActive(current)
         ? VOICE.TYPE_FALLBACK
         : current;
 
