@@ -10,13 +10,17 @@
 <!--
   PAIKALLINEN E2E-VALJAS. EI TUOTANTOA.
 
-  Liittää oikean index.html:n #app-merkinnän ja oikeat näkymämoduulit
-  sivulle, mutta istunto ja tietokanta ovat tekoja:
-    - käyttäjä asetetaan suoraan (setUser), kirjautumista ei tehdä
-    - Supabase-asiakas on paikallinen korvike, joka ei ota verkkoyhteyttä
+  Liittää oikean index.html:n rungon sivulle ja käynnistää sovelluksen
+  omalla polullaan (src/app/main.js: istunnon palautus, skeematarkistus,
+  loadUserData, renderAll), mutta istunto ja tietokanta ovat tekoja:
+    - istunto on valmiiksi kirjautunut tekaistu käyttäjä ilman tokenia
+      (kirjautumista ei tehdä, tekoälykutsuja ei lähde)
+    - Supabase-asiakas on paikallinen korvike (tools/e2e/fakeSupabase.mjs),
+      joka tallentaa rivit sivun sessionStorageen eikä ota verkkoyhteyttä
     - supabase-js:ää ei ladata lainkaan
   Ajaja (tools/e2e/run-suunta-e2e.mjs) estää lisäksi *.supabase.co- ja
-  Anthropic-nimet DNS-tasolla.
+  Anthropic-nimet DNS-tasolla, ja J-porttitilassa se lisää tähän import
+  mapin, joka ohjaa /src/data/schema.js:n J-porttiseen versioon.
 
   Kello on siirrettävä (window.__e2e.advance), jotta ajastimen minuutit
   voidaan todentaa odottamatta oikeaa aikaa.

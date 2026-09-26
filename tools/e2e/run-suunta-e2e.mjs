@@ -1,6 +1,8 @@
 // Suunta E2E: paikallinen selainajo (headless Chrome, CDP). EI TUOTANTOA.
 //
-//   node tools/e2e/run-suunta-e2e.mjs
+//   node tools/e2e/run-suunta-e2e.mjs            kaikki ryhmät
+//   E2E_GROUPS=legacy node tools/e2e/run-...     vain vanhan käyttäjän ryhmä
+//   E2E_GATES_REF=<ref>                          J-porttien lähde (oletus rehearsal/wave-j-v1)
 //
 // TURVASÄÄNNÖT (ks. aiempi havainto vieraasta Chrome-prosessista):
 //   - debug-portti valitaan vapaaksi JA todennetaan vapaaksi ennen
@@ -10,15 +12,26 @@
 //     yritys tuotantoon kaataa ajon
 //   - profiili on projektin tmp/-hakemistossa ja poistetaan lopuksi
 //
-// Skenaariot: aloitus (vaihe 1/7, ei mitään ennen tallennusta),
-// ensikäyttö (alue, tärkeys, tavoite, kapasiteetti), ajastin (alue
-// kysytään, käynnistä, kello eteen, pysäytä), nopea kirjaus dialogista,
-// Enter "Muu"-kentässä (oikea näppäily), kirjatun ajan alue jälkikäteen,
-// arviojono (yksi kortti, viiveellä heräävä seuraava),
-// kuormitus + energia, huomiotta jääminen, poikkeama, päivän kortti,
-// selitys (varapolku), viikkokatsaus, ehdotuksen esikatselu ja
-// ryhmävahvistus, mobiilileveys ilman vaakavieritystä, saavutettava nimi
-// jokaisella painikkeella ja kentällä.
+// KÄYNNISTYS: valjas (tools/e2e/harness.mjs) käynnistää sovelluksen
+// oikealla polulla (src/app/main.js) tekaistulla istunnolla ja
+// tallentavalla kannan korvikkeella (tools/e2e/fakeSupabase.mjs).
+// Uudelleenlataus on oikea sivun uudelleenlataus (Page.reload): main.js
+// käynnistyy uudelleen ja loadUserData lukee kannan rivit.
+//
+// RYHMÄT (jokainen alkaa tyhjältä laitteelta):
+//   closed   haaran omat portit (Suunta muistissa), tyhjä kanta:
+//            aiemmat skenaariot
+//   J        aallon J portit (ks. tools/e2e/gates.mjs), tyhjä kanta:
+//            samat skenaariot tallentuvalla Suunnalla
+//   legacy   aallon J portit, vanhan käyttäjän kanta (tools/e2e/seeds.mjs):
+//            aloitus, alue, kapasiteetti, tavoite, arvio, ajastin,
+//            uudelleenlataus, pysäytys, katsaus, ensi viikko, liitos,
+//            näppäimistö ja offline
+//
+// ODOTTAA RINNAKKAISTA PAKETTIA: skenaario, jonka korjaus tulee toisesta
+// paketista, on PENDING_ON-listassa. Sen epäonnistuminen ei kaada ajoa,
+// mutta onnistuminen kaataa ("poista merkintä"): merkintä ei jää
+// unohduksiin, kun korjaus on integroitu.
 
 import http from 'node:http';
 import net from 'node:net';
@@ -26,6 +39,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { resolveGateMode, GATES_QUERY, harnessHtml } from './gates.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const CHROME_CANDIDATES = [
@@ -40,6 +54,8 @@ const MIME = {
   '.json': 'application/json; charset=utf-8', '.png': 'image/png', '.svg': 'image/svg+xml'
 };
 
+const HARNESS_PAGE = 'tools/e2e/suunta-harness.html';
+
 function freePort() {
   return new Promise((resolve, reject) => {
     const server = net.createServer();
@@ -51,18 +67,29 @@ function freePort() {
   });
 }
 
-function startServer(port) {
+function startServer(port, { gatedSchema }) {
   const server = http.createServer((req, res) => {
-    const urlPath = decodeURIComponent((req.url || '/').split('?')[0]);
+    const url = new URL(req.url || '/', 'http://127.0.0.1');
+    const urlPath = decodeURIComponent(url.pathname);
     if (urlPath.startsWith('/api/')) {
       res.writeHead(501, { 'Content-Type': 'application/json' }).end('{"error":"ei paikallisesti"}');
       return;
     }
-    const filePath = path.resolve(ROOT, urlPath === '/' ? 'tools/e2e/suunta-harness.html' : urlPath.replace(/^\/+/, ''));
+    const headers = type => ({ 'Content-Type': type, 'Cache-Control': 'no-store' });
+    if (urlPath === '/' || urlPath === '/' + HARNESS_PAGE) {
+      const template = fs.readFileSync(path.join(ROOT, HARNESS_PAGE), 'utf8');
+      res.writeHead(200, headers(MIME['.html'])).end(harnessHtml(template, url.searchParams.get('gates')));
+      return;
+    }
+    if (urlPath === '/src/data/schema.js' && url.searchParams.get(GATES_QUERY) === 'J') {
+      res.writeHead(200, headers(MIME['.js'])).end(gatedSchema);
+      return;
+    }
+    const filePath = path.resolve(ROOT, urlPath.replace(/^\/+/, ''));
     if (!filePath.startsWith(ROOT)) { res.writeHead(403).end(); return; }
     fs.readFile(filePath, (err, data) => {
       if (err) { res.writeHead(404).end('404'); return; }
-      res.writeHead(200, { 'Content-Type': MIME[path.extname(filePath)] || 'application/octet-stream', 'Cache-Control': 'no-store' }).end(data);
+      res.writeHead(200, headers(MIME[path.extname(filePath)] || 'application/octet-stream')).end(data);
     });
   });
   return new Promise(resolve => server.listen(port, '127.0.0.1', () => resolve(server)));
@@ -127,6 +154,9 @@ window.H = {
   text(sel) { const node = document.querySelector(sel); return node ? node.textContent : ''; },
   html(sel) { const node = document.querySelector(sel); return node ? node.innerHTML : ''; },
   s: () => window.__e2e.state(),
+  // Kannan rivit (kirjautuneen käyttäjän), kuten palvelin ne näkee.
+  db: table => window.__e2e.db.rows(table),
+  tab: screen => H.click('.tab-btn[data-screen="' + screen + '"]'),
   // Tallennus on valmis vasta, kun painike ei ole enää varattu (tuplaklikkaussuoja):
   // tila päivittyy optimistisesti jo ennen kuin tallennus on palannut.
   idle: (sel, label) => H.waitFor(() => !H.el(sel).disabled && !H.el(sel).hasAttribute('aria-busy'), label || ('valmis: ' + sel))
@@ -260,13 +290,21 @@ const SCENARIOS = [
     return 'havainnot: ' + [...document.querySelectorAll('#dirSignals .dir-signal-title')].map(n => n.textContent).join(' | ');
   })()`],
 
+  // Kortti luetaan Tänään-välilehdeltä, kuten käyttäjä sen näkee (piirto
+  // voi rajautua näkyvään välilehteen), ja palataan Suuntaan.
   ['päivän kortti: yksi asia huomattavaksi, syy näkyvissä', `(async () => {
-    const card = H.text('#todayDirection');
-    if (!card.includes('Tänään kannattaa huomata')) throw new Error(card);
-    if (!H.html('#todayDirection').includes('Miksi tämä?')) throw new Error('syy puuttuu');
-    const count = document.querySelectorAll('#todayDirection .dir-today-observation').length;
-    if (count > 3) throw new Error('liikaa havaintoja: ' + count);
-    return count + ' havaintoa päivän kortissa';
+    H.tab('screen-today');
+    try {
+      await H.waitFor(() => H.el('#screen-today').classList.contains('active')
+        && H.text('#todayDirection').includes('Tänään kannattaa huomata'), 'päivän kortti');
+      if (!H.html('#todayDirection').includes('Miksi tämä?')) throw new Error('syy puuttuu');
+      const count = document.querySelectorAll('#todayDirection .dir-today-observation').length;
+      if (count > 3) throw new Error('liikaa havaintoja: ' + count);
+      return count + ' havaintoa päivän kortissa';
+    } finally {
+      H.tab('screen-direction');
+      await H.waitFor(() => H.el('#screen-direction').classList.contains('active'), 'takaisin Suuntaan');
+    }
   })()`],
 
   ['selitys: tekoäly oletuksena pois, päällä deterministinen varapolku', `(async () => {
@@ -350,10 +388,7 @@ const SCENARIOS = [
       H.el('#timeLogMinutes').focus();
       return H.s().timeEntries.length;
     })()`);
-    await cdp.send('Input.insertText', { text: '25' });
-    const enter = { key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 };
-    await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', text: '\r', ...enter });
-    await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', ...enter });
+    await typeAndEnter(cdp, '25');
     return evaluate(`(async () => {
       await H.waitFor(() => H.s().timeEntries.length === ${before} + 1, 'kirjaus Enterillä');
       const entry = H.s().timeEntries[H.s().timeEntries.length - 1];
@@ -446,15 +481,400 @@ const MOBILE = `(async () => {
   return 'leveys ' + widths.viewport + ' px: sivu ' + widths.page + ' px, dialogi ' + widths.dialog + ' px';
 })()`;
 
+const MOBILE_SCENARIO = ['mobiili 360 px: ei vaakavieritystä, dialogi mahtuu', async ({ evaluate, cdp }) => {
+  await cdp.send('Emulation.setDeviceMetricsOverride', { width: 360, height: 740, deviceScaleFactor: 3, mobile: true });
+  return evaluate(MOBILE);
+}];
+
+/** Kirjoita teksti fokusoituun kenttään ja paina Enter oikeina näppäilyinä. */
+async function typeAndEnter(cdp, text) {
+  if (text) await cdp.send('Input.insertText', { text });
+  const enter = { key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 };
+  await cdp.send('Input.dispatchKeyEvent', { type: 'keyDown', text: '\r', ...enter });
+  await cdp.send('Input.dispatchKeyEvent', { type: 'keyUp', ...enter });
+}
+
+// =====================================================================
+// VANHA KÄYTTÄJÄ (J-portit): 36 tehtävää ilman kestoa, 1 tavoite,
+// 1 projekti, ei alueita. Kanta: tools/e2e/seeds.mjs legacyUserSeed.
+// Kello: tämän viikon keskiviikko klo 10 (viikonpäivä ei vaihtele ajosta
+// toiseen). Skenaariot jatkavat samaa istuntoa järjestyksessä.
+// =====================================================================
+
+const LEGACY_WRITE_TABLES = ['tasks', 'goals', 'projects', 'life_areas', 'weekly_capacities', 'time_entries',
+  'alignment_reviews', 'alignment_item_settings', 'running_timers'];
+
+const LEGACY_SCENARIOS = [
+  ['legacy: 36 tehtävää ilman kestoa, 1 tavoite, 1 projekti, ei alueita: Suunta avautuu aloitukseen, '
+    + 'vanha data kuitataan, ei huomiotta jäämis- eikä poikkeamaväitteitä, ei automaattisia kirjoituksia', `(async () => {
+    const e = window.__e2e;
+    if (e.gates.mode !== 'J' || !e.gates.tables.lifeAreas || !e.gates.columns.ALIGNMENT_REALITY_FIELDS) throw new Error('ei J-portteja: ' + JSON.stringify(e.gates));
+    const s = H.s();
+    // Siemen tuli OIKEAN latauksen kautta (loadUserData), ei tilaan käsin.
+    if (s.tasks.length !== 36 || s.tasks.some(t => t.durationMinutes != null || t.completed)) throw new Error('tehtävät: ' + s.tasks.length);
+    if (s.goals.length !== 1 || s.projects.length !== 1 || s.projects[0].goalId !== s.goals[0].id) throw new Error('tavoite/projekti');
+    if (s.lifeAreas.length !== 0 || !s.profileExists) throw new Error('alueita tai profiili puuttuu');
+    // Ensikäytön opastus tälle käyttäjälle tällä laitteella: suljetaan omalla painikkeellaan.
+    await H.waitFor(() => H.el('#onboarding').getAttribute('aria-hidden') === 'false', 'ensikäytön opastus');
+    H.click('#onboardingSkip');
+    H.tab('screen-direction');
+    await H.waitFor(() => H.el('#screen-direction').classList.contains('active'), 'Suunta auki');
+    const setup = H.el('#dirSetup');
+    if (setup.hidden || !H.text('#dirSetup').includes('1/7')) throw new Error('aloitus ei näy');
+    if (setup.querySelector('[data-setup="skip"]')) throw new Error('aluetta voi ohittaa');
+    // F9: vanha data kuitataan oikeilla luvuilla (koko Suunnan aluelistassa).
+    const legacy = H.text('#dirAreaSuggestions .dir-legacy');
+    for (const part of ['36 tehtävää', '1 tavoite', '1 projekti']) {
+      if (!legacy.includes(part)) throw new Error('kuittaus ilman "' + part + '": ' + legacy);
+    }
+    const kinds = e.alignment.analyzeCurrentWeek().signals.map(signal => signal.kind);
+    if (kinds.includes(e.SIGNAL.NEGLECT) || kinds.includes(e.SIGNAL.MISALIGNMENT)) throw new Error('väite ilman alueita: ' + kinds);
+    if (document.querySelectorAll('#dirSignals .dir-signal, #todayDirection .dir-today-observation').length > 0) throw new Error('havaintoja ilman alueita');
+    const all = e.db.writes();
+    const writes = all.filter(w => ${JSON.stringify(LEGACY_WRITE_TABLES)}.includes(w.table));
+    if (writes.length > 0) throw new Error('automaattinen kirjoitus: ' + JSON.stringify(writes));
+    const other = [...new Set(all.map(w => w.table + ':' + w.op))];
+    return '36 tehtävää (0 kestollista), 1 tavoite, 1 projekti ladattu; aloitus 1/7; kuittaus: "' + legacy.slice(0, 60) + '…"; '
+      + 'havainnot: ' + (kinds.join(', ') || 'ei yhtään') + '; Suunnan ja vanhan datan kirjoituksia 0'
+      + (other.length ? ' (muut käynnistyksen kirjoitukset: ' + other.join(', ') + ')' : ', ei muitakaan kirjoituksia');
+  })()`],
+
+  ['legacy: elämänalue omalla tärkeydellä (ei esivalintaa, kategoria ei kytkeydy hiljaa) -> kantaan', `(async () => {
+    H.click('#dirSetup [data-setup-draft="Terveys"]');
+    H.click('#dirSetup [data-setup="to-importance"]');
+    await H.waitFor(() => H.text('#dirSetup').includes('2/7'), 'vaihe 2');
+    if (document.querySelector('#dirSetup input[type="radio"]:checked')) throw new Error('tärkeys valittu valmiiksi');
+    const category = document.querySelector('#dirSetup [data-setup-category="0"]');
+    if (!category || category.checked) throw new Error('kategorian kytkentä puuttuu tai on valittu valmiiksi');
+    if (!H.el('#dirSetup [data-setup="save-areas"]').disabled) throw new Error('tallennus sallittu ilman tärkeyttä');
+    H.click('#dirSetup input[data-setup-importance="0"][value="4"]');
+    await H.waitFor(() => !H.el('#dirSetup [data-setup="save-areas"]').disabled, 'tallennus sallittu');
+    H.click('#dirSetup [data-setup="save-areas"]');
+    await H.waitFor(() => H.db('life_areas').length === 1 && H.s().lifeAreas.length === 1, 'alue kannassa');
+    await H.waitFor(() => H.text('#dirSetup').includes('3/7'), 'vaihe 3');
+    const row = H.db('life_areas')[0];
+    if (row.name !== 'Terveys' || row.importance !== 4 || row.category_key !== null) throw new Error(JSON.stringify(row));
+    const touched = window.__e2e.db.writes().filter(w => ['tasks', 'goals', 'projects'].includes(w.table));
+    if (touched.length) throw new Error('alue kirjoitti vanhaan dataan: ' + JSON.stringify(touched));
+    return 'life_areas: Terveys, tärkeys 4 (valittu itse), category_key null; tehtäviin ja tavoitteisiin ei kirjoitettu';
+  })()`],
+
+  ['legacy: kapasiteetti (vaihe 4, ei oletusarvoa) -> kantaan', `(async () => {
+    H.click('#dirSetup [data-setup="skip"]');
+    await H.waitFor(() => document.querySelector('#dirSetupCapacity'), 'kapasiteettivaihe');
+    if (H.el('#dirSetupCapacity').value !== '') throw new Error('kapasiteetilla oletus: ' + H.el('#dirSetupCapacity').value);
+    H.fill('#dirSetupCapacity', '20');
+    H.click('#dirSetup [data-setup="save-capacity"]');
+    await H.waitFor(() => H.db('weekly_capacities').length === 1, 'kapasiteetti kannassa');
+    const row = H.db('weekly_capacities')[0];
+    if (row.available_minutes !== 1200 || row.week_start !== window.__e2e.seed.monday) throw new Error(JSON.stringify(row));
+    return 'weekly_capacities: ' + row.week_start + ' 1200 min (tavoitevaihe ohitettu itse)';
+  })()`],
+
+  ['legacy: vanha tavoite liitetään alueeseen (vaihe 5), kuittaus luvuin -> goals.life_area_id kantaan', `(async () => {
+    const goalId = window.__e2e.seed.goalId;
+    const select = await H.waitFor(() => document.querySelector('#dirSetup [data-setup-goal="' + goalId + '"]'), 'tavoitevaihe');
+    const hint = H.text('#dirSetupLegacy');
+    for (const part of ['36 tehtävää', '1 tavoite', '1 projekti']) {
+      if (!hint.includes(part)) throw new Error('vaiheen 5 kuittaus ilman "' + part + '": ' + hint);
+    }
+    if (select.value !== '') throw new Error('tavoitteelle valittu alue valmiiksi');
+    const area = H.s().lifeAreas[0];
+    H.fill('#dirSetup [data-setup-goal="' + goalId + '"]', area.id);
+    await H.waitFor(() => H.db('goals')[0].life_area_id === area.id, 'tavoitteen alue kannassa');
+    const project = H.db('projects')[0];
+    if (project.goal_id !== goalId) throw new Error('projektin liitos muuttui');
+    H.click('#dirSetup [data-setup="finish-step"]');
+    await H.waitFor(() => H.text('#dirSetup').includes('6/7'), 'vaihe 6');
+    return 'goals.life_area_id = Terveys; projekti seuraa tavoitettaan (goal_id ennallaan)';
+  })()`],
+
+  ['legacy: arviojono (vaihe 6): yksi tämän viikon tehtävä arvioidaan -> duration_minutes kantaan', `(async () => {
+    const card = await H.waitFor(() => document.querySelector('#dirSetup [data-queue-card]'), 'arviokortti');
+    if (document.querySelectorAll('#dirSetup [data-queue-card]').length !== 1) throw new Error('useampi kortti');
+    const key = card.dataset.queueCard;
+    const id = key.replace(/^task:/, '');
+    await H.waitFor(() => !document.querySelector('#dirSetup [data-queue-estimate="' + key + '"][data-minutes="30"]').disabled, 'kortti valmis');
+    H.click('#dirSetup [data-queue-estimate="' + key + '"][data-minutes="30"]');
+    await H.waitFor(() => (H.db('tasks').find(t => t.id === id) || {}).duration_minutes === 30, 'arvio kannassa');
+    const others = H.db('tasks').filter(t => t.id !== id && t.duration_minutes !== null);
+    if (others.length) throw new Error('muita arvioita: ' + others.length);
+    window.__e2eEstimated = id;
+    H.click('#dirSetup [data-setup="finish-step"]');
+    await H.waitFor(() => H.text('#dirSetup').includes('7/7'), 'vaihe 7');
+    return 'tasks ' + id + ': duration_minutes 30; muut 35 ennallaan';
+  })()`],
+
+  ['legacy: ajastin alueelle (vaihe 7) -> running_timers-rivi kantaan, aloitus valmis', `(async () => {
+    const area = H.s().lifeAreas[0];
+    H.fill('#dirSetupTimerArea', area.id);
+    await H.waitFor(() => !H.el('#dirSetup [data-setup="start-timer"]').disabled, 'käynnistyspainike');
+    H.click('#dirSetup [data-setup="start-timer"]');
+    await H.waitFor(() => !H.el('#timerBar').hidden && document.querySelector('#timerBar [data-timer="stop"]'), 'ajastinpalkki');
+    await H.waitFor(() => H.db('running_timers').length === 1, 'ajastin kannassa');
+    const row = H.db('running_timers')[0];
+    if (row.life_area_id !== area.id) throw new Error(JSON.stringify(row));
+    await H.waitFor(() => !H.el('#screen-direction').classList.contains('dir-setup-active'), 'aloitus valmis, koko Suunta näkyvissä');
+    // Kello eteen ennen uudelleenlatausta: kulunut aika ei saa kadota.
+    window.__e2e.advance(25 * 60 * 1000);
+    return 'running_timers: 1 rivi (Terveys); aloitus valmis; kello +25 min';
+  })()`],
+
+  ['legacy: uudelleenlataus: ajastin yhä käynnissä, alue, kapasiteetti, tavoitteen alue ja arvio säilyvät, opastus ei palaa', async ({ evaluate, reload }) => {
+    const before = await evaluate(`({ timer: H.s().runningTimers[0], estimated: window.__e2eEstimated })`);
+    await reload();
+    return evaluate(`(async () => {
+      const s = H.s();
+      const timer = s.runningTimers[0];
+      if (!timer || timer.id !== ${JSON.stringify(before.timer.id)} || timer.startedAt !== ${JSON.stringify(before.timer.startedAt)}) throw new Error('ajastin: ' + JSON.stringify(timer));
+      await H.waitFor(() => !H.el('#timerBar').hidden && document.querySelector('#timerBar [data-timer="stop"]'), 'ajastinpalkki');
+      if (!/0:2[5-9]/.test(H.text('#timerBar'))) throw new Error('kulunut aika: ' + H.text('#timerBar'));
+      if (s.lifeAreas.length !== 1 || s.lifeAreas[0].importance !== 4) throw new Error('alue');
+      if (s.weeklyCapacities.length !== 1 || s.weeklyCapacities[0].availableMinutes !== 1200) throw new Error('kapasiteetti');
+      if (s.goals[0].lifeAreaId !== s.lifeAreas[0].id) throw new Error('tavoitteen alue katosi');
+      const estimated = s.tasks.find(t => t.id === ${JSON.stringify(before.estimated)});
+      if (!estimated || estimated.durationMinutes !== 30) throw new Error('arvio katosi');
+      if (H.el('#onboarding').getAttribute('aria-hidden') !== 'true') throw new Error('opastus palasi');
+      if (!H.el('#screen-direction').classList.contains('active')) throw new Error('viimeisin näkymä ei palautunut');
+      return 'sama ajastin (' + H.text('#timerBar .timer-elapsed') + '), alue, 20 h, tavoitteen alue ja 30 min arvio tallessa; opastus ei palannut';
+    })()`);
+  }],
+
+  ['legacy: toinen laite: ajastin palautuu kannasta, kun laitteen kopio puuttuu', async ({ evaluate, reload }) => {
+    const id = await evaluate(`(() => {
+      const timer = H.s().runningTimers[0];
+      localStorage.removeItem('manifestival.timer.v1.' + window.__e2e.userId());
+      return timer.id;
+    })()`);
+    await reload();
+    return evaluate(`(async () => {
+      await H.waitFor(() => H.s().runningTimers[0] && !H.el('#timerBar').hidden, 'ajastin kannasta');
+      if (H.s().runningTimers[0].id !== ${JSON.stringify(id)}) throw new Error('eri ajastin');
+      if (!localStorage.getItem('manifestival.timer.v1.' + window.__e2e.userId())) throw new Error('laitteen kopio ei palautunut');
+      return 'running_timers-rivi palautti saman ajastimen ja laitteen kopion';
+    })()`);
+  }],
+
+  ['legacy: pysäytys: toteuma kirjautuu kerran kantaan, Suunta päivittyy', `(async () => {
+    const area = H.s().lifeAreas[0];
+    const rowBefore = window.__e2e.alignment.analyzeCurrentWeek().areas.find(r => r.id === area.id);
+    if (rowBefore.actualMinutes !== 0) throw new Error('toteuma ennen pysäytystä ' + rowBefore.actualMinutes);
+    const listBefore = H.text('#dirAreasList');
+    window.__e2e.advance(15 * 60 * 1000);
+    const shown = H.text('#timerBar .timer-elapsed');
+    H.click('#timerBar [data-timer="stop"]');
+    await H.waitFor(() => H.db('time_entries').length === 1 && H.db('running_timers').length === 0, 'kirjaus kannassa, ajastin pois');
+    await H.waitFor(() => H.el('#timerBar').hidden, 'palkki piiloon');
+    const entry = H.db('time_entries')[0];
+    if (entry.minutes < 40 || entry.minutes > 41 || entry.source !== 'timer' || entry.life_area_id !== area.id) throw new Error(JSON.stringify(entry));
+    if (!entry.operation_id || !entry.started_at || !entry.ended_at) throw new Error('0013-sarakkeet puuttuvat: ' + JSON.stringify(entry));
+    if (H.s().timeEntries.length !== 1) throw new Error('tilassa ' + H.s().timeEntries.length + ' kirjausta');
+    const analysis = window.__e2e.alignment.analyzeCurrentWeek();
+    const row = analysis.areas.find(r => r.id === area.id);
+    if (row.actualMinutes !== entry.minutes) throw new Error('Suunnan toteuma ' + row.actualMinutes);
+    await H.waitFor(() => H.text('#dirAreasList') !== listBefore, 'aluelista päivittyi');
+    const kinds = analysis.signals.map(signal => signal.kind);
+    if (kinds.includes(window.__e2e.SIGNAL.NEGLECT)) throw new Error('ensimmäisen viikon kirjaus teki alueesta huomiotta jäävän');
+    return 'time_entries: ' + entry.minutes + ' min (palkki ' + shown + '), lähde timer, 1 rivi; Suunnan toteuma ' + row.actualMinutes
+      + ' min; havainnot: ' + (kinds.join(', ') || 'ei yhtään');
+  })()`],
+
+  ['legacy: tehtävä liitetään tavoitteeseen lomakkeella, liitos säilyy uudelleenlatauksessa (F1)', async ({ evaluate, reload }) => {
+    const taskId = await evaluate(`(async () => {
+      const goalId = window.__e2e.seed.goalId;
+      const monday = window.__e2e.seed.monday;
+      const task = H.s().tasks.find(t => t.date >= monday && t.durationMinutes == null && !t.goalId);
+      H.tab('screen-tasks');
+      const edit = await H.waitFor(() => document.querySelector('#screen-tasks [data-edit="' + task.id + '"]'), 'tehtävä listassa');
+      edit.click();
+      await H.waitFor(() => !H.el('#addForm').hidden && getComputedStyle(H.el('#addForm')).display !== 'none', 'lomake auki');
+      H.fill('#afGoal', goalId);
+      H.click('#afSave');
+      await H.waitFor(() => (H.db('tasks').find(t => t.id === task.id) || {}).goal_id === goalId, 'goal_id kannassa');
+      await H.idle('#afSave', 'tallennus valmis');
+      return task.id;
+    })()`);
+    await reload();
+    return evaluate(`(async () => {
+      const goalId = window.__e2e.seed.goalId;
+      const task = H.s().tasks.find(t => t.id === ${JSON.stringify(taskId)});
+      if (!task || task.goalId !== goalId) throw new Error('liitos katosi: ' + JSON.stringify(task && task.goalId));
+      const area = H.s().lifeAreas[0];
+      const row = window.__e2e.alignment.analyzeCurrentWeek().areas.find(r => r.id === area.id);
+      if (!(row.plannedUnknown > 0 || row.plannedMinutes > 0)) throw new Error('tehtävä ei näy alueen luvuissa: ' + JSON.stringify(row));
+      H.tab('screen-direction');
+      await H.waitFor(() => H.el('#screen-direction').classList.contains('active'), 'Suunta');
+      return 'tasks.goal_id säilyi; alueen suunnitelmassa ' + row.plannedMinutes + ' min + ' + row.plannedUnknown + ' arvioimatonta';
+    })()`);
+  }],
+
+  ['legacy: viikkokatsaus tallentuu kantaan ja historiaan', `(async () => {
+    H.fill('#dirAnswer-most_draining', 'Vanhat rästit painoivat');
+    H.click('#dirReviewSave');
+    await H.waitFor(() => H.db('alignment_reviews').length === 1, 'katsaus kannassa');
+    const row = H.db('alignment_reviews')[0];
+    if (row.week_start !== window.__e2e.seed.monday || (row.reflection_answers || {}).most_draining !== 'Vanhat rästit painoivat') throw new Error(JSON.stringify(row));
+    if (row.policy_version !== 3) throw new Error('sääntöversio ' + row.policy_version);
+    await H.waitFor(() => H.text('#dirReviewHistory').trim() !== '', 'historia');
+    return 'alignment_reviews: ' + row.week_start + ', sääntöversio ' + row.policy_version + ', pohdinta tallessa';
+  })()`],
+
+  ['legacy: ensi viikon esikatselu ei kirjoita; vahvistettu muutos kantaan', `(async () => {
+    const box = await H.waitFor(() => document.querySelector('#dirProposals input[data-adjust-select]'), 'ehdotus');
+    const id = box.dataset.adjustSelect;
+    box.click();
+    const writesBefore = window.__e2e.db.writes().length;
+    H.click('#dirPreviewSelected');
+    await H.waitFor(() => H.html('#dirProposalPreview').includes('<caption>'), 'esikatselu');
+    await H.waitFor(() => !H.el('#dirApplySelected').disabled, 'vahvistuspainike');
+    H.click('#dirApplySelected');
+    await H.waitFor(() => document.querySelector('#confirmDialog[open]'), 'vahvistusdialogi');
+    if (window.__e2e.db.writes().length !== writesBefore) throw new Error('esikatselu tai dialogi kirjoitti kantaan');
+    H.click('#confirmAccept');
+    await H.waitFor(() => window.__e2e.db.writes().length > writesBefore, 'muutos kantaan');
+    const written = window.__e2e.db.writes().slice(writesBefore).map(w => w.table + ':' + w.op);
+    return 'vahvistettu ' + id + ' -> ' + written.join(', ');
+  })()`],
+
+  ['legacy: näppäimistö: Enter "Muu"-kentässä kirjaa kirjoitetut minuutit kantaan', async ({ evaluate, cdp }) => {
+    const before = await evaluate(`(async () => {
+      H.click('#dirQuickLog');
+      await H.waitFor(() => document.querySelector('#timeLogDialog[open]'), 'dialogi auki');
+      H.fill('#timeLogArea', H.s().lifeAreas[0].id);
+      H.el('#timeLogMinutes').focus();
+      return H.db('time_entries').length;
+    })()`);
+    await typeAndEnter(cdp, '25');
+    return evaluate(`(async () => {
+      await H.waitFor(() => H.db('time_entries').length === ${before} + 1, 'kirjaus kannassa');
+      const row = H.db('time_entries').find(r => r.source === 'manual' && r.minutes === 25);
+      if (!row) throw new Error('Enter kirjasi: ' + JSON.stringify(H.db('time_entries').map(r => r.minutes)));
+      if (document.querySelector('#timeLogDialog[open]')) throw new Error('dialogi jäi auki');
+      return 'Enter kirjasi 25 min (ei pikavalintaa 15 min) alueelle ' + H.s().lifeAreas[0].name;
+    })()`);
+  }],
+
+  { name: 'legacy: offline: jonossa oleva kirjaus näkyy uudelleenlatauksen jälkeen ja lähtee kerran, kun yhteys palaa',
+    // Offline-lataus kirjaa jokaisen epäonnistuneen kokoelman konsoliin (logError):
+    // odotettua tässä skenaariossa.
+    allowConsoleErrors: true,
+    run: async ({ evaluate, reload }) => {
+      const queued = await evaluate(`(async () => {
+        const rowsBefore = H.db('time_entries').length;
+        window.__e2e.setOffline(true);
+        H.click('#dirQuickLog');
+        await H.waitFor(() => document.querySelector('#timeLogDialog[open]'), 'dialogi auki');
+        H.fill('#timeLogArea', H.s().lifeAreas[0].id);
+        H.fill('#timeLogMinutes', '10');
+        H.click('#timeLogDialog button[value="custom"]');
+        await H.waitFor(() => window.__e2e.alignment.pendingTimeEntryCount() === 1, 'kirjaus lähtökorissa');
+        if (H.db('time_entries').length !== rowsBefore) throw new Error('offline-kirjaus meni kantaan');
+        const entry = H.s().timeEntries.find(e => e.minutes === 10);
+        if (!entry) throw new Error('kirjaus ei näy');
+        return { id: entry.id, operationId: entry.operationId, rowsBefore };
+      })()`);
+      await reload();
+      return evaluate(`(async () => {
+        if (navigator.onLine !== false) throw new Error('uudelleenlataus ei ollut offline');
+        const visible = H.s().timeEntries.filter(e => e.operationId === ${JSON.stringify(queued.operationId)});
+        if (visible.length !== 1) throw new Error('offline-latauksen jälkeen näkyy ' + visible.length + ' kpl');
+        if (window.__e2e.alignment.pendingTimeEntryCount() !== 1) throw new Error('lähtökori tyhjeni');
+        if (!document.querySelector('#dirTimeList [data-time-delete="' + visible[0].id + '"]')) throw new Error('kirjaus ei näy Toteuma-listassa');
+        window.__e2e.setOffline(false);
+        await H.waitFor(() => H.db('time_entries').filter(r => r.operation_id === ${JSON.stringify(queued.operationId)}).length === 1
+          && window.__e2e.alignment.pendingTimeEntryCount() === 0, 'lähetys yhteyden palattua', 10000);
+        await H.sleep(300);
+        const rows = H.db('time_entries').filter(r => r.operation_id === ${JSON.stringify(queued.operationId)});
+        const shown = H.s().timeEntries.filter(e => e.operationId === ${JSON.stringify(queued.operationId)});
+        if (rows.length !== 1 || shown.length !== 1) throw new Error('kannassa ' + rows.length + ', näkyvissä ' + shown.length);
+        return '10 min lähtökorissa -> näkyi offline-latauksen jälkeen -> yhteyden palattua kannassa kerran ja näkyvissä kerran';
+      })()`);
+    } },
+
+  // CRIT-03: ajastinpalkin uudelleenpiirto (innerHTML) hävitti fokuksen.
+  // Korjaus kuuluu saavutettavuuspakettiin (timeLog.js renderTimerBar):
+  // ks. PENDING_ON.
+  ['legacy: näppäimistö: Tauko pitää fokuksen ajastinpalkissa', async ({ evaluate, cdp }) => {
+    await evaluate(`(async () => {
+      if (H.s().runningTimers.length === 0) {
+        H.click('#dirStartTimer');
+        await H.waitFor(() => document.querySelector('#timeLogDialog[open]'), 'aluevalinta');
+        H.click('#timeLogDialog button[value="timer"]');
+      }
+      const pause = await H.waitFor(() => document.querySelector('#timerBar [data-timer="pause"]'), 'Tauko');
+      pause.focus();
+      if (document.activeElement !== pause) throw new Error('Tauko ei saa fokusta');
+      return true;
+    })()`);
+    await typeAndEnter(cdp, '');
+    return evaluate(`(async () => {
+      await H.waitFor(() => H.s().runningTimers[0] && H.s().runningTimers[0].pausedAt, 'tauolla');
+      await H.waitFor(() => document.querySelector('#timerBar [data-timer="resume"]'), 'Jatka');
+      await H.sleep(100);
+      const active = document.activeElement;
+      if (!active || !H.el('#timerBar').contains(active) || !active.matches('[data-timer="resume"], [data-timer="pause"]')) {
+        const where = !active ? 'ei mitään' : active === document.body ? 'body (fokus katosi)'
+          : active.tagName + (active.id ? '#' + active.id : '') + ' ' + (active.textContent || '').trim().slice(0, 20);
+        throw new Error('fokus: ' + where);
+      }
+      return 'Enter Tauko-painikkeella: tauolla, fokus "' + active.textContent.trim() + '"-painikkeessa';
+    })()`);
+  }]
+];
+
+/**
+ * Skenaariot, joiden korjaus tulee rinnakkaisesta paketista. Epäonnistuminen
+ * raportoidaan ODOTTAA-rivinä eikä kaada ajoa; onnistuminen kaataa, jotta
+ * merkintä poistetaan heti integraation jälkeen.
+ */
+const PENDING_ON = Object.freeze({
+  'legacy: näppäimistö: Tauko pitää fokuksen ajastinpalkissa': 'saavutettavuuspaketti (timeLog.js renderTimerBar, CRIT-03)'
+});
+
+const OPEN_DIRECTION = `(async () => {
+  H.tab('screen-direction');
+  await H.waitFor(() => H.el('#screen-direction').classList.contains('active'), 'Suunta auki');
+  return true;
+})()`;
+
+/** Tämän viikon keskiviikko klo 10 paikallista aikaa (legacy-ryhmän kello). */
+function wednesdayTen(now = new Date()) {
+  const date = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 10, 0, 0);
+  const weekday = (date.getDay() + 6) % 7;
+  date.setDate(date.getDate() - weekday + 2);
+  const pad = n => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T10:00`;
+}
+
+const GROUPS = [
+  { key: 'closed', label: 'suljetut portit', query: { gates: 'closed', seed: 'empty', onboarding: 'skip' },
+    setup: OPEN_DIRECTION, scenarios: [...SCENARIOS, MOBILE_SCENARIO] },
+  { key: 'J', label: 'J-portit', query: { gates: 'J', seed: 'empty', onboarding: 'skip' },
+    setup: OPEN_DIRECTION, scenarios: [...SCENARIOS, MOBILE_SCENARIO] },
+  { key: 'legacy', label: 'J-portit, vanha käyttäjä', query: { gates: 'J', seed: 'legacy', clock: wednesdayTen() },
+    setup: null, scenarios: LEGACY_SCENARIOS }
+];
+
+function normalizeScenario(entry) {
+  if (Array.isArray(entry)) return { name: entry[0], run: entry[1], allowConsoleErrors: false };
+  return { allowConsoleErrors: false, ...entry };
+}
+
 async function main() {
   const chrome = CHROME_CANDIDATES.find(candidate => fs.existsSync(candidate));
   if (!chrome) throw new Error('Chromea ei löytynyt; aseta CHROME_PATH');
+
+  const wanted = (process.env.E2E_GROUPS || '').split(',').map(s => s.trim()).filter(Boolean);
+  const groups = GROUPS.filter(group => wanted.length === 0 || wanted.includes(group.key));
+  const schemaSource = fs.readFileSync(path.join(ROOT, 'src/data/schema.js'), 'utf8');
+  const jGates = resolveGateMode('J', { cwd: ROOT, schemaSource });
+  console.log(`J-portit: ${jGates.provenance}`);
 
   const httpPort = await freePort();
   const debugPort = await freePort();
   if (await cdpReachable(debugPort)) throw new Error(`debug-portti ${debugPort} on jo käytössä — ei liitytä vieraaseen prosessiin`);
 
-  const server = await startServer(httpPort);
+  const server = await startServer(httpPort, { gatedSchema: jGates.source });
   const profile = path.join(ROOT, 'tmp', `e2e-chrome-${process.pid}-${Date.now()}`);
   fs.mkdirSync(profile, { recursive: true });
   const browser = spawn(chrome, [
@@ -467,6 +887,8 @@ async function main() {
   const results = [];
   const requests = [];
   const consoleErrors = [];
+  let allowConsole = false;
+  let allowedConsole = 0;
   let cdp = null;
   try {
     let version = null;
@@ -480,16 +902,16 @@ async function main() {
     await cdp.open();
     cdp.on(message => {
       if (message.method === 'Network.requestWillBeSent') requests.push(message.params.request.url);
+      // Poikkeus ei ole koskaan odotettu, konsolin virherivi vain luvallisessa skenaariossa.
       if (message.method === 'Runtime.exceptionThrown') consoleErrors.push(message.params.exceptionDetails.text);
       if (message.method === 'Runtime.consoleAPICalled' && message.params.type === 'error') {
-        consoleErrors.push(message.params.args.map(a => a.value || a.description).join(' '));
+        if (allowConsole) allowedConsole += 1;
+        else consoleErrors.push(message.params.args.map(a => a.value || a.description).join(' '));
       }
     });
     await cdp.send('Network.enable');
     await cdp.send('Runtime.enable');
     await cdp.send('Page.enable');
-    await cdp.send('Emulation.setDeviceMetricsOverride', { width: 412, height: 915, deviceScaleFactor: 2, mobile: true });
-    await cdp.send('Page.navigate', { url: `http://127.0.0.1:${httpPort}/` });
 
     const evaluate = async expression => {
       const response = await cdp.send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });
@@ -499,29 +921,59 @@ async function main() {
       return response.result.value;
     };
 
-    for (let i = 0; i < 100; i++) {
-      await new Promise(r => setTimeout(r, 100));
-      if (await evaluate('Boolean(window.__e2e && window.__e2e.ready)').catch(() => false)) break;
-    }
-    const bootErrors = await evaluate('window.__e2eErrors || []');
-    if (bootErrors.length) throw new Error('käynnistysvirhe: ' + bootErrors.join('; '));
-    await evaluate(HELPERS);
-
-    for (const [name, script] of SCENARIOS) {
-      try {
-        // Funktio-skenaario tarvitsee CDP:tä (oikeat näppäilyt); muut ajetaan sivulla.
-        const detail = typeof script === 'function' ? await script({ evaluate, cdp }) : await evaluate(script);
-        results.push({ name, ok: true, detail });
-      } catch (error) {
-        results.push({ name, ok: false, detail: error.message.split('\n')[0] });
+    // Käynnistys (ensimmäinen lataus tai uudelleenlataus) on valmis, kun
+    // valjas on nähnyt kirjautumisen ja latauksen loppuun (harness.mjs boot).
+    const waitReady = async label => {
+      for (let i = 0; i < 150; i++) {
+        await new Promise(r => setTimeout(r, 100));
+        const ready = await evaluate('Boolean(window.__e2e && window.__e2e.ready && !window.__e2eUnloading) || (window.__e2eErrors || []).length > 0')
+          .catch(() => false);
+        if (ready) break;
       }
-    }
+      const bootErrors = await evaluate('window.__e2eErrors || []').catch(() => ['ei vastausta']);
+      if (bootErrors.length) throw new Error(`${label}: käynnistysvirhe: ${bootErrors.join('; ')}`);
+      if (!(await evaluate('Boolean(window.__e2e && window.__e2e.ready)').catch(() => false))) throw new Error(`${label}: valjas ei käynnistynyt`);
+      await evaluate(HELPERS);
+    };
+    // Vanha sivu merkitään ennen latausta: odotus ei saa lukea sen
+    // valmiutta tai virheitä ennen kuin uusi sivu on vaihtunut tilalle.
+    const leavePage = () => evaluate('window.__e2eUnloading = true; window.__e2eErrors = []; true').catch(() => false);
+    const reload = async () => {
+      await leavePage();
+      await cdp.send('Page.reload', {});
+      await waitReady('uudelleenlataus');
+    };
 
-    await cdp.send('Emulation.setDeviceMetricsOverride', { width: 360, height: 740, deviceScaleFactor: 3, mobile: true });
-    try {
-      results.push({ name: 'mobiili 360 px: ei vaakavieritystä, dialogi mahtuu', ok: true, detail: await evaluate(MOBILE) });
-    } catch (error) {
-      results.push({ name: 'mobiili 360 px', ok: false, detail: error.message.split('\n')[0] });
+    for (const group of groups) {
+      await cdp.send('Emulation.setDeviceMetricsOverride', { width: 412, height: 915, deviceScaleFactor: 2, mobile: true });
+      const query = new URLSearchParams({ reset: '1', ...group.query });
+      await leavePage();
+      await cdp.send('Page.navigate', { url: `http://127.0.0.1:${httpPort}/?${query}` });
+      try {
+        await waitReady(group.label);
+        if (group.setup) await evaluate(group.setup);
+      } catch (error) {
+        results.push({ name: `[${group.label}] käynnistys`, ok: false, detail: error.message.split('\n')[0] });
+        continue;
+      }
+      if (group.query.clock) console.log(`[${group.label}] kello: ${group.query.clock}`);
+
+      for (const scenario of group.scenarios.map(normalizeScenario)) {
+        const name = `[${group.label}] ${scenario.name}`;
+        allowConsole = scenario.allowConsoleErrors;
+        try {
+          // Funktio-skenaario tarvitsee CDP:tä (oikeat näppäilyt, uudelleenlataus); muut ajetaan sivulla.
+          const detail = typeof scenario.run === 'function' ? await scenario.run({ evaluate, cdp, reload }) : await evaluate(scenario.run);
+          results.push({ name, ok: true, detail, pendingOn: PENDING_ON[scenario.name] });
+        } catch (error) {
+          results.push({ name, ok: false, detail: error.message.split('\n')[0], pendingOn: PENDING_ON[scenario.name] });
+        } finally {
+          allowConsole = false;
+        }
+      }
+      const unsupported = await evaluate('window.__e2e ? window.__e2e.db.unsupported() : []').catch(() => []);
+      results.push({ name: `[${group.label}] kannan korvike tuki jokaisen kyselyn`, ok: unsupported.length === 0,
+        detail: unsupported.length ? unsupported.join(', ') : 'ei tukemattomia kyselyjä' });
     }
   } finally {
     if (cdp) cdp.close();
@@ -540,13 +992,27 @@ async function main() {
   const forbidden = requests.filter(url => /supabase\.co|anthropic\.com/.test(url));
   results.push({ name: 'ei yhtään pyyntöä tuotantoon (Supabase/Anthropic)', ok: forbidden.length === 0,
     detail: forbidden.length ? forbidden.join(', ') : `${requests.length} pyyntöä, kaikki paikallisia` });
-  results.push({ name: 'ei konsolivirheitä', ok: consoleErrors.length === 0, detail: consoleErrors.slice(0, 3).join(' | ') || 'ei virheitä' });
+  results.push({ name: 'ei konsolivirheitä', ok: consoleErrors.length === 0,
+    detail: consoleErrors.slice(0, 3).join(' | ') || `ei virheitä${allowedConsole ? ` (offline-skenaarion odotetut latausvirheet: ${allowedConsole})` : ''}` });
 
+  let failed = 0;
+  let pending = 0;
   for (const result of results) {
-    console.log(`${result.ok ? 'PASS' : 'FAIL'}  ${result.name}\n      ${result.detail}`);
+    let label = result.ok ? 'PASS' : 'FAIL';
+    let detail = result.detail;
+    if (result.pendingOn && !result.ok) {
+      label = 'ODOTTAA';
+      detail = `${detail}\n      (korjaus: ${result.pendingOn})`;
+      pending += 1;
+    } else if (result.pendingOn && result.ok) {
+      label = 'FAIL';
+      detail = `${detail}\n      (onnistui: poista PENDING_ON-merkintä, korjaus ${result.pendingOn} on integroitu)`;
+    }
+    if (label === 'FAIL') failed += 1;
+    console.log(`${label}  ${result.name}\n      ${detail}`);
   }
-  const failed = results.filter(r => !r.ok).length;
-  console.log(`\nSUUNTA E2E: ${failed === 0 ? 'PASS' : 'FAIL'} (${results.length - failed}/${results.length})`);
+  const passed = results.length - failed - pending;
+  console.log(`\nSUUNTA E2E: ${failed === 0 ? 'PASS' : 'FAIL'} (${passed}/${results.length}${pending ? `, odottaa ${pending}` : ''})`);
   process.exitCode = failed === 0 ? 0 : 1;
 }
 
