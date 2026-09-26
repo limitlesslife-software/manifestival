@@ -621,7 +621,8 @@ test('main.js: skeeman palautus herättää odottavat osat ennen toistoa', () =>
   const start = source.indexOf('initSchemaStatus({');
   const block = source.slice(start, source.indexOf('});', start));
   const wake = block.indexOf('offline.wakeSchemaPending()');
-  assert.ok(wake > -1 && block.indexOf('reconnect.refreshNow()') > wake, block);
+  // Päivityksellä on syy (CRIT-02): reconnect.refreshNow({ reason: … }).
+  assert.ok(wake > -1 && block.indexOf('reconnect.refreshNow(') > wake, block);
 });
 
 test('unwritableInsert: lisäyksen pois jäävät kentät ja tehtävä sellaisena kuin kanta sen tallentaa', () => {

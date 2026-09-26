@@ -308,7 +308,8 @@ test('CRIT-02: kirjautumisen lataus (noteRefreshStarted) kattaa heti perään tu
 test('CRIT-02: main.js kertoo paluun ja skeeman syyn sekä kirjaa jokaisen täyden latauksen ohjaimelle', () => {
   const main = readCode('src/app/main.js');
   assert.match(main, /reconnect\.refreshNow\(\{ reason: REFRESH_REASON\.RESUME \}\)/);
-  assert.match(main, /onRecovered: \(\) => reconnect\.refreshNow\(\{ reason: REFRESH_REASON\.SCHEMA \}\)/);
+  const recovery = main.slice(main.indexOf('initSchemaStatus({'), main.indexOf('});', main.indexOf('initSchemaStatus({')));
+  assert.match(recovery, /onRecovered: \(\) => \{?[\s\S]*reconnect\.refreshNow\(\{ reason: REFRESH_REASON\.SCHEMA \}\)/);
   const loadFresh = main.slice(main.indexOf('async function loadFresh'), main.indexOf('\n}', main.indexOf('async function loadFresh')));
   assert.ok(loadFresh.indexOf('reconnect.noteRefreshStarted()') > -1
     && loadFresh.indexOf('reconnect.noteRefreshStarted()') < loadFresh.indexOf('await loadUserData()'));
