@@ -26,7 +26,26 @@ ja tavoitteiden tallennukset (esim. `depends_on` ennen 0010:tä → 42703).
 **Asenna vasta, kun `verify_0013.sql` = 0 poikkeavaa ja aalto J on
 deployattu webiin.** Web-sovellus päivittyy deployn mukana; APK ei.
 
-## Nykyinen paketti 5df40b2 on vanhentunut
+## Nykyinen paketti: J v2 (cba9463)
+
+`.claude/release-packages/manifestival-suunta-waveJ-v23-vc1-cba9463-debug.apk`
+(+ `.apk.json`), rakennettu 2026-09-26 lukitusta ehdokkaasta
+`rehearsal/wave-j-v2` = `cba9463155c823a24d0fdb4632ab18a1fcbd01d0`
+(aaltocommit `783cfc1`), JDK 21.0.12, Gradle 9.1.0, AGP 8.13.0.
+
+| | |
+|---|---|
+| applicationId | `fi.limitlesslife.manifestival` |
+| versionCode / versionName | `1` / `1.0.0-waveJ.v23+cba9463-debug` (versionCode = omistajan päätös, ks. alla) |
+| koko | 6 058 208 tavua |
+| SHA-256 | `671835d6df317fdb616fb5f1e9ae053c269ddd2af989393022ed3a73ec78cf54` |
+| luvat | `INTERNET`, `RECORD_AUDIO`, `ACCESS_NETWORK_STATE`, `POST_NOTIFICATIONS`, `RECEIVE_BOOT_COMPLETED`, `SCHEDULE_EXACT_ALARM`, `WAKE_LOCK` + oma signature-lupa; **ei sijaintilupia** |
+| liitännäiset | `@capacitor/app`, `@capacitor/geolocation` (ilman lupia; `NATIVE_LOCATION_ENABLED = false`), `@capacitor/local-notifications`; puhe = sovelluksen oma `SpeechPlugin` |
+| verify-apk | 34/34 PASS; 162 web-tiedostoa tavu tavulta samat kuin `dist/` ja commitin blobit |
+
+**Ei asennettu eikä ajettu laitteella.** Asennusjärjestys yllä.
+
+## Vanha paketti 5df40b2 on vanhentunut
 
 `.claude/release-packages/manifestival-suunta-waveJ-v23-5df40b2-debug.apk`
 (SHA-256 `649529…fe405`) on rakennettu ennen uutta lähdemanifestia. Siinä on
@@ -37,8 +56,7 @@ versionName on `1.0`. `scripts/verify-apk.mjs` hylkää sen tarkoituksella
 tiedosto alkaa BOM-merkillä, aikaleima ei ole ISO-8601 ja SHA-256 on isoilla
 kirjaimilla. verify-apk lukee sen silti.
 
-**Älä asenna sitä.** Rakenna uusi paketti J-ehdokkaasta, kun ehdokas on
-leikattu uudelleen ja lukitustiedosto päivitetty.
+**Älä asenna sitä.** Korvaaja on yllä oleva J v2 -paketti.
 
 ---
 
@@ -85,7 +103,7 @@ leikattu uudelleen ja lukitustiedosto päivitetty.
 ### 1. Työpuu
 
 ```powershell
-git worktree add .claude\worktrees\rc-j rehearsal/wave-j-v1   # jos ei jo ole
+git worktree add .claude\worktrees\rc-j rehearsal/wave-j-v2   # jos ei jo ole
 ```
 
 Työpuut ovat projektin sisällä hakemistossa `.claude/worktrees/`.
