@@ -19,7 +19,7 @@ import { freezeLocalDate } from './helpers/clock.mjs';
 import { fakeClient } from './helpers/gates.mjs';
 import { setUser, clearUser } from '../src/data/session.js';
 import { setClient } from '../src/data/client.js';
-import { resetState, getState } from '../src/app/state.js';
+import { resetState, getState, setDomainLoadStatus } from '../src/app/state.js';
 import { clearLocalUserData } from '../src/app/actions.js';
 import { createLifeArea, resetAppliedAdjustments } from '../src/app/alignment.js';
 import { renderDirection, initDirection, resetDirectionView } from '../src/app/views/direction.js';
@@ -55,14 +55,18 @@ function stubElement(id = null) {
   };
 }
 
-/** Aloituksen pääpainike säiliön merkinnästä; sama olio kunnes merkintä vaihtuu. */
-function withPrimaryButton(container) {
+/**
+ * Aloituksen pääpainike kortin merkinnästä; sama olio kunnes merkintä vaihtuu.
+ * Kortti piirretään #dirSetupCard-elementtiin #dirSetup-alueen sisällä; kuten
+ * oikeassa DOM:issa alueen querySelector löytää painikkeen kortista.
+ */
+function withPrimaryButton(container, markup = () => container.innerHTML) {
   let parsedFrom = null;
   let button = null;
   container.querySelector = selector => {
     if (selector !== '[data-focus="primary"]') return null;
-    if (parsedFrom !== container.innerHTML) {
-      parsedFrom = container.innerHTML;
+    if (parsedFrom !== markup()) {
+      parsedFrom = markup();
       const match = /data-setup="([^"]+)" data-focus="primary"\s*(disabled)?\s*>([^<]*)</.exec(parsedFrom);
       button = match ? { dataset: { setup: match[1], focus: 'primary' }, disabled: Boolean(match[2]), textContent: match[3] } : null;
     }
@@ -79,7 +83,9 @@ function installDom() {
       if (!HTML_IDS.has(id)) return null;
       if (!elements.has(id)) {
         const element = stubElement(id);
-        elements.set(id, id === 'dirSetup' ? withPrimaryButton(element) : element);
+        elements.set(id, id === 'dirSetup'
+          ? withPrimaryButton(element, () => globalThis.document.getElementById('dirSetupCard').innerHTML)
+          : element);
       }
       return elements.get(id);
     },
@@ -102,6 +108,7 @@ function installStorage() {
 }
 
 const setup = () => globalThis.document.getElementById('dirSetup');
+const card = () => globalThis.document.getElementById('dirSetupCard');
 const primary = () => setup().querySelector('[data-focus="primary"]');
 const flush = async () => { for (let i = 0; i < 20; i++) await new Promise(resolve => setImmediate(resolve)); };
 
@@ -140,9 +147,11 @@ afterEach(() => {
 test('vaihe 4: "Tallenna" herää ensimmäisestä merkistä ja tallentaa napautuksella; tyhjä kenttä sammuttaa sen', async (t) => {
   freezeLocalDate(t, THURSDAY);
   await createLifeArea({ name: 'Perhe', importance: 5, targetMinutesPerWeek: 300 });
+  // Alueet ladattu onnistuneesti: tuntematonta latausta ei näytetä aloituksena.
+  setDomainLoadStatus('lifeAreas', true);
   initDirection();
   renderDirection();
-  assert.match(setup().innerHTML, /Vaihe 4\/7/);
+  assert.match(card().innerHTML, /Vaihe 4\/7/);
   assert.equal(primary().dataset.setup, 'save-capacity');
   assert.equal(primary().disabled, true, 'tyhjällä kentällä ei tallenneta');
 
