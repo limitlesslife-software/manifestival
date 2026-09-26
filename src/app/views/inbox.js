@@ -41,7 +41,9 @@ import {
   captureAndInterpret, reviewItem, closeReview, approveItem,
   interpretItem, dismissItemById, restoreItemById, deleteInboxItem
 } from '../capture.js';
-import { listenOnce, speechAvailable, isDictating, cancelDictation } from '../speechInput.js';
+import {
+  listenOnce, speechAvailable, isDictating, cancelDictation, finishDictation
+} from '../speechInput.js';
 
 /** Näytetäänkö myös käsitellyt rivit? Näkymän oma tila, ei sovelluksen. */
 let showClosed = false;
@@ -123,9 +125,17 @@ async function submitCapture(source = CAPTURE_SOURCE.TEXT) {
 let dictationRun = 0;
 
 /**
+ * Tilarivi mikrofonin ollessa auki. Lupaa, että toinen napautus LOPETTAA
+ * (ja vie sanotun kenttään) -- toggleDictation tekee juuri sen
+ * (finishDictation), ei peru.
+ */
+export const DICTATION_LISTENING_STATUS = 'Kuuntelen… Napauta mikrofonia uudelleen lopettaaksesi.';
+
+/**
  * Sanele kirjauskenttään. Painike on KYTKIN (aria-pressed): toinen
- * napautus kesken kuuntelun peruu sanelun eikä käynnistä toista
- * tunnistinta.
+ * napautus kesken kuuntelun LOPETTAA sanelun, ja se mitä ehdittiin sanoa
+ * menee kenttään (tunnistin viimeistelee, ei toista tunnistinta). Ennen
+ * kuin mikrofoni on auki (lupa, käynnistys) toinen napautus peruu hiljaa.
  *
  * ÄÄNTÄ EI TALLENNETA. Tunnistin palauttaa tekstin, teksti menee
  * kenttään, ja käyttäjä näkee sen ennen kuin mitään lähtee eteenpäin.
@@ -136,7 +146,7 @@ export async function toggleDictation() {
   if (!button) return;
 
   if (isDictating()) {
-    cancelDictation();
+    if (finishDictation()) setCaptureStatus('Lopetetaan kuuntelu…');
     return;
   }
 
@@ -150,13 +160,14 @@ export async function toggleDictation() {
   try {
     const result = await listenOnce({
       onPermission: () => { if (current()) setCaptureStatus('Salli mikrofoni, jos laite kysyy lupaa.'); },
-      onStart: () => { if (current()) setCaptureStatus('Kuuntelen… Napauta mikrofonia uudelleen lopettaaksesi.'); }
+      onStart: () => { if (current()) setCaptureStatus(DICTATION_LISTENING_STATUS); }
     });
     if (!current()) return;
 
     if (!result.ok) {
       setCaptureStatus('');
-      // Peruttu (toinen napautus, sovellus taustalle) ei ole virhe.
+      // Peruttu (toinen napautus ennen kuin mikrofoni aukesi, sovellus
+      // taustalle, uloskirjautuminen) ei ole virhe.
       if (result.code !== 'aborted') {
         setCaptureError(result.error || 'Puheentunnistus ei onnistunut. Kirjoita sen sijaan.');
       }

@@ -33,8 +33,9 @@
 //
 // Tunnistin antaa tekstin, ja äänivirta katoaa. Tässä moduulissa ei ole
 // tallennusta, puskuria eikä äänirajapintoja, eikä sellaisia saa lisätä.
-// Kuuntelu päättyy aina: tulokseen, virheeseen, perumiseen,
-// aikakatkaisuun tai siihen, että sovellus siirtyy taustalle.
+// Kuuntelu päättyy aina: tulokseen (myös käyttäjän lopetuksesta, finish),
+// virheeseen, perumiseen, aikakatkaisuun tai siihen, että sovellus siirtyy
+// taustalle.
 // Natiiviliitännäinen perii kuuntelun lisäksi itse onPause-tapahtumassa.
 //
 // EI HEITÄ. Jokainen polku palauttaa `{ok: false, code}`; koodin
@@ -83,6 +84,13 @@ export const LISTEN_TIMEOUT_MS = 15000;
  * käynnisty (kyselyyn ei vastata).
  */
 export const WEB_START_GUARD_MS = 60000;
+
+/**
+ * Viimeistelyn yläraja: lopetuksen (finish) jälkeen tunnistimella on näin
+ * kauan aikaa toimittaa se, mitä ehdittiin sanoa. Tunnistus tehdään usein
+ * palvelimella, joten raja on väljä mutta ei ikuinen.
+ */
+export const FINISH_TIMEOUT_MS = 8000;
 
 /** Liitännäisen tilatapahtuma (SpeechPlugin.java STATE_EVENT). */
 export const NATIVE_STATE_EVENT = 'speechState';
@@ -236,8 +244,13 @@ function call(fn, ...args) {
  * `stopBackend` katkaisee taustajärjestelmän (abort / plugin.cancel).
  * Sitä kutsutaan VAIN kun kuuntelu perutaan tai aikakatkaistaan -- ei
  * silloin, kun tunnistin itse päätti kuuntelun tulokseen tai virheeseen.
+ *
+ * `finishBackend` pyytää tunnistinta LOPETTAMAAN ja viimeistelemään
+ * (recognition.stop() / plugin.stop()): mikrofoni sulkeutuu, ja se mitä
+ * ehdittiin sanoa tulee tavallisena tuloksena. null = taustajärjestelmä ei
+ * osaa viimeistellä, jolloin lopetus on peruminen.
  */
-function createSession({ timeoutMs, stopBackend, onSettled }) {
+function createSession({ timeoutMs, stopBackend, onSettled, finishBackend = null }) {
   let resolveResult;
   let timer = null;
   const session = {
@@ -267,6 +280,34 @@ function createSession({ timeoutMs, stopBackend, onSettled }) {
       if (session.settled) return;
       call(stopBackend);
       session.finish({ ok: false, code });
+    },
+    /**
+     * Lopeta kuuntelu ja viimeistele: tulos ratkeaa tekstillä (tai
+     * 'no-speech', jos mitään ei kuultu). Vain kun mikrofoni on auki --
+     * lupadialogin tai käynnistyksen aikana ei ole mitään viimeisteltävää,
+     * ja kuuntelu perutaan. Toinen pyyntö viimeistelyn aikana ei tee mitään.
+     *
+     * @returns {boolean} true = viimeistellään (teksti tulee), false = peruttiin tai ei mitään
+     */
+    finishListening() {
+      if (session.settled) return false;
+      if (session.phase === 'finishing') return true;
+      if (session.phase !== 'listening' || typeof finishBackend !== 'function') {
+        session.cancel(SPEECH_ERROR.ABORTED);
+        return false;
+      }
+      session.phase = 'finishing';
+      // Viimeistely saa oman lyhyen rajansa: jumiin jäänyt tunnistin ei
+      // jätä kutsujaa odottamaan, eikä jäljellä oleva kuunteluaika katkaise
+      // juuri valmistuvaa tulosta.
+      session.arm(FINISH_TIMEOUT_MS);
+      try {
+        finishBackend();
+      } catch {
+        session.cancel(SPEECH_ERROR.UNKNOWN);
+        return false;
+      }
+      return true;
     }
   };
   return session;
@@ -290,7 +331,13 @@ function listenNative(plugin, { lang, timeoutMs, onStart, onPermission }) {
       Promise.resolve(listener)
         .then(handle => { if (handle && typeof handle.remove === 'function') return handle.remove(); return undefined; })
         .catch(() => {});
-    }
+    },
+    // SpeechPlugin.stop(): SpeechRecognizer.stopListening(), ja kesken oleva
+    // listen() ratkeaa tunnistetulla tekstillä. Vanhempi liitännäinen ilman
+    // stop-metodia: lopetus on peruminen (createSession).
+    finishBackend: typeof plugin.stop === 'function'
+      ? () => { Promise.resolve(plugin.stop()).catch(() => session.cancel(SPEECH_ERROR.UNKNOWN)); }
+      : null
   });
 
   // Tilatapahtumat: lupadialogin aikana aikakatkaisu ei kulu (käyttäjä
@@ -298,7 +345,7 @@ function listenNative(plugin, { lang, timeoutMs, onStart, onPermission }) {
   if (typeof plugin.addListener === 'function') {
     try {
       listener = plugin.addListener(NATIVE_STATE_EVENT, event => {
-        if (session.settled) return;
+        if (session.settled || session.phase === 'finishing') return;
         const state = event && event.state;
         if (state === 'permission') {
           session.phase = 'permission';
@@ -356,7 +403,13 @@ function listenWeb(Ctor, { lang, timeoutMs, onStart, onInterim }) {
     released = true;
     try { recognition.abort(); } catch { /* jo pysähtynyt */ }
   };
-  const session = createSession({ timeoutMs, stopBackend: abort, onSettled: abort });
+  // Lopetus (käyttäjä on sanonut sanottavansa) on stop(): mikrofoni sulkeutuu,
+  // ja tunnistin toimittaa jo kuullun lopullisena tuloksena (onresult).
+  const stop = () => {
+    if (!recognition || released) return;
+    recognition.stop();
+  };
+  const session = createSession({ timeoutMs, stopBackend: abort, onSettled: abort, finishBackend: stop });
 
   try {
     recognition = new Ctor();
@@ -372,7 +425,7 @@ function listenWeb(Ctor, { lang, timeoutMs, onStart, onInterim }) {
   recognition.maxAlternatives = 1;
 
   recognition.onstart = () => {
-    if (session.settled) return;
+    if (session.settled || session.phase === 'finishing') return;
     session.phase = 'listening';
     // Kuunteluaika alkaa vasta nyt: selaimen mikrofonikysely ei kuluta sitä.
     session.arm();
@@ -442,7 +495,10 @@ function bindHiddenCancelOnce() {
  * @param {Function} [options.onStart]      mikrofoni on auki
  * @param {Function} [options.onPermission] järjestelmän lupadialogi on auki (natiivi)
  * @param {Function} [options.onInterim]    väliaikainen teksti (vain selain)
- * @returns {{result: Promise<{ok:true,text:string}|{ok:false,code:string}>, cancel: () => void}}
+ * @returns {{result: Promise<{ok:true,text:string}|{ok:false,code:string}>, cancel: () => void, finish: () => boolean}}
+ *   `cancel` hylkää kaiken ('aborted'). `finish` lopettaa kuuntelun ja
+ *   viimeistelee: jo sanottu tulee tuloksena (true), tai ennen mikrofonin
+ *   aukeamista kuuntelu perutaan (false).
  */
 export function startListening({
   lang = 'fi-FI', timeoutMs = LISTEN_TIMEOUT_MS, onStart, onPermission, onInterim
@@ -468,7 +524,11 @@ export function startListening({
     active = session;
     bindHiddenCancelOnce();
   }
-  return { result: session.result, cancel: () => session.cancel(SPEECH_ERROR.ABORTED) };
+  return {
+    result: session.result,
+    cancel: () => session.cancel(SPEECH_ERROR.ABORTED),
+    finish: () => session.finishListening()
+  };
 }
 
 /** Onko kuuntelu käynnissä (mikrofoni auki tai aukeamassa). */

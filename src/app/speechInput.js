@@ -25,8 +25,9 @@
 //
 // Varsinainen tunnistus on alustasovittimessa (src/platform/speech.js):
 // selaimessa Web Speech API, Android-sovelluksessa oma liitännäinen.
-// Sovitin hoitaa aikakatkaisun (15 s), perumisen (abort) ja sen, ettei
-// mikrofoni jää auki taustalle.
+// Sovitin hoitaa aikakatkaisun (15 s), perumisen (abort), lopetuksen
+// (stop: jo sanottu teksti talteen) ja sen, ettei mikrofoni jää auki
+// taustalle.
 //
 // =====================================================================
 // EPÄONNISTUMINEN EI OLE UMPIKUJA
@@ -67,6 +68,23 @@ export function cancelDictation() {
   active = null;
   current.cancel();
   return true;
+}
+
+/**
+ * Lopeta sanelu ja ota talteen se, mitä ehdittiin sanoa: tunnistin
+ * viimeistelee, ja kesken olevan listenOnce()-kutsun lupaus ratkeaa
+ * tekstillä. Ennen kuin mikrofoni on auki (lupa, käynnistys) ei ole mitään
+ * viimeisteltävää, ja sanelu perutaan hiljaa ('aborted').
+ *
+ * Peruminen (cancelDictation) on eri asia: se hylkää kaiken, ja sitä
+ * käytetään kun käyttäjä ei ole enää paikalla (uloskirjautuminen, sovellus
+ * taustalle).
+ *
+ * @returns {boolean} true = viimeistellään (teksti tulee), false = peruttiin tai ei sanelua
+ */
+export function finishDictation() {
+  if (!active) return false;
+  return active.finish() === true;
 }
 
 /**

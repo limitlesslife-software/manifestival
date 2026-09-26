@@ -48,7 +48,7 @@ import java.util.regex.Pattern;
  * SAIKEET
  *   SpeechRecognizer on vain paasaikeen olio. Kaikki tila (recognizer,
  *   active, awaitingPermission) luetaan ja kirjoitetaan vain paasaikeessa;
- *   liitannaismetodit (listen, cancel) siirtavat tyonsa sinne.
+ *   liitannaismetodit (listen, cancel, stop) siirtavat tyonsa sinne.
  *
  * YKSITYISYYS
  *   Jarjestelman tunnistin (yleensa Googlen) kasittelee aanen, usein
@@ -101,6 +101,23 @@ public class SpeechPlugin extends Plugin {
         main.post(() -> {
             cancelPermissionWait();
             stopInternal("aborted");
+            call.resolve();
+        });
+    }
+
+    /**
+     * Lopeta kuuntelu ja anna tunnistimen viimeistella (kayttaja on sanonut
+     * sanottavansa). Mikrofoni sulkeutuu heti (stopListening), ja kesken
+     * oleva listen() ratkeaa tunnistetulla tekstilla, kun tulos saapuu
+     * (onResults), tai koodilla "no-speech". Lupadialogin odotus perutaan
+     * kuten cancel(): mikrofoni ei ole viela auki, eika viimeisteltavaa ole.
+     * Taustalle siirto, navigointi ja uloskirjautuminen kayttavat cancel()ia.
+     */
+    @PluginMethod
+    public void stop(PluginCall call) {
+        main.post(() -> {
+            cancelPermissionWait();
+            finishListening();
             call.resolve();
         });
     }
@@ -247,6 +264,17 @@ public class SpeechPlugin extends Plugin {
         active = null;
         destroyRecognizer();
         if (call != null) done(call, code, null);
+    }
+
+    /** Pyyda tunnistinta viimeistelemaan. Tulos tulee kuuntelijan kautta (finish). */
+    private void finishListening() {
+        if (recognizer == null || active == null) return;
+        SpeechRecognizer current = recognizer;
+        try {
+            current.stopListening();
+        } catch (RuntimeException error) {
+            finish(current, "unknown", null);
+        }
     }
 
     private void cancelPermissionWait() {

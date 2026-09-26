@@ -220,7 +220,18 @@ mikrofonikysely ei kuluta kuunteluaikaa (tunnistin, joka ei käynnisty
 lainkaan, katkaistaan 60 sekunnin käynnistysvaran jälkeen,
 `WEB_START_GUARD_MS`). Peruminen on `abort()`,
 ei `stop()`: kesken jäänyt tulos hylätään, eikä perutun kuuntelun myöhäinen
-tulos päädy kenttään. Virheilmoitukset tulevat yhdestä alustakohtaisesta
+tulos päädy kenttään. Peruminen on oikein silloin, kun käyttäjä ei ole enää
+paikalla (paneelin sulkeminen, sovellus taustalle, uloskirjautuminen).
+
+**Lopetus on eri asia kuin peruminen.** Kirjauspalkin sanelussa tilarivi
+sanoo "Napauta mikrofonia uudelleen lopettaaksesi", ja toinen napautus
+mikrofonin ollessa auki todella lopettaa: kuuntelukahvan `finish()` kutsuu
+selaimessa `recognition.stop()` ja Android-sovelluksessa liitännäisen
+`stop()`-metodia (`SpeechRecognizer.stopListening()`). Mikrofoni sulkeutuu
+heti, ja se mitä ehdittiin sanoa menee kenttään tarkistettavaksi.
+Viimeistelyllä on oma 8 sekunnin raja (`FINISH_TIMEOUT_MS`). Ennen kuin
+mikrofoni on auki (lupadialogi, käynnistys) viimeisteltävää ei ole, ja toinen
+napautus peruu hiljaa. Virheilmoitukset tulevat yhdestä alustakohtaisesta
 taulukosta (`speechErrorMessage`): selaimessa neuvotaan selaimen asetuksiin,
 Android-sovelluksessa polkuun Asetukset → Sovellukset → Manifestival →
 Käyttöoikeudet → Mikrofoni.

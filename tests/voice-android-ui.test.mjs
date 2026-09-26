@@ -69,11 +69,13 @@ const $ = id => globalThis.document.getElementById(id);
 // ----------------------------------------------------- kaksoiskappaleet
 
 function fakeSpeechPlugin({ microphone = 'prompt' } = {}) {
-  const calls = { listen: [], cancel: 0, requestPermissions: 0, checkPermissions: 0, openSettings: 0 };
+  const calls = { listen: [], cancel: 0, stop: 0, requestPermissions: 0, checkPermissions: 0, openSettings: 0 };
   const listeners = new Map();
   let pending = null;
   return {
     calls,
+    /** Mitä tunnistin on kuullut, kun stop() pyytää viimeistelemään. */
+    heard: '',
     emit(state) { for (const fn of listeners.get('speechState') || []) fn({ state }); },
     settle(value) { if (pending) { const resolve = pending; pending = null; resolve(value); } },
     addListener(event, fn) {
@@ -86,6 +88,8 @@ function fakeSpeechPlugin({ microphone = 'prompt' } = {}) {
       return new Promise(resolve => { pending = resolve; });
     },
     async cancel() { calls.cancel += 1; this.settle({ ok: false, code: 'aborted' }); },
+    // Kuten SpeechPlugin.stop(): stopListening -> onResults -> listen ratkeaa kuullulla.
+    async stop() { calls.stop += 1; this.settle(this.heard ? { ok: true, text: this.heard } : { ok: false, code: 'no-speech' }); },
     async checkPermissions() { calls.checkPermissions += 1; return { microphone }; },
     async requestPermissions() { calls.requestPermissions += 1; return { microphone: 'granted' }; },
     async openSettings() { calls.openSettings += 1; return { ok: true }; }
@@ -386,16 +390,61 @@ test('VOICE-AND-2: virhetekstit tulevat alustan taulukosta, eivät kutsupaikoist
 
 // ================================================= VOICE-AND-6: sanelu
 
-test('VOICE-AND-4/6: sanelun toinen napautus peruu eikä näytä virhettä', async () => {
+test('KRIITTINEN: sanelun tilarivi lupaa lopetuksen, ja toinen napautus todella lopettaa: sanottu menee kenttään', async () => {
+  // Tilarivi sanoo "lopettaaksesi". Jos toinen napautus perisi (cancel),
+  // kaikki sanottu katoaisi, vaikka käyttäjälle luvattiin lopetus.
   const plugin = fakeSpeechPlugin();
   installShell(plugin);
   $('captureError').textContent = '';
+  $('captureInput').value = '';
 
   const first = inbox.toggleDictation();
   assert.equal($('captureMicBtn').getAttribute('aria-pressed'), 'true');
   assert.match($('captureStatus').textContent, /Käynnistetään mikrofonia/);
   plugin.emit('listening');
-  assert.match($('captureStatus').textContent, /Kuuntelen/);
+  assert.equal($('captureStatus').textContent, inbox.DICTATION_LISTENING_STATUS);
+  assert.match($('captureStatus').textContent, /Napauta mikrofonia uudelleen lopettaaksesi/);
+
+  plugin.heard = 'soita äidille huomenna';
+  await inbox.toggleDictation();
+  await first;
+  await flush();
+
+  assert.equal(plugin.calls.listen.length, 1, 'toinen napautus käynnisti toisen tunnistimen');
+  assert.equal(plugin.calls.stop, 1, 'toinen napautus ei pyytänyt tunnistinta lopettamaan');
+  assert.equal(plugin.calls.cancel, 0, 'toinen napautus hylkäsi sanotun, vaikka tilarivi lupasi lopetuksen');
+  assert.equal($('captureInput').value, 'soita äidille huomenna');
+  assert.match($('captureStatus').textContent, /Tarkista teksti/);
+  assert.equal($('captureError').textContent, '');
+  assert.equal($('captureMicBtn').getAttribute('aria-pressed'), 'false');
+});
+
+test('sanelu selaimessa: toinen napautus on stop() (ei abort), ja lopullinen teksti menee kenttään', async () => {
+  globalThis.webkitSpeechRecognition = FakeRecognition;
+  $('captureInput').value = '';
+  const first = inbox.toggleDictation();
+  const recognition = FakeRecognition.instances[0];
+  recognition.onstart();
+  assert.equal($('captureStatus').textContent, inbox.DICTATION_LISTENING_STATUS);
+
+  await inbox.toggleDictation();
+  assert.deepEqual(recognition.calls, ['start', 'stop'], 'toinen napautus hylkäsi sanotun (abort)');
+  recognition.final('osta maitoa');
+  await first;
+
+  assert.equal($('captureInput').value, 'osta maitoa');
+  assert.equal(FakeRecognition.instances.length, 1);
+});
+
+test('VOICE-AND-4/6: toinen napautus ennen kuin mikrofoni aukeaa peruu eikä näytä virhettä', async () => {
+  const plugin = fakeSpeechPlugin();
+  installShell(plugin);
+  $('captureError').textContent = '';
+
+  const first = inbox.toggleDictation();
+  plugin.emit('permission');
+  assert.equal(/lopettaaksesi/.test($('captureStatus').textContent), false,
+    'lopetusta ei luvata ennen kuin mikrofoni on auki');
 
   await inbox.toggleDictation();
   await first;
@@ -403,10 +452,28 @@ test('VOICE-AND-4/6: sanelun toinen napautus peruu eikä näytä virhettä', asy
 
   assert.equal(plugin.calls.listen.length, 1, 'toinen napautus käynnisti toisen tunnistimen');
   assert.equal(plugin.calls.cancel, 1);
+  assert.equal(plugin.calls.stop, 0);
   assert.equal($('captureError').textContent, '', 'peruttu sanelu näytti virheen');
   assert.equal($('captureError').style.display, 'none');
   assert.equal($('captureStatus').textContent, '');
   assert.equal($('captureMicBtn').getAttribute('aria-pressed'), 'false');
+});
+
+test('sanelu: uloskirjautuminen (closeCaptureReview) perii eikä vie kuultua kenttään', async () => {
+  const plugin = fakeSpeechPlugin();
+  installShell(plugin);
+  $('captureInput').value = '';
+  const first = inbox.toggleDictation();
+  plugin.emit('listening');
+  plugin.heard = 'edellisen käyttäjän sanelu';
+
+  inbox.closeCaptureReview();
+  await first;
+  await flush();
+
+  assert.equal(plugin.calls.cancel, 1);
+  assert.equal(plugin.calls.stop, 0, 'uloskirjautuminen ei saa viimeistellä sanelua');
+  assert.equal($('captureInput').value, '');
 });
 
 test('VOICE-AND-4: kaksi nopeaa napautusta selaimessa rakentaa yhden tunnistimen', async () => {

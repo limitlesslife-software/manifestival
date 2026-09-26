@@ -446,6 +446,47 @@ test('puheliitännäinen ratkaisee kutsut eikä koskaan hylkää niitä', { skip
   assert.ok(javaCodes.has('blocked') && javaCodes.has('not-allowed') && javaCodes.has('unavailable'));
 });
 
+/** Capacitorin Plugin-perusluokan omat metodit: JS voi kutsua niitä ilman omaa @PluginMethodia. */
+const CAPACITOR_PLUGIN_BUILTINS = new Set(['addListener', 'removeAllListeners', 'checkPermissions', 'requestPermissions']);
+
+test('KRIITTINEN: jokainen JS:n kutsuma puheliitännäisen metodi on Javassa @PluginMethod', { skip: !hasAndroid }, () => {
+  // Capacitor luo JS-olion metodit Javan @PluginMethodeista: puuttuva metodi
+  // on JS:ssä undefined, ja kutsu kaatuisi vasta puhelimessa.
+  const java = javaCode('SpeechPlugin.java');
+  const javaMethods = new Set([...java.matchAll(/@PluginMethod\s+public void (\w+)\(PluginCall call\)/g)].map(m => m[1]));
+  assert.ok(javaMethods.has('listen') && javaMethods.has('cancel'), 'Javan metodihaku on rikki');
+
+  const speechSource = readCode('src/platform/speech.js');
+  const jsCalls = new Set([
+    ...[...speechSource.matchAll(/\bplugin\.(\w+)\(/g)].map(m => m[1]),
+    ...[...speechSource.matchAll(/nativeSpeechPlugin\(\)\.(\w+)\(/g)].map(m => m[1])
+  ]);
+  assert.ok(jsCalls.has('listen') && jsCalls.has('cancel') && jsCalls.has('stop'), 'JS:n kutsuhaku on rikki');
+
+  const missing = [...jsCalls].filter(name => !javaMethods.has(name) && !CAPACITOR_PLUGIN_BUILTINS.has(name));
+  assert.deepEqual(missing, [], 'JS kutsuu puheliitännäisen metodia, jota Javassa ei ole');
+});
+
+test('KRIITTINEN: puheliitännäisen stop() viimeistelee (stopListening), cancel() hylkää', { skip: !hasAndroid }, () => {
+  // Sanelun toinen napautus lupaa lopettaa ("lopettaaksesi"): se, mitä
+  // ehdittiin sanoa, tulee tuloksena. Peruminen (taustalle siirto,
+  // navigointi, uloskirjautuminen) hylkää kaiken ja tuhoaa tunnistimen.
+  const java = javaCode('SpeechPlugin.java');
+  const between = (from, to) => java.slice(java.indexOf(from), java.indexOf(to, java.indexOf(from)));
+
+  const stop = between('public void stop(PluginCall call)', 'public void openSettings');
+  assert.match(stop, /main\.post\(\(\) -> \{\s*cancelPermissionWait\(\);\s*finishListening\(\);\s*call\.resolve\(\);/);
+  assert.equal(/stopInternal|destroyRecognizer/.test(stop), false, 'stop() ei saa hylätä kuultua');
+
+  const finishListening = between('private void finishListening', 'private void cancelPermissionWait');
+  assert.match(finishListening, /current\.stopListening\(\)/);
+  assert.equal(/\.cancel\(\)|destroyRecognizer/.test(finishListening), false,
+    'viimeistely ei saa perua tunnistinta ennen tulosta');
+
+  // Tulos kulkee tavallista reittiä: onResults -> finish -> listen ratkeaa tekstillä.
+  assert.match(java, /public void onResults\(Bundle results\)[\s\S]*?finish\(owner, null, text\)/);
+});
+
 test('vain käynnistysaktiviteetti on ulospäin avoin', { skip: !hasAndroid }, () => {
   const manifest = appManifest();
 

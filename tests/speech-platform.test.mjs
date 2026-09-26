@@ -21,13 +21,15 @@ const ORIGINAL_CAPACITOR = globalThis.Capacitor;
 /** Muistissa elävä ManifestivalSpeech-liitännäinen, joka kirjaa kutsunsa. */
 function fakeSpeechPlugin({ listen = 'pending', microphone = 'prompt' } = {}) {
   const calls = {
-    listen: [], cancel: 0, requestPermissions: 0, checkPermissions: 0,
+    listen: [], cancel: 0, stop: 0, requestPermissions: 0, checkPermissions: 0,
     openSettings: 0, addListener: [], removed: 0
   };
   const listeners = new Map();
   let pending = null;
   return {
     calls,
+    /** Mitä tunnistin on kuullut, kun stop() pyytää viimeistelemään. */
+    heard: '',
     /** Liitännäisen notifyListeners. */
     emit(event, data) { for (const fn of listeners.get(event) || []) fn(data); },
     /** Ratkaise odottava listen()-kutsu. */
@@ -49,6 +51,12 @@ function fakeSpeechPlugin({ listen = 'pending', microphone = 'prompt' } = {}) {
       calls.cancel += 1;
       // Kuten Java: kesken oleva listen ratkeaa koodilla "aborted".
       if (pending) pending({ ok: false, code: 'aborted' });
+    },
+    async stop() {
+      calls.stop += 1;
+      // Kuten Java (stopListening -> onResults): kesken oleva listen ratkeaa
+      // sillä, mitä ehdittiin kuulla.
+      if (pending) pending(this.heard ? { ok: true, text: this.heard } : { ok: false, code: 'no-speech' });
     },
     async checkPermissions() { calls.checkPermissions += 1; return { microphone }; },
     async requestPermissions() { calls.requestPermissions += 1; return { microphone: 'granted' }; },
@@ -325,6 +333,103 @@ test('uusi kuuntelu korvaa vanhan: kaksi mikrofonia ei ole koskaan auki', async 
   assert.equal(speech.isListening(), true);
   second.cancel();
   await second.result;
+});
+
+// ------------------------------------------- 5b. lopetus: sanottu talteen
+
+test('natiivi: lopetus mikrofonin ollessa auki on stop() (ei cancel), ja sanottu palautuu tuloksena', async () => {
+  const plugin = fakeSpeechPlugin();
+  installShell(plugin);
+  const handle = speech.startListening();
+  plugin.emit(speech.NATIVE_STATE_EVENT, { state: 'starting' });
+  plugin.emit(speech.NATIVE_STATE_EVENT, { state: 'listening' });
+  plugin.heard = 'osta maitoa';
+
+  assert.equal(handle.finish(), true, 'mikrofoni oli auki: viimeistellään');
+  assert.equal(handle.finish(), true, 'toinen lopetus viimeistelyn aikana ei tee mitään uutta');
+  assert.deepEqual(await handle.result, { ok: true, text: 'osta maitoa' });
+  assert.equal(plugin.calls.stop, 1);
+  assert.equal(plugin.calls.cancel, 0, 'lopetus ei saa hylätä sanottua');
+  assert.equal(speech.isListening(), false);
+});
+
+test('natiivi: lopetus ennen kuin mikrofoni aukeaa (lupadialogi, käynnistys) perii hiljaa', async () => {
+  for (const state of ['permission', 'starting']) {
+    const plugin = fakeSpeechPlugin();
+    installShell(plugin);
+    const handle = speech.startListening();
+    plugin.emit(speech.NATIVE_STATE_EVENT, { state });
+    assert.equal(handle.finish(), false, state);
+    assert.deepEqual(await handle.result, { ok: false, code: 'aborted' }, state);
+    assert.equal(plugin.calls.stop, 0, state);
+    assert.equal(plugin.calls.cancel, 1, state);
+  }
+});
+
+test('natiivi: liitännäinen ilman stop-metodia -> lopetus on peruminen, ei jumia', async () => {
+  const plugin = fakeSpeechPlugin();
+  delete plugin.stop;
+  installShell(plugin);
+  const handle = speech.startListening();
+  plugin.emit(speech.NATIVE_STATE_EVENT, { state: 'listening' });
+  assert.equal(handle.finish(), false);
+  assert.deepEqual(await handle.result, { ok: false, code: 'aborted' });
+  assert.equal(plugin.calls.cancel, 1);
+});
+
+test('natiivi: viimeistelyllä on oma raja; jumiin jäänyt tunnistin perutaan', async () => {
+  mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    const plugin = fakeSpeechPlugin();
+    plugin.stop = async () => { plugin.calls.stop += 1; };
+    installShell(plugin);
+    let outcome = null;
+    const handle = speech.startListening();
+    handle.result.then(value => { outcome = value; });
+    plugin.emit(speech.NATIVE_STATE_EVENT, { state: 'starting' });
+    plugin.emit(speech.NATIVE_STATE_EVENT, { state: 'listening' });
+    mock.timers.tick(speech.LISTEN_TIMEOUT_MS - 100);
+
+    handle.finish();
+    // Jäljellä oleva kuunteluaika ei katkaise valmistuvaa tulosta.
+    mock.timers.tick(200);
+    await settle();
+    assert.equal(outcome, null);
+    mock.timers.tick(speech.FINISH_TIMEOUT_MS);
+    await settle();
+    assert.deepEqual(outcome, { ok: false, code: 'timeout' });
+    assert.equal(plugin.calls.cancel, 1, 'mikrofoni suljetaan varmasti');
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test('selain: lopetus on stop() (ei abort), ja lopullinen tulos palautuu', async () => {
+  globalThis.webkitSpeechRecognition = FakeRecognition;
+  const handle = speech.startListening();
+  const recognition = FakeRecognition.instances[0];
+  recognition.onstart();
+
+  assert.equal(handle.finish(), true);
+  assert.deepEqual(recognition.calls, ['start', 'stop'], 'lopetus ei saa hylätä sanottua (abort)');
+  recognition.final('soita äidille');
+  assert.deepEqual(await handle.result, { ok: true, text: 'soita äidille' });
+
+  // Selain ennen onstartia (mikrofonikysely auki): ei viimeisteltävää -> abort.
+  const early = speech.startListening();
+  assert.equal(early.finish(), false);
+  assert.deepEqual(FakeRecognition.instances[1].calls, ['start', 'abort']);
+  assert.deepEqual(await early.result, { ok: false, code: 'aborted' });
+});
+
+test('selain: lopetus ilman kuultua puhetta päättyy onendiin (no-speech), ei roiku', async () => {
+  globalThis.webkitSpeechRecognition = FakeRecognition;
+  const handle = speech.startListening();
+  const recognition = FakeRecognition.instances[0];
+  recognition.onstart();
+  handle.finish();
+  recognition.onend();
+  assert.deepEqual(await handle.result, { ok: false, code: 'no-speech' });
 });
 
 // ---------------------------------------------------------- 6. aikakatkaisu
