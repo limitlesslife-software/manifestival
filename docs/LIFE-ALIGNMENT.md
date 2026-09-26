@@ -495,6 +495,15 @@ verkko, 5xx, aikakatkaisu 16 s, kelvoton vastaus) → deterministinen
 selitys. Kesken oleva haku pitää painikkeen estettynä. Lokiin vain lähde
 ja lopputulos. Android-kuori tarvitsee CORS-vastauksen (`api/_cors.js`).
 
+Lähtevä konteksti ei sisällä sääntöä eikä seurannan jakson lukuja
+(`trackedPercent`, `trackedFrom`, `trackedDays`, `trackingLevel`,
+`openUnknownCount`). Siksi `neglect.plan_unknown` selitetään **aina
+paikallisesti** (`DETERMINISTIC_ONLY_RULES`, `failure: 'deterministic_only'`,
+ei verkkokutsua): mallille se näyttäisi tavalliselta "suunniteltu alle
+tavoitteen" -havainnolta, ja malli voisi väittää vajetta, jota ei ole
+todettu. Toteumaan perustuvan havainnon vertailujakson alku ("vertailu 1.10.
+alkaen") on vain deterministisessä selityksessä.
+
 ### Toteuman lähteet (laajennuspisteet)
 
 `src/domain/realitySources.js`: jokainen fakta kantaa lähteen, jakson,

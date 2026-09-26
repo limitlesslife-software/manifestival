@@ -14,7 +14,7 @@ import { createRequire } from 'node:module';
 
 import {
   explainWithFallback, explanationContext, acceptableExplanation, aiExplainEnabled,
-  setAiExplainEnabledForTests, AI_EXPLAIN_ENABLED, MAX_EXPLANATION_LENGTH
+  setAiExplainEnabledForTests, AI_EXPLAIN_ENABLED, MAX_EXPLANATION_LENGTH, DETERMINISTIC_ONLY_RULES
 } from '../src/ai/alignmentExplainClient.js';
 import { restoreAreaNames } from '../src/ai/alignmentContext.js';
 import { analyzeWeek, SIGNAL } from '../src/domain/alignment.js';
@@ -171,6 +171,32 @@ test('minimoitu konteksti: tunnit puolen tunnin tarkkuudella, ei tunnisteita', (
   for (const value of Object.values(context.signals[0].metrics)) {
     if (typeof value === 'number') assert.equal(value * 2, Math.round(value * 2));
   }
+});
+
+test('plan_unknown selitetään aina paikallisesti: mallia ei kutsuta (sääntö ja seurannan jakso eivät lähde)', async () => {
+  // Lähtevässä kontekstissa ei ole sääntöä eikä seurannan jakson lukuja:
+  // malli näkisi "suunniteltu alle tavoitteen" ja voisi väittää vajetta.
+  const { context } = explanationContext(analysis, neglect);
+  for (const key of ['rule', 'trackedPercent', 'trackedFrom', 'trackedDays', 'trackingLevel', 'openUnknownCount']) {
+    assert.equal(key in context.signals[0].metrics || key in context.signals[0], false, key);
+  }
+  assert.deepEqual(DETERMINISTIC_ONLY_RULES, ['neglect.plan_unknown']);
+
+  const unknownWeek = analyzeWeek({
+    weekStart: WEEK, todayIso: '2026-09-15', areas,
+    tasks: [normalizeTask({ id: 'u', title: 'Arvioimaton', date: '2026-09-16', durationMinutes: null, category: 'perhe' })]
+  });
+  const signal = unknownWeek.signals.find(s => s.rule === 'neglect.plan_unknown');
+  assert.ok(signal, 'aineistossa on plan_unknown');
+  let calls = 0;
+  const result = await explainWithFallback({
+    analysis: unknownWeek, signal, areas, accessToken: 'token',
+    fetchImpl: async () => { calls++; return response(200, { text: 'A1 jää selvästi vajaaksi tällä viikolla, varaa aikaa.' }); }
+  });
+  assert.equal(calls, 0, 'ei verkkokutsua');
+  assert.deepEqual([result.source, result.failure], ['deterministic', 'deterministic_only']);
+  const expected = explainSignal(signal, areas);
+  assert.equal(result.text, `${expected.text} ${expected.why}`);
 });
 
 // ================================================================ VASTAUS

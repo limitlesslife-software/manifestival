@@ -19,7 +19,19 @@ import { API } from '../data/config.js';
 import { apiUrl } from '../platform/index.js';
 import { buildAlignmentAssistantContext, restoreAreaNames } from './alignmentContext.js';
 import { explainSignal } from '../domain/alignmentReview.js';
-import { SIGNAL } from '../domain/alignment.js';
+import { SIGNAL, NEGLECT_PLAN_UNKNOWN } from '../domain/alignment.js';
+
+/**
+ * Säännöt, joita malli EI selitä: vain deterministinen teksti.
+ *
+ * Lähtevä konteksti (alignmentContext.js SIGNAL_METRIC_KEYS) ei sisällä
+ * sääntöä eikä seurannan jakson lukuja (trackedPercent, trackedFrom,
+ * trackedDays, trackingLevel, openUnknownCount). `neglect.plan_unknown`
+ * näyttäisi mallille tavalliselta "suunniteltu alle tavoitteen"
+ * -havainnolta, ja malli voisi väittää vajetta, jota ei ole todettu
+ * (tuntematon ei ole nolla). Siksi se selitetään aina paikallisesti.
+ */
+export const DETERMINISTIC_ONLY_RULES = Object.freeze([NEGLECT_PLAN_UNKNOWN]);
 
 /**
  * PRODUCTION GATE: tekoälyselitys.
@@ -142,6 +154,8 @@ export async function explainWithFallback({ analysis, signal, areas = [], access
   const fallback = deterministic(signal, areas);
   // Katkaisin pois: ei verkkokutsua lainkaan.
   if (!aiExplainEnabled()) return { ...fallback, failure: 'disabled' };
+  // Sääntö, jota malli ei näe oikein (ks. DETERMINISTIC_ONLY_RULES): ei verkkokutsua.
+  if (signal && DETERMINISTIC_ONLY_RULES.includes(signal.rule)) return { ...fallback, failure: 'deterministic_only' };
   const doFetch = fetchImpl || (typeof fetch === 'function' ? fetch : null);
   if (!doFetch || !accessToken) return { ...fallback, failure: 'unavailable' };
 
