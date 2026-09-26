@@ -371,9 +371,54 @@ async function abortedSessionCase({ sql, fail, scenario }) {
   return out;
 }
 
+/** 0010 ennen kuin katalogitarkistukset siirrettiin lukituksen eteen (vertailu). */
+export const RERUN_BASELINE_REF = 'e44644c';
+
+/**
+ * Uudelleenajo, kun sovellus pitää lukkoa: 0010 on jo ajettu ja goals on
+ * avoimen kirjoituksen lukitsema. Katalogitarkistus ennen lukitusta
+ * sanoo "JO AJETTU" heti — ei lukon aikakatkaisua 5 s:n päästä.
+ */
+async function rerunUnderLockCase({ sql, label, fail, scenario }) {
+  const db = `mv_rehearsal_lk_rerun_${label.replace(/\W/g, '_')}`.toLowerCase().slice(0, 60);
+  const client = await cloneProdShape('0010', db);
+  const monitor = await connect(db);
+  const out = { label: `${label}: 0010 uudelleen, kun goals on avoimen kirjoituksen lukitsema` };
+  try {
+    const pid = Number(await scalar(client, 'select pg_backend_pid()'));
+    const itemsBefore = await catalogItems(client);
+    const blocker = await openBlocker(db, 'public.goals', 'ROW EXCLUSIVE');
+    let run;
+    try {
+      const t0 = Date.now();
+      run = await runSql(client, sql);
+      out.waitedMs = Date.now() - t0;
+    } finally {
+      out.migrationRelationLocksAfter = await relationLocksOf(monitor, pid);
+      await closeBlocker(blocker);
+    }
+    const d = diffCatalog(itemsBefore, await catalogItems(client));
+    Object.assign(out, { ok: run.ok, error: run.error?.message || null, catalogUnchanged: !d.added.length && !d.removed.length });
+    const problems = [];
+    if (run.ok) problems.push('uudelleenajo meni läpi');
+    else if (!/JO AJETTU/.test(run.error.message)) problems.push(`virhe ei ole "JO AJETTU": ${run.error.message}`);
+    if (out.waitedMs >= WAIT_MIN) problems.push(`odotti ${out.waitedMs} ms (lukkoa) ennen vastausta`);
+    if (!out.catalogUnchanged) problems.push('katalogi muuttui');
+    if (out.migrationRelationLocksAfter !== 0) problems.push(`${out.migrationRelationLocksAfter} relaatiolukkoa jäi`);
+    out.pass = problems.length === 0;
+    out.problems = problems;
+    for (const p of problems) fail(scenario, `uudelleenajo lukon aikana (${label}): ${p}`);
+  } finally {
+    await monitor.end();
+    await client.end();
+    await dropDatabase(db);
+  }
+  return out;
+}
+
 export async function locksScenario({ fail }) {
   const scenario = 'failure:0010-locks';
-  const results = { matrix: [], late: null, stall: [], deadlock: [], aborted: null, beforeF11: null };
+  const results = { matrix: [], late: null, stall: [], deadlock: [], aborted: null, rerunBlocked: null, beforeF11: null };
   const sql0010 = readSql(`supabase/migrations/${migrationName('0010')}.sql`);
   for (const n of ['0010', '0009', '0011']) {
     const sql = n === '0010' ? sql0010 : readSql(`supabase/migrations/${migrationName(n)}.sql`);
@@ -391,6 +436,14 @@ export async function locksScenario({ fail }) {
   results.stall.push(await stallCase({ sql: sql0010, label: 'nykyinen 0010', fail, scenario }));
   results.deadlock.push(await deadlockCase({ sql: sql0010, label: 'nykyinen 0010', fail, scenario }));
   results.aborted = await abortedSessionCase({ sql: sql0010, fail, scenario });
+  results.rerunBlocked = await rerunUnderLockCase({ sql: sql0010, label: 'nykyinen', fail, scenario });
+  // Vertailu: sama uudelleenajo 0010:llä, jossa tunnistus oli lukituksen jälkeen.
+  const beforeReorder = gitShow(RERUN_BASELINE_REF, 'supabase/migrations/0010_goal_to_action.sql');
+  if (beforeReorder && beforeReorder.indexOf('lock table public.goals') < beforeReorder.indexOf('into olemassa from (')) {
+    results.rerunBlockedBefore = await rerunUnderLockCase({ sql: beforeReorder, label: `ennen ${RERUN_BASELINE_REF}`, fail: () => {}, scenario });
+  } else {
+    results.rerunBlockedBefore = { skipped: `git show ${RERUN_BASELINE_REF} ei saatavilla tai tunnistus on jo ennen lukitusta` };
+  }
 
   // Vertailu: 0010 ennen F11:tä (sama mittaus, ei hylkäysehtoja DDL-määrälle).
   const old = gitShow(F11_BASELINE_REF, 'supabase/migrations/0010_goal_to_action.sql');

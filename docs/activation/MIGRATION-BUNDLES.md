@@ -39,7 +39,7 @@ deployataan ehdokashaarasta; SQL ajetaan aina tästä taulukosta.
 | 0009 | `supabase/migrations/0009_finance_2.sql` | `278a806757e7ed10ee97a0a8f4837f07633f5a97` |
 | 0009 | `supabase/verify/verify_0009.sql` | `470176835858356ecbafd0cef5653fd60ce29961` |
 | 0010 | `supabase/preflight/preflight_0010.sql` | `b9279498e587bdb6609941d28c338415ee5205af` |
-| 0010 | `supabase/migrations/0010_goal_to_action.sql` | `270023e401439a6c3d40eb27223d0c58f3602310` |
+| 0010 | `supabase/migrations/0010_goal_to_action.sql` | `431e9270c8e0c4ce9403b70fdcb47c5e2be174ec` |
 | 0010 | `supabase/verify/verify_0010.sql` | `75cc526992c22b35b03071d1acd00d7b9946d3e3` |
 | 0011 | `supabase/preflight/preflight_0011.sql` | `3dac36aebaf33c5a57534750531bd6571eaa06d0` |
 | 0011 | `supabase/migrations/0011_personal_assistant.sql` | `2ed6389aabe89af693b1ed278483a6c44f48f147` |
@@ -59,10 +59,10 @@ deployataan ehdokashaarasta; SQL ajetaan aina tästä taulukosta.
 | Missä ajetaan | Supabase → SQL Editor → **uusi välilehti**, postgres-rooli, ei muita avoimia välilehtiä |
 | Miten | Liitä **koko** tiedosto, ei valintaa, Run |
 | Transaktio | Jokainen migraatio on yksi `begin … commit`. Kesken kaatunut ajo **perutaan kokonaan** — todennettu: katalogi, vanhat rivit ja tilarajoite täsmälleen ennallaan jokaisessa virhetilanteessa, myös kun virhe injektoitiin 0010:n tilarajoitteen vaihdon **jälkeen** |
-| Lukot | `set local lock_timeout = '5s'`: jos sovelluksen pyyntö tai avoin välilehti pitää lukkoa, migraatio luovuttaa 5 s:ssa ja peruuntuu kokonaan; lukon vapauduttua uusi ajo menee läpi. **0010 lukitsee `goals`, `projects`, `tasks` ja `profile` kerralla ennen yhtäkään muutosta**: estäjä missä tahansa niistä = 0 DDL-komentoa ennen perumista, sovelluksen luku odottaa enintään ~5 s |
+| Lukot | `set local lock_timeout = '5s'` — 5 s per lukon odotus (lock_timeout koskee jokaista lukkoa erikseen): jos sovelluksen pyyntö tai avoin välilehti pitää lukkoa, migraatio luovuttaa 5 s:ssa ja peruuntuu kokonaan; lukon vapauduttua uusi ajo menee läpi. **0010 lukitsee `goals`, `projects`, `tasks` ja `profile` kerralla ennen yhtäkään muutosta**: estäjä missä tahansa niistä = 0 DDL-komentoa ennen perumista, sovelluksen luku odottaa enintään ~5 s |
 | Virheen jälkeen | Avaa **uusi** editorin välilehti. Kaatunut istunto ei pidä lukkoja (todennettu), mutta se näkyy preflightissa rivinä *idle in transaction (aborted)* |
 | Esteet preflightissa | *Avoimia idle in transaction -istuntoja*, *Odottavia lukkoja* (tämä kanta) ja *Muut istunnot eivät lukitse tauluja, joita NNNN muuttaa* (`pg_locks`). Idle-rivi ei näe muiden roolien istuntoja ilman `pg_read_all_stats`-oikeutta; lukitut taulut -rivi näkee estäjän aina (todennettu NOSUPERUSER-roolilla) |
-| Uudelleenajo | Kaatuu kiinni viestillä **"JO AJETTU"** |
+| Uudelleenajo | Kaatuu kiinni viestillä **"JO AJETTU"**. 0010 tunnistaa sen katalogista ennen lukitusta: viesti tulee heti (harjoitus 55 ms), vaikka sovellus pitäisi `goals`-lukkoa — aiemmin lukon aikakatkaisu 5 s:n jälkeen väärällä syyllä |
 | Vanha data | Jokaisen vanhan rivin arvot vanhoissa sarakkeissa, rivin `xmin` (ei UPDATEa) ja taulun `relfilenode` (ei uudelleenkirjoitusta) ennallaan jokaisen migraation yli. 0010: kaikki 5 tavoitteen tilaa × projekti kytketty/irti |
 | Taaksepäin yhteensopivuus | Jokainen migraatio ajetaan edellisen aallon koodin ollessa tuotannossa. Jokaisessa tauossa elävän ja seuraavan aallon **oikeat** rivimuodot (sovelluksen omat rivimuunnokset, insert/update/upsert) menivät läpi, ja verify + seuraava preflight antoivat 0 FAIL |
 | Verify-luku | `poikkeavia_yhteensa` laskee myös NULL-tuloksen (puuttuva objekti), ja details kertoo `toteutui null` |
@@ -105,7 +105,8 @@ tulostaa ajettavat tiedostot tiivisteineen.
 |---|---|
 | Tekee | Uusi taulu `milestones`; **muuttaa eläviä tauluja**: `goals` +7 saraketta ja 4 rajoitetta, `goals_status_check` korvataan (sallii lisäksi `maintenance`), `tasks` +2 (`milestone_id`, `depends_on text[] not null default '{}'`), `projects` +1, `profile` +2 (`automation_level`, `planning_buffer_ratio`, oletusarvoin) |
 | Elävät taulut | `goals`, `tasks`, `projects`, `profile` — kaikki auki tuotannossa ja niissä on oikeaa dataa; viittaus `auth.users` |
-| Lukot | Neljä elävää taulua lukitaan **kerralla, kiinteässä järjestyksessä, ennen yhtäkään muutosta** (`lock table … in access exclusive mode`). Estäjä → 5 s ja peruutus ilman ainuttakaan DDL:ää (harjoitus: 8/8 estäjää goals/tasks/projects/profile × luku/kirjoitus; ennen tätä profile-estäjä ehti 42 DDL-komentoa). `depends_on` lisätään oletusarvolla ilman taulun uudelleenkirjoitusta |
+| Järjestys | 0a–0b vain katalogia lukevat esiehdot, uudelleenajon tunnistus (**"JO AJETTU"** / kesken, 38 objektia) ja `touch_updated_at` — **ennen lukitusta**, joten ne vastaavat heti eivätkä odota sovelluksen lukkoa → 0c `set local lock_timeout = '5s'` (5 s per lukon odotus; lock_timeout koskee jokaista lukkoa erikseen) ja lukitus → 0d omistajan rivi `auth.users`-taulussa ja 0e tavoitteiden tilat (rivien luku vasta lukituksen jälkeen) → vaihe 1: ensimmäinen DDL |
+| Lukot | Neljä elävää taulua lukitaan **kerralla, kiinteässä järjestyksessä, ennen ensimmäistä rivien lukua ja ennen yhtäkään muutosta** (`lock table … in access exclusive mode`). Estäjä → 5 s ja peruutus ilman ainuttakaan DDL:ää (harjoitus: 8/8 estäjää goals/tasks/projects/profile × luku/kirjoitus; ennen tätä profile-estäjä ehti 42 DDL-komentoa). `depends_on` lisätään oletusarvolla ilman taulun uudelleenkirjoitusta |
 | Epäonnistuminen kesken | Kokonaan peruuntuva transaktio; todennettu lukon aikakatkaisulla, lukkiutumisella (40P01) ja virheellä tilarajoitteen vaihdon jälkeen: tilarajoite palaa 0004:n viiden arvon versioksi |
 | Olemassa oleva data | Jokainen nykyinen tavoitteen tila on uuden rajoitteen sallima (preflightin rivi 08). Harjoitus 10 muunnelmalla: yksikään vanha arvo ei muutu, yhtään riviä tai taulua ei kirjoiteta uudelleen; vanhoilla riveillä `depends_on = '{}'`, `automation_level = 1`, `planning_buffer_ratio = 0.25`, muut uudet sarakkeet null |
 | Varmuuskopio | **PAKOLLINEN**, tänään otettu, aikaleima ylös ennen ajoa. Ohje ja palautus: `docs/activation/0010-BACKUP-AND-RECOVERY.md` |
