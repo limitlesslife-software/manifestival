@@ -75,6 +75,15 @@ const KNOWN_CODES = new Set(Object.values(SPEECH_ERROR));
 /** Kuuntelun yläraja. Osa tunnistimista ei koskaan lopeta itse. */
 export const LISTEN_TIMEOUT_MS = 15000;
 
+/**
+ * Selaimen käynnistysvara. recognition.start() voi avata selaimen oman
+ * mikrofonikyselyn, eikä käyttäjän harkinta-aika saa kuluttaa
+ * kuunteluaikaa: LISTEN_TIMEOUT_MS alkaa vasta onstart-tapahtumasta. Tämä
+ * pidempi vara vain estää roikkumasta ikuisesti, jos tunnistin ei koskaan
+ * käynnisty (kyselyyn ei vastata).
+ */
+export const WEB_START_GUARD_MS = 60000;
+
 /** Liitännäisen tilatapahtuma (SpeechPlugin.java STATE_EVENT). */
 export const NATIVE_STATE_EVENT = 'speechState';
 
@@ -235,9 +244,10 @@ function createSession({ timeoutMs, stopBackend, onSettled }) {
     phase: 'starting',
     settled: false,
     result: new Promise(resolve => { resolveResult = resolve; }),
-    arm() {
+    /** Aikaraja alkaa alusta (oletuksena kuunteluaika). */
+    arm(ms = timeoutMs) {
       session.disarm();
-      timer = setTimeout(() => session.cancel(SPEECH_ERROR.TIMEOUT), timeoutMs);
+      timer = setTimeout(() => session.cancel(SPEECH_ERROR.TIMEOUT), ms);
     },
     disarm() {
       if (timer !== null) clearTimeout(timer);
@@ -364,6 +374,8 @@ function listenWeb(Ctor, { lang, timeoutMs, onStart, onInterim }) {
   recognition.onstart = () => {
     if (session.settled) return;
     session.phase = 'listening';
+    // Kuunteluaika alkaa vasta nyt: selaimen mikrofonikysely ei kuluta sitä.
+    session.arm();
     call(onStart);
   };
 
@@ -392,7 +404,8 @@ function listenWeb(Ctor, { lang, timeoutMs, onStart, onInterim }) {
     session.finish({ ok: false, code: SPEECH_ERROR.NO_SPEECH });
   };
 
-  session.arm();
+  // Ennen onstartia vain käynnistysvara (ks. WEB_START_GUARD_MS).
+  session.arm(Math.max(WEB_START_GUARD_MS, timeoutMs));
   try {
     recognition.start();
   } catch {
@@ -425,7 +438,7 @@ function bindHiddenCancelOnce() {
  *
  * @param {object} [options]
  * @param {string} [options.lang='fi-FI']
- * @param {number} [options.timeoutMs=15000] kuuntelun yläraja (lupadialogi ei kuluta sitä)
+ * @param {number} [options.timeoutMs=15000] kuuntelun yläraja (natiivin lupadialogi tai selaimen mikrofonikysely ei kuluta sitä)
  * @param {Function} [options.onStart]      mikrofoni on auki
  * @param {Function} [options.onPermission] järjestelmän lupadialogi on auki (natiivi)
  * @param {Function} [options.onInterim]    väliaikainen teksti (vain selain)

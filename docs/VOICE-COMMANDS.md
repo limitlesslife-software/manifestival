@@ -214,7 +214,11 @@ kuunnella. Kun puhe ei ole käytettävissä, kirjoituspaneeli kertoo syyn
 (`#vfFallbackReason`, kyvykkyysrekisterin `reason`).
 
 Jokainen kuuntelu päättyy: tulokseen, virheeseen, perumiseen, 15 sekunnin
-aikarajaan tai sovelluksen siirtymiseen taustalle. Peruminen on `abort()`,
+aikarajaan tai sovelluksen siirtymiseen taustalle. 15 sekuntia alkaa vasta,
+kun mikrofoni on auki: selaimessa `onstart`-tapahtumasta, joten selaimen oma
+mikrofonikysely ei kuluta kuunteluaikaa (tunnistin, joka ei käynnisty
+lainkaan, katkaistaan 60 sekunnin käynnistysvaran jälkeen,
+`WEB_START_GUARD_MS`). Peruminen on `abort()`,
 ei `stop()`: kesken jäänyt tulos hylätään, eikä perutun kuuntelun myöhäinen
 tulos päädy kenttään. Virheilmoitukset tulevat yhdestä alustakohtaisesta
 taulukosta (`speechErrorMessage`): selaimessa neuvotaan selaimen asetuksiin,

@@ -7,7 +7,7 @@
 // ja virheiden kieli. Se, kuuleeko puhelimen tunnistin oikeasti suomea,
 // on laitehyväksynnän asia (docs/DEVICE-ACCEPTANCE-BACKLOG.md).
 
-import { test, beforeEach, afterEach } from 'node:test';
+import { test, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { readCode } from './helpers/sources.mjs';
@@ -392,6 +392,61 @@ test('selainpolku: tulos, väliaikateksti, virheet ja hiljainen loppu', async ()
     const next = speech.startListening();
     FakeRecognition.instances.at(-1).onerror({ error });
     assert.deepEqual(await next.result, { ok: false, code }, error);
+  }
+});
+
+/** Lupausketjujen tyhjennys, kun setTimeout on korvattu (setImmediate ei ole). */
+const settle = async () => { for (let i = 0; i < 5; i += 1) await new Promise(resolve => setImmediate(resolve)); };
+
+test('selainpolku: selaimen oma mikrofonikysely ei kuluta kuunteluaikaa; raja alkaa onstartista', async () => {
+  mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    globalThis.webkitSpeechRecognition = FakeRecognition;
+    let started = 0;
+    let outcome = null;
+    const handle = speech.startListening({ onStart: () => { started += 1; } });
+    handle.result.then(value => { outcome = value; });
+    const recognition = FakeRecognition.instances[0];
+
+    // Selain kysyy mikrofonilupaa 20 s (yli kuunteluajan): onstart ei ole
+    // vielä tullut, eikä kuuntelu saa aikakatkaista.
+    mock.timers.tick(20000);
+    await settle();
+    assert.equal(outcome, null, 'selaimen lupakysely kulutti kuunteluajan');
+    assert.deepEqual(recognition.calls, ['start']);
+
+    // Lupa annettu, mikrofoni auki: täysi kuunteluaika alkaa nyt.
+    recognition.onstart();
+    assert.equal(started, 1);
+    mock.timers.tick(speech.LISTEN_TIMEOUT_MS - 1);
+    await settle();
+    assert.equal(outcome, null, 'kuunteluaika ei alkanut onstartista');
+    mock.timers.tick(1);
+    await settle();
+    assert.deepEqual(outcome, { ok: false, code: 'timeout' });
+    assert.deepEqual(recognition.calls, ['start', 'abort'], 'aikakatkaisu katkaisee tunnistimen kerran');
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test('selainpolku: tunnistin, joka ei koskaan käynnisty, katkaistaan käynnistysvaran jälkeen', async () => {
+  mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    globalThis.webkitSpeechRecognition = FakeRecognition;
+    let outcome = null;
+    speech.startListening().result.then(value => { outcome = value; });
+    assert.ok(speech.WEB_START_GUARD_MS > speech.LISTEN_TIMEOUT_MS);
+
+    mock.timers.tick(speech.WEB_START_GUARD_MS - 1);
+    await settle();
+    assert.equal(outcome, null);
+    mock.timers.tick(1);
+    await settle();
+    assert.deepEqual(outcome, { ok: false, code: 'timeout' }, 'vastaamaton kysely jätti kuuntelun roikkumaan');
+    assert.equal(speech.isListening(), false);
+  } finally {
+    mock.timers.reset();
   }
 });
 
