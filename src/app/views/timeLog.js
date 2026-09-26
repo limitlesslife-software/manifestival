@@ -14,6 +14,9 @@
 //      ruudunlukijasemantiikka tulevat selaimelta. Dialogi sulkeutuu
 //      ensimmäisestä valinnasta, ja kirjauksella on dialogikohtainen
 //      operaatiotunniste, joten kaksoisnapautus ei tuota kahta riviä.
+//      Pikavalinnat ovat type="button" (CRIT-04): Enter "Muu"-kentässä
+//      lähettää lomakkeen ENSIMMÄISELLÄ submit-painikkeella, ja sen on
+//      oltava "Kirjaa" — ei pikavalinta, joka kirjaisi 15 min.
 //
 //   3. VALMISTUMISEN KIRJAUS. Tehtävän valmistuessa kysytään "Kirjataanko
 //      tähän käytetty aika?". Arvio EI kopioidu toteumaksi: käyttäjä voi
@@ -175,12 +178,14 @@ function areaSelectHtml() {
  * @param {string} [options.operationId]
  * @param {string} [options.skipLabel]
  * @param {boolean} [options.offerMute]  "Älä kysy tätä tällä laitteella"
+ * @param {boolean} [options.timerOnly]  vain alueen valinta ja "Aloita ajastin" (ei kirjausta)
  * @returns {Promise<{action: 'logged'|'timer'|'skip', result?: object}>}
  */
 export function openTimeLogDialog(options) {
   const {
     target = { kind: 'none' }, title, message = '', suggestions = null, allowTimer = false,
-    chooseArea = false, operationId = null, skipLabel = 'Peruuta', offerMute = false, entryDate = null
+    chooseArea = false, operationId = null, skipLabel = 'Peruuta', offerMute = false, entryDate = null,
+    timerOnly = false
   } = options;
   const dialog = dialogElement();
   // Auki olevaa dialogia EI korvata: sen sulkeutuminen laukaisisi myös
@@ -191,27 +196,36 @@ export function openTimeLogDialog(options) {
   const operation = operationId || newOperationId();
   const introHtml = message ? `<p class="confirm-message">${escapeHtml(message)}</p>` : '';
 
-  dialog.innerHTML = `
-    <form method="dialog" class="confirm-body time-log-body">
-      <h2 class="confirm-title" id="timeLogTitle">${escapeHtml(title)}</h2>
-      ${introHtml}
-      ${chooseArea ? areaSelectHtml() : ''}
+  // Pikavalinnat ovat type="button" ja sulkevat dialogin itse (CRIT-04).
+  // Ennen ne olivat submit-painikkeita ENNEN "Kirjaa"-painiketta, joten
+  // Enter "Muu"-kentässä (implisiittinen lähetys = ensimmäinen submit)
+  // kirjasi 15 min kirjoitetun arvon sijaan. Nyt ensimmäinen submit on
+  // "Kirjaa". value-attribuutti säilyy: se on painikkeen tunniste.
+  const logControls = timerOnly ? '' : `
       <div class="time-log-presets" role="group" aria-label="Kirjattava aika">
-        ${presets.map(preset => `<button type="submit" formnovalidate class="form-btn secondary time-log-preset" value="m:${preset.minutes}">
+        ${presets.map(preset => `<button type="button" class="form-btn secondary time-log-preset" value="m:${preset.minutes}" data-log-minutes="${preset.minutes}">
             ${escapeHtml(preset.label)}${preset.hint ? `<span class="time-log-hint">${escapeHtml(preset.hint)}</span>` : ''}
           </button>`).join('')}
       </div>
       <div class="time-log-custom">
         <label class="field-label" for="timeLogMinutes">Muu (minuuttia)</label>
         <!-- step="1": step lasketaan min-arvosta, joten min="1" step="5" hyväksyi
-             vain 1, 6, 11, ... 26, 31 — tavallinen 30 min esti koko lomakkeen. -->
-        <input type="number" id="timeLogMinutes" min="1" max="1440" step="1" inputmode="numeric">
+             vain 1, 6, 11, ... 26, 31 — tavallinen 30 min esti koko lomakkeen.
+             required: tyhjä kenttä + Enter ei sulje dialogia kirjaamatta. -->
+        <input type="number" id="timeLogMinutes" min="1" max="1440" step="1" inputmode="numeric" required>
         <button type="submit" class="form-btn secondary" value="custom">Kirjaa</button>
-      </div>
+      </div>`;
+
+  dialog.innerHTML = `
+    <form method="dialog" class="confirm-body time-log-body">
+      <h2 class="confirm-title" id="timeLogTitle" tabindex="-1">${escapeHtml(title)}</h2>
+      ${introHtml}
+      ${chooseArea ? areaSelectHtml() : ''}
+      ${logControls}
       ${offerMute ? `<label class="checkbox-row" for="timeLogMute"><input type="checkbox" id="timeLogMute"> Älä kysy tätä tällä laitteella</label>` : ''}
       <div class="confirm-actions">
         <button type="submit" formnovalidate class="form-btn secondary" value="cancel">${escapeHtml(skipLabel)}</button>
-        ${allowTimer ? '<button type="submit" formnovalidate class="form-btn primary" value="timer">Aloita ajastin</button>' : ''}
+        ${allowTimer || timerOnly ? '<button type="submit" formnovalidate class="form-btn primary" value="timer">Aloita ajastin</button>' : ''}
       </div>
     </form>`;
 
@@ -245,10 +259,16 @@ export function openTimeLogDialog(options) {
       resolve({ action: 'logged', result });
     };
     dialog.addEventListener('close', onClose);
+    for (const preset of dialog.querySelectorAll('[data-log-minutes]')) {
+      preset.addEventListener('click', () => dialog.close(preset.value));
+    }
     dialog.returnValue = 'cancel';
     dialog.showModal();
-    const first = dialog.querySelector('.time-log-preset');
-    if (first) first.focus();
+    // Alkufokus otsikkoon, EI pikavalintaan (CRIT-04): yksi Enter tai
+    // välilyönti heti avautumisen jälkeen kirjasi ennen 15 min. Otsikko
+    // ei myöskään avaa puhelimen näppäimistöä pikavalintojen päälle.
+    const heading = dialog.querySelector('#timeLogTitle');
+    if (heading) heading.focus();
   });
 }
 
@@ -437,6 +457,22 @@ export function openItemLog(kind, id) {
 export function openGeneralLog() {
   return openTimeLogDialog({
     target: { kind: 'none' }, title: 'Kirjaa aikaa', chooseArea: true, allowTimer: true
+  });
+}
+
+/**
+ * "Aloita ajanseuranta" Suunnasta: kysy alue ENNEN ajastimen käynnistystä
+ * (F6). Ennen ajastin käynnistyi aina ilman aluetta, eikä kirjattua aikaa
+ * voinut kohdistaa jälkikäteen. "Ei aluetta" on yhä sallittu valinta.
+ */
+export function openTimerChooser() {
+  const hasAreas = getState().lifeAreas.some(area => area.active);
+  return openTimeLogDialog({
+    target: { kind: 'none' }, title: 'Aloita ajanseuranta',
+    message: hasAreas
+      ? 'Mihin alueeseen tämä aika kuuluu? Voit jättää alueen valitsematta ja liittää ajan myöhemmin.'
+      : 'Ajastin käynnistyy ilman aluetta. Voit liittää ajan alueeseen myöhemmin.',
+    chooseArea: true, timerOnly: true
   });
 }
 

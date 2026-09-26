@@ -129,11 +129,16 @@ test('F1 KRIITTINEN: ajastimen tarkistusdialogi hyväksyy minkä tahansa esitäy
 
 test('F1: peruutus-, valmis- ja ajastinpainikkeet eivät vaadi "Muu"-kentän kelpoisuutta', () => {
   const source = read('src/app/views/timeLog.js');
-  for (const value of ['value="cancel"', 'value="timer"', 'time-log-preset']) {
+  for (const value of ['value="cancel"', 'value="timer"']) {
     const button = source.split('\n').find(line => line.includes(value) && line.includes('type="submit"'));
     assert.ok(button, value);
     assert.match(button, /formnovalidate/, `${value}: validointi estäisi painikkeen`);
   }
+  // Pikavalinnat eivät ole lainkaan submit-painikkeita (CRIT-04): validointi
+  // ei voi estää niitä, eikä Enter "Muu"-kentässä osu niihin.
+  const preset = source.split('\n').find(line => line.includes('time-log-preset') && line.includes('<button'));
+  assert.ok(preset);
+  assert.match(preset, /type="button"/);
 });
 
 // ================================================================ F2

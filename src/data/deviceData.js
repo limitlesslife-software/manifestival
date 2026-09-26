@@ -23,7 +23,7 @@
 
 import { purgeQueue } from './offlineQueueStore.js';
 import { purgeTimerData } from './timerStore.js';
-import { clearDevicePreferences } from './preferences.js';
+import { clearDevicePreferences, purgeUserPreferences } from './preferences.js';
 import { clearSchemaCache } from './schemaProbe.js';
 
 /** Mitä merkinnälle tapahtuu. */
@@ -90,6 +90,14 @@ export const DEVICE_STORAGE = Object.freeze([
     onDelete: DEVICE_ACTION.CLEAR
   }),
   entry({
+    prefix: 'manifestival.userPrefs.v1.',
+    owner: 'src/data/preferences.js',
+    contains: 'Käyttäjäkohtaiset liput (USER_DEFAULTS): ensikäytön opastus nähty, '
+      + 'Suunnan aloituksen ohitetut vaiheet. Ei käyttäjän kirjoittamaa tekstiä',
+    onSignOut: DEVICE_ACTION.KEEP,
+    onDelete: DEVICE_ACTION.PURGE
+  }),
+  entry({
     prefix: 'manifestival.schemaCompat.v1.',
     owner: 'src/data/schemaProbe.js',
     contains: 'Viimeisimmän skeematarkistuksen tulos tälle käännökselle ja palvelimelle '
@@ -136,6 +144,7 @@ export const DEVICE_STORAGE = Object.freeze([
 export function purgeDeviceDataForUser(userId) {
   purgeQueue(userId);
   purgeTimerData(userId);
+  purgeUserPreferences(userId);
   clearDevicePreferences();
   clearSchemaCache();
 }

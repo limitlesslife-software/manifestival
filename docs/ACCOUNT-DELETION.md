@@ -277,6 +277,7 @@ selaintallennusta ilman rekisterimerkintää.
 | `manifestival.timeOutbox.v1.<käyttäjä>` | Lähettämättömät aikakirjaukset (myös muistiinpano) | säilyy | poistetaan |
 | `manifestival.timerTombstones.v1.<käyttäjä>` | Poistettujen ajastimien tunnisteet | säilyy | poistetaan |
 | `manifestival.timerPending.v1.<käyttäjä>` | Kirjaamattomat ajastimet, jotka jäivät odottamaan toisen laitteen ajastimen vuoksi | säilyy | poistetaan |
+| `manifestival.userPrefs.v1.<käyttäjä>` | Käyttäjäkohtaiset liput (`USER_DEFAULTS`): ensikäytön opastus nähty, Suunnan aloituksen ohitetut vaiheet | säilyy | poistetaan (`purgeUserPreferences`) |
 | `manifestival:<asetus>` | Laitekohtaiset asetukset (`DEVICE_DEFAULTS`) | tyhjennetään | tyhjennetään |
 | `manifestival.schemaCompat.v1.<tiiviste>` | Viimeisimmän skeematarkistuksen tulos tälle käännökselle ja palvelimelle (migraatiotunnisteet, ei käyttäjän dataa) | säilyy | tyhjennetään (`clearSchemaCache`) |
 | `__manifestival_probe__` | Tallennuskokeilu, kirjoitetaan ja poistetaan heti | — | — |

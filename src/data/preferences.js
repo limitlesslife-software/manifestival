@@ -20,7 +20,11 @@ const STORAGE_PREFIX = 'manifestival:';
 
 /** Laitekohtaisten asetusten oletukset. */
 export const DEVICE_DEFAULTS = Object.freeze({
-  /** Onko ensikäytön opastus nähty tällä laitteella. */
+  /**
+   * VANHA laitekohtainen merkintä ensikäytön opastuksesta. Luetaan vain
+   * siirtymässä (src/app/onboarding.js): merkintä on nyt käyttäjäkohtainen
+   * (USER_DEFAULTS), koska tämä tyhjeni jokaisessa uloskirjautumisessa.
+   */
   onboardingCompleted: false,
   /** Mikä välilehti oli viimeksi auki. */
   lastScreen: 'screen-today',
@@ -114,10 +118,91 @@ export function setDevicePreference(key, value) {
 }
 
 
+// ------------------------------------------------ käyttäjäkohtaiset merkinnät
+//
+// Muutama laitteen muistama asia koskee KÄYTTÄJÄÄ eikä laitetta: onko hän
+// nähnyt ensikäytön opastuksen ja mitkä Suunnan aloituksen vaiheet hän on
+// itse ohittanut. Laitekohtaisina ne tyhjenivät jokaisessa
+// uloskirjautumisessa (opastus näkyi taas, CRIT-06), ja toinen käyttäjä
+// samalla laitteella olisi perinyt ne. Siksi avain on käyttäjäkohtainen:
+//
+//   manifestival.userPrefs.v1.<käyttäjätunnus>
+//
+// Uloskirjautuminen SÄILYTTÄÄ merkinnän (kuten lähtökorin), tilin poisto
+// POISTAA sen (purgeUserPreferences, src/data/deviceData.js). Sisältö on
+// pelkkiä lippuja ja vaiheiden nimiä, ei käyttäjän kirjoittamaa tekstiä.
+
+const USER_PREFIX = 'manifestival.userPrefs.v1.';
+const USER_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+
+/** Käyttäjäkohtaisten merkintöjen oletukset. Vain nämä avaimet kelpaavat. */
+export const USER_DEFAULTS = Object.freeze({
+  /** Onko tämä käyttäjä nähnyt ensikäytön opastuksen tällä laitteella. */
+  onboardingCompleted: false,
+  /**
+   * Suunnan aloitus: käyttäjän ohittamat vaiheet ja tieto siitä, että
+   * aloitus on kertaalleen käyty loppuun. Vaiheen valmius päätellään
+   * tiedoista (src/domain/alignmentSetup.js), ei tästä.
+   */
+  suuntaSetup: Object.freeze({ skipped: Object.freeze([]), completed: false })
+});
+
+function userKey(userId) {
+  const id = userId == null ? '' : String(userId);
+  return USER_ID_PATTERN.test(id) ? USER_PREFIX + id : null;
+}
+
+function readUserRecord(store, key) {
+  try {
+    const raw = store.getItem(key);
+    const parsed = raw === null ? null : JSON.parse(raw);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+/** Lue käyttäjäkohtainen merkintä. Tuntematon käyttäjä tai virhe -> oletus. */
+export function getUserPreference(userId, key) {
+  const fallback = USER_DEFAULTS[key];
+  const store = storage();
+  const storageKey = userKey(userId);
+  if (!store || !storageKey || !Object.prototype.hasOwnProperty.call(USER_DEFAULTS, key)) return fallback;
+  const record = readUserRecord(store, storageKey);
+  return Object.prototype.hasOwnProperty.call(record, key) ? record[key] : fallback;
+}
+
+/** Kirjoita käyttäjäkohtainen merkintä. Epäonnistuminen ei ole virhe. */
+export function setUserPreference(userId, key, value) {
+  const store = storage();
+  const storageKey = userKey(userId);
+  if (!store || !storageKey || !Object.prototype.hasOwnProperty.call(USER_DEFAULTS, key)) return false;
+  try {
+    const record = readUserRecord(store, storageKey);
+    record[key] = value;
+    store.setItem(storageKey, JSON.stringify(record));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Tilin poisto: tämän käyttäjän merkinnät pois. Muiden merkinnät säilyvät. */
+export function purgeUserPreferences(userId) {
+  const store = storage();
+  const storageKey = userKey(userId);
+  if (!store || !storageKey) return;
+  try {
+    store.removeItem(storageKey);
+  } catch {
+    // Poiston epäonnistuminen ei kaada tilin poiston siivousta.
+  }
+}
+
 /**
  * Tyhjennä laitekohtaiset asetukset.
  * Kutsutaan uloskirjautumisessa, jotta seuraava käyttäjä samalla laitteella
- * ei peri edellisen tilaa.
+ * ei peri edellisen tilaa. Käyttäjäkohtaiset merkinnät (yllä) säilyvät.
  */
 export function clearDevicePreferences() {
   const store = storage();

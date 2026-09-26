@@ -59,6 +59,10 @@ function buildDialog() {
   const dialog = document.createElement('dialog');
   dialog.id = DIALOG_ID;
   dialog.className = 'confirm-dialog';
+  // Saavutettava nimi ja kuvaus: ruudunlukija sanoo kysymyksen, ei
+  // pelkkää "dialogi" (CRIT-06).
+  dialog.setAttribute('aria-labelledby', 'confirmTitle');
+  dialog.setAttribute('aria-describedby', 'confirmMessage');
   dialog.innerHTML = `
     <form method="dialog" class="confirm-body">
       <h2 class="confirm-title" id="confirmTitle"></h2>
@@ -147,6 +151,8 @@ function buildProposalDialog() {
   const dialog = document.createElement('dialog');
   dialog.id = PROPOSAL_DIALOG_ID;
   dialog.className = 'confirm-dialog proposal-dialog';
+  dialog.setAttribute('aria-labelledby', 'proposalTitle');
+  dialog.setAttribute('aria-describedby', 'proposalTarget proposalChanges proposalWarning');
   dialog.innerHTML = `
     <form method="dialog" class="confirm-body">
       <div class="proposal-kind" id="proposalKind"></div>
