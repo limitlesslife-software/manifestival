@@ -15,14 +15,29 @@
 import { getClient } from './client.js';
 import { requireUserId } from './session.js';
 import { hasTable, isTableMissing, writeRefusal, noteSchemaError } from './schema.js';
-import { ok, fail } from '../lib/result.js';
+import { ok, fail, failWith, ERROR_CODE } from '../lib/result.js';
 import { normalizePreferences, DEFAULT_PREFERENCES } from '../domain/notification.js';
 
 const TABLE = 'notification_preferences';
 const SCHEMA_KEY = 'notificationPreferences';
 
+/** Käyttäjälle: tallennus odottaa, että asetukset on luettu palvelimelta. */
+export const PREFERENCES_NOT_LOADED_MESSAGE = 'Muistutusasetuksia ei ole vielä haettu palvelimelta, '
+  + 'joten muutosta ei tallennettu. Yritä hetken kuluttua uudelleen.';
+
 /** Muistivarasto, kun taulua ei vielä ole. */
 let memoryPreferences = null;
+
+/**
+ * Kenen asetukset on luettu kannasta tässä istunnossa (käyttäjän tunniste),
+ * tai null.
+ *
+ * MIKSI: jos taulu todettiin latauksessa puuttuvaksi (ajonaikainen
+ * tarkistus tai välimuistin vanha tieto), näkymä sai hiljaiset oletukset.
+ * Kun taulu myöhemmin löytyy, oletusten päälle tehty muutos EI saa
+ * korvata palvelimella jo olevaa riviä (upsert kirjoittaisi koko rivin).
+ */
+let serverLoadedFor = null;
 
 /** Säilyvätkö asetukset tallennuksen yli juuri nyt? */
 export function isPersistent() {
@@ -84,7 +99,19 @@ export async function loadPreferences() {
   // latausvirhettä. Tallennus torjutaan (ks. savePreferences).
   if (isTableMissing(SCHEMA_KEY)) return ok(normalizePreferences({}));
 
+  const loaded = await readServerRow();
+  if (!loaded.ok) {
+    return fail('Muistutusasetusten lataus ei onnistunut.',
+      { cause: loaded.cause, code: 'notificationPrefs.load' });
+  }
+  serverLoadedFor = loaded.userId;
+  return ok(preferencesFromRow(loaded.row));
+}
+
+/** Käyttäjän rivi kannasta: { ok, row, userId } tai { ok: false, cause }. Ei heitä. */
+async function readServerRow() {
   try {
+    const userId = String(requireUserId());
     const { data, error } = await getClient()
       .from(TABLE)
       .select('*')
@@ -93,14 +120,33 @@ export async function loadPreferences() {
 
     if (error) {
       noteSchemaError(TABLE, error);
-      return fail('Muistutusasetusten lataus ei onnistunut.',
-        { cause: error, code: 'notificationPrefs.load' });
+      return { ok: false, cause: error };
     }
-    return ok(preferencesFromRow(data));
+    return { ok: true, row: data || null, userId };
   } catch (cause) {
-    return fail('Muistutusasetusten lataus ei onnistunut.',
-      { cause, code: 'notificationPrefs.load' });
+    return { ok: false, cause };
   }
+}
+
+/**
+ * Saako tallennus korvata palvelimen rivin? Kyllä, jos asetukset on luettu
+ * kannasta tässä istunnossa. Muuten tarkistetaan ensin: jos riviä ei ole,
+ * mitään ei korvata (uusi käyttäjä); jos rivi on, tallennus torjutaan --
+ * käyttäjän muutos tehtiin oletusten, ei hänen omien asetustensa päälle.
+ * Uudelleenlataus (src/app/schemaStatus.js) tuo oikeat asetukset näkyviin.
+ */
+async function ensureServerBaseline() {
+  let userId;
+  try { userId = String(requireUserId()); } catch { userId = null; }
+  if (userId && serverLoadedFor === userId) return null;
+  const loaded = await readServerRow();
+  if (!loaded.ok) {
+    return fail('Muistutusasetusten tallennus ei onnistunut.',
+      { cause: loaded.cause, code: 'notificationPrefs.save' });
+  }
+  if (loaded.row) return failWith(ERROR_CODE.CONFLICT, PREFERENCES_NOT_LOADED_MESSAGE);
+  serverLoadedFor = loaded.userId;
+  return null;
 }
 
 /**
@@ -119,6 +165,9 @@ export async function savePreferences(preferences) {
   // Huoltotila tai kannasta puuttuva taulu: kerrotaan, ei teeskennellä.
   const refused = writeRefusal(SCHEMA_KEY);
   if (refused) return refused;
+  // Oletusten päälle tehty muutos ei korvaa palvelimen riviä.
+  const unknownBaseline = await ensureServerBaseline();
+  if (unknownBaseline) return unknownBaseline;
 
   try {
     const { error } = await getClient()
@@ -140,6 +189,7 @@ export async function savePreferences(preferences) {
 /** Tyhjennä muistivarasto. Kutsutaan uloskirjautumisessa. */
 export function clearPreferences() {
   memoryPreferences = null;
+  serverLoadedFor = null;
 }
 
 export { DEFAULT_PREFERENCES };

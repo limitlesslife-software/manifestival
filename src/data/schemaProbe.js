@@ -22,16 +22,21 @@
 //   - Tuore välimuisti samalle vaatimusjoukolle ja palvelimelle: käytetään
 //     heti ja tarkistetaan taustalla.
 //   - Tarkistus voi vain LASKEA portteja (ks. schemaRuntime.js).
+//   - Ei kirjautunutta käyttäjää: ei yhtään pyyntöä. Uloskirjautuminen
+//     peruu odottavan uudelleentarkistuksen ja unohtaa kiellot
+//     (resetSchemaSession), ja kesken olevan tarkistuksen tulos hylätään.
+//     Anon-roolin 42501 (HTTP 401) on "ei tiedetä", ei huoltokatko.
 //
 // Lokiin menee vain lukumääriä ja migraatiotunnisteita, ei taulujen tai
 // sarakkeiden nimiä eikä virheviestejä.
 
 import { getClient } from './client.js';
 import { SUPABASE_URL } from './config.js';
+import { sessionSnapshot, isSameSession } from './session.js';
 import { COMPILE_GATES, openRequirements, recomputeSchemaCapabilities } from './schema.js';
 import {
-  recordProbeResults, schemaSnapshot, isVerified, isFailure, computeCapabilities,
-  PROBE_RESULT, SCHEMA_STATUS
+  recordProbeResults, schemaSnapshot, isVerified, isFailure, computeCapabilities, reactiveMark,
+  clearForbiddenResults, PROBE_RESULT, SCHEMA_STATUS
 } from './schemaRuntime.js';
 import { logEvent } from '../lib/logger.js';
 
@@ -52,14 +57,20 @@ const CACHEABLE = new Set([PROBE_RESULT.OK, PROBE_RESULT.MISSING_TABLE, PROBE_RE
  * tulla välityspalvelimelta eikä todista taulun puuttumista. Siksi
  * koodition vastaus on aina "ei tiedetä", olipa tila mikä tahansa.
  *
+ * POIKKEUS: 42501 tilalla 401 on kirjautumattoman (anon) roolin kielto
+ * -- esim. uloskirjautumisen jälkeen lähtenyt tarkistus. Se kertoo
+ * istunnosta, ei kannasta, eikä saa laukaista huoltotilaa.
+ *
  * @param {object|null} error PostgREST-virhe ({code, message})
+ * @param {number} [status] vastauksen HTTP-tila (supabase-js pitää sen vastauksessa)
  */
-export function classifyProbeError(error) {
+export function classifyProbeError(error, status) {
   if (!error) return PROBE_RESULT.OK;
   const code = String(error.code || '');
+  const httpStatus = Number(status ?? error.status ?? 0);
   if (code === 'PGRST205' || code === '42P01') return PROBE_RESULT.MISSING_TABLE;
   if (code === '42703' || code === 'PGRST204') return PROBE_RESULT.MISSING_COLUMN;
-  if (code === '42501') return PROBE_RESULT.FORBIDDEN;
+  if (code === '42501') return httpStatus === 401 ? PROBE_RESULT.UNKNOWN : PROBE_RESULT.FORBIDDEN;
   // PGRST301/303 ja 401 (istunto), PGRST000-003 ja 5xx (palvelin),
   // verkko ja keskeytys: ei tiedetä.
   return PROBE_RESULT.UNKNOWN;
@@ -92,7 +103,7 @@ export async function probeSchema({ client, requirements, timeoutMs = SCHEMA_PRO
       let query = client.from(table).select(columns.join(',')).limit(0);
       if (controller && typeof query.abortSignal === 'function') query = query.abortSignal(controller.signal);
       const response = await query;
-      return classifyProbeError(response && response.error);
+      return classifyProbeError(response && response.error, response && response.status);
     } catch {
       return PROBE_RESULT.UNKNOWN;
     }
@@ -212,8 +223,8 @@ export function clearSchemaCache(storage = defaultStorage()) {
 
 // -------------------------------------------------------- orkestrointi
 
-function apply(results, from) {
-  const definite = recordProbeResults(results, { from });
+function apply(results, from, reactiveUpTo) {
+  const definite = recordProbeResults(results, { from, reactiveUpTo });
   recomputeSchemaCapabilities();
   return definite;
 }
@@ -235,18 +246,29 @@ function logProbe(outcome, requirements, results, extra = {}) {
   });
 }
 
+/** Käynnissä oleva tarkistus: { session, run }. Toisen istunnon ajoa ei jaeta. */
 let inFlight = null;
+/** Käynnissä oleva taustatarkistus: { session, run }. */
 let revalidating = null;
 
 async function probeAndApply(context, timeoutMs, outcome) {
-  const { client, requirements, storage, key, cached, now, compile } = context;
+  const { client, requirements, storage, key, cached, now, compile, session } = context;
+  // Tätä ennen kirjatut reaktiiviset puutteet tarkistus saa kumota.
+  const mark = reactiveMark();
   let probed;
   try {
     probed = await probeSchema({ client: client || getClient(), requirements, timeoutMs });
   } catch {
     probed = { results: {}, requests: 0, timedOut: false };
   }
-  const definite = apply(probed.results, 'probe');
+  // Uloskirjautuminen (tai käyttäjän vaihto) kesken tarkistuksen: vastaus
+  // kuvaa vanhan istunnon oikeuksia (anon-roolin kielto näyttäisi
+  // huoltokatkolta). Ei tilaan eikä välimuistiin.
+  if (session && !isSameSession(session)) {
+    logProbe('discarded', requirements, {}, { requests: probed.requests });
+    return { ...probed, discarded: true };
+  }
+  const definite = apply(probed.results, 'probe', mark);
   if (definite > 0) {
     const status = computeCapabilities({
       requirements, compile, results: probed.results, verified: true
@@ -278,18 +300,28 @@ async function probeAndApply(context, timeoutMs, outcome) {
  * @returns {Promise<object>} schemaSnapshot() + { outcome }
  */
 export function ensureSchemaCompatibility(options = {}) {
-  if (inFlight) return inFlight;
-  inFlight = run(options)
+  // Sama istunto jakaa käynnissä olevan tarkistuksen. Edellisen istunnon
+  // (uloskirjautunut tai toinen käyttäjä) tarkistus ei kelpaa tälle: sen
+  // tulos hylätään (probeAndApply), joten tälle aloitetaan oma.
+  if (inFlight && isSameSession(inFlight.session)) return inFlight.run;
+  const session = sessionSnapshot();
+  const run = runProbe(options, session)
     .catch(() => ({ ...schemaSnapshot(), outcome: 'error' }))
-    .finally(() => { inFlight = null; });
-  return inFlight;
+    .finally(() => { if (inFlight && inFlight.run === run) inFlight = null; });
+  inFlight = { session, run };
+  return run;
 }
 
-async function run({
+async function runProbe({
   timeoutMs = SCHEMA_PROBE_TIMEOUT_MS, force = false, onlyIfUnverified = false, background = true,
   client = null, isOnline = defaultIsOnline, storage = defaultStorage(), now = () => Date.now(),
   host = supabaseHost()
-} = {}) {
+} = {}, session = sessionSnapshot()) {
+  // Ei kirjautunutta käyttäjää (esim. uloskirjautumisen jälkeen lauennut
+  // uudelleentarkistus): anon-roolin vastaukset kertoisivat istunnosta,
+  // eivät kannasta. Ei yhtään pyyntöä.
+  if (!session.userId) return { ...schemaSnapshot(), outcome: 'no_session' };
+
   // "Tarkistettu" = kanta on vastannut tässä istunnossa. Offline-käynnistyksen
   // välimuisti ei riitä: verkon palattua tarkistetaan kerran oikeasti.
   if (onlyIfUnverified && isVerified() && schemaSnapshot().source === 'probe') {
@@ -300,7 +332,7 @@ async function run({
   const requirements = openRequirements(compile);
   const key = schemaCacheKey(requirements, host);
   const cached = readCache(storage, key);
-  const context = { client, requirements, storage, key, cached, now, compile };
+  const context = { client, requirements, storage, key, cached, now, compile, session };
 
   if (!isOnline()) {
     if (cached) apply(cached.results, 'cache');
@@ -311,55 +343,92 @@ async function run({
   const fresh = cached && now() - cached.checkedAt >= 0 && now() - cached.checkedAt < SCHEMA_CACHE_FRESH_MS;
   if (!force && fresh && cached.status !== SCHEMA_STATUS.MAINTENANCE) {
     apply(cached.results, 'cache');
-    if (background && !revalidating) {
-      revalidating = probeAndApply(context, BACKGROUND_TIMEOUT_MS, 'revalidate')
+    if (background && !(revalidating && isSameSession(revalidating.session))) {
+      const revalidation = probeAndApply(context, BACKGROUND_TIMEOUT_MS, 'revalidate')
         .catch(() => null)
-        .finally(() => { revalidating = null; });
+        .finally(() => { if (revalidating && revalidating.run === revalidation) revalidating = null; });
+      revalidating = { session, run: revalidation };
     }
     return { ...schemaSnapshot(), outcome: 'cache' };
   }
 
-  await probeAndApply(context, timeoutMs, force ? 'reprobe' : 'probe');
-  return { ...schemaSnapshot(), outcome: 'probe' };
+  const probed = await probeAndApply(context, timeoutMs, force ? 'reprobe' : 'probe');
+  return { ...schemaSnapshot(), outcome: probed && probed.discarded ? 'discarded' : 'probe' };
 }
 
 /** Testejä ja diagnostiikkaa varten: käynnissä oleva taustatarkistus tai null. */
 export function schemaRevalidation() {
-  return revalidating;
+  return revalidating ? revalidating.run : null;
 }
 
 // ------------------------------------------------ uudelleentarkistus
 
 export const SCHEMA_REPROBE_MIN_INTERVAL_MS = 30000;
 let lastReprobeAt = -Infinity;
-let reprobeTimer = null;
+/** Odottava uudelleentarkistus: { timer, resolve } tai null. */
+let pendingReprobe = null;
 
 /**
  * Ajasta uusi tarkistus (kanta vastasi skeemavirheellä). Rajoitettu:
  * enintään yksi odottava ja vähintään 30 s väli, joten toistuva virhe ei
- * tuota pyyntövyöryä.
+ * tuota pyyntövyöryä. Uloskirjautuminen peruu odottavan
+ * (cancelSchemaReprobe): lupaus valmistuu silloin tuloksella 'cancelled'.
  *
  * @returns {Promise<object>|null} valmistuva tarkistus, tai null jos yksi jo odottaa
  */
 export function scheduleSchemaReprobe({
   delayMs = 1000, minIntervalMs = SCHEMA_REPROBE_MIN_INTERVAL_MS, now = () => Date.now(), ...options
 } = {}) {
-  if (reprobeTimer) return null;
+  if (pendingReprobe) return null;
   const wait = Math.max(delayMs, lastReprobeAt + minIntervalMs - now(), 0);
   return new Promise(resolve => {
-    reprobeTimer = setTimeout(() => {
-      reprobeTimer = null;
+    const entry = { timer: null, resolve };
+    entry.timer = setTimeout(() => {
+      if (pendingReprobe === entry) pendingReprobe = null;
       lastReprobeAt = now();
       ensureSchemaCompatibility({ ...options, force: true, background: false }).then(resolve);
     }, wait);
-    if (reprobeTimer && typeof reprobeTimer.unref === 'function') reprobeTimer.unref();
+    if (entry.timer && typeof entry.timer.unref === 'function') entry.timer.unref();
+    pendingReprobe = entry;
   });
+}
+
+/** Peru odottava uudelleentarkistus. Palauttaa true, jos jokin peruttiin. Ei heitä. */
+export function cancelSchemaReprobe() {
+  const entry = pendingReprobe;
+  if (!entry) return false;
+  pendingReprobe = null;
+  clearTimeout(entry.timer);
+  try { entry.resolve({ ...schemaSnapshot(), outcome: 'cancelled' }); } catch { /* ignore */ }
+  return true;
+}
+
+/**
+ * Uloskirjautuminen: istuntoon sidottu tarkistustieto pois.
+ *
+ *   - odottava uudelleentarkistus perutaan (se lähtisi anon-roolina)
+ *   - kielto (42501) unohdetaan: se kuvasi päättyneen istunnon roolia, ja
+ *     jäädessään seuraava kirjautuminen näkisi huoltoilmoituksen
+ *   - kesken olevan tarkistuksen tulos hylätään istunnon vaihtuessa
+ *     (probeAndApply), ja uusi istunto aloittaa omansa
+ *
+ * Kannan rakenteesta saatu tieto (puuttuva taulu tai sarake) säilyy: se
+ * ei riipu käyttäjästä. Ei heitä.
+ */
+export function resetSchemaSession() {
+  cancelSchemaReprobe();
+  lastReprobeAt = -Infinity;
+  inFlight = null;
+  revalidating = null;
+  try {
+    if (clearForbiddenResults() > 0) recomputeSchemaCapabilities();
+  } catch { /* uloskirjautuminen ei kaadu tarkistukseen */ }
 }
 
 /** Testejä varten. */
 export function resetSchemaProbeForTests() {
-  if (reprobeTimer) clearTimeout(reprobeTimer);
-  reprobeTimer = null;
+  if (pendingReprobe) clearTimeout(pendingReprobe.timer);
+  pendingReprobe = null;
   lastReprobeAt = -Infinity;
   inFlight = null;
   revalidating = null;

@@ -595,7 +595,15 @@ function columnFromMessage(message) {
  * viesti ei riitä huoltotilaan -- uusi tarkistus päättää. 23514 (CHECK)
  * ei koskaan laske mitään: se on myös tavallinen validointivirhe.
  *
- * Laskettu tieto on pysyvä istunnon ajan (ks. schemaRuntime.js).
+ * YDINTAULUN PUUTTUMINEN (tasks, profile; PGRST205/42P01) ei laske
+ * mitään: se on tarkistuksen huoltotila, ja sen sarakeporttien
+ * laskeminen jäisi voimaan huoltokatkon jälkeenkin (tehtävät
+ * tallentuisivat ilman kuvausta, kestoa ja määräaikaa sivun lataukseen
+ * asti). Uusi tarkistus pyydetään silti.
+ *
+ * Vain kirjoituksen PGRST204 (PostgRESTin vanhentunut skeemavälimuisti)
+ * on pysyvä istunnon ajan. Muut puutteet kumoutuvat, kun myöhempi
+ * tarkistus näkee vaatimuksen kunnossa (ks. schemaRuntime.js).
  * Palauttaa true, jos jokin laski. Ei heitä.
  *
  * @param {string} table kannan taulu
@@ -607,6 +615,12 @@ export function noteSchemaError(table, error, payloadKeys = []) {
     const cause = (error && error.cause) || error || {};
     const code = String(cause.code || '');
     if (!MISSING_TABLE_CODES.has(code) && !MISSING_COLUMN_CODES.has(code)) return false;
+
+    if (MISSING_TABLE_CODES.has(code)
+      && SCHEMA_REQUIREMENTS.some(requirement => requirement.core && requirement.table === table)) {
+      requestReprobe('schema_error');
+      return false;
+    }
 
     const open = openRequirements().filter(requirement => requirement.table === table && !requirement.core);
     const failures = {};
@@ -631,7 +645,8 @@ export function noteSchemaError(table, error, payloadKeys = []) {
       }
     }
 
-    const changed = recordReactiveFailures(failures) && recomputeSchemaCapabilities();
+    const changed = recordReactiveFailures(failures, { sticky: code === 'PGRST204' })
+      && recomputeSchemaCapabilities();
     // 'lowered' kertoo sovelluskerrokselle, että odottavat muutokset voi
     // lähettää uudelleen heti tarkistuksen jälkeen (ks. src/app/schemaStatus.js).
     requestReprobe(changed ? 'lowered' : 'schema_error');

@@ -583,16 +583,20 @@ test('AKTIVOITU: muistutusasetusten tallennus on upsert eikä sokea update', asy
   const tulos = await prefsRepo.savePreferences({ enabled: true, maxPerDay: 5 });
   assert.equal(tulos.ok, true);
 
-  assert.equal(asiakas.kutsut.length, 1);
-  assert.equal(asiakas.kutsut[0].operaatio, 'upsert',
+  // Ennen istunnon ensimmäistä tallennusta rivi luetaan: oletusten päälle
+  // tehty muutos ei saa korvata palvelimella jo olevaa riviä. Lukuja saa
+  // siis olla, kirjoituksia tasan yksi.
+  const kirjoitukset = asiakas.kutsut.filter(k => k.operaatio !== 'select');
+  assert.equal(kirjoitukset.length, 1);
+  assert.equal(kirjoitukset[0].operaatio, 'upsert',
     'asetusten tallennus ei ole upsert');
-  assert.equal(asiakas.kutsut[0].payload.id, KAYTTAJA_A.id,
+  assert.equal(kirjoitukset[0].payload.id, KAYTTAJA_A.id,
     'asetusrivin omistaja ei ole kirjautunut käyttäjä');
 
   // created_at ja updated_at ovat palvelimen omia myös täällä.
   for (const kentta of ['created_at', 'updated_at']) {
     assert.equal(
-      Object.prototype.hasOwnProperty.call(asiakas.kutsut[0].payload, kentta), false,
+      Object.prototype.hasOwnProperty.call(kirjoitukset[0].payload, kentta), false,
       `asetusrivi sisältää palvelimen kentän ${kentta}`);
   }
 });

@@ -161,12 +161,26 @@ let source = 'compile';
 /** Varmat tulokset tarkistuksesta tai välimuistista (vaatimus -> tulos). */
 let probeResults = {};
 /**
- * Kannan virheistä päätellyt puutteet. PYSYVIÄ ISTUNNON AJAN: GET-tarkistus
- * kysyy PostgreSQL:ltä, mutta kirjoitus voi yhä kaatua PostgRESTin
- * vanhentuneeseen skeemavälimuistiin (PGRST204). Jos onnistunut tarkistus
- * nollaisi nämä, toisto ja tarkistus ajaisivat toisiaan kehässä.
+ * Kannan virheistä päätellyt puutteet: vaatimus -> { result, sticky, seq }.
+ *
+ * KAKSI LAJIA:
+ *
+ *   sticky   kirjoituksen PGRST204 (payloadin sarake puuttuu PostgRESTin
+ *            skeemavälimuistista). PYSYVÄ ISTUNNON AJAN: GET-tarkistus
+ *            kysyy PostgreSQL:ltä, mutta kirjoitus voi yhä kaatua
+ *            vanhentuneeseen välimuistiin. Jos onnistunut tarkistus
+ *            nollaisi tämän, toisto ja tarkistus ajaisivat toisiaan kehässä.
+ *   muu      puuttuva taulu (PGRST205/42P01) tai PostgreSQL:n 42703.
+ *            Tarkistus näkee saman asian kuin virhe, joten myöhempi varma
+ *            "ok" samalle vaatimukselle poistaa puutteen. Muuten yksi
+ *            hetkellinen virhe (esim. huoltokatkon aikana ladattu lista)
+ *            pitäisi ominaisuuden poissa sivun lataukseen asti.
+ *
+ * `seq` kertoo järjestyksen: tarkistus poistaa vain ne puutteet, jotka
+ * kirjattiin ENNEN kuin se lähti (ks. reactiveMark).
  */
 let reactiveResults = {};
+let reactiveSeq = 0;
 let verified = false;
 let generation = 0;
 const listeners = new Set();
@@ -178,20 +192,46 @@ function same(a, b) {
       .every(key => a[key].join(',') === b[key].join(','));
 }
 
-function emit() {
+function emit(change) {
   const snapshot = schemaSnapshot();
   for (const listener of listeners) {
-    try { listener(snapshot); } catch { /* näkymän virhe ei kaada tarkistusta */ }
+    try { listener(snapshot, change); } catch { /* näkymän virhe ei kaada tarkistusta */ }
   }
+}
+
+function tableLevel(caps, key) {
+  if (caps.missingTables.includes(key)) return 0;
+  if (caps.readOnlyTables.includes(key)) return 1;
+  return 2;
+}
+
+/**
+ * PUHDAS: taulut, joiden kyvykkyys NOUSI (puuttui -> luettavissa, tai
+ * vain luku -> kirjoitettavissa). Näiden tieto on voitu ladata tyhjänä
+ * tai niiden kirjoitukset ovat odottaneet: sovellus lataa ja lähettää
+ * uudelleen (src/app/schemaStatus.js).
+ */
+export function raisedTables(previous, next) {
+  const keys = new Set([...previous.missingTables, ...previous.readOnlyTables]);
+  return [...keys].filter(key => tableLevel(next, key) > tableLevel(previous, key)).sort();
 }
 
 /** Yhdistetyt tulokset: reaktiivinen puute voittaa tarkistuksen "ok":n. */
 export function currentResults() {
   const merged = { ...probeResults };
-  for (const [id, result] of Object.entries(reactiveResults)) {
-    if (isFailure(result)) merged[id] = result;
+  for (const [id, entry] of Object.entries(reactiveResults)) {
+    if (isFailure(entry.result)) merged[id] = entry.result;
   }
   return merged;
+}
+
+/**
+ * Reaktiivisen kirjanpidon merkki. Tarkistus ottaa sen ENNEN pyyntöjä ja
+ * antaa sen recordProbeResultsille: vain sitä ennen kirjatut (ei-pysyvät)
+ * puutteet voi kumota. Tarkistuksen aikana tullut virhe on sitä tuoreempi.
+ */
+export function reactiveMark() {
+  return reactiveSeq;
 }
 
 /** Onko tietoa (tarkistus tai välimuisti) saatu? */
@@ -202,16 +242,28 @@ export function isVerified() {
 /**
  * Tallenna tarkistuksen tulokset. Tuntemattomat (UNKNOWN) eivät korvaa
  * aiempaa tietoa: ne eivät laske eivätkä nosta mitään.
+ *
+ * Oikean tarkistuksen (from: 'probe') varma "ok" kumoaa saman vaatimuksen
+ * ei-pysyvän reaktiivisen puutteen, jos se kirjattiin ennen tarkistuksen
+ * lähtöä (`reactiveUpTo`, ks. reactiveMark). Välimuisti ei kumoa mitään:
+ * se on vanhempaa tietoa kuin virhe.
  */
-export function recordProbeResults(results, { from = 'probe' } = {}) {
+export function recordProbeResults(results, { from = 'probe', reactiveUpTo = -Infinity } = {}) {
   const next = { ...probeResults };
   let definite = 0;
+  let reactive = reactiveResults;
   for (const [id, result] of Object.entries(results || {})) {
     if (result === PROBE_RESULT.UNKNOWN || result == null) continue;
     next[id] = result;
     definite += 1;
+    const noted = reactive[id];
+    if (from === 'probe' && result === PROBE_RESULT.OK && noted && !noted.sticky && noted.seq <= reactiveUpTo) {
+      reactive = { ...reactive };
+      delete reactive[id];
+    }
   }
   probeResults = next;
+  reactiveResults = reactive;
   if (definite > 0) {
     verified = true;
     source = from;
@@ -219,23 +271,58 @@ export function recordProbeResults(results, { from = 'probe' } = {}) {
   return definite;
 }
 
-/** Merkitse vaatimukset puuttuviksi kannan virheen perusteella (pysyvä istunnon ajan). */
-export function recordReactiveFailures(failures) {
+/**
+ * Merkitse vaatimukset puuttuviksi kannan virheen perusteella.
+ *
+ * @param {Record<string,string>} failures vaatimus -> PROBE_RESULT
+ * @param {{sticky?: boolean}} [options] sticky: pysyy istunnon loppuun
+ *   (kirjoituksen PGRST204); muuten seuraava varma "ok" kumoaa sen
+ */
+export function recordReactiveFailures(failures, { sticky = false } = {}) {
   let changed = false;
   for (const [id, result] of Object.entries(failures || {})) {
-    if (!isFailure(result) || reactiveResults[id] === result) continue;
-    reactiveResults = { ...reactiveResults, [id]: result };
+    if (!isFailure(result)) continue;
+    const previous = reactiveResults[id];
+    const keepSticky = Boolean(sticky || (previous && previous.sticky));
+    if (previous && previous.result === result && previous.sticky === keepSticky) continue;
+    reactiveSeq += 1;
+    reactiveResults = { ...reactiveResults, [id]: { result, sticky: keepSticky, seq: reactiveSeq } };
     changed = true;
   }
   return changed;
 }
 
-/** Aseta laskettu kyvykkyys. Kuuntelijat kuulevat vain todellisen muutoksen. */
+/**
+ * Uloskirjautuminen: kielto (42501) koskee istunnon roolia, ei kantaa.
+ * Edellisen käyttäjän (tai kirjautumattoman) kielto ei saa jäädä seuraavan
+ * kirjautumisen huoltoilmoitukseksi. Palauttaa poistettujen määrän.
+ */
+export function clearForbiddenResults() {
+  const next = {};
+  let removed = 0;
+  for (const [id, result] of Object.entries(probeResults)) {
+    if (result === PROBE_RESULT.FORBIDDEN) removed += 1;
+    else next[id] = result;
+  }
+  probeResults = next;
+  // Pelkkiä kieltoja: kannasta ei tiedetä mitään (seuraava tarkistus kysyy).
+  if (removed > 0 && Object.keys(next).length === 0) {
+    verified = false;
+    source = 'compile';
+  }
+  return removed;
+}
+
+/**
+ * Aseta laskettu kyvykkyys. Kuuntelijat kuulevat vain todellisen muutoksen,
+ * ja toinen argumentti kertoo sen suunnan: `{ raisedTables }`.
+ */
 export function setCapabilities(next) {
   if (same(capabilities, next)) return false;
+  const previous = capabilities;
   capabilities = next;
   generation += 1;
-  emit();
+  emit(Object.freeze({ raisedTables: Object.freeze(raisedTables(previous, next)) }));
   return true;
 }
 
@@ -287,7 +374,10 @@ export function schemaSnapshot() {
   });
 }
 
-/** Tilan muutoksen kuuntelija. Palauttaa peruutusfunktion. */
+/**
+ * Tilan muutoksen kuuntelija: listener(snapshot, { raisedTables }).
+ * Palauttaa peruutusfunktion.
+ */
 export function subscribeSchemaStatus(listener) {
   listeners.add(listener);
   return () => listeners.delete(listener);
@@ -316,6 +406,7 @@ export function resetSchemaRuntimeForTests() {
   source = 'compile';
   probeResults = {};
   reactiveResults = {};
+  reactiveSeq = 0;
   verified = false;
   generation += 1;
   reprobeHandler = null;

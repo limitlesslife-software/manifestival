@@ -17,7 +17,7 @@ import {
   subscribeSchemaStatus, schemaSnapshot, schemaGeneration, setReprobeHandler,
   isWritable, SCHEMA_STATUS
 } from '../data/schemaRuntime.js';
-import { ensureSchemaCompatibility, scheduleSchemaReprobe } from '../data/schemaProbe.js';
+import { ensureSchemaCompatibility, scheduleSchemaReprobe, resetSchemaSession } from '../data/schemaProbe.js';
 import { getClient } from '../data/client.js';
 
 /** Kaikki käyttäjälle näkyvä teksti. Testi varmistaa, ettei skeeman nimiä vuoda. */
@@ -74,6 +74,35 @@ let retrying = false;
 let loweredSinceReprobe = false;
 let onRecovered = () => {};
 let lastKey = null;
+/** Kyvykkyyden sukupolvi, jolle palautus on jo pyydetty (ei kahta samasta muutoksesta). */
+let recoveredGeneration = null;
+
+/**
+ * Lähetä odottavat ja lataa tiedot uudelleen (onRecovered), kerran per
+ * kyvykkyyden muutos. Nousu, uudelleentarkistus ja "Yritä uudelleen"
+ * voivat kaikki huomata saman muutoksen. Vain kirjautuneelle ja kun
+ * kantaan saa kirjoittaa.
+ */
+function recover() {
+  if (!active || !isWritable()) return false;
+  const generation = schemaGeneration();
+  if (generation === recoveredGeneration) return false;
+  recoveredGeneration = generation;
+  try { onRecovered(); } catch { /* palautus ei kaada näkymää */ }
+  return true;
+}
+
+/**
+ * Kyvykkyys NOUSI (taustatarkistus tai uusi tarkistus löysi taulun, jota
+ * välimuisti tai virhe oli pitänyt puuttuvana tai vain luettavana).
+ * Taulun tieto ladattiin tyhjänä tai oletuksina, ja sen kirjaukset ovat
+ * odottaneet: ladataan ja lähetetään uudelleen. Muuten esimerkiksi
+ * muistutusasetusten tallennus kirjoittaisi oletukset palvelimen rivin päälle.
+ */
+function onSchemaChange(snapshot, change) {
+  render(snapshot);
+  if (change && Array.isArray(change.raisedTables) && change.raisedTables.length > 0) recover();
+}
 
 /** Elementti tai null. Toimii myös ilman DOMia (testit, esilataus). */
 function node(id) {
@@ -135,9 +164,7 @@ export async function retrySchemaCheck({ ensure = ensureSchemaCompatibility } = 
     await ensure({ force: true, timeoutMs: 8000 });
     const recovered = isWritable();
     setText('schemaMaintenanceStatus', recovered ? '' : SCHEMA_COPY.stillDown);
-    if (recovered && active) {
-      try { onRecovered(); } catch { /* palautus ei kaada näkymää */ }
-    }
+    if (recovered) recover();
     return { ran: true, recovered };
   } finally {
     retrying = false;
@@ -168,9 +195,7 @@ function handleReprobeRequest(reason) {
   return pending.then(() => {
     const changed = loweredSinceReprobe || schemaGeneration() !== before;
     loweredSinceReprobe = false;
-    if (active && changed && isWritable()) {
-      try { onRecovered(); } catch { /* ignore */ }
-    }
+    if (changed) recover();
   });
 }
 
@@ -184,7 +209,7 @@ function handleReprobeRequest(reason) {
 export function initSchemaStatus({ onRecovered: recovered } = {}) {
   onRecovered = typeof recovered === 'function' ? recovered : () => {};
   setReprobeHandler(handleReprobeRequest);
-  subscribeSchemaStatus(snapshot => render(snapshot));
+  subscribeSchemaStatus(onSchemaChange);
   const retry = node('schemaRetry');
   if (retry) retry.addEventListener('click', () => { retrySchemaCheck(); });
   const signOut = node('schemaSignOut');
@@ -195,10 +220,17 @@ export function initSchemaStatus({ onRecovered: recovered } = {}) {
 /**
  * Näytetäänkö tila? Vain kirjautuneelle: uloskirjautuessa kaikki piiloon
  * (kirjautumisportti ei saa jäädä huoltoilmoituksen alle).
+ *
+ * Uloskirjautuminen (false) nollaa myös istuntoon sidotun tarkistustiedon
+ * (resetSchemaSession): odottava uudelleentarkistus perutaan, jottei se
+ * lähde anon-roolina, ja kiellot unohdetaan, jottei seuraava kirjautuminen
+ * ala huoltoilmoituksella.
  */
 export function setSchemaStatusActive(value) {
   active = Boolean(value);
   loweredSinceReprobe = false;
+  recoveredGeneration = null;
   lastKey = null;
+  if (!active) resetSchemaSession();
   render();
 }
