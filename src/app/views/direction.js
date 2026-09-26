@@ -34,7 +34,8 @@ import {
   saveWeeklyCapacity, logTime, deleteTimeEntry, saveWeeklyReview, applyAdjustment,
   applySelectedAdjustments, previewSelectedAdjustments, compareWithPreviousWeek, recentTrends,
   currentDailyAlignment, explainSignalOptionally, aiExplanationAvailable, pendingTimeEntryCount,
-  pendingTimeEntryOperations, isAdjustmentDone
+  pendingTimeEntryOperations, isAdjustmentDone, failedTimeEntries, failedTimeEntryOperations,
+  retryFailedTimeEntries, discardFailedTimeEntries
 } from '../alignment.js';
 import { saveItemSettings, itemSettingsFor, currentTimer, newOperationId } from '../timeTracking.js';
 import { editTask, editRoutine } from '../actions.js';
@@ -333,7 +334,41 @@ function weekSummaryHtml(analysis) {
   if (pending > 0) {
     parts.push(`<p class="dir-line">${countOf(pending, 'kirjaus odottaa', 'kirjausta odottaa')} yhteyttä — ne lähetetään, kun yhteys palaa.</p>`);
   }
+  parts.push(failedEntriesHtml(failedTimeEntries().length));
   return parts.join('');
+}
+
+/**
+ * Kirjaukset, joita palvelin ei hyväksynyt toistuvasti (ei verkkovirhe).
+ * Ne ovat laitteella tallessa; käyttäjä päättää: uudelleen tai hylkää
+ * (hylkäys kysyy vahvistuksen). Sama malli kuin tehtäväjonon
+ * epäonnistuneissa (src/app/offlineStatus.js).
+ */
+function failedEntriesHtml(count) {
+  if (count === 0) return '';
+  const text = count === 1
+    ? '1 kirjaus ei mennyt palvelimelle, vaikka yhteys toimii. Se on tallessa tällä laitteella.'
+    : `${count} kirjausta ei mennyt palvelimelle, vaikka yhteys toimii. Ne ovat tallessa tällä laitteella.`;
+  return `<p class="dir-line" role="status">${escapeHtml(text)}</p>
+    <div class="assist-actions">
+      <button class="assist-btn" type="button" data-time-failed="retry">Yritä uudelleen</button>
+      <button class="assist-btn danger" type="button" data-time-failed="discard">Hylkää…</button>
+    </div>`;
+}
+
+/** Epäonnistuneiden kirjausten painikkeet (viikon yhteenvedossa). */
+async function onFailedEntriesClick(event) {
+  const button = event.target && typeof event.target.closest === 'function'
+    ? event.target.closest('[data-time-failed]') : null;
+  if (!button) return;
+  button.disabled = true;
+  try {
+    if (button.dataset.timeFailed === 'retry') await retryFailedTimeEntries();
+    else if (button.dataset.timeFailed === 'discard') await discardFailedTimeEntries();
+  } finally {
+    button.disabled = false;
+    renderDirection();
+  }
 }
 
 // ------------------------------------------------ arviointi ja kohdistus
@@ -575,13 +610,16 @@ function timeListHtml(entries, areas) {
   const byId = new Map(areas.map(area => [area.id, area]));
   // Laitteen lähtökorissa odottavat merkitään: ne eivät ole vielä kannassa.
   const pending = pendingTimeEntryOperations();
+  const failed = failedTimeEntryOperations();
+  const tag = entry => (failed.has(entry.operationId)
+    ? ' · <span class="assist-tag">Lähetys epäonnistui</span>'
+    : pending.has(entry.operationId) ? ' · <span class="assist-tag">Odottaa lähetystä</span>' : '');
   return [...entries].sort((a, b) => b.entryDate.localeCompare(a.entryDate)).map(entry => `
     <div class="assist-row">
       <div class="assist-meta">
         ${escapeHtml(shortDate(entry.entryDate))} · ${escapeHtml(hours(entry.minutes))}
         · ${escapeHtml(entryTargetLabel(entry, byId))}
-        · ${entry.source === 'timer' ? 'Ajastin' : 'Käsin'}${pending.has(entry.operationId)
-          ? ' · <span class="assist-tag">Odottaa lähetystä</span>' : ''}
+        · ${entry.source === 'timer' ? 'Ajastin' : 'Käsin'}${tag(entry)}
       </div>
       ${entry.note ? `<div class="assist-reason">${escapeHtml(entry.note)}</div>` : ''}
       <div class="assist-actions">
@@ -1416,6 +1454,7 @@ export function initDirection() {
     const preset = event.target.closest('[data-preset-minutes]');
     if (preset) el('dirTimeMinutes').value = preset.dataset.presetMinutes;
   });
+  on('dirWeekSummary', 'click', onFailedEntriesClick);
   on('dirEstimate', 'click', onEstimateClick);
   on('dirUnassigned', 'change', onAssignChange);
   on('dirUnassigned', 'click', onAssignClick);

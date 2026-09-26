@@ -7,7 +7,9 @@
 // että aika on tallessa.
 //
 // SÄÄNTÖ: vain tiedon oma virhe (22xxx, 23xxx paitsi 23505) hylkää.
-// Kaikki muu jättää kirjauksen koriin ja pysäyttää lähetyksen.
+// Kaikki muu jättää kirjauksen koriin. Tilapäinen virhe (verkko, istunto,
+// skeema, palvelin poissa) pysäyttää lähetyksen; muu pysyvä virhe ei
+// jumita seuraavia (tests/time-outbox-robustness.test.mjs).
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

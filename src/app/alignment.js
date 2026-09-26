@@ -620,6 +620,62 @@ export function pendingTimeEntryOperations() {
   return typeof writer.pendingOperations === 'function' ? writer.pendingOperations() : new Set();
 }
 
+/**
+ * Kirjaukset, joita palvelin ei toistuvasti hyväksynyt (pysyvä virhe, ei
+ * verkko). Ne ovat yhä laitteella eivätkä estä muiden lähetystä; käyttäjä
+ * päättää niistä Suunta-näkymässä.
+ */
+export function failedTimeEntries() {
+  return typeof writer.failedEntries === 'function' ? writer.failedEntries() : [];
+}
+
+/** Epäonnistuneiden operaatiotunnisteet (listan merkintä). */
+export function failedTimeEntryOperations() {
+  return new Set(failedTimeEntries().map(entry => entry.operationId));
+}
+
+/** "Yritä uudelleen": epäonnistuneet takaisin lähetykseen ja lähetys heti. */
+export async function retryFailedTimeEntries() {
+  const retried = typeof writer.retryFailed === 'function' ? writer.retryFailed() : 0;
+  if (retried === 0) return { retried: 0, sent: 0, left: pendingTimeEntryCount() };
+  outboxRetry = { failures: 0, notBefore: 0 };
+  // Jo käynnissä oleva lähetys on voinut ohittaa ne ennen palautusta:
+  // odotetaan se loppuun ja lähetetään sitten uudelleen.
+  if (outboxFlush) await outboxFlush.catch(() => null);
+  const result = await flushTimeOutbox();
+  return { retried, ...result };
+}
+
+/**
+ * "Hylkää": epäonnistuneet pois laitteelta. Vaatii AINA vahvistuksen (sama
+ * sääntö kuin tehtäväjonon epäonnistuneissa): aika on käyttäjän työtä.
+ */
+export async function discardFailedTimeEntries({ confirmFn = confirmAction } = {}) {
+  const count = failedTimeEntries().length;
+  if (count === 0) return { discarded: 0 };
+  const session = sessionSnapshot();
+  const accepted = await confirmFn({
+    title: 'Hylätäänkö kirjaukset?',
+    message: count === 1
+      ? 'Kirjaus poistetaan tältä laitteelta eikä sitä lähetetä. Tätä ei voi perua.'
+      : `${count} kirjausta poistetaan tältä laitteelta eikä niitä lähetetä. Tätä ei voi perua.`,
+    confirmLabel: 'Hylkää',
+    cancelLabel: 'Pidä toistaiseksi',
+    destructive: true
+  });
+  if (!accepted || !isSameSession(session)) return { discarded: 0, cancelled: true };
+  let discarded = 0;
+  // Luetaan uudelleen vahvistuksen jälkeen: dialogin aikana jokin on voinut lähteä.
+  for (const entry of failedTimeEntries()) {
+    if (writer.forget(entry).length === 0) continue;
+    forgetWrite('timeEntry', value => value.id === entry.id);
+    removeTimeEntryFromState(entry.id);
+    discarded += 1;
+  }
+  if (discarded > 0) logEvent('alignment.time_outbox_discarded', { count: discarded });
+  return { discarded };
+}
+
 /** Automaattisen uusinnan porrastus: epäonnistunut kierros harventaa seuraavia. */
 const OUTBOX_RETRY_BASE_MS = 30000;
 const OUTBOX_RETRY_MAX_MS = 10 * 60000;
@@ -657,6 +713,12 @@ async function flushTimeOutboxOnce(now) {
     // Palvelin hylkäsi (esim. kohde poistettu): ei uusita loputtomiin.
     removeTimeEntryFromState(entry.id);
     showError(error);
+  }
+  if ((result.newlyFailed || []).length > 0) {
+    // Pysyvä virhe toistui: kirjaus jää laitteelle, eikä sitä enää yritetä
+    // automaattisesti. Käyttäjälle kerrotaan, ettei aika kadonnut.
+    notify('Aikakirjausta ei saatu tallennettua palvelimelle. Se on tallessa tällä laitteella: '
+      + 'voit yrittää uudelleen tai hylätä sen Suunta-näkymässä.', 8000);
   }
   if (result.sent > 0) logEvent('alignment.time_outbox_flushed', { sent: result.sent, left: result.left });
   outboxRetry = result.sent === 0 && result.left > 0
@@ -708,6 +770,9 @@ export async function deleteTimeEntry(id) {
   }
   forgetWrite('timeEntry', value => value.id === entry.id);
   const unqueued = typeof writer.forget === 'function' ? writer.forget(entry) : [];
+  // Korin lähetys ehti ottaa kirjauksen matkaan juuri ennen unohdusta:
+  // odota sen vastaus, jottei myöhästyvä INSERT herätä poistettua riviä.
+  if (entry.operationId && typeof writer.settled === 'function') await writer.settled(entry.operationId);
   const result = await timeEntriesRepo.remove(id);
   if (!result.ok) {
     if (unqueued.length > 0) writer.requeue(unqueued);
