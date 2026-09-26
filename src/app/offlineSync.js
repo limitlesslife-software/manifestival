@@ -21,6 +21,10 @@
 //     eikä uusia muutoksia jonoteta -- jono säilyy koskemattomana
 //   - SKEEMAVIRHE ei ole hylkäys: operaatio jää odottamaan ja skeema
 //     tarkistetaan uudelleen; tilapäinen palvelinvirhe uusitaan viiveellä
+//   - OSITTAIN KIRJOITETTU MUUTOS: jos kanta ei vielä tue osaa kentistä
+//     (ajon aikana laskettu portti), kirjoitettavat lähtevät ja loput jäävät
+//     jonoon odottamaan (SCHEMA_PENDING_CODE). Pudotettua kenttää ei
+//     koskaan raportoida onnistuneeksi.
 //
 // FIXED HANDLER MAP: (domain.operation) -> funktio on käsin kirjoitettu
 // taulukko. Jonossa oleva merkkijono ei valitse koodia.
@@ -33,6 +37,50 @@ import {
 } from '../domain/offlineQueue.js';
 import { normalizeTask, validateTask } from '../domain/task.js';
 import { logEvent } from '../lib/logger.js';
+
+/** Operaation virhekoodi: osa kentistä odottaa, että kanta tukee niitä. */
+export const SCHEMA_PENDING_CODE = 'schema_pending';
+/** Käyttäjälle (tilarivi): miksi muutos yhä odottaa. */
+export const SCHEMA_PENDING_NOTE = 'Osa muutoksesta odottaa palvelun päivitystä';
+/**
+ * Kuinka pian odottavaa osaa yritetään uudelleen. Yrityksiä ei kuluteta
+ * (vika ei ole muutoksessa), eikä jono jumitu: muut operaatiot jatkavat.
+ */
+export const SCHEMA_PENDING_RETRY_MS = 60000;
+
+const has = (object, key) => Boolean(object) && Object.prototype.hasOwnProperty.call(object, key);
+
+/**
+ * Rajaa operaatio kenttiin, jotka eivät vielä tallentuneet, ja jätä se
+ * odottamaan. Muut kentät ovat jo kannassa, joten niitä ei lähetetä uudelleen.
+ */
+function keepWaitingFields(queue, id, fields, nowMs) {
+  return {
+    ...queue,
+    ops: queue.ops.map(op => {
+      if (op.id !== id) return op;
+      const payload = {};
+      const baseValues = {};
+      for (const field of fields) {
+        if (has(op.payload, field)) payload[field] = op.payload[field];
+        if (has(op.baseValues, field)) baseValues[field] = op.baseValues[field];
+      }
+      return {
+        ...op, payload, baseValues, status: OP_STATUS.PENDING, lastErrorCode: SCHEMA_PENDING_CODE,
+        nextAttemptAt: Number.isFinite(nowMs) ? nowMs + SCHEMA_PENDING_RETRY_MS : null
+      };
+    })
+  };
+}
+
+/** Uusi muokkaus yhdistyi odottavaan: yritetään heti, ei vasta odotuksen jälkeen. */
+function wakeWaiting(queue, id) {
+  return {
+    ...queue,
+    ops: queue.ops.map(op => (op.id === id && op.lastErrorCode === SCHEMA_PENDING_CODE
+      ? { ...op, nextAttemptAt: null, lastErrorCode: null } : op))
+  };
+}
 
 function sameValue(a, b) {
   if (a === b) return true;
@@ -163,7 +211,7 @@ export function createOfflineSync(deps) {
 
     const result = enqueue(queue, created.op);
     if (!result.ok) return { ok: false, reason: result.reason };
-    commit(result.queue);
+    commit(result.coalesced ? wakeWaiting(result.queue, result.op.id) : result.queue);
     return { ok: true, queued: true, coalesced: result.coalesced, opId: result.op.id };
   }
 
@@ -243,6 +291,12 @@ export function createOfflineSync(deps) {
     // Ehdollinen kirjoitus ei osunut: rivi muuttui lukemisen jälkeen. Yritä uudelleen
     // (seuraava kierros lukee uuden tilan ja päättää konfliktista).
     if (!patched.value.applied) return { kind: 'retry', code: 'changed_during_sync' };
+    // Kanta ei vielä tue kaikkia muuttuneita kenttiä (ajon aikana laskettu
+    // portti): ne eivät tallentuneet, vaikka kirjoitus "onnistui". Aiemmin
+    // tyhjä erotus palasi onnistumisena ja muutos katosi jonosta hiljaa.
+    const waiting = Array.isArray(patched.value.unwritable)
+      ? patched.value.unwritable.filter(field => has(decision.patch, field)) : [];
+    if (waiting.length > 0) return { kind: 'partial', fields: waiting, wrote: !patched.value.noop, code: SCHEMA_PENDING_CODE };
     return { kind: 'success' };
   }
 
@@ -326,6 +380,11 @@ export function createOfflineSync(deps) {
           if (outcome.kind === 'success' || outcome.kind === 'duplicate') {
             commit(markSucceeded(queue, op.id));
             result.synced += 1;
+          } else if (outcome.kind === 'partial') {
+            // Kirjoitettavat kentät ovat kannassa; loput odottavat jonossa
+            // omalla viiveellään, eivätkä pysäytä muiden toistoa.
+            commit(keepWaitingFields(queue, op.id, outcome.fields, now()));
+            if (outcome.wrote) result.synced += 1;
           } else if (outcome.kind === 'network' || outcome.kind === 'auth') {
             commit(markPaused(queue, op.id, outcome.kind));
             result.reason = outcome.kind;

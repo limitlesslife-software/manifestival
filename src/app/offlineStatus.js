@@ -13,6 +13,7 @@ import { confirmAction } from '../ui/confirm.js';
 import { showError } from '../ui/toast.js';
 import { describeQueueStatus, OP_STATUS } from '../domain/offlineQueue.js';
 import { offline, subscribeSyncStatus, isOnlineNow } from './offline.js';
+import { SCHEMA_PENDING_CODE, SCHEMA_PENDING_NOTE } from './offlineSync.js';
 
 const FIELD_LABELS = Object.freeze({
   title: 'otsikko', date: 'päivä', time: 'kellonaika', endTime: 'päättymisaika', category: 'elämänalue',
@@ -28,11 +29,30 @@ function fieldNames(fields) {
 let lastText = null;
 let reviewing = false;
 
+/**
+ * PUHDAS: jonon tila + operaatiot -> tilarivi. Kun osa muutoksesta odottaa,
+ * että kanta tukee sitä (offlineSync: SCHEMA_PENDING_CODE), rivi sanoo sen:
+ * muuten "odottaa synkronointia" näyttäisi jäävän jumiin ilman syytä.
+ *
+ * @param {object} status offline.status()
+ * @param {Array<{status:string,lastErrorCode:string|null}>} items offline.list()
+ * @param {{online:boolean}} context
+ */
+export function describeSyncLine(status, items = [], { online = true } = {}) {
+  const view = describeQueueStatus(status, { online, replaying: status.replaying });
+  const waitingForService = (items || []).some(item =>
+    item.status === OP_STATUS.PENDING && item.lastErrorCode === SCHEMA_PENDING_CODE);
+  if (!view.text || view.needsReview || !waitingForService) return view;
+  return { ...view, text: `${view.text} · ${SCHEMA_PENDING_NOTE}` };
+}
+
 function render(status) {
   const node = maybe('syncStatus');
   if (!node) return;
 
-  const view = describeQueueStatus(status, { online: isOnlineNow(), replaying: status.replaying });
+  let items = [];
+  try { items = offline.list(); } catch { /* tilarivi ei kaada jonoa */ }
+  const view = describeSyncLine(status, items, { online: isOnlineNow() });
   const key = `${view.text}|${view.tone}|${view.needsReview}`;
   if (key === lastText) return;
   lastText = key;

@@ -12,7 +12,7 @@
 
 import { getClient } from './client.js';
 import { requireUserId } from './session.js';
-import { taskColumns, writeRefusal, noteSchemaError } from './schema.js';
+import { taskColumns, writeRefusal, noteSchemaError, COMPILE_COLUMN_GATES } from './schema.js';
 import { normalizeTask } from '../domain/task.js';
 import {
   toRow, fromRow, assertClientSafe, sameColumnValue, pgArrayLiteral
@@ -229,6 +229,38 @@ export function partialPayloadFor(next, current, columns = taskColumns()) {
   return { diff, guards };
 }
 
+/** Sarakkeet, jotka tämä käännös kirjoittaisi, jos kanta tukisi kaikkea. */
+const compileTaskColumns = () => taskColumns(gate => COMPILE_COLUMN_GATES[gate] === true);
+
+/**
+ * Muutoksen kentät, joita EI voi nyt kirjoittaa, koska kanta on käännöstä
+ * jäljessä: jokainen sarake, johon kentän muutos osuisi, kuuluu ajon
+ * aikana laskettuun sarakeporttiin.
+ *
+ * Sarakejoukko johdetaan rivimuunnoksesta (ei omaa kenttä -> sarake
+ * -taulukkoa). Kenttä, jonka muutos osuu myös kirjoitettavaan sarakkeeseen
+ * (esim. loppuaika muuttaa johdettua kestoa), on kirjoitettava.
+ * Käännösaikaisesti kiinni oleva portti ei ole "odottava": sen kentät
+ * elävät tarkoituksella vain istunnon muistissa (ks. schema.js).
+ *
+ * @param {object} changes muuttuvat domain-kentät
+ * @param {object} expected rivi, jonka päälle muutos tehdään
+ * @param {ReadonlyArray<string>} [columns] kirjoitettavat sarakkeet (testejä varten)
+ * @returns {string[]} kentät
+ */
+export function unwritableTaskFields(changes, expected, columns = taskColumns()) {
+  const compiled = compileTaskColumns();
+  const base = payloadFor({ ...expected }, compiled);
+  const out = [];
+  for (const field of Object.keys(changes || {})) {
+    const row = payloadFor({ ...expected, [field]: changes[field] }, compiled);
+    const touched = Object.keys(row)
+      .filter(column => column !== 'id' && !sameColumnValue(row[column], base[column]));
+    if (touched.length > 0 && touched.every(column => !columns.includes(column))) out.push(field);
+  }
+  return out;
+}
+
 /**
  * Ehdollisen kirjoituksen vertailuehto yhdelle sarakkeelle.
  *
@@ -255,14 +287,20 @@ export function guardFilter(value) {
  * yhtään riviä ei päivity (`applied: false`) eikä palvelimen uudempaa
  * arvoa ylikirjoiteta. Erotus laskee mikä oikeasti muuttuu.
  *
- * @returns {Promise<{ok:true,value:{applied:boolean,noop:boolean}}|{ok:false,error:object}>}
+ * `unwritable` kertoo kentät, joita ei kirjoitettu, koska kanta ei vielä
+ * tue niitä (ajon aikana laskettu portti). Ne EIVÄT ole tallentuneet,
+ * vaikka `applied` olisi true: kutsuja pitää ne odottamassa (offline-jono)
+ * eikä raportoi niitä onnistuneiksi.
+ *
+ * @returns {Promise<{ok:true,value:{applied:boolean,noop:boolean,unwritable:string[]}}|{ok:false,error:object}>}
  */
 export async function patchTask(id, changes, expected) {
   const refused = writeRefusal();
   if (refused) return refused;
   try {
+    const unwritable = unwritableTaskFields(changes, { ...expected, id });
     const { diff, guards } = partialPayloadFor({ ...expected, ...changes, id }, { ...expected, id });
-    if (Object.keys(diff).length === 0) return ok({ applied: true, noop: true });
+    if (Object.keys(diff).length === 0) return ok({ applied: true, noop: true, unwritable });
 
     let query = getClient()
       .from(TABLE)
@@ -279,7 +317,7 @@ export async function patchTask(id, changes, expected) {
       noteSchemaError(TABLE, error, Object.keys(diff));
       return fail('Muutoksen tallennus ei onnistunut.', { cause: error, code: 'tasks.patch' });
     }
-    return ok({ applied: Array.isArray(data) && data.length > 0, noop: false });
+    return ok({ applied: Array.isArray(data) && data.length > 0, noop: false, unwritable });
   } catch (cause) {
     return fail('Muutoksen tallennus ei onnistunut.', { cause, code: 'tasks.patch' });
   }

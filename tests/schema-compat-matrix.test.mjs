@@ -41,7 +41,9 @@ import { profileToRow } from '../src/data/profileRepo.js';
 import { preferencesToRow } from '../src/data/notificationPrefsRepo.js';
 import { toRow, TASK_COLUMNS_CORE } from '../src/lib/rows.js';
 import { normalizeTask } from '../src/domain/task.js';
-import { createOfflineSync } from '../src/app/offlineSync.js';
+import { createOfflineSync, SCHEMA_PENDING_CODE, SCHEMA_PENDING_NOTE } from '../src/app/offlineSync.js';
+import { describeSyncLine } from '../src/app/offlineStatus.js';
+import { unwritableTaskFields } from '../src/data/tasksRepo.js';
 import { createTimeEntryWriter } from '../src/app/timeEntryWriter.js';
 
 const WAVES = WAVE_IDS.slice(WAVE_IDS.indexOf('C'));
@@ -451,6 +453,76 @@ graphTest('KRIITTINEN aalto J: offline-jonon skeemavirhe pysäyttää, ei hylkä
   assert.equal(second.synced, 1);
   const insert = server.writes().filter(call => call.op === 'insert').at(-1);
   assert.equal(insert.payloadKeys.includes('milestone_id'), false);
+});
+
+graphTest('KRIITTINEN aalto J: jonottu välitavoitemuutos ei katoa, kun kanta ei tue sitä (portti laskettu)', async () => {
+  // Kanta 0001-0009: tasks.milestone_id puuttuu -> GOAL_PLANNING_FIELDS lasketaan.
+  const { g, server } = await start('J', DB_STATES['+0009']);
+  assert.equal(g.schema.columnGateOpen('GOAL_PLANNING_FIELDS'), false, 'lähtötilanne: portti laskettu');
+  const task = normalizeTask({ id: 'pq-1', title: 'Tehtävä', date: '2026-09-26' });
+  assert.equal((await g.tasksRepo.insertTask(task)).ok, true);
+
+  const saved = new Map();
+  let clock = 1_000;
+  const sync = createOfflineSync({
+    repo: g.tasksRepo,
+    store: { load: id => saved.get(id) || null, save: (id, text) => { saved.set(id, text); return { ok: true, persistent: true }; }, purge: id => saved.delete(id) },
+    session: { userId: () => USER.id, snapshot: () => ({}), isSame: () => true },
+    now: () => clock, isOnline: () => true, newId: (() => { let n = 0; return () => 'pq-op' + (++n); })(),
+    canSync: g.runtime.isWritable
+  });
+  sync.activate(USER.id);
+  assert.equal(sync.enqueueTaskUpdate({ id: task.id, previous: task, updated: { ...task, milestoneId: 'm2' } }).ok, true);
+
+  // Pelkkä välitavoite: mitään ei voi kirjoittaa, eikä muutosta raportoida onnistuneeksi.
+  const writesBefore = server.writes().length;
+  const first = await sync.replay();
+  assert.deepEqual([first.synced, first.failed], [0, 0]);
+  assert.equal(sync.status().pending, 1, 'jonottu muutos katosi hiljaa (tyhjä erotus = "onnistui")');
+  const [op] = sync.list();
+  assert.equal(op.lastErrorCode, SCHEMA_PENDING_CODE);
+  assert.equal(server.writes().length, writesBefore, 'tyhjää muutosta ei lähetetä');
+  assert.match(describeSyncLine(sync.status(), sync.list(), { online: true }).text, new RegExp(SCHEMA_PENDING_NOTE));
+
+  // Odottava osa ei jumita jonoa eikä toistu heti uudelleen.
+  const callsBefore = server.calls.length;
+  await sync.replay();
+  assert.equal(server.calls.length, callsBefore, 'odottava osa haettiin heti uudelleen');
+
+  // Uusi muokkaus samaan tehtävään: kirjoitettava kenttä lähtee, välitavoite odottaa yhä.
+  const shown = { ...task, milestoneId: 'm2' };
+  assert.equal(sync.enqueueTaskUpdate({ id: task.id, previous: shown, updated: { ...shown, title: 'Uusi otsikko', milestoneId: 'm3' } }).ok, true);
+  const second = await sync.replay();
+  assert.equal(second.synced, 1);
+  assert.equal(server.rows('tasks').find(row => row.id === task.id).title, 'Uusi otsikko');
+  assert.equal(sync.status().pending, 1);
+  assert.deepEqual(Object.keys(JSON.parse(saved.get(USER.id)).ops[0].payload), ['milestoneId']);
+
+  // Kanta päivitetään (0010): uusi tarkistus nostaa portin, ja odottanut osa tallentuu.
+  const fixed = createSchemaServer({ ...DB_STATES['+0010'], currentUserId: () => USER.id });
+  fixed.rows('tasks').push({ ...server.rows('tasks').find(row => row.id === task.id) });
+  g.client.setClient(fixed);
+  await g.probe.ensureSchemaCompatibility({ client: fixed, isOnline: () => true, storage: memoryStorage(), force: true });
+  assert.equal(g.schema.columnGateOpen('GOAL_PLANNING_FIELDS'), true);
+  clock += 60_000;
+  const third = await sync.replay();
+  assert.equal(third.synced, 1);
+  assert.equal(sync.status().total, 0);
+  const row = fixed.rows('tasks').find(r => r.id === task.id);
+  assert.deepEqual([row.milestone_id, row.title], ['m3', 'Uusi otsikko']);
+});
+
+test('unwritableTaskFields: vain ajon aikana lasketun portin kentät odottavat', () => {
+  const base = normalizeTask({ id: 'u1', title: 'T', date: '2026-09-26', time: '09:00' });
+  // Laajennetut sarakkeet laskettu: kuvaus odottaa; loppuaika menee (end_time),
+  // vaikka se muuttaa myös johdettua kestoa.
+  const core = TASK_COLUMNS_CORE;
+  const fields = unwritableTaskFields({ description: 'Kuvaus', endTime: '10:00', title: 'Uusi' }, base, core);
+  assert.deepEqual(fields, COMPILE_COLUMN_GATES.TASK_EXTENDED_FIELDS ? ['description'] : []);
+  // Käännösaikaisesti kiinni oleva portti ei ole "odottava" (tieto elää istunnon muistissa).
+  const planning = unwritableTaskFields({ milestoneId: 'm1' }, base, core);
+  assert.deepEqual(planning, COMPILE_COLUMN_GATES.GOAL_PLANNING_FIELDS ? ['milestoneId'] : []);
+  assert.deepEqual(unwritableTaskFields({ title: 'Uusi' }, base), []);
 });
 
 graphTest('KRIITTINEN aalto J: aikakirjaukset ilman 0013:a -> vain luku; lähtökori säilyy ja lähtee kun kanta on valmis', async () => {
