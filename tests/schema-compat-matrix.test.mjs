@@ -569,6 +569,61 @@ graphTest('KRIITTINEN aalto J: jonottu lisäys + yhdistetty välitavoite: rivi s
   assert.deepEqual([row.milestone_id, row.title], ['m3', 'Offline-tehtävä']);
 });
 
+graphTest('KRIITTINEN aalto J: sarakeportin nousu herättää odottavan kentän, ja se tallentuu heti palautuksessa', async () => {
+  // Kaikki taulut ovat kannassa, vain tehtävien suunnittelusarakkeet
+  // puuttuvat: nousu koskee PELKKÄÄ sarakeporttia (ei yhtään taulua).
+  const { g, server } = await start('J', { ...DB_STATES['+0013'], drop: { tasks: ['milestone_id', 'depends_on'] } });
+  assert.equal(g.schema.columnGateOpen('GOAL_PLANNING_FIELDS'), false, 'lähtötilanne: portti laskettu');
+  assert.deepEqual(Object.keys(g.schema.TABLES).filter(key => !g.schema.isTableAvailable(key)), [],
+    'lähtötilanne: yksikään taulu ei ole laskettu');
+  const task = normalizeTask({ id: 'wk-1', title: 'Tehtävä', date: '2026-09-26' });
+  assert.equal((await g.tasksRepo.insertTask(task)).ok, true);
+  const saved = new Map();
+  const clock = { now: 1_000 };
+  const sync = queueFor(g, saved, clock, 'wk-op');
+  sync.activate(USER.id);
+  assert.equal(sync.enqueueTaskUpdate({ id: task.id, previous: task, updated: { ...task, milestoneId: 'm2' } }).ok, true);
+  await sync.replay();
+  assert.equal(sync.list()[0].lastErrorCode, SCHEMA_PENDING_CODE, 'lähtötilanne: välitavoite odottaa');
+
+  // Sovelluksen palautus kuten main.js: herätä odottavat, sitten toisto.
+  const status = await importAtWave('J', 'app/schemaStatus.js');
+  let recoveries = 0;
+  let recovery = null;
+  status.initSchemaStatus({
+    onRecovered: () => { recoveries += 1; sync.wakeSchemaPending(); recovery = sync.replay(); }
+  });
+  status.setSchemaStatusActive(true);
+  const changes = [];
+  g.runtime.subscribeSchemaStatus((_snapshot, change) => { changes.push(change); });
+  try {
+    // Sarakkeet lisätään. Kello etenee vain sekunnin, ei odotusaikaa.
+    const fixed = createSchemaServer({ ...DB_STATES['+0013'], currentUserId: () => USER.id });
+    fixed.rows('tasks').push({ ...server.rows('tasks').find(row => row.id === task.id) });
+    g.client.setClient(fixed);
+    clock.now += 1_000;
+    await g.probe.ensureSchemaCompatibility({ client: fixed, isOnline: () => true, storage: memoryStorage(), force: true });
+    assert.equal(g.schema.columnGateOpen('GOAL_PLANNING_FIELDS'), true);
+    assert.deepEqual(changes.map(change => [[...change.raisedTables], [...(change.raisedColumnGates || [])]]),
+      [[[], ['GOAL_PLANNING_FIELDS']]], 'muutos kertoo nousseen sarakeportin');
+    assert.equal(recoveries, 1, 'sarakeportin nousu ei käynnistänyt palautusta');
+    const result = await recovery;
+    assert.equal(result.synced, 1, 'odottava kenttä ei lähtenyt palautuksessa (odotusaika kesken)');
+    assert.equal(sync.status().total, 0);
+    assert.equal(fixed.rows('tasks').find(row => row.id === task.id).milestone_id, 'm2');
+  } finally {
+    status.setSchemaStatusActive(false);
+  }
+});
+
+test('main.js: skeeman palautus herättää odottavat osat ennen toistoa', () => {
+  const source = read('src/app/main.js');
+  const start = source.indexOf('initSchemaStatus({');
+  const block = source.slice(start, source.indexOf('});', start));
+  const wake = block.indexOf('offline.wakeSchemaPending()');
+  assert.ok(wake > -1 && block.indexOf('reconnect.refreshNow()') > wake, block);
+});
+
 test('unwritableInsert: lisäyksen pois jäävät kentät ja tehtävä sellaisena kuin kanta sen tallentaa', () => {
   const task = normalizeTask({ id: 'u2', title: 'T', date: '2026-09-26', description: 'Kuvaus' });
   const lowered = unwritableInsert(task, TASK_COLUMNS_CORE);

@@ -468,6 +468,25 @@ export function createOfflineSync(deps) {
     return result;
   }
 
+  /**
+   * Kanta tukee taas laskettua porttia (src/app/schemaStatus.js): odottavat
+   * osat (SCHEMA_PENDING_CODE) yritetään seuraavassa toistossa heti eikä
+   * vasta odotusajan jälkeen. Kutsu ENNEN palautuksen toistoa. Virhekoodi
+   * jää, kunnes kenttä on oikeasti tallentunut; jos portti on yhä laskettu,
+   * toisto asettaa odotuksen uudelleen. Palauttaa herätettyjen määrän.
+   */
+  function wakeSchemaPending() {
+    let woken = 0;
+    const ops = queue.ops.map(op => {
+      if (op.status !== OP_STATUS.PENDING || op.lastErrorCode !== SCHEMA_PENDING_CODE
+        || op.nextAttemptAt === null) return op;
+      woken += 1;
+      return { ...op, nextAttemptAt: null };
+    });
+    if (woken > 0) commit({ ...queue, ops });
+    return woken;
+  }
+
   // ----------------------------------------------- käyttäjän päätökset
 
   /**
@@ -504,7 +523,7 @@ export function createOfflineSync(deps) {
 
   return {
     activate, deactivate, purge, enqueueTaskCreate, enqueueTaskUpdate,
-    replay, resolve, list, status,
+    replay, resolve, list, status, wakeSchemaPending,
     /** Lisää odottavat muutokset ladatun listan päälle. */
     overlay: tasks => overlayPending(tasks, queue),
     pendingIds: () => pendingEntityIds(queue),

@@ -26,7 +26,7 @@ import {
 import {
   resetSchemaRuntimeForTests, schemaSnapshot, isWritable, isColumnGateLowered, currentResults,
   recordReactiveFailures, recordProbeResults, reactiveMark, setCapabilities, computeCapabilities,
-  raisedTables, setReprobeHandler, PROBE_RESULT, SCHEMA_STATUS
+  raisedTables, raisedColumnGates, setReprobeHandler, PROBE_RESULT, SCHEMA_STATUS
 } from '../src/data/schemaRuntime.js';
 import {
   SCHEMA_REQUIREMENTS, taskColumns, noteSchemaError, TASK_EXTENDED_FIELDS
@@ -299,6 +299,14 @@ test('raisedTables: puuttuva -> luettava ja vain luku -> kirjoitettava ovat nous
   assert.deepEqual(raisedTables(readonly, ok), ['goals']);
   assert.deepEqual(raisedTables(ok, missing), []);
   assert.deepEqual(raisedTables(readonly, missing), []);
+});
+
+test('raisedColumnGates: laskettu -> auki on nousu, lasku ja ennallaan pysyvä eivät', () => {
+  const gates = (...names) => ({ loweredColumnGates: names });
+  assert.deepEqual(raisedColumnGates(gates('GOAL_PLANNING_FIELDS', 'TASK_LINK_FIELDS'), gates('TASK_LINK_FIELDS')),
+    ['GOAL_PLANNING_FIELDS']);
+  assert.deepEqual(raisedColumnGates(gates(), gates('GOAL_PLANNING_FIELDS')), []);
+  assert.deepEqual(raisedColumnGates(gates('TASK_LINK_FIELDS'), gates('TASK_LINK_FIELDS')), []);
 });
 
 test('KRIITTINEN: kun taulu löytyy, tiedot ladataan ja odottavat lähetetään uudelleen (kerran)', () => {

@@ -98,10 +98,14 @@ function recover() {
  * Taulun tieto ladattiin tyhjänä tai oletuksina, ja sen kirjaukset ovat
  * odottaneet: ladataan ja lähetetään uudelleen. Muuten esimerkiksi
  * muistutusasetusten tallennus kirjoittaisi oletukset palvelimen rivin päälle.
+ *
+ * Sama koskee sarakeporttia: sen kentät ovat odottaneet offline-jonossa
+ * (schema_pending), ja palautus herättää ne heti (ks. main.js).
  */
 function onSchemaChange(snapshot, change) {
   render(snapshot);
-  if (change && Array.isArray(change.raisedTables) && change.raisedTables.length > 0) recover();
+  const raised = list => Array.isArray(list) && list.length > 0;
+  if (change && (raised(change.raisedTables) || raised(change.raisedColumnGates))) recover();
 }
 
 /** Elementti tai null. Toimii myös ilman DOMia (testit, esilataus). */

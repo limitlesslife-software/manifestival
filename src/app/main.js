@@ -438,8 +438,14 @@ async function start() {
   // Skeematarkistuksen tila (rajoitettu / huoltokatko) ENNEN istunnon
   // palautusta: palautettu istunto ajaa tarkistuksen jo initAuthin aikana.
   // Palautuminen lähettää odottavat muutokset ja lataa tiedot samalla
-  // polulla kuin verkon palautuminen.
-  initSchemaStatus({ onRecovered: () => reconnect.refreshNow() });
+  // polulla kuin verkon palautuminen. Kannan tukea odottaneet osat
+  // herätetään ENSIN: muuten ne lähtisivät vasta odotusajan (60 s) jälkeen.
+  initSchemaStatus({
+    onRecovered: () => {
+      offline.wakeSchemaPending();
+      reconnect.refreshNow();
+    }
+  });
 
   // 3. Istunnon palautus.
   const session = await initAuth({ onSignedIn, onSignedOut });

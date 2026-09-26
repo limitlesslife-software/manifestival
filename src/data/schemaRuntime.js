@@ -216,6 +216,17 @@ export function raisedTables(previous, next) {
   return [...keys].filter(key => tableLevel(next, key) > tableLevel(previous, key)).sort();
 }
 
+/**
+ * PUHDAS: sarakeportit, jotka NOUSIVAT (laskettu -> auki). Niiden kentät
+ * ovat voineet odottaa offline-jonossa: sovellus herättää odottavat ja
+ * lähettää ne uudelleen (src/app/schemaStatus.js). Ilman tätä pelkän
+ * sarakeportin nousu ei käynnistänyt mitään, ja odottava kenttä lähti
+ * vasta oman odotusaikansa jälkeen seuraavan toiston mukana.
+ */
+export function raisedColumnGates(previous, next) {
+  return previous.loweredColumnGates.filter(gate => !next.loweredColumnGates.includes(gate)).sort();
+}
+
 /** Yhdistetyt tulokset: reaktiivinen puute voittaa tarkistuksen "ok":n. */
 export function currentResults() {
   const merged = { ...probeResults };
@@ -316,14 +327,17 @@ export function clearForbiddenResults() {
 
 /**
  * Aseta laskettu kyvykkyys. Kuuntelijat kuulevat vain todellisen muutoksen,
- * ja toinen argumentti kertoo sen suunnan: `{ raisedTables }`.
+ * ja toinen argumentti kertoo sen suunnan: `{ raisedTables, raisedColumnGates }`.
  */
 export function setCapabilities(next) {
   if (same(capabilities, next)) return false;
   const previous = capabilities;
   capabilities = next;
   generation += 1;
-  emit(Object.freeze({ raisedTables: Object.freeze(raisedTables(previous, next)) }));
+  emit(Object.freeze({
+    raisedTables: Object.freeze(raisedTables(previous, next)),
+    raisedColumnGates: Object.freeze(raisedColumnGates(previous, next))
+  }));
   return true;
 }
 
@@ -376,7 +390,7 @@ export function schemaSnapshot() {
 }
 
 /**
- * Tilan muutoksen kuuntelija: listener(snapshot, { raisedTables }).
+ * Tilan muutoksen kuuntelija: listener(snapshot, { raisedTables, raisedColumnGates }).
  * Palauttaa peruutusfunktion.
  */
 export function subscribeSchemaStatus(listener) {
