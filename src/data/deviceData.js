@@ -75,6 +75,13 @@ export const DEVICE_STORAGE = Object.freeze([
     onDelete: DEVICE_ACTION.PURGE
   }),
   entry({
+    prefix: 'manifestival.timerPending.v1.',
+    owner: 'src/data/timerStore.js',
+    contains: 'Kirjaamattomat ajastimet, jotka jäivät odottamaan toisen laitteen ajastimen vuoksi',
+    onSignOut: DEVICE_ACTION.KEEP,
+    onDelete: DEVICE_ACTION.PURGE
+  }),
+  entry({
     prefix: 'manifestival:',
     owner: 'src/data/preferences.js',
     contains: 'Laitekohtaiset asetukset (DEVICE_DEFAULTS)',
