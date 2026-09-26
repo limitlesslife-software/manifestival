@@ -434,6 +434,80 @@ graphTest('aalto J: edellisen istunnon myöhästynyt lataus ei kelpaa tallennuks
   g.session.clearUser();
 });
 
+graphTest('KRIITTINEN aalto J: luettu rivi -> PGRST205 -> oletukset -> tarkistus löytää taulun: tallennus ei korvaa riviä oletuksilla', async () => {
+  const g = await loadWaveJ();
+  await freshSession(g);
+  const server = createSchemaServer({ applied: ALL, currentUserId: () => USER.id });
+  server.rows('notification_preferences').push({ ...PREFS_ROW });
+  const { state, client } = withMissingTable(server, 'notification_preferences');
+  state.missing = false;
+  g.client.setClient(client);
+  const reprobe = () => g.probe.ensureSchemaCompatibility({
+    client, isOnline: ONLINE, storage: memoryStorage(), force: true
+  });
+  await reprobe();
+
+  // 1. Asetukset luetaan palvelimelta: lähtötieto on olemassa.
+  const loaded = await g.prefs.loadPreferences();
+  assert.equal(loaded.value.taskLeadMinutes, 45);
+
+  // 2. Kanta vastaa hetken "taulua ei ole": taulu lasketaan (lukuvirhe, ei pysyvä).
+  state.missing = true;
+  assert.equal((await g.prefs.loadPreferences()).ok, false);
+  assert.equal(g.schema.isTableMissing('notificationPreferences'), true);
+
+  // 3. Päivitys antaa näkymälle hiljaiset oletukset.
+  const defaults = await g.prefs.loadPreferences();
+  assert.equal(defaults.ok, true);
+  assert.notEqual(defaults.value.taskLeadMinutes, 45, 'lähtötilanne: oletukset, ei palvelimen riviä');
+
+  // 4. Uusi tarkistus löytää taulun, ja puute kumoutuu.
+  state.missing = false;
+  await reprobe();
+  assert.equal(g.schema.isTableMissing('notificationPreferences'), false);
+
+  // 5. Tallennus oletusten päältä ennen palautuksen latausta: rivi luetaan
+  //    ensin ja muutos torjutaan -- palvelimen rivi säilyy ennallaan.
+  const writesBefore = server.writes().length;
+  const saved = await g.prefs.savePreferences({ ...defaults.value, maxPerDay: 2 });
+  assert.equal(saved.ok, false, 'oletukset tallennettiin palvelimen rivin päälle');
+  assert.equal(server.writes().length, writesBefore);
+  assert.deepEqual(server.rows('notification_preferences')[0], { ...PREFS_ROW });
+
+  // Uudelleenlataus tuo oikeat asetukset, ja niiden tallennus toimii.
+  const reloaded = await g.prefs.loadPreferences();
+  assert.equal(reloaded.value.taskLeadMinutes, 45);
+  assert.equal((await g.prefs.savePreferences({ ...reloaded.value, maxPerDay: 2 })).ok, true);
+  assert.deepEqual([server.rows('notification_preferences')[0].task_lead_minutes,
+    server.rows('notification_preferences')[0].max_per_day], [45, 2]);
+  g.session.clearUser();
+});
+
+graphTest('aalto J: oletuksiin päättynyttä latausta vanhempi, myöhässä valmistuva luku ei palauta lähtötietoa', async () => {
+  const g = await loadWaveJ();
+  await freshSession(g);
+  const server = createSchemaServer({ applied: ALL, currentUserId: () => USER.id });
+  server.rows('notification_preferences').push({ ...PREFS_ROW });
+  const gate = deferred();
+  g.client.setClient(delayed(server, gate.promise));
+  const older = g.prefs.loadPreferences();
+
+  // Kesken luvun taulu todetaan puuttuvaksi, ja uudempi lataus antaa oletukset.
+  g.schema.noteSchemaError('notification_preferences', { code: 'PGRST205', message: 'x' });
+  const defaults = await g.prefs.loadPreferences();
+  assert.notEqual(defaults.value.taskLeadMinutes, 45);
+  gate.resolve();
+  assert.equal((await older).value.taskLeadMinutes, 45);
+
+  g.client.setClient(server);
+  await g.probe.ensureSchemaCompatibility({ client: server, isOnline: ONLINE, storage: memoryStorage(), force: true });
+  assert.equal(g.schema.isTableMissing('notificationPreferences'), false);
+  const saved = await g.prefs.savePreferences({ ...defaults.value, maxPerDay: 2 });
+  assert.equal(saved.ok, false, 'vanhempi luku kelpasi oletusten tallennuksen lähtötiedoksi');
+  assert.deepEqual(server.rows('notification_preferences')[0], { ...PREFS_ROW });
+  g.session.clearUser();
+});
+
 graphTest('KRIITTINEN aalto J: puuttuva taulu (PGRST205) ei jää voimaan, kun uusi tarkistus löytää sen', async () => {
   const g = await loadWaveJ();
   await freshSession(g);

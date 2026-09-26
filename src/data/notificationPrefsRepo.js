@@ -36,8 +36,16 @@ let memoryPreferences = null;
  * tarkistus tai välimuistin vanha tieto), näkymä sai hiljaiset oletukset.
  * Kun taulu myöhemmin löytyy, oletusten päälle tehty muutos EI saa
  * korvata palvelimella jo olevaa riviä (upsert kirjoittaisi koko rivin).
+ *
+ * Lähtötieto kuvaa VIIMEISINTÄ latausta: oletuksiin päättynyt lataus
+ * nollaa sen, eikä sitä vanhempi, myöhässä valmistuva luku palauta sitä.
+ * Aiemmin istunnon alussa luettu rivi jäi voimaan, vaikka näkymä oli
+ * sittemmin saanut oletukset (PGRST205 -> tarkistus löysi taulun), ja
+ * tallennus kirjoitti oletukset palvelimen rivin päälle.
  */
 let serverLoadedFor = null;
+/** Latausten järjestysnumero: vain viimeisin lataus asettaa lähtötiedon. */
+let loadGeneration = 0;
 
 /** Säilyvätkö asetukset tallennuksen yli juuri nyt? */
 export function isPersistent() {
@@ -92,19 +100,25 @@ export function preferencesToRow(preferences, userId) {
  * Oletukset ovat tarkoituksella hiljaiset: `enabled: false`.
  */
 export async function loadPreferences() {
+  const generation = ++loadGeneration;
   if (!isPersistent()) {
     return ok(memoryPreferences ? { ...memoryPreferences } : normalizePreferences({}));
   }
   // Taulua ei ole kannassa (ajon aikana todettu): hiljaiset oletukset, ei
-  // latausvirhettä. Tallennus torjutaan (ks. savePreferences).
-  if (isTableMissing(SCHEMA_KEY)) return ok(normalizePreferences({}));
+  // latausvirhettä. Tallennus torjutaan (ks. savePreferences). Näkymä saa
+  // oletukset eikä palvelimen riviä, joten aiempi lataus ei enää kelpaa
+  // tallennuksen lähtötiedoksi: kun taulu löytyy, rivi luetaan ensin.
+  if (isTableMissing(SCHEMA_KEY)) {
+    serverLoadedFor = null;
+    return ok(normalizePreferences({}));
+  }
 
   const loaded = await readServerRow();
   if (!loaded.ok) {
     return fail('Muistutusasetusten lataus ei onnistunut.',
       { cause: loaded.cause, code: 'notificationPrefs.load' });
   }
-  if (loaded.current) serverLoadedFor = loaded.userId;
+  if (loaded.current && generation === loadGeneration) serverLoadedFor = loaded.userId;
   return ok(preferencesFromRow(loaded.row));
 }
 
