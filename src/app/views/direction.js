@@ -9,7 +9,7 @@
 // Sävy on toteava. Tämä ei ole suorituspisteytys: valmistumisprosenttia
 // ei näytetä pääviestinä missään.
 
-import { el, maybe, toggle, setText, focus } from '../../ui/dom.js';
+import { el, maybe, toggle, setText, focus, singleFlight, setBusy } from '../../ui/dom.js';
 import { escapeHtml } from '../../lib/format.js';
 import { fmtISO, todayMidnight } from '../../lib/datetime.js';
 import { getState, findLifeArea } from '../state.js';
@@ -570,6 +570,22 @@ async function submitTime() {
   el('dirTimeNote').value = '';
 }
 
+/**
+ * Tallennuspainike kertalukittuna: toinen napautus kesken tallennuksen ei
+ * lähetä toista kirjausta, katsausta tai kapasiteettia (tuplaklikkaus).
+ */
+export function guardedSave(buttonId, save) {
+  return singleFlight(async () => {
+    const button = maybe(buttonId);
+    setBusy(button, true);
+    try {
+      return await save();
+    } finally {
+      setBusy(button, false);
+    }
+  });
+}
+
 async function submitReview() {
   const status = el('dirReviewStatus');
   status.textContent = '';
@@ -620,10 +636,10 @@ export function initDirection() {
   el('dirNext').addEventListener('click', () => goToWeek(7));
   el('dirThisWeek').addEventListener('click', () => { viewWeek = null; renderDirection(); });
 
-  el('dirCapacitySave').addEventListener('click', submitCapacity);
+  el('dirCapacitySave').addEventListener('click', guardedSave('dirCapacitySave', submitCapacity));
   el('dirAddArea').addEventListener('click', () => openAreaForm(null));
   el('dirAreaCancel').addEventListener('click', closeAreaForm);
-  el('dirAreaSave').addEventListener('click', submitAreaForm);
+  el('dirAreaSave').addEventListener('click', guardedSave('dirAreaSave', submitAreaForm));
   el('dirAreaDelete').addEventListener('click', async () => {
     if (!editingAreaId) return;
     if (await deleteLifeArea(editingAreaId)) closeAreaForm();
@@ -645,7 +661,7 @@ export function initDirection() {
     if (select) assignGoalToLifeArea(select.dataset.goalArea, select.value || null);
   });
 
-  el('dirTimeSave').addEventListener('click', submitTime);
+  el('dirTimeSave').addEventListener('click', guardedSave('dirTimeSave', submitTime));
   el('dirTimeList').addEventListener('click', event => {
     const remove = event.target.closest('[data-time-delete]');
     if (remove) deleteTimeEntry(remove.dataset.timeDelete);
@@ -653,7 +669,7 @@ export function initDirection() {
 
   el('dirReflection').addEventListener('input', event => { event.target.dataset.dirty = '1'; });
   el('dirProposals').addEventListener('click', onProposalClick);
-  el('dirReviewSave').addEventListener('click', submitReview);
+  el('dirReviewSave').addEventListener('click', guardedSave('dirReviewSave', submitReview));
 
   const today = maybe('todayDirection');
   if (today) {
