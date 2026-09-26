@@ -189,6 +189,11 @@ export function explainSignal(signal, areas = []) {
             : m.incomplete ? ' Aineisto on vajaa, joten tämä on suuntaa-antava.' : ''),
         why: `Osuus poikkeaa toivomastasi jakaumasta vähintään ${RULES.MISALIGNMENT_POINTS} prosenttiyksikköä. `
           + 'Toivottu jakauma lasketaan alueiden viikkotavoitteista.'
+          + (m.excludedAreaCount > 0
+            ? ` Vertailusta puuttuu ${countOf(m.excludedAreaCount, 'kesken jakson luotu alue', 'kesken jakson luotua aluetta')}: `
+              + `${m.excludedAreaCount === 1 ? 'sen' : 'niiden'} aiemmat päivät ovat tuntemattomia, joten jakauma `
+              + 'lasketaan alueista, jotka olivat olemassa koko jakson.'
+            : '')
       };
     }
 
@@ -565,9 +570,10 @@ export function proposeAdjustments(analysis, {
     const area = areasById.get(signal.areaId);
     if (!area || !area.active || !Number.isInteger(area.targetMinutesPerWeek)) continue;
     // Tavoite, jolla toivottu osuus vastaisi toteutunutta, kun muiden
-    // alueiden tavoitteet pysyvät ennallaan: osuus x tavoitteiden summa.
+    // alueiden tavoitteet pysyvät ennallaan: osuus x tavoitteiden summa
+    // (vain vertailussa mukana olleiden alueiden, jos osa luotiin kesken).
     const share = (signal.metrics.basisMinutes || 0) / Math.max(signal.metrics.assignedMinutes || 1, 1);
-    const suggested = roundToQuarter(share * targetsTotal);
+    const suggested = roundToQuarter(share * (signal.metrics.comparedTargetsMinutes || targetsTotal));
     if (suggested === area.targetMinutesPerWeek) continue;
     add({
       id: `${ADJUSTMENT.CHANGE_TARGET}:${area.id}`,

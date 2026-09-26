@@ -606,6 +606,31 @@ test('osittaisen kirjauksen syy sanotaan: "vain N päivänä ikkunan M päiväst
     'Ikkunan 5 päivältä ei ole vielä kirjauksia, joten toteumaa ei vielä verrata tavoitteisiin.');
 });
 
+// ================================================================ ALUEEN ALKU, TAVOITTEEN ALARAJA, ARVIOIMATON ALUE
+
+test('toteuman jakauma: lauantaina luotu alue ei ole vertailussa eikä vääristä muiden toivottua osuutta', () => {
+  const areas = [area('work', 'Työ', 3, 1200, 'tyo', day(0)), area('fam', 'Perhe', 3, 600, 'perhe', day(0)),
+    area('hobby', 'Harrastus', 3, 600, 'harrastus', day(5))];
+  const logged = (work, fam) => [0, 1, 2, 3, 4].flatMap(i => [
+    entry('w' + i, day(i), work, { lifeAreaId: 'work' }), entry('f' + i, day(i), fam, { lifeAreaId: 'fam' })]);
+  // Työ ja perhe 2:1 kuten tavoitteissa. Ennen: harrastuksen tavoite oli
+  // mukana toiveessa -> "Harrastus saa vähemmän" (Vahva) ja "Työ vie enemmän".
+  const even = analyzeWeek({ weekStart: WEEK, todayIso: AFTER, areas, capacity: capacity(1800), timeEntries: logged(160, 80) });
+  assert.equal(even.tracking.level, TRACKING.ESTABLISHED);
+  assert.equal(even.tracking.windowStart, day(0));
+  assert.deepEqual(signalsOf(even, SIGNAL.MISALIGNMENT), []);
+  // Todellinen poikkeama vertailluissa alueissa näkyy yhä, ja luvut kertovat rajauksen.
+  const skewed = analyzeWeek({ weekStart: WEEK, todayIso: AFTER, areas, capacity: capacity(1800), timeEntries: logged(200, 40) });
+  const work = signalsOf(skewed, SIGNAL.MISALIGNMENT).find(s => s.areaId === 'work');
+  assert.deepEqual([work.metrics.desiredPercent, work.metrics.actualPercent, work.metrics.excludedAreaCount], [67, 83, 1]);
+  assert.equal(signalsOf(skewed, SIGNAL.MISALIGNMENT).some(s => s.areaId === 'hobby'), false);
+  assert.match(explainSignal(work, areas).why,
+    /Vertailusta puuttuu 1 kesken jakson luotu alue: sen aiemmat päivät ovat tuntemattomia/);
+  const change = proposeAdjustments(skewed, { areas })
+    .find(p => p.type === ADJUSTMENT.CHANGE_TARGET && p.payload.areaId === 'work');
+  assert.equal(change.payload.to, 1500, '83 % vertailtujen alueiden tavoitteista (30 h), ei kaikkien (40 h)');
+});
+
 // ================================================================ NÄKYMÄ: DOM-tynkä
 
 const USER = { id: 'dddddddd-4444-4444-8444-00000000000d', email: 'sparse@example.com' };

@@ -85,6 +85,13 @@ Vain aktiiviset alueet, joiden **tärkeys ≥ 4** ja **tavoite ≥ 30 min**.
 - Perusta: toteuma, jos seuranta on **vakiintunut** ja alueisiin liitettyä
   aikaa ≥ 120 min; muuten suunnitelma (sama raja), mutta vain jos vähintään
   50 % viikon asioista on arvioitu; muuten ei arvioida.
+- Toteuman jakauma: alue, joka luotiin kirjatun ajan vertailujakson alun
+  **jälkeen** (esim. lauantaina), ei ole vertailussa kumpaankaan suuntaan,
+  eikä sen tavoite ole toivotussa jakaumassa: toivottu osuus ja alueiden
+  kirjattu aika lasketaan koko jakson olemassa olleista alueista
+  (`excludedAreaCount`, `comparedTargetsMinutes`; "Miksi?" kertoo rajauksen).
+- Suunnitelman jakauma: alue, jonka **avoimelta** työltä puuttuu kesto, ei saa
+  osuusväitettä eikä tavoitteen muutosehdotusta (tuntematon ei ole nolla).
 - `|toteutunut % − toivottu %| ≥ 15 pp` → **Huomio**, `≥ 25 pp` → **Vahva**
   (suunnitelmaan perustuva enintään Huomio; toteumaan perustuva enintään
   Huomio, kunnes viikko on päättynyt).

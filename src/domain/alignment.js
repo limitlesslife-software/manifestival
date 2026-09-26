@@ -675,13 +675,30 @@ export function isNeglectShortfall(signal) {
   return Boolean(signal) && signal.kind === SIGNAL.NEGLECT && signal.rule !== NEGLECT_PLAN_UNKNOWN;
 }
 
-function distributionBasis({ planned, actual, tracking }) {
+/**
+ * Alueet, jotka luotiin kirjatun ajan vertailujakson alun JÄLKEEN. Niiden
+ * aiemmat päivät ovat tuntemattomia, joten toteuman jakaumassa ne eivät
+ * ole mukana kumpaankaan suuntaan: ei "saa vähemmän" -väitettä, eikä
+ * niiden tavoite vääristä muiden alueiden toivottua osuutta.
+ */
+function areasStartedAfter(areas, windowStart) {
+  if (!isIsoDate(windowStart)) return new Set();
+  return new Set(areas.filter(area => isIsoDate(area.startDate) && area.startDate > windowStart).map(area => area.id));
+}
+
+function distributionBasis({ areas, planned, actual, tracking }) {
   const assignedActual = actual.minutes - (actual.byArea.get(NONE_KEY) || 0);
-  if (tracking.level === TRACKING.ESTABLISHED && assignedActual >= RULES.MISALIGNMENT_MIN_MINUTES) {
-    return {
-      basis: 'actual', assigned: assignedActual, total: actual.minutes,
-      minutesFor: id => actual.byArea.get(id) || 0
-    };
+  if (tracking.level === TRACKING.ESTABLISHED) {
+    const excluded = areasStartedAfter(areas, tracking.windowStart);
+    let excludedMinutes = 0;
+    for (const id of excluded) excludedMinutes += actual.byArea.get(id) || 0;
+    const compared = assignedActual - excludedMinutes;
+    if (compared >= RULES.MISALIGNMENT_MIN_MINUTES) {
+      return {
+        basis: 'actual', assigned: compared, coverageAssigned: assignedActual, total: actual.minutes,
+        minutesFor: id => actual.byArea.get(id) || 0, excluded
+      };
+    }
   }
   // Suunnitelman jakauma vain, kun riittävä osa asioista on arvioitu:
   // kahden arvioidun tehtävän jakauma ei kerro viikosta.
@@ -701,17 +718,22 @@ function distributionBasis({ planned, actual, tracking }) {
 }
 
 function misalignmentSignals({ areas, planned, actual, neglected, tracking, progress }) {
-  const desired = desiredShares(areas);
-  if (desired.totalMinutes <= 0) return [];
-  const source = distributionBasis({ planned, actual, tracking });
+  if (desiredShares(areas).totalMinutes <= 0) return [];
+  const source = distributionBasis({ areas, planned, actual, tracking });
   if (!source) return [];
+  // Toteuman jakauma vain alueista, jotka olivat olemassa koko
+  // vertailujakson: toivottu osuus lasketaan niiden tavoitteista.
+  const excluded = source.excluded || new Set();
+  const compared = excluded.size > 0 ? areas.filter(area => !excluded.has(area.id)) : areas;
+  const desired = desiredShares(compared);
+  if (desired.totalMinutes <= 0) return [];
 
-  const coverage = ratio(source.assigned, source.total);
+  const coverage = ratio(source.coverageAssigned ?? source.assigned, source.total);
   const weak = coverage === null || coverage < RULES.MIN_ASSIGNED_COVERAGE;
   const incomplete = weak || Boolean(source.estimateLimited);
   const signals = [];
 
-  for (const area of areas) {
+  for (const area of compared) {
     const want = desired.shares.get(area.id) ?? 0;
     const got = source.minutesFor(area.id) / source.assigned;
     // Alue, jolle ei toivottu osuutta eikä käytetty aikaa, ei ole poikkeama.
@@ -742,6 +764,10 @@ function misalignmentSignals({ areas, planned, actual, neglected, tracking, prog
       assignedMinutes: source.assigned, coveragePercent: percent(coverage), incomplete
     };
     if (source.basis === 'planned') metrics.estimateCoveragePercent = source.estimateCoveragePercent;
+    if (excluded.size > 0) {
+      metrics.excludedAreaCount = excluded.size;
+      metrics.comparedTargetsMinutes = desired.totalMinutes;
+    }
     signals.push({
       kind: SIGNAL.MISALIGNMENT, severity, areaId: area.id, basis: source.basis,
       rule: 'misalignment.share_deviation', metrics
