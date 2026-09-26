@@ -24,6 +24,10 @@ desktop.ini
 *.swp
 *~
 
+# Aktivoinnin orkestroijan paivakirja (tools/activation/orchestrate.mjs):
+# paikallinen kirjaus deployista, hyvaksynnoista ja peruutuksista
+.claude/activation/
+
 # Lokit ja valiaikaiset
 *.log
 npm-debug.log*

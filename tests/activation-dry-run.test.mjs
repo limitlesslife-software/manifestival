@@ -1,0 +1,168 @@
+// `npm run activation:dry-run` (ACT-13): tila ja seuraava askel yhdellä
+// komennolla, ilman kirjoituksia, git-muutoksia tai (testeissä) verkkoa.
+
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+
+import { ROOT, read } from './helpers/sources.mjs';
+import {
+  ROOT_STUB, lockFrom, projectFiles, shaOf, stubFetch, stubFs, stubGit
+} from './helpers/activation-history.mjs';
+import { runDryRun } from '../tools/activation/orchestrate.mjs';
+import { createGit } from '../tools/release/git-layer.mjs';
+
+const fixture = name => fs.readFileSync(path.join(ROOT, 'tests/fixtures/activation-inventory', name), 'utf8');
+const lineOf = (lines, key) => lines.find(l => l.startsWith(`${key}:`)) || '';
+
+function deps({ production = 'C', inventory = fixture('state-0008.json'), gitOptions = {}, liveSha = null, lock = null } = {}) {
+  const git = stubGit({ production, ...gitOptions });
+  const fsStub = stubFs(projectFiles({ lock: lock || lockFrom(stubGit({ production })), inventory }));
+  return {
+    git, fs: fsStub, root: ROOT_STUB,
+    fetchImpl: stubFetch(git, liveSha || shaOf(production)),
+    now: () => new Date('2026-09-26T12:00:00Z')
+  };
+}
+
+test('KRIITTINEN: kanta 0008 + tuotanto C -> seuraava deploy D, välimuisti v17, 0009 odottaa, omistajan deployportti', async () => {
+  const d = deps();
+  const result = await runDryRun(d, { live: false, inventoryPath: 'inventaario.json' });
+  const { lines, report } = result;
+  assert.equal(result.exitCode, 0, lines.join('\n'));
+  assert.match(lineOf(lines, 'PRODUCTION_SHA'), new RegExp(shaOf('C')));
+  assert.match(lineOf(lines, 'PRODUCTION_SHA'), /FETCH_HEAD/);
+  assert.equal(lineOf(lines, 'CURRENT_WAVE'), 'CURRENT_WAVE: C');
+  assert.equal(lineOf(lines, 'CURRENT_CACHE'), 'CURRENT_CACHE: v16');
+  assert.match(lineOf(lines, 'CURRENT_DB_WAVE'), /^CURRENT_DB_WAVE: E/);
+  assert.match(lineOf(lines, 'NEXT_DEPLOYMENT'), new RegExp(`^NEXT_DEPLOYMENT: D ${shaOf('D')}`));
+  assert.match(lineOf(lines, 'NEXT_MIGRATION'), /0009 \(aalto F\) — ODOTTAA: aalto E/);
+  assert.match(lineOf(lines, 'EXPECTED_CACHE'), /^EXPECTED_CACHE: v17 .*= v17: OK/);
+  assert.match(lineOf(lines, 'EXPECTED_SCHEMA_GATE'), /9 porttia auki/);
+  assert.match(lineOf(lines, 'EXPECTED_SCHEMA_GATE'), /BILL_PAYMENT_FIELDS=false/);
+  assert.match(lineOf(lines, 'EXPECTED_CANDIDATE_SHA'), /== lukko: OK; fast-forward tuotannosta: OK/);
+  assert.match(lineOf(lines, 'REQUIRED_OWNER_GATE'), /OWNER_DEPLOY_APPROVAL_REQUIRED/);
+  assert.match(lineOf(lines, 'RISK'), /matala/);
+  assert.match(lineOf(lines, 'LIVE'), /OFFLINE/);
+  assert.equal(report.NEXT_DEPLOYMENT.wave, 'D');
+  assert.equal(report.EXPECTED_CACHE.expected, 'v17');
+  assert.equal(report.NEXT_MIGRATION.deferred, true);
+  assert.equal(report.DECISION, 'GO');
+});
+
+test('KRIITTINEN: ilman inventaariota -> OWNER_READ_ONLY_SQL_REQUIRED ja exit 1', async () => {
+  const d = deps({ inventory: null });
+  const result = await runDryRun(d, { live: false });
+  assert.equal(result.exitCode, 1);
+  assert.match(lineOf(result.lines, 'INVENTORY'), /UNKNOWN — OWNER_READ_ONLY_SQL_REQUIRED/);
+  assert.match(result.lines.join('\n'), /STOP: OWNER_READ_ONLY_SQL_REQUIRED/);
+});
+
+test('lukukelvoton inventaario -> exit 2', async () => {
+  const d = deps({ inventory: 'tämä ei ole inventaario' });
+  const result = await runDryRun(d, { live: false, inventoryPath: 'inventaario.json' });
+  assert.equal(result.exitCode, 2);
+});
+
+test('oletusinventaario: uusin dokumentoitu tuotannon fixture (rekonstruoitu näkyy)', async () => {
+  const git = stubGit();
+  const fsStub = stubFs(projectFiles({
+    lock: lockFrom(stubGit()),
+    productionFixture: { date: '2026-09-26', text: fixture('production-2026-09-26.json') }
+  }));
+  const result = await runDryRun({ git, fs: fsStub, root: ROOT_STUB, now: () => new Date('2026-09-26T12:00:00Z') }, { live: false });
+  assert.equal(result.exitCode, 0, result.lines.join('\n'));
+  assert.match(lineOf(result.lines, 'INVENTORY'), /production-2026-09-26\.json — REKONSTRUOITU/);
+  assert.match(lineOf(result.lines, 'NEXT_ACTION'), /DEPLOY D/);
+});
+
+test('fixture ilman dokumenttia ei kelpaa oletukseksi', async () => {
+  const git = stubGit();
+  const fsStub = stubFs(projectFiles({
+    lock: lockFrom(stubGit()),
+    productionFixture: { date: '2026-09-26', text: fixture('production-2026-09-26.json'), doc: false }
+  }));
+  const result = await runDryRun({ git, fs: fsStub, root: ROOT_STUB, now: () => new Date() }, { live: false });
+  assert.equal(result.exitCode, 1);
+  assert.match(result.lines.join('\n'), /OWNER_READ_ONLY_SQL_REQUIRED/);
+});
+
+test('KRIITTINEN: siirtynyt viite -> STOP', async () => {
+  const lock = lockFrom(stubGit());
+  const d = deps({ gitOptions: { refOverrides: { [lock.waves[1].ref]: 'ee'.repeat(20) } }, lock });
+  const result = await runDryRun(d, { live: false, inventoryPath: 'inventaario.json' });
+  assert.equal(result.exitCode, 1);
+  assert.match(result.lines.join('\n'), /STOP: LOCK_DRIFT/);
+});
+
+test('live-ristiintarkistus: täsmää -> OK; poikkeaa -> STOP', async () => {
+  const ok = await runDryRun(deps(), { live: true, inventoryPath: 'inventaario.json' });
+  assert.equal(ok.exitCode, 0, ok.lines.join('\n'));
+  assert.match(lineOf(ok.lines, 'LIVE'), /^LIVE: OK/);
+
+  const mismatch = await runDryRun(deps({ liveSha: shaOf('D') }), { live: true, inventoryPath: 'inventaario.json' });
+  assert.equal(mismatch.exitCode, 1);
+  assert.match(mismatch.lines.join('\n'), /STOP: LIVE_MISMATCH/);
+});
+
+test('migraatiovaihe: SQL-tiedostot tiivisteineen ja lukittu lähde', async () => {
+  const d = deps({ production: 'E' });
+  const result = await runDryRun(d, { live: false, inventoryPath: 'inventaario.json' });
+  assert.match(lineOf(result.lines, 'NEXT_ACTION'), /MIGRATE F 0009/);
+  const sql = result.lines.filter(l => /^\s+supabase\//.test(l));
+  assert.equal(sql.length, 3);
+  for (const l of sql) {
+    assert.match(l, /sha256 [0-9a-f]{64}/);
+    assert.match(l, new RegExp(`lähde rehearsal/wave-j-v1 @ ${shaOf('J')}`));
+  }
+  assert.match(lineOf(result.lines, 'NEXT_DEPLOYMENT'), /F .* \(migraation 0009 jälkeen\)/);
+});
+
+test('--json antaa samat kentät objektina', async () => {
+  const result = await runDryRun(deps(), { live: false, inventoryPath: 'inventaario.json' });
+  for (const key of ['PRODUCTION_SHA', 'FETCH_HEAD', 'CURRENT_WAVE', 'CURRENT_CACHE', 'LIVE', 'INVENTORY',
+    'CURRENT_DB_WAVE', 'NEXT_MIGRATION', 'NEXT_DEPLOYMENT', 'RISK', 'REQUIRED_OWNER_GATE',
+    'EXPECTED_CANDIDATE_SHA', 'EXPECTED_CACHE', 'EXPECTED_SCHEMA_GATE', 'SQL', 'DECISION']) {
+    assert.ok(key in result.report, key);
+  }
+  assert.doesNotThrow(() => JSON.stringify(result.report));
+});
+
+test('KRIITTINEN: dry-run ei kirjoita eikä muuta gitiä', async () => {
+  const d = deps();
+  await runDryRun(d, { live: true, inventoryPath: 'inventaario.json' });
+  assert.deepEqual(d.fs.writes, []);
+  assert.equal(d.git.calls.some(c => ['push', 'update-ref', 'lsRemoteMain'].includes(c[0])), false);
+  for (const r of d.fetchImpl.requests) {
+    assert.equal(r.method, 'GET');
+    assert.equal(/\/api\//.test(r.url), false);
+  }
+});
+
+test('KRIITTINEN: dry-run-skriptin lähde: ei kirjoitusta, ei pushia, verkko vain --offline-ehdolla', () => {
+  const code = read('scripts/activation-dry-run.mjs');
+  for (const forbidden of ['writeFileSync', 'appendFileSync', 'rmSync', 'push', 'update-ref', 'allowPush']) {
+    assert.equal(code.includes(forbidden), false, `dry-run sisältää: ${forbidden}`);
+  }
+  assert.equal(/\bfetch\(/.test(code), false, 'dry-run kutsuu fetchiä suoraan');
+  assert.match(code, /fetchImpl: offline \? null : getOnlyFetch/, 'live-haku ei ole --offline-lipun takana');
+  assert.match(code, /createGit\(\)/);
+});
+
+test('KRIITTINEN: package.jsonissa on activation:dry-run ja activation:orchestrate', () => {
+  const scripts = JSON.parse(read('package.json')).scripts;
+  assert.equal(scripts['activation:dry-run'], 'node scripts/activation-dry-run.mjs');
+  assert.equal(scripts['activation:orchestrate'], 'node scripts/activation-orchestrate.mjs');
+});
+
+test('oikea repo (ehdollinen): tuotannon inventaario + origin/main C -> DEPLOY D lukitulla SHA:lla', async t => {
+  const git = createGit({ cwd: ROOT });
+  const origin = git.revParse('origin/main');
+  if (!origin || !git.revParse('091e73c0091e8f135641e3501742b998dbac8461')) { t.skip('ehdokashistoria ei ole paikallisesti saatavilla'); return; }
+  if (origin !== 'cf259d0ef755f7e875cc9cd9c15405eba632e408') { t.skip(`origin/main on siirtynyt (${origin.slice(0, 7)}): odotus koski tuotantoa C`); return; }
+  const result = await runDryRun({ git, fs, root: ROOT, now: () => new Date('2026-09-26T12:00:00Z') }, { live: false });
+  assert.match(lineOf(result.lines, 'NEXT_DEPLOYMENT'), /^NEXT_DEPLOYMENT: D 091e73c0091e8f135641e3501742b998dbac8461/, result.lines.join('\n'));
+  assert.match(lineOf(result.lines, 'EXPECTED_CACHE'), /^EXPECTED_CACHE: v17 .*: OK/);
+  assert.match(lineOf(result.lines, 'CURRENT_DB_WAVE'), /^CURRENT_DB_WAVE: E/);
+});

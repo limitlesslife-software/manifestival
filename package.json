@@ -15,6 +15,9 @@
     "android:acceptance": "node scripts/android-acceptance-build.mjs",
     "activation:preflight": "node scripts/activation-preflight.mjs",
     "activation:verify-wave": "node scripts/verify-wave.mjs",
+    "activation:dry-run": "node scripts/activation-dry-run.mjs",
+    "activation:orchestrate": "node scripts/activation-orchestrate.mjs",
+    "activation:train-map": "node tools/activation/train-map.mjs",
     "production:verify-assets": "node scripts/production-verify-assets.mjs",
     "release:manifest": "node scripts/release-manifest.mjs",
     "e2e:suunta": "node tools/e2e/run-suunta-e2e.mjs"

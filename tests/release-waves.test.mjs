@@ -685,6 +685,9 @@ test('KRIITTINEN: julkaisutyökalut ovat olemassa ja kytketty package.jsoniin', 
   const odotetut = {
     'activation:preflight': 'scripts/activation-preflight.mjs',
     'activation:verify-wave': 'scripts/verify-wave.mjs',
+    'activation:dry-run': 'scripts/activation-dry-run.mjs',
+    'activation:orchestrate': 'scripts/activation-orchestrate.mjs',
+    'activation:train-map': 'tools/activation/train-map.mjs',
     'production:verify-assets': 'scripts/production-verify-assets.mjs',
     'release:manifest': 'scripts/release-manifest.mjs'
   };
@@ -699,25 +702,35 @@ test('KRIITTINEN: julkaisutyökalut ovat olemassa ja kytketty package.jsoniin', 
 });
 
 test('KRIITTINEN: tuotannon resurssitodennus on vain lukeva eikä käytä tunnuksia', () => {
-  // Tämä skripti ottaa yhteyttä tuotantoon. Sen on oltava
-  // kiistattomasti vaaraton: vain GET, ei tunnuksia, ei /api/-kutsuja.
-  const koodi = read('scripts/production-verify-assets.mjs');
+  // Nämä ottavat yhteyttä tuotantoon. Niiden on oltava kiistattomasti
+  // vaarattomia: vain GET, ei tunnuksia, ei /api/-kutsuja. Logiikka on
+  // tools/release/live-assets.mjs:ssä (ACT-06); CLI ja dry-run käyttävät sitä.
+  for (const tiedosto of ['scripts/production-verify-assets.mjs', 'tools/release/live-assets.mjs']) {
+    const koodi = read(tiedosto);
 
-  assert.match(koodi, /method: 'GET'/, 'pyyntömetodia ei ole kiinnitetty');
-  for (const kielletty of ['POST', 'PUT', 'PATCH', 'DELETE']) {
-    assert.equal(new RegExp(`method:\\s*'${kielletty}'`).test(koodi), false,
-      `skripti käyttää metodia ${kielletty}`);
+    assert.match(koodi, /method: 'GET'/, `${tiedosto}: pyyntömetodia ei ole kiinnitetty`);
+    for (const kielletty of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+      assert.equal(new RegExp(`method:\\s*'${kielletty}'`).test(koodi), false,
+        `${tiedosto} käyttää metodia ${kielletty}`);
+    }
+
+    for (const kielletty of ['service_role', 'SUPABASE_ANON_KEY', 'Authorization',
+                             'apikey', 'password', 'sk-ant-']) {
+      assert.equal(koodi.includes(kielletty), false,
+        `${tiedosto} viittaa tunnisteeseen ${kielletty}`);
+    }
+
+    // Ei /api/-kutsuja: ne maksavat ja koskevat AI-rajapintaan.
+    assert.equal(/hae\('\/api\//.test(koodi), false, `${tiedosto} kutsuu /api/-polkua`);
   }
-
-  for (const kielletty of ['service_role', 'SUPABASE_ANON_KEY', 'Authorization',
-                           'apikey', 'password', 'sk-ant-']) {
-    assert.equal(koodi.includes(kielletty), false,
-      `resurssitodennus viittaa tunnisteeseen ${kielletty}`);
+  // Kumpikin kieltää /api/-polun myös ajon aikana.
+  assert.match(read('tools/release/live-assets.mjs'), /FORBIDDEN_PATH = \/\^\\\/api\\\/\//);
+  assert.match(read('scripts/production-verify-assets.mjs'), /\/\\\/api\\\/\/\.test/);
+  // Dry-run ja orkestroija eivät hae verkosta itse: vain GET-kääreen kautta.
+  for (const tiedosto of ['scripts/activation-dry-run.mjs', 'scripts/activation-orchestrate.mjs']) {
+    assert.equal(/\bfetch\(/.test(read(tiedosto)), false, `${tiedosto} kutsuu fetchiä suoraan`);
+    assert.match(read(tiedosto), /getOnlyFetch/);
   }
-
-  // Ei /api/-kutsuja: ne maksavat ja koskevat AI-rajapintaan.
-  assert.equal(/hae\('\/api\//.test(koodi), false,
-    'resurssitodennus kutsuu /api/-polkua');
 });
 
 test('KRIITTINEN: yksikään testi ei riipu verkkoyhteydestä', () => {
