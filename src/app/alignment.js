@@ -38,6 +38,7 @@ import {
   normalizeWeeklyCapacity, validateWeeklyCapacity, capacityForWeek, weekStartOf, nextWeekStart
 } from '../domain/weeklyCapacity.js';
 import { normalizeTimeEntry, validateTimeEntry, entriesForOperation } from '../domain/timeEntry.js';
+import { classifyError, ERROR_CLASS } from '../domain/offlineQueue.js';
 import { analyzeWeek } from '../domain/alignment.js';
 import { addDaysIso } from '../domain/fiTemporal.js';
 import {
@@ -311,13 +312,19 @@ export async function deleteLifeArea(id, { confirmFn = confirmAction } = {}) {
   });
   if (!accepted) return false;
 
-  const goalIds = state.goals.filter(goal => goal.lifeAreaId === id).map(goal => goal.id);
-  const entryIds = state.timeEntries.filter(entry => entry.lifeAreaId === id).map(entry => entry.id);
+  // Tila luetaan UUDELLEEN vahvistuksen jälkeen: dialogin aikana ehtinyt
+  // lataus tai muutos (uusi tavoite alueelle) jäisi muuten palautuksen
+  // ulkopuolelle, ja epäonnistunut poisto palauttaisi väärät kytkennät.
+  const current = findLifeArea(id);
+  if (!current) return false;
+  const latest = getState();
+  const goalIds = latest.goals.filter(goal => goal.lifeAreaId === id).map(goal => goal.id);
+  const entryIds = latest.timeEntries.filter(entry => entry.lifeAreaId === id).map(entry => entry.id);
   removeLifeAreaFromState(id);
   const result = await lifeAreasRepo.remove(id);
   if (!result.ok) {
     // Kanta ei muuttunut: alue ja kytkennät takaisin tilaan.
-    restoreLifeAreaInState(area, goalIds, entryIds);
+    restoreLifeAreaInState(current, goalIds, entryIds);
     showError(result.error);
     return false;
   }
@@ -335,10 +342,49 @@ export async function assignGoalToLifeArea(goalId, areaId) {
   return result;
 }
 
+// ------------------------------------------ viikkokohtaiset tallennukset
+
+/**
+ * Saman viikon katsaus- ja kapasiteettitallennukset JONOSSA. Ilman tätä
+ * toinen napautus ensimmäisen INSERTin ollessa kesken luki optimistisen
+ * rivin "olemassa olevaksi" ja teki UPDATEn riville, jota kannassa ei
+ * vielä ollut (RACE-04): PostgREST kuittasi nollan rivin päivityksen
+ * onnistuneeksi, ja tila ja kanta erkanivat.
+ */
+const weekSaves = new Map();
+
+function serializedSave(key, task) {
+  const previous = weekSaves.get(key);
+  const run = previous ? previous.then(task) : task();
+  const tail = run.then(() => undefined, () => undefined);
+  weekSaves.set(key, tail);
+  tail.then(() => { if (weekSaves.get(key) === tail) weekSaves.delete(key); });
+  return run;
+}
+
+/** Kannan uniikkiavain: viikolla on jo rivi (eri tunnisteella). */
+function isDuplicate(error) {
+  return classifyError(error) === ERROR_CLASS.DUPLICATE;
+}
+
+/**
+ * Päivitys ei osunut yhteenkään riviin. Repositorio palauttaa tämän, kun
+ * se ketjuttaa päivitykseen `.select('id')` (collectionsRepo.js); siihen
+ * asti tämä haara on varautumista.
+ */
+function isNotFound(error) {
+  return /\.not_found$/.test(String((error && error.code) || ''));
+}
+
 // ------------------------------------------------------ kapasiteetti
 
 /** Aseta viikon kapasiteetti. Yksi rivi viikkoa kohti (päivitys, jos on jo). */
-export async function saveWeeklyCapacity(input) {
+export function saveWeeklyCapacity(input) {
+  const monday = weekStartOf(input && input.weekStart) || String(input && input.weekStart);
+  return serializedSave(`capacity:${monday}`, () => saveWeeklyCapacityNow(input));
+}
+
+async function saveWeeklyCapacityNow(input) {
   const state = getState();
   const existing = capacityForWeek(state.weeklyCapacities, input.weekStart);
   const capacity = normalizeWeeklyCapacity({
@@ -348,27 +394,106 @@ export async function saveWeeklyCapacity(input) {
   if (!valid) return { ok: false, errors };
 
   upsertWeeklyCapacityInState(capacity);
-  const result = existing
+  let saved = capacity;
+  let result = existing
     ? await weeklyCapacitiesRepo.update(capacity)
     : await weeklyCapacitiesRepo.insert(capacity);
+  if (!result.ok && existing && isNotFound(result.error)) {
+    // Riviä ei ollut kannassa: luodaan se samalla tunnisteella.
+    result = await weeklyCapacitiesRepo.insert(capacity);
+  }
+  if (!result.ok && isDuplicate(result.error)) {
+    // Viikolla on jo rivi kannassa, vaikka tila ei sitä tuntenut (lataus
+    // pyyhki sen kesken tallennuksen, tai edellisen vastaus katosi).
+    // Ilman tätä jokainen uusi yritys törmäsi uniikkiavaimeen (RACE-05).
+    const listed = await weeklyCapacitiesRepo.list();
+    const stored = listed.ok ? capacityForWeek(listed.value, capacity.weekStart) : null;
+    if (stored) {
+      saved = normalizeWeeklyCapacity({ ...stored, ...input, id: stored.id, weekStart: capacity.weekStart });
+      result = await weeklyCapacitiesRepo.update(saved);
+    }
+  }
   if (!result.ok) {
     if (existing) upsertWeeklyCapacityInState(existing);
     else removeWeeklyCapacityFromState(capacity.id);
     showError(result.error);
     return { ok: false };
   }
-  logEvent('alignment.capacity_saved', { minutes: capacity.availableMinutes, energy: capacity.energyLevel });
-  return { ok: true, capacity };
+  // Uudelleen tilaan: samaan aikaan valmistunut lataus on voinut korvata
+  // tilan listalla, jossa tätä riviä ei vielä ollut. (Sama viikko korvaa
+  // myös optimistisen rivin, jos kannan rivillä oli eri tunniste.)
+  upsertWeeklyCapacityInState(saved);
+  rememberWrite('capacity', saved);
+  logEvent('alignment.capacity_saved', { minutes: saved.availableMinutes, energy: saved.energyLevel });
+  return { ok: true, capacity: saved };
 }
 
 // ------------------------------------------------------------ toteuma
 
-/** Parhaillaan tallentuvat operaatiot: kaksoisklikkaus ei tuota toista riviä. */
-const inFlightOperations = new Set();
+/**
+ * Parhaillaan tallentuvat operaatiot -> valmistumislupaus. Kaksoisklikkaus
+ * ei tuota toista riviä, ja poisto odottaa kesken olevan tallennuksen.
+ */
+const inFlightOperations = new Map();
 
 function sessionUserId() {
   const user = getUser();
   return user && user.id ? String(user.id) : null;
+}
+
+// ------------------------------------------ latauksen ja tallennuksen limitys
+//
+// Lataus (loadUserData) on parikymmentä rinnakkaista hakua. Jos tallennus
+// valmistuu, kun haku on jo lähtenyt mutta tulos ei vielä ole tilassa,
+// vanhentunut lista korvaa tilan ja juuri tallennettu rivi katoaa
+// näkyvistä seuraavaan lataukseen asti — katsaus ja kapasiteetti jopa
+// niin, että seuraava tallennus törmää kannan uniikkiavaimeen (23505).
+// Siksi tallennukset kirjataan järjestysnumerolla, ja latauksen jälkeen
+// sen alun jälkeen tallennetut palautetaan tilaan (keepWritesSince).
+
+let writeSeq = 0;
+const recentWrites = [];
+const MAX_RECENT_WRITES = 100;
+
+function rememberWrite(kind, value) {
+  writeSeq += 1;
+  recentWrites.push({ seq: writeSeq, kind, value, owner: sessionUserId() });
+  if (recentWrites.length > MAX_RECENT_WRITES) recentWrites.splice(0, recentWrites.length - MAX_RECENT_WRITES);
+}
+
+function forgetWrite(kind, matches) {
+  for (let index = recentWrites.length - 1; index >= 0; index--) {
+    if (recentWrites[index].kind === kind && matches(recentWrites[index].value)) recentWrites.splice(index, 1);
+  }
+}
+
+/** Kutsu ENNEN latausta: palauttaa merkin keepWritesSince()-kutsulle. */
+export function beginDataLoad() {
+  return writeSeq;
+}
+
+/**
+ * Palauta tilaan ne tämän käyttäjän tallennukset, jotka valmistuivat
+ * latauksen alun jälkeen mutta puuttuvat ladatusta listasta.
+ */
+export function keepWritesSince(mark) {
+  const owner = sessionUserId();
+  for (const write of recentWrites) {
+    if (write.seq <= mark || write.owner !== owner) continue;
+    const state = getState();
+    if (write.kind === 'timeEntry') {
+      const known = state.timeEntries.some(entry => entry.id === write.value.id
+        || (write.value.operationId && entry.operationId === write.value.operationId));
+      if (!known) addTimeEntryToState(write.value);
+    } else if (write.kind === 'review') {
+      const current = state.alignmentReviews.find(review => review.weekStart === write.value.weekStart);
+      const newer = !current || (current.id === write.value.id
+        && String(current.completedAt || '') < String(write.value.completedAt || ''));
+      if (newer) upsertAlignmentReviewInState(write.value);
+    } else if (write.kind === 'capacity') {
+      if (!capacityForWeek(state.weeklyCapacities, write.value.weekStart)) upsertWeeklyCapacityInState(write.value);
+    }
+  }
 }
 
 const defaultWriter = createTimeEntryWriter({
@@ -426,30 +551,43 @@ export async function logTime(input, { silent = false } = {}) {
   if (existing) return { ok: true, duplicate: true, entry: existing };
   if (inFlightOperations.has(entry.operationId)) return { ok: true, duplicate: true, pending: true };
 
-  inFlightOperations.add(entry.operationId);
+  let settle = () => {};
+  inFlightOperations.set(entry.operationId, new Promise(resolve => { settle = resolve; }));
+  const session = sessionSnapshot();
   try {
     addTimeEntryToState(entry);
     const result = await writer.insert(entry);
+    // Käyttäjä vaihtui odotuksen aikana: tila kuuluu jo toiselle. Kirjaus
+    // on tekijänsä korissa tai kannassa; nykyiseen tilaan ei kosketa.
+    if (!isSameSession(session)) {
+      return result.ok ? { ok: true, entry, queued: Boolean(result.queued), sessionChanged: true }
+        : { ok: false, sessionChanged: true };
+    }
     if (!result.ok) {
       removeTimeEntryFromState(entry.id);
       if (!silent) showError(result.error);
       return { ok: false };
     }
     if (result.duplicate) {
-      // Sama operaatio on jo kannassa eri tunnisteella: paikallista
-      // kopiota ei jätetä tilaan (se näkyisi kahdesti eikä sitä voisi
-      // poistaa). Kannan rivi tulee seuraavassa latauksessa.
+      // Sama operaatio on jo kannassa (tai korissa) eri tunnisteella:
+      // paikallista kopiota ei jätetä tilaan (se näkyisi kahdesti eikä
+      // sitä voisi poistaa). Kannan rivi tulee seuraavassa latauksessa.
       removeTimeEntryFromState(entry.id);
+      // Käyttäjän oma kirjaus ei saa kadota hiljaa (F17): esimerkiksi
+      // rutiinin kerta on voitu kirjata jo toisella laitteella.
+      if (!silent) notify('Tämä aika on jo kirjattu (esimerkiksi toisella laitteella), joten sitä ei lisätty toista kertaa.', 6000);
       return { ok: true, duplicate: true, entry };
     }
     if (result.detached) {
       replaceTimeEntryInState(entry.id, result.entry);
+      rememberWrite('timeEntry', result.entry);
       return { ok: true, detached: true, entry: result.entry };
     }
     if (result.queued) {
       if (!silent) notify('Ei yhteyttä: kirjaus tallennetaan, kun yhteys palaa.', 5000);
       return { ok: true, queued: true, entry };
     }
+    rememberWrite('timeEntry', entry);
     logEvent('alignment.time_logged', {
       minutes: entry.minutes, source: entry.source,
       linked: Boolean(entry.lifeAreaId || entry.taskId || entry.goalId || entry.projectId || entry.routineId)
@@ -457,6 +595,7 @@ export async function logTime(input, { silent = false } = {}) {
     return { ok: true, entry };
   } finally {
     inFlightOperations.delete(entry.operationId);
+    settle();
   }
 }
 
@@ -465,30 +604,92 @@ export function pendingTimeEntryCount() {
   return writer.pendingCount();
 }
 
+/** Korissa odottavien kirjausten operaatiotunnisteet (listan merkintä). */
+export function pendingTimeEntryOperations() {
+  return typeof writer.pendingOperations === 'function' ? writer.pendingOperations() : new Set();
+}
+
+/** Automaattisen uusinnan porrastus: epäonnistunut kierros harventaa seuraavia. */
+const OUTBOX_RETRY_BASE_MS = 30000;
+const OUTBOX_RETRY_MAX_MS = 10 * 60000;
+let outboxRetry = { failures: 0, notBefore: 0 };
+let outboxFlush = null;
+
 /**
  * Lähetä laitteelle jääneet kirjaukset. Uusinta on turvallinen: sama
  * operaatio tallentuu kerran (kannan uniikkirajoite -> "jo tallennettu").
+ *
+ * YKSI KERRALLAAN: rinnakkainen kutsu (kirjautuminen, verkon palautuminen,
+ * ajastettu uusinta) saa käynnissä olevan lähetyksen tuloksen. Näin
+ * "lähetä ensin, lataa sitten" odottaa myös toisen käynnistämän lähetyksen.
  */
-export async function flushTimeOutbox() {
+export function flushTimeOutbox({ now = Date.now() } = {}) {
+  if (outboxFlush) return outboxFlush;
+  const run = flushTimeOutboxOnce(now);
+  outboxFlush = run;
+  const done = () => { if (outboxFlush === run) outboxFlush = null; };
+  run.then(done, done);
+  return run;
+}
+
+async function flushTimeOutboxOnce(now) {
   const result = await writer.flush();
   for (const entry of result.detached || []) {
     if (getState().timeEntries.some(e => e.id === entry.id)) replaceTimeEntryInState(entry.id, entry);
   }
+  for (const entry of result.sentEntries || []) rememberWrite('timeEntry', entry);
   for (const { entry, error } of result.rejected || []) {
     // Palvelin hylkäsi (esim. kohde poistettu): ei uusita loputtomiin.
     removeTimeEntryFromState(entry.id);
     showError(error);
   }
   if (result.sent > 0) logEvent('alignment.time_outbox_flushed', { sent: result.sent, left: result.left });
+  outboxRetry = result.sent === 0 && result.left > 0
+    ? { failures: outboxRetry.failures + 1,
+        notBefore: now + Math.min(OUTBOX_RETRY_BASE_MS * 2 ** outboxRetry.failures, OUTBOX_RETRY_MAX_MS) }
+    : { failures: 0, notBefore: 0 };
   return { sent: result.sent, left: result.left };
 }
 
+/**
+ * Ajastettu uusinta (F16): verkko voi pätkiä niin, ettei selain koskaan
+ * ilmoita olevansa offline (heikko kenttä, kirjautumissivu). Silloin
+ * mikään muu ei lähettäisi koria ennen seuraavaa paluuta sovellukseen.
+ * Ei tee mitään, jos kori on tyhjä tai edellinen yritys epäonnistui äsken.
+ */
+export function retryTimeOutbox({ now = Date.now() } = {}) {
+  if (pendingTimeEntryCount() === 0) return Promise.resolve({ sent: 0, left: 0, skipped: 'empty' });
+  if (now < outboxRetry.notBefore) return Promise.resolve({ sent: 0, left: pendingTimeEntryCount(), skipped: 'backoff' });
+  return flushTimeOutbox({ now });
+}
+
+/** Uloskirjautuminen: istuntokohtainen lähetys- ja tallennusmuisti pois. */
+export function resetTimeEntrySync() {
+  outboxRetry = { failures: 0, notBefore: 0 };
+  recentWrites.length = 0;
+}
+
+/**
+ * Poista kirjaus.
+ *
+ * Kesken oleva tallennus (kirjaus tai korin lähetys) odotetaan ensin:
+ * muuten myöhästyvä INSERT herättäisi poistetun rivin henkiin. Lähtökorista
+ * poistetaan myös (F9): ennen tätä poisto "onnistui" (kanta poisti 0 riviä),
+ * mutta seuraava lähetys lisäsi kirjauksen takaisin.
+ */
 export async function deleteTimeEntry(id) {
   const entry = getState().timeEntries.find(e => e.id === id);
   if (!entry) return false;
   removeTimeEntryFromState(id);
+  if (entry.operationId) {
+    await inFlightOperations.get(entry.operationId);
+    if (typeof writer.settled === 'function') await writer.settled(entry.operationId);
+  }
+  forgetWrite('timeEntry', value => value.id === entry.id);
+  const unqueued = typeof writer.forget === 'function' ? writer.forget(entry) : [];
   const result = await timeEntriesRepo.remove(id);
   if (!result.ok) {
+    if (unqueued.length > 0) writer.requeue(unqueued);
     addTimeEntryToState(entry);
     showError(result.error);
     return false;
@@ -502,12 +703,19 @@ export async function deleteTimeEntry(id) {
  * Tallenna viikkokatsaus: tilannekuva siitä mitä käyttäjä näki, hänen
  * oma pohdintansa ja vahvistetut muutokset.
  */
-export async function saveWeeklyReview({
+export function saveWeeklyReview(input = {}, clock = clockNow()) {
+  const monday = weekStartOf((input && input.weekStart) || clock.todayIso || fmtISO(todayMidnight()));
+  return serializedSave(`review:${monday}`, () => saveWeeklyReviewNow(input || {}, clock));
+}
+
+async function saveWeeklyReviewNow({
   weekStart, reflection = null, adjustments = [], reflectionAnswers = undefined
-} = {}, clock = clockNow()) {
+}, clock) {
   const analysis = analyzeCurrentWeek(weekStart, clock);
   const state = getState();
   const existing = state.alignmentReviews.find(review => review.weekStart === analysis.weekStart) || null;
+  // Katsauksen puuttuessa toteutetut muutokset kirjataan nyt (RACE-12).
+  const pendingAdjustments = [...(pendingReviewAdjustments.get(analysis.weekStart) || [])];
   const review = normalizeAlignmentReview({
     ...(existing || {}),
     id: existing ? existing.id : newTaskId(),
@@ -518,14 +726,37 @@ export async function saveWeeklyReview({
     reflection,
     reflectionAnswers: reflectionAnswers === undefined
       ? (existing ? existing.reflectionAnswers : {}) : reflectionAnswers,
-    adjustments: [...new Set([...(existing ? existing.adjustments : []), ...adjustments])],
+    adjustments: [...new Set([...(existing ? existing.adjustments : []), ...pendingAdjustments, ...adjustments])],
     completedAt: new Date().toISOString()
   });
   const { valid, errors } = validateAlignmentReview(review);
   if (!valid) return { ok: false, errors };
 
   upsertAlignmentReviewInState(review);
-  const result = existing ? await alignmentReviewsRepo.update(review) : await alignmentReviewsRepo.insert(review);
+  let saved = review;
+  let result = existing ? await alignmentReviewsRepo.update(review) : await alignmentReviewsRepo.insert(review);
+  if (!result.ok && existing && isNotFound(result.error)) {
+    // Riviä ei ollut kannassa: luodaan se samalla tunnisteella.
+    result = await alignmentReviewsRepo.insert(review);
+  }
+  if (!result.ok && isDuplicate(result.error)) {
+    // Viikolla on jo katsaus kannassa, vaikka tila ei sitä tuntenut
+    // (lataus pyyhki sen kesken tallennuksen, tai vastaus katosi). Ilman
+    // tätä jokainen uusi yritys törmäsi uniikkiavaimeen (RACE-05).
+    // Käyttäjän kirjoittama voittaa; tallennettu täydentää.
+    const listed = await alignmentReviewsRepo.list();
+    const stored = listed.ok ? listed.value.find(row => row.weekStart === review.weekStart) : null;
+    if (stored) {
+      saved = normalizeAlignmentReview({
+        ...review,
+        id: stored.id,
+        reflection: review.reflection ?? stored.reflection ?? null,
+        reflectionAnswers: { ...(stored.reflectionAnswers || {}), ...(review.reflectionAnswers || {}) },
+        adjustments: [...new Set([...(stored.adjustments || []), ...review.adjustments])]
+      });
+      result = await alignmentReviewsRepo.update(saved);
+    }
+  }
   if (!result.ok) {
     // Palautus MOLEMMISSA tapauksissa. Ennen korjausta epäonnistunut
     // ENSIMMÄINEN tallennus jätti katsauksen tilaan, seuraava tallennus
@@ -536,11 +767,20 @@ export async function saveWeeklyReview({
     showError(result.error);
     return { ok: false };
   }
+  // Uudelleen tilaan: samaan aikaan valmistunut lataus on voinut korvata
+  // tilan listalla, jossa tätä katsausta ei vielä ollut.
+  upsertAlignmentReviewInState(saved);
+  rememberWrite('review', saved);
+  const recorded = pendingReviewAdjustments.get(analysis.weekStart);
+  if (recorded) {
+    for (const id of pendingAdjustments) recorded.delete(id);
+    if (recorded.size === 0) pendingReviewAdjustments.delete(analysis.weekStart);
+  }
   logEvent('alignment.review_saved', {
-    signals: analysis.signals.length, adjustments: review.adjustments.length,
+    signals: analysis.signals.length, adjustments: saved.adjustments.length,
     quality: analysis.dataQuality.level
   });
-  return { ok: true, review };
+  return { ok: true, review: saved };
 }
 
 // ------------------------------------------------------- muutokset
@@ -548,8 +788,43 @@ export async function saveWeeklyReview({
 /** Tällä istunnolla jo toteutetut ehdotukset: sama ehdotus ei toteudu kahdesti. */
 const applied = new Set();
 
+/**
+ * Viikko -> toteutetut ehdotukset, joita ei vielä ole kirjattu katsaukseen
+ * (katsausta ei ollut toteutushetkellä). Seuraava saveWeeklyReview kirjaa ne.
+ */
+const pendingReviewAdjustments = new Map();
+
 export function resetAppliedAdjustments() {
   applied.clear();
+  pendingReviewAdjustments.clear();
+}
+
+/** Luodaanko tehtävä, joka on jo olemassa (sama otsikko ja päivä)? */
+function taskAlreadyCreated(payload) {
+  const title = String((payload && payload.title) || '').trim();
+  if (!title) return false;
+  return getState().tasks.some(task => String(task.title || '').trim() === title && task.date === payload.date);
+}
+
+/**
+ * Onko ehdotus jo toteutettu? Istunnon muisti ei riitä (RACE-12): sivun
+ * uudelleenlatauksen tai toisen välilehden jälkeen sama ehdotus näkyi
+ * uudelleen ja loi toisen tehtävän. Siksi myös viikon TALLENNETTU
+ * katsaus ja (tehtävän luonnissa) olemassa oleva tehtävä ratkaisevat.
+ *
+ * @param {object} proposal
+ * @param {string|null} [weekStart] viikko, jonka analyysista ehdotus syntyi
+ */
+export function isAdjustmentDone(proposal, weekStart = null) {
+  if (!proposal) return false;
+  if (applied.has(proposal.id)) return true;
+  const monday = weekStart ? weekStartOf(weekStart) : null;
+  if (monday) {
+    const review = getState().alignmentReviews.find(entry => entry.weekStart === monday);
+    if (review && (review.adjustments || []).includes(proposal.id)) return true;
+    if ((pendingReviewAdjustments.get(monday) || new Set()).has(proposal.id)) return true;
+  }
+  return proposal.type === ADJUSTMENT.CREATE_TASK && taskAlreadyCreated(proposal.payload);
 }
 
 function describe(proposal) {
@@ -563,9 +838,13 @@ function describe(proposal) {
  * @param {object} [options]
  * @param {Function} [options.confirmFn] vahvistusdialogi (testeissä korvattava)
  * @param {object} [options.overrides] käyttäjän muokkaama arvo (esim. tavoiteminuutit)
+ * @param {string} [options.weekStart] viikko, jonka analyysista ehdotus syntyi:
+ *   sen tallennettu katsaus kertoo jo toteutetut, ja toteutus kirjataan siihen
  * @returns {Promise<{ok: boolean, applied?: boolean, cancelled?: boolean, duplicate?: boolean}>}
  */
-export async function applyAdjustment(proposal, { confirmFn = confirmAction, overrides = {}, confirmed = false } = {}) {
+export async function applyAdjustment(proposal, {
+  confirmFn = confirmAction, overrides = {}, confirmed = false, weekStart = null
+} = {}) {
   if (!proposal || !Object.values(ADJUSTMENT).includes(proposal.type)) return { ok: false };
   // Ohjaava ehdotus ei kirjoita mitään: näkymä avaa työnkulun.
   if (NON_WRITING_ADJUSTMENTS.includes(proposal.type)) {
@@ -574,6 +853,9 @@ export async function applyAdjustment(proposal, { confirmFn = confirmAction, ove
   if (applied.has(proposal.id)) return { ok: true, applied: false, duplicate: true };
 
   const payload = { ...proposal.payload, ...overrides };
+  // Jo toteutettu aiemmin (tallennettu katsaus) tai tehtävä on jo olemassa:
+  // ei kysytä eikä luoda toista kertaa.
+  if (isAdjustmentDone({ ...proposal, payload }, weekStart)) return { ok: true, applied: false, duplicate: true };
   // `confirmed`: ryhmä on jo vahvistettu yhdellä dialogilla, jossa
   // jokainen muutos oli lueteltu (applySelectedAdjustments).
   const accepted = confirmed || await confirmFn({
@@ -624,6 +906,13 @@ export async function applyAdjustment(proposal, { confirmFn = confirmAction, ove
   }
 
   if (!result.ok) applied.delete(proposal.id);
+  else if (weekStart && weekStartOf(weekStart)) {
+    // Muistiin viikolle: seuraava katsauksen tallennus kirjaa toteutuksen,
+    // jolloin sama ehdotus ei toteudu uudelleen latauksen jälkeen.
+    const monday = weekStartOf(weekStart);
+    if (!pendingReviewAdjustments.has(monday)) pendingReviewAdjustments.set(monday, new Set());
+    pendingReviewAdjustments.get(monday).add(proposal.id);
+  }
   logEvent('alignment.adjustment', { type: proposal.type, accepted: true, ok: Boolean(result.ok) });
   if (result.ok && !confirmed) notify('Muutos tehty.', 3000);
   return { ok: Boolean(result.ok), applied: Boolean(result.ok) };
@@ -638,9 +927,11 @@ export async function applyAdjustment(proposal, { confirmFn = confirmAction, ove
  *
  * @returns {Promise<{ok: boolean, cancelled?: boolean, results?: Array}>}
  */
-export async function applySelectedAdjustments(proposals = [], { confirmFn = confirmAction, overrides = {}, preview = null } = {}) {
+export async function applySelectedAdjustments(proposals = [], {
+  confirmFn = confirmAction, overrides = {}, preview = null, weekStart = null
+} = {}) {
   const writing = (proposals || []).filter(proposal => proposal && !NON_WRITING_ADJUSTMENTS.includes(proposal.type)
-    && !applied.has(proposal.id));
+    && !isAdjustmentDone({ ...proposal, payload: { ...proposal.payload, ...(overrides[proposal.id] || {}) } }, weekStart));
   if (writing.length === 0) return { ok: true, results: [] };
   const lines = writing.map((proposal, index) => `${index + 1}. ${proposal.label}`);
   const outcome = preview
@@ -658,7 +949,9 @@ export async function applySelectedAdjustments(proposals = [], { confirmFn = con
   }
   const results = [];
   for (const proposal of writing) {
-    results.push({ id: proposal.id, ...(await applyAdjustment(proposal, { overrides: overrides[proposal.id] || {}, confirmed: true })) });
+    results.push({ id: proposal.id, ...(await applyAdjustment(proposal, {
+      overrides: overrides[proposal.id] || {}, confirmed: true, weekStart
+    })) });
   }
   const done = results.filter(result => result.applied).length;
   logEvent('alignment.adjustment_group', { count: writing.length, accepted: true, applied: done });

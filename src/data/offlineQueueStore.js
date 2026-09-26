@@ -37,11 +37,16 @@ export function queueKey(userId) {
 export function loadQueueText(userId) {
   const key = queueKey(userId);
   if (!key) return null;
+  // Muistikopio ENSIN (F12): se on olemassa vain, kun viimeisin tallennus
+  // ei mennyt localStorageen (kiintiö, yksityinen tila). Silloin
+  // localStorageen jäänyt teksti on VANHEMPI jono, ja sen lukeminen
+  // palauttaisi jo lähetetyt tai hävittäisi uudet operaatiot.
+  if (memory.has(key)) return memory.get(key);
   try {
     const store = storage();
     if (store) return store.getItem(key);
-  } catch { /* putoaa varamuistiin */ }
-  return memory.has(key) ? memory.get(key) : null;
+  } catch { /* ei luettavissa */ }
+  return null;
 }
 
 /** @returns {{ok:boolean, persistent:boolean}} */

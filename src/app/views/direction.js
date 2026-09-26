@@ -9,7 +9,7 @@
 // Sävy on toteava. Tämä ei ole suorituspisteytys: valmistumisprosenttia
 // ei näytetä pääviestinä missään.
 
-import { el, maybe, toggle, setText, focus } from '../../ui/dom.js';
+import { el, maybe, toggle, setText, focus, setBusy, singleFlight } from '../../ui/dom.js';
 import { escapeHtml } from '../../lib/format.js';
 import { fmtISO, todayMidnight } from '../../lib/datetime.js';
 import { getState, findLifeArea, findTask, findRoutine, findGoal, findProject } from '../state.js';
@@ -33,7 +33,8 @@ import {
   createLifeArea, editLifeArea, deleteLifeArea, assignGoalToLifeArea,
   saveWeeklyCapacity, logTime, deleteTimeEntry, saveWeeklyReview, applyAdjustment,
   applySelectedAdjustments, previewSelectedAdjustments, compareWithPreviousWeek, recentTrends,
-  currentDailyAlignment, explainSignalOptionally, aiExplanationAvailable, pendingTimeEntryCount
+  currentDailyAlignment, explainSignalOptionally, aiExplanationAvailable, pendingTimeEntryCount,
+  pendingTimeEntryOperations, isAdjustmentDone
 } from '../alignment.js';
 import { saveItemSettings, itemSettingsFor, currentTimer, newOperationId } from '../timeTracking.js';
 import { editTask, editRoutine } from '../actions.js';
@@ -41,6 +42,12 @@ import { startTimerFor, openGeneralLog } from './timeLog.js';
 
 /** Näytettävä viikko (maanantai). null = tämä viikko. Näkymän oma tila. */
 let viewWeek = null;
+/**
+ * Viikko, joka viimeksi PIIRRETTIIN. Tallennukset menevät tälle viikolle,
+ * eivät kellon mukaiselle (RACE-06): sunnuntaina 23.55 aloitettu katsaus,
+ * joka tallennetaan maanantaina 00.02, kuuluu näkyvissä olleelle viikolle.
+ */
+let renderedWeek = null;
 /** Muokattavan alueen tunniste; null = uusi. */
 let editingAreaId = null;
 /** Viimeksi näytetyt ehdotukset: painike viittaa tunnisteella. */
@@ -73,6 +80,31 @@ const OPEN_GOAL_STATUSES = new Set(['active', 'paused', 'maintenance']);
 
 function shownWeek() {
   return viewWeek || currentWeekStart();
+}
+
+/** Tallennuksen viikko: näkyvissä oleva, ei napautushetken kellon viikko. */
+function targetWeek() {
+  return renderedWeek || shownWeek();
+}
+
+/**
+ * Keskeneräinen syöte kiinnittää näkyvän viikon: seuraava piirto (esim.
+ * datan päivitys keskiyön jälkeen) ei vaihda viikkoa puoliksi kirjoitetun
+ * katsauksen tai kapasiteetin alta.
+ */
+function markDirty(field) {
+  if (!field || !field.dataset) return;
+  field.dataset.dirty = '1';
+  if (viewWeek === null && renderedWeek) viewWeek = renderedWeek;
+}
+
+const CAPACITY_FIELDS = Object.freeze(['dirCapacityHours', 'dirEnergy', 'dirEnergyBudget']);
+
+function clearCapacityDirty() {
+  for (const id of CAPACITY_FIELDS) {
+    const field = maybe(id);
+    if (field) delete field.dataset.dirty;
+  }
 }
 
 // ---------------------------------------------------------- muotoilu
@@ -541,12 +573,15 @@ function entryTargetLabel(entry, byId) {
 function timeListHtml(entries, areas) {
   if (entries.length === 0) return '';
   const byId = new Map(areas.map(area => [area.id, area]));
+  // Laitteen lähtökorissa odottavat merkitään: ne eivät ole vielä kannassa.
+  const pending = pendingTimeEntryOperations();
   return [...entries].sort((a, b) => b.entryDate.localeCompare(a.entryDate)).map(entry => `
     <div class="assist-row">
       <div class="assist-meta">
         ${escapeHtml(shortDate(entry.entryDate))} · ${escapeHtml(hours(entry.minutes))}
         · ${escapeHtml(entryTargetLabel(entry, byId))}
-        · ${entry.source === 'timer' ? 'Ajastin' : 'Käsin'}
+        · ${entry.source === 'timer' ? 'Ajastin' : 'Käsin'}${pending.has(entry.operationId)
+          ? ' · <span class="assist-tag">Odottaa lähetystä</span>' : ''}
       </div>
       ${entry.note ? `<div class="assist-reason">${escapeHtml(entry.note)}</div>` : ''}
       <div class="assist-actions">
@@ -692,12 +727,21 @@ function proposalInput(proposal) {
   return '';
 }
 
-function proposalsHtml(proposals) {
+function proposalsHtml(proposals, weekStart) {
   if (proposals.length === 0) {
     return '<div class="assist-empty">Ei ehdotuksia. Voit silti kirjata pohdintasi.</div>';
   }
   return proposals.map(proposal => {
     const navigating = NON_WRITING_ADJUSTMENTS.includes(proposal.type);
+    // Jo toteutettu (myös aiemmalla käynnillä: tallennettu katsaus tai
+    // olemassa oleva tehtävä) ei tarjoa samaa muutosta uudelleen.
+    if (!navigating && isAdjustmentDone(proposal, weekStart)) {
+      return `
+    <div class="assist-row is-closed">
+      <div class="assist-title">${escapeHtml(proposal.label)}</div>
+      <div class="assist-meta"><span class="assist-tag">Tehty</span></div>
+    </div>`;
+    }
     return `
     <div class="assist-row">
       ${navigating ? '' : `<label class="checkbox-row" for="dirSel-${escapeHtml(proposal.id)}">
@@ -752,6 +796,7 @@ export function renderDirection() {
   const areas = state.lifeAreas;
 
   lastAnalysis = analysis;
+  renderedWeek = analysis.weekStart;
 
   setText('dirWeekLabel', weekLabel(analysis.weekStart));
   toggle('dirThisWeek', analysis.weekStart !== currentWeekStart());
@@ -790,14 +835,17 @@ export function renderDirection() {
   const chosenArea = timeArea.value;
   timeArea.innerHTML = areaOptions(areas.filter(area => area.active), chosenArea, 'Ei aluetta');
 
-  // Lomakkeen arvoja ei ylikirjoiteta kesken kirjoittamisen.
+  // Lomakkeen arvoja ei ylikirjoiteta kesken kirjoittamisen — eikä
+  // tallentamatonta arvoa senkään jälkeen, kun fokus on siirtynyt muualle
+  // (RACE-13: datan päivitys piirtää näkymän uudelleen).
   const capacity = capacityForWeek(state.weeklyCapacities, analysis.weekStart);
+  const untouched = field => document.activeElement !== field && !field.dataset.dirty;
   const hoursInput = el('dirCapacityHours');
-  if (document.activeElement !== hoursInput) hoursInput.value = capacity ? toHoursInput(capacity.availableMinutes) : '';
+  if (untouched(hoursInput)) hoursInput.value = capacity ? toHoursInput(capacity.availableMinutes) : '';
   const energy = el('dirEnergy');
-  if (document.activeElement !== energy) energy.value = capacity && capacity.energyLevel ? String(capacity.energyLevel) : '';
+  if (untouched(energy)) energy.value = capacity && capacity.energyLevel ? String(capacity.energyLevel) : '';
   const budget = maybe('dirEnergyBudget');
-  if (budget && document.activeElement !== budget) {
+  if (budget && untouched(budget)) {
     budget.value = capacity && Number.isInteger(capacity.energyBudgetMinutes) ? toHoursInput(capacity.energyBudgetMinutes) : '';
   }
   const timeDate = el('dirTimeDate');
@@ -823,7 +871,7 @@ export function renderDirection() {
   shownProposals = currentProposals(analysis);
   const ids = new Set(shownProposals.map(proposal => proposal.id));
   selectedProposalIds = new Set([...selectedProposalIds].filter(id => ids.has(id)));
-  el('dirProposals').innerHTML = proposalsHtml(shownProposals);
+  el('dirProposals').innerHTML = proposalsHtml(shownProposals, analysis.weekStart);
   // Esikatselu kuvaa sen tilan, jossa se laskettiin. Mikä tahansa muutos
   // (toisessa näkymässä tai tallennuksen jälkeen) mitätöi sen.
   if (lastPreview && lastPreview.stateRef !== state) lastPreview = null;
@@ -978,8 +1026,9 @@ async function submitCapacity() {
     setError('dirEnergyBudgetError', 'Anna tunnit, esim. 8, tai jätä tyhjäksi.');
     return;
   }
+  const week = targetWeek();
   const result = await saveWeeklyCapacity({
-    weekStart: shownWeek(), availableMinutes: minutes, energyLevel: energyValue ? Number(energyValue) : null,
+    weekStart: week, availableMinutes: minutes, energyLevel: energyValue ? Number(energyValue) : null,
     energyBudgetMinutes: budget
   });
   if (!result.ok) {
@@ -987,7 +1036,8 @@ async function submitCapacity() {
     if (result.errors && result.errors.energyBudgetMinutes) setError('dirEnergyBudgetError', result.errors.energyBudgetMinutes);
     return;
   }
-  const previousWeek = addDaysIso(shownWeek(), -7);
+  clearCapacityDirty();
+  const previousWeek = addDaysIso(week, -7);
   const state = getState();
   const previousActual = entriesInRange(state.timeEntries, previousWeek, addDaysIso(previousWeek, 6))
     .reduce((sum, entry) => sum + entry.minutes, 0);
@@ -1052,7 +1102,7 @@ async function submitReview() {
     if (field && field.value) reflectionAnswers[code] = field.value;
   }
   const result = await saveWeeklyReview({
-    weekStart: shownWeek(), reflection: reflection.value || null, reflectionAnswers
+    weekStart: targetWeek(), reflection: reflection.value || null, reflectionAnswers
   });
   if (result.ok) {
     delete reflection.dataset.dirty;
@@ -1063,6 +1113,35 @@ async function submitReview() {
     status.textContent = 'Viikkokatsaus tallennettu.';
   }
 }
+
+/**
+ * Yksi tallennus kerrallaan (RACE-04, RACE-15): rinnakkainen napautus
+ * ohitetaan ja painike on pois käytöstä vastaukseen asti — sama malli
+ * kuin aikakirjauksessa (submitTime). Ennen tätä toinen napautus
+ * ensimmäisen ollessa kesken muuttui UPDATEksi riville, jota kannassa ei
+ * vielä ollut, ja näkymä saattoi ilmoittaa "tallennettu" turhaan.
+ */
+function guardedSave(buttonId, save) {
+  return singleFlight(async () => {
+    const button = maybe(buttonId);
+    setBusy(button, true);
+    if (button) button.disabled = true;
+    try {
+      return await save();
+    } finally {
+      setBusy(button, false);
+      if (button) button.disabled = false;
+    }
+  });
+}
+
+const saveAreaFormOnce = guardedSave('dirAreaSave', submitAreaForm);
+const saveCapacityOnce = guardedSave('dirCapacitySave', submitCapacity);
+const saveReviewOnce = guardedSave('dirReviewSave', submitReview);
+const deleteAreaOnce = singleFlight(async () => {
+  if (!editingAreaId) return;
+  if (await deleteLifeArea(editingAreaId)) closeAreaForm();
+});
 
 // ------------------------------------------------ uudet toiminnot (v2)
 
@@ -1100,7 +1179,7 @@ function onPreviewSelected() {
   }
   const overrides = collectOverrides(proposals);
   if (!overrides) return;
-  const preview = previewSelectedAdjustments(shownWeek(), proposals, overrides);
+  const preview = previewSelectedAdjustments(targetWeek(), proposals, overrides);
   lastPreview = { ...preview, stateRef: getState(), ids: proposals.map(p => p.id), overrides };
   renderDirection();
 }
@@ -1108,9 +1187,11 @@ function onPreviewSelected() {
 async function onApplySelected() {
   if (!lastPreview) return;
   const proposals = shownProposals.filter(proposal => lastPreview.ids.includes(proposal.id));
-  const result = await applySelectedAdjustments(proposals, { overrides: lastPreview.overrides, preview: lastPreview });
+  const week = targetWeek();
+  const result = await applySelectedAdjustments(proposals, {
+    overrides: lastPreview.overrides, preview: lastPreview, weekStart: week
+  });
   if (result.cancelled) return;
-  const week = shownWeek();
   const existing = getState().alignmentReviews.find(review => review.weekStart === week);
   const appliedIds = (result.results || []).filter(entry => entry.applied).map(entry => entry.id);
   if (existing && appliedIds.length > 0) {
@@ -1251,7 +1332,8 @@ async function onProposalClick(event) {
     if (proposal.type === ADJUSTMENT.CHANGE_TARGET) overrides.to = minutes;
     if (proposal.type === ADJUSTMENT.SET_CAPACITY) overrides.availableMinutes = minutes;
   }
-  const result = await applyAdjustment(proposal, { overrides });
+  const week = targetWeek();
+  const result = await applyAdjustment(proposal, { overrides, weekStart: week });
   if (result.navigate === 'estimate') {
     // Ehdotus koskee ensi viikkoa: näytetään se viikko, jonka asiat arvioidaan.
     if (proposal.payload && proposal.payload.weekStart) viewWeek = weekStartOf(proposal.payload.weekStart);
@@ -1259,7 +1341,6 @@ async function onProposalClick(event) {
     return;
   }
   if (result.applied) {
-    const week = shownWeek();
     const state = getState();
     const existing = state.alignmentReviews.find(review => review.weekStart === week);
     // Valittu muutos kirjataan katsaukseen, jos katsaus on jo tallennettu.
@@ -1275,6 +1356,8 @@ function goToWeek(offsetDays) {
   viewWeek = weekStartOf(addDaysIso(shownWeek(), offsetDays));
   explanations = new Map();
   lastPreview = null;
+  // Kapasiteettikentät näyttävät valitun viikon arvot, eivät edellisen luonnosta.
+  clearCapacityDirty();
   renderDirection();
 }
 
@@ -1283,16 +1366,19 @@ export function initDirection() {
   if (!prev) return;
   prev.addEventListener('click', () => goToWeek(-7));
   el('dirNext').addEventListener('click', () => goToWeek(7));
-  el('dirThisWeek').addEventListener('click', () => { viewWeek = null; renderDirection(); });
+  el('dirThisWeek').addEventListener('click', () => { viewWeek = null; clearCapacityDirty(); renderDirection(); });
 
-  el('dirCapacitySave').addEventListener('click', submitCapacity);
+  el('dirCapacitySave').addEventListener('click', saveCapacityOnce);
+  for (const id of CAPACITY_FIELDS) {
+    const field = maybe(id);
+    if (!field) continue;
+    field.addEventListener('input', event => markDirty(event.target || field));
+    field.addEventListener('change', event => markDirty(event.target || field));
+  }
   el('dirAddArea').addEventListener('click', () => openAreaForm(null));
   el('dirAreaCancel').addEventListener('click', closeAreaForm);
-  el('dirAreaSave').addEventListener('click', submitAreaForm);
-  el('dirAreaDelete').addEventListener('click', async () => {
-    if (!editingAreaId) return;
-    if (await deleteLifeArea(editingAreaId)) closeAreaForm();
-  });
+  el('dirAreaSave').addEventListener('click', saveAreaFormOnce);
+  el('dirAreaDelete').addEventListener('click', deleteAreaOnce);
   el('dirAreaForm').addEventListener('keydown', event => {
     if (event.key === 'Escape') { event.preventDefault(); closeAreaForm(); }
   });
@@ -1316,9 +1402,9 @@ export function initDirection() {
     if (remove) deleteTimeEntry(remove.dataset.timeDelete);
   });
 
-  el('dirReflection').addEventListener('input', event => { event.target.dataset.dirty = '1'; });
+  el('dirReflection').addEventListener('input', event => markDirty(event.target));
   el('dirProposals').addEventListener('click', onProposalClick);
-  el('dirReviewSave').addEventListener('click', submitReview);
+  el('dirReviewSave').addEventListener('click', saveReviewOnce);
 
   // --- Suunta 2 ---
   const on = (id, type, handler) => { const node = maybe(id); if (node) node.addEventListener(type, handler); };
@@ -1364,9 +1450,7 @@ export function initDirection() {
       renderDirection();
     }
   });
-  on('dirReflectionPrompts', 'input', event => {
-    if (event.target && event.target.dataset) event.target.dataset.dirty = '1';
-  });
+  on('dirReflectionPrompts', 'input', event => markDirty(event.target));
 
   const today = maybe('todayDirection');
   if (today) {
@@ -1403,11 +1487,25 @@ export function resetDirectionView() {
   explainsInFlight = new Set();
   lastAnalysis = null;
   trendsRequested = false;
-  // Pohdintakentät tyhjiksi: seuraava käyttäjä ei näe edellisen tekstiä.
+  renderedWeek = null;
+  // Kesken jäänyt kirjaus on uusi kirjaus seuraavalle käyttäjälle.
+  timeFormOperation = null;
+  // Kentät tyhjiksi: seuraava käyttäjä ei näe edellisen tekstiä, eikä
+  // voi tallentaa sitä omaan katsaukseensa (RACE-14, F15). Kentät ovat
+  // index.html:ssä pysyviä, joten tila ei nollaudu itsestään.
   if (typeof document !== 'undefined') {
-    for (const code of REFLECTION_CODES) {
-      const field = maybe(`dirAnswer-${code}`);
+    const fields = [
+      'dirReflection', 'dirTimeNote', 'dirTimeMinutes', 'dirTimeDate', 'dirTimeArea',
+      ...CAPACITY_FIELDS, ...REFLECTION_CODES.map(code => `dirAnswer-${code}`)
+    ];
+    for (const id of fields) {
+      const field = maybe(id);
       if (field) { field.value = ''; delete field.dataset.dirty; }
     }
+    for (const id of ['dirTimeDateError', 'dirTimeMinutesError', 'dirCapacityError', 'dirEnergyBudgetError']) {
+      setError(id, '');
+    }
+    setText('dirCapacityWarning', '');
+    setText('dirReviewStatus', '');
   }
 }
