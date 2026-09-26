@@ -631,6 +631,47 @@ test('toteuman jakauma: lauantaina luotu alue ei ole vertailussa eikä väärist
   assert.equal(change.payload.to, 1500, '83 % vertailtujen alueiden tavoitteista (30 h), ei kaikkien (40 h)');
 });
 
+test('tavoitteen muutosta ei esitäytetä alle 30 minuutin (poikkeaman haara)', () => {
+  const areas = [area('work', 'Työ', 3, 600, 'tyo', day(0)), area('side', 'Sivu', 3, 600, null, day(0))];
+  const analysis = analyzeWeek({ weekStart: WEEK, todayIso: AFTER, areas,
+    timeEntries: [...[0, 1, 2, 3, 4].map(i => entry('w' + i, day(i), 150, { lifeAreaId: 'work' })),
+      entry('s', day(0), 5, { lifeAreaId: 'side' })] });
+  const side = signalsOf(analysis, SIGNAL.MISALIGNMENT).find(s => s.areaId === 'side');
+  assert.equal(side.metrics.direction, 'under');
+  assert.equal(side.severity, SEVERITY.STRONG);
+  const changes = proposeAdjustments(analysis, { areas }).filter(p => p.type === ADJUSTMENT.CHANGE_TARGET);
+  assert.equal(changes.some(p => p.payload.areaId === 'side'), false, 'ennen: tavoitteeksi 15 min');
+  assert.ok(changes.some(p => p.payload.areaId === 'work'), 'yli-poikkeamasta ehdotetaan yhä');
+});
+
+test('yksikään tavoitteen muutosehdotus ei esitäytä alle 30 min (satunnaiset viikot, kiinteä siemen)', () => {
+  let seed = 20261004;
+  const random = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+  const pick = list => list[Math.floor(random() * list.length)];
+  let changes = 0;
+  for (let round = 0; round < 300; round++) {
+    const areas = ['tyo', 'perhe', 'hyvinvointi', 'harrastus'].slice(0, 2 + Math.floor(random() * 3))
+      .map((key, i) => area('a' + i, 'Alue ' + i, 1 + Math.floor(random() * 5),
+        pick([null, 0, 30, 60, 300, 600, 1200]), key, pick([null, day(0), day(3), day(5)])));
+    const todayIso = pick([day(3), day(5), AFTER, AFTER]);
+    const timeEntries = [];
+    for (let d = 0; d < 7; d++) {
+      for (const a of areas) {
+        if (random() < 0.6) timeEntries.push(entry(`e${d}${a.id}`, day(d), pick([5, 10, 30, 90, 240]), { lifeAreaId: a.id }));
+      }
+    }
+    const tasks = Array.from({ length: Math.floor(random() * 8) }, (_, i) =>
+      task('t' + i, day(Math.floor(random() * 7)), pick([null, 15, 60, 180]), { category: pick(['tyo', 'perhe', 'hyvinvointi', 'harrastus']) }));
+    const analysis = analyzeWeek({ weekStart: WEEK, todayIso, areas, tasks,
+      timeEntries: timeEntries.filter(e => e.entryDate <= todayIso), capacity: pick([null, capacity(600), capacity(1800)]) });
+    for (const proposal of proposeAdjustments(analysis, { areas }).filter(p => p.type === ADJUSTMENT.CHANGE_TARGET)) {
+      changes += 1;
+      assert.ok(proposal.payload.to >= TIME_RULES.NEGLECT_MIN_TARGET_MINUTES, `kierros ${round}: ${proposal.id} -> ${proposal.payload.to}`);
+    }
+  }
+  assert.ok(changes > 20, `aineisto tuottaa tavoitteen muutoksia (${changes})`);
+});
+
 // ================================================================ NÄKYMÄ: DOM-tynkä
 
 const USER = { id: 'dddddddd-4444-4444-8444-00000000000d', email: 'sparse@example.com' };

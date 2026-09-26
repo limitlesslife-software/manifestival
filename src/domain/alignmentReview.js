@@ -569,12 +569,18 @@ export function proposeAdjustments(analysis, {
   for (const signal of signalsOf(analysis, SIGNAL.MISALIGNMENT)) {
     const area = areasById.get(signal.areaId);
     if (!area || !area.active || !Number.isInteger(area.targetMinutesPerWeek)) continue;
+    // Suuntaa-antavasta (vajaa aineisto, arvioimatonta työtä) ei ehdoteta
+    // tavoitteen muutosta.
+    if (signal.metrics.incomplete) continue;
     // Tavoite, jolla toivottu osuus vastaisi toteutunutta, kun muiden
     // alueiden tavoitteet pysyvät ennallaan: osuus x tavoitteiden summa
     // (vain vertailussa mukana olleiden alueiden, jos osa luotiin kesken).
     const share = (signal.metrics.basisMinutes || 0) / Math.max(signal.metrics.assignedMinutes || 1, 1);
     const suggested = roundToQuarter(share * (signal.metrics.comparedTargetsMinutes || targetsTotal));
     if (suggested === area.targetMinutesPerWeek) continue;
+    // Alle mielekkään tavoitteen alarajan ei esitäytetä: 0 tai 15 min
+    // tarkoittaisi käytännössä "ei nyt" ja hiljentäisi alueen.
+    if (suggested < RULES.NEGLECT_MIN_TARGET_MINUTES) continue;
     add({
       id: `${ADJUSTMENT.CHANGE_TARGET}:${area.id}`,
       type: ADJUSTMENT.CHANGE_TARGET,

@@ -230,8 +230,11 @@ kapasiteetista.
   kapasiteettiin (Y); N asiaa ilman arviota, joten kokonaiskuormaa ei
   tiedetä." — ei "Suunnitelma mahtui kapasiteettiin".
 - Ehdotukset: kapasiteettia ei ehdoteta kirjatun ajan perusteella
-  osittaisesta viikosta; tavoitteen muutos vain vakiintuneesta toteumasta ja
-  vähintään 30 min (0 = "ei nyt" hiljentäisi alueen). Uusi ohjaava ehdotus
+  osittaisesta viikosta; tavoitteen muutos (huomiotta jäämisen haara) vain
+  vakiintuneesta toteumasta. **Kumpikaan haara** (huomiotta jääminen,
+  poikkeama) ei esitäytä alle 30 min arvoa: silloin ehdotusta ei tehdä
+  (0 tai 15 min = käytännössä "ei nyt" hiljentäisi alueen). Suuntaa-antavasta
+  poikkeamasta ei ehdoteta tavoitteen muutosta. Uusi ohjaava ehdotus
   `start_tracking` ("Kirjaa aikaa koko ensi viikon, niin katsaus voi verrata
   toteumaa tavoitteisiin") kun kirjaus alkoi mutta ei vakiintunut; ei
   kirjoita mitään.
@@ -276,7 +279,7 @@ jokainen erikseen, ja sama ehdotus ei toteudu kahdesti:
 | Kevennä ensi viikkoa | ensi viikon suunnitelma > kapasiteetti | siirtää liittämättömät ja vähiten tärkeät tehtävät viikolla eteenpäin |
 | Keskeytä tavoite | kuormitus; alueen tärkeys ≤ 2 | tavoitteen tila `paused` (ei katoa) |
 | Varaa aikaa alueelle | huomiotta jääminen (ei `plan_unknown`) | luo tehtävän ensi maanantaille alueen tärkeimpään tavoitteeseen |
-| Muuta alueen tavoitetta | huomiotta jääminen vakiintuneesta toteumasta (arvo ≥ 30 min) / poikkeama | päivittää tavoitteen (käyttäjä muokkaa arvon) |
+| Muuta alueen tavoitetta | huomiotta jääminen vakiintuneesta toteumasta / poikkeama (ei suuntaa-antava, ei arvioimatonta aluetta); esitäytetty arvo aina ≥ 30 min | päivittää tavoitteen (käyttäjä muokkaa arvon) |
 | Kirjaa aikaa koko ensi viikon | kirjaus alkoi mutta ei vakiintunut (v3) | ei kirjoita mitään: avaa ajan kirjauksen |
 
 ## Palaute Tavoitteesta tekemiseksi -moottorille
