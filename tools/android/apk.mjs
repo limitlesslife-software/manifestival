@@ -37,7 +37,9 @@ export const APPLICATION_ID_PLACEHOLDER = '${applicationId}';
  * Loput tulevat kirjastojen manifesteista yhdistämisessä:
  *   @capacitor/local-notifications: RECEIVE_BOOT_COMPLETED, WAKE_LOCK,
  *     POST_NOTIFICATIONS, SCHEDULE_EXACT_ALARM
- *   Capacitor/androidx: ACCESS_NETWORK_STATE
+ *   io.ionic.libs:iongeolocation-android (tulee @capacitor/geolocationin
+ *     riippuvuutena; todennettu manifestiyhdistäjän raportista):
+ *     ACCESS_NETWORK_STATE
  *   androidx.core: <appId>.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION
  *     (signature-tasoinen, sovelluksen oma)
  */
@@ -151,7 +153,8 @@ export function expectedPermissions(appId = APP_ID) {
   return APK_PERMISSION_ALLOWLIST.map(p => withAppId(p, appId)).sort();
 }
 
-function isForbidden(permission) {
+/** Onko lupa APK_FORBIDDEN_PERMISSIONS-listalla (`*` = etuliite)? */
+export function isForbiddenPermission(permission) {
   return APK_FORBIDDEN_PERMISSIONS.some(rule => rule.endsWith('*')
     ? permission.startsWith(rule.slice(0, -1))
     : permission === rule);
@@ -182,15 +185,23 @@ function describeDiff({ missing, extra }) {
 /**
  * `aapt2 dump badging` -tuloste.
  *
+ * `features`: feature-groupin laitteisto-ominaisuudet. `uses-feature:` on
+ * pakollinen (myös lupien implisiittisesti vaatimat, esim. RECORD_AUDIO ->
+ * mikrofoni), `uses-feature-not-required:` valinnainen. Tieto on
+ * kuvaileva: sivuladattavan APK:n asennusta ominaisuudet eivät estä, eikä
+ * mikään tarkistus kaadu valinnaiseen ominaisuuteen (esim. mikrofoni
+ * required="false").
+ *
  * @returns {{ packageName: string|null, versionCode: string|null,
  *   versionName: string|null, compileSdk: string|null, minSdk: number|null,
  *   targetSdk: number|null, debuggable: boolean, permissions: string[],
- *   launchableActivity: string|null }}
+ *   launchableActivity: string|null, features: { name: string, required: boolean }[] }}
  */
 export function parseBadging(text) {
   const result = {
     packageName: null, versionCode: null, versionName: null, compileSdk: null,
-    minSdk: null, targetSdk: null, debuggable: false, permissions: [], launchableActivity: null
+    minSdk: null, targetSdk: null, debuggable: false, permissions: [], launchableActivity: null,
+    features: []
   };
   for (const raw of String(text || '').split(LINES)) {
     const line = raw.trimEnd();
@@ -208,6 +219,9 @@ export function parseBadging(text) {
     else if ((m = /^uses-permission(?:-sdk-23)?: name='([^']+)'/.exec(line))) result.permissions.push(m[1]);
     else if (line.trim() === 'application-debuggable') result.debuggable = true;
     else if ((m = /^launchable-activity: name='([^']+)'/.exec(line))) result.launchableActivity = m[1];
+    else if ((m = /^\s*uses-feature(-not-required)?: name='([^']+)'/.exec(line))) {
+      result.features.push({ name: m[2], required: !m[1] });
+    }
   }
   return result;
 }
@@ -276,6 +290,18 @@ export function parseXmlTree(text) {
 
 const COMPONENT_TAGS = new Set(['activity', 'activity-alias', 'service', 'receiver', 'provider']);
 
+/**
+ * Onko komponentti avoin ulospäin? FAIL CLOSED: vain kirjaimellinen
+ * `false` sulkee. Mikä tahansa muu arvo (resurssiviittaus `@0x7f…`,
+ * tyypitetty luku, `true`) tulkitaan avoimeksi. Ilman attribuuttia
+ * Androidin oletus: avoin, jos komponentilla on intent-filter.
+ */
+function isExported(component) {
+  const value = component.attrs['android:exported'];
+  if (value === undefined) return component.children.some(x => x.name === 'intent-filter');
+  return value !== 'false';
+}
+
 /** Tarkastuksen kannalta olennaiset tiedot manifestipuusta. */
 export function manifestFacts(tree) {
   const manifest = (tree.children || []).find(e => e.name === 'manifest');
@@ -285,13 +311,13 @@ export function manifestFacts(tree) {
 
   const components = application.children.filter(e => COMPONENT_TAGS.has(e.name));
   const exported = components
-    .filter(c => c.attrs['android:exported'] === 'true'
-      || (c.attrs['android:exported'] === undefined && c.children.some(x => x.name === 'intent-filter')))
+    .filter(isExported)
     .map(c => ({
       tag: c.name,
       name: c.attrs['android:name'] || null,
       permission: c.attrs['android:permission'] || null,
-      explicit: c.attrs['android:exported'] === 'true'
+      explicit: c.attrs['android:exported'] !== undefined,
+      exportedValue: c.attrs['android:exported'] ?? null
     }));
 
   const queryIntentActions = [];
@@ -312,6 +338,8 @@ export function manifestFacts(tree) {
       .map(e => e.attrs['android:name']),
     declaredPermissions: children.filter(e => e.name === 'permission')
       .map(e => ({ name: e.attrs['android:name'], protectionLevel: e.attrs['android:protectionLevel'] ?? null })),
+    usesFeatures: children.filter(e => e.name === 'uses-feature')
+      .map(e => ({ name: e.attrs['android:name'] ?? null, required: e.attrs['android:required'] !== 'false' })),
     application: {
       debuggable: application.attrs['android:debuggable'] ?? null,
       allowBackup: application.attrs['android:allowBackup'] ?? null,
@@ -422,7 +450,7 @@ export function checkPermissions(dump, { appId = APP_ID } = {}) {
       ? describeDiff(diff)
       : `täsmälleen ${APK_PERMISSION_ALLOWLIST.length} sallittua lupaa`));
 
-  const forbidden = dump.requested.filter(isForbidden);
+  const forbidden = dump.requested.filter(isForbiddenPermission);
   checks.push(check('permissions.forbidden', forbidden.length === 0,
     forbidden.length ? 'kielletty lupa: ' + forbidden.join(', ') : 'ei kiellettyjä lupia'));
 
@@ -466,6 +494,11 @@ export function checkManifest(facts, { appId = APP_ID, buildType = 'debug' } = {
   const problems = [];
   for (const component of facts.exported) {
     const rule = allowed.find(a => a.name === component.name);
+    const literal = !component.explicit || component.exportedValue === 'true';
+    if (!literal) {
+      problems.push(`${component.tag} ${component.name}: android:exported=${component.exportedValue} `
+        + 'ei ole kirjaimellinen true/false (tulkitaan avoimeksi)');
+    }
     if (!rule) problems.push(`${component.tag} ${component.name} on avoin`
       + (component.explicit ? '' : ' (intent-filter ilman android:exported)'));
     else if (rule.permission && component.permission !== rule.permission) {

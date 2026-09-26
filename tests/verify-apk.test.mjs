@@ -237,6 +237,54 @@ test('avoin FileProvider, DUMP-suojaton ProfileInstallReceiver ja allowBackup=tr
   assert.deepEqual(failed(checkManifest(manifestFacts(parseXmlTree(backup)))), ['manifest.allowBackup']);
 });
 
+test('android:exported: vain kirjaimellinen false sulkee (fail closed), intent-filter-oletus säilyy', () => {
+  // Resurssiviittaus (esim. @bool/-arvo) ei ole kirjaimellinen false. Ennen
+  // korjausta FileProvider tulkittiin suljetuksi ja tarkastus meni läpi.
+  const refProvider = SPEECH.xmltree.replace(
+    'android:exported(0x01010010)=false\n            A: http://schemas.android.com/apk/res/android:authorities(0x01010018)="fi.limitlesslife.manifestival.fileprovider"',
+    'android:exported(0x01010010)=@0x7f050001\n            A: http://schemas.android.com/apk/res/android:authorities(0x01010018)="fi.limitlesslife.manifestival.fileprovider"');
+  assert.notEqual(refProvider, SPEECH.xmltree);
+  const facts = manifestFacts(parseXmlTree(refProvider));
+  assert.ok(facts.exported.some(c => c.name === 'androidx.core.content.FileProvider' && c.exportedValue === '@0x7f050001'));
+  const checks = checkManifest(facts);
+  assert.deepEqual(failed(checks), ['manifest.exported']);
+  assert.match(byId(checks, 'manifest.exported').detail, /FileProvider: android:exported=@0x7f050001 ei ole kirjaimellinen/);
+  assert.match(byId(checks, 'manifest.exported').detail, /androidx\.core\.content\.FileProvider on avoin/);
+
+  // Sallittukin komponentti kaatuu, jos arvo ei ole kirjaimellinen.
+  const refMain = SPEECH.xmltree.replace(
+    'android:exported(0x01010010)=true\n            A: http://schemas.android.com/apk/res/android:launchMode',
+    'android:exported(0x01010010)=@0x7f050002\n            A: http://schemas.android.com/apk/res/android:launchMode');
+  assert.notEqual(refMain, SPEECH.xmltree);
+  const mainChecks = checkManifest(manifestFacts(parseXmlTree(refMain)));
+  assert.deepEqual(failed(mainChecks), ['manifest.exported']);
+  assert.match(byId(mainChecks, 'manifest.exported').detail, /MainActivity: android:exported=@0x7f050002/);
+
+  // Ei attribuuttia + intent-filter = avoin (Androidin oletus).
+  const implicit = SPEECH.xmltree.replace(
+    'LocalNotificationRestoreReceiver")\n            A: http://schemas.android.com/apk/res/android:exported(0x01010010)=false\n',
+    'LocalNotificationRestoreReceiver")\n');
+  assert.notEqual(implicit, SPEECH.xmltree);
+  const implicitChecks = checkManifest(manifestFacts(parseXmlTree(implicit)));
+  assert.deepEqual(failed(implicitChecks), ['manifest.exported']);
+  assert.match(byId(implicitChecks, 'manifest.exported').detail, /LocalNotificationRestoreReceiver on avoin \(intent-filter ilman android:exported\)/);
+
+  // Kirjaimellinen false ja attribuutiton komponentti ilman intent-filteriä ovat suljettuja.
+  assert.deepEqual(manifestFacts(parseXmlTree(SPEECH.xmltree)).exported.map(c => c.exportedValue), ['true', 'true']);
+});
+
+test('ACCESS_NETWORK_STATE: apk.mjs ja dokumentti nimeävät saman lähteen (iongeolocation-android)', () => {
+  const source = read('tools/android/apk.mjs');
+  const comment = source.slice(source.indexOf('Loput tulevat kirjastojen manifesteista'), source.indexOf('export const APK_PERMISSION_ALLOWLIST'));
+  assert.ok(comment.length > 0, 'lupien alkuperäkommentti puuttuu apk.mjs:stä');
+  assert.match(comment, /iongeolocation-android[\s\S]*@capacitor\/geolocation[\s\S]*ACCESS_NETWORK_STATE/);
+  assert.doesNotMatch(comment, /Capacitor\/androidx/, 'väärä alkuperä: manifestiyhdistäjän raportin mukaan lupa tulee iongeolocationista');
+  const row = read('docs/activation/ANDROID-ACCEPTANCE-BUILD.md').split(/\r?\n/).find(l => l.startsWith('| `ACCESS_NETWORK_STATE`'));
+  assert.ok(row, 'dokumentin lupataulukosta puuttuu ACCESS_NETWORK_STATE');
+  assert.match(row, /iongeolocation-android/);
+  assert.match(row, /@capacitor\/geolocation/);
+});
+
 test('<queries> ilman RecognitionServicea kaatuu', () => {
   const other = SPEECH.xmltree.replace('"android.speech.RecognitionService" (Raw: "android.speech.RecognitionService")',
     '"android.intent.action.VIEW" (Raw: "android.intent.action.VIEW")');
@@ -482,6 +530,52 @@ test('KOKONAISUUS: vanhan J-APK:n tulosteet kaatuvat täsmälleen odotetuista sy
     'manifest.permissions', 'manifest.queries',
     'permissions.allowlist', 'permissions.forbidden'
   ]);
+});
+
+test('valinnainen mikrofoni (uses-feature-not-required) kelpaa: badging, manifesti ja kokonaisuus', () => {
+  // Jos lähdemanifestiin lisätään <uses-feature android:name="android.hardware.microphone"
+  // android:required="false"/>, aapt2 näyttää sen feature-groupissa
+  // julistettuna ja valinnaisena, eikä implisiittistä pakollista
+  // mikrofonia enää ole (vrt. oikean J-APK:n location.gps-rivi).
+  const badgingText = SPEECH.badging.replace(
+    "feature-group: label=''\n",
+    "feature-group: label=''\n  uses-feature-not-required: name='android.hardware.microphone'\n").replace(
+    "  uses-feature: name='android.hardware.microphone'\n"
+      + "  uses-implied-feature: name='android.hardware.microphone' reason='requested android.permission.RECORD_AUDIO permission'\n", '');
+  assert.notEqual(badgingText, SPEECH.badging);
+  assert.doesNotMatch(badgingText, /uses-implied-feature: name='android\.hardware\.microphone'/);
+  const xmltree = SPEECH.xmltree.replace(
+    '      E: queries (line=24)\n',
+    '      E: uses-feature (line=23)\n'
+      + '        A: http://schemas.android.com/apk/res/android:name(0x01010003)="android.hardware.microphone" (Raw: "android.hardware.microphone")\n'
+      + '        A: http://schemas.android.com/apk/res/android:required(0x0101028e)=false\n'
+      + '      E: queries (line=24)\n');
+  assert.notEqual(xmltree, SPEECH.xmltree);
+
+  const badging = parseBadging(badgingText);
+  assert.deepEqual(badging.features, [
+    { name: 'android.hardware.microphone', required: false },
+    { name: 'android.hardware.faketouch', required: true }
+  ]);
+  assert.deepEqual(parseBadging(SPEECH.badging).features, [
+    { name: 'android.hardware.faketouch', required: true },
+    { name: 'android.hardware.microphone', required: true }
+  ], 'nykyinen manifesti: mikrofoni on RECORD_AUDIOn implisiittisesti vaatima');
+  assert.deepEqual(parseBadging(J.badging).features.find(f => f.name === 'android.hardware.location.gps'),
+    { name: 'android.hardware.location.gps', required: false }, 'oikean J-APK:n uses-feature-not-required-rivi');
+
+  assert.deepEqual(failed(checkBadging(badging, NEW_EXPECT)), []);
+  const facts = manifestFacts(parseXmlTree(xmltree));
+  assert.deepEqual(facts.usesFeatures, [{ name: 'android.hardware.microphone', required: false }]);
+  assert.deepEqual(failed(checkManifest(facts)), []);
+
+  const web = webPayload('J', 'v23');
+  const result = verifyApkContents({
+    apkBytes: apkFor({ web }), wave: 'J', outputs: { ...SPEECH, badging: badgingText, xmltree }, expect: NEW_EXPECT,
+    dist: web, git: lfOnly(web), repoCapacitorConfig: read('capacitor.config.json')
+  });
+  assert.deepEqual(failed(result.checks), []);
+  assert.equal(result.passed, true);
 });
 
 test('KOKONAISUUS: väärä SHA-256, käsin muokattu assetti ja ylimääräinen liitännäinen kaatavat', () => {
