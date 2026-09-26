@@ -94,6 +94,14 @@ state = {
 `subscribe()`-funktiolla, joten yksikään toiminto ei joudu muistamaan kutsua
 `renderAll()`. Ennen tätä datakerros kutsui renderöintiä itse.
 
+Piirron hinta (CRIT-01): useampi tilamuutos kootaan yhdeksi ilmoitukseksi
+`batch()`-funktiolla (koko `loadUserData()` on yksi ilmoitus). `renderAll()`
+piirtää vain ajastinpalkin, päivän Suunta-kortin ja avoimen näytön; muut
+näytöt merkitään likaisiksi, ja `navigation.js` piirtää likaisen näytön ennen
+kuin näyttää sen. Suunnan viikkoanalyysi tulee välimuistista
+(`analyzeCurrentWeek`, avaimena kokoelmien viittaukset — kokoelmia ei koskaan
+mutatoida paikallaan). Ks. `tests/render-cost.test.mjs`.
+
 Kirjautuneen käyttäjän identiteetti on erikseen `src/data/session.js`:ssä.
 `requireUserId()` **heittää poikkeuksen** ilman kirjautumista, joten rajaamaton
 kysely kaatuu ennen kuin se lähtee verkkoon.
