@@ -315,9 +315,13 @@ function openStopReview(totalMinutes, {
            kokonaisluku, ja yli viikon unohtunut ajastin ylitti max-arvon —
            silloin kumpikaan painike ei toiminut. Pitkä kesto pilkotaan
            päiväkohtaisiin kirjauksiin (src/domain/timer.js). -->
-      <input type="number" id="timeLogReviewMinutes" min="1" step="1" value="${escapeHtml(String(totalMinutes))}">
+      <!-- required: tyhjä kenttä + Enter ei peru kirjausta hiljaa. -->
+      <input type="number" id="timeLogReviewMinutes" min="1" step="1" required value="${escapeHtml(String(totalMinutes))}">
       <div class="confirm-actions">
-        <button type="submit" formnovalidate class="form-btn secondary" value="cancel">Takaisin</button>
+        <!-- "Takaisin" ei ole submit-painike: Enter esitäytetyssä kentässä
+             aktivoi lomakkeen ENSIMMÄISEN submit-painikkeen, ja se oli
+             "Takaisin" — mitään ei kirjattu. Nyt ainoa submit on "Kirjaa". -->
+        <button type="button" class="form-btn secondary" id="timeLogReviewBack">Takaisin</button>
         <button type="submit" class="form-btn primary" value="confirm">Kirjaa</button>
       </div>
     </form>`;
@@ -330,6 +334,8 @@ function openStopReview(totalMinutes, {
       resolve(Number.isInteger(minutes) && minutes > 0 ? minutes : null);
     };
     dialog.addEventListener('close', onClose);
+    const back = dialog.querySelector('#timeLogReviewBack');
+    if (back) back.addEventListener('click', () => dialog.close('cancel'));
     dialog.returnValue = 'cancel';
     dialog.showModal();
   });

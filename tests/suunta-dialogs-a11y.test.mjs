@@ -13,10 +13,10 @@ import { setClient } from '../src/data/client.js';
 import { resetState, getState } from '../src/app/state.js';
 import { clearLocalUserData } from '../src/app/actions.js';
 import { resetAppliedAdjustments, setTimeEntryWriterForTests } from '../src/app/alignment.js';
-import { setTimerRepoForTests, currentTimer, cancelTracking } from '../src/app/timeTracking.js';
+import { setTimerRepoForTests, currentTimer, cancelTracking, startTracking } from '../src/app/timeTracking.js';
 import { resetTimerStoreForTests } from '../src/data/timerStore.js';
 import { resetDirectionView } from '../src/app/views/direction.js';
-import { openTimeLogDialog, closeTimeLogDialog } from '../src/app/views/timeLog.js';
+import { openTimeLogDialog, closeTimeLogDialog, stopAndLog } from '../src/app/views/timeLog.js';
 import { initOnboarding, maybeShowOnboarding } from '../src/app/onboarding.js';
 import { confirmAction, confirmProposal, closeConfirmDialogs } from '../src/ui/confirm.js';
 import {
@@ -214,6 +214,40 @@ test('CRIT-04: pikavalinta kirjaa napautuksesta; alkufokus on otsikossa, ei data
   const result = await pending;
   assert.equal(result.action, 'logged');
   assert.deepEqual(getState().timeEntries.map(e => e.minutes), [30]);
+});
+
+/** Unohtunut ajastin: pysäytys avaa keston tarkistuksen. */
+async function openForgottenTimerReview() {
+  await startTracking({ kind: 'none' }, { now: Date.now() - 14 * 60 * 60 * 1000 });
+  const stopping = stopAndLog();
+  await flush();
+  const dialog = registry.get('timeLogDialog');
+  assert.equal(dialog.open, true, 'pitkä ajastus tarkistetaan ennen kirjausta');
+  return { stopping, dialog };
+}
+
+test('CRIT-04 KRIITTINEN: ajastimen tarkistuksessa Enter esitäytetyssä kentässä kirjaa, ei peru', async () => {
+  const { stopping, dialog } = await openForgottenTimerReview();
+  // Ensimmäinen (ja ainoa) submit on "Kirjaa"; "Takaisin" on tavallinen painike.
+  assert.equal(/<button type="submit"[^>]*value="([^"]+)"/.exec(dialog.innerHTML)[1], 'confirm');
+  assert.match(dialog.innerHTML, /<button type="button" class="form-btn secondary" id="timeLogReviewBack">Takaisin<\/button>/);
+  assert.match(dialog.innerHTML, /<input type="number" id="timeLogReviewMinutes" min="1" step="1" required value="\d+">/);
+  const prefilled = /id="timeLogReviewMinutes"[^>]*value="(\d+)"/.exec(dialog.innerHTML)[1];
+  dialog.querySelector('#timeLogReviewMinutes').value = prefilled;
+  dialog.implicitSubmit();
+  const result = await stopping;
+  assert.equal(result.ok, true);
+  assert.equal(getState().timeEntries.reduce((sum, entry) => sum + entry.minutes, 0), Number(prefilled));
+  assert.equal(currentTimer(), null);
+});
+
+test('CRIT-04: ajastimen tarkistuksen "Takaisin" peruu — mitään ei kirjata ja ajastin jatkuu', async () => {
+  const { stopping, dialog } = await openForgottenTimerReview();
+  dialog.querySelector('#timeLogReviewBack').dispatch('click');
+  const result = await stopping;
+  assert.equal(result.cancelled, true);
+  assert.equal(getState().timeEntries.length, 0);
+  assert.ok(currentTimer(), 'ajastin odottaa yhä');
 });
 
 // ================================================================ CRIT-06
