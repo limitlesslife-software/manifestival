@@ -29,8 +29,9 @@ Säännöt joka askeleella:
 
 ## Askel 0 — tila nyt
 
-- **TILA:** tuotanto `origin/main` = `cf259d0` = C (v16); kanta 0001–0008
-  ajettu, 0009–0013 ei.
+- **TILA (2026-09-26, D:n deployn jälkeen):** tuotanto `origin/main` =
+  `091e73c` = D (v17), `DEPLOYED_TECHNICALLY_ACCEPTED`; C ja D teknisesti
+  hyväksytty. Kanta 0001–0008 ajettu, 0009–0013 ei. Seuraava askel: E.
 - **KOMENTO (Claude):** `npm run activation:dry-run` (tai `-- --offline`)
 - **ODOTUS:** `NEXT_ACTION: DEPLOY D`; `REQUIRED_OWNER_GATE` = vain
   "hyväksyn D"; `REQUIRED_TECHNICAL_GATE` = C:n tekninen hyväksyntä, D:n

@@ -90,7 +90,7 @@ ollut julkaisupäätös.
 
 ### Julkaisujunan varaamat numerot
 
-<!-- LINEAGE-CHECK: origin/main sha=cf259d0ef755f7e875cc9cd9c15405eba632e408 cache=v16 -->
+<!-- LINEAGE-CHECK: origin/main sha=091e73c0091e8f135641e3501742b998dbac8461 cache=v17 -->
 
 `tests/production-lineage.test.mjs` lukee edellisen rivin ja vertaa sitä
 siihen, mitä `origin/main` PAIKALLISESTI (ei verkosta) on juuri nyt
@@ -108,8 +108,8 @@ kertoo deployn jälkeen, että rivi kannattaa päivittää.
 | Perustila | `v13` | valmis, ei deployattu |
 | A | `v14` | **deployattu** (`703c28f`) |
 | B | `v15` | **deployattu** (`ddfc356`) |
-| C | `v16` | **deployattu** (`cf259d0`) — tuotannon nykytila, EI VIELÄ hyväksytty käyttäjän toimesta |
-| D | `v17` | valmis, ei deployattu — commitoitu `release/activation-0003-0008`-haaraan (`091e73c`) |
+| C | `v16` | **deployattu** (`cf259d0`) — AUTOMATED_TECHNICAL_ACCEPTANCE; käyttötodennus LIVE_USE_VALIDATION_PENDING |
+| D | `v17` | **deployattu** (`091e73c`, 2026-09-26, omistajan "hyväksyn D") — tuotannon nykytila; AUTOMATED_TECHNICAL_ACCEPTANCE, käyttötodennus LIVE_USE_VALIDATION_PENDING |
 | E | `v18` | valmis, ei deployattu — sama haara (`2b947cc`), haaran kärki `86c4325` |
 | F | `v19` | estetty (migraatio 0009 ajamatta) |
 | G | `v20` | estetty (migraatio 0010 ajamatta) |
@@ -181,7 +181,7 @@ ohjaa ajantasaisen tiedon luo.
 ### 1. Numerot on jo jaettu, mutta tuotanto on ohittanut osan niistä
 
 Kun tämä kohta kirjoitettiin, tuotanto oli `v15` (aalto B; nyt tuotannossa on
-aalto C, ks. LINEAGE-CHECK yllä). Aallot C–E ovat
+aalto D, ks. LINEAGE-CHECK yllä). Aallot C–E ovat
 `v16`–`v18` eikä niitä ole deployattu. Numerot siis **varaavat
 paikkoja**, joita kukaan ei ole vielä käyttänyt — ja tämä haara
 sanoo `v13`, joka on jo menneisyyttä.
@@ -313,8 +313,8 @@ yllä on TOSI. Linja on lineaarinen, ei haarautunut.
 
 ```
 Aalto B  v15  (deployattu ddfc356)
-  -> C  v16   routines + routineExceptions          (DEPLOYATTU cf259d0 = origin/main, ks. LINEAGE-CHECK)
-    -> D  v17   recurringExpenses + savingsGoals + bills  (lukittu, ei deployattu)
+  -> C  v16   routines + routineExceptions          (DEPLOYATTU cf259d0)
+    -> D  v17   recurringExpenses + savingsGoals + bills  (DEPLOYATTU 091e73c = origin/main 2026-09-26, ks. LINEAGE-CHECK)
       -> E  v18   aiAudit                            (lukittu, ei deployattu)
         -> F  v19   Talous 2.0 -- migraatio 0009
           -> G  v20   Tavoitteesta tekemiseksi -- migraatio 0010
