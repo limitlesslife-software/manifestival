@@ -1520,12 +1520,15 @@ export async function saveWellbeingEntry(input) {
 
 /** Tallenna profiili. */
 export async function saveProfile(profile) {
-  const previous = getState().profile;
+  const { profile: previous, profileExists: existedBefore } = getState();
   setProfile(profile);
 
   const result = await profileRepo.saveProfile(profile);
   if (!result.ok) {
-    setProfile(previous); // peruutus
+    // Peruutus palauttaa myös tiedon rivin olemassaolosta: epäonnistunut
+    // ENSIMMÄINEN tallennus ei saa jättää profileExists-tilaa päälle, tai
+    // vienti ja poiston esikatselu laskisivat profiilin, jota kannassa ei ole.
+    setProfile(previous, existedBefore === true);
     showError(result.error);
     return false;
   }

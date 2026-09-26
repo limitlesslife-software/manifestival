@@ -16,6 +16,10 @@ import assert from 'node:assert/strict';
 import { readCode } from './helpers/sources.mjs';
 import { EXPORTED_COLLECTIONS } from '../src/domain/dataExport.js';
 import { authAccountDeletable } from '../src/domain/accountLifecycle.js';
+import { saveProfile } from '../src/app/actions.js';
+import { getState, resetState, setProfile } from '../src/app/state.js';
+import { setUser, clearUser } from '../src/data/session.js';
+import { setClient } from '../src/data/client.js';
 
 const profileSource = readCode('src/app/views/profile.js');
 const indexHtml = readCode('index.html');
@@ -56,6 +60,62 @@ test('vienti ja poiston esikatselu ottavat profiilin vain, jos rivi on olemassa 
   const start = profileSource.indexOf('function collectExportData');
   const body = profileSource.slice(start, profileSource.indexOf('\n}', start));
   assert.match(body, /state\.profileExists !== true\) data\.profile = null/);
+});
+
+/** Profiilitaulu, jonka upsert vastaa annetulla virheellä (null = onnistuu). */
+function profileClient(error) {
+  const calls = [];
+  return {
+    calls,
+    from: table => ({
+      upsert: async row => { calls.push({ table, row }); return { data: null, error }; }
+    })
+  };
+}
+
+async function withSignedIn(client, fn) {
+  resetState();
+  setUser({ id: 'aaaaaaaa-0000-4000-8000-00000000000a', email: 'a@example.com' });
+  setClient(client);
+  try {
+    await fn();
+  } finally {
+    setClient(null);
+    clearUser();
+    resetState();
+  }
+}
+
+test('KRIITTINEN: epäonnistunut ensimmäinen profiilin tallennus ei jätä haamuprofiilia vientiin eikä esikatseluun', async () => {
+  const client = profileClient({ message: 'Failed to fetch' });
+  await withSignedIn(client, async () => {
+    assert.equal(getState().profileExists, false, 'esiehto: uudella käyttäjällä ei ole profiiliriviä');
+    const before = getState().profile;
+
+    assert.equal(await saveProfile({ ...before, age: 41 }), false);
+
+    assert.equal(client.calls.length, 1, 'esiehto: tallennusta yritettiin');
+    assert.equal(getState().profileExists, false,
+      'peruutus merkitsi profiilin olemassa olevaksi: vienti ja poiston esikatselu laskisivat haamuprofiilin');
+    assert.deepEqual(getState().profile, before, 'peruutus palauttaa aiemmat arvot');
+  });
+});
+
+test('epäonnistunut tallennus olemassa olevalle profiilille pitää sen olemassa olevana', async () => {
+  await withSignedIn(profileClient({ message: 'Failed to fetch' }), async () => {
+    setProfile({ age: 30 }, true);
+    assert.equal(await saveProfile({ ...getState().profile, age: 31 }), false);
+    assert.equal(getState().profileExists, true);
+    assert.equal(getState().profile.age, 30);
+  });
+});
+
+test('onnistunut ensimmäinen tallennus merkitsee profiilin olemassa olevaksi', async () => {
+  await withSignedIn(profileClient(null), async () => {
+    assert.equal(await saveProfile({ ...getState().profile, age: 41 }), true);
+    assert.equal(getState().profileExists, true);
+    assert.equal(getState().profile.age, 41);
+  });
 });
 
 test('KRIITTINEN: latauspainike on olemassa ja kytketty klikkaukseen', () => {
