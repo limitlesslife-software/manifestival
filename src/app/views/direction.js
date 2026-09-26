@@ -45,8 +45,10 @@ import {
   applySelectedAdjustments, previewSelectedAdjustments, compareWithPreviousWeek, recentTrends,
   currentDailyAlignment, explainSignalOptionally, aiExplanationAvailable, pendingTimeEntryCount,
   pendingTimeEntryOperations, isAdjustmentDone, failedTimeEntries, failedTimeEntryOperations,
-  retryFailedTimeEntries, discardFailedTimeEntries, analysisLoadProblems, editTimeEntry, clockNow
+  retryFailedTimeEntries, discardFailedTimeEntries, analysisLoadProblems, editTimeEntry, clockNow,
+  timeEntrySaving
 } from '../alignment.js';
+import { showError } from '../../ui/toast.js';
 import { saveItemSettings, itemSettingsFor, currentTimer, newOperationId } from '../timeTracking.js';
 import { editTask, editRoutine } from '../actions.js';
 import { openGeneralLog, openTimerChooser } from './timeLog.js';
@@ -1075,6 +1077,15 @@ function entryTargetLabel(entry, byId) {
   return 'Ei aluetta';
 }
 
+/** Tallennukset, joiden valmistuminen piirtää kirjauslistan uudelleen (kerran). */
+const savesAwaitingRender = new WeakSet();
+
+function rerenderWhenSaved(saving) {
+  if (savesAwaitingRender.has(saving)) return;
+  savesAwaitingRender.add(saving);
+  saving.then(() => { if (typeof document !== 'undefined') renderDirection(); });
+}
+
 function timeListHtml(entries, areas) {
   const state = getState();
   const byId = new Map(areas.map(area => [area.id, area]));
@@ -1101,8 +1112,12 @@ function timeListHtml(entries, areas) {
     return timeListUnassignedOnly ? filterNote + '<div class="assist-empty">Kaikki tämän viikon kirjaukset kuuluvat alueeseen.</div>' : '';
   }
   return filterNote + [...shown].sort((a, b) => b.entryDate.localeCompare(a.entryDate)).map(entry => {
-    // Odottava tai epäonnistunut kirjaus ei ole kannassa: siihen ei voi vielä liittää aluetta.
-    const waiting = pending.has(entry.operationId) || failed.has(entry.operationId);
+    // Odottava, epäonnistunut tai vasta tallentuva kirjaus ei ole kannassa:
+    // siihen ei voi vielä liittää aluetta. Tallentuvan liitos tulee näkyviin,
+    // kun tallennus valmistuu.
+    const saving = timeEntrySaving(entry.operationId);
+    if (saving) rerenderWhenSaved(saving);
+    const waiting = pending.has(entry.operationId) || failed.has(entry.operationId) || Boolean(saving);
     const label = `${shortDate(entry.entryDate)} ${hours(entry.minutes)}`;
     // Liitä alueeseen: vain alueettomille, ja vasta kun kirjaus on kannassa.
     const assign = unassigned(entry) && activeAreas.length > 0 && !waiting
@@ -2247,10 +2262,18 @@ export function initDirection() {
       renderDirection();
     }
   });
-  // Kirjatun ajan alue jälkikäteen (F6).
-  el('dirTimeList').addEventListener('change', event => {
+  // Kirjatun ajan alue jälkikäteen (F6). Hylätty liitos (esim. alue poistui
+  // tai kirjaus tallentuu vielä) kerrotaan, ja valikko piirretään takaisin
+  // "Valitse alue" -tilaan: muuten se näytti liitoksen tehdyksi.
+  el('dirTimeList').addEventListener('change', async event => {
     const select = event.target.closest('[data-time-area]');
-    if (select && select.value) editTimeEntry(select.dataset.timeArea, { lifeAreaId: select.value });
+    if (!select || !select.value) return;
+    const result = await editTimeEntry(select.dataset.timeArea, { lifeAreaId: select.value });
+    if (result.ok || result.sessionChanged) return;
+    // Tallennusvirheen editTimeEntry on jo näyttänyt; tarkistusvirhe näytetään tässä.
+    const first = Object.values(result.errors || {})[0];
+    if (first) showError(first);
+    renderDirection();
   });
   const category = maybe('dirAreaCategory');
   if (category) category.addEventListener('change', renderCategoryImpact);

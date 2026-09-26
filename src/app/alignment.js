@@ -686,6 +686,14 @@ export function pendingTimeEntryOperations() {
 }
 
 /**
+ * Parhaillaan tallentuvan kirjauksen valmistumislupaus, tai null. Tallentuvaa
+ * ei voi vielä liittää alueeseen (editTimeEntry hylkää sen).
+ */
+export function timeEntrySaving(operationId) {
+  return (operationId && inFlightOperations.get(operationId)) || null;
+}
+
+/**
  * Kirjaukset, joita palvelin ei toistuvasti hyväksynyt (pysyvä virhe, ei
  * verkko). Ne ovat yhä laitteella eivätkä estä muiden lähetystä; käyttäjä
  * päättää niistä Suunta-näkymässä.

@@ -280,6 +280,46 @@ test('F6: lähetystä odottavaa kirjausta ei muokata (kannassa ei vielä riviä)
   assert.doesNotMatch(html('dirTimeList'), /data-time-area=/);
 });
 
+test('F6: hylätty liitos kerrotaan, ja valikko piirretään takaisin "Valitse alue" -tilaan', async (t) => {
+  freezeLocalDate(t, THURSDAY);
+  await createLifeArea({ name: 'Perhe', importance: 5 });
+  const { entry } = await logTime({ entryDate: THURSDAY, minutes: 45 });
+  initDirection();
+  renderDirection();
+  const created = [];
+  const createElement = globalThis.document.createElement;
+  globalThis.document.createElement = tag => { const made = createElement(tag); created.push(made); return made; };
+  // Valikossa näkynyt alue ehti poistua (esim. toisella laitteella): editTimeEntry hylkää.
+  node('dirTimeList').innerHTML = 'valikko jäi valintaan';
+  node('dirTimeList').dispatch('change', eventFor({ timeArea: entry.id }, { value: 'poistettu-alue' }));
+  await flush();
+  assert.ok(created.some(made => made.textContent === 'Aluetta ei löytynyt.'), 'syy kerrotaan');
+  assert.equal(getState().timeEntries[0].lifeAreaId, null);
+  assert.match(html('dirTimeList'), new RegExp(`data-time-area="${entry.id}"`), 'lista piirrettiin uudelleen');
+  assert.match(html('dirTimeList'), /<option value="">Valitse alue<\/option>/);
+});
+
+test('F6: tallentuvalle kirjaukselle ei tarjota liitosta; tallennuksen valmistuttua tarjotaan', async (t) => {
+  freezeLocalDate(t, THURSDAY);
+  await createLifeArea({ name: 'Perhe', importance: 5 });
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  setTimeEntryWriterForTests(createTimeEntryWriter({
+    repo: { isPersistent: () => false, insert: () => gate },
+    loadOutbox, saveOutbox, userId: () => USER.id
+  }));
+  const logging = logTime({ entryDate: THURSDAY, minutes: 20 }, { silent: true });
+  await flush();
+  initDirection();
+  renderDirection();
+  assert.match(html('dirTimeList'), /20 min/, 'kirjaus näkyy jo');
+  assert.doesNotMatch(html('dirTimeList'), /data-time-area=/, 'kesken olevaa tallennusta ei voi liittää');
+  release({ ok: true });
+  assert.equal((await logging).ok, true);
+  await flush();
+  assert.match(html('dirTimeList'), /data-time-area=/, 'valmistunut tallennus tuo liitoksen näkyviin');
+});
+
 test('F6: tehtävän kategorian kautta alueeseen kuuluva kirjaus ei ole alueeton', async (t) => {
   freezeLocalDate(t, THURSDAY);
   await createLifeArea({ name: 'Työ', importance: 3, categoryKey: 'tyo' });
