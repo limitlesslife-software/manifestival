@@ -737,14 +737,35 @@ function onChange(event) {
   }
 }
 
+/**
+ * Pääpainike ajan tasalle kirjoittaessa ILMAN uudelleenpiirtoa: kenttä,
+ * fokus ja kursori säilyvät. Ennen "Tallenna" jäi kapasiteettivaiheessa
+ * pois käytöstä kirjoittamisen jälkeen (se laskettiin vain piirrossa), ja
+ * kosketuskäyttäjä jäi vaiheeseen 4 (löydös E2E:ssä, vanha käyttäjä).
+ */
+function syncPrimaryButton() {
+  const container = maybe('dirSetup');
+  const button = container && typeof container.querySelector === 'function'
+    ? container.querySelector('[data-focus="primary"]') : null;
+  if (!button) return;
+  const state = getState();
+  const progress = setupProgress(setupFacts(state));
+  const primary = stepContent(SETUP_STEPS[shownIndex(progress, state)], state, progress, {}).primary;
+  button.dataset.setup = primary.action;
+  button.textContent = primary.label;
+  button.disabled = !(primary.enabled && !busy);
+}
+
 function onInput(event) {
   if (hooks.queueEvent('input', event)) return;
   const field = event.target;
   if (!field || !field.dataset) return;
   // Luonnos talteen: datan päivitys piirtää kortin uudelleen kesken kirjoittamisen.
   if (field.dataset.focus === 'custom-name') customNameDraft = field.value;
-  else if (field.dataset.focus === 'capacity') capacityDraft = field.value;
-  else if (field.dataset.setupTargetHours) {
+  else if (field.dataset.focus === 'capacity') {
+    capacityDraft = field.value;
+    syncPrimaryButton();
+  } else if (field.dataset.setupTargetHours) {
     const id = field.dataset.setupTargetHours;
     targetChoices.set(id, { choice: 'custom', customHours: field.value });
   }
