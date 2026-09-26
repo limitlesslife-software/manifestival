@@ -271,6 +271,7 @@ selaintallennusta ilman rekisterimerkintää.
 | `manifestival.timer.v1.<käyttäjä>` | Käynnissä olevan ajastimen aikaleimat ja kohteen tunniste | säilyy | poistetaan |
 | `manifestival.timeOutbox.v1.<käyttäjä>` | Lähettämättömät aikakirjaukset (myös muistiinpano) | säilyy | poistetaan |
 | `manifestival.timerTombstones.v1.<käyttäjä>` | Poistettujen ajastimien tunnisteet | säilyy | poistetaan |
+| `manifestival.timerPending.v1.<käyttäjä>` | Kirjaamattomat ajastimet, jotka jäivät odottamaan toisen laitteen ajastimen vuoksi | säilyy | poistetaan |
 | `manifestival:<asetus>` | Laitekohtaiset asetukset (`DEVICE_DEFAULTS`) | tyhjennetään | tyhjennetään |
 | `__manifestival_probe__` | Tallennuskokeilu, kirjoitetaan ja poistetaan heti | — | — |
 | `sb-<projekti>-auth-token` | supabase-js:n istunto | supabase-js poistaa | supabase-js poistaa; varapolulla `clearAuthSession()` |
