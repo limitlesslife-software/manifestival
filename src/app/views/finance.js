@@ -206,7 +206,7 @@ function renderOverviewDetail(container, state) {
     </div>
     ${kortit.map(([avain, otsikko, luku, selite]) => `
       <div class="task-row">
-        <button class="t-body t-open" data-goto-segment="${escapeHtml(key)}"
+        <button class="t-body t-open" data-goto-segment="${escapeHtml(avain)}"
                 aria-label="Siirry osioon ${escapeHtml(otsikko)}">
           <div class="t-title">${escapeHtml(otsikko)}</div>
           <div class="t-meta"><span class="task-cat-tag">${escapeHtml(luku)}</span></div>
