@@ -14,7 +14,8 @@
 //   importance  jokaisella käytössä olevalla alueella on tärkeys 1–5
 //   targets     jollakin alueella on viikkotavoite (0 = "ei nyt" on tavoite)
 //   capacity    viikon kapasiteetti on asetettu ainakin kerran
-//   goals       yhtään avointa tavoitetta ei ole ilman aluetta
+//   goals       yhtään avointa tavoitetta ei ole ilman aluetta (myös pois
+//               käytöstä oleva alue on liitos, kuten analyysissa)
 //   estimates   tämän viikon avoimilla asioilla on kestoarvio
 //   logging     aikaa on kirjattu (tai ajastin on käynnissä)
 //
@@ -78,7 +79,9 @@ export function setupProgress({
   timerRunning = false, openUnknownCount = 0, skipped = []
 } = {}) {
   const active = (areas || []).filter(area => area && area.active);
-  const areaIds = new Set(active.map(area => area.id));
+  // Tavoitteen liitos: mikä tahansa olemassa oleva alue, myös pois käytöstä
+  // oleva (buildAttributionIndex laskee senkin tavoitteen alueeksi).
+  const areaIds = new Set((areas || []).filter(area => area && area.id).map(area => area.id));
   const skippedSet = new Set((skipped || []).filter(key => !REQUIRED_SETUP_STEPS.includes(key)));
 
   const done = {
@@ -120,7 +123,8 @@ export function legacySummary({
 } = {}) {
   const monday = weekStartOf(weekStart || todayIso);
   const week = new Set(monday ? weekDates(monday) : []);
-  const areaIds = new Set((areas || []).filter(area => area && area.active).map(area => area.id));
+  // Pois käytöstä olevaan alueeseen liitetty tavoite on liitetty (ks. setupProgress).
+  const areaIds = new Set((areas || []).filter(area => area && area.id).map(area => area.id));
   const summary = {
     openTasks: 0, thisWeekOpen: 0, overdueOpen: 0, unestimatedThisWeek: 0,
     goals: 0, goalsWithoutArea: 0, projects: 0, routines: 0, byCategory: {}

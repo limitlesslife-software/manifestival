@@ -323,8 +323,20 @@ function goalsStep(state) {
   const areas = activeAreas(state);
   const goals = state.goals.filter(isOpenGoal)
     .sort((a, b) => Number(Boolean(a.lifeAreaId)) - Number(Boolean(b.lifeAreaId)) || a.title.localeCompare(b.title, 'fi'));
-  const options = selected => '<option value="">Ei elämänaluetta</option>'
-    + areas.map(area => `<option value="${escapeHtml(area.id)}"${area.id === selected ? ' selected' : ''}>${escapeHtml(area.name)}</option>`).join('');
+  // Kuten tavoitelomakkeessa (goals.js fillLifeAreaSelect): nykyinen alue
+  // pysyy valittuna, vaikka se olisi pois käytöstä tai ei näkyvissä. Muuten
+  // valikko väitti tavoitetta alueettomaksi.
+  const options = current => {
+    const known = current ? findLifeArea(current) : null;
+    let html = '<option value="">Ei elämänaluetta</option>'
+      + areas.map(area => `<option value="${escapeHtml(area.id)}"${area.id === current ? ' selected' : ''}>${escapeHtml(area.name)}</option>`).join('');
+    if (current && known && !known.active) {
+      html += `<option value="${escapeHtml(current)}" selected>${escapeHtml(known.name)} (pois käytöstä)</option>`;
+    } else if (current && !known) {
+      html += `<option value="${escapeHtml(current)}" selected>Nykyinen alue (ei näkyvissä)</option>`;
+    }
+    return html;
+  };
   const legacy = legacyNoticeText(currentLegacySummary(state));
   const controls = goals.length === 0
     ? '<div class="assist-empty">Sinulla ei ole avoimia tavoitteita. Voit luoda niitä Tavoitteet-välilehdellä.</div>'
@@ -332,7 +344,7 @@ function goalsStep(state) {
       <div class="dir-goal-row">
         <label class="field-label" for="dirSetupGoal-${escapeHtml(goal.id)}">${escapeHtml(goal.title)}</label>
         <select id="dirSetupGoal-${escapeHtml(goal.id)}" data-setup-goal="${escapeHtml(goal.id)}" data-focus="goal:${escapeHtml(goal.id)}">
-          ${options(goal.lifeAreaId && findLifeArea(goal.lifeAreaId) ? goal.lifeAreaId : '')}
+          ${options(goal.lifeAreaId || '')}
         </select>
       </div>`).join('');
   return {

@@ -26,7 +26,7 @@ import { resetTimerStoreForTests } from '../src/data/timerStore.js';
 import {
   renderDirection, renderTodayDirection, initDirection, resetDirectionView, openAreaForm
 } from '../src/app/views/direction.js';
-import { currentSetupProgress } from '../src/app/views/directionSetup.js';
+import { currentSetupProgress, currentLegacySummary } from '../src/app/views/directionSetup.js';
 import { getUserPreference, clearDevicePreferences } from '../src/data/preferences.js';
 import { normalizeTask } from '../src/domain/task.js';
 import { normalizeGoal } from '../src/domain/goal.js';
@@ -337,6 +337,32 @@ test('F2 + F9: vaihe 5 kuittaa vanhan datan oikeilla luvuilla ja liittää tavoi
   assert.equal(getState().goals[0].lifeAreaId, null, 'ei automaattista liittämistä');
   await change({ setupGoal: goal.id }, { value: getState().lifeAreas[0].id });
   assert.equal(getState().goals[0].lifeAreaId, getState().lifeAreas[0].id);
+});
+
+test('F2: vaihe 5 — pois käytöstä olevan alueen tavoite on liitetty, ja tuntematon nykyinen alue pysyy valittuna', async (t) => {
+  freezeLocalDate(t, THURSDAY);
+  const { area: work } = await createLifeArea({ name: 'Työ', importance: 4, targetMinutesPerWeek: 600 });
+  const { area: old } = await createLifeArea({ name: 'Vanha', importance: 2, active: false });
+  await saveWeeklyCapacity({ weekStart: '2026-09-14', availableMinutes: 1200 });
+  const { goal: archived } = await createGoal({ title: 'Arkistoidun alueen tavoite', lifeAreaId: old.id });
+  const { goal: hidden } = await createGoal({ title: 'Näkymätön alue', lifeAreaId: 'lataamaton-alue' });
+  const { goal: loose } = await createGoal({ title: 'Irrallinen' });
+  initDirection();
+  renderDirection();
+  assert.equal(stepLine(), '5');
+  const markup = html('dirSetup');
+  const selectOf = id => new RegExp(`<select id="dirSetupGoal-${id}"[^>]*>([\\s\\S]*?)</select>`).exec(markup)[1];
+  assert.match(selectOf(archived.id), new RegExp(`<option value="${old.id}" selected>Vanha \\(pois käytöstä\\)</option>`));
+  assert.doesNotMatch(selectOf(archived.id), /<option value="" selected>/, 'ei "Ei elämänaluetta"');
+  assert.match(selectOf(hidden.id), /<option value="lataamaton-alue" selected>Nykyinen alue \(ei näkyvissä\)<\/option>/);
+  assert.doesNotMatch(selectOf(loose.id), /selected/);
+  assert.doesNotMatch(selectOf(loose.id), /pois käytöstä|ei näkyvissä/, 'käytöstä poistettua ei tarjota muille');
+  assert.equal(currentLegacySummary().goalsWithoutArea, 2, 'pois käytöstä oleva alue on liitos, olematon ei');
+  await change({ setupGoal: loose.id }, { value: work.id });
+  await change({ setupGoal: hidden.id }, { value: work.id });
+  assert.equal(currentSetupProgress().steps.find(s => s.key === 'goals').done, true,
+    'arkistoidun alueen tavoite ei pidä vaihetta keskeneräisenä');
+  assert.equal(getState().goals.find(g => g.id === archived.id).lifeAreaId, old.id, 'liitos ei katkennut');
 });
 
 test('F9: kuittauksen sijamuodot ja tyhjä tila', () => {
