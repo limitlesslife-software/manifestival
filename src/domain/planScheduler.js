@@ -147,7 +147,9 @@ export function planHorizon({
   routines = [],
   exceptions = [],
   automationLevel = AUTOMATION_LEVEL.SUGGEST_ONLY,
-  bufferRatio = DEFAULT_BUFFER_RATIO
+  bufferRatio = DEFAULT_BUFFER_RATIO,
+  events = null,
+  blocks = null
 } = {}) {
   const level = normalizeAutomationLevel(automationLevel);
 
@@ -155,8 +157,10 @@ export function planHorizon({
     return { placements: [], unplaced: [], days: [], moves: [] };
   }
 
+  // Tapahtumat ja suojatut lohkot (valinnaiset) pienentävät päivien
+  // kapasiteettia; ks. capacity.js dayCapacity.
   const capacity = horizonCapacity({
-    tasks, profile, fromIso, toIso, routines, exceptions, bufferRatio
+    tasks, profile, fromIso, toIso, routines, exceptions, bufferRatio, events, blocks
   });
 
   // Kulutettava kopio. Alkuperäistä ei muteta.

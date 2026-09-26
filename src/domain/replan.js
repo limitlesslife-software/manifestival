@@ -32,6 +32,7 @@ import { fmtISO, parseISO, addDays } from '../lib/datetime.js';
 import { planHorizon, isMovable, PLACEMENT } from './planScheduler.js';
 import { normalizeAutomationLevel, partitionMoves, allowsAutoMove } from './automation.js';
 import { DEFAULT_BUFFER_RATIO } from './capacity.js';
+import { findCalendarCollisions } from './scheduler.js';
 
 /** Mikä käynnisti uudelleensuunnittelun. */
 export const REPLAN_TRIGGER = Object.freeze({
@@ -133,6 +134,8 @@ export function repeatedlySkippedRoutines(routines = [], exceptions = [], todayI
  * @param {number} [input.horizonDays]
  * @param {number} [input.automationLevel]
  * @param {Array}  [input.taskIds]  rajaa muutos näihin tehtäviin
+ * @param {Array}  [input.events]   tapahtumaesiintymät: pienentävät päivien kapasiteettia
+ * @param {Array}  [input.blocks]   suojatut lohkot: pienentävät päivien kapasiteettia
  */
 export function buildReplanProposal({
   trigger = REPLAN_TRIGGER.MANUAL,
@@ -145,7 +148,9 @@ export function buildReplanProposal({
   horizonDays = 14,
   automationLevel,
   bufferRatio = DEFAULT_BUFFER_RATIO,
-  taskIds = null
+  taskIds = null,
+  events = null,
+  blocks = null
 } = {}) {
   const level = normalizeAutomationLevel(automationLevel);
 
@@ -184,7 +189,9 @@ export function buildReplanProposal({
     routines,
     exceptions,
     automationLevel: level,
-    bufferRatio
+    bufferRatio,
+    events,
+    blocks
   });
 
   // MUUTOKSET = siirrot ja myöhässä olleiden uudet päivät.
@@ -312,6 +319,14 @@ export function describeChange(change) {
  * opettaa käyttäjän ohittamaan kysymyksen, ja silloin se ei enää toimi
  * silloinkaan kun se on tarpeen.
  *
+ * KALENTERI (valinnainen): kun `events` tai `blocks` annetaan,
+ * automaattisesti sijoitettu (AUTO) tehtävä, joka osuu tapahtumaan,
+ * matkaan, valmistautumiseen tai uneen, nostaa CONFLICT-laukaisimen.
+ * Se korjataan päivän sisällä (proposeSchedule `reflow: true`), koska
+ * päivätason siirto ei ratkaise kellonajan päällekkäisyyttä. Käyttäjän
+ * itse ajastama tehtävä ei nosta tätä laukaisinta: sen päällekkäisyys
+ * on käyttäjän oma ristiriita (conflicts.js detectBlockConflicts).
+ *
  * @returns {{needed: boolean, triggers: Array<{trigger:string, detail:string}>}}
  */
 export function detectReplanTriggers({
@@ -320,7 +335,9 @@ export function detectReplanTriggers({
   exceptions = [],
   goals = [],
   milestones = [],
-  todayIso
+  todayIso,
+  events = [],
+  blocks = []
 } = {}) {
   const triggers = [];
 
@@ -357,6 +374,24 @@ export function detectReplanTriggers({
         + `${milestone.targetDate}.`,
       milestoneId: milestone.id,
       goalId: milestone.goalId
+    });
+  }
+
+  // Menneet päivät kuuluvat MISSED_TASK-laukaisimelle, eivät tälle.
+  const collisions = findCalendarCollisions({
+    tasks, events, blocks, fromIso: isIsoDate(todayIso) ? todayIso : null
+  });
+  if (collisions.length > 0) {
+    const first = collisions[0];
+    triggers.push({
+      trigger: REPLAN_TRIGGER.CONFLICT,
+      detail: collisions.length === 1
+        ? `"${first.title}" (${first.dateIso} klo ${first.time}) osuu ${first.phrase}. `
+          + 'Ehdotan sille uutta aikaa.'
+        : `${collisions.length} automaattisesti sijoitettua tehtävää osuu tapahtumaan, `
+          + 'matkaan tai lepoon. Ehdotan niille uudet ajat.',
+      taskIds: collisions.map(collision => collision.taskId),
+      dateIsos: [...new Set(collisions.map(collision => collision.dateIso))]
     });
   }
 
