@@ -15,16 +15,40 @@ täytetty eikä kukaan ole päättänyt puolestasi, mikä sinulle on tärkeää.
 
 ## A. Ensikäyttö (se, mitä käytät joka päivä)
 
-- [ ] 1. **Kirjaudu** sovellukseen. Tänään-näkymä aukeaa.
-- [ ] 2. **Suunta → luo elämänalue** omalla nimelläsi (ehdotukset ovat vain
-      ehdotuksia — mitään ei luoda ilman sinun painallustasi).
-- [ ] 3. Anna alueelle **tärkeys** ja **viikkotavoite** (tunteja).
-      Luo halutessasi 2–4 aluetta lisää.
-- [ ] 4. **Liitä olemassa oleva tavoite** alueeseen (Tavoitteet →
-      tavoite → elämänalue).
-- [ ] 5. Aseta **tämän viikon kapasiteetti** realistisesti.
-- [ ] 6. Lisää **kestoarvio** yhteen tämän viikon tehtävään (arvion
-      työnkulku kysyy puuttuvat).
+- [ ] 1. **Kirjaudu** sovellukseen. Sovellus aukeaa (Tänään tai viimeksi
+      avattu näkymä). Ensikäytön opastus näkyy korkeintaan kerran tälle
+      käyttäjälle — ei uudelleen uloskirjautumisen jälkeen.
+- [ ] 2. **Avaa Suunta** (tai Tänään-kortista **Aloita Suunta**). Ilman
+      alueita Suunta avautuu **aloitukseen**: "Vaihe 1/7", yksi kysymys
+      kerrallaan, [Takaisin] [Ohita tämä vaihe] [Seuraava/Tallenna]; muu
+      Suunta on piilossa ("Näytä koko Suunta" siirtää aloituksen sivuun).
+      Valitse alueet (ehdotukset tai oma nimi) — **mitään ei luoda ennen
+      kuin painat "Tallenna alueet"**, eikä aluevaihetta voi ohittaa.
+- [ ] 3. Vaihe 2: anna jokaiselle alueelle **tärkeys** (mitään ei ole
+      valittu valmiiksi; kategorian kytkentä on erillinen valinta, joka
+      kertoo montako tehtävää se toisi). Vaihe 3: **viikkotavoite**
+      ([Ei tavoitetta] ≠ [0 – ei nyt]).
+- [ ] 4. Vaihe 5 kertoo, mitä sinulla jo on ("Sinulla on jo N tehtävää,
+      N tavoitetta ja N projektia …"). **Liitä olemassa oleva tavoite**
+      alueeseen: aloituksen vaihe 5, tai Suunta → Tavoitteet → valitse
+      tavoitteelle alue, tai Tavoitteet → muokkaa → **Elämänalue (Suunta)**.
+      (Lomakkeiden "Kategoria" on eri asia kuin elämänalue.)
+- [ ] 4b. **Tehtävän tavoiteliitos säilyy:** liitä yksi tämän viikon
+      tehtävä tavoitteeseen (tehtävälomake → Tavoite) → sulje sovellus
+      kokonaan → avaa → tehtävä on yhä tavoitteessa ja näkyy Suunnan alueen
+      luvuissa. (Vaatii tehtävän tavoite-, projekti- ja määräaikasarakkeiden
+      tallennuksen — F1.)
+- [ ] 5. Vaihe 4: aseta **tämän viikon kapasiteetti** realistisesti
+      (kentässä ei ole oletusarvoa).
+- [ ] 6. Vaihe 6 / **Arvioi tehtäviä** / Tekeminen → **Arvioi kestot (N)**:
+      arviojono näyttää **yhden tehtävän kerrallaan** (tänään ensin),
+      [10 min] [30 min] [1 h] [2 h] [Muu…] [Ohita], "Kumoa" ja
+      "Valmis tältä erää". Kaikkea ei tarvitse arvioida. Jos tällä
+      viikolla ei ole päivättyjä tehtäviä, siirrä yksi tälle viikolle tai
+      valitse jonossa "Näytä myös rästit".
+- [ ] 6b. **Aloita ajanseuranta kysyy alueen** ennen käynnistystä ("Ei
+      aluetta" on sallittu). Alueeton kirjaus näkyy Toteuma-listassa
+      valinnalla **Liitä alueeseen**.
 
 ## B. Pysyvyys (tärkein osa)
 
@@ -35,6 +59,8 @@ täytetty eikä kukaan ole päättänyt puolestasi, mikä sinulle on tärkeää.
       Kirjaus näkyy **kerran** viikon listassa.
 - [ ] 9. **Nopea kirjaus:** kirjaa aikaa ja kirjoita "Muu"-kenttään esim.
       **30** → "Kirjaa". (Korjattu tänä yönä: aiemmin selain hylkäsi 30.)
+      Toista näppäimistöllä: kirjoita **25** ja paina **Enter** → kirjautuu
+      25 min (ei ensimmäistä pikavalintaa 15 min).
 - [ ] 10. **Suunta päivittyy:** kirjattu aika näkyy alueen toteumassa;
       havainnot (kuormitus / huomiotta jääminen / poikkeama) perustuvat
       tallennettuun dataan — sama näkymä latauksen jälkeen. Ensimmäisellä
@@ -52,7 +78,8 @@ täytetty eikä kukaan ole päättänyt puolestasi, mikä sinulle on tärkeää.
 
 ## D. Istunto ja ulkoasu
 
-- [ ] 12. **Kirjaudu ulos ja takaisin:** kaikki tieto on tallessa.
+- [ ] 12. **Kirjaudu ulos ja takaisin:** kaikki tieto on tallessa, eikä
+      ensikäytön opastus tai jo käyty Suunnan aloitus tule uudelleen.
 - [ ] 13. **Ei vaakavieritystä** Suunta-, Tänään- ja kirjausdialogeissa
       puhelimen leveydellä; sovellus ei kaadu.
 - [ ] 14. Avaa sama tili **selaimessa** (tuotanto-URL): samat alueet ja
@@ -69,7 +96,7 @@ täytetty eikä kukaan ole päättänyt puolestasi, mikä sinulle on tärkeää.
 
 ---
 
-**Valmis, kun kohdat 1–14 ovat OK.** Kohta 15 ei estä päivittäistä käyttöä.
+**Valmis, kun kohdat 1–14 (ml. 4b, 6b) ovat OK.** Kohta 15 ei estä päivittäistä käyttöä.
 
 ## Tunnetut rajoitukset (eivät estä Day 1:tä)
 
