@@ -12,9 +12,11 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import os from 'node:os';
 import path from 'node:path';
 
-import { read } from './helpers/sources.mjs';
+import { ROOT, read } from './helpers/sources.mjs';
 import { ALL_GATES, expectedMatrix } from '../tools/release/waves.mjs';
 import {
   APK_FORBIDDEN_PERMISSIONS, APP_ID, EXPECTED_CAPACITOR_PLUGINS, EXPECTED_SIGNER_CERT_SHA256,
@@ -28,8 +30,12 @@ import {
   GENERATED_GRADLE_FILES, LOCK_FILE, buildPlan, junctionCommands, powershellGradleCommand,
   psQuote, runPreflight
 } from '../tools/android/preflight.mjs';
+import { parseCliArgs, resolveFromInvocation } from '../tools/android/cli.mjs';
+import { MAIN_ACTIVITY, SOURCE_MANIFEST } from '../tools/android/source-manifest.mjs';
 import { toolPaths } from '../tools/android/toolchain.mjs';
 import { VERSION_CODE_EPOCH_SECONDS, VERSION_POLICY } from '../tools/android/version.mjs';
+import * as acceptanceScript from '../scripts/android-acceptance-build.mjs';
+import * as verifyApkScript from '../scripts/verify-apk.mjs';
 
 const SHA = '5df40b20cee4f35279a79888959d49c9af88bcc7';
 const CT = 1790294741;
@@ -147,6 +153,10 @@ function schemaFor(wave) {
     + '\n});\nexport function hasTable() {}\n';
 }
 
+/** Repon nykyinen lähdemanifesti ja MainActivity: puhe- ja sijaintimuutokset mukana. */
+const REPO_MANIFEST = read(SOURCE_MANIFEST);
+const REPO_MAIN_ACTIVITY = read(MAIN_ACTIVITY);
+
 /**
  * Muistissa oleva työpuu. Palauttaa preflightin riippuvuudet ja lokin
  * git-kutsuista. Riippuvuuksissa EI ole kirjoittavia funktioita.
@@ -154,7 +164,8 @@ function schemaFor(wave) {
 function fakeWorld({
   wave = 'J', cache = 'v23', dirty = '', plumbing = true, nodeModules = true, jdk = true, sdk = true,
   lockTarget = SHA, lockConsistent = true, packageExists = false, installed = '8.5.0', locked = '8.5.0',
-  mainRepo = MAIN, gradleProperties = `org.gradle.java.home=${JDK}\n`, platform = 'win32'
+  mainRepo = MAIN, gradleProperties = `org.gradle.java.home=${JDK}\n`, platform = 'win32',
+  manifest = REPO_MANIFEST, mainActivity = REPO_MAIN_ACTIVITY, commonDir = true
 } = {}) {
   const files = new Map();
   const put = (rel, text, root = WT) => files.set(path.join(root, rel), text);
@@ -165,6 +176,8 @@ function fakeWorld({
   put('android/app/build.gradle', plumbing
     ? "def a = project.findProperty('manifestival.versionCode')\ndef b = project.findProperty('manifestival.versionName')\n"
     : 'versionCode 1\nversionName "1.0"\n');
+  if (manifest !== null) put(SOURCE_MANIFEST, manifest);
+  if (mainActivity !== null) put(MAIN_ACTIVITY, mainActivity);
   if (gradleProperties !== null) put('android/gradle.properties', gradleProperties);
   const capacitor = ['android', 'core', 'cli', 'app', 'geolocation', 'local-notifications'];
   put('package-lock.json', JSON.stringify({ packages: Object.fromEntries(capacitor.map(n =>
@@ -197,7 +210,11 @@ function fakeWorld({
     if (key === 'status --porcelain --untracked-files=all') return dirty;
     if (key === 'log -1 --format=%H %ct') return `${SHA} ${CT}`;
     if (key === 'rev-parse --abbrev-ref HEAD') return 'rehearsal/wave-j-v1';
-    if (key === 'rev-parse --path-format=absolute --git-common-dir') return path.join(mainRepo, '.git');
+    if (key === 'rev-parse --path-format=absolute --git-common-dir') {
+      // Vanha git (< 2.31) ei tunne --path-formatia: pääkopio jää tuntemattomaksi.
+      if (!commonDir) throw new Error("git rev-parse: unknown option '--path-format=absolute'");
+      return path.join(mainRepo, '.git');
+    }
     throw new Error('odottamaton git-kutsu: ' + key);
   };
   const deps = Object.freeze({
@@ -313,6 +330,111 @@ test('--version-code=commit-epoch antaa committer-ajasta johdetun koodin nimeen 
   assert.ok(gradle.args.at(-1).includes("'-Pmanifestival.versionCode=23069141'"));
 });
 
+test('esitarkistus: lähdemanifesti tarkistetaan ennen Gradlea (manifest.source)', () => {
+  const ok = preflight();
+  const source = ok.checks.find(c => c.id === 'manifest.source');
+  assert.ok(source, 'manifest.source-tarkistus puuttuu esitarkistuksesta');
+  assert.equal(source.ok, true, source.detail);
+
+  // Ehdokas ilman puhe- ja sijaintimuutoksia: sijaintilupa, ei mikrofonia.
+  const oldManifest = REPO_MANIFEST.replace('<uses-permission android:name="android.permission.RECORD_AUDIO" />',
+    '<uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />');
+  assert.notEqual(oldManifest, REPO_MANIFEST, 'korvaus ei osunut repon manifestiin');
+  const old = preflight({}, { manifest: oldManifest });
+  assert.deepEqual(old.failedIds, ['manifest.source']);
+  assert.equal(old.ok, false);
+  const detail = old.checks.find(c => c.id === 'manifest.source').detail;
+  assert.match(detail, /sijaintilupa: android\.permission\.ACCESS_COARSE_LOCATION/);
+  assert.match(detail, /RECORD_AUDIO puuttuu/);
+  assert.match(detail, /train-map --write/);
+
+  const noQueries = REPO_MANIFEST.replace(/<queries>[\s\S]*?<\/queries>/, '');
+  assert.notEqual(noQueries, REPO_MANIFEST);
+  assert.match(preflight({}, { manifest: noQueries }).checks.find(c => c.id === 'manifest.source').detail,
+    /android\.speech\.RecognitionService/);
+
+  const unregistered = REPO_MAIN_ACTIVITY.replace('registerPlugin(SpeechPlugin.class);', '');
+  assert.notEqual(unregistered, REPO_MAIN_ACTIVITY);
+  const noPlugin = preflight({}, { mainActivity: unregistered });
+  assert.deepEqual(noPlugin.failedIds, ['manifest.source']);
+  assert.match(noPlugin.checks.find(c => c.id === 'manifest.source').detail, /SpeechPlugin/);
+
+  assert.deepEqual(preflight({}, { manifest: null }).failedIds, ['manifest.source']);
+});
+
+test('esitarkistus kaatuu, jos pakettihakemistoa ei voi päätellä; --out-dir korjaa', () => {
+  // Ennen korjausta package.target-tarkistus jäi pois, esitarkistus meni
+  // läpi ja koonti ajettiin loppuun ilman paikkaa paketille.
+  const unknown = preflight({}, { commonDir: false });
+  assert.equal(unknown.facts.mainRepo, null);
+  assert.equal(unknown.facts.outDir, null);
+  assert.deepEqual(unknown.failedIds, ['package.target']);
+  assert.equal(unknown.ok, false);
+  assert.match(unknown.checks.find(c => c.id === 'package.target').detail, /--out-dir/);
+
+  const outDir = path.resolve('/pkgs');
+  const given = preflight({ outDir }, { commonDir: false });
+  assert.deepEqual(given.failedIds, []);
+  assert.equal(given.facts.packagePath, path.join(outDir, 'manifestival-suunta-waveJ-v23-vc1-5df40b2-debug.apk'));
+});
+
+// ----------------------------------------------------------- komentorivi
+
+test('lippu hyväksyy vain --lippu ja --lippu=true; =false ei ohita lukitusta', () => {
+  const flags = [...acceptanceScript.FLAGS];
+  assert.deepEqual(flags.sort(), ['dry-run', 'help', 'skip-lock-check']);
+  assert.equal(parseCliArgs(['--skip-lock-check'], flags).options['skip-lock-check'], true);
+  assert.equal(parseCliArgs(['--skip-lock-check=true'], flags).options['skip-lock-check'], true);
+  for (const value of ['false', '0', 'no', '', 'TRUE']) {
+    for (const flag of ['skip-lock-check', 'dry-run']) {
+      assert.throws(() => parseCliArgs([`--${flag}=${value}`], flags), /on lippu/, `--${flag}=${value}`);
+    }
+  }
+  for (const flag of verifyApkScript.FLAGS) {
+    assert.throws(() => parseCliArgs([`--${flag}=false`], verifyApkScript.FLAGS), /on lippu/, `verify-apk --${flag}=false`);
+    assert.equal(parseCliArgs([`--${flag}`], verifyApkScript.FLAGS).options[flag], true);
+  }
+  // Arvolliset valinnat toimivat kuten ennen.
+  assert.deepEqual(parseCliArgs(['--wave', 'J', '--version-code=commit-epoch'], flags).options,
+    { wave: 'J', 'version-code': 'commit-epoch' });
+
+  const parsed = acceptanceScript.parseBuildArgs(['--worktree', 'wt', '--wave', 'J', '--skip-lock-check'],
+    { env: {}, cwd: path.resolve('/repo') });
+  assert.equal(parsed.skipLockCheck, true);
+  assert.equal(acceptanceScript.parseBuildArgs(['--worktree', 'wt', '--wave', 'J'], { env: {}, cwd: path.resolve('/repo') })
+    .skipLockCheck, false);
+  // Välilyönnillä annettu arvo ei jää irralliseksi (hiljaa huomiotta).
+  assert.throws(() => acceptanceScript.parseBuildArgs(['--worktree', 'wt', '--wave', 'J', '--skip-lock-check', 'false'],
+    { env: {}, cwd: path.resolve('/repo') }), /tuntematon argumentti: false/);
+});
+
+test('skriptit: --skip-lock-check=false ja --no-dist=false ovat käyttövirheitä (2), eivät ohituksia', () => {
+  const run = (script, args) => spawnSync(process.execPath, [path.join(ROOT, 'scripts', script), ...args],
+    { cwd: ROOT, encoding: 'utf8', windowsHide: true, env: { ...process.env, INIT_CWD: '' } });
+  const missing = path.join(os.tmpdir(), 'mf-ei-tyopuuta-' + process.pid);
+  const build = run('android-acceptance-build.mjs', ['--worktree', missing, '--wave', 'J', '--dry-run', '--skip-lock-check=false']);
+  assert.equal(build.status, 2, build.stdout + build.stderr);
+  assert.match(build.stdout, /--skip-lock-check on lippu/);
+  const verify = run('verify-apk.mjs', ['--apk', path.join(missing, 'x.apk'), '--worktree', missing, '--wave', 'J', '--no-dist=false']);
+  assert.equal(verify.status, 2, verify.stdout + verify.stderr);
+  assert.match(verify.stdout, /--no-dist on lippu/);
+});
+
+test('--worktree ja --out-dir ratkaistaan samasta hakemistosta (INIT_CWD)', () => {
+  const invoked = path.resolve('/kayttaja/kansio');
+  const cwd = path.resolve('/repo');
+  const parsed = acceptanceScript.parseBuildArgs(
+    ['--worktree', '.claude/worktrees/rc-j', '--wave', 'J', '--out-dir', 'paketit'], { env: { INIT_CWD: invoked }, cwd });
+  assert.equal(parsed.worktree, path.join(invoked, '.claude', 'worktrees', 'rc-j'));
+  assert.equal(parsed.outDir, path.join(invoked, 'paketit'));
+  // Ilman INIT_CWD:tä (suora node-ajo) molemmat nykyisestä hakemistosta.
+  const direct = acceptanceScript.parseBuildArgs(['--worktree', 'wt', '--wave', 'J', '--out-dir=out'], { env: {}, cwd });
+  assert.equal(direct.worktree, path.join(cwd, 'wt'));
+  assert.equal(direct.outDir, path.join(cwd, 'out'));
+  assert.equal(acceptanceScript.parseBuildArgs(['--worktree', 'wt', '--wave', 'J'], { env: {}, cwd }).outDir, null);
+  assert.equal(resolveFromInvocation(path.resolve('/abs'), { env: { INIT_CWD: invoked }, cwd }), path.resolve('/abs'));
+});
+
 // -------------------------------------------------------- suunnitelma
 
 test('suunnitelma: build:web -> cap sync -> Gradle PowerShellistä -> tarkastus -> palautus -> paketti', () => {
@@ -391,6 +513,21 @@ test('ANDROID-ACCEPTANCE-BUILD.md: menettely, versiointipäätös ja allekirjoit
     assert.ok(doc.includes(needle), `${ACCEPTANCE_DOC}: puuttuu "${needle}"`);
   }
   assert.doesNotMatch(doc, /versionCode\/versionName jätettiin ennalleen/, 'vanha "versio jätettiin ennalleen" -teksti');
+});
+
+test('ANDROID-ACCEPTANCE-BUILD.md: edellytykset vaativat puhe-, sijainti- ja versiointicommitit ja uudelleenlukituksen', () => {
+  const doc = read(ACCEPTANCE_DOC).replace(/\r\n/g, '\n');
+  const start = doc.indexOf('### 0. Edellytykset');
+  const prerequisites = doc.slice(start, doc.indexOf('### 1.', start));
+  assert.ok(start > -1 && prerequisites.length > 0, 'Edellytykset-osio puuttuu');
+  for (const needle of ['f0fcfc9', 'bbce1cd', 'e5604e2', 'manifest.source', 'gradle.versionPlumbing',
+    'RECORD_AUDIO', 'android.speech.RecognitionService', 'train-map.mjs --write', '--skip-lock-check=false']) {
+    assert.ok(prerequisites.includes(needle), `Edellytykset: puuttuu "${needle}"`);
+  }
+  const dryRun = doc.slice(doc.indexOf('### 2. Kuivaharjoitus'), doc.indexOf('### 3.'));
+  for (const needle of ['manifest.source', 'package.target', '--out-dir', 'INIT_CWD']) {
+    assert.ok(dryRun.includes(needle), `Kuivaharjoitus: puuttuu "${needle}"`);
+  }
 });
 
 test('Java-ohjeet eivät neuvo Android Studion JBR:ää, kun daemon on kiinnitetty JDK 21:een', () => {

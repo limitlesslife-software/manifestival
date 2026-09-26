@@ -18,9 +18,11 @@
 //
 //   0. Esitarkistus: puhdas työpuu, --wave = porttimatriisi = välimuisti,
 //      HEAD = lukittu ehdokas (docs/activation/release-train-c-j.json),
-//      versioputkitus build.gradlessa, node_modules ratkeaa (muuten
+//      versioputkitus build.gradlessa, lähdemanifestissa RECORD_AUDIO ja
+//      <queries> RecognitionService eikä sijaintilupia, MainActivity
+//      rekisteröi SpeechPluginin, node_modules ratkeaa (muuten
 //      TULOSTETAAN liitoskomento ja pysähdytään), JDK 21 ja SDK löytyvät,
-//      pakettinimi on vapaa.
+//      pakettihakemisto on tiedossa ja pakettinimi on vapaa.
 //   1. npm run build:web
 //   2. npx cap sync android
 //   3. gradlew.bat assembleDebug -Pmanifestival.versionCode=… -Pmanifestival.versionName=…
@@ -32,6 +34,9 @@
 //      + .json (UTF-8 ilman BOMia)
 //
 // --dry-run ajaa VAIN esitarkistuksen ja tulostaa suunnitelman.
+//
+// Liput (--dry-run, --skip-lock-check) hyväksyvät vain muodot `--lippu` ja
+// `--lippu=true`. `--skip-lock-check=false` on käyttövirhe (2), ei ohitus.
 //
 // versionCode: oletus 1 (nykyinen käytös). `--version-code=commit-epoch`
 // on suositus, mutta sen käyttöönotto on OMISTAJAN TUOTEPÄÄTÖS (OWNER
@@ -50,7 +55,7 @@ import path from 'node:path';
 import process from 'node:process';
 
 import { APP_ID, EXPECTED_SIGNER_CERT_SHA256 } from '../tools/android/apk.mjs';
-import { REPO_ROOT, isMain, parseCliArgs } from '../tools/android/cli.mjs';
+import { REPO_ROOT, isMain, parseCliArgs, rejectPositional, resolveFromInvocation } from '../tools/android/cli.mjs';
 import { buildPackageMetadata, serializeMetadata } from '../tools/android/package.mjs';
 import {
   DEBUG_APK_OUTPUT, GENERATED_GRADLE_FILES, buildPlan, runPreflight
@@ -146,27 +151,50 @@ function restoreGenerated(worktree) {
   return { clean: status === '', status };
 }
 
+/** Komentorivin liput tälle skriptille (vain `--lippu` tai `--lippu=true`). */
+export const FLAGS = Object.freeze(['dry-run', 'skip-lock-check', 'help']);
+
+/**
+ * Komentorivi valinnoiksi. Heittää käyttövirheestä (paluuarvo 2).
+ *
+ * Suhteelliset polut (--worktree, --out-dir) ratkaistaan SAMASTA
+ * hakemistosta: siitä, jossa komento kirjoitettiin (npm run vaihtaa cwd:n
+ * paketin juureen ja jättää alkuperäisen INIT_CWD:hen). Aiemmin --out-dir
+ * ratkesi paketin juuresta, joten sama suhteellinen polku osoitti eri
+ * paikkaan kuin --worktree.
+ */
+export function parseBuildArgs(argv, { env = process.env, cwd = process.cwd() } = {}) {
+  const { options, positional } = parseCliArgs(argv, FLAGS);
+  rejectPositional(positional);
+  const at = value => resolveFromInvocation(value, { env, cwd });
+  return {
+    options,
+    worktree: options.worktree ? at(options.worktree) : null,
+    outDir: options['out-dir'] ? at(options['out-dir']) : null,
+    dryRun: options['dry-run'] === true,
+    skipLockCheck: options['skip-lock-check'] === true
+  };
+}
+
 function main(argv) {
-  let options;
+  let parsed;
   try {
-    ({ options } = parseCliArgs(argv, ['dry-run', 'skip-lock-check', 'help']));
+    parsed = parseBuildArgs(argv);
   } catch (error) {
     out('  ' + error.message);
     return 2;
   }
+  const { options, worktree, outDir } = parsed;
   if (options.help || !options.worktree || !options.wave) {
     out('  Käyttö: npm run android:acceptance -- --worktree <hakemisto> --wave <X> [--dry-run]');
     out('          [--version-code=1|commit-epoch|<N>] [--jdk <dir>] [--sdk <dir>] [--out-dir <dir>] [--skip-lock-check]');
     return options.help ? 0 : 2;
   }
 
-  // Suhteellinen polku siitä hakemistosta, jossa komento kirjoitettiin
-  // (npm run vaihtaa cwd:n paketin juureen ja jättää alkuperäisen INIT_CWD:hen).
-  const worktree = path.resolve(process.env.INIT_CWD || process.cwd(), options.worktree);
   const pre = runPreflight({
     worktree, wave: options.wave, versionCode: options['version-code'] ?? '1',
-    jdk: options.jdk, sdk: options.sdk, outDir: options['out-dir'] ? path.resolve(options['out-dir']) : null,
-    skipLockCheck: Boolean(options['skip-lock-check']), repoRoot: REPO_ROOT
+    jdk: options.jdk, sdk: options.sdk, outDir,
+    skipLockCheck: parsed.skipLockCheck, repoRoot: REPO_ROOT
   }, {
     git: gitIn(worktree),
     exists: fs.existsSync,
@@ -176,7 +204,7 @@ function main(argv) {
   });
 
   out('');
-  out('  ANDROID-HYVÄKSYNTÄKOONTI' + (options['dry-run'] ? '  (KUIVAHARJOITUS)' : ''));
+  out('  ANDROID-HYVÄKSYNTÄKOONTI' + (parsed.dryRun ? '  (KUIVAHARJOITUS)' : ''));
   out('');
   out(`  Työpuu:  ${worktree}`);
   if (pre.facts.head) out(`  Commit:  ${pre.facts.head} (${pre.facts.branch})`);
@@ -191,11 +219,11 @@ function main(argv) {
 
   if (!pre.ok) {
     out(`  ESITARKISTUS: FAIL (${pre.checks.filter(c => !c.ok).length} kaatui)`
-      + (options['dry-run'] ? ' — koonti pysähtyisi tähän' : ' — mitään ei ajettu'));
+      + (parsed.dryRun ? ' — koonti pysähtyisi tähän' : ' — mitään ei ajettu'));
     out('');
     return 1;
   }
-  if (options['dry-run']) {
+  if (parsed.dryRun) {
     out('  ESITARKISTUS: PASS — kuivaharjoitus, mitään ei ajettu');
     out('');
     return 0;
@@ -268,7 +296,8 @@ function main(argv) {
         minSdk: badging.minSdk,
         targetSdk: badging.targetSdk,
         debuggable: badging.debuggable,
-        permissions: [...badging.permissions].sort()
+        permissions: [...badging.permissions].sort(),
+        features: badging.features
       },
       verify: { passed: verification.passed, checks: verification.checks.length,
         failed: verification.checks.filter(c => !c.ok).map(c => c.id) },

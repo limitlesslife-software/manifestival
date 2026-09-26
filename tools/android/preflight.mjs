@@ -15,6 +15,7 @@ import path from 'node:path';
 import { WAVE_IDS } from '../release/waves.mjs';
 import { samePath } from './cli.mjs';
 import { packageFileName } from './package.mjs';
+import { MAIN_ACTIVITY, SOURCE_MANIFEST, SPEECH_PERMISSION, sourceManifestProblems } from './source-manifest.mjs';
 import { BUILD_TOOLS_VERSION, readGradleJavaHome, resolveJdkDir, resolveSdkDir, toolPaths } from './toolchain.mjs';
 import {
   GRADLE_VERSION_CODE_PROPERTY, GRADLE_VERSION_NAME_PROPERTY, computeAndroidVersion,
@@ -202,6 +203,17 @@ export function runPreflight(options, deps) {
     : 'android/app/build.gradle ei lue versio-ominaisuuksia: cherry-pickaa versiointicommit ehdokkaalle '
       + '(muuttaa kärjen SHA:n → train-map --write ja activation:verify-wave)'));
 
+  // Lähdemanifesti ja MainActivity: puhe- ja sijaintimuutokset ehdokkaalla.
+  // Ilman tätä virhe paljastuisi vasta verify-apk:ssa Gradle-koonnin jälkeen.
+  const manifestProblems = sourceManifestProblems({
+    manifest: tryRead(SOURCE_MANIFEST), mainActivity: tryRead(MAIN_ACTIVITY)
+  });
+  checks.push(check('manifest.source', manifestProblems.length === 0, manifestProblems.length
+    ? manifestProblems.join('; ') + '. Ehdokkaalta puuttuvat puhe- ja sijaintimuutokset: cherry-pickaa ne '
+      + '(muuttaa kärjen SHA:n → train-map --write ja activation:verify-wave)'
+    : `${SOURCE_MANIFEST}: ${SPEECH_PERMISSION}, <queries> RecognitionService, ei sijaintilupia; `
+      + 'MainActivity rekisteröi SpeechPluginin'));
+
   // node_modules: Capacitorin gradle-projektit ja CLI.
   const needed = ['node_modules/@capacitor/android/capacitor/build.gradle', 'node_modules/@capacitor/cli/package.json'];
   const missing = needed.filter(rel => !exists(path.join(worktree, rel)));
@@ -258,9 +270,15 @@ export function runPreflight(options, deps) {
     checks.push(check('sdk', false, 'Android SDK:ta ei löydy: aseta ANDROID_HOME tai anna --sdk <hakemisto>'));
   }
 
-  // Paketin kohde: ei ylikirjoiteta aiempaa pakettia.
+  // Paketin kohde: ei ylikirjoiteta aiempaa pakettia. Jos hakemistoa ei
+  // voi päätellä (git-common-dir ei ratkennut eikä --out-dir annettu),
+  // esitarkistus KAATUU: muuten koonti ajettaisiin loppuun ilman paikkaa
+  // paketille.
   facts.outDir = options.outDir || (facts.mainRepo ? path.join(facts.mainRepo, '.claude', 'release-packages') : null);
-  if (facts.version && facts.outDir) {
+  if (!facts.outDir) {
+    checks.push(check('package.target', false,
+      'pakettihakemistoa ei voitu päätellä (git rev-parse --git-common-dir ei ratkennut): anna --out-dir <hakemisto>'));
+  } else if (facts.version) {
     facts.packageName = packageFileName({
       wave: facts.version.wave, cacheVersion: facts.version.cacheVersion,
       versionCode: facts.version.versionCode, sha7: facts.version.sha7, buildType: 'debug'

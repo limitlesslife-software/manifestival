@@ -55,18 +55,32 @@ leikattu uudelleen ja lukitustiedosto päivitetty.
 | Capacitor | android 8.5.0, core 8.5.1, cli 8.5.1; app 8.1.1, geolocation 8.2.2, local-notifications 8.3.1 |
 | Sovellus | `fi.limitlesslife.manifestival`, minSdk 24, targetSdk 36 |
 
-- **Ehdokkaassa on oltava versiointicommit**: `android/app/build.gradle`
-  lukee ominaisuudet `manifestival.versionCode` ja `manifestival.versionName`.
-  Ilman sitä Gradle ohittaa `-P`-arvot hiljaa, ja APK saa arvot 1 / `1.0`.
-  Esitarkistus kaatuu silloin kohtaan `gradle.versionPlumbing`. Korjaus on
-  commitin cherry-pick ehdokashaaralle. Se muuttaa kärjen SHA:n, joten aja sen
-  jälkeen `node tools/activation/train-map.mjs --write` ja
-  `npm run activation:verify-wave -- J`.
+- **Ehdokkaassa on oltava puhe- ja sijaintimuutokset sekä versiointicommit.**
+  Ennen koontia ehdokashaaralle cherry-pickataan (jos eivät jo ole mukana):
+
+  | Commit | Mitä | Esitarkistus kaatuu ilman sitä kohtaan |
+  |---|---|---|
+  | `f0fcfc9` | sijaintiluvat pois lähdemanifestista | `manifest.source` |
+  | `bbce1cd` | `RECORD_AUDIO`, `<queries>` (`android.speech.RecognitionService`), SpeechPlugin ja sen rekisteröinti MainActivityssä | `manifest.source` |
+  | `e5604e2` | versiointi: `android/app/build.gradle` lukee ominaisuudet `manifestival.versionCode` ja `manifestival.versionName` | `gradle.versionPlumbing` |
+
+  Ilman versiointicommitia Gradle ohittaa `-P`-arvot hiljaa, ja APK saa arvot
+  1 / `1.0`. Ilman manifestimuutoksia APK kaatuisi vasta verify-apk:ssa
+  Gradle-koonnin jälkeen, joten esitarkistus lukee työpuun
+  `android/app/src/main/AndroidManifest.xml`:n ja `MainActivity.java`n jo
+  ennen koontia (`manifest.source`, `tools/android/source-manifest.mjs`).
+- **Leikkauksen jälkeen lukitaan uudelleen.** Cherry-pick muuttaa kärjen SHA:n,
+  joten aja sen jälkeen `node tools/activation/train-map.mjs --write` ja
+  `npm run activation:verify-wave -- J`. Vasta uudelleen lukittu ehdokas
+  läpäisee `lock`-tarkistuksen.
 - **Lukitus**: ehdokkaiden SHA:t ovat tiedostossa
   `docs/activation/release-train-c-j.json` (kirjoittaa
   `tools/activation/train-map.mjs`). Koonti kieltäytyy, jos työpuun HEAD ei
   ole aallon lukittu `deployTarget`. Ohitus `--skip-lock-check` kirjataan
-  paketin metatietoihin.
+  paketin metatietoihin. Liput (`--skip-lock-check`, `--dry-run`) hyväksyvät
+  vain muodot `--lippu` ja `--lippu=true`: esimerkiksi
+  `--skip-lock-check=false` tai `--skip-lock-check false` on käyttövirhe
+  (paluuarvo 2) eikä ohita mitään.
 
 ### 1. Työpuu
 
@@ -89,9 +103,19 @@ eikä kirjoiteta. Esitarkistus vaatii seuraavat:
 - `--wave`, `src/data/schema.js`:n porttimatriisi ja `sw.js`:n
   `CACHE_VERSION` vastaavat toisiaan
 - HEAD on lukittu ehdokas, ja versioputkitus on paikallaan
+- lähdemanifestin luvat kuuluvat sallittuun joukkoon, `RECORD_AUDIO` ja
+  `<queries>`-kohdan `android.speech.RecognitionService` ovat mukana,
+  sijaintilupia ei ole, ja MainActivity rekisteröi SpeechPluginin ennen
+  `super.onCreate`a (`manifest.source`)
 - `node_modules` ratkeaa ja vastaa työpuun `package-lock.json`ia
 - JDK 21 ja build-tools 36.0.0 löytyvät
-- paketin nimi on vapaa (vanhaa pakettia ei ylikirjoiteta)
+- pakettihakemisto on tiedossa (`--out-dir` tai pääkopion
+  `.claude/release-packages`; jos kumpaakaan ei voi päätellä, `package.target`
+  kaatuu) ja paketin nimi on vapaa (vanhaa pakettia ei ylikirjoiteta)
+
+Suhteelliset `--worktree`- ja `--out-dir`-polut ratkaistaan siitä
+hakemistosta, jossa komento kirjoitettiin (`INIT_CWD`), vaikka `npm run`
+ajaa skriptin repon juuresta.
 
 ### 3. node_modules-liitos (vain jos esitarkistus pyytää)
 

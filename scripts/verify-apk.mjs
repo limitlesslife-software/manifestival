@@ -40,7 +40,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 
-import { REPO_ROOT, isMain, parseCliArgs } from '../tools/android/cli.mjs';
+import { REPO_ROOT, isMain, parseCliArgs, rejectPositional } from '../tools/android/cli.mjs';
 import { resolveJdkDir, resolveSdkDir } from '../tools/android/toolchain.mjs';
 import { collectAndVerify, formatChecks } from '../tools/android/verify.mjs';
 
@@ -57,10 +57,15 @@ export function readMetadataFile(file) {
   return JSON.parse(fs.readFileSync(file, 'utf8').replace(/^﻿/, ''));
 }
 
+/** Komentorivin liput (vain `--lippu` tai `--lippu=true`; `--no-dist=false` on käyttövirhe). */
+export const FLAGS = Object.freeze(['no-dist', 'json', 'help']);
+
 function main(argv) {
   let options;
   try {
-    ({ options } = parseCliArgs(argv, ['no-dist', 'json', 'help']));
+    let positional;
+    ({ options, positional } = parseCliArgs(argv, FLAGS));
+    rejectPositional(positional);
   } catch (error) {
     out('  ' + error.message);
     return 2;
