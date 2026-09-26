@@ -87,9 +87,12 @@ Claude pisteyttää → Claude deployaa orkestroijalla → live-todennus →
 tekninen hyväksyntä kirjataan. 0010:lle ensin tuore tilannekuva
 (`supabase/backup/snapshot_state_0009.sql` + `restore-snapshot.mjs check`;
 [`docs/activation/0010-BACKUP-AND-RECOVERY.md`](activation/0010-BACKUP-AND-RECOVERY.md)).
-H, I ja J leikataan uudelleen ennen deployta: orkestroija pysähtyy
-(`TRAIN_RECUT_REQUIRED`), ja alla oleva STOP-rivi pysyy, kunnes lukko on
-kirjoitettu uusilla SHA:illa.
+F–J on leikattu uudelleen (F v4, G v5, H v5, I v3, J v2) ja lukittu
+2026-09-26: jokainen deploykohde sisältää pakolliset korjaukset
+(`train-map.mjs` REQUIRED_PATCHES), ja jokaisen ehdokkaan oma
+testipatteristo ja käynnistyssavu on kirjattu päiväkirjaan. Jos lukko
+jää korjauksesta jälkeen, orkestroija pysähtyy (`TRAIN_RECUT_REQUIRED`)
+ja STOP-rivi pysyy, kunnes lukko on kirjoitettu uusilla SHA:illa.
 
 Deploy-komennot lukosta (ensisijainen askel; `--sync-docs` päivittää ne):
 

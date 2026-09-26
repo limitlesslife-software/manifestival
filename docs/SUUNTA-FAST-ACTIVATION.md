@@ -195,10 +195,10 @@ npm run activation:orchestrate -- --execute-deploy --approved-sha=4eb93a9e386123
 ## Askel H — migraatio 0011 + deploy H (v21)
 
 - **OMISTAJAN VIESTI:** **"hyväksyn 0011/H"**
-- **TILA:** G teknisesti hyväksytty; kanta 0010. H leikataan uudelleen:
-  niin kauan kuin alla on STOP-rivi, orkestroija pysähtyy
-  `TRAIN_RECUT_REQUIRED` (pääkehittäjä: leikkaa, `train-map --write`,
-  `train-map --sync-docs`).
+- **TILA:** G teknisesti hyväksytty; kanta 0010. H on leikattu uudelleen
+  (H v5) ja lukittu; lukon deploykohde sisältää pakolliset korjaukset. Jos
+  alle ilmestyy STOP-rivi, orkestroija pysähtyy `TRAIN_RECUT_REQUIRED`
+  (pääkehittäjä: leikkaa, `train-map --write`, `train-map --sync-docs`).
 - **KOMENTO (Claude):** H:n testiajo ja käynnistyssavu kirjauksineen
   (työpuut ja komennot dry-runista kuten D), SQL-tiedostot:
 
@@ -230,7 +230,8 @@ npm run activation:orchestrate -- --execute-deploy --approved-sha=388cd990a1f764
 ## Askel I — migraatio 0012 + deploy I (v22)
 
 - **OMISTAJAN VIESTI:** **"hyväksyn 0012/I"**
-- **TILA:** H teknisesti hyväksytty; kanta 0011. Uudelleenleikkaus kuten H.
+- **TILA:** H teknisesti hyväksytty; kanta 0011. Leikattu uudelleen (I v3)
+  ja lukittu kuten H.
 - **KOMENTO (Claude):** I:n testiajo ja käynnistyssavu kirjauksineen
   (työpuut ja komennot dry-runista kuten D), SQL-tiedostot:
 
@@ -263,7 +264,7 @@ npm run activation:orchestrate -- --execute-deploy --approved-sha=4a24fdf3e2cb74
 
 - **OMISTAJAN VIESTI:** **"hyväksyn 0013/J"**
 - **TILA:** I teknisesti hyväksytty; kanta 0012; `verify_0012` = 0 poikkeavaa.
-  Uudelleenleikkaus kuten H.
+  Leikattu uudelleen (J v2) ja lukittu kuten H; J on lukon SQL-lähde.
 - **KOMENTO (Claude):** J:n testiajo ja käynnistyssavu kirjauksineen
   (työpuut ja komennot dry-runista kuten D), SQL-tiedostot:
 
