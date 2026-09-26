@@ -123,7 +123,10 @@ window.H = {
   },
   text(sel) { const node = document.querySelector(sel); return node ? node.textContent : ''; },
   html(sel) { const node = document.querySelector(sel); return node ? node.innerHTML : ''; },
-  s: () => window.__e2e.state()
+  s: () => window.__e2e.state(),
+  // Tallennus on valmis vasta, kun painike ei ole enää varattu (tuplaklikkaussuoja):
+  // tila päivittyy optimistisesti jo ennen kuin tallennus on palannut.
+  idle: (sel, label) => H.waitFor(() => !H.el(sel).disabled && !H.el(sel).hasAttribute('aria-busy'), label || ('valmis: ' + sel))
 };
 true;`;
 
@@ -133,13 +136,16 @@ const SCENARIOS = [
     H.fill('#dirAreaName', 'Perhe'); H.fill('#dirAreaImportance', '5'); H.fill('#dirAreaTarget', '10');
     H.click('#dirAreaSave');
     await H.waitFor(() => H.s().lifeAreas.length === 1, 'ensimmäinen alue');
+    await H.idle('#dirAreaSave', 'ensimmäinen tallennus valmis');
     H.click('#dirAddArea');
     H.fill('#dirAreaName', 'Työ'); H.fill('#dirAreaImportance', '3'); H.fill('#dirAreaTarget', '10'); H.fill('#dirAreaCategory', 'tyo');
     H.click('#dirAreaSave');
     await H.waitFor(() => H.s().lifeAreas.length === 2, 'toinen alue');
+    await H.idle('#dirAreaSave', 'toinen tallennus valmis');
     H.fill('#dirCapacityHours', '20'); H.fill('#dirEnergyBudget', '2');
     H.click('#dirCapacitySave');
     await H.waitFor(() => H.s().weeklyCapacities.length === 1, 'kapasiteetti');
+    await H.idle('#dirCapacitySave', 'kapasiteetin tallennus valmis');
     const areas = H.text('#dirAreasList');
     const cap = H.s().weeklyCapacities[0];
     if (!areas.includes('Perhe') || !areas.includes('Erittäin tärkeä')) throw new Error('alue ei näy');
@@ -394,7 +400,13 @@ async function main() {
     browser.kill();
     server.close();
     await new Promise(r => setTimeout(r, 500));
-    fs.rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    // Windows voi pitää profiilin tiedostoja hetken lukossa Chromen sulkeuduttua.
+    // Siivouksen epäonnistuminen ei saa peittää varsinaista tulosta (EPERM).
+    try {
+      fs.rmSync(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
+    } catch (error) {
+      console.warn(`HUOM  väliaikaisprofiilia ei voitu poistaa (${error.code}); poista käsin: ${path.relative(ROOT, profile)}`);
+    }
   }
 
   const forbidden = requests.filter(url => /supabase\.co|anthropic\.com/.test(url));
