@@ -225,6 +225,8 @@ Jokainen kohta tarkistetaan **sivun latauksen jälkeen**.
 | 13 — (user_id, operation_id) uniikki | PASS |
 | 20 — yksi ajastin käyttäjää kohti | PASS |
 | 24 — SET NULL rajaa nollauksen yhteen sarakkeeseen | PASS |
+| 26–27 — migraatioiden 26 taulua: vierasavain auth.usersiin on olemassa ja CASCADE | PASS |
+| 28 — muut public-taulut kuin migraatioiden 26 (eivät kuulu riveihin 26–27) | INFO |
 | 34 — PUBLIC-roolilla ei ole oikeuksia | PASS |
 | 40 — `tasks`, `goals`, `projects`, `routines` yhä 16 politiikkaa | PASS |
 | 50–51 — rivimäärät | INFO |
