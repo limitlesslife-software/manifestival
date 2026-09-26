@@ -368,12 +368,15 @@ function isDuplicate(error) {
 }
 
 /**
- * Päivitys ei osunut yhteenkään riviin. Repositorio palauttaa tämän, kun
- * se ketjuttaa päivitykseen `.select('id')` (collectionsRepo.js); siihen
- * asti tämä haara on varautumista.
+ * Päivitys ei osunut yhteenkään riviin. Muistivarasto (portti kiinni)
+ * palauttaa `memory.missing`; kantapolku palauttaa `<taulu>.not_found`,
+ * kun repositorio ketjuttaa päivitykseen `.select('id')`
+ * (collectionsRepo.js) — siihen asti se kuittaa nollan rivin päivityksen
+ * onnistuneeksi, ja tämä haara on varautumista.
  */
 function isNotFound(error) {
-  return /\.not_found$/.test(String((error && error.code) || ''));
+  const code = String((error && error.code) || '');
+  return code === 'memory.missing' || /\.not_found$/.test(code);
 }
 
 // ------------------------------------------------------ kapasiteetti

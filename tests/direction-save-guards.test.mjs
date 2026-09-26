@@ -224,6 +224,15 @@ test('RACE-04: päivitys, joka ei osunut riviin (.not_found), luo rivin uudellee
   assert.deepEqual(capacityCalls, ['update', 'insert:c-gone']);
 });
 
+test('RACE-04: tilassa oleva kapasiteetti, jota tallennus ei tunne, tallentuu (ei "riviä ei löydy")', async () => {
+  // Portti kiinni: muistivarasto hylkää puuttuvan rivin päivityksen
+  // (memory.missing) -> rivi luodaan. Portti auki: päivitys menee kantaan.
+  setWeeklyCapacities([{ id: 'only-in-state', weekStart: WEEK, availableMinutes: 600 }]);
+  const result = await saveWeeklyCapacity({ weekStart: WEEK, availableMinutes: 900 });
+  assert.equal(result.ok, true);
+  assert.deepEqual(getState().weeklyCapacities.map(c => [c.id, c.availableMinutes]), [['only-in-state', 900]]);
+});
+
 // ================================================================ RACE-05
 
 test('RACE-05: lataus pyyhki optimistisen katsauksen kesken tallennuksen -> tallennettu palaa tilaan', async () => {
