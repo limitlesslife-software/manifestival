@@ -9,7 +9,7 @@
 // eikä palvelimen konfiguraatiota. Kehittäjä näkee ne konsolissa -- ilman
 // käyttäjän arvoja (redactDbDetail, redactQuotedValues).
 
-import { logEvent, LOG_LEVEL } from './logger.js';
+import { LOG_LEVEL, logFailure as logFailureFields } from './logger.js';
 
 /**
  * Sovellusvirhe, jolla on erikseen käyttäjäviesti ja diagnostiikka.
@@ -176,23 +176,16 @@ export function logError(error) {
  *
  * Sovelluskoodin console.warn/error(…, error) tulosti koko virheolion
  * (viesti voi sisältää käyttäjän tekstiä). Tämä kirjaa vain tunnisteet.
- * Sama allekirjoitus kuin tietoturvapaketin src/lib/logger.js:n
- * logFailure-apurilla, jotta kutsupaikat voidaan siirtää sinne.
+ * Yksi toteutus: kirjaus tehdään src/lib/logger.js:n logFailure-apurilla
+ * (failureFields: nimi, koodi ja tila myös syyoliosta). Tämä säilyttää
+ * vain oletustason ERROR tämän moduulin kutsujille.
  *
  * @param {string} event esim. 'auth.signout_failed'
  * @param {unknown} error
  * @param {string} [level] LOG_LEVEL; oletus ERROR
  */
 export function logFailure(event, error, level = LOG_LEVEL.ERROR) {
-  const cause = error && typeof error === 'object' ? error : {};
-  const inner = cause.cause && typeof cause.cause === 'object' ? cause.cause : {};
-  const text = value => (typeof value === 'string' || typeof value === 'number' ? value : null);
-  logEvent(event, {
-    errorName: text(cause.name),
-    code: text(cause.code),
-    status: typeof cause.status === 'number' ? cause.status : null,
-    causeCode: text(inner.code)
-  }, level);
+  logFailureFields(event, error, level);
 }
 
 /**
