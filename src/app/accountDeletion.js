@@ -32,10 +32,12 @@ import {
 } from '../domain/accountDeletionFlow.js';
 import { currentAccessToken, queueAuthNote } from './auth.js';
 import { clearLocalUserData } from './actions.js';
+import { resetState } from './state.js';
 import { offline } from './offline.js';
 import { cancelDeviceNotifications } from './notifications.js';
-import { purgeTimerData } from '../data/timerStore.js';
-import { getUser } from '../data/session.js';
+import { purgeDeviceDataForUser, clearAuthSession } from '../data/deviceData.js';
+import { clearDevicePreferences } from '../data/preferences.js';
+import { getUser, clearUser } from '../data/session.js';
 
 let flow = initialFlowState();
 let previewSeen = false;
@@ -228,16 +230,50 @@ const openPreview = singleFlight(async () => {
   render();
 });
 
-const signOutAndClean = async () => {
+function reloadPage() {
+  if (typeof location !== 'undefined' && typeof location.reload === 'function') location.reload();
+}
+
+/**
+ * Paikallinen uloskirjautuminen ilman palvelinta.
+ *
+ * Samat vaiheet kuin src/app/main.js:n onSignedOut (käyttäjä, offline-jonon
+ * muistikopio, muistivarastot, laiteasetukset, tila) sekä istunnon avain,
+ * jottei uudelleenlataus palauta poistetun tilin istuntoa. Muu muistissa
+ * elävä tila (avoimet lomakkeet, sijainti) katoaa uudelleenlatauksessa,
+ * jonka kutsuja tekee heti perään.
+ */
+export function forceLocalSignOut() {
+  clearUser();
+  offline.deactivate();
+  clearLocalUserData();
+  clearDevicePreferences();
+  resetState();
+  clearAuthSession();
+}
+
+/**
+ * Kirjaudu ulos tilin poiston jälkeen ja varmista paikallinen siivous.
+ *
+ * Tavallisesti signOut laukaisee SIGNED_OUT-tapahtuman, ja siivous kulkee
+ * samaa polkua kuin mikä tahansa uloskirjautuminen (main.js onSignedOut).
+ * MUTTA supabase-js ei heitä verkkovirheessä: se palauttaa { error },
+ * jättää istunnon laitteelle eikä laukaise SIGNED_OUT:ia. Tili on jo
+ * poistettu palvelimelta, joten laite siivotaan silloin itse -- sekä
+ * virhepalautuksessa että poikkeuksessa.
+ */
+export async function signOutAndClean() {
+  let failed = false;
   try {
-    await getClient().auth.signOut({ scope: 'local' });
+    const result = await getClient().auth.signOut({ scope: 'local' });
+    failed = Boolean(result && result.error);
   } catch {
-    // Paikallinen siivous ei saa jäädä tekemättä, vaikka uloskirjautuminen
-    // epäonnistuisi (käyttäjä on jo poistettu palvelimelta).
-    clearLocalUserData();
-    if (typeof location !== 'undefined') location.reload();
+    failed = true;
   }
-};
+  if (!failed) return;
+  forceLocalSignOut();
+  reloadPage();
+}
 
 const submitDeletion = singleFlight(async () => {
   const status = statusNow();
@@ -271,11 +307,14 @@ const submitDeletion = singleFlight(async () => {
   }
 
   dispatch(FLOW_EVENT.SUCCEEDED);
-  // Tili on poistettu: sen lähettämättömät offline-muutokset poistetaan laitteelta.
+  // Tili on poistettu: sen tallennettu data poistetaan laitteelta. Offline-
+  // jonon muistikopio ensin (muuten uloskirjautuminen tallentaisi sen
+  // takaisin), sitten jokainen src/data/deviceData.js:n rekisterin
+  // poistettava avain: jono, ajastin, lähtökori, hautakivet, laiteasetukset.
   const deleted = getUser();
-  offline.purge(deleted && deleted.id ? deleted.id : null);
-  // Ajastin ja lähettämättömät aikakirjaukset samoin.
-  purgeTimerData(deleted && deleted.id ? deleted.id : null);
+  const deletedId = deleted && deleted.id ? deleted.id : null;
+  offline.purge(deletedId);
+  purgeDeviceDataForUser(deletedId);
   // Laitteelle ajastetut muistutukset sisältävät poistetun tilin tehtävien
   // otsikoita. Ne perutaan ENNEN uloskirjautumista ja odotetaan (rajatusti,
   // DEVICE_CANCEL_TIMEOUT_MS), jottei yksikään laukea poiston jälkeen.
