@@ -46,9 +46,6 @@ const RENAMES = Object.freeze({
  * (testi kaatuu vanhentuneeseen merkintään).
  */
 const ALLOWED_OMISSIONS = Object.freeze({
-  'tasks.deadline': 'korjataan rows.js:ssä (task links)',
-  'tasks.goal_id': 'korjataan rows.js:ssä (task links)',
-  'tasks.project_id': 'korjataan rows.js:ssä (task links)',
   'profile.legacy_id': 'Migraation 0001 vanha kiinteä tunniste (id = \'me\'), ei käyttäjän tietoa',
   'profile.automation_level': 'Ei kirjoittajaa eikä lukijaa: automaatiotaso on toistaiseksi '
     + 'laitekohtainen asetus (DEVICE_DEFAULTS.automationLevel); sarake on oletusarvossa',

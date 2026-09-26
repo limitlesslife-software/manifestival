@@ -24,6 +24,7 @@
 import { purgeQueue } from './offlineQueueStore.js';
 import { purgeTimerData } from './timerStore.js';
 import { clearDevicePreferences } from './preferences.js';
+import { clearSchemaCache } from './schemaProbe.js';
 
 /** Mitä merkinnälle tapahtuu. */
 export const DEVICE_ACTION = Object.freeze({
@@ -89,6 +90,14 @@ export const DEVICE_STORAGE = Object.freeze([
     onDelete: DEVICE_ACTION.CLEAR
   }),
   entry({
+    prefix: 'manifestival.schemaCompat.v1.',
+    owner: 'src/data/schemaProbe.js',
+    contains: 'Viimeisimmän skeematarkistuksen tulos tälle käännökselle ja palvelimelle '
+      + '(migraatiotunnisteet, ei käyttäjän dataa eikä käyttäjätunnusta)',
+    onSignOut: DEVICE_ACTION.KEEP,
+    onDelete: DEVICE_ACTION.CLEAR
+  }),
+  entry({
     prefix: '__manifestival_probe__',
     owner: 'src/platform/capabilities.js',
     contains: 'Tallennuskokeilu: kirjoitetaan ja poistetaan heti',
@@ -118,6 +127,7 @@ export function purgeDeviceDataForUser(userId) {
   purgeQueue(userId);
   purgeTimerData(userId);
   clearDevicePreferences();
+  clearSchemaCache();
 }
 
 /** supabase-js v2:n istuntoavain (+ PKCE-vahvistin) ja v1:n vanha avain. */

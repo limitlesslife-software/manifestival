@@ -187,6 +187,29 @@ function writeCache(storage, key, previous, results, checkedAt, status) {
   } catch { /* kiintiö tai yksityinen tila: tarkistetaan ensi kerralla uudelleen */ }
 }
 
+/**
+ * Poista kaikki tarkistustulokset laitteelta (tilin poisto). Tulos ei ole
+ * käyttäjän dataa, mutta tilin poisto ei jätä laitteelle mitään
+ * sovelluksen avainta (src/data/deviceData.js). Ei koskaan heitä.
+ */
+export function clearSchemaCache(storage = defaultStorage()) {
+  if (!storage) return 0;
+  const keys = [];
+  try {
+    for (let index = 0; index < storage.length; index++) {
+      const key = storage.key(index);
+      if (typeof key === 'string' && key.startsWith(CACHE_PREFIX)) keys.push(key);
+    }
+  } catch {
+    return 0;
+  }
+  let removed = 0;
+  for (const key of keys) {
+    try { storage.removeItem(key); removed += 1; } catch { /* seuraava */ }
+  }
+  return removed;
+}
+
 // -------------------------------------------------------- orkestrointi
 
 function apply(results, from) {

@@ -208,7 +208,9 @@ const task = (id, extra = {}) => normalizeTask({ id, title: 'Tehtävä ' + id, d
 
 // ================================================== RACE-01 / offline F4
 
-for (const [name, cause] of [['hylkäys 23514', { code: '23514', message: 'check' }], ['palvelinvirhe 503', { status: 503 }]]) {
+// Vain palvelimen HYLKÄYS (23514) jättää osan tallentamatta. Palvelinvirhe
+// (503) on ohimenevä: osa jää lähtökoriin ja lähtee myöhemmin (ks. testi alla).
+for (const [name, cause] of [['hylkäys 23514', { code: '23514', message: 'check' }]]) {
   test(`RACE-01: toisen osan ${name} -> uusinta kirjaa VAIN puuttuvan osan, ajastin poistuu vasta kun kaikki on tallessa`, async () => {
     const db = entryDb(['ok', cause]);
     useEntryDb(db);
@@ -235,6 +237,28 @@ for (const [name, cause] of [['hylkäys 23514', { code: '23514', message: 'check
     assert.equal(loadTimer(USER_A.id), null);
   });
 }
+
+test('RACE-01: toisen osan palvelinvirhe 503 on ohimenevä -> osa jää lähtökoriin, pysäytys valmistuu eikä mitään katoa', async () => {
+  const db = entryDb(['ok', { status: 503 }]);
+  useEntryDb(db);
+  const start = new Date(2026, 8, 20, 23, 30).getTime(); // su 23.30
+  await startTracking({ kind: 'none' }, { now: start });
+  const op = OPERATION.timer(currentTimer().id);
+
+  const first = await stopTracking({ now: start + 75 * MIN }); // 30 + 45 min
+  assert.equal(first.ok, true, 'ohimenevä virhe ei kaada pysäytystä');
+  assert.equal(currentTimer(), null);
+  assert.equal(loadTimer(USER_A.id), null);
+  assert.deepEqual(loadOutbox(USER_A.id).map(entry => entry.operationId), [`${op}.1`], 'toinen osa odottaa lähtökorissa');
+  assert.deepEqual([...db.rows.values()].map(row => row.minutes), [30]);
+
+  // Yhteys palaa: lähtökori lähettää puuttuvan osan kerran.
+  await flushTimeOutbox();
+  const rows = [...db.rows.values()];
+  assert.deepEqual(rows.map(row => row.minutes).sort((x, y) => x - y), [30, 45], '75 min, ei hukkaa');
+  assert.deepEqual(rows.map(row => row.operationId).sort(), [op, `${op}.1`], 'yksi rivi per operaatio');
+  assert.deepEqual(loadOutbox(USER_A.id), []);
+});
 
 test('RACE-01: uudelleenlataus osittaisen pysäytyksen jälkeen -> puuttuva osa kirjataan kerran, vaikka tila ei tunne tallennettua osaa', async () => {
   const db = entryDb(['ok', { code: '23514', message: 'check' }]);
