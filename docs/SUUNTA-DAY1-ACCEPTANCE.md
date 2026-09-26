@@ -105,7 +105,7 @@ täytetty eikä kukaan ole päättänyt puolestasi, mikä sinulle on tärkeää.
 | Offline aloitettu ajastin ei siirry `running_timers`-tauluun myöhemmin | Toinen laite ei näe sitä; aika ei katoa eikä monistu | P1-korjaus |
 | Toisella laitteella pysäytetty ajastin voi näkyä tällä laitteella käynnissä latauksen jälkeen | Pysäytys ei kirjaa kahdesti (operaatiotunniste) | P1-korjaus |
 | "Varaa aikaa" -ehdotuksen voi toteuttaa uudelleen sivun latauksen jälkeen | Toinen samanlainen tehtävä | P1-korjaus |
-| Kahden laitteen kilpailutilanne (sama viikon kapasiteetti / alueen nimi) näyttää yleisen virheen | Lataa sivu ja yritä uudelleen | P1 |
+| Kahden laitteen kilpailutilanne (sama viikon kapasiteetti / alueen nimi / viikon katsaus): jälkimmäinen tallennus ei mene läpi | Viesti kertoo syyn rajoitteen nimen mukaan (`describeError`, `CONFLICT_MESSAGES`), esim. "Tämän viikon kapasiteetti on jo tallennettu toisella laitteella. Päivitä näkymä ja yritä uudelleen." — ei enää yleistä virhettä | tunnettu (viesti korjattu) |
 | Tallennetun katsauksen tilannekuva lasketaan uudelleen, jos katsaus tallennetaan uudelleen samalle viikolle | Historia päivittyy | PRODUCT_DECISION_REQUIRED |
 | Avustajan kirjaus (aalto H) vaatii yhteyden | Epäonnistuu näkyvästi, ei valehtele | tunnettu |
 | Puhe Android-sovelluksessa: aiemmissa APK:issa ei toimi (WebView'n tunnistimen mikrofonipyyntö menee `onPermissionRequest(AUDIO_CAPTURE)`-polkuun, Capacitor vaatii kaksi julistamatonta lupaa → `not-allowed`). Korjaus on koodissa: oma `ManifestivalSpeech`-liitännäinen, `RECORD_AUDIO` kysytään vasta napautuksesta. Ei laitetestattu | Suunta ei tarvitse puhetta; kirjoittaminen toimii aina | P1 |
