@@ -15,14 +15,18 @@ import assert from 'node:assert/strict';
 
 import { freezeLocalDate } from './helpers/clock.mjs';
 import {
-  press, choose, accessibleName, assertSameNode, assertDifferentNode
+  press, choose, type, accessibleName, assertSameNode, assertDifferentNode
 } from './helpers/a11yDom.mjs';
-import { mountSuunta, echoClient, flush } from './helpers/a11ySuunta.mjs';
+import { mountSuunta, echoClient, flush, USER } from './helpers/a11ySuunta.mjs';
 import { getState, setTasks, setGoals, setDomainLoadStatus } from '../src/app/state.js';
 import { createGoal } from '../src/app/actions.js';
 import { createLifeArea, saveWeeklyCapacity } from '../src/app/alignment.js';
-import { startTracking, cancelTracking } from '../src/app/timeTracking.js';
-import { renderHtml, setHtml, captureFocus, restoreFocus } from '../src/ui/dom.js';
+import {
+  startTracking, cancelTracking, setTimerRepoForTests, discardPendingTracking, pendingTimer
+} from '../src/app/timeTracking.js';
+import { adoptLoadedTimers } from '../src/app/timerState.js';
+import { saveTimer } from '../src/data/timerStore.js';
+import { renderHtml, setHtml, captureFocus, restoreFocus, reannounce } from '../src/ui/dom.js';
 import { normalizeTask } from '../src/domain/task.js';
 import { normalizeGoal } from '../src/domain/goal.js';
 
@@ -282,6 +286,152 @@ test('dom.js: setHtml kirjoittaa uudelleen, jos DOMia on muutettu käsin väliss
   host.querySelector('p').textContent = 'käsin muutettu';
   assert.equal(setHtml(host, '<p class="hint">A</p>'), true, 'piirretty tila palautetaan');
   assert.equal(host.textContent, 'A');
+});
+
+test('dom.js: reannounce korvaa ilmoituksen samanlaisella uudella solmulla; säiliön merkintä ei muutu', async () => {
+  const { doc } = mount();
+  const host = doc.getElementById('dirPersistNote');
+  setHtml(host, '<p class="field-error" id="x-err" role="alert">Virhe</p>');
+  const before = doc.getElementById('x-err');
+  const after = reannounce(before);
+  assertDifferentNode(after, before);
+  assert.equal(after.isConnected, true);
+  assert.equal(before.isConnected, false);
+  assert.equal(after.getAttribute('role'), 'alert');
+  assert.equal(after.textContent, 'Virhe');
+  assert.equal(setHtml(host, '<p class="field-error" id="x-err" role="alert">Virhe</p>'), false,
+    'sama merkintä: seuraava piirto ei kirjoita (eikä kuuluta) uudelleen');
+});
+
+// ================================================================ TOISTETTU TOIMINTO
+
+test('aloitus: "Lisää" jo valitulla nimellä tyhjentää kentän, vaikka kortin merkintä ei muutu', async (t) => {
+  freezeLocalDate(t, THURSDAY);
+  const { doc } = mount();
+  doc.querySelector('#dirSetup [data-setup-draft="Perhe"]').focus();
+  press(doc, 'Enter');
+  const input = doc.getElementById('dirSetupCustomName');
+  type(input, 'Perhe');
+  input.focus();
+  press(doc, 'Enter');
+  assertSameNode(doc.getElementById('dirSetupCustomName'), input, 'kortti ei piirtynyt uudelleen');
+  assert.equal(input.value, '', 'kirjoitettu nimi ei jää näkyviin');
+  assert.match(doc.getElementById('dirSetupCard').textContent, /Valittu: Perhe\./);
+});
+
+test('aloitus: tyhjä nimi ja "Lisää" kahdesti kuuluttaa virheen uudelleen; kenttä viittaa virheeseen', async (t) => {
+  freezeLocalDate(t, THURSDAY);
+  const { doc } = mount();
+  doc.querySelector('#dirSetup [data-setup="add-custom"]').focus();
+  press(doc, 'Enter');
+  const first = doc.getElementById('dirSetupError');
+  assert.ok(first !== null, 'virhe näkyy');
+  assert.equal(first.getAttribute('role'), 'alert');
+  assert.equal(first.textContent, 'Kirjoita alueelle nimi.');
+  const input = doc.getElementById('dirSetupCustomName');
+  assert.equal(input.getAttribute('aria-invalid'), 'true');
+  assert.equal(input.getAttribute('aria-describedby'), 'dirSetupError');
+  assert.equal(doc.activeElement.dataset.setup, 'add-custom', 'fokus pysyy Lisää-painikkeessa');
+
+  press(doc, 'Enter');
+  const second = doc.getElementById('dirSetupError');
+  assertDifferentNode(second, first, 'toistettu toiminto: uusi role=alert-solmu kuulutetaan');
+  assert.equal(second.textContent, 'Kirjoita alueelle nimi.');
+  assertSameNode(doc.getElementById('dirSetupCustomName'), input, 'vain ilmoitus vaihtui, ei kenttä');
+
+  // Muu tilamuutos ei kuuluta samaa virhettä uudelleen (CRIT-03).
+  setTasks([task('z', THURSDAY, 15)]);
+  assertSameNode(doc.getElementById('dirSetupError'), second);
+});
+
+test('arviojono: sama virheellinen minuuttimäärä kuulutetaan uudelleen; kenttä viittaa virheeseen', async (t) => {
+  freezeLocalDate(t, THURSDAY);
+  const { doc } = mount();
+  await createLifeArea({ name: 'Työ', importance: 3, categoryKey: 'tyo' });
+  setTasks([task('q1', THURSDAY, null, { category: 'tyo' })]);
+  doc.getElementById('dirOpenEstimate').focus();
+  press(doc, 'Enter');
+  doc.querySelector('#dirEstimate [data-queue-custom="task:q1"]').focus();
+  press(doc, 'Enter');
+  type(doc.getElementById('dirQueueCustom-main'), '0');
+  doc.querySelector('#dirEstimate [data-queue-estimate="task:q1"][data-minutes="custom"]').focus();
+  press(doc, 'Enter');
+  const first = doc.getElementById('dirQueueError-main');
+  assert.ok(first !== null, 'virhe näkyy');
+  assert.equal(first.getAttribute('role'), 'alert');
+  const input = doc.getElementById('dirQueueCustom-main');
+  assert.equal(input.getAttribute('aria-invalid'), 'true');
+  assert.equal(input.getAttribute('aria-describedby'), 'dirQueueError-main');
+  assert.equal(doc.activeElement.dataset.minutes, 'custom', 'fokus pysyy Tallenna arvio -painikkeessa');
+
+  press(doc, 'Enter');
+  const second = doc.getElementById('dirQueueError-main');
+  assertDifferentNode(second, first, 'sama virheellinen arvo uudelleen: uusi role=alert-solmu');
+  assert.equal(second.textContent, first.textContent);
+  assert.equal(getState().tasks[0].durationMinutes ?? null, null, 'mitään ei tallennettu');
+});
+
+// ================================================================ AJASTINPALKKI: KESKEN JA TYHJENNYS
+
+/** Ajastimen kanta, jonka päivitykset voi pidättää (ajastintoiminto kesken). */
+function timerRepo({ hold = null } = {}) {
+  return {
+    isPersistent: () => true,
+    insert: async timer => ({ ok: true, value: timer }),
+    update: async () => { if (hold) await hold; return { ok: true }; },
+    remove: async () => ({ ok: true }),
+    list: async () => ({ ok: true, value: [] })
+  };
+}
+
+test('CRIT-03: tyhjentynyt kirjaamattoman ajastuksen lokero vie fokuksen palkin painikkeeseen, ei <body>', async (t) => {
+  const start = freezeLocalDate(t, THURSDAY, '10:00').getTime();
+  const { doc, render } = mount();
+  setTimerRepoForTests(timerRepo());
+  saveTimer(USER.id, { id: 'local-L', startedAt: new Date(start - 60 * 60000).toISOString(), targetKind: 'none' });
+  adoptLoadedTimers([{ id: 'remote-R', startedAt: new Date(start - 30 * 60000).toISOString(), targetKind: 'none' }]);
+  render();
+  const bar = doc.getElementById('timerBar');
+  const discard = bar.querySelector('[data-timer="pending-discard"]');
+  assert.ok(discard !== null, 'kirjaamaton ajastus näkyy palkissa');
+  discard.focus();
+
+  const gone = await discardPendingTracking({ confirmFn: async () => true });
+  assert.equal(gone.cancelled, true);
+  assert.equal(pendingTimer(), null);
+  render();
+  assert.equal(bar.querySelector('[data-timer="pending-discard"]'), null, 'lokero tyhjeni');
+  const toggle = bar.querySelector('[data-timer="pause"]');
+  assertSameNode(doc.activeElement, toggle, 'palkin oma painike, ei <body>');
+  assert.equal(toggle.hasAttribute('tabindex'), false, 'painike pysyy sarkainjärjestyksessä');
+});
+
+test('CRIT-03: ajastintoiminnon ajan KAIKKI palkin painikkeet ovat aria-disabled, ja tila poistuu lopuksi', { timeout: 10_000 }, async (t) => {
+  const start = freezeLocalDate(t, THURSDAY, '10:00').getTime();
+  const { doc } = mount();
+  let release;
+  const hold = new Promise(resolve => { release = resolve; });
+  try {
+    setTimerRepoForTests(timerRepo({ hold }));
+    await startTracking({ kind: 'none' }, { now: start });
+    const bar = doc.getElementById('timerBar');
+    const buttons = () => bar.querySelectorAll('[data-timer]');
+    assert.equal(buttons().length, 3, 'Tauko, Pysäytä ja kirjaa, Hylkää');
+    bar.querySelector('[data-timer="pause"]').focus();
+    press(doc, 'Enter');
+    await flush(3);
+    for (const button of buttons()) {
+      assert.equal(button.getAttribute('aria-disabled'), 'true', `kesken: ${button.dataset.timer}`);
+    }
+    release();
+    await flush();
+    for (const button of buttons()) {
+      assert.equal(button.hasAttribute('aria-disabled'), false, `valmis: ${button.dataset.timer}`);
+    }
+    assert.equal(bar.querySelector('[data-timer="resume"]') !== null, true, 'tauko tallentui');
+  } finally {
+    release();
+  }
 });
 
 test('dom.js: renderHtml palauttaa fokuksen avaimella; estetty sama ohjain -> varaotsikko', async () => {

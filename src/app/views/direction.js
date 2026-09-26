@@ -14,7 +14,9 @@
 // Sävy on toteava. Tämä ei ole suorituspisteytys: valmistumisprosenttia
 // ei näytetä pääviestinä missään.
 
-import { el, maybe, toggle, setText, focus, setBusy, singleFlight, renderHtml, setHtml } from '../../ui/dom.js';
+import {
+  el, maybe, toggle, setText, focus, setBusy, singleFlight, renderHtml, setHtml, renderAnnouncingError
+} from '../../ui/dom.js';
 import { escapeHtml } from '../../lib/format.js';
 import { fmtISO, todayMidnight } from '../../lib/datetime.js';
 import { getState, findLifeArea, findTask, findRoutine, findGoal, findProject } from '../state.js';
@@ -703,6 +705,8 @@ function activeQueueCardHtml(item, host, queue) {
   const title = queueItemTitle(item);
   const blocked = queue.saving || !queue.armed;
   const off = blocked ? ' disabled data-armed="0"' : ' data-armed="1"';
+  // Jonon virhe koskee aina omaa minuuttimäärää: kenttä viittaa siihen.
+  const invalid = queue.error ? ` aria-invalid="true" aria-describedby="dirQueueError-${host}"` : '';
   return `
     <div class="assist-row dir-estimate-row dir-queue-card" data-queue-card="${key}">
       <div class="assist-meta">${escapeHtml(ESTIMATE_BUCKET_LABELS[item.bucket] || '')} · ${escapeHtml(shortDate(item.date))}`
@@ -718,13 +722,13 @@ function activeQueueCardHtml(item, host, queue) {
         <div>
           <label class="field-label" for="dirQueueCustom-${host}">Kesto minuutteina</label>
           <input type="number" min="1" max="1440" step="1" inputmode="numeric" id="dirQueueCustom-${host}"
-            data-queue-input="${key}" value="${escapeHtml(queue.customValue || '')}">
+            data-queue-input="${key}" value="${escapeHtml(queue.customValue || '')}"${invalid}>
         </div>
         <button class="assist-btn" type="button" data-queue-estimate="${key}" data-minutes="custom"${off}>Tallenna arvio</button>
       </div>` : ''}
       ${item.kind === 'task' ? `<label class="checkbox-row" for="dirQueueApprox-${host}">
         <input type="checkbox" id="dirQueueApprox-${host}" data-queue-approx="1"${queue.approximate ? ' checked' : ''}> Karkea arvio</label>` : ''}
-      ${queue.error ? `<p class="field-error dir-setup-error" role="alert">${escapeHtml(queue.error)}</p>` : ''}
+      ${queue.error ? `<p class="field-error dir-setup-error" id="dirQueueError-${host}" role="alert">${escapeHtml(queue.error)}</p>` : ''}
     </div>`;
 }
 
@@ -818,7 +822,8 @@ async function saveQueueEstimate(key, minutes) {
   if (!active || active.key !== key) return;
   if (!Number.isInteger(minutes) || minutes <= 0 || minutes > 1440) {
     queue.error = 'Anna kesto minuutteina, 1–1440.';
-    renderDirection();
+    // Sama virheellinen arvo uudelleen: sama virhe kuulutetaan uudelleen.
+    renderAnnouncingError(`dirQueueError-${queue.scope === 'setup' ? 'setup' : 'main'}`, renderDirection);
     return;
   }
   const previous = previousEstimateOf(active);
