@@ -20,7 +20,7 @@ import {
   flushTimeOutbox, retryTimeOutbox, pendingTimeEntryCount, beginDataLoad, keepWritesSince,
   resetAlignmentSession
 } from './alignment.js';
-import { createReconnectController } from './reconnect.js';
+import { createReconnectController, REFRESH_REASON } from './reconnect.js';
 import { initAuth, showAuthGate, hideAuthGate } from './auth.js';
 import {
   initNavigation, restoreLastScreen, setScreenRenderers, markScreensDirty, renderVisible,
@@ -120,6 +120,8 @@ async function sendPending() {
  */
 async function loadFresh() {
   const mark = beginDataLoad();
+  // Täysi lataus alkaa: paluu etualalle heti perään ei lataa uudelleen (CRIT-02).
+  reconnect.noteRefreshStarted();
   const result = await loadUserData();
   // Palautetut tallennukset yhtenä ilmoituksena (loadUserData on jo yksi).
   if (!result.discarded) batch(() => keepWritesSince(mark));
@@ -469,7 +471,7 @@ async function start() {
   initSchemaStatus({
     onRecovered: () => {
       offline.wakeSchemaPending();
-      reconnect.refreshNow();
+      reconnect.refreshNow({ reason: REFRESH_REASON.SCHEMA });
     }
   });
 
@@ -509,7 +511,8 @@ async function start() {
   // Natiivikuoressa `document.visibilitychange` ei ole luotettava korvike
   // käyttöjärjestelmän omalle resume/pause-tapahtumalle (ks. lifecycle.js:n
   // kommentti); web-kuori saa silti visibilitychange-varajärjestelmän, koska
-  // bindLifecycle kytkee molemmat.
+  // bindLifecycle kytkee molemmat — ja yhdistää ne: yksi paluu on yksi
+  // onResume-kutsu (lifecycle.js RESUME_DEDUP_MS).
   lifecycle.bind({
     onResume: () => {
       if (!signedIn) return;
@@ -522,8 +525,9 @@ async function start() {
       // Sovellus on voinut olla taustalla pitkään: data on voinut vanhentua
       // (esim. muokattu toisella laitteella). refreshNow() on limitelty
       // reconnect.js:ssä, joten tämä ei koskaan käynnisty rinnakkain
-      // samanaikaisen online-palautuksen kanssa.
-      reconnect.refreshNow();
+      // samanaikaisen online-palautuksen kanssa — eikä lataa uudelleen, jos
+      // edellinen päivitys alkoi alle MIN_REFRESH_INTERVAL_MS sitten.
+      reconnect.refreshNow({ reason: REFRESH_REASON.RESUME });
     },
     onPause: () => {
       reconnect.cancelPending();
