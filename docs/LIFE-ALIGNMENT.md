@@ -44,9 +44,13 @@ Ensimmäinen osuma voittaa. Jokainen kohde lasketaan tasan yhteen alueeseen.
 
 ## Havaintojen säännöt (tarkat)
 
-Kaikki kynnykset ovat `RULES`-vientejä tiedostossa `src/domain/alignment.js`.
+Kaikki kynnykset ovat `TIME_RULES`-vientejä tiedostossa
+`src/domain/alignmentPolicy.js` (`RULES` alignment.js:ssä on sama olio).
 Jokainen havainto kantaa säännön tunnisteen, perustan (`planned`/`actual`) ja
-luvut; käyttöliittymä näyttää ne kohdassa **"Miksi tämä näkyy?"**.
+luvut. Perusta näkyy havainnon vieressä sanoin ("suunnitelman perusteella" /
+"kirjatun ajan perusteella"); sääntö ja luvut suomenkielisin nimin ovat
+kohdassa **"Miksi tämä näkyy?" → "Tekniset luvut"**. Sääntöversion 3 harvan
+aineiston rajat: ks. [Sääntöversio 3](#sääntöversio-3-harva-aineisto-ja-ensimmäinen-viikko).
 
 ### Kuormitus (`overload`)
 
@@ -60,24 +64,38 @@ luvut; käyttöliittymä näyttää ne kohdassa **"Miksi tämä näkyy?"**.
 
 Vain aktiiviset alueet, joiden **tärkeys ≥ 4** ja **tavoite ≥ 30 min**.
 
-- **Toteumaan perustuva** (kun viikolle on kirjattu aikaa JA viikosta on
-  kulunut ≥ 3/7 eli torstaista alkaen): `toteuma < 50 % × tavoite ×
-  kulunut osuus` → **Huomio**; viikon jälkeen alle 25 % → **Vahva**.
+- **Toteumaan perustuva** (vain kun alueen seuranta on **vakiintunut**, ks.
+  sääntöversio 3): `toteuma < 50 % × tavoite × seurantajakson osuus` →
+  **Huomio**. Odotettu lasketaan seurantajakson alusta (myöhäisin: viikon
+  maanantai, ensimmäinen koskaan kirjattu päivä, alueen luontipäivä), ei
+  maanantaista. **Vahva**: viikko päättynyt, jakso kattoi ≥ 6/7 viikosta ja
+  toteuma alle 25 %.
 - **Suunnitelmaan perustuva** (muuten): `suunniteltu < 50 % tavoitteesta` →
-  **Tiedoksi** (suunnitelma on vielä muutettavissa).
+  **Tiedoksi** (suunnitelma on vielä muutettavissa). Jos alueella on
+  arvioimattomia asioita, sääntö on `neglect.plan_unknown` ("suunnitelman
+  kesto ei vielä tiedossa"): vajetta ei väitetä, eikä sitä käytetä suojattuun
+  aikaan, painotukseen, varausehdotukseen eikä tavoitteen muutokseen.
 - Maanantaina toteumaa ei verrata. Vähemmän tärkeä alue, tavoite 0/puuttuu tai
   pois käytöstä oleva alue ei ole koskaan "huomiotta".
+- Teksti sanoo "kirjattu X", ei "on saanut X": kirjattu aika ei ole eletty aika.
 
 ### Poikkeama tavoitteista (`misalignment`)
 
 - Toivottu osuus = alueen tavoite / kaikkien aktiivisten tavoitteiden summa.
-- Perusta: toteuma, jos alueisiin liitettyä aikaa ≥ 120 min; muuten suunnitelma
-  (sama raja); muuten ei arvioida.
+- Perusta: toteuma, jos seuranta on **vakiintunut** ja alueisiin liitettyä
+  aikaa ≥ 120 min; muuten suunnitelma (sama raja), mutta vain jos vähintään
+  50 % viikon asioista on arvioitu; muuten ei arvioida.
 - `|toteutunut % − toivottu %| ≥ 15 pp` → **Huomio**, `≥ 25 pp` → **Vahva**
-  (suunnitelmaan perustuva enintään Huomio).
-- Jos alle 60 % ajasta on liitetty alueisiin → **Tiedoksi** ja "suuntaa-antava".
+  (suunnitelmaan perustuva enintään Huomio; toteumaan perustuva enintään
+  Huomio, kunnes viikko on päättynyt).
+- Jos alle 60 % ajasta on liitetty alueisiin, tai suunnitelmasta on arvioitu
+  50–79 % → **Tiedoksi** ja "suuntaa-antava".
 - Tavoite 0 on päätös (siihen kulunut aika on poikkeama); puuttuva tavoite ei.
-- Vajetta ei raportoida kahdesti, jos alue on jo "huomiotta".
+- Alue, joka on "huomiotta" (todettu vaje), ei saa poikkeamaa kumpaankaan
+  suuntaan: vajetta ei raportoida kahdesti, eikä alue voi samaan aikaan viedä
+  liikaa (ristiriita).
+- Otsikko ja teksti kertovat perustan: "Työ vie **suunnitelmassa** enemmän
+  kuin halusit", "Työ sai 62 % **kirjatusta** ajastasi".
 
 ### Jännite (`target_tension`)
 
@@ -87,8 +105,117 @@ tavoitetta tai kapasiteettia ei muuteta puolesta.
 ### Aineiston laatu
 
 `good` / `partial` / `weak` / `none` + syyt: ei alueita, ei tavoitteita, ei
-kapasiteettia, arvioimatonta työtä, liittämätöntä työtä, ei toteumaa.
-Kattavuusprosentit: arvioitu osuus, alueeseen liitetty suunniteltu ja toteuma.
+kapasiteettia, arvioimatonta työtä (avoimet asiat; valmiiksi merkityt ilman
+kestoa erikseen tietona `unestimated_completed`), liittämätöntä työtä, ei
+toteumaa, **osittainen kirjaus** (`partial_actual`: seuranta `early` tai
+`partial`). Kattavuusprosentit: arvioitu osuus, alueeseen liitetty
+suunniteltu ja toteuma; lisäksi seurannan taso (`trackingLevel`) ja kirjattu
+osuus kapasiteetista (`loggedSharePercent`).
+
+## Sääntöversio 3: harva aineisto ja ensimmäinen viikko
+
+Lähtötilanne, jolle tämä on tehty: kymmeniä tehtäviä ilman kestoa, ei
+alueita, ei kirjauksia, Suunta on uusi. Ennen versiota 3 yksi 45 min
+kirjaus torstaina teki kolmesta alueesta "Huomio: jäämässä huomiotta" ja
+katsauksesta "Vahva"; kahden arvioidun tehtävän jakauma näkyi päivän
+tärkeimpänä havaintona. **Päivä ilman kirjauksia on tuntematon, ei nolla.**
+
+### Seurannan kypsyys (`trackingMaturity`, `analysis.tracking`)
+
+Seurantajakso alkaa myöhäisimmästä: viikon maanantai, **ensimmäinen koskaan
+kirjattu päivä**, alueen luontipäivä (koko viikolle: Suunnan käyttöönotto =
+aikaisin alueen luontipäivä). Sovelluskerros antaa luontipäivän paikallisena
+päivänä (`startDate`); domain ei lue kelloa. `createLifeArea` asettaa
+`createdAt`:n heti (kanta korvaa omallaan latauksessa).
+
+| Taso | Ehto |
+|---|---|
+| `none` | viikolle ei ole kirjauksia |
+| `early` | jaksosta kulunut < 3/7 viikkoa **tai** kirjauksia < 2 päivältä |
+| `partial` | kirjauspäiviä < puolet jakson kuluneista päivistä (ylöspäin), **tai** kapasiteetin ollessa asetettu kirjattu aika < 25 % × kapasiteetti × jakson osuus |
+| `established` | muuten — vain tällä tasolla toteumaa verrataan tavoitteisiin |
+
+Ajastimella ja käsin kirjattu päivä ovat samanarvoisia todisteita
+seurannasta; minuutteja ei painoteta lähteen mukaan. Katsauksen
+"Tiedossa"-rivi näyttää jaon (ajastimella / käsin).
+
+### Kynnykset (`TIME_RULES`, `REVIEW_RULES`)
+
+| Vakio | Arvo | Mitä |
+|---|---|---|
+| `ACTUAL_MIN_TRACKED_DAYS` | 2 | kirjauspäiviä vähintään |
+| `ACTUAL_MIN_DAY_COVERAGE` | 0,5 | kirjauspäiviä vähintään tämä osuus jakson kuluneista päivistä |
+| `ACTUAL_MIN_LOGGED_SHARE` | 0,25 | (vain kapasiteetin kanssa) kirjattu ≥ osuus × kapasiteetti × jakson osuus |
+| `STRONG_MIN_TRACKED_FRACTION` | 6/7 | vahva huomiotta jääminen vain, kun jakso kattoi lähes koko viikon |
+| `PLAN_MIN_ESTIMATE_COVERAGE` | 0,5 | suunnitelman jakaumaa ei arvioida alle tämän arvioidun osuuden |
+| `PLAN_FULL_ESTIMATE_COVERAGE` | 0,8 | 0,5–0,8: suunnitelman jakauma enintään Tiedoksi ("suuntaa-antava") |
+| `REVIEW_RULES.CAPACITY_MIN_TRACKED_FRACTION` | 6/7 | kapasiteettikysymys kirjatusta ajasta vain vakiintuneesta, lähes koko viikon kirjauksesta |
+
+**Miksi kirjattu osuus on 25 % eikä 50 %:** kapasiteetti on käyttäjän arvio
+siitä, paljonko hän *ehtii*, ei siitä paljonko hän kirjaa. 50 %
+kapasiteetista (auditoinnin prototyyppi) tekisi toteuman vertailusta
+saavuttamattoman sille, joka arvioi kapasiteettinsa reilusti — tämä on
+tarkoituksellinen poikkeama. Päiväkattavuus kertoo kirjaamisen
+säännöllisyydestä paremmin kuin minuuttimäärä; osuus vain estää
+vertailun muutaman minuutin kirjauksista. Ilman kapasiteettia osuutta ei
+tarkisteta (ei keksittyä viitettä).
+
+### Harvat arviot
+
+- `SPARSE_ESTIMATES_NOTICE` = **"Suunnan arvio tarkentuu, kun lisäät
+  aika-arvioita."** näkyy, kun alle 80 % viikon asioista on arvioitu
+  (`estimateConfidence`: `sparse` < 50 %, `partial` < 80 %, muuten `ok`):
+  ENSIMMÄISENÄ Suunnan havaintojen yläpuolella (`role="status"`, "Arvioi
+  tehtäviä") ja päivän kortin ensimmäisenä rivinä. Havainnot näkyvät yhä
+  sen alla: sovellus on käytettävä vähälläkin aineistolla.
+- Päivän havainnoissa arvioimaton työ nousee `sparse`-tilassa sijalle 4
+  (ennen huomio-tason suunnitelman havaintoja).
+- "Kapasiteettia jäljellä X" sanotaan arvioimattomien kanssa muodossa
+  "…jäljellä X arvioidun työn jälkeen; N asiaa ilman kestoarviota ei ole
+  mukana."
+- Arvioimattomien laskussa käytetään avoimia asioita
+  (`planned.openUnknownCount`); valmiiksi merkityt ilman kestoa kerrotaan
+  tietona ("N valmiiksi merkittyä ilman arviota (ei lasketa kuormaan)"),
+  koska arviointi ei kysy niitä.
+
+### Ensimmäinen katsaus
+
+- Katsauksen alussa **Tiedossa / Ei tiedossa / Ei kirjattu**: arvioitu työ
+  (kestoarvio N/M asialla), kirjattu aika päivineen ja lähteineen;
+  arvioimattomat ("kokonaiskuormaa ei tiedetä"); päivät ilman kirjauksia
+  ("tuntemattomia, eivät nollaa").
+- Ei vakiintunutta kirjausta: "Kirjattu X N päivänä (kirjaukset alkoivat
+  <pvm>). Päivät ilman kirjauksia ovat tuntemattomia, eivät nollaa."
+- Ei kuormitusta mutta arvioimattomia: "Arvioitu työ (X) mahtui
+  kapasiteettiin (Y); N asiaa ilman arviota, joten kokonaiskuormaa ei
+  tiedetä." — ei "Suunnitelma mahtui kapasiteettiin".
+- Ehdotukset: kapasiteettia ei ehdoteta kirjatun ajan perusteella
+  osittaisesta viikosta; tavoitteen muutos vain vakiintuneesta toteumasta ja
+  vähintään 30 min (0 = "ei nyt" hiljentäisi alueen). Uusi ohjaava ehdotus
+  `start_tracking` ("Kirjaa aikaa koko ensi viikon, niin katsaus voi verrata
+  toteumaa tavoitteisiin") kun kirjaus alkoi mutta ei vakiintunut; ei
+  kirjoita mitään.
+- Ensimmäistä Suunta-viikkoa ei verrata Suuntaa edeltäneeseen viikkoon
+  ("Ensimmäinen Suunta-viikko — vertailu alkaa ensi viikolla."), eikä
+  kehitys ulotu Suuntaa edeltäneisiin viikkoihin. Suunniteltu-rivi kertoo
+  arvioimattomat ("arvioimattomia A → B"); jos jommallakummalla viikolla
+  alle 50 % on arvioitu, suunniteltua ei verrata. Suunnitellun ajan kehitystä
+  ei sanoiteta, jos jollakin viikolla alle 80 % oli arvioitu.
+- Historia: "(kirjauksia vain N päivänä)", kun katsauksen kirjaus ei ollut
+  vakiintunut.
+
+### Vajaa lataus ja virheelliset arvot
+
+- Jos jonkin analyysin syötteen (alueet, kapasiteetit, kirjaukset,
+  katsaukset, ajastimet, asetukset, tehtävät, rutiinit, poikkeukset,
+  tavoitteet, projektit) lataus epäonnistui (`analysisLoadProblems`),
+  havainnot, laatu, katsaus ja ehdotukset korvataan ilmoituksella, eikä
+  katsausta tallenneta (`{ok:false, code:'incomplete_data'}`): "Kaikkia
+  tietoja ei saatu ladattua, joten katsausta ei tallennettu vajailla
+  luvuilla. Pohdintasi on yhä kentässä – päivitä, kun yhteys toimii."
+- Muutosehdotuksen kelvoton arvo näytetään kentän vieressä ("Anna tunnit,
+  esim. 5 tai 2,5." / 0–168 h -raja) ennen vahvistusta; ryhmä ei jatka
+  puolittain ja nimeää epäonnistuneet.
 
 ---
 
@@ -106,8 +233,9 @@ jokainen erikseen, ja sama ehdotus ei toteudu kahdesti:
 | Aseta ensi viikon kapasiteetti | ei asetettu | tallentaa kapasiteetin (käyttäjä muokkaa arvon) |
 | Kevennä ensi viikkoa | ensi viikon suunnitelma > kapasiteetti | siirtää liittämättömät ja vähiten tärkeät tehtävät viikolla eteenpäin |
 | Keskeytä tavoite | kuormitus; alueen tärkeys ≤ 2 | tavoitteen tila `paused` (ei katoa) |
-| Varaa aikaa alueelle | huomiotta jääminen | luo tehtävän ensi maanantaille alueen tärkeimpään tavoitteeseen |
-| Muuta alueen tavoitetta | huomiotta jääminen / poikkeama | päivittää tavoitteen (käyttäjä muokkaa arvon) |
+| Varaa aikaa alueelle | huomiotta jääminen (ei `plan_unknown`) | luo tehtävän ensi maanantaille alueen tärkeimpään tavoitteeseen |
+| Muuta alueen tavoitetta | huomiotta jääminen vakiintuneesta toteumasta (arvo ≥ 30 min) / poikkeama | päivittää tavoitteen (käyttäjä muokkaa arvon) |
+| Kirjaa aikaa koko ensi viikon | kirjaus alkoi mutta ei vakiintunut (v3) | ei kirjoita mitään: avaa ajan kirjauksen |
 
 ## Palaute Tavoitteesta tekemiseksi -moottorille
 
@@ -145,11 +273,13 @@ tuottaa samoja faktoja:
 
 Kaikki kynnykset ovat yhdessä moduulissa `src/domain/alignmentPolicy.js`
 (`TIME_RULES`, `ENERGY_RULES`, `DAILY_RULES`, `QUALITY_RULES`,
-`REVIEW_RULES`, `TREND_RULES`, `TIMER_RULES`). Ajan kynnykset ovat
-ensimmäisen version arvot sellaisenaan (`RULES` alignment.js:ssä on sama
-olio). Kynnyksiä ei näytetä käyttäjälle säädettävinä.
+`REVIEW_RULES`, `TREND_RULES`, `TIMER_RULES`). Ensimmäisen version ajan
+kynnykset ovat ennallaan (`RULES` alignment.js:ssä on sama olio); versio 3
+lisäsi harvan aineiston rajat (ks. yllä). Kynnyksiä ei näytetä käyttäjälle
+säädettävinä.
 
-`POLICY_VERSION = 2` tallentuu viikkokatsauksen tilannekuvaan
+`POLICY_VERSION = 3` (versio 2: energia ja päivän havainnot; versio 3: harvan
+aineiston rajat) tallentuu viikkokatsauksen tilannekuvaan
 (`snapshot.policyVersion`, 0013:n jälkeen myös sarakkeeseen). Katsaus ilman
 versiota on versio 1. Vanhoja tilannekuvia **ei lasketa uudelleen**; historia
 ja vertailu näyttävät millä säännöillä viikko arvioitiin.
@@ -227,8 +357,10 @@ kun aika ei ylity.
 Enintään 3 havaintoa, deterministinen järjestys: 1 vahva kuormitus · 2 vahva
 huomiotta jääminen · 3 vahva poikkeama · 4 energiakuormitus · 5–7 huomio-tason
 aikahavainnot · 8 luokittelematon työ (≥ 3) · 9 aineiston laatu (≥ 3
-arvioimatonta / ei kapasiteettia) · 10 tiedoksi. Ensimmäinen on "Tänään
-kannattaa huomata", ja jokainen kertoo "Miksi tämä?". Lisäksi tilarivit:
+arvioimatonta / ei kapasiteettia; harvalla arvioaineistolla sija 4) · 10
+tiedoksi. Ensimmäinen on "Tänään kannattaa huomata", ja jokainen kertoo
+"Miksi tämä?" ja perustan. Harvan arvioaineiston ilmoitus on kortin
+ensimmäinen rivi. Lisäksi tilarivit:
 kapasiteettia jäljellä, kuormittavaa jäljellä rajasta, tämän päivän yhteys
 hyvin tärkeisiin alueisiin. Ei ilmoituksia, ei kaavioita.
 
@@ -258,7 +390,8 @@ lasketaan vasta pyydettäessä. Ei elämänpisteitä, ei tulostaulua.
 ### Tasapainotus ja esikatselu
 
 Uudet ehdotukset: kapasiteettioletus kirjatun toteuman perusteella (vain kun
-viikko on päättynyt ja poikkeama ≥ 25 % ja ≥ 2 h; kysymyksenä), arvioi
+viikko on päättynyt, kirjaaminen oli vakiintunut ja kattoi ≥ 6/7 viikosta,
+ja poikkeama ≥ 25 % ja ≥ 2 h; kysymyksenä), arvioi
 ensi viikon arvioimattomat (ohjaava, ei kirjoita), hiljainen tavoite (ei
 tekemistä 3 viikkoon, alue ≤ 3 tai matala prioriteetti). Tavoitteen muutos on
 kysymys: "Pidetäänkö tavoite vai muutetaanko suunnitelmaa?" — ei väitettä,

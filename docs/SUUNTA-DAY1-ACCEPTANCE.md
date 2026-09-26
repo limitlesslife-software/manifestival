@@ -37,7 +37,11 @@ täytetty eikä kukaan ole päättänyt puolestasi, mikä sinulle on tärkeää.
       **30** → "Kirjaa". (Korjattu tänä yönä: aiemmin selain hylkäsi 30.)
 - [ ] 10. **Suunta päivittyy:** kirjattu aika näkyy alueen toteumassa;
       havainnot (kuormitus / huomiotta jääminen / poikkeama) perustuvat
-      tallennettuun dataan — sama näkymä latauksen jälkeen.
+      tallennettuun dataan — sama näkymä latauksen jälkeen. Ensimmäisellä
+      viikolla yksi tai kaksi kirjausta **ei** tee alueesta "huomiotta
+      jäävää" (toteumaa verrataan vasta vakiintuneesta kirjauksesta), ja
+      kun useimmilta tehtäviltä puuttuu kesto, havaintojen yläpuolella
+      lukee ensin **"Suunnan arvio tarkentuu, kun lisäät aika-arvioita."**
 
 ## C. Ilman verkkoa (1 min)
 
@@ -57,8 +61,11 @@ täytetty eikä kukaan ole päättänyt puolestasi, mikä sinulle on tärkeää.
 ## E. Viikkokatsaus (voi tehdä sunnuntaina)
 
 - [ ] 15. Tee ensimmäinen **viikkokatsaus**, tallenna, lataa → se on
-      historiassa. Valitse ensi viikolle yksi muutos: esikatselu näyttää
-      ennen/jälkeen, mitään ei muutu ilman vahvistusta.
+      historiassa. Katsauksen alussa lukee **Tiedossa / Ei tiedossa / Ei
+      kirjattu**; kirjaamattomat päivät ovat "tuntemattomia, eivät nollaa",
+      eikä ensimmäistä viikkoa verrata Suuntaa edeltäneeseen. Valitse ensi
+      viikolle yksi muutos: esikatselu näyttää ennen/jälkeen, mitään ei muutu
+      ilman vahvistusta.
 
 ---
 
