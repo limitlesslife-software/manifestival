@@ -187,8 +187,8 @@ test('KRIITTINEN: yhdenkin portin poikkeama muuttaa tai mitätöi tilan', () => 
     }
   }
 
-  // Yksitoista tilaa (BASE + A-J) kertaa kaksikymmentäneljä porttia.
-  assert.equal(mutaatioita, 264, `mutaatioita ajettiin ${mutaatioita}, odotettiin 264`);
+  // Kaksitoista tilaa (BASE + A-K) kertaa kolmekymmentäneljä porttia.
+  assert.equal(mutaatioita, 408, `mutaatioita ajettiin ${mutaatioita}, odotettiin 408`);
 
   // Ainoat sallitut siirtymät ovat niiden aaltojen välillä, jotka
   // eroavat tasan yhdellä portilla. Jos tähän ilmestyisi uusi pari,
@@ -213,7 +213,9 @@ test('KRIITTINEN: yhdenkin portin poikkeama muuttaa tai mitätöi tilan', () => 
   // joten sekään ei tuo uutta paria. Aalto J avaa KAKSI porttia
   // (runningTimers, alignmentItemSettings), joten sekään ei ole yhden
   // käännöksen päässä I:stä: 264 - 4 sallittua siirtymää = 260.
-  assert.equal(mitättömiä, 260);
+  // Aalto K avaa KYMMENEN porttia, joten sekään ei tuo uutta paria:
+  // 408 - 4 = 404.
+  assert.equal(mitättömiä, 404);
 });
 
 test('KRIITTINEN: puuttuva tai ylimääräinen portti hylätään', () => {
@@ -263,9 +265,11 @@ test('KRIITTINEN: vierasavaimet luetaan molemmista ilmoitusmuodoista', () => {
   // Yhdeksän erästä 0003-0008, kolme migraatiosta 0010, kaksi
   // migraatiosta 0011, neljä migraatiosta 0012 ja seitsemän
   // migraatiosta 0013 (time_entries -> projects/routines, running_timers
-  // -> life_areas/goals/tasks/projects/routines).
-  assert.equal(viitteet.length, 25,
-    `omistajuusviitteitä löytyi ${viitteet.length}, odotettiin 25`);
+  // -> life_areas/goals/tasks/projects/routines). Migraatiosta 0014 kuusi
+  // (place_aliases, calendar_events x2, commute_observations, habit_events,
+  // exercise_sessions).
+  assert.equal(viitteet.length, 31,
+    `omistajuusviitteitä löytyi ${viitteet.length}, odotettiin 31`);
 
   const parit = viitteet.map(v => `${v.child}->${v.parent}`);
   assert.ok(parit.includes('routine_exceptions->routines'),
@@ -348,7 +352,11 @@ test('KRIITTINEN: aallon taulut vastaavat sen portteja', () => {
     travel_plans: 'travelPlans', location_rules: 'locationRules',
     life_areas: 'lifeAreas', weekly_capacities: 'weeklyCapacities',
     time_entries: 'timeEntries', alignment_reviews: 'alignmentReviews',
-    running_timers: 'runningTimers', alignment_item_settings: 'alignmentItemSettings'
+    running_timers: 'runningTimers', alignment_item_settings: 'alignmentItemSettings',
+    saved_places: 'savedPlaces', place_aliases: 'placeAliases', calendar_events: 'calendarEvents',
+    commute_observations: 'commuteObservations', life_settings: 'lifeSettings',
+    sleep_logs: 'sleepLogs', habit_plans: 'habitPlans', habit_events: 'habitEvents',
+    exercise_sessions: 'exerciseSessions', wellbeing_checkins: 'wellbeingCheckins'
   };
 
   for (const wave of WAVES) {

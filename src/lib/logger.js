@@ -56,7 +56,21 @@ export const SENSITIVE_KEYS = Object.freeze([
   'energy', 'mood', 'stress', 'sleephours',
   'amount', 'amountminor', 'targetminor', 'currentminor',
   // Sijainti: koordinaatti ei saa päätyä konsoliin (src/platform/geolocation.js).
-  'latitude', 'longitude', 'lat', 'lng', 'lon', 'coords', 'coordinates', 'position', 'geolocation'
+  'latitude', 'longitude', 'lat', 'lng', 'lon', 'coords', 'coordinates', 'position', 'geolocation',
+  // Arjen käyttöjärjestelmä (0014). Paikka tekstinä kertoo, missä ihminen
+  // asuu ja käy; uni, motivaatio, hallinnan tunne, tavat (nikotiini) ja
+  // liikunta ovat terveyteen liittyviä. Arvot eivät kuulu lokiin koskaan —
+  // lokiin kuuluvat vain koodit, lukumäärät ja totuusarvot.
+  'address', 'alias', 'aliases', 'area', 'locationtext', 'providerplaceid', 'origin', 'destination',
+  'motivation', 'control', 'wellbeingcheckin', 'wellbeingcheckins',
+  'sleep', 'sleeplog', 'sleeplogs', 'bedtime', 'bedtimetarget', 'plannedbedtime', 'actualbedtime',
+  'plannedwake', 'actualwake', 'waketime', 'sleepwindow',
+  'habit', 'habits', 'habitplan', 'habitplans', 'habitevent', 'habitevents',
+  'nicotine', 'cigarettes', 'snus', 'dailytarget', 'baselineperday',
+  'exercise', 'exercisesession', 'exercisesessions', 'workout', 'intensity', 'recoverydemand',
+  'mealrhythm', 'meals', 'supplement', 'supplements', 'morningroutine',
+  'hourlyvalue', 'hourlyvalueminor', 'unitcost', 'unitcostminor', 'spend', 'spent', 'budget',
+  'discretionary'
 ]);
 
 const SENSITIVE = new Set(SENSITIVE_KEYS);

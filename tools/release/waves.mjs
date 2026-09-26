@@ -366,8 +366,12 @@ export const WAVES = Object.freeze([
     backupRequired: false,
     verifyPrerequisite: '0013',
 
-    // READY koskee käyttöliittymää, `blockedBy` kantaa. Ks. aalto F.
-    readiness: 'READY',
+    // ESTETTY MOLEMMISTA SYISTÄ, kuten aalto H hetken oli: migraatio on
+    // ajamatta JA näkymät rakennetaan erikseen (kalenteri, paikat, uni,
+    // herätys, tavat, liikunta). Valmiustila JOHDETAAN tavoitettavuudesta
+    // (tests/ui-reachability.test.mjs): kun näkymät ovat olemassa, rivit
+    // tools/release/reachability.mjs:ssä ja tämä arvo muuttuvat yhdessä.
+    readiness: 'BLOCKED',
     blockedBy: 'supabase/migrations/0014_daily_life.sql — EI AJETTU',
     gates: Object.freeze(['savedPlaces', 'placeAliases', 'calendarEvents', 'commuteObservations',
                           'lifeSettings', 'sleepLogs', 'habitPlans', 'habitEvents',

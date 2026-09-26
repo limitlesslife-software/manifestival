@@ -24,6 +24,9 @@ import {
   inboxRepo, remindersRepo, noticesRepo, travelPlansRepo, locationRulesRepo,
   lifeAreasRepo, weeklyCapacitiesRepo, timeEntriesRepo, alignmentReviewsRepo,
   alignmentItemSettingsRepo, runningTimersRepo,
+  savedPlacesRepo, placeAliasesRepo, calendarEventsRepo, commuteObservationsRepo,
+  lifeSettingsRepo, sleepLogsRepo, habitPlansRepo, habitEventsRepo,
+  exerciseSessionsRepo, wellbeingCheckinsRepo,
   clearAllCollections
 } from '../data/collectionsRepo.js';
 import { newTaskId } from '../lib/rows.js';
@@ -84,7 +87,10 @@ import {
   setInboxItems, setReminders, setNotices, setTravelPlans, setLocationRules,
   setAiAudit, setDomainLoadStatus, batch,
   setLifeAreas, setWeeklyCapacities, setTimeEntries, setAlignmentReviews,
-  setAlignmentItemSettings, removeItemSettingsFromState
+  setAlignmentItemSettings, removeItemSettingsFromState,
+  setSavedPlaces, setPlaceAliases, setCalendarEvents, setCommuteObservations,
+  setLifeSettings, setSleepLogs, setHabitPlans, setHabitEvents,
+  setExerciseSessions, setWellbeingCheckins
 } from './state.js';
 import { adoptLoadedTimers, timerMutationSeq } from './timerState.js';
 import {
@@ -223,7 +229,19 @@ export async function loadUserData() {
     timeEntriesRepo.list(),
     alignmentReviewsRepo.list(),
     alignmentItemSettingsRepo.list(),
-    runningTimersRepo.list()
+    runningTimersRepo.list(),
+    // Arjen käyttöjärjestelmä (0014). LOPPUUN: purku on paikkasidonnainen,
+    // ja applyLoadedData lukee samat paikat samassa järjestyksessä.
+    savedPlacesRepo.list(),
+    placeAliasesRepo.list(),
+    calendarEventsRepo.list(),
+    commuteObservationsRepo.list(),
+    lifeSettingsRepo.list(),
+    sleepLogsRepo.list(),
+    habitPlansRepo.list(),
+    habitEventsRepo.list(),
+    exerciseSessionsRepo.list(),
+    wellbeingCheckinsRepo.list()
   ]);
 
   // Istunto on voinut vaihtua odotuksen aikana.
@@ -244,7 +262,10 @@ function applyLoadedData(loaded, timerSeq) {
     investmentsResult, milestonesResult, auditResult,
     inboxResult, remindersResult, noticesResult, travelResult,
     locationResult, areasResult, capacitiesResult, entriesResult,
-    reviewsResult, itemSettingsResult, timersResult] = loaded;
+    reviewsResult, itemSettingsResult, timersResult,
+    placesResult, aliasesResult, eventsResult, observationsResult,
+    lifeSettingsResult, sleepLogsResult, habitPlansResult, habitEventsResult,
+    exerciseResult, checkinsResult] = loaded;
 
   // Jokainen kokoelma kulkee applyLoadResult():n läpi: onnistunut haku
   // korvaa kokoelman (myös tyhjällä listalla — se on kelvollinen tulos),
@@ -300,7 +321,19 @@ function applyLoadedData(loaded, timerSeq) {
     // Suunta 2 (0013). Ajastin: kannan rivi voittaa laitteen kopion
     // (src/app/timeTracking.js adoptTimer), joten lataus vain asettaa listan.
     applyLoadResult('alignmentItemSettings', itemSettingsResult, setAlignmentItemSettings),
-    applyLoadResult('runningTimers', timersResult, timers => adoptLoadedTimers(timers, { sinceSeq: timerSeq }))
+    applyLoadResult('runningTimers', timersResult, timers => adoptLoadedTimers(timers, { sinceSeq: timerSeq })),
+    // Arjen käyttöjärjestelmä (0014). Ladataan vaikka näkymä ei vielä
+    // käyttäisi kaikkia: muuten tieto katoaisi näkymän rakentamisen hetkellä.
+    applyLoadResult('savedPlaces', placesResult, setSavedPlaces),
+    applyLoadResult('placeAliases', aliasesResult, setPlaceAliases),
+    applyLoadResult('calendarEvents', eventsResult, setCalendarEvents),
+    applyLoadResult('commuteObservations', observationsResult, setCommuteObservations),
+    applyLoadResult('lifeSettings', lifeSettingsResult, setLifeSettings),
+    applyLoadResult('sleepLogs', sleepLogsResult, setSleepLogs),
+    applyLoadResult('habitPlans', habitPlansResult, setHabitPlans),
+    applyLoadResult('habitEvents', habitEventsResult, setHabitEvents),
+    applyLoadResult('exerciseSessions', exerciseResult, setExerciseSessions),
+    applyLoadResult('wellbeingCheckins', checkinsResult, setWellbeingCheckins)
   ];
 
   // Aikakirjausten haku epäonnistui (F6): lähtökorin kirjaukset näkyvät

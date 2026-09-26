@@ -34,6 +34,14 @@ import { normalizeTimeEntry } from '../domain/timeEntry.js';
 import { normalizeAlignmentReview } from '../domain/alignmentReview.js';
 import { normalizeItemSettings } from '../domain/alignmentItemSettings.js';
 import { normalizeTimer } from '../domain/timer.js';
+import { normalizeSavedPlace, normalizePlaceAlias } from '../domain/savedPlace.js';
+import { normalizeCalendarEvent } from '../domain/calendarEvent.js';
+import { normalizeCommuteObservation } from '../domain/commuteObservation.js';
+import { normalizeLifeSettings, effectiveLifeSettings } from '../domain/lifeSettings.js';
+import { normalizeSleepLog } from '../domain/sleepLog.js';
+import { normalizeHabitPlan, normalizeHabitEvent } from '../domain/habit.js';
+import { normalizeExerciseSession } from '../domain/exerciseSession.js';
+import { normalizeWellbeingCheckin } from '../domain/wellbeingCheckin.js';
 import { getDevicePreference, setDevicePreference } from '../data/preferences.js';
 
 function initialState() {
@@ -120,6 +128,23 @@ function initialState() {
     /** Suunta 2 (0013): kohdeasetukset ja käynnissä oleva ajastin (0–1). */
     alignmentItemSettings: [],
     runningTimers: [],
+
+    /**
+     * Arjen käyttöjärjestelmä (0014). Ei säily ennen migraatiota 0014.
+     * `lifeSettings` on 0–1 riviä: puuttuva rivi = oletukset
+     * (currentLifeSettings). Uni-, motivaatio- ja tapakirjaukset ovat
+     * arkaluonteisia: ne eivät kulje tekoälylle eivätkä lokiin.
+     */
+    savedPlaces: [],
+    placeAliases: [],
+    calendarEvents: [],
+    commuteObservations: [],
+    lifeSettings: [],
+    sleepLogs: [],
+    habitPlans: [],
+    habitEvents: [],
+    exerciseSessions: [],
+    wellbeingCheckins: [],
 
     /**
      * Kirjaus, jonka tulkintaa käyttäjä parhaillaan tarkistaa.
@@ -413,7 +438,10 @@ export function removeGoalFromState(id) {
     // koskaan poisteta tavoitteen mukana.
     tasks: state.tasks.map(t => (t.goalId === id ? { ...t, goalId: null } : t)),
     // Kirjattu aika säilyy; tavoiteliitos katkeaa (time_entries_goal_fkey).
-    timeEntries: state.timeEntries.map(e => (e.goalId === id ? { ...e, goalId: null } : e))
+    timeEntries: state.timeEntries.map(e => (e.goalId === id ? { ...e, goalId: null } : e)),
+    // Menot ja liikuntakerrat säilyvät (0014: on delete set null (goal_id)).
+    calendarEvents: state.calendarEvents.map(e => (e.goalId === id ? { ...e, goalId: null } : e)),
+    exerciseSessions: state.exerciseSessions.map(s => (s.goalId === id ? { ...s, goalId: null } : s))
   });
 }
 
@@ -1237,6 +1265,259 @@ export function setRunningTimerInState(timer) {
 
 export function replaceTimeEntryInState(id, entry) {
   commit({ timeEntries: state.timeEntries.map(e => (e.id === id ? normalizeTimeEntry(entry) : e)) });
+}
+
+// ---------------------------------------------- arjen käyttöjärjestelmä (0014)
+//
+// Tila noudattaa samoja poistosääntöjä kuin kanta (migraatio 0014):
+//   paikan poisto vie lisänimet ja matkahavainnot (kaskadi) ja katkaisee
+//   menojen paikkaliitoksen (set null); tavan poisto vie sen kirjaukset.
+// Näin muistitila ja kanta eivät ajaudu erilleen portin auettua.
+
+/** Tunnisteen mukainen korvaus: rivi, jota ei ole, EI synny (ei hiljaista lisäystä). */
+function replaceById(list, id, next) {
+  return list.map(item => (item.id === id ? next : item));
+}
+
+export function setSavedPlaces(places) {
+  commit({ savedPlaces: (places || []).map(normalizeSavedPlace) });
+}
+
+export function addSavedPlaceToState(place) {
+  commit({ savedPlaces: [...state.savedPlaces, normalizeSavedPlace(place)] });
+}
+
+export function replaceSavedPlaceInState(id, place) {
+  commit({ savedPlaces: replaceById(state.savedPlaces, id, normalizeSavedPlace(place)) });
+}
+
+/**
+ * Poista paikka kuten kanta: lisänimet ja matkahavainnot poistuvat,
+ * menot jäävät ilman paikkaa. Palauttaa poistetut osat peruutusta varten
+ * (restoreSavedPlaceInState), tai null jos paikkaa ei ollut.
+ */
+export function removeSavedPlaceFromState(id) {
+  const place = state.savedPlaces.find(p => p.id === id) || null;
+  if (!place) return null;
+  const removed = {
+    place,
+    aliases: state.placeAliases.filter(a => a.placeId === id),
+    observations: state.commuteObservations.filter(o => o.placeId === id),
+    eventIds: state.calendarEvents.filter(e => e.placeId === id).map(e => e.id)
+  };
+  commit({
+    savedPlaces: state.savedPlaces.filter(p => p.id !== id),
+    placeAliases: state.placeAliases.filter(a => a.placeId !== id),
+    commuteObservations: state.commuteObservations.filter(o => o.placeId !== id),
+    calendarEvents: state.calendarEvents.map(e => (e.placeId === id ? { ...e, placeId: null } : e))
+  });
+  return removed;
+}
+
+/** Peruutus epäonnistuneelle poistolle: paikka, sen lapsirivit ja menojen liitokset takaisin. */
+export function restoreSavedPlaceInState(removed) {
+  if (!removed || !removed.place) return;
+  const placeId = removed.place.id;
+  const eventIds = new Set(removed.eventIds || []);
+  const aliasIds = new Set((removed.aliases || []).map(a => a.id));
+  const observationIds = new Set((removed.observations || []).map(o => o.id));
+  commit({
+    savedPlaces: [...state.savedPlaces.filter(p => p.id !== placeId), normalizeSavedPlace(removed.place)],
+    placeAliases: [...state.placeAliases.filter(a => !aliasIds.has(a.id)),
+      ...(removed.aliases || []).map(normalizePlaceAlias)],
+    commuteObservations: [...state.commuteObservations.filter(o => !observationIds.has(o.id)),
+      ...(removed.observations || []).map(normalizeCommuteObservation)],
+    calendarEvents: state.calendarEvents.map(e => (eventIds.has(e.id) ? { ...e, placeId } : e))
+  });
+}
+
+export function findSavedPlace(id) {
+  return state.savedPlaces.find(p => p.id === id) || null;
+}
+
+export function setPlaceAliases(aliases) {
+  commit({ placeAliases: (aliases || []).map(normalizePlaceAlias) });
+}
+
+/** Sama lisänimi samalle paikalle kerran (kanta: place_aliases_alias_unique). */
+export function upsertPlaceAliasInState(alias) {
+  const normalized = normalizePlaceAlias(alias);
+  commit({
+    placeAliases: [
+      ...state.placeAliases.filter(a => a.id !== normalized.id
+        && !(a.alias === normalized.alias && a.placeId === normalized.placeId)),
+      normalized
+    ]
+  });
+}
+
+export function removePlaceAliasFromState(id) {
+  commit({ placeAliases: state.placeAliases.filter(a => a.id !== id) });
+}
+
+export function findPlaceAlias(id) {
+  return state.placeAliases.find(a => a.id === id) || null;
+}
+
+export function setCalendarEvents(events) {
+  commit({ calendarEvents: (events || []).map(normalizeCalendarEvent) });
+}
+
+export function addCalendarEventToState(event) {
+  commit({ calendarEvents: [...state.calendarEvents, normalizeCalendarEvent(event)] });
+}
+
+export function replaceCalendarEventInState(id, event) {
+  commit({ calendarEvents: replaceById(state.calendarEvents, id, normalizeCalendarEvent(event)) });
+}
+
+export function removeCalendarEventFromState(id) {
+  commit({ calendarEvents: state.calendarEvents.filter(e => e.id !== id) });
+}
+
+export function findCalendarEvent(id) {
+  return state.calendarEvents.find(e => e.id === id) || null;
+}
+
+export function setCommuteObservations(observations) {
+  commit({ commuteObservations: (observations || []).map(normalizeCommuteObservation) });
+}
+
+export function addCommuteObservationToState(observation) {
+  commit({ commuteObservations: [...state.commuteObservations, normalizeCommuteObservation(observation)] });
+}
+
+export function removeCommuteObservationFromState(id) {
+  commit({ commuteObservations: state.commuteObservations.filter(o => o.id !== id) });
+}
+
+/** Asetukset: 0–1 riviä. Lista, koska lataus ja vienti käsittelevät kokoelmia. */
+export function setLifeSettings(rows) {
+  commit({ lifeSettings: (rows || []).map(normalizeLifeSettings).slice(0, 1) });
+}
+
+/** YKSI RIVI KÄYTTÄJÄÄ KOHTI: uusi rivi korvaa aina edellisen. */
+export function upsertLifeSettingsInState(settings) {
+  commit({ lifeSettings: settings ? [normalizeLifeSettings(settings)] : [] });
+}
+
+/**
+ * Voimassa olevat asetukset: tallennettu rivi tai oletukset. Ei koskaan
+ * null — kutsujan ei tarvitse tietää, onko käyttäjä tallentanut mitään.
+ */
+export function currentLifeSettings(current = state) {
+  return effectiveLifeSettings(current && current.lifeSettings);
+}
+
+export function setSleepLogs(logs) {
+  commit({ sleepLogs: (logs || []).map(normalizeSleepLog) });
+}
+
+/** Yksi kirjaus heräämispäivää kohti (kanta: sleep_logs_wake_date_unique). */
+export function upsertSleepLogInState(log) {
+  const normalized = normalizeSleepLog(log);
+  commit({
+    sleepLogs: [
+      ...state.sleepLogs.filter(l => l.id !== normalized.id && l.wakeDate !== normalized.wakeDate),
+      normalized
+    ]
+  });
+}
+
+export function removeSleepLogFromState(id) {
+  commit({ sleepLogs: state.sleepLogs.filter(l => l.id !== id) });
+}
+
+export function setHabitPlans(plans) {
+  commit({ habitPlans: (plans || []).map(normalizeHabitPlan) });
+}
+
+export function addHabitPlanToState(plan) {
+  commit({ habitPlans: [...state.habitPlans, normalizeHabitPlan(plan)] });
+}
+
+export function replaceHabitPlanInState(id, plan) {
+  commit({ habitPlans: replaceById(state.habitPlans, id, normalizeHabitPlan(plan)) });
+}
+
+/**
+ * Poista suunnitelma kuten kanta: sen kirjaukset poistuvat (kaskadi).
+ * Palauttaa poistetut peruutusta varten (restoreHabitPlanInState).
+ */
+export function removeHabitPlanFromState(id) {
+  const plan = state.habitPlans.find(p => p.id === id) || null;
+  if (!plan) return null;
+  const removed = { plan, events: state.habitEvents.filter(e => e.planId === id) };
+  commit({
+    habitPlans: state.habitPlans.filter(p => p.id !== id),
+    habitEvents: state.habitEvents.filter(e => e.planId !== id)
+  });
+  return removed;
+}
+
+export function restoreHabitPlanInState(removed) {
+  if (!removed || !removed.plan) return;
+  const eventIds = new Set((removed.events || []).map(e => e.id));
+  commit({
+    habitPlans: [...state.habitPlans.filter(p => p.id !== removed.plan.id), normalizeHabitPlan(removed.plan)],
+    habitEvents: [...state.habitEvents.filter(e => !eventIds.has(e.id)),
+      ...(removed.events || []).map(normalizeHabitEvent)]
+  });
+}
+
+export function findHabitPlan(id) {
+  return state.habitPlans.find(p => p.id === id) || null;
+}
+
+export function setHabitEvents(events) {
+  commit({ habitEvents: (events || []).map(normalizeHabitEvent) });
+}
+
+export function addHabitEventToState(event) {
+  commit({ habitEvents: [...state.habitEvents, normalizeHabitEvent(event)] });
+}
+
+export function removeHabitEventFromState(id) {
+  commit({ habitEvents: state.habitEvents.filter(e => e.id !== id) });
+}
+
+export function setExerciseSessions(sessions) {
+  commit({ exerciseSessions: (sessions || []).map(normalizeExerciseSession) });
+}
+
+export function addExerciseSessionToState(session) {
+  commit({ exerciseSessions: [...state.exerciseSessions, normalizeExerciseSession(session)] });
+}
+
+export function replaceExerciseSessionInState(id, session) {
+  commit({ exerciseSessions: replaceById(state.exerciseSessions, id, normalizeExerciseSession(session)) });
+}
+
+export function removeExerciseSessionFromState(id) {
+  commit({ exerciseSessions: state.exerciseSessions.filter(s => s.id !== id) });
+}
+
+export function findExerciseSession(id) {
+  return state.exerciseSessions.find(s => s.id === id) || null;
+}
+
+export function setWellbeingCheckins(checkins) {
+  commit({ wellbeingCheckins: (checkins || []).map(normalizeWellbeingCheckin) });
+}
+
+/** Yksi kirjaus päivää kohti (kanta: wellbeing_checkins_date_unique). */
+export function upsertWellbeingCheckinInState(checkin) {
+  const normalized = normalizeWellbeingCheckin(checkin);
+  commit({
+    wellbeingCheckins: [
+      ...state.wellbeingCheckins.filter(c => c.id !== normalized.id && c.date !== normalized.date),
+      normalized
+    ]
+  });
+}
+
+export function removeWellbeingCheckinFromState(id) {
+  commit({ wellbeingCheckins: state.wellbeingCheckins.filter(c => c.id !== id) });
 }
 
 export function resetState() {
