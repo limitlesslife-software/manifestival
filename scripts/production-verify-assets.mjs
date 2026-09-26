@@ -5,6 +5,20 @@
 //   npm run production:verify-assets -- --infer
 //   npm run production:verify-assets -- --rollback-of=D
 //   npm run production:verify-assets -- --wave=A --url=https://oma.esikatselu.example
+//   npm run production:verify-assets -- --wave=C --sha=<40 merkin SHA> --record-acceptance
+//
+// TEKNINEN HYVÄKSYNTÄ (--record-acceptance)
+//
+// Todentaa tuotannossa olevan aallon KAIKKI koneelliset ehdot
+// (tools/activation/acceptance-policy.mjs: sukulinja, migraatioedellytys,
+// ehdokkaan testit, tietoturva, esitarkistus, verify_00XX, live-
+// sormenjälki, välimuisti ja portit) ja vain niiden täyttyessä kirjaa
+// AUTOMATED_TECHNICAL_ACCEPTANCE-rivin PAIKALLISEEN, git-ignoroituun
+// päiväkirjaan .claude/activation/journal.jsonl. Käsin tehtävä
+// käyttötodennus jää tilaan LIVE_USE_VALIDATION_PENDING. Vaatii --wave ja
+// --sha, ei salli --url-, --infer- eikä --rollback-of-lippua.
+// Migraatioaallolle myös --verify-result=<verify_00XX-tulos>.
+// Logiikka: tools/activation/orchestrate.mjs (recordTechnicalAcceptance).
 //
 // MITÄ TÄMÄ TEKEE
 //
@@ -29,7 +43,8 @@
 //   - ei POST/PUT/PATCH/DELETE-pyyntöjä, vain GET
 //   - ei /api/-kutsuja (ne maksavat ja koskevat AI-rajapintaan)
 //   - ei Supabase-kutsuja
-//   - ei kirjoituksia mihinkään
+//   - ei kirjoituksia mihinkään — ainoa poikkeus on --record-acceptance,
+//     joka lisää yhden rivin paikalliseen päiväkirjaan
 //
 // MIKSI TÄMÄ EI OLE YKSIKKÖTESTI
 //
@@ -98,6 +113,33 @@ if (!aalto && !peruutus && !päättele) {
 const git = createGit();
 const gitShow = (s, p) => git.showBuffer(s, p);
 const preload = (s, p) => git.showMany(s, p);
+
+// ------------------------------------------- tekninen hyväksyntä (kirjaus)
+
+if (process.argv.slice(2).includes('--record-acceptance')) {
+  if (!aalto || !sha || peruutus || päättele || argumentti('url')) {
+    out('  --record-acceptance vaatii --wave=<X> ja --sha=<40 merkkiä>, eikä salli --url-, --infer- tai --rollback-of-lippua.');
+    process.exit(1);
+  }
+  const { recordTechnicalAcceptance } = await import('../tools/activation/orchestrate.mjs');
+  const tiedosto = argumentti('verify-result');
+  if (tiedosto && !fs.existsSync(path.resolve(ROOT, tiedosto))) { out(`  --verify-result: tiedostoa ${tiedosto} ei ole`); process.exit(1); }
+  const tulos = await recordTechnicalAcceptance(
+    { git, fs, root: ROOT, fetchImpl: hae, now: () => new Date() },
+    { wave: aalto, sha, inventoryPath: argumentti('inventory'), verifyResult: tiedosto ? fs.readFileSync(path.resolve(ROOT, tiedosto), 'utf8') : null }
+  );
+  out('');
+  out(`  TEKNINEN HYVÄKSYNTÄ (aalto ${aalto}, ${sha})`);
+  out('');
+  for (const [tunniste, teksti] of Object.entries(tulos.checks)) out(`    OK    ${tunniste}: ${teksti}`);
+  for (const ongelma of tulos.problems) out(`    STOP  ${ongelma}`);
+  out('');
+  out(tulos.ok
+    ? `  AUTOMATED_TECHNICAL_ACCEPTANCE kirjattu -> ${tulos.journal.path} (käyttötodennus: LIVE_USE_VALIDATION_PENDING, ei PASS)`
+    : '  EI KIRJATTU: vähintään yksi ehto ei täyty.');
+  out('');
+  process.exit(tulos.ok ? 0 : 1);
+}
 
 /** Junan ehdokkaat lukosta + origin/main. */
 function ehdokkaat() {

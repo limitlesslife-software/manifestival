@@ -18,6 +18,7 @@ import {
 } from '../../tools/release/waves.mjs';
 import { TRAIN, buildTrainMap } from '../../tools/activation/train-map.mjs';
 import { SECURITY_HEADERS } from '../../tools/release/live-assets.mjs';
+import { BASE_FILES } from '../../tools/release/preflight-checks.mjs';
 
 export const TRAIN_WAVES = ['C', 'D', 'E', 'F', 'G', 'H', 'I', 'J'];
 export const shaOf = wave => (TRAIN_WAVES.indexOf(wave) + 1).toString(16).padStart(2, '0').repeat(20);
@@ -58,9 +59,17 @@ export function checkResult(n, { fail = 0, poikkeavia = fail, drop = 0 } = {}) {
 export const PREFLIGHT_CHECKS = 16;
 export const VERIFY_CHECKS = 30;
 
-/** Tiedostot jokaiselle aallolle. */
+/** docs/PRODUCTION-STATUS.md:n porttitaulukko, joka vastaa aallon matriisia. */
+function statusDocFor(wave) {
+  const matrix = expectedMatrix(wave);
+  return ALL_GATES.map(g => `| \`${g}\` | 00xx | ${matrix[g] ? 'AKTIVOITU' : 'kiinni'} |`).join('\n') + '\n';
+}
+
+/** Tiedostot jokaiselle aallolle (repoChecks: BASE_FILES + tilannedokumentti). */
 function filesFor(wave, { cache } = {}) {
   const files = {
+    ...Object.fromEntries(BASE_FILES.map(f => [f, `-- ${f}\n`])),
+    'docs/PRODUCTION-STATUS.md': statusDocFor(wave),
     'sw.js': swFor(wave, cache),
     'src/data/schema.js': schemaFor(wave),
     'index.html': `<!doctype html><title>${wave}</title>`,
@@ -245,6 +254,27 @@ export function lockFrom(git) {
 }
 
 export const ROOT_STUB = path.resolve('virtual-activation-root');
+
+/** Päiväkirjarivi: aallon `wave` tekninen hyväksyntä tuotannon commitille. */
+export function acceptanceEntry(wave, sha = shaOf(wave)) {
+  return { at: '2026-09-26T10:00:00.000Z', type: 'technical-acceptance', wave, sha, result: 'AUTOMATED_TECHNICAL_ACCEPTANCE', liveUse: 'LIVE_USE_VALIDATION_PENDING', checks: {} };
+}
+
+/** Päiväkirjarivi: ehdokkaan vihreä testiajo. */
+export function testsEntry(wave, sha = shaOf(wave), { pass = 1600, fail = 0 } = {}) {
+  return { at: '2026-09-26T09:00:00.000Z', type: 'candidate-tests', wave, sha, result: fail ? 'FAIL' : 'PASS', tests: pass + fail, pass, fail, cancelled: 0, skipped: 0, todo: 0 };
+}
+
+/** Päiväkirja (JSONL) riveistä. */
+export function journalOf(...entries) {
+  return entries.map(e => JSON.stringify(e)).join('\n') + '\n';
+}
+
+/** `node --test` -yhteenveto (spec-raportoija). */
+export function testOutput({ pass = 1600, fail = 0, cancelled = 0 } = {}) {
+  return [`✔ jokin testi (1.2ms)`, `ℹ tests ${pass + fail + cancelled}`, 'ℹ suites 0', `ℹ pass ${pass}`,
+    `ℹ fail ${fail}`, `ℹ cancelled ${cancelled}`, 'ℹ skipped 3', 'ℹ todo 0', 'ℹ duration_ms 81234.5'].join('\n') + '\n';
+}
 
 /** Projektin tiedostot tynkä-fs:ään: lukko ja valinnainen inventaario. */
 export function projectFiles({ lock, inventory = null, inventoryName = 'inventaario.json', productionFixture = null, journal = null } = {}) {

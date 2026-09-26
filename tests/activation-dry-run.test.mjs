@@ -8,7 +8,7 @@ import path from 'node:path';
 
 import { ROOT, read } from './helpers/sources.mjs';
 import {
-  ROOT_STUB, lockFrom, projectFiles, shaOf, stubFetch, stubFs, stubGit
+  ROOT_STUB, acceptanceEntry, journalOf, lockFrom, projectFiles, shaOf, stubFetch, stubFs, stubGit, testsEntry
 } from './helpers/activation-history.mjs';
 import { runDryRun } from '../tools/activation/orchestrate.mjs';
 import { createGit } from '../tools/release/git-layer.mjs';
@@ -42,13 +42,41 @@ test('KRIITTINEN: kanta 0008 + tuotanto C -> seuraava deploy D, välimuisti v17,
   assert.match(lineOf(lines, 'EXPECTED_SCHEMA_GATE'), /9 porttia auki/);
   assert.match(lineOf(lines, 'EXPECTED_SCHEMA_GATE'), /BILL_PAYMENT_FIELDS=false/);
   assert.match(lineOf(lines, 'EXPECTED_CANDIDATE_SHA'), /== lukko: OK; fast-forward tuotannosta: OK/);
-  assert.match(lineOf(lines, 'REQUIRED_OWNER_GATE'), /OWNER_DEPLOY_APPROVAL_REQUIRED/);
+  assert.match(lineOf(lines, 'REQUIRED_OWNER_GATE'), /^REQUIRED_OWNER_GATE: OWNER_DEPLOY_APPROVAL_REQUIRED — aallon D deploy: omistajan viesti "hyväksyn D"/);
   assert.match(lineOf(lines, 'RISK'), /matala/);
   assert.match(lineOf(lines, 'LIVE'), /OFFLINE/);
   assert.equal(report.NEXT_DEPLOYMENT.wave, 'D');
   assert.equal(report.EXPECTED_CACHE.expected, 'v17');
   assert.equal(report.NEXT_MIGRATION.deferred, true);
   assert.equal(report.DECISION, 'GO');
+});
+
+test('KRIITTINEN: REQUIRED_OWNER_GATE listaa VAIN omistajan hyväksynnät; tekninen hyväksyntä ja käyttötodennus erikseen', async () => {
+  const { lines, report } = await runDryRun(deps(), { live: false, inventoryPath: 'inventaario.json' });
+  const owner = lineOf(lines, 'REQUIRED_OWNER_GATE');
+  for (const notOwner of [/TECHNICAL_ACCEPTANCE_REQUIRED/, /CANDIDATE_TESTS_REQUIRED/, /OWNER_READ_ONLY_SQL_REQUIRED/, /LIVE_USE/, /\bUI\b/, /selain/i]) {
+    assert.equal(notOwner.test(owner), false, `REQUIRED_OWNER_GATE sisältää: ${notOwner}`);
+  }
+  assert.deepEqual(report.REQUIRED_OWNER_GATE.map(g => g.class), ['OWNER_DEPLOY_APPROVAL_REQUIRED']);
+  assert.deepEqual(report.REQUIRED_TECHNICAL_GATE.map(g => g.class), ['TECHNICAL_ACCEPTANCE_REQUIRED', 'CANDIDATE_TESTS_REQUIRED']);
+  assert.match(lineOf(lines, 'REQUIRED_TECHNICAL_GATE'), new RegExp(`--wave=C --sha=${shaOf('C')} --record-acceptance`));
+  assert.match(lineOf(lines, 'TECHNICAL_ACCEPTANCE'), /^TECHNICAL_ACCEPTANCE: C 0101010 PUUTTUU — npm run production:verify-assets/);
+  // Käyttötodennus tulostetaan tiedoksi, ei porttina eikä PASSina.
+  const live = lineOf(lines, 'LIVE_USE_VALIDATION_PENDING');
+  assert.match(live, /^LIVE_USE_VALIDATION_PENDING: C — tiedoksi, ei estä junaa eikä ole PASS \(docs\/acceptance\/WAVE-C-OWNER-ACCEPTANCE\.md\)/);
+  assert.ok(lines.some(l => /^ {2}- rutiinin luonti/.test(l)));
+  assert.deepEqual(report.LIVE_USE_VALIDATION_PENDING.map(l => [l.wave, l.status]), [['C', 'LIVE_USE_VALIDATION_PENDING']]);
+  assert.equal(lines.some(l => /LIVE_USE_VALIDATION_PENDING[^\n]*:\s*PASS\b/.test(l)), false);
+  assert.match(lines.at(-1), /^GO: seuraava askel DEPLOY D — odottaa: koneelliset .*omistajan hyväksyntä "hyväksyn D"/);
+});
+
+test('kirjattu tekninen hyväksyntä ja testiajo: vain omistajan deployhyväksyntä jää', async () => {
+  const d = deps();
+  d.fs.store.set(path.resolve(ROOT_STUB, '.claude/activation/journal.jsonl'), journalOf(acceptanceEntry('C'), testsEntry('D')));
+  const { lines, report } = await runDryRun(d, { live: false, inventoryPath: 'inventaario.json' });
+  assert.match(lineOf(lines, 'TECHNICAL_ACCEPTANCE'), /^TECHNICAL_ACCEPTANCE: C 0101010 = AUTOMATED_TECHNICAL_ACCEPTANCE/);
+  assert.equal(lineOf(lines, 'REQUIRED_TECHNICAL_GATE'), 'REQUIRED_TECHNICAL_GATE: -');
+  assert.deepEqual(report.REQUIRED_OWNER_GATE.map(g => g.message), ['hyväksyn D']);
 });
 
 test('KRIITTINEN: ilman inventaariota -> OWNER_READ_ONLY_SQL_REQUIRED ja exit 1', async () => {
@@ -117,13 +145,20 @@ test('migraatiovaihe: SQL-tiedostot tiivisteineen ja lukittu lähde', async () =
     assert.match(l, new RegExp(`lähde rehearsal/wave-j-v1 @ ${shaOf('J')}`));
   }
   assert.match(lineOf(result.lines, 'NEXT_DEPLOYMENT'), /F .* \(migraation 0009 jälkeen\)/);
+  // Migraation hyväksyntä on omistajan portti; vain lukeva SQL on syöte, ei hyväksyntä.
+  assert.deepEqual(result.report.REQUIRED_OWNER_GATE.map(g => [g.class, g.message]),
+    [['OWNER_PRODUCTION_MIGRATION_APPROVAL_REQUIRED', 'hyväksyn 0009/F']]);
+  assert.match(lineOf(result.lines, 'REQUIRED_OWNER_INPUT'), /OWNER_READ_ONLY_SQL_REQUIRED — supabase\/preflight\/preflight_0009\.sql/);
+  assert.equal(lineOf(result.lines, 'REQUIRED_OWNER_GATE').includes('OWNER_READ_ONLY_SQL_REQUIRED'), false);
+  assert.deepEqual(result.report.LIVE_USE_VALIDATION_PENDING.map(l => l.wave), ['C', 'D', 'E']);
 });
 
 test('--json antaa samat kentät objektina', async () => {
   const result = await runDryRun(deps(), { live: false, inventoryPath: 'inventaario.json' });
   for (const key of ['PRODUCTION_SHA', 'FETCH_HEAD', 'CURRENT_WAVE', 'CURRENT_CACHE', 'LIVE', 'INVENTORY',
     'CURRENT_DB_WAVE', 'NEXT_MIGRATION', 'NEXT_DEPLOYMENT', 'RISK', 'REQUIRED_OWNER_GATE',
-    'EXPECTED_CANDIDATE_SHA', 'EXPECTED_CACHE', 'EXPECTED_SCHEMA_GATE', 'SQL', 'DECISION']) {
+    'REQUIRED_OWNER_INPUT', 'REQUIRED_TECHNICAL_GATE', 'TECHNICAL_ACCEPTANCE', 'LIVE_USE_VALIDATION_PENDING',
+    'REPO_PREFLIGHT', 'EXPECTED_CANDIDATE_SHA', 'EXPECTED_CACHE', 'EXPECTED_SCHEMA_GATE', 'SQL', 'DECISION']) {
     assert.ok(key in result.report, key);
   }
   assert.doesNotThrow(() => JSON.stringify(result.report));
@@ -165,4 +200,6 @@ test('oikea repo (ehdollinen): tuotannon inventaario + origin/main C -> DEPLOY D
   assert.match(lineOf(result.lines, 'NEXT_DEPLOYMENT'), /^NEXT_DEPLOYMENT: D 091e73c0091e8f135641e3501742b998dbac8461/, result.lines.join('\n'));
   assert.match(lineOf(result.lines, 'EXPECTED_CACHE'), /^EXPECTED_CACHE: v17 .*: OK/);
   assert.match(lineOf(result.lines, 'CURRENT_DB_WAVE'), /^CURRENT_DB_WAVE: E/);
+  assert.match(lineOf(result.lines, 'REQUIRED_OWNER_GATE'), /^REQUIRED_OWNER_GATE: OWNER_DEPLOY_APPROVAL_REQUIRED — aallon D deploy: omistajan viesti "hyväksyn D"/);
+  assert.match(lineOf(result.lines, 'REPO_PREFLIGHT'), /^REPO_PREFLIGHT: PASS/);
 });

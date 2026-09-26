@@ -2,7 +2,7 @@
 //
 //   npm run activation:orchestrate
 //       kuivaharjoitus (oletus): lue tila, tarkista lukko, kerro seuraava
-//       askel ja mikä omistajan portti on auki. Ei kirjoita, ei pushaa.
+//       askel ja mikä portti on auki. Ei kirjoita, ei pushaa.
 //
 //   npm run activation:orchestrate -- --inventory=inv.txt --preflight-result=pre.txt
 //       migraatioaalto: esitarkistuksen tulos (0 FAIL) -> STOP_OWNER_MIGRATION
@@ -10,30 +10,39 @@
 //   npm run activation:orchestrate -- --inventory=inv.txt --verify-result=ver.txt
 //       migraation jälkeen: varmistus (0 poikkeavaa) -> STOP_OWNER_DEPLOY
 //
-//   npm run activation:orchestrate -- --execute-deploy --approved-sha=<40 merkkiä> [--accepted=C]
-//       DEPLOY: vain kun --approved-sha on lukon deployTarget. Compare-and-
-//       swap (ls-remote main == odotettu edellinen), sitten
-//       git push origin <sha>:refs/heads/main (ei koskaan force), sitten
-//       VERIFY_LIVE, TECH_ACCEPTANCE ja päiväkirja.
+//   npm run activation:orchestrate -- --execute-deploy --approved-sha=<40 merkkiä>
+//       DEPLOY: vain kun --approved-sha on lukon deployTarget, tuotannon
+//       aallon tekninen hyväksyntä ja ehdokkaan vihreä testiajo on
+//       kirjattu päiväkirjaan. Compare-and-swap (ls-remote main ==
+//       odotettu edellinen), sitten git push origin <sha>:refs/heads/main
+//       (ei koskaan force), sitten VERIFY_LIVE, TECH_ACCEPTANCE ja
+//       päiväkirja.
 //
-//   npm run activation:orchestrate -- --record-acceptance=D
-//       kirjaa omistajan UI-hyväksynnän tuotannossa olevalle aallolle
+//   npm run activation:orchestrate -- --record-acceptance=C --sha=<40 merkkiä> [--verify-result=ver.txt]
+//       kirjaa tuotannossa olevan aallon AUTOMATED_TECHNICAL_ACCEPTANCE
+//       live-todennuksesta (sama kuin production:verify-assets
+//       --record-acceptance). Vaatii verkon (vain GET).
+//
+//   npm run activation:orchestrate -- --record-candidate-tests=D --sha=<40> --tests-result=tulos.txt
+//       kirjaa ehdokkaan oman `node --test` -ajon (vain vihreä kirjataan)
 //
 //   npm run activation:orchestrate -- --verify-rollback-of=D [--record]
 //       todenna peruutus (ACT-10); --record kirjaa sen, ja juna pysähtyy
 //       tilaan TRAIN_HALTED_RECUT_REQUIRED kunnes lukko kirjoitetaan uudelleen
 //
 // Muut liput: --wave=<X> (varmistus: seuraavan aallon on oltava tämä),
-// --offline (ei live-GET:iä; deploy vaatii verkon), --json,
+// --offline (ei live-GET:iä; deploy ja kirjaus vaativat verkon), --json,
 // --journal=<polku projektikansiossa>, --poll-timeout=<s>, --poll-interval=<s>.
 //
-// HYVÄKSYNTÄ TULEE OMISTAJALTA. --approved-sha ja --accepted ovat
-// omistajan oman viestin kirjaus komentoriville; agentti ei saa keksiä
-// niitä. Orkestroija ei koskaan etene seuraavaan aaltoon itsestään.
+// HYVÄKSYNTÄ TULEE OMISTAJALTA. --approved-sha on omistajan oman viestin
+// ("hyväksyn D", "hyväksyn 0009/F") kirjaus komentoriville; agentti ei
+// saa keksiä sitä. Käsin tehtävä UI-hyväksyntä ei ole portti
+// (LIVE_USE_VALIDATION_PENDING, docs/activation/AUTOMATED-ACCEPTANCE-POLICY.md),
+// joten --accepted-lippua ei enää ole. Orkestroija ei koskaan etene
+// seuraavaan aaltoon itsestään. Päiväkirja on paikallinen ja git-ignoroitu.
 //
 // Logiikka: tools/activation/orchestrate.mjs. Poistumiskoodi: 0 = askel
-// valmis (tai juna valmis), 1 = STOP / odottaa omistajaa, 2 = syötettä ei
-// voitu lukea.
+// valmis (tai juna valmis), 1 = STOP / odottaa, 2 = syötettä ei voitu lukea.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -44,7 +53,7 @@ import { createGit, isFullSha } from '../tools/release/git-layer.mjs';
 import { getOnlyFetch } from '../tools/release/live-assets.mjs';
 import { WAVE_IDS } from '../tools/release/waves.mjs';
 import {
-  JOURNAL_PATH, recordAcceptance, resolveJournalPath, runOrchestrator, verifyRollback
+  JOURNAL_PATH, recordCandidateTests, recordTechnicalAcceptance, resolveJournalPath, runOrchestrator, verifyRollback
 } from '../tools/activation/orchestrate.mjs';
 
 const args = process.argv.slice(2);
@@ -68,6 +77,12 @@ try {
   resolveJournalPath(ROOT, journalPath);
 } catch (err) {
   out(`  STOP: ${err.message}`);
+  process.exit(2);
+}
+if (arg('accepted') || flag('accepted')) {
+  out('  STOP: --accepted on poistettu. Käsin tehtävä UI-hyväksyntä ei ole junan portti');
+  out('  (LIVE_USE_VALIDATION_PENDING). Tuotannon aallon tekninen hyväksyntä kirjataan:');
+  out('  npm run production:verify-assets -- --wave=<X> --sha=<40 merkkiä> --record-acceptance');
   process.exit(2);
 }
 if (approvedSha && !isFullSha(approvedSha)) {
@@ -100,8 +115,28 @@ const deps = {
 
 const acceptanceWave = waveArg('record-acceptance');
 if (acceptanceWave) {
-  const result = recordAcceptance(deps, { wave: acceptanceWave, journalPath });
-  out(result.ok ? `  KIRJATTU: aallon ${acceptanceWave} hyväksyntä -> ${result.journal.path}` : `  STOP: ${result.reason}`);
+  if (offline) { out('  STOP: teknisen hyväksynnän kirjaus vaatii live-todennuksen (poista --offline)'); process.exit(2); }
+  const sha = arg('sha');
+  if (!isFullSha(sha)) { out('  STOP: --record-acceptance vaatii --sha=<40 merkkiä> (tuotannon commit)'); process.exit(2); }
+  const result = await recordTechnicalAcceptance(deps, {
+    wave: acceptanceWave, sha, verifyResult: readInput('verify-result'), inventoryPath: arg('inventory'), journalPath
+  });
+  for (const [id, text] of Object.entries(result.checks)) out(`  OK      ${id}: ${text}`);
+  for (const p of result.problems) out(`  STOP    ${p}`);
+  out(result.ok
+    ? `  KIRJATTU: aalto ${acceptanceWave} = AUTOMATED_TECHNICAL_ACCEPTANCE (käyttötodennus LIVE_USE_VALIDATION_PENDING) -> ${result.journal.path}`
+    : `  EI KIRJATTU: aallon ${acceptanceWave} teknistä hyväksyntää ei voitu todentaa`);
+  process.exit(result.ok ? 0 : 1);
+}
+
+const testsWave = waveArg('record-candidate-tests');
+if (testsWave) {
+  const result = recordCandidateTests(deps, {
+    wave: testsWave, sha: arg('sha'), testsText: readInput('tests-result'), journalPath
+  });
+  out(result.ok
+    ? `  KIRJATTU: ehdokkaan ${testsWave} testit ${result.entry.pass}/${result.entry.tests} PASS -> ${result.journal.path}`
+    : `  EI KIRJATTU: ${result.reason}`);
   process.exit(result.ok ? 0 : 1);
 }
 
@@ -117,7 +152,6 @@ if (rollbackWave) {
 
 // ------------------------------------------------------------ pääajo
 
-const accepted = (arg('accepted') || '').split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
 const result = await runOrchestrator(deps, {
   live: !offline,
   inventoryPath: arg('inventory'),
@@ -125,7 +159,6 @@ const result = await runOrchestrator(deps, {
   verifyResult: readInput('verify-result'),
   executeDeploy,
   approvedSha,
-  accepted,
   wave: waveArg('wave'),
   journalPath,
   pollTimeoutMs: arg('poll-timeout') ? Number(arg('poll-timeout')) * 1000 : undefined,
@@ -136,6 +169,7 @@ if (flag('json')) {
   out(JSON.stringify({ plan: result.plan, deploy: result.deploy, live: result.live, journal: result.journal }, null, 2));
 } else {
   const plan = result.plan;
+  const byKind = kind => (plan.pendingGates || []).filter(g => g.kind === kind);
   out('');
   out(`  AKTIVOINNIN ORKESTROIJA${executeDeploy ? '' : ' (kuivaharjoitus)'}`);
   out('');
@@ -144,10 +178,17 @@ if (flag('json')) {
     for (const d of s.detail) out(`            ${d}`);
   }
   for (const w of plan.warnings || []) out(`  HUOM    ${w}`);
-  if (plan.pendingGates && plan.pendingGates.length) {
+  for (const [title, kind] of [['OMISTAJAN HYVÄKSYNNÄT', 'OWNER_APPROVAL'], ['OMISTAJAN VAIN LUKEVA SQL', 'OWNER_INPUT'], ['KONEELLISET PORTIT (Claude)', 'TECHNICAL']]) {
+    const gates = byKind(kind);
+    if (!gates.length) continue;
     out('');
-    out('  OMISTAJAN PORTIT:');
-    for (const g of plan.pendingGates) out(`    ${g.class} — ${g.detail}`);
+    out(`  ${title}:`);
+    for (const g of gates) out(`    ${g.class} — ${g.detail}`);
+  }
+  for (const lu of plan.liveUse || []) {
+    out('');
+    out(`  LIVE_USE_VALIDATION_PENDING ${lu.wave} (tiedoksi — ei estä junaa, ei PASS; ${lu.doc}):`);
+    for (const item of lu.items) out(`    - ${item}`);
   }
   out('');
   out(`  TILA: ${plan.state || plan.decision}${plan.reason ? ` — ${plan.reason}` : ''}`);
