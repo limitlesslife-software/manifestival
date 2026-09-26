@@ -10,6 +10,51 @@
 
 const DIALOG_ID = 'confirmDialog';
 
+// ------------------------------------------------ yksi kysymys kerrallaan
+//
+// ONGELMA (RACE-16): toinen kysymys samaan dialogiin sen ollessa auki
+// ylikirjoitti otsikon ja viestin, ja yksi napsautus vastasi MOLEMPIIN —
+// käyttäjä saattoi hyväksyä toiminnon, jonka tekstiä hän ei nähnyt.
+// Nyt kysymykset jonotetaan dialogikohtaisesti: seuraava näytetään vasta,
+// kun edellinen on vastattu.
+
+/** Dialogin tunniste -> edellisen kysymyksen valmistuminen. */
+const turns = new Map();
+/** Kasvaa, kun dialogit suljetaan (uloskirjautuminen): jonossa odottavat vastaavat "ei". */
+let dialogGeneration = 0;
+
+function inTurn(dialogId, cancelled, show) {
+  const generation = dialogGeneration;
+  const previous = turns.get(dialogId);
+  // Vapaa dialogi näytetään heti (synkronisesti, kuten ennenkin).
+  const run = previous
+    ? previous.then(() => (generation === dialogGeneration ? show() : cancelled))
+    : show();
+  // Vuoro vapautuu samassa reaktiossa, jossa vastaus valmistuu: heti
+  // vastauksen jälkeen kysytty seuraava näytetään taas synkronisesti.
+  const release = () => { if (turns.get(dialogId) === settled) turns.delete(dialogId); };
+  const settled = Promise.resolve(run).then(release, release);
+  turns.set(dialogId, settled);
+  return run;
+}
+
+/**
+ * Sulje avoimet vahvistusdialogit vastauksella "peruuta" ja hylkää
+ * jonossa odottavat. Uloskirjautuminen: edellisen käyttäjän kysymys
+ * ("Pysäytetäänkö ja kirjataanko ...") ei saa jäädä auki seuraavalle, eikä
+ * sen hyväksyntä saa käynnistää mitään uudessa istunnossa.
+ */
+export function closeConfirmDialogs() {
+  dialogGeneration += 1;
+  if (typeof document === 'undefined') return;
+  for (const id of [DIALOG_ID, PROPOSAL_DIALOG_ID]) {
+    const dialog = document.getElementById(id);
+    if (!dialog || !dialog.open || typeof dialog.close !== 'function') continue;
+    dialog.returnValue = 'cancel';
+    dialog.close('cancel');
+  }
+}
+
 function buildDialog() {
   const dialog = document.createElement('dialog');
   dialog.id = DIALOG_ID;
@@ -57,25 +102,27 @@ export function confirmAction({
     return Promise.resolve(Boolean(globalThis.confirm && globalThis.confirm(text)));
   }
 
-  dialog.querySelector('#confirmTitle').textContent = title || '';
-  dialog.querySelector('#confirmMessage').textContent = message || '';
+  return inTurn(DIALOG_ID, false, () => {
+    dialog.querySelector('#confirmTitle').textContent = title || '';
+    dialog.querySelector('#confirmMessage').textContent = message || '';
 
-  const acceptButton = dialog.querySelector('#confirmAccept');
-  const cancelButton = dialog.querySelector('#confirmCancel');
-  acceptButton.textContent = confirmLabel;
-  cancelButton.textContent = cancelLabel;
-  acceptButton.classList.toggle('danger', destructive);
+    const acceptButton = dialog.querySelector('#confirmAccept');
+    const cancelButton = dialog.querySelector('#confirmCancel');
+    acceptButton.textContent = confirmLabel;
+    cancelButton.textContent = cancelLabel;
+    acceptButton.classList.toggle('danger', destructive);
 
-  return new Promise(resolve => {
-    const onClose = () => {
-      dialog.removeEventListener('close', onClose);
-      resolve(dialog.returnValue === 'confirm');
-    };
-    dialog.addEventListener('close', onClose);
-    dialog.returnValue = 'cancel';
-    dialog.showModal();
-    // Fokus peruutukseen: vaarallinen toiminto ei saa olla oletusvalinta.
-    cancelButton.focus();
+    return new Promise(resolve => {
+      const onClose = () => {
+        dialog.removeEventListener('close', onClose);
+        resolve(dialog.returnValue === 'confirm');
+      };
+      dialog.addEventListener('close', onClose);
+      dialog.returnValue = 'cancel';
+      dialog.showModal();
+      // Fokus peruutukseen: vaarallinen toiminto ei saa olla oletusvalinta.
+      cancelButton.focus();
+    });
   });
 }
 
@@ -187,41 +234,43 @@ export function confirmProposal(proposal) {
       Boolean(globalThis.confirm && globalThis.confirm(lines.join('\n'))));
   }
 
-  dialog.querySelector('#proposalKind').textContent = preview.targetTypeLabel || '';
-  dialog.querySelector('#proposalTitle').textContent = preview.action;
-  dialog.querySelector('#proposalTarget').textContent =
-    preview.targetLabel || preview.description;
+  return inTurn(PROPOSAL_DIALOG_ID, false, () => {
+    dialog.querySelector('#proposalKind').textContent = preview.targetTypeLabel || '';
+    dialog.querySelector('#proposalTitle').textContent = preview.action;
+    dialog.querySelector('#proposalTarget').textContent =
+      preview.targetLabel || preview.description;
 
-  const changes = dialog.querySelector('#proposalChanges');
-  changes.replaceChildren();
-  for (const row of preview.changes) changes.appendChild(buildChangeRow(row));
+    const changes = dialog.querySelector('#proposalChanges');
+    changes.replaceChildren();
+    for (const row of preview.changes) changes.appendChild(buildChangeRow(row));
 
-  const warning = dialog.querySelector('#proposalWarning');
-  warning.textContent = preview.destructive
-    ? 'Tämä poistaa tiedon pysyvästi. Toimintoa ei voi perua.'
-    : '';
-  warning.hidden = !preview.destructive;
+    const warning = dialog.querySelector('#proposalWarning');
+    warning.textContent = preview.destructive
+      ? 'Tämä poistaa tiedon pysyvästi. Toimintoa ei voi perua.'
+      : '';
+    warning.hidden = !preview.destructive;
 
-  const accept = dialog.querySelector('#proposalAccept');
-  const cancel = dialog.querySelector('#proposalCancel');
+    const accept = dialog.querySelector('#proposalAccept');
+    const cancel = dialog.querySelector('#proposalCancel');
 
-  accept.hidden = false;
-  accept.textContent = preview.destructive ? 'Poista pysyvästi' : 'Hyväksy';
-  accept.classList.toggle('danger', preview.destructive);
-  accept.classList.toggle('primary', !preview.destructive);
-  cancel.textContent = 'Peruuta';
-  dialog.classList.toggle('destructive', preview.destructive);
+    accept.hidden = false;
+    accept.textContent = preview.destructive ? 'Poista pysyvästi' : 'Hyväksy';
+    accept.classList.toggle('danger', preview.destructive);
+    accept.classList.toggle('primary', !preview.destructive);
+    cancel.textContent = 'Peruuta';
+    dialog.classList.toggle('destructive', preview.destructive);
 
-  return new Promise(resolve => {
-    const onClose = () => {
-      dialog.removeEventListener('close', onClose);
-      resolve(dialog.returnValue === 'confirm');
-    };
-    dialog.addEventListener('close', onClose);
-    dialog.returnValue = 'cancel';
-    dialog.showModal();
-    // Fokus peruutukseen: vaarallinen toiminto ei saa olla oletusvalinta.
-    cancel.focus();
+    return new Promise(resolve => {
+      const onClose = () => {
+        dialog.removeEventListener('close', onClose);
+        resolve(dialog.returnValue === 'confirm');
+      };
+      dialog.addEventListener('close', onClose);
+      dialog.returnValue = 'cancel';
+      dialog.showModal();
+      // Fokus peruutukseen: vaarallinen toiminto ei saa olla oletusvalinta.
+      cancel.focus();
+    });
   });
 }
 
@@ -243,46 +292,48 @@ export function chooseTarget(candidates, question = 'Mitä näistä tarkoitit?')
   // Ilman dialogia ei voi valita turvallisesti, eikä arvata saa.
   if (typeof dialog.showModal !== 'function') return Promise.resolve(null);
 
-  dialog.querySelector('#proposalKind').textContent = 'Tarkennus';
-  dialog.querySelector('#proposalTitle').textContent = question;
-  dialog.querySelector('#proposalTarget').textContent = '';
+  return inTurn(PROPOSAL_DIALOG_ID, null, () => {
+    dialog.querySelector('#proposalKind').textContent = 'Tarkennus';
+    dialog.querySelector('#proposalTitle').textContent = question;
+    dialog.querySelector('#proposalTarget').textContent = '';
 
-  const list = dialog.querySelector('#proposalChanges');
-  list.replaceChildren();
+    const list = dialog.querySelector('#proposalChanges');
+    list.replaceChildren();
 
-  let chosen = null;
+    let chosen = null;
 
-  for (const candidate of candidates) {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'proposal-candidate';
-    button.textContent = candidate.date
-      ? `${candidate.label} — ${candidate.date}`
-      : candidate.label;
-    button.addEventListener('click', () => {
-      chosen = candidate;
-      dialog.returnValue = 'confirm';
-      dialog.close();
+    for (const candidate of candidates) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'proposal-candidate';
+      button.textContent = candidate.date
+        ? `${candidate.label} — ${candidate.date}`
+        : candidate.label;
+      button.addEventListener('click', () => {
+        chosen = candidate;
+        dialog.returnValue = 'confirm';
+        dialog.close();
+      });
+      list.appendChild(button);
+    }
+
+    dialog.querySelector('#proposalWarning').hidden = true;
+
+    const accept = dialog.querySelector('#proposalAccept');
+    const cancel = dialog.querySelector('#proposalCancel');
+    accept.hidden = true;
+    cancel.textContent = 'Peruuta';
+
+    return new Promise(resolve => {
+      const onClose = () => {
+        dialog.removeEventListener('close', onClose);
+        accept.hidden = false;
+        resolve(dialog.returnValue === 'confirm' ? chosen : null);
+      };
+      dialog.addEventListener('close', onClose);
+      dialog.returnValue = 'cancel';
+      dialog.showModal();
+      cancel.focus();
     });
-    list.appendChild(button);
-  }
-
-  dialog.querySelector('#proposalWarning').hidden = true;
-
-  const accept = dialog.querySelector('#proposalAccept');
-  const cancel = dialog.querySelector('#proposalCancel');
-  accept.hidden = true;
-  cancel.textContent = 'Peruuta';
-
-  return new Promise(resolve => {
-    const onClose = () => {
-      dialog.removeEventListener('close', onClose);
-      accept.hidden = false;
-      resolve(dialog.returnValue === 'confirm' ? chosen : null);
-    };
-    dialog.addEventListener('close', onClose);
-    dialog.returnValue = 'cancel';
-    dialog.showModal();
-    cancel.focus();
   });
 }
