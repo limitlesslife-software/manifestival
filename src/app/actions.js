@@ -341,6 +341,31 @@ function canQueueAfter(error) {
 
 let queuedNoticeAt = 0;
 
+/**
+ * Tehtävän liitokset (tavoite, projekti) vain käyttäjän omaan tilaan.
+ *
+ * Kannan vierasavain on yhdistelmä (user_id, goal_id): tuntematon tai jo
+ * poistettu tavoite kaataisi tallennuksen koodilla 23503. Tekoälyn tai
+ * vanhentuneen näkymän antama tunniste pudotetaan siksi ENNEN kirjoitusta,
+ * ja tehtävä tallentuu ilman liitosta. Sama sääntö kuin aikakirjauksella
+ * (src/app/alignment.js logTime).
+ *
+ * Muokkauksessa ennallaan pysyvää liitosta EI pudoteta: jos tavoitteiden
+ * lataus epäonnistui, tavallinen otsikon muutos ei saa katkaista kannassa
+ * olevaa liitosta.
+ */
+function withOwnLinks(task, previous = null) {
+  const keep = (field, find) => {
+    const value = task[field];
+    if (value == null) return null;
+    if (previous && previous[field] === value) return value;
+    return find(value) ? value : null;
+  };
+  const goalId = keep('goalId', findGoal);
+  const projectId = keep('projectId', findProject);
+  return goalId === task.goalId && projectId === task.projectId ? task : { ...task, goalId, projectId };
+}
+
 /** Kerro jonotuksesta, mutta ei jokaisella muutoksella (ei toast-ryöppyä). */
 function announceQueued() {
   const at = Date.now();
@@ -357,11 +382,11 @@ function announceQueued() {
  *   offline-jonotuksen (AI-komennon suoritusta ei koskaan jonoteta)
  */
 export async function createTask(input, options = {}) {
-  const task = normalizeTask({
+  const task = withOwnLinks(normalizeTask({
     ...input,
     id: newTaskId(),
     schedulingState: input.time ? SCHEDULING.MANUAL : SCHEDULING.UNSCHEDULED
-  });
+  }));
 
   const { valid, errors } = validateTask(task);
   if (!valid) return { ok: false, errors };
@@ -402,7 +427,7 @@ export async function editTask(id, changes, options = {}) {
   const previous = findTask(id);
   if (!previous) return { ok: false };
 
-  const updated = normalizeTask({
+  const updated = withOwnLinks(normalizeTask({
     ...previous,
     ...changes,
     // Käyttäjän tekemä ajan muutos on aina manuaalinen päätös. Automaatti
@@ -424,7 +449,7 @@ export async function editTask(id, changes, options = {}) {
       : (changes.time
         ? SCHEDULING.MANUAL
         : (changes.time === null ? SCHEDULING.UNSCHEDULED : previous.schedulingState))
-  });
+  }), previous);
 
   const { valid, errors } = validateTask(updated);
   if (!valid) return { ok: false, errors };

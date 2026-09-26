@@ -14,7 +14,7 @@
 // Ks. docs/TASK-EXTENDED-FIELDS-ACTIVATION.md.
 
 import {
-  TASK_COLUMNS_CORE, TASK_COLUMNS_EXTENDED, TASK_COLUMNS_PLANNING
+  TASK_COLUMNS_CORE, TASK_COLUMNS_EXTENDED, TASK_COLUMNS_PLANNING, TASK_COLUMNS_LINKS
 } from '../lib/rows.js';
 
 /**
@@ -39,10 +39,16 @@ export const TASK_EXTENDED_FIELDS = true;
  * migraatio 0010 tuo suunnittelukentät. Portin lukeminen tässä on ainoa
  * paikka, jossa sarakejoukko valitaan — kutsupaikat eivät tiedä
  * migraatioista mitään.
+ *
+ * Liitokset (määräaika, tavoite, projekti; migraatio 0004) lisätään
+ * jokaiseen tasoon, kun goals- ja projects-taulut ovat käytössä.
+ *
+ * @param {(gate: string) => boolean} [isOpen] testejä varten (synteettiset portit)
  */
-export function taskColumns() {
-  if (!TASK_EXTENDED_FIELDS) return TASK_COLUMNS_CORE;
-  return GOAL_PLANNING_FIELDS ? TASK_COLUMNS_PLANNING : TASK_COLUMNS_EXTENDED;
+export function taskColumns(isOpen = compiledColumnGate) {
+  const base = !isOpen('TASK_EXTENDED_FIELDS') ? TASK_COLUMNS_CORE
+    : (isOpen('GOAL_PLANNING_FIELDS') ? TASK_COLUMNS_PLANNING : TASK_COLUMNS_EXTENDED);
+  return isOpen('TASK_LINK_FIELDS') ? Object.freeze([...base, ...TASK_COLUMNS_LINKS]) : base;
 }
 
 /**
@@ -215,6 +221,20 @@ export const ALIGNMENT_REALITY_FIELDS = false;
 /** Onko taulu käytettävissä tietokannassa? */
 export function hasTable(name) {
   return TABLES[name] === true;
+}
+
+/**
+ * Käännösaikainen sarakeportti nimen mukaan (taskColumns).
+ *
+ * TASK_LINK_FIELDS ei ole oma literaalinsa: tehtävän liitossarakkeet
+ * syntyvät samassa migraatiossa (0004) kuin goals- ja projects-taulut,
+ * joten ne ovat auki täsmälleen silloin kun molemmat taulut ovat.
+ */
+function compiledColumnGate(name) {
+  if (name === 'TASK_LINK_FIELDS') return TABLES.goals === true && TABLES.projects === true;
+  if (name === 'TASK_EXTENDED_FIELDS') return TASK_EXTENDED_FIELDS;
+  if (name === 'GOAL_PLANNING_FIELDS') return GOAL_PLANNING_FIELDS;
+  return false;
 }
 
 /** Taulut, jotka odottavat migraatiota. */

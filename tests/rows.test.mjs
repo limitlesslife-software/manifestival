@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 
 import {
   toRow, fromRow, assertClientSafe, newTaskId,
-  SERVER_OWNED_FIELDS, TASK_COLUMNS_EXTENDED
+  SERVER_OWNED_FIELDS, TASK_COLUMNS_EXTENDED, TASK_COLUMNS_LINKS
 } from '../src/lib/rows.js';
 
 const EXPECTED_COLUMNS = [
@@ -82,6 +82,21 @@ test('laajennetut kentät säilyvät kierroksen yli, kun skeema tukee niitä', (
   assert.equal(roundTripped.durationMinutes, 60);
   assert.equal(roundTripped.priority, 'korkea');
   assert.equal(roundTripped.schedulingState, 'manual');
+});
+
+test('liitokset (määräaika, tavoite, projekti) säilyvät kierroksen yli, kun skeema tukee niitä', () => {
+  // Migraatio 0004 (tuotannossa aallosta B). Aiemmin näitä ei kirjoitettu
+  // eikä luettu, joten tehtävän tavoite ja määräaika katosivat latauksessa.
+  const task = {
+    id: 'm1', date: '2026-08-31', title: 'Hae kirjat', completed: false, isWake: false,
+    deadline: '2026-09-15', goalId: 'g1', projectId: 'p1'
+  };
+  const row = toRow(task, [...TASK_COLUMNS_EXTENDED, ...TASK_COLUMNS_LINKS]);
+  assert.deepEqual([row.deadline, row.goal_id, row.project_id], ['2026-09-15', 'g1', 'p1']);
+  const back = fromRow(row);
+  assert.deepEqual([back.deadline, back.goalId, back.projectId], ['2026-09-15', 'g1', 'p1']);
+  // Perussarakkeilla (portti kiinni) liitokset eivät lähde: ennen 0004:ää 42703.
+  for (const column of TASK_COLUMNS_LINKS) assert.equal(column in toRow(task), false, column);
 });
 
 test('SKEEMAPORTTI: perussarakkeilla laajennetut kentät eivät päädy kantaan', () => {
