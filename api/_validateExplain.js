@@ -29,14 +29,21 @@ const QUALITY_LEVELS = Object.freeze(['good', 'partial', 'weak', 'none']);
 const DIRECTIONS = Object.freeze(['over', 'under']);
 const AREA_ALIAS = /^A([1-9]|[1-3][0-9]|40)$/;
 
-/** Havainnon sallitut mittarit ja niiden rajat. */
+/**
+ * Havainnon sallitut mittarit ja niiden rajat.
+ *
+ * Ajat ovat TUNTEJA ja kentät nimetty sen mukaan (...Hours). Domainin
+ * minuuttikentät (src/domain/alignment.js) muunnetaan ja nimetään
+ * uudelleen selaimessa (src/ai/alignmentContext.js). Minuuttinimellä
+ * kulkenut tuntiluku johti mallin harhaan ("10 minuuttia" = 10 h).
+ */
 const METRIC_NUMBERS = Object.freeze({
-  plannedMinutes: 200, availableMinutes: 200, overageMinutes: 200, percentOfCapacity: 1000,
-  unknownCount: 10000, targetMinutes: 200, expectedByNowMinutes: 200, actualMinutes: 200,
+  plannedHours: 200, availableHours: 200, overageHours: 200, percentOfCapacity: 1000,
+  unknownCount: 10000, targetHours: 200, expectedByNowHours: 200, actualHours: 200,
   percentOfExpected: 1000, weekProgressPercent: 100, desiredPercent: 100, actualPercent: 100,
-  deviationPoints: 100, coveragePercent: 100, targetsMinutes: 200, differenceMinutes: 200,
-  heavyMinutes: 200, veryHeavyMinutes: 200, energyBudgetMinutes: 200, percentOfBudget: 1000,
-  unratedCount: 10000, unratedMinutes: 200, heavySharePercent: 100, energyLevel: 5, knownMinutes: 200
+  deviationPoints: 100, coveragePercent: 100, targetsHours: 200, differenceHours: 200,
+  heavyHours: 200, veryHeavyHours: 200, energyBudgetHours: 200, percentOfBudget: 1000,
+  unratedCount: 10000, unratedHours: 200, heavySharePercent: 100, energyLevel: 5, knownHours: 200
 });
 const METRIC_BOOLEANS = Object.freeze(['incomplete', 'timeOverloaded']);
 
@@ -68,18 +75,24 @@ function cleanMetrics(input) {
   return out;
 }
 
+/**
+ * Alueen rivi. Vain annetut kentät: selain lähettää viikkotason
+ * havainnolle pelkän tärkeyden ja tavoitteen, eikä puuttuva `active`
+ * saa muuttua promptissa väitteeksi "alue ei ole käytössä".
+ */
 function cleanArea(input) {
   if (!input || typeof input !== 'object') return null;
   const area = typeof input.area === 'string' && AREA_ALIAS.test(input.area) ? input.area : null;
   if (!area) return null;
-  return {
-    area,
-    importance: number(input.importance, 5, { min: 1 }),
-    active: input.active === true,
-    targetHours: number(input.targetHours, 168),
-    plannedHours: number(input.plannedHours, 168),
-    actualHours: number(input.actualHours, 168)
-  };
+  const out = { area };
+  const importance = number(input.importance, 5, { min: 1 });
+  if (importance !== null) out.importance = importance;
+  if (typeof input.active === 'boolean') out.active = input.active;
+  for (const key of ['targetHours', 'plannedHours', 'actualHours']) {
+    const value = number(input[key], 168);
+    if (value !== null) out[key] = value;
+  }
+  return out;
 }
 
 function cleanSignal(input) {

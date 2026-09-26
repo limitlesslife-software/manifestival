@@ -20,6 +20,7 @@ const SUPABASE_URL = 'https://twpyubcymdnbvelsjidg.supabase.co';
 const SUPABASE_ANON_KEY =
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR3cHl1YmN5bWRuYnZlbHNqaWRnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODUyNTg1MTEsImV4cCI6MjEwMDgzNDUxMX0.ych4lT7elajj3H12smhi2wjP-CP1dYrqtKhoK1RoSYQ';
 
+/** Todennuksen aikakatkaisu. Selityksen aikarajat (api/explain.js, vercel.json) mitoitetaan tämän päälle. */
 const VERIFY_TIMEOUT_MS = 5000;
 
 /**
@@ -93,4 +94,4 @@ async function authenticate(req, { fetchImpl } = {}) {
   }
 }
 
-module.exports = { authenticate, bearerToken, authRequired };
+module.exports = { authenticate, bearerToken, authRequired, VERIFY_TIMEOUT_MS };
