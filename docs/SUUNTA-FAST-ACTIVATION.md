@@ -29,10 +29,10 @@ Säännöt joka askeleella:
 
 ## Askel 0 — tila nyt
 
-- **TILA (2026-09-26, E:n deployn jälkeen):** tuotanto `origin/main` =
-  `86c4325` = E (v18), `DEPLOYED_TECHNICALLY_ACCEPTED`; C, D ja E teknisesti
-  hyväksytty. Kanta 0001–0008 ajettu, 0009–0013 ei. Seuraava askel: F
-  (ensimmäinen migraatio, 0009).
+- **TILA (2026-09-26, F:n deployn jälkeen):** tuotanto `origin/main` =
+  `2c8e230` = F (v19), `DEPLOYED_TECHNICALLY_ACCEPTED`; C–F teknisesti
+  hyväksytty. Kanta 0001–0009 ajettu (verify_0009 34/34, 0 poikkeavaa),
+  0010–0013 ei. Seuraava askel: G (0010, KORKEA riski, tilannekuva ensin).
 - **KOMENTO (Claude):** `npm run activation:dry-run` (tai `-- --offline`)
 - **ODOTUS:** `NEXT_ACTION: DEPLOY D`; `REQUIRED_OWNER_GATE` = vain
   "hyväksyn D"; `REQUIRED_TECHNICAL_GATE` = C:n tekninen hyväksyntä, D:n

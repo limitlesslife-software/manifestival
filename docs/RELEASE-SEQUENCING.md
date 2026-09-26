@@ -90,7 +90,7 @@ ollut julkaisupäätös.
 
 ### Julkaisujunan varaamat numerot
 
-<!-- LINEAGE-CHECK: origin/main sha=86c4325b00e8d58913afebdd0f1eca95d430174e cache=v18 -->
+<!-- LINEAGE-CHECK: origin/main sha=2c8e230f8864ce0df1529718fb17ae265fb5d82b cache=v19 -->
 
 `tests/production-lineage.test.mjs` lukee edellisen rivin ja vertaa sitä
 siihen, mitä `origin/main` PAIKALLISESTI (ei verkosta) on juuri nyt
@@ -110,8 +110,8 @@ kertoo deployn jälkeen, että rivi kannattaa päivittää.
 | B | `v15` | **deployattu** (`ddfc356`) |
 | C | `v16` | **deployattu** (`cf259d0`) — AUTOMATED_TECHNICAL_ACCEPTANCE; käyttötodennus LIVE_USE_VALIDATION_PENDING |
 | D | `v17` | **deployattu** (`091e73c`, 2026-09-26, omistajan "hyväksyn D") — AUTOMATED_TECHNICAL_ACCEPTANCE, käyttötodennus LIVE_USE_VALIDATION_PENDING |
-| E | `v18` | **deployattu** (`86c4325`, aaltocommit `2b947cc`, 2026-09-26, omistajan "hyväksyn E") — tuotannon nykytila; AUTOMATED_TECHNICAL_ACCEPTANCE, käyttötodennus LIVE_USE_VALIDATION_PENDING |
-| F | `v19` | estetty (migraatio 0009 ajamatta) |
+| E | `v18` | **deployattu** (`86c4325`, aaltocommit `2b947cc`, 2026-09-26, omistajan "hyväksyn E") — AUTOMATED_TECHNICAL_ACCEPTANCE, käyttötodennus LIVE_USE_VALIDATION_PENDING |
+| F | `v19` | **deployattu** (`2c8e230`, aaltocommit `e05c54b`, 2026-09-26; migraatio 0009 ajettu, verify_0009 34/34, omistajan "hyväksyn 0009/F") — tuotannon nykytila; AUTOMATED_TECHNICAL_ACCEPTANCE, käyttötodennus LIVE_USE_VALIDATION_PENDING |
 | G | `v20` | estetty (migraatio 0010 ajamatta) |
 | H | `v21` | estetty (migraatio 0011 ajamatta) |
 | I | `v22` | estetty (migraatio 0012 ajamatta) |
@@ -181,7 +181,7 @@ ohjaa ajantasaisen tiedon luo.
 ### 1. Numerot on jo jaettu, mutta tuotanto on ohittanut osan niistä
 
 Kun tämä kohta kirjoitettiin, tuotanto oli `v15` (aalto B; nyt tuotannossa on
-aalto E, ks. LINEAGE-CHECK yllä). Aallot C–E ovat
+aalto F, ks. LINEAGE-CHECK yllä). Aallot C–E ovat
 `v16`–`v18` eikä niitä ole deployattu. Numerot siis **varaavat
 paikkoja**, joita kukaan ei ole vielä käyttänyt — ja tämä haara
 sanoo `v13`, joka on jo menneisyyttä.
@@ -315,8 +315,8 @@ yllä on TOSI. Linja on lineaarinen, ei haarautunut.
 Aalto B  v15  (deployattu ddfc356)
   -> C  v16   routines + routineExceptions          (DEPLOYATTU cf259d0)
     -> D  v17   recurringExpenses + savingsGoals + bills  (DEPLOYATTU 091e73c 2026-09-26)
-      -> E  v18   aiAudit                            (DEPLOYATTU 86c4325 = origin/main 2026-09-26, ks. LINEAGE-CHECK)
-        -> F  v19   Talous 2.0 -- migraatio 0009
+      -> E  v18   aiAudit                            (DEPLOYATTU 86c4325 2026-09-26)
+        -> F  v19   Talous 2.0 -- migraatio 0009     (0009 AJETTU; DEPLOYATTU 2c8e230 = origin/main 2026-09-26, ks. LINEAGE-CHECK)
           -> G  v20   Tavoitteesta tekemiseksi -- migraatio 0010
             -> H  v21   Henkilökohtainen avustaja -- migraatio 0011
               -> I  v22   Suunta (Life Alignment) -- migraatio 0012
@@ -401,8 +401,8 @@ merkittyinä ei-tuotannoksi, pushaamatta mihinkään.
 > (ja työpuut `.claude/worktrees/mv-wave-f/g/h`, jotka osoittavat
 > `-candidate-v2`-haaroihin) EIVÄT ole nykyisiä ehdokkaita. Nykyiset
 > deploykohteet ovat junan lukossa `docs/activation/release-train-c-j.json`
-> (C `cf259d0`, D `091e73c`, E `86c4325` — nämä kolme tuotannossa —, F v4,
-> G v5, H v5, I v3 ja J v2; ks. "Lukko ja orkestroija" alla).
+> (C `cf259d0`, D `091e73c`, E `86c4325` ja F v4 `2c8e230` — nämä neljä
+> tuotannossa —, G v5, H v5, I v3 ja J v2; ks. "Lukko ja orkestroija" alla).
 
 Kolme paikallista haaraa, EI pushattu minnekaan, EI deployattu, EI
 lisätty `origin`iin. Jokainen on `origin/main`in (`ddfc356`, v15, Aalto
