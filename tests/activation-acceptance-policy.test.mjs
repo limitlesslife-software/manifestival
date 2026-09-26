@@ -12,11 +12,12 @@ import path from 'node:path';
 
 import { ROOT, read } from './helpers/sources.mjs';
 import {
-  FAST_ACTIVATION_DOC, LIVE_USE_VALIDATION, POLICY_DOC, TECHNICAL_REQUIREMENTS, candidateTestsOf, gateKind,
-  ownerMessageFor, parseTestSummary, technicalAcceptanceOf, testSummaryGreen
+  FAST_ACTIVATION_DOC, LIVE_USE_VALIDATION, POLICY_DOC, TECHNICAL_GATE, TECHNICAL_REQUIREMENTS, bootSmokeGreen, bootSmokeOf,
+  bootSmokeProblems, candidateTestsOf, gateKind, ownerMessageFor, parseBootSmoke, parseTestSummary, technicalAcceptanceOf,
+  testSummaryGreen
 } from '../tools/activation/acceptance-policy.mjs';
 import { pushLineDocs } from '../tools/activation/train-map.mjs';
-import { acceptanceEntry, shaOf, testOutput, testsEntry } from './helpers/activation-history.mjs';
+import { acceptanceEntry, shaOf, smokeEntry, smokeOutput, testOutput, testsEntry } from './helpers/activation-history.mjs';
 
 const lf = text => text.replace(/\r\n/g, '\n');
 const flat = text => lf(text).replace(/\s+/g, ' ');
@@ -37,6 +38,8 @@ test('porttilajit: vain migraatio- ja deployhyväksyntä ovat omistajan hyväksy
   assert.equal(gateKind('OWNER_READ_ONLY_SQL_REQUIRED'), 'OWNER_INPUT');
   assert.equal(gateKind('TECHNICAL_ACCEPTANCE_REQUIRED'), 'TECHNICAL');
   assert.equal(gateKind('CANDIDATE_TESTS_REQUIRED'), 'TECHNICAL');
+  assert.equal(TECHNICAL_GATE.BOOT_SMOKE, 'BOOT_SMOKE_REQUIRED');
+  assert.equal(gateKind(TECHNICAL_GATE.BOOT_SMOKE), 'TECHNICAL');
 });
 
 test('KRIITTINEN: node --test -yhteenveto: spec ja TAP; vain vihreä kelpaa; puuttuva yhteenveto = null', () => {
@@ -70,6 +73,80 @@ test('KRIITTINEN: tekninen hyväksyntä vain täsmälleen samalle aallolle ja SH
   assert.equal(candidateTestsOf([testsEntry('D')], { wave: 'D', sha: shaOf('E') }).ok, false);
 });
 
+// ------------------------------------------------------- käynnistyssavu
+
+const D = { wave: 'D', sha: shaOf('D') };
+const smokeProblems = options => bootSmokeProblems(parseBootSmoke(smokeOutput(options)), D);
+
+test('KRIITTINEN: käynnistyssavun tuloste: PASS n/n, laskurit 0, EHDOKAS = sama täysi SHA omilla porteilla kelpaa', () => {
+  const text = smokeOutput();
+  const summary = parseBootSmoke(text);
+  assert.deepEqual(
+    [summary.label, summary.result, summary.pass, summary.total, summary.exceptions, summary.rejections, summary.consoles, summary.production],
+    ['D', 'PASS', 27, 27, 0, 0, 0, 0]);
+  assert.deepEqual(summary.candidate, { label: 'D', head: shaOf('D'), gates: 'omat', expectSha: shaOf('D') });
+  assert.equal(summary.runs, 1);
+  assert.equal(summary.headChecked && summary.treeChecked, true);
+  assert.match(summary.sha256, /^[0-9a-f]{64}$/);
+  assert.deepEqual(bootSmokeProblems(summary, D), []);
+  // CRLF, BOM ja loppuun jäänyt tyhjä rivi eivät muuta tulosta.
+  assert.deepEqual(bootSmokeProblems(parseBootSmoke(`﻿${text.replace(/\n/g, '\r\n')}\r\n\r\n`), D), []);
+  // Lyhyt --expect-sha (7+) kelpaa, kun EHDOKAS-rivin täysi HEAD on sama.
+  assert.deepEqual(smokeProblems({ expectSha: shaOf('D').slice(0, 7) }), []);
+});
+
+test('KRIITTINEN: käynnistyssavun tuloste hylätään: FAIL, n/m, nollasta poikkeava laskuri, puuttuva rivi, toinen SHA, väärä aalto', () => {
+  const cases = [
+    ['FAIL', { result: 'FAIL', pass: 26 }, /savun tulos on FAIL \(26\/27\)/],
+    ['PASS mutta n/m ei täsmää', { pass: 26 }, /tarkistuksia 26\/27: PASS edellyttää n\/n/],
+    ['PASS 0/0', { pass: 0, total: 0 }, /tarkistuksia 0\/0/],
+    ['poikkeus', { exceptions: 1 }, /laskurit eivät ole nollia: poikkeuksia 1/],
+    ['hylkäys', { rejections: 2 }, /hylkäyksiä 2/],
+    ['konsolivirhe', { consoles: 1 }, /konsolivirheitä 1/],
+    ['tuotantopyyntö', { production: 1 }, /tuotantopyyntöjä 1/],
+    ['EHDOKAS-rivi puuttuu (vanha savu)', { candidateLine: false }, /EHDOKAS-rivi .* puuttuu/],
+    ['toinen HEAD', { head: shaOf('E'), expectSha: shaOf('E') }, new RegExp(`savu ajettiin commitille ${shaOf('E')}, ei ${shaOf('D')}`)],
+    ['--expect-sha puuttuu', { expectSha: null }, /ilman --expect-sha:ta/],
+    ['--expect-sha eri commit', { expectSha: shaOf('E') }, new RegExp(`--expect-sha ${shaOf('E')} ei ole ${shaOf('D')}`)],
+    ['--gates J', { gates: 'J' }, /porteilla "J"/],
+    ['väärä aalto', { label: 'E' }, /savun nimi on \[E\], ei aalto \[D\]/]
+  ];
+  for (const [name, options, pattern] of cases) {
+    const problems = smokeProblems(options);
+    assert.ok(problems.length > 0, `${name}: hyväksyttiin`);
+    assert.match(problems.join('; '), pattern, name);
+  }
+  // Tulosrivi puuttuu, on muokattu tai ei ole viimeinen: ei arvata.
+  for (const [name, text] of [
+    ['tulosrivi puuttuu (keskeytyi)', smokeOutput({ verdictLine: false })],
+    ['tyhjä', ''],
+    ['node --test -tuloste', testOutput()],
+    ['tulosrivin jälkeen muuta', smokeOutput({ trailing: 'npm error code 1' })],
+    ['muokattu tulosrivi', smokeOutput().replace('PASS (27/27;', 'PASS (27/27, ')],
+    ['negatiivinen laskuri', smokeOutput().replace('poikkeuksia 0,', 'poikkeuksia -1,')]
+  ]) {
+    assert.equal(parseBootSmoke(text), null, name);
+    assert.match(bootSmokeProblems(null, D).join(' '), /viimeinen rivi ei ole "KÄYNNISTYSSAVU/, name);
+  }
+  // Kaksi ajoa samassa tiedostossa (>>): ei kirjata.
+  const twice = parseBootSmoke(`${smokeOutput()}\n${smokeOutput()}`);
+  assert.match(bootSmokeProblems(twice, D).join('; '), /2 savun tulosriviä/);
+});
+
+test('KRIITTINEN: käynnistyssavun kirjaus kelpaa vain PASSina samalle aallolle ja SHA:lle', () => {
+  assert.equal(bootSmokeGreen(smokeEntry('D')), true);
+  assert.equal(bootSmokeGreen(smokeEntry('D', shaOf('D'), { result: 'FAIL', pass: 26 })), false);
+  assert.equal(bootSmokeGreen(smokeEntry('D', shaOf('D'), { pass: 26 })), false, 'n/m');
+  assert.equal(bootSmokeGreen(smokeEntry('D', shaOf('D'), { exceptions: 1 })), false);
+  assert.equal(bootSmokeGreen({ ...smokeEntry('D'), production: undefined }), false, 'puuttuva laskuri ei ole nolla');
+  assert.equal(bootSmokeOf([smokeEntry('D')], D).ok, true);
+  assert.equal(bootSmokeOf([smokeEntry('D')], { wave: 'D', sha: shaOf('E') }).ok, false);
+  assert.equal(bootSmokeOf([smokeEntry('E', shaOf('D'))], D).ok, false);
+  assert.equal(bootSmokeOf([testsEntry('D')], D).ok, false, 'testiajo ei ole savu');
+  // Viimeisin kirjaus voittaa.
+  assert.equal(bootSmokeOf([smokeEntry('D'), smokeEntry('D', shaOf('D'), { result: 'FAIL', pass: 20 })], D).ok, false);
+});
+
 test('käyttötodennuksen lista kattaa C–J, ja jokainen dokumentti on olemassa', () => {
   assert.deepEqual(Object.keys(LIVE_USE_VALIDATION), TRAIN);
   for (const [wave, { doc, items }] of Object.entries(LIVE_USE_VALIDATION)) {
@@ -78,7 +155,8 @@ test('käyttötodennuksen lista kattaa C–J, ja jokainen dokumentti on olemassa
     for (const item of items) assert.equal(/\bPASS\b/.test(item), false, `${wave}: "${item}"`);
   }
   assert.deepEqual(TECHNICAL_REQUIREMENTS.map(r => r.id),
-    ['ancestry', 'migrationPrerequisite', 'candidateTests', 'security', 'repoPreflight', 'migrationVerify', 'liveAssets', 'cacheAndGates']);
+    ['ancestry', 'migrationPrerequisite', 'candidateTests', 'security', 'repoPreflight', 'migrationVerify', 'liveAssets', 'cacheAndGates',
+      'bootSmoke']);
 });
 
 // --------------------------------------------------------------- dokumentit
@@ -169,6 +247,34 @@ test('KRIITTINEN: nopea polku: jokainen askel C–J ja APK, omistajan viesti, TI
   const apk = doc.slice(doc.indexOf('\n## Askel APK '));
   assert.match(flat(apk), /`verify_0013` ≠ 0 tai J ei ole tuotannossa: \*\*älä asenna\*\*/);
   assert.ok(doc.includes(`SQL-lähde (lukon sqlSource): \`${lock.sqlSource.ref}\` @ \`${lock.sqlSource.sha}\``));
+});
+
+test('KRIITTINEN: käynnistyssavu on koneellinen ehto 9: politiikka kertoo kirjauskomennon, nopea polku ajaa ja kirjaa sen D–J', () => {
+  const policy = lf(read(POLICY_DOC));
+  const f = flat(policy);
+  assert.match(policy, /^\| 9 \| Ehdokkaan käynnistyssavu omalla koodilla ja porteilla \(`bootSmoke`\) \|/m);
+  assert.match(f, /orkestroija näyttää portin `BOOT_SMOKE_REQUIRED`/);
+  assert.ok(policy.includes('npm run activation:orchestrate -- --record-boot-smoke=X --sha=<deployTarget> --smoke-result=.claude/activation/smoke-X.txt'));
+  assert.ok(policy.includes('`KÄYNNISTYSSAVU [X]: PASS (n/n; poikkeuksia 0, hylkäyksiä 0, konsolivirheitä 0, tuotantopyyntöjä 0)`'));
+  assert.ok(policy.includes('`EHDOKAS [X]: <deployTarget> (portit: omat; --expect-sha: <deployTarget>)`'));
+  assert.equal(/savulla ei vielä ole omaa/.test(f), false, 'vanha "ei omaa checks-avainta" jäi');
+  assert.match(f, /Aallolle \*\*C\*\* ehdot 3 ja 9 eivät ole pakollisia/);
+  for (const wave of TRAIN.slice(1)) {
+    const start = policy.indexOf(`### Aalto ${wave} `);
+    const section = policy.slice(start, policy.indexOf('\n### ', start + 1) === -1 ? policy.indexOf('\n## ', start) : policy.indexOf('\n### ', start + 1));
+    assert.ok(section.includes(`--record-boot-smoke=${wave}\``), `politiikka, aalto ${wave}: savun kirjaus puuttuu`);
+  }
+
+  const fast = lf(read(FAST_ACTIVATION_DOC));
+  for (const w of lock.waves.filter(x => x.wave !== 'C')) {
+    const start = fast.indexOf(`\n## Askel ${w.wave} `);
+    const section = fast.slice(start, fast.indexOf('\n## Askel ', start + 1));
+    const tests = `npm run activation:orchestrate -- --record-candidate-tests=${w.wave} --sha=${w.deployTarget} --tests-result=.claude/activation/tests-${w.wave}.txt`;
+    const smoke = `npm run e2e:boot-smoke -- --root .claude/worktrees/rc-${w.wave}-smoke --label ${w.wave} --expect-sha ${w.deployTarget} > .claude/activation/smoke-${w.wave}.txt`;
+    const record = `npm run activation:orchestrate -- --record-boot-smoke=${w.wave} --sha=${w.deployTarget} --smoke-result=.claude/activation/smoke-${w.wave}.txt`;
+    assert.ok(section.includes(`${tests}\n${smoke}\n${record}\n`), `askel ${w.wave}: savu ja kirjaus eivät ole testiajon vieressä`);
+    assert.match(section.split('**ODOTUS:**')[0], /käynnistyssavu/, `askel ${w.wave}: KOMENTO ei mainitse savua`);
+  }
 });
 
 test('KRIITTINEN: nopean polun SHA:t ovat lukon SHA:t (--sync-docs pitää ne ajan tasalla)', () => {

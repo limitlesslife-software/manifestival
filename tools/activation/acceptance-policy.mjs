@@ -46,7 +46,8 @@ export const OWNER_INPUT = Object.freeze({ READ_ONLY_SQL: 'OWNER_READ_ONLY_SQL_R
 /** Koneelliset portit: Claude hoitaa, omistajaa ei tarvita. */
 export const TECHNICAL_GATE = Object.freeze({
   ACCEPTANCE: 'TECHNICAL_ACCEPTANCE_REQUIRED',
-  CANDIDATE_TESTS: 'CANDIDATE_TESTS_REQUIRED'
+  CANDIDATE_TESTS: 'CANDIDATE_TESTS_REQUIRED',
+  BOOT_SMOKE: 'BOOT_SMOKE_REQUIRED'
 });
 
 /** Portin laji: 'OWNER_APPROVAL' | 'OWNER_INPUT' | 'TECHNICAL'. */
@@ -79,12 +80,15 @@ export const TECHNICAL_REQUIREMENTS = Object.freeze([
   Object.freeze({ id: 'repoPreflight', label: 'julkaisun esitarkistus (repoChecks) PASS' }),
   Object.freeze({ id: 'migrationVerify', label: 'verify_00XX.sql = 0 poikkeavaa (migraatioaallot)' }),
   Object.freeze({ id: 'liveAssets', label: 'tuotannon staattiset tiedostot = ehdokkaan SHA:n sormenjälki' }),
-  Object.freeze({ id: 'cacheAndGates', label: 'välimuisti, porttimatriisi ja sarakeportit vastaavat aaltoa' })
+  Object.freeze({ id: 'cacheAndGates', label: 'välimuisti, porttimatriisi ja sarakeportit vastaavat aaltoa' }),
+  Object.freeze({ id: 'bootSmoke', label: 'ehdokkaan käynnistyssavu PASS omalla koodilla ja porteilla (kirjattu päiväkirjaan)' })
 ]);
 
 /**
  * Aalto, jonka tekninen hyväksyntä saa perustua pelkkään live-todennukseen
- * ilman kirjattua testiajoa: C deployattiin ennen aktivointityökaluja.
+ * ilman kirjattua testiajoa ja käynnistyssavua: C deployattiin ennen
+ * aktivointityökaluja. Jos C:lle on kirjattu testiajo tai savu, se
+ * näytetään todisteena.
  */
 export const PRE_TOOLING_WAVE = TRAIN_FLOOR_WAVE;
 
@@ -209,4 +213,107 @@ export function parseTestSummary(text) {
     cancelled: summary.cancelled ?? 0, skipped: summary.skipped ?? 0, todo: summary.todo ?? 0,
     sha256: createHash('sha256').update(String(text)).digest('hex')
   };
+}
+
+// ---------------------------------------------------------------------
+// KÄYNNISTYSSAVU (tools/e2e/boot-smoke.mjs)
+// ---------------------------------------------------------------------
+
+/**
+ * Ehdokkaan käynnistyssavun kirjaus: viimeisin 'boot-smoke'-rivi tälle
+ * commitille. `ok` vain, jos se on PASS ja luvut ovat johdonmukaiset.
+ */
+export function bootSmokeOf(entries, { wave, sha }) {
+  const hits = (entries || []).filter(e => e && e.type === 'boot-smoke' && e.wave === wave && e.sha === sha);
+  const entry = hits.length ? hits[hits.length - 1] : null;
+  return { entry, ok: Boolean(entry && bootSmokeGreen(entry)) };
+}
+
+const SMOKE_COUNTS = Object.freeze([
+  ['exceptions', 'poikkeuksia'], ['rejections', 'hylkäyksiä'], ['consoles', 'konsolivirheitä'], ['production', 'tuotantopyyntöjä']
+]);
+
+/** Onko savu PASS: n/n tarkistusta (n > 0), jokainen laskuri 0? */
+export function bootSmokeGreen(summary) {
+  return Boolean(summary) && summary.result === 'PASS'
+    && Number(summary.total) > 0 && Number(summary.pass) === Number(summary.total)
+    && SMOKE_COUNTS.every(([key]) => Number(summary[key]) === 0);
+}
+
+const SMOKE_VERDICT = /^KÄYNNISTYSSAVU \[([A-Za-z0-9._-]{1,40})\]: (PASS|FAIL) \((\d+)\/(\d+); poikkeuksia (\d+), hylkäyksiä (\d+), konsolivirheitä (\d+), tuotantopyyntöjä (\d+)\)$/;
+const SMOKE_ANY_VERDICT = /^KÄYNNISTYSSAVU \[[^\]]*\]: (?:PASS|FAIL)\b/;
+const SMOKE_CANDIDATE = /^EHDOKAS \[([A-Za-z0-9._-]{1,40})\]: (\S+) \(portit: (omat|J); --expect-sha: (\S+)\)$/;
+/** Tarkistusrivit, jotka savu tulostaa vain --expect-sha:lla (tools/e2e/boot-smoke.mjs evaluateRun). */
+const SMOKE_HEAD_CHECK = 'PASS  HEAD on odotettu commit';
+const SMOKE_TREE_CHECK = 'PASS  tarjoiltu puu = commit';
+
+/**
+ * Käynnistyssavun tuloste (`npm run e2e:boot-smoke -- … > tiedosto`).
+ * Viimeinen ei-tyhjä rivi on tulosrivi
+ * `KÄYNNISTYSSAVU [X]: PASS (n/n; poikkeuksia 0, hylkäyksiä 0,
+ * konsolivirheitä 0, tuotantopyyntöjä 0)`, ja sitä edeltää
+ * `EHDOKAS [X]: <tarjoillun juuren täysi HEAD> (portit: omat|J;
+ * --expect-sha: <sha|->)`. null, jos viimeinen rivi ei ole tulosrivi
+ * (keskeytynyt tai katkaistu ajo: ei arvata). Ei päätä hyväksynnästä:
+ * ks. bootSmokeProblems.
+ */
+export function parseBootSmoke(text) {
+  const lines = String(text || '').replace(/^﻿/, '').split(/\r?\n/)
+    .map(line => line.replace(/\s+$/, '')).filter(line => line.length > 0);
+  const verdict = SMOKE_VERDICT.exec(lines.length ? lines[lines.length - 1] : '');
+  if (!verdict) return null;
+  const candidates = lines.map(line => SMOKE_CANDIDATE.exec(line)).filter(Boolean);
+  const candidate = candidates.length === 1 ? candidates[0] : null;
+  return {
+    label: verdict[1], result: verdict[2], pass: Number(verdict[3]), total: Number(verdict[4]),
+    exceptions: Number(verdict[5]), rejections: Number(verdict[6]), consoles: Number(verdict[7]), production: Number(verdict[8]),
+    runs: lines.filter(line => SMOKE_ANY_VERDICT.test(line)).length,
+    candidateLines: candidates.length,
+    candidate: candidate
+      ? { label: candidate[1], head: candidate[2], gates: candidate[3], expectSha: candidate[4] === '-' ? null : candidate[4] }
+      : null,
+    headChecked: lines.some(line => line.startsWith(SMOKE_HEAD_CHECK)),
+    treeChecked: lines.some(line => line.startsWith(SMOKE_TREE_CHECK)),
+    failedChecks: lines.filter(line => line.startsWith('FAIL  ')).length,
+    sha256: createHash('sha256').update(String(text)).digest('hex')
+  };
+}
+
+/**
+ * Miksi savun tulostetta ei voi kirjata aallon `wave` ehdokkaalle `sha`
+ * (40 merkkiä)? Tyhjä lista = kelpaa. Kelpaa VAIN yksi ajo, jonka
+ * tulosrivi on PASS n/n ja jokainen laskuri 0, nimi on aalto, ja
+ * EHDOKAS-rivin HEAD on juuri `sha` omilla porteilla, --expect-sha:lla
+ * todennettuna (HEAD- ja puutarkistus PASS).
+ */
+export function bootSmokeProblems(summary, { wave, sha }) {
+  if (!summary) {
+    return ['tulosteen viimeinen rivi ei ole "KÄYNNISTYSSAVU [X]: PASS|FAIL (n/m; poikkeuksia …, hylkäyksiä …, konsolivirheitä …, tuotantopyyntöjä …)" — ajo keskeytyi, tuloste on katkaistu tai väärä tiedosto'];
+  }
+  const problems = [];
+  if (summary.runs !== 1) problems.push(`tulosteessa on ${summary.runs} savun tulosriviä: kirjataan vain yhden ajon tuloste`);
+  if (summary.label !== wave) problems.push(`savun nimi on [${summary.label}], ei aalto [${wave}] (aja --label ${wave})`);
+  if (summary.result !== 'PASS') problems.push(`savun tulos on ${summary.result} (${summary.pass}/${summary.total})`);
+  if (!(summary.total > 0) || summary.pass !== summary.total) {
+    problems.push(`tarkistuksia ${summary.pass}/${summary.total}: PASS edellyttää n/n (n > 0)`);
+  }
+  const nonZero = SMOKE_COUNTS.filter(([key]) => summary[key] !== 0).map(([key, fi]) => `${fi} ${summary[key]}`);
+  if (nonZero.length) problems.push(`laskurit eivät ole nollia: ${nonZero.join(', ')}`);
+  if (summary.failedChecks > 0) problems.push(`tulosteessa on ${summary.failedChecks} FAIL-tarkistusriviä`);
+  const c = summary.candidate;
+  if (!c) {
+    problems.push(summary.candidateLines > 1
+      ? `tulosteessa on ${summary.candidateLines} EHDOKAS-riviä: kirjataan vain yhden ajon tuloste`
+      : 'EHDOKAS-rivi (tarjoillun juuren täysi SHA) puuttuu: aja savu tämän haaran tools/e2e/boot-smoke.mjs:llä');
+  } else {
+    if (c.label !== summary.label) problems.push(`EHDOKAS-rivin nimi [${c.label}] ei ole tulosrivin [${summary.label}]`);
+    if (c.head !== sha) problems.push(`savu ajettiin commitille ${c.head}, ei ${sha}`);
+    if (c.gates !== 'omat') problems.push(`savu ajettiin porteilla "${c.gates}" (--gates): ehdokas savutetaan omilla porteillaan`);
+    if (!c.expectSha) problems.push(`savu ajettiin ilman --expect-sha:ta: aja --expect-sha ${sha}`);
+    else if (!sha.startsWith(c.expectSha)) problems.push(`--expect-sha ${c.expectSha} ei ole ${sha}`);
+  }
+  if (!summary.headChecked || !summary.treeChecked) {
+    problems.push('HEAD- ja puutarkistus (--expect-sha: "HEAD on odotettu commit", "tarjoiltu puu = commit") puuttuvat tulosteesta');
+  }
+  return problems;
 }

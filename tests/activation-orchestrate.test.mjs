@@ -19,11 +19,11 @@ import path from 'node:path';
 import { ROOT, read } from './helpers/sources.mjs';
 import {
   HEAD_SHA, PREFLIGHT_CHECKS, ROOT_STUB, VERIFY_CHECKS, acceptanceEntry, checkResult, journalOf, lockFrom,
-  projectFiles, shaOf, stubFetch, stubFs, stubGit, testOutput, testsEntry
+  projectFiles, shaOf, smokeEntry, smokeOutput, stubFetch, stubFs, stubGit, testOutput, testsEntry
 } from './helpers/activation-history.mjs';
 import {
-  appendJournal, planNext, readJournal, readState, recordCandidateTests, recordTechnicalAcceptance,
-  resolveJournalPath, rollbackPack, runOrchestrator, technicalAcceptance, verifyRollback
+  appendJournal, bootSmokeCommand, planNext, readJournal, readState, recordBootSmoke, recordCandidateTests,
+  recordTechnicalAcceptance, resolveJournalPath, rollbackPack, runOrchestrator, technicalAcceptance, verifyRollback
 } from '../tools/activation/orchestrate.mjs';
 import { TECHNICAL_REQUIREMENTS } from '../tools/activation/acceptance-policy.mjs';
 import { cacheVersionOf, expectedMatrix } from '../tools/release/waves.mjs';
@@ -37,8 +37,8 @@ function inventoryAt(state, now = '2026-09-26 10:00:00') {
   return JSON.stringify(parsed);
 }
 
-/** Valmis päiväkirja: tuotannon aalto teknisesti hyväksytty + seuraavan ehdokkaan testit. */
-const READY_C_TO_D = journalOf(acceptanceEntry('C'), testsEntry('D'));
+/** Valmis päiväkirja: tuotannon aalto teknisesti hyväksytty + seuraavan ehdokkaan testit ja käynnistyssavu. */
+const READY_C_TO_D = journalOf(acceptanceEntry('C'), testsEntry('D'), smokeEntry('D'));
 
 function setup({
   production = 'C', dbState = '0008', gitOptions = {}, liveSha, journal = null, inventory = true,
@@ -95,9 +95,36 @@ test('KRIITTINEN: oletusajo ei kirjoita eikä pushaa — tuotanto C + kanta 0008
   assert.deepEqual(kinds(result.plan), {
     OWNER_APPROVAL: ['OWNER_DEPLOY_APPROVAL_REQUIRED'],
     OWNER_INPUT: [],
-    TECHNICAL: ['TECHNICAL_ACCEPTANCE_REQUIRED', 'CANDIDATE_TESTS_REQUIRED']
+    TECHNICAL: ['TECHNICAL_ACCEPTANCE_REQUIRED', 'CANDIDATE_TESTS_REQUIRED', 'BOOT_SMOKE_REQUIRED']
   });
   assert.deepEqual(result.plan.liveUse.map(l => [l.wave, l.status]), [['C', 'LIVE_USE_VALIDATION_PENDING']]);
+});
+
+test('KRIITTINEN: suunnitelma antaa puuttuvan käynnistyssavun tarkan ajo- ja kirjauskomennon', async () => {
+  const d = shaOf('D');
+  assert.equal(bootSmokeCommand('D', d),
+    `git worktree add --detach .claude/worktrees/rc-D-smoke ${d} && npm run e2e:boot-smoke -- --root .claude/worktrees/rc-D-smoke --label D --expect-sha ${d} > .claude/activation/smoke-D-0202020.txt; `
+    + `npm run activation:orchestrate -- --record-boot-smoke=D --sha=${d} --smoke-result=.claude/activation/smoke-D-0202020.txt`);
+  const { deps, options } = setup({ journal: journalOf(acceptanceEntry('C'), testsEntry('D')) });
+  const result = await runOrchestrator(deps, options);
+  const smoke = result.plan.pendingGates.find(g => g.class === 'BOOT_SMOKE_REQUIRED');
+  assert.equal(smoke.kind, 'TECHNICAL');
+  assert.equal(smoke.detail,
+    `ehdokkaan D (0202020) käynnistyssavu omalla koodilla ja porteilla ei ole kirjattu PASSiksi: ${bootSmokeCommand('D', d)}`);
+  assert.deepEqual(kinds(result.plan).TECHNICAL, ['BOOT_SMOKE_REQUIRED']);
+  assert.equal(result.plan.evidence.bootSmoke, undefined);
+  assert.match(result.plan.steps.at(-1).detail.join(' '), /BOOT_SMOKE_REQUIRED: .*--record-boot-smoke=D/);
+
+  // Kirjattu PASS poistaa portin ja päätyy todisteeksi.
+  const ready = setup({ journal: READY_C_TO_D });
+  const plan = (await runOrchestrator(ready.deps, ready.options)).plan;
+  assert.equal(plan.pendingGates.some(g => g.class === 'BOOT_SMOKE_REQUIRED'), false);
+  assert.match(plan.evidence.bootSmoke, /^käynnistyssavu \[D\] 27\/27 PASS omilla porteilla, poikkeuksia 0, hylkäyksiä 0, konsolivirheitä 0, tuotantopyyntöjä 0/);
+
+  // Migraatioaallon ehdokas: portti näkyy jo ennen migraatiota.
+  const migrate = setup({ production: 'E', dbState: '0008' });
+  const gates = (await runOrchestrator(migrate.deps, migrate.options)).plan.pendingGates;
+  assert.match(gates.find(g => g.class === 'BOOT_SMOKE_REQUIRED').detail, new RegExp(`--record-boot-smoke=F --sha=${shaOf('F')}`));
 });
 
 test('kuivaharjoitus ei pushaa edes --approved-sha:lla ilman --execute-deploy', async () => {
@@ -201,7 +228,7 @@ test('KRIITTINEN: --execute-deploy ilman tarkistettua live-tilaa -> STOP LIVE_RE
 // =====================================================================
 
 test('KRIITTINEN: deploy vaatii tuotannon aallon teknisen hyväksynnän: ilman sitä STOP eikä pushia', async () => {
-  const { git, deps, options } = deploySetup({ journal: journalOf(testsEntry('D')) });
+  const { git, deps, options } = deploySetup({ journal: journalOf(testsEntry('D'), smokeEntry('D')) });
   const result = await runOrchestrator(deps, { ...options, executeDeploy: true, approvedSha: shaOf('D') });
   assert.equal(result.plan.decision, 'STOP');
   assert.equal(result.plan.stopClass, 'TECHNICAL_ACCEPTANCE_REQUIRED');
@@ -210,7 +237,8 @@ test('KRIITTINEN: deploy vaatii tuotannon aallon teknisen hyväksynnän: ilman s
 });
 
 test('KRIITTINEN: deploy vaatii ehdokkaan vihreän testiajon: ilman sitä STOP CANDIDATE_TESTS_REQUIRED', async () => {
-  for (const journal of [journalOf(acceptanceEntry('C')), journalOf(acceptanceEntry('C'), testsEntry('D', shaOf('D'), { fail: 1 }))]) {
+  for (const journal of [journalOf(acceptanceEntry('C'), smokeEntry('D')),
+    journalOf(acceptanceEntry('C'), testsEntry('D', shaOf('D'), { fail: 1 }), smokeEntry('D'))]) {
     const { git, deps, options } = deploySetup({ journal });
     const result = await runOrchestrator(deps, { ...options, executeDeploy: true, approvedSha: shaOf('D') });
     assert.equal(result.plan.stopClass, 'CANDIDATE_TESTS_REQUIRED');
@@ -219,10 +247,28 @@ test('KRIITTINEN: deploy vaatii ehdokkaan vihreän testiajon: ilman sitä STOP C
   }
 });
 
+test('KRIITTINEN: deploy vaatii ehdokkaan käynnistyssavun (PASS samalle SHA:lle): ilman sitä STOP BOOT_SMOKE_REQUIRED', async () => {
+  for (const [name, journal] of [
+    ['ei savua', journalOf(acceptanceEntry('C'), testsEntry('D'))],
+    ['savu FAIL', journalOf(acceptanceEntry('C'), testsEntry('D'), smokeEntry('D', shaOf('D'), { result: 'FAIL', pass: 26 }))],
+    ['PASS mutta poikkeus', journalOf(acceptanceEntry('C'), testsEntry('D'), smokeEntry('D', shaOf('D'), { exceptions: 1 }))],
+    ['toisen commitin savu', journalOf(acceptanceEntry('C'), testsEntry('D'), smokeEntry('D', 'dd'.repeat(20)))],
+    ['toisen aallon savu', journalOf(acceptanceEntry('C'), testsEntry('D'), smokeEntry('E', shaOf('D')))],
+    ['PASS, sitten FAIL', journalOf(acceptanceEntry('C'), testsEntry('D'), smokeEntry('D'), smokeEntry('D', shaOf('D'), { result: 'FAIL', pass: 20 }))]
+  ]) {
+    const { git, deps, options } = deploySetup({ journal });
+    const result = await runOrchestrator(deps, { ...options, executeDeploy: true, approvedSha: shaOf('D') });
+    assert.equal(result.plan.stopClass, 'BOOT_SMOKE_REQUIRED', name);
+    assert.match(result.plan.steps.at(-1).detail.join(' '), /--record-boot-smoke=D/, name);
+    assert.deepEqual(pushes(git), [], name);
+    assert.equal(git.calls.some(c => c[0] === 'lsRemoteMain'), false, name);
+  }
+});
+
 test('KRIITTINEN: vanhan mallin UI-hyväksyntä tai toisen commitin hyväksyntä ei kelpaa (fail closed)', async () => {
-  const legacy = journalOf({ at: '2026-09-26T10:00:00Z', type: 'acceptance', wave: 'C', sha: shaOf('C') }, testsEntry('D'));
-  const otherSha = journalOf(acceptanceEntry('C', 'cc'.repeat(20)), testsEntry('D'));
-  const wrongWave = journalOf(acceptanceEntry('B', shaOf('C')), testsEntry('D'));
+  const legacy = journalOf({ at: '2026-09-26T10:00:00Z', type: 'acceptance', wave: 'C', sha: shaOf('C') }, testsEntry('D'), smokeEntry('D'));
+  const otherSha = journalOf(acceptanceEntry('C', 'cc'.repeat(20)), testsEntry('D'), smokeEntry('D'));
+  const wrongWave = journalOf(acceptanceEntry('B', shaOf('C')), testsEntry('D'), smokeEntry('D'));
   for (const journal of [legacy, otherSha, wrongWave]) {
     const { git, deps, options } = deploySetup({ journal });
     const result = await runOrchestrator(deps, { ...options, executeDeploy: true, approvedSha: shaOf('D') });
@@ -381,6 +427,7 @@ test('KRIITTINEN: hyväksytty deploy: CAS, yksi push lukittuun SHA:han, live tä
   assert.equal(entry.result, 'AUTOMATED_TECHNICAL_ACCEPTANCE');
   assert.equal(entry.liveUse, 'LIVE_USE_VALIDATION_PENDING');
   for (const r of TECHNICAL_REQUIREMENTS) assert.ok(entry.checks[r.id], `päiväkirjan ehto puuttuu: ${r.id}`);
+  assert.match(entry.checks.bootSmoke, /^käynnistyssavu \[D\] 27\/27 PASS omilla porteilla/);
   assert.equal('acceptedWave' in entry, false, 'vanha UI-hyväksyntäkenttä');
   assert.equal(fsStub.writes.some(w => w[0] === 'writeFileSync'), false);
 
@@ -460,6 +507,7 @@ test('KRIITTINEN: C:n tekninen hyväksyntä live-todennuksesta: kaikki ehdot, yk
   assert.deepEqual(writes(fsStub), [], 'technicalAcceptance ei kirjoita');
   for (const r of TECHNICAL_REQUIREMENTS) assert.ok(dry.checks[r.id], `ehto puuttuu: ${r.id}`);
   assert.match(dry.checks.candidateTests, /ennen aktivointityökaluja/);
+  assert.match(dry.checks.bootSmoke, /^C: ei kirjattua savua — C deployattiin ennen aktivointityökaluja/);
   assert.match(dry.checks.liveAssets, /sormenjälki \d+ tiedostoa = 0101010/);
 
   const recorded = await recordTechnicalAcceptance(deps, { wave: 'C', sha: shaOf('C'), inventoryPath: 'inventaario.json' });
@@ -496,15 +544,40 @@ test('KRIITTINEN: teknistä hyväksyntää ei kirjata, jos yksikin ehto pettää
   }
 });
 
-test('D:n ja F:n tekninen hyväksyntä vaatii kirjatun testiajon; F myös verify_0009-tuloksen', async () => {
+test('D:n ja F:n tekninen hyväksyntä vaatii kirjatun testiajon ja käynnistyssavun; F myös verify_0009-tuloksen', async () => {
   const d = setup({ production: 'D' });
   const noTests = await technicalAcceptance(d.deps, { wave: 'D', sha: shaOf('D'), inventoryPath: 'inventaario.json' });
   assert.equal(noTests.ok, false);
   assert.match(noTests.problems.join(' '), /CANDIDATE_TESTS_REQUIRED/);
-  const dOk = setup({ production: 'D', journal: journalOf(testsEntry('D')) });
-  assert.equal((await technicalAcceptance(dOk.deps, { wave: 'D', sha: shaOf('D'), inventoryPath: 'inventaario.json' })).ok, true);
+  assert.match(noTests.problems.join(' '), /BOOT_SMOKE_REQUIRED/);
 
-  const f = setup({ production: 'F', dbState: '0009', journal: journalOf(testsEntry('F')) });
+  // Testiajo kirjattu, savu puuttuu tai ei ole PASS: ei hyväksyntää eikä kirjausta.
+  for (const [name, journal] of [
+    ['savu puuttuu', journalOf(testsEntry('D'))],
+    ['savu FAIL', journalOf(testsEntry('D'), smokeEntry('D', shaOf('D'), { result: 'FAIL', pass: 26 }))],
+    ['toisen commitin savu', journalOf(testsEntry('D'), smokeEntry('D', 'dd'.repeat(20)))]
+  ]) {
+    const s = setup({ production: 'D', journal });
+    const refused = await recordTechnicalAcceptance(s.deps, { wave: 'D', sha: shaOf('D'), inventoryPath: 'inventaario.json' });
+    assert.equal(refused.ok, false, name);
+    assert.deepEqual(refused.problems.filter(p => !p.startsWith('BOOT_SMOKE_REQUIRED')), [], `${name}: ${refused.problems.join('; ')}`);
+    assert.equal(refused.problems.length, 1, name);
+    assert.ok(refused.problems[0].includes(`--record-boot-smoke=D --sha=${shaOf('D')}`), name);
+    assert.ok(refused.checks.candidateTests, `${name}: testiajo todennettiin`);
+    assert.equal(refused.checks.bootSmoke, undefined, name);
+    assert.equal(refused.journal, null, name);
+    assert.deepEqual(writes(s.fs), [], `${name}: kirjoitti päiväkirjaan`);
+  }
+
+  // Molemmat kirjattu: hyväksytään, ja kirjaus sisältää molemmat ehdot.
+  const dOk = setup({ production: 'D', journal: journalOf(testsEntry('D'), smokeEntry('D')) });
+  const accepted = await recordTechnicalAcceptance(dOk.deps, { wave: 'D', sha: shaOf('D'), inventoryPath: 'inventaario.json' });
+  assert.equal(accepted.ok, true, accepted.problems.join('; '));
+  assert.match(accepted.entry.checks.candidateTests, /node --test 1600\/1600 PASS/);
+  assert.match(accepted.entry.checks.bootSmoke, /^käynnistyssavu \[D\] 27\/27 PASS omilla porteilla/);
+  for (const r of TECHNICAL_REQUIREMENTS) assert.ok(accepted.entry.checks[r.id], `ehto puuttuu: ${r.id}`);
+
+  const f = setup({ production: 'F', dbState: '0009', journal: journalOf(testsEntry('F'), smokeEntry('F')) });
   const noVerify = await technicalAcceptance(f.deps, { wave: 'F', sha: shaOf('F'), inventoryPath: 'inventaario.json' });
   assert.match(noVerify.problems.join(' '), /verify_0009\.sql -tulos puuttuu/);
   const withVerify = await technicalAcceptance(f.deps, { wave: 'F', sha: shaOf('F'), inventoryPath: 'inventaario.json', verifyResult: checkResult(VERIFY_CHECKS) });
@@ -536,6 +609,62 @@ test('ehdokkaan testiajon kirjaus: vain vihreä, vain lukon deployTarget, yhteen
     assert.match(result.reason, pattern);
   }
   assert.equal(writes(s.fs).length, before, 'hylätty testiajo kirjattiin');
+});
+
+test('KRIITTINEN: käynnistyssavun kirjaus: vain PASS n/n nollalaskureilla, sama täysi SHA = lukon deployTarget, oikea aalto', () => {
+  const s = setup();
+  const d = shaOf('D');
+  const text = smokeOutput({ label: 'D', sha: d });
+  const green = recordBootSmoke(s.deps, { wave: 'D', sha: d, smokeText: text });
+  assert.equal(green.ok, true, green.reason);
+  const appended = s.fs.writes.filter(w => w[0] === 'appendFileSync');
+  assert.equal(appended.length, 1);
+  assert.equal(appended[0][1], path.resolve(ROOT_STUB, '.claude/activation/journal.jsonl'), 'vain (virtuaalinen) päiväkirja');
+  const entry = JSON.parse(appended[0][2]);
+  assert.deepEqual(entry, green.entry);
+  assert.deepEqual(
+    [entry.type, entry.wave, entry.sha, entry.result, entry.gates, entry.pass, entry.total, entry.exceptions, entry.rejections, entry.consoles, entry.production],
+    ['boot-smoke', 'D', d, 'PASS', 'omat', 27, 27, 0, 0, 0, 0]);
+  assert.equal(entry.command, `npm run e2e:boot-smoke -- --label D --expect-sha ${d}`);
+  assert.equal(entry.at, '2026-09-26T12:00:00.000Z');
+  assert.match(entry.outputSha256, /^[0-9a-f]{64}$/);
+
+  const before = writes(s.fs).length;
+  for (const [name, opts, pattern] of [
+    ['FAIL', { wave: 'D', sha: d, smokeText: smokeOutput({ result: 'FAIL', pass: 25 }) }, /savun tulos on FAIL \(25\/27\)/],
+    ['n/m', { wave: 'D', sha: d, smokeText: smokeOutput({ pass: 26 }) }, /tarkistuksia 26\/27/],
+    ['konsolivirhe', { wave: 'D', sha: d, smokeText: smokeOutput({ consoles: 2 }) }, /konsolivirheitä 2/],
+    ['tuotantopyyntö', { wave: 'D', sha: d, smokeText: smokeOutput({ production: 1 }) }, /tuotantopyyntöjä 1/],
+    ['tulosrivi puuttuu', { wave: 'D', sha: d, smokeText: smokeOutput({ verdictLine: false }) }, /viimeinen rivi ei ole "KÄYNNISTYSSAVU/],
+    ['EHDOKAS puuttuu', { wave: 'D', sha: d, smokeText: smokeOutput({ candidateLine: false }) }, /EHDOKAS-rivi/],
+    ['tyhjä tuloste', { wave: 'D', sha: d, smokeText: '' }, /tuloste puuttuu tai on tyhjä/],
+    ['ei tulostetta', { wave: 'D', sha: d, smokeText: null }, /--smoke-result/],
+    ['UTF-16 (PowerShell)', { wave: 'D', sha: d, smokeText: [...smokeOutput()].join('\u0000') }, /UTF-16/],
+    ['savu toiselle commitille', { wave: 'D', sha: d, smokeText: smokeOutput({ head: shaOf('E'), expectSha: shaOf('E') }) }, /savu ajettiin commitille 0303/],
+    ['väärä nimi (--label E)', { wave: 'D', sha: d, smokeText: smokeOutput({ label: 'E' }) }, /savun nimi on \[E\], ei aalto \[D\]/],
+    ['--gates J', { wave: 'D', sha: d, smokeText: smokeOutput({ gates: 'J' }) }, /omilla porteillaan/],
+    ['E:n savu D:n kirjauksena', { wave: 'E', sha: d, smokeText: smokeOutput({ label: 'E', sha: d }) }, /ei ole aallon E lukittu deployTarget/],
+    ['E:n SHA D:lle', { wave: 'D', sha: shaOf('E'), smokeText: smokeOutput({ label: 'D', sha: shaOf('E') }) }, /ei ole aallon D lukittu deployTarget/],
+    ['lyhyt SHA', { wave: 'D', sha: '0202020', smokeText: text }, /40-merkkisen/],
+    ['ei junan aalto', { wave: 'B', sha: d, smokeText: text }, /ei ole junan C–J aalto/]
+  ]) {
+    const result = recordBootSmoke(s.deps, opts);
+    assert.equal(result.ok, false, name);
+    assert.equal(result.journal, null, name);
+    assert.match(result.reason, pattern, name);
+  }
+  assert.equal(writes(s.fs).length, before, 'hylätty savu kirjattiin');
+});
+
+test('C (PRE_TOOLING_WAVE): savun kirjaus sallitaan kuten testiajon; kirjattu savu näkyy todisteena, puuttuva ei estä', async () => {
+  const s = setup();
+  const c = shaOf('C');
+  const recorded = recordBootSmoke(s.deps, { wave: 'C', sha: c, smokeText: smokeOutput({ label: 'C', sha: c }) });
+  assert.equal(recorded.ok, true, recorded.reason);
+  const accepted = await technicalAcceptance(s.deps, { wave: 'C', sha: c, inventoryPath: 'inventaario.json' });
+  assert.equal(accepted.ok, true, accepted.problems.join('; '));
+  assert.match(accepted.checks.bootSmoke, /^käynnistyssavu \[C\] 27\/27 PASS/);
+  assert.match(accepted.checks.candidateTests, /ennen aktivointityökaluja/, 'testiajo yhä poikkeuksella');
 });
 
 // =====================================================================

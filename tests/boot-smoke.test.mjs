@@ -16,8 +16,9 @@ import {
   parseArgs, UsageError, chromeArgs, HOST_RESOLVER_RULES, PRODUCTION_HOST, EXPECTED_OFFLINE_HOSTS,
   classifyUrl, resolveRequest, profileDirFor, assertDebugPortFree, fingerprintRoot, fingerprintChanges,
   evaluateRun, describeException, describeConsole, locate, smokePageHtml, gitBlobSha, treeMatchesCommit,
-  groupIssues, SMOKE_FILES, SMOKE_PREFIX
+  groupIssues, SMOKE_FILES, SMOKE_PREFIX, reportLines, summaryLines
 } from '../tools/e2e/boot-smoke.mjs';
+import { bootSmokeProblems, parseBootSmoke } from '../tools/activation/acceptance-policy.mjs';
 import { ownerSmokeSeed, OWNER_USER_ID, OWNER_COUNTS, SEEDS, mondayOf } from '../tools/e2e/seeds.mjs';
 import { createFakeDatabase, createFakeSupabase } from '../tools/e2e/fakeSupabase.mjs';
 
@@ -337,7 +338,55 @@ test('virheen sijainti: ehdokkaan polku ja rivi pinosta; hylkäys tunnistetaan',
 test('npm-skripti ja hyväksyntäpolitiikka: savu on osa AUTOMATED_TECHNICAL_ACCEPTANCEa jokaiselle aallolle', () => {
   assert.equal(JSON.parse(read('package.json')).scripts['e2e:boot-smoke'], 'node tools/e2e/boot-smoke.mjs');
   const policy = read('docs/activation/AUTOMATED-ACCEPTANCE-POLICY.md').replace(/\s+/g, ' ');
-  assert.match(policy, /npm run e2e:boot-smoke -- --root \.claude\/worktrees\/rc-X --label X --expect-sha <deployTarget>/);
+  assert.match(policy, /npm run e2e:boot-smoke -- --root \.claude\/worktrees\/rc-X-smoke --label X --expect-sha <deployTarget>/);
   assert.match(policy, /KÄYNNISTYSSAVU \[X\]: PASS/);
+  assert.match(policy, /--record-boot-smoke=X --sha=<deployTarget> --smoke-result=/);
   assert.match(policy, /AUTOMATED_TECHNICAL_ACCEPTANCE/);
+});
+
+// ------------------------------------------------ sopimus orkestroijan kanssa
+
+/** Täysi ajo raportin tulostusta varten (cleanRun + käynnistyksen tiedot). */
+const reportableRun = overrides => ({
+  ...cleanRun(), root: 'C:/x/rc-D-smoke', label: 'D', expectSha: 'a'.repeat(40),
+  boot: {
+    appVisible: true, authGateOpen: false, startupError: null, onboarding: 'ohitettu',
+    gates: { tables: { tasks: true }, columns: {} }, adaptations: ['setClient'], userId: OWNER_USER_ID, todayIso: '2026-09-26', seed: { tasks: 36 }
+  },
+  ...overrides
+});
+
+test('KRIITTINEN: savun loppurivit ovat orkestroijan --record-boot-smoke-jäsentimen sopimus', () => {
+  const sha = 'a'.repeat(40);
+  const run = reportableRun();
+  const verdict = evaluateRun(run);
+  assert.equal(verdict.passed, true);
+  const lines = reportLines(run, verdict);
+  assert.deepEqual(lines.slice(-2), summaryLines(run, verdict));
+  assert.equal(lines.at(-1), `KÄYNNISTYSSAVU [D]: PASS (${verdict.lines.length}/${verdict.lines.length}; poikkeuksia 0, hylkäyksiä 0, konsolivirheitä 0, tuotantopyyntöjä 0)`);
+  assert.equal(lines.at(-2), `EHDOKAS [D]: ${sha} (portit: omat; --expect-sha: ${sha})`);
+  // console.log-tuloste sellaisenaan (+ npm:n otsake) kelpaa kirjattavaksi.
+  const printed = ['', '> manifestival@1.0.0 e2e:boot-smoke', '', ...lines, ''].join('\n');
+  const summary = parseBootSmoke(printed);
+  assert.equal(summary.total, verdict.lines.length);
+  assert.deepEqual(bootSmokeProblems(summary, { wave: 'D', sha }), []);
+
+  // Epäonnistunut ajo tulostaa FAILin, jota ei kirjata.
+  const broken = reportableRun();
+  broken.issues.push({ kind: 'exception', message: 'Uncaught ReferenceError: key is not defined', location: 'src/app/views/finance.js:209:71', step: 'Talous' });
+  const failed = evaluateRun(broken);
+  const failedText = reportLines(broken, failed).join('\n');
+  assert.match(failedText.split('\n').at(-1), /^KÄYNNISTYSSAVU \[D\]: FAIL \(\d+\/\d+; poikkeuksia 1,/);
+  assert.match(bootSmokeProblems(parseBootSmoke(failedText), { wave: 'D', sha }).join('; '), /savun tulos on FAIL/);
+
+  // Ilman --expect-sha:ta tai J-porteilla ajettu savu ei kelpaa ehdokkaalle.
+  const noExpect = reportableRun({ expectSha: null });
+  assert.equal(summaryLines(noExpect, evaluateRun(noExpect))[0], `EHDOKAS [D]: ${sha} (portit: omat; --expect-sha: -)`);
+  assert.match(bootSmokeProblems(parseBootSmoke(reportLines(noExpect, evaluateRun(noExpect)).join('\n')), { wave: 'D', sha }).join('; '), /ilman --expect-sha:ta/);
+  const gatedJ = reportableRun({ gateMode: { mode: 'J', provenance: 'J', matrix: { tables: { tasks: true } } } });
+  assert.match(summaryLines(gatedJ, evaluateRun(gatedJ))[0], /\(portit: J; /);
+  assert.match(bootSmokeProblems(parseBootSmoke(reportLines(gatedJ, evaluateRun(gatedJ)).join('\n')), { wave: 'D', sha }).join('; '), /omilla porteillaan/);
+  // HEAD lukukelvoton: ei täyttä SHA:ta, ei kirjausta.
+  const noHead = reportableRun({ head: { sha: null, ref: null } });
+  assert.match(summaryLines(noHead, evaluateRun(noHead))[0], /^EHDOKAS \[D\]: \? \(/);
 });

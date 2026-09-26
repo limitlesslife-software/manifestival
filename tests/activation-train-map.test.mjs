@@ -309,6 +309,26 @@ test('KRIITTINEN: uudelleenleikkaus palauttaa STOP-rivit komennoiksi uusilla SHA
   assert.match(fast, /SQL-lähde \(lukon sqlSource\): `rehearsal\/wave-j-v2` @ `3{40}`/);
 });
 
+test('käynnistyssavun rivit (--label X --expect-sha, --record-boot-smoke=X --sha=) seuraavat lukkoa', () => {
+  const d = map.waves.find(w => w.wave === 'D').deployTarget;
+  const e = map.waves.find(w => w.wave === 'E').deployTarget;
+  const stale = [
+    `npm run e2e:boot-smoke -- --root .claude/worktrees/rc-D-smoke --label D --expect-sha ${e} > .claude/activation/smoke-D.txt`,
+    `npm run activation:orchestrate -- --record-boot-smoke=D --sha=${e} --smoke-result=.claude/activation/smoke-D.txt`,
+    `node tools/e2e/boot-smoke.mjs --root x --label=D --expect-sha=${e}`
+  ].join('\n');
+  const problems = waveShaArgProblems(stale, { lock: map, file: 'x.md' });
+  assert.equal(problems.length, 3, problems.join('; '));
+  assert.match(problems[0], new RegExp(`--expect-sha ${e.slice(0, 7)} ei ole aallon D lukittu deployTarget`));
+  const synced = syncDoc(stale, { lock: map });
+  assert.equal(synced.includes(e), false);
+  assert.equal(synced.split(d).length - 1, 3);
+  assert.deepEqual(waveShaArgProblems(synced, { lock: map, file: 'x.md' }), []);
+  // Paikkamerkki X ei ole aalto: politiikan yleisohje ei muutu.
+  const generic = 'npm run e2e:boot-smoke -- --root .claude/worktrees/rc-X-smoke --label X --expect-sha <deployTarget>';
+  assert.equal(syncDoc(generic, { lock: map }), generic);
+});
+
 test('push-rivien tarkistus hylkää haaran nimen, lyhyen SHA:n ja väärän aallon SHA:n', () => {
   const d = map.waves.find(w => w.wave === 'D').deployTarget;
   const e = map.waves.find(w => w.wave === 'E').deployTarget;

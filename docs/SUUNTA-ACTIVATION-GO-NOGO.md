@@ -57,7 +57,7 @@ uudelleen: niiden SHA:t päivittyvät lukosta (`train-map --write`, sitten
 Odotettu: `NEXT_ACTION: DEPLOY D` — **ei** migraatio 0009: se odottaa, kunnes E
 on tuotannossa ja teknisesti hyväksytty. `REQUIRED_OWNER_GATE` sisältää vain
 omistajan hyväksynnän "hyväksyn D"; `REQUIRED_TECHNICAL_GATE` kertoo Clauden
-koneelliset askeleet (C:n tekninen hyväksyntä, D:n testiajo);
+koneelliset askeleet (C:n tekninen hyväksyntä, D:n testiajo ja käynnistyssavu);
 `LIVE_USE_VALIDATION_PENDING` tulostetaan tiedoksi. Tuore inventaario
 (`supabase/acceptance/activation_readonly_inventory.sql`, vain luku) tarvitaan
 vasta ennen migraatiota 0009.
@@ -68,11 +68,12 @@ paikalliseen, git-ignoroituun päiväkirjaan `.claude/activation/journal.jsonl`:
 Aallon C selainlista (`docs/acceptance/WAVE-C-OWNER-ACCEPTANCE.md`) on
 `LIVE_USE_VALIDATION_PENDING`: tehdään oikeassa käytössä, ei estä D:tä.
 
-**3. (Claude)** D:n oma testipatteristo ehdokkaan työpuussa ja kirjaus
-(`--record-candidate-tests`, komento dry-runin `REQUIRED_TECHNICAL_GATE`-rivillä).
+**3. (Claude)** D:n oma testipatteristo ja käynnistyssavu ehdokkaan omissa
+työpuissa ja niiden kirjaus (`--record-candidate-tests`, `--record-boot-smoke`;
+komennot dry-runin `REQUIRED_TECHNICAL_GATE`-rivillä).
 
 **4. (omistaja)** "hyväksyn D" → Claude ajaa orkestroijan, joka tarkistaa
-lukon, teknisen hyväksynnän, testiajon ja esitarkistuksen, varmistaa että
+lukon, teknisen hyväksynnän, testiajon, käynnistyssavun ja esitarkistuksen, varmistaa että
 `origin`in main on yhä tuotannon SHA (compare-and-swap), pushaa **lukon
 deployTargetin** (ei koskaan force), todentaa tuotannon (välimuisti, portit,
 sarakeportit, sormenjälki) ja kirjaa D:n `AUTOMATED_TECHNICAL_ACCEPTANCE`:n.
@@ -136,6 +137,7 @@ kanssa (todennettu), joten tauko minkä tahansa aallon jälkeen on turvallinen.
 | OWNER_READ_ONLY_SQL_REQUIRED | Omistajan syöte, ei hyväksyntä: tuore inventaario ennen 0009:ää, `preflight_00XX.sql`- ja `verify_00XX.sql`-tulokset (vain luku, liitetään Claudelle) |
 | TECHNICAL_ACCEPTANCE_REQUIRED | Claude: tuotannon aallon `AUTOMATED_TECHNICAL_ACCEPTANCE` päiväkirjaan (C live-todennuksesta, D–J orkestroijan deploysta) |
 | CANDIDATE_TESTS_REQUIRED | Claude: ehdokkaan oma täysi testipatteristo vihreänä ja kirjattuna ennen sen migraatiota tai deployta |
+| BOOT_SMOKE_REQUIRED | Claude: ehdokkaan käynnistyssavu (`npm run e2e:boot-smoke`, omalla koodilla ja porteilla) PASSina ja kirjattuna (`--record-boot-smoke`) ennen sen migraatiota tai deployta |
 | LIVE_USE_VALIDATION_PENDING | Kaikki käsin tehtävät selain- ja laitetarkistukset (WAVE-X.md kohta 4, `WAVE-C-OWNER-ACCEPTANCE.md`, Day 1): oikeassa käytössä, **ei estä junaa, ei koskaan PASS** |
 | PHONE_ACCEPTANCE_REQUIRED | Day 1 puhelimella J:n jälkeen — `LIVE_USE_VALIDATION_PENDING` (ei estä); APK asennetaan vasta kun `verify_0013` = 0 ja J on tuotannossa |
 | OPTIONAL_OWNER_APPROVAL | T-2-varmuuskopion kuivaharjoitus tuotannossa (valinnainen, oma hyväksyntänsä; `docs/activation/0010-BACKUP-AND-RECOVERY.md`) |

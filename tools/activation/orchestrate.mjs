@@ -43,8 +43,9 @@
 //   VERIFY                (migraatioaallon DEPLOY) verify_M-tulos 0 poikkeavaa
 //                         ja tuore inventaario näyttää M:n ajetuksi
 //   STOP_OWNER_DEPLOY     seis, ellei --execute-deploy --approved-sha=<lukon
-//                         deployTarget>, tuotannon aallon tekninen hyväksyntä
-//                         ja ehdokkaan vihreä testiajo ole kirjattu
+//                         deployTarget>, tuotannon aallon tekninen hyväksyntä,
+//                         ehdokkaan vihreä testiajo ja ehdokkaan käynnistyssavu
+//                         (PASS omalla koodilla ja porteilla) ole kirjattu
 //   DEPLOY                compare-and-swap: ls-remote main == odotettu
 //                         edellinen SHA, sitten push <sha>:refs/heads/main
 //                         (EI force)
@@ -73,8 +74,9 @@ import { countChecksInSql, decide, parseCheckTable } from './score-sql-result.mj
 import { LOCK_PATH, checkTrainMap } from './train-map.mjs';
 import {
   LIVE_USE_PENDING, LIVE_USE_VALIDATION, OWNER_APPROVAL, OWNER_INPUT, PRE_TOOLING_WAVE,
-  TECHNICAL_ACCEPTANCE, TECHNICAL_GATE, TECHNICAL_REQUIREMENTS, candidateTestsOf, gateKind,
-  ownerMessageFor, parseTestSummary, technicalAcceptanceOf, testSummaryGreen
+  TECHNICAL_ACCEPTANCE, TECHNICAL_GATE, TECHNICAL_REQUIREMENTS, bootSmokeOf, bootSmokeProblems,
+  candidateTestsOf, gateKind, ownerMessageFor, parseBootSmoke, parseTestSummary, technicalAcceptanceOf,
+  testSummaryGreen
 } from './acceptance-policy.mjs';
 import { originMainStateFrom } from '../release/lineage.mjs';
 import { parseCacheVersion, parseGates } from '../release/state.mjs';
@@ -402,6 +404,25 @@ export function candidateTestsCommand(wave, sha) {
 }
 
 /**
+ * Komennot, joilla ehdokkaan käynnistyssavu ajetaan sen omalla koodilla
+ * ja porteilla (koskematon irrotettu työpuu, --expect-sha) ja kirjataan.
+ * Savu ajetaan tämän haaran tools/e2e/boot-smoke.mjs:llä: vain se
+ * tulostaa EHDOKAS-rivin, jonka kirjaus vaatii.
+ */
+export function bootSmokeCommand(wave, sha) {
+  const tree = `.claude/worktrees/rc-${wave}-smoke`;
+  const out = `.claude/activation/smoke-${wave}-${sha.slice(0, 7)}.txt`;
+  return `git worktree add --detach ${tree} ${sha} && npm run e2e:boot-smoke -- --root ${tree} --label ${wave} --expect-sha ${sha} > ${out}; `
+    + `npm run activation:orchestrate -- --record-boot-smoke=${wave} --sha=${sha} --smoke-result=${out}`;
+}
+
+/** Päiväkirjan boot-smoke-rivin todiste `checks.bootSmoke`-kenttään. */
+function bootSmokeEvidence(entry) {
+  return `käynnistyssavu [${entry.wave}] ${entry.pass}/${entry.total} PASS omilla porteilla, poikkeuksia 0, hylkäyksiä 0, `
+    + `konsolivirheitä 0, tuotantopyyntöjä 0 (${entry.at})`;
+}
+
+/**
  * Seuraava askel. Puhdas funktio: ei I/O:ta (git-kerrosta käytetään
  * vain lukemiseen ehdokkaan ja SQL-tiedostojen ristiintarkistukseen).
  *
@@ -605,6 +626,13 @@ export function planNext(state, input = {}, { git }) {
   } else {
     gate(TECHNICAL_GATE.CANDIDATE_TESTS,
       `ehdokkaan ${wave} (${record.deployTarget.slice(0, 7)}) oma testipatteristo ei ole kirjattu vihreäksi: ${candidateTestsCommand(wave, record.deployTarget)}`);
+  }
+  const smoke = bootSmokeOf(state.journal.entries, { wave, sha: record.deployTarget });
+  if (smoke.ok) {
+    plan.evidence.bootSmoke = bootSmokeEvidence(smoke.entry);
+  } else {
+    gate(TECHNICAL_GATE.BOOT_SMOKE,
+      `ehdokkaan ${wave} (${record.deployTarget.slice(0, 7)}) käynnistyssavu omalla koodilla ja porteilla ei ole kirjattu PASSiksi: ${bootSmokeCommand(wave, record.deployTarget)}`);
   }
   const approval = ownerMessageFor(wave);
 
@@ -914,9 +942,10 @@ export async function verifyRollback(deps, { rollbackOf, record = false, journal
  * deployattiin ennen näitä työkaluja, ja myöhemmän aallon deployn
  * VERIFY_LIVE voi aikakatkaista vaikka tuotanto täsmäisi hetken päästä.
  *
- * Tarkistaa KAIKKI TECHNICAL_REQUIREMENTS-ehdot. Ehdokkaan testiajo on
- * pakollinen muille kuin aallolle C (PRE_TOOLING_WAVE), jonka hyväksyntä
- * perustuu omistajan päätöksellä live-todennukseen. Ei kirjoita mitään.
+ * Tarkistaa KAIKKI TECHNICAL_REQUIREMENTS-ehdot. Ehdokkaan testiajo ja
+ * käynnistyssavu ovat pakollisia muille kuin aallolle C (PRE_TOOLING_WAVE),
+ * jonka hyväksyntä perustuu omistajan päätöksellä live-todennukseen (C:lle
+ * kirjattu testiajo tai savu näytetään todisteena). Ei kirjoita mitään.
  *
  * @param {object} deps { git, fs, root, fetchImpl, now }
  * @param {object} options { wave, sha, verifyResult?, inventoryPath?, journalPath? }
@@ -1017,6 +1046,12 @@ export async function technicalAcceptance(deps, { wave, sha, verifyResult = null
   else if (wave === PRE_TOOLING_WAVE) checks.candidateTests = `${wave}: ei kirjattua ajoa — ${wave} deployattiin ennen aktivointityökaluja; hyväksyntä live-todennuksesta (omistajan päätös 2026-09-26)`;
   else problems.push(`${TECHNICAL_GATE.CANDIDATE_TESTS}: ${candidateTestsCommand(wave, sha)}`);
 
+  // Ehdokkaan käynnistyssavu omalla koodilla ja porteilla (sama poikkeus C:lle).
+  const smoke = bootSmokeOf(journal.entries, { wave, sha });
+  if (smoke.ok) checks.bootSmoke = bootSmokeEvidence(smoke.entry);
+  else if (wave === PRE_TOOLING_WAVE) checks.bootSmoke = `${wave}: ei kirjattua savua — ${wave} deployattiin ennen aktivointityökaluja; hyväksyntä live-todennuksesta (omistajan päätös 2026-09-26)`;
+  else problems.push(`${TECHNICAL_GATE.BOOT_SMOKE}: ${bootSmokeCommand(wave, sha)}`);
+
   // Live: tuotanto tarjoilee juuri tämän commitin.
   if (typeof deps.fetchImpl !== 'function') {
     problems.push('LIVE_REQUIRED: tekninen hyväksyntä vaatii tuotannon live-todennuksen (verkkohaku puuttuu)');
@@ -1058,6 +1093,23 @@ export async function recordTechnicalAcceptance(deps, options) {
 }
 
 /**
+ * Ehdokaskirjauksen kohde: junan C–J aalto, 40-merkkinen SHA, joka on
+ * aallon lukittu deployTarget ja löytyy paikallisesti. null = kelpaa,
+ * muuten syy.
+ */
+function candidateTargetProblem({ git, fs, root }, wave, sha) {
+  if (!waveById(wave) || wave === 'BASE' || waveIndex(wave) < waveIndex(TRAIN_FLOOR_WAVE)) return `aalto ${wave} ei ole junan C–J aalto`;
+  if (!SHA40.test(String(sha))) return `--sha vaatii 40-merkkisen SHA:n (annettiin ${sha || '-'})`;
+  const lockProblems = [];
+  const lock = readLockState({ fs, root, git }, lockProblems).data;
+  const record = lock && Array.isArray(lock.waves) ? lock.waves.find(w => w.wave === wave) : null;
+  if (!record) return `lukossa ei ole aaltoa ${wave}${lockProblems.length ? ` (${lockProblems.join('; ')})` : ''}`;
+  if (record.deployTarget !== sha) return `${sha.slice(0, 7)} ei ole aallon ${wave} lukittu deployTarget ${String(record.deployTarget).slice(0, 7)}`;
+  if (!git.revParse(sha)) return `committia ${sha} ei ole paikallisesti`;
+  return null;
+}
+
+/**
  * Kirjaa ehdokkaan oman testipatteriston vihreä ajo. Vain lukon
  * deployTargetille, ja vain vihreä yhteenveto (fail 0, cancelled 0).
  *
@@ -1065,16 +1117,10 @@ export async function recordTechnicalAcceptance(deps, options) {
  * @param {object} options { wave, sha, testsText, journalPath? }
  */
 export function recordCandidateTests(deps, { wave, sha, testsText, journalPath = JOURNAL_PATH }) {
-  const { git, fs, root } = deps;
+  const { fs, root } = deps;
   const refuse = reason => ({ ok: false, reason, journal: null });
-  if (!waveById(wave) || wave === 'BASE' || waveIndex(wave) < waveIndex(TRAIN_FLOOR_WAVE)) return refuse(`aalto ${wave} ei ole junan C–J aalto`);
-  if (!SHA40.test(String(sha))) return refuse(`--sha vaatii 40-merkkisen SHA:n (annettiin ${sha || '-'})`);
-  const lockProblems = [];
-  const lock = readLockState({ fs, root, git }, lockProblems).data;
-  const record = lock && Array.isArray(lock.waves) ? lock.waves.find(w => w.wave === wave) : null;
-  if (!record) return refuse(`lukossa ei ole aaltoa ${wave}${lockProblems.length ? ` (${lockProblems.join('; ')})` : ''}`);
-  if (record.deployTarget !== sha) return refuse(`${sha.slice(0, 7)} ei ole aallon ${wave} lukittu deployTarget ${String(record.deployTarget).slice(0, 7)}`);
-  if (!git.revParse(sha)) return refuse(`committia ${sha} ei ole paikallisesti`);
+  const target = candidateTargetProblem(deps, wave, sha);
+  if (target) return refuse(target);
   const summary = parseTestSummary(testsText);
   if (!summary) return refuse('testituloksesta ei löytynyt node --test -yhteenvetoa (tests/pass/fail)');
   if (!testSummaryGreen(summary)) {
@@ -1084,6 +1130,41 @@ export function recordCandidateTests(deps, { wave, sha, testsText, journalPath =
     at: (deps.now ? deps.now() : new Date()).toISOString(), type: 'candidate-tests', wave, sha, result: 'PASS',
     command: 'node --test', tests: summary.tests, pass: summary.pass, fail: summary.fail,
     cancelled: summary.cancelled, skipped: summary.skipped, todo: summary.todo, outputSha256: summary.sha256
+  };
+  return { ok: true, reason: null, entry, journal: { path: appendJournal(entry, { fs, root, journalPath }), entry } };
+}
+
+/**
+ * Kirjaa ehdokkaan käynnistyssavu (tools/e2e/boot-smoke.mjs). Vain lukon
+ * deployTargetille, ja vain yhden ajon tuloste, jonka viimeinen rivi on
+ * `KÄYNNISTYSSAVU [aalto]: PASS (n/n; poikkeuksia 0, hylkäyksiä 0,
+ * konsolivirheitä 0, tuotantopyyntöjä 0)` ja jonka EHDOKAS-rivin täysi
+ * HEAD on juuri tämä SHA omilla porteilla ja --expect-sha:lla
+ * (acceptance-policy.mjs bootSmokeProblems). Hylätty tuloste ei kirjoita
+ * mitään.
+ *
+ * @param {object} deps { git, fs, root, now }
+ * @param {object} options { wave, sha, smokeText, journalPath? }
+ */
+export function recordBootSmoke(deps, { wave, sha, smokeText, journalPath = JOURNAL_PATH }) {
+  const { fs, root } = deps;
+  const refuse = reason => ({ ok: false, reason, journal: null });
+  const target = candidateTargetProblem(deps, wave, sha);
+  if (target) return refuse(target);
+  if (smokeText === null || smokeText === undefined || !String(smokeText).trim()) {
+    return refuse('käynnistyssavun tuloste puuttuu tai on tyhjä (--smoke-result=<tiedosto>)');
+  }
+  if (String(smokeText).includes('\u0000')) {
+    return refuse('käynnistyssavun tuloste on UTF-16-muodossa (Windows PowerShellin >): aja komento Git Bashissa tai sh:ssa');
+  }
+  const summary = parseBootSmoke(smokeText);
+  const problems = bootSmokeProblems(summary, { wave, sha });
+  if (problems.length) return refuse(`käynnistyssavua ei kirjata: ${problems.join('; ')}`);
+  const entry = {
+    at: (deps.now ? deps.now() : new Date()).toISOString(), type: 'boot-smoke', wave, sha, result: 'PASS',
+    command: `npm run e2e:boot-smoke -- --label ${wave} --expect-sha ${sha}`, gates: summary.candidate.gates,
+    pass: summary.pass, total: summary.total, exceptions: summary.exceptions, rejections: summary.rejections,
+    consoles: summary.consoles, production: summary.production, outputSha256: summary.sha256
   };
   return { ok: true, reason: null, entry, journal: { path: appendJournal(entry, { fs, root, journalPath }), entry } };
 }

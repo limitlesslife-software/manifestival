@@ -12,7 +12,8 @@
 // Todentaa tuotannossa olevan aallon KAIKKI koneelliset ehdot
 // (tools/activation/acceptance-policy.mjs: sukulinja, migraatioedellytys,
 // ehdokkaan testit, tietoturva, esitarkistus, verify_00XX, live-
-// sormenjälki, välimuisti ja portit) ja vain niiden täyttyessä kirjaa
+// sormenjälki, välimuisti ja portit, ehdokkaan käynnistyssavu) ja vain
+// niiden täyttyessä kirjaa
 // AUTOMATED_TECHNICAL_ACCEPTANCE-rivin PAIKALLISEEN, git-ignoroituun
 // päiväkirjaan .claude/activation/journal.jsonl. Käsin tehtävä
 // käyttötodennus jää tilaan LIVE_USE_VALIDATION_PENDING. Vaatii --wave ja
