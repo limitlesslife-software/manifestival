@@ -602,6 +602,77 @@ graphTest('KRIITTINEN aalto J: kirjoituksen skeemavirhe on pysyvä istunnon ajan
   g.session.clearUser();
 });
 
+/** Palvelin, josta annetut taulut puuttuvat, kunnes ne poistetaan joukosta `missing`. */
+function withMissingTables(server, tables) {
+  const missing = new Set(tables);
+  return { missing, client: { from: name => (missing.has(name) ? missingTableQuery(name) : server.from(name)) } };
+}
+
+/** Odota, kunnes ehto täyttyy (enintään `ms`), ja anna kesken olevien ketjujen valmistua. */
+async function settle(condition, ms = 5000) {
+  const until = Date.now() + ms;
+  while (!condition() && Date.now() < until) await new Promise(resolve => setTimeout(resolve, 10));
+  await new Promise(resolve => setTimeout(resolve, 50));
+}
+
+graphTest('aalto J: ajastetun uudelleentarkistuksen aikana noussut taulu palauttaa kerran (kuuntelija + tarkistuspyyntö)', async () => {
+  const g = await loadWaveJ();
+  await freshSession(g);
+  const server = createSchemaServer({ applied: ALL, currentUserId: () => USER.id });
+  const { missing, client } = withMissingTables(server, ['notification_preferences']);
+  g.client.setClient(client);
+  let recovered = 0;
+  g.status.initSchemaStatus({ onRecovered: () => { recovered += 1; } });
+  g.status.setSchemaStatusActive(true);
+  try {
+    await g.probe.ensureSchemaCompatibility({ client, isOnline: ONLINE, storage: memoryStorage() });
+    assert.equal(g.schema.isTableMissing('notificationPreferences'), true, 'lähtötilanne: taulu puuttuu');
+    assert.equal(recovered, 0);
+
+    // Kanta korjataan; skeemavirhe pyytää uuden tarkistuksen (ajastettu, oletusviive).
+    missing.clear();
+    const generation = g.runtime.schemaGeneration();
+    assert.equal(g.runtime.requestReprobe('schema_error'), true);
+    await settle(() => g.runtime.schemaGeneration() !== generation && recovered > 0);
+    assert.equal(g.schema.isTableMissing('notificationPreferences'), false);
+    // Sekä nousun kuuntelija että tarkistuspyynnön jatko huomaavat saman muutoksen.
+    assert.equal(recovered, 1, 'sama kyvykkyyden muutos palautettiin useammin kuin kerran');
+  } finally {
+    g.status.setSchemaStatusActive(false);
+    g.session.clearUser();
+  }
+});
+
+graphTest('aalto J: "Yritä uudelleen" huoltokatkon jälkeen palauttaa kerran, vaikka nousun kuuntelija ehti ensin', async () => {
+  const g = await loadWaveJ();
+  await freshSession(g);
+  const server = createSchemaServer({ applied: ALL, currentUserId: () => USER.id });
+  const { missing, client } = withMissingTables(server, ['tasks', 'notification_preferences']);
+  g.client.setClient(client);
+  let recovered = 0;
+  g.status.initSchemaStatus({ onRecovered: () => { recovered += 1; } });
+  g.status.setSchemaStatusActive(true);
+  const ensure = options => g.probe.ensureSchemaCompatibility({
+    ...options, client, isOnline: ONLINE, storage: memoryStorage()
+  });
+  try {
+    await ensure({});
+    assert.equal(g.runtime.schemaSnapshot().status, SCHEMA_STATUS.MAINTENANCE, 'lähtötilanne: huoltokatko');
+
+    missing.clear();
+    const retried = await g.status.retrySchemaCheck({ ensure });
+    assert.equal(retried.recovered, true);
+    assert.equal(g.runtime.schemaSnapshot().status, SCHEMA_STATUS.OK);
+    assert.equal(recovered, 1, 'sama kyvykkyyden muutos palautettiin useammin kuin kerran');
+    // Uusi painallus ilman muutosta ei palauta uudelleen.
+    await g.status.retrySchemaCheck({ ensure });
+    assert.equal(recovered, 1);
+  } finally {
+    g.status.setSchemaStatusActive(false);
+    g.session.clearUser();
+  }
+});
+
 graphTest('KRIITTINEN aalto J: puuttuva taulu (PGRST205) ei jää voimaan, kun uusi tarkistus löytää sen', async () => {
   const g = await loadWaveJ();
   await freshSession(g);
