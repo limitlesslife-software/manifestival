@@ -19,7 +19,7 @@ import { freezeLocalDate } from './helpers/clock.mjs';
 import { fakeClient } from './helpers/gates.mjs';
 import { setUser, clearUser } from '../src/data/session.js';
 import { setClient } from '../src/data/client.js';
-import { resetState, getState } from '../src/app/state.js';
+import { resetState, getState, setDomainLoadStatus } from '../src/app/state.js';
 import { clearLocalUserData } from '../src/app/actions.js';
 import { createLifeArea, resetAppliedAdjustments } from '../src/app/alignment.js';
 import { renderDirection, initDirection, resetDirectionView } from '../src/app/views/direction.js';
@@ -55,14 +55,18 @@ function stubElement(id = null) {
   };
 }
 
-/** Aloituksen pääpainike säiliön merkinnästä; sama olio kunnes merkintä vaihtuu. */
-function withPrimaryButton(container) {
+/**
+ * Aloituksen pääpainike säiliön merkinnästä; sama olio kunnes merkintä
+ * vaihtuu. Merkintä piirretään säiliön sisällä olevaan korttiin
+ * (#dirSetupCard), ja selaimessa säiliön querySelector löytää sen sieltä.
+ */
+function withPrimaryButton(container, markup) {
   let parsedFrom = null;
   let button = null;
   container.querySelector = selector => {
     if (selector !== '[data-focus="primary"]') return null;
-    if (parsedFrom !== container.innerHTML) {
-      parsedFrom = container.innerHTML;
+    if (parsedFrom !== markup()) {
+      parsedFrom = markup();
       const match = /data-setup="([^"]+)" data-focus="primary"\s*(disabled)?\s*>([^<]*)</.exec(parsedFrom);
       button = match ? { dataset: { setup: match[1], focus: 'primary' }, disabled: Boolean(match[2]), textContent: match[3] } : null;
     }
@@ -79,7 +83,8 @@ function installDom() {
       if (!HTML_IDS.has(id)) return null;
       if (!elements.has(id)) {
         const element = stubElement(id);
-        elements.set(id, id === 'dirSetup' ? withPrimaryButton(element) : element);
+        elements.set(id, id === 'dirSetup'
+          ? withPrimaryButton(element, () => globalThis.document.getElementById('dirSetupCard').innerHTML) : element);
       }
       return elements.get(id);
     },
@@ -129,6 +134,9 @@ beforeEach(() => {
   installDom();
   setUser(USER);
   setClient(fakeClient({ data: [], error: null }));
+  // Alueiden haku onnistui (kuten suunta-first-run.test.mjs): tuntematon
+  // latausstatus ei ole "ladattu", eikä aloitusta silloin näytetä (2e2edf4).
+  setDomainLoadStatus('lifeAreas', true);
 });
 
 afterEach(() => {
@@ -142,7 +150,7 @@ test('vaihe 4: "Tallenna" herää ensimmäisestä merkistä ja tallentaa napautu
   await createLifeArea({ name: 'Perhe', importance: 5, targetMinutesPerWeek: 300 });
   initDirection();
   renderDirection();
-  assert.match(setup().innerHTML, /Vaihe 4\/7/);
+  assert.match(globalThis.document.getElementById('dirSetupCard').innerHTML, /Vaihe 4\/7/);
   assert.equal(primary().dataset.setup, 'save-capacity');
   assert.equal(primary().disabled, true, 'tyhjällä kentällä ei tallenneta');
 
