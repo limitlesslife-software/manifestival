@@ -28,6 +28,7 @@ import {
 } from '../src/app/views/direction.js';
 import { currentSetupProgress, currentLegacySummary } from '../src/app/views/directionSetup.js';
 import { getUserPreference, clearDevicePreferences } from '../src/data/preferences.js';
+import { lifeAreasRepo } from '../src/data/collectionsRepo.js';
 import { normalizeTask } from '../src/domain/task.js';
 import { normalizeGoal } from '../src/domain/goal.js';
 import { normalizeProject } from '../src/domain/project.js';
@@ -347,6 +348,29 @@ test('F2: viikkotavoitteet — "Ei tavoitetta" ja "0 – ei nyt" ovat eri asioit
   assert.equal(p.targetMinutesPerWeek, 450);
   assert.equal(w.targetMinutesPerWeek, 0, '0 = ei nyt');
   assert.equal(stepLine(), '4');
+});
+
+test('F2: viikkotavoitteiden virheet puhuvat viikkotavoitteista (tavoite on eri asia)', async (t) => {
+  freezeLocalDate(t, THURSDAY);
+  await createLifeArea({ name: 'Perhe', importance: 5 });
+  initDirection();
+  renderDirection();
+  assert.equal(stepLine(), '3');
+  const [perhe] = getState().lifeAreas;
+  await change({ setupTarget: perhe.id }, { value: 'custom' });
+  setup().dispatch('input', eventFor({ setupTargetHours: perhe.id }, { value: 'paljon' }));
+  await click({ setup: 'save-targets' });
+  assert.match(html('dirSetupCard'), /role="alert">Anna alueen Perhe viikkotavoite tunteina, esim\. 5 tai 2,5\.<\/p>/);
+  const original = lifeAreasRepo.update;
+  lifeAreasRepo.update = async () => ({ ok: false, error: 'Tallennus ei onnistunut.' });
+  try {
+    await change({ setupTarget: perhe.id }, { value: '300' });
+    await click({ setup: 'save-targets' });
+  } finally {
+    lifeAreasRepo.update = original;
+  }
+  assert.match(html('dirSetupCard'), /role="alert">Kaikkia viikkotavoitteita ei saatu tallennettua\.<\/p>/);
+  assert.equal(getState().lifeAreas[0].targetMinutesPerWeek, null, 'epäonnistunut palautettiin');
 });
 
 test('F2: kapasiteetilla ei ole oletusta; tallennus tälle viikolle', async (t) => {

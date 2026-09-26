@@ -590,7 +590,7 @@ async function saveTargets() {
     if (!area) continue;
     const minutes = targetMinutesFor(choice);
     if (Number.isNaN(minutes) || (minutes !== null && minutes > 168 * 60)) {
-      stepError = `Anna alueen ${area.name} tavoite tunteina, esim. 5 tai 2,5.`;
+      stepError = `Anna alueen ${area.name} viikkotavoite tunteina, esim. 5 tai 2,5.`;
       rerender();
       return;
     }
@@ -609,7 +609,7 @@ async function saveTargets() {
     busy = false;
   }
   if (failed) {
-    stepError = 'Kaikkia tavoitteita ei saatu tallennettua.';
+    stepError = 'Kaikkia viikkotavoitteita ei saatu tallennettua.';
     rerender();
     return;
   }
