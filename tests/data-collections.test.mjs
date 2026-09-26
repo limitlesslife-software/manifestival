@@ -50,7 +50,29 @@ test('sama tunniste kahdesti on virhe — se paljastaa bugin', async () => {
   await store.insert({ id: 'a' });
   const result = await store.insert({ id: 'a' });
   assert.equal(result.ok, false);
-  assert.match(result.error.userMessage, /jo käytössä/i);
+  assert.match(result.error.userMessage, /jo olemassa/i);
+  assert.equal(result.error.code, 'memory.duplicate');
+});
+
+test('ERR-13: muistivaraston virheviesti ei paljasta taulun nimeä', async () => {
+  // Portti kiinni -> Suunta elää muistissa. Juuri poistetun alueen
+  // muokkaus näytti aiemmin "life_areas: riviä ei löydy.".
+  const store = createCollection({ name: 'life_areas' });
+  const results = [
+    await store.update({ id: 'x' }),
+    await store.get('x'),
+    await store.patch('x', {}),
+    (await store.insert({ id: 'y' }), await store.insert({ id: 'y' })),
+    await store.insert({})
+  ];
+  for (const result of results) {
+    assert.equal(result.ok, false);
+    assert.doesNotMatch(result.error.userMessage, /life_areas|_/, result.error.userMessage);
+    // Taulu säilyy diagnostiikassa (op), ei viestissä.
+    assert.equal(result.error.op, 'life_areas');
+  }
+  assert.equal(results[0].error.userMessage, 'Kohdetta ei löytynyt. Päivitä näkymä.');
+  assert.equal(results[0].error.code, 'memory.missing', 'kutsujat tunnistavat puuttuvan rivin koodista');
 });
 
 test('olemattoman päivitys epäonnistuu, poisto ei', async () => {
@@ -71,9 +93,17 @@ test('patch yhdistää muutokset säilyttäen muut kentät', async () => {
 });
 
 test('tunnisteeton rivi hylätään', async () => {
+  // ERR-13: hylkäys on fail-tulos, ei heitetty poikkeus. Muistipolulla
+  // (collectionsRepo) poikkeus ohitti kutsujan virheenkäsittelyn.
   const store = createCollection({ name: 'testi' });
-  await assert.rejects(() => store.insert({}), /tunniste puuttuu/);
-  await assert.rejects(() => store.insert({ id: '' }), /tunniste puuttuu/);
+  for (const entity of [{}, { id: '' }]) {
+    const inserted = await store.insert(entity);
+    assert.equal(inserted.ok, false);
+    assert.match(inserted.error.userMessage, /tunniste puuttuu/);
+    assert.equal(inserted.error.code, 'memory.invalid_id');
+    assert.equal((await store.update(entity)).ok, false);
+  }
+  assert.equal(store.size(), 0);
 });
 
 test('replaceAll korvaa koko sisällön', async () => {

@@ -498,14 +498,13 @@ function isDuplicate(error) {
 
 /**
  * Päivitys ei osunut yhteenkään riviin. Muistivarasto (portti kiinni)
- * palauttaa `memory.missing`; kantapolku palauttaa `<taulu>.not_found`,
- * kun repositorio ketjuttaa päivitykseen `.select('id')`
- * (collectionsRepo.js) — siihen asti se kuittaa nollan rivin päivityksen
- * onnistuneeksi, ja tämä haara on varautumista.
+ * palauttaa `memory.missing`; kantapolku palauttaa ERROR_CODE.NOT_FOUND
+ * (`not_found`), kun päivitys ketjutettuna `.select('id')`:hen ei osunut
+ * riviin (collectionsRepo.js). `<taulu>.not_found` on vanha muoto.
  */
 function isNotFound(error) {
   const code = String((error && error.code) || '');
-  return code === 'memory.missing' || /\.not_found$/.test(code);
+  return code === 'memory.missing' || /(^|\.)not_found$/.test(code);
 }
 
 // ------------------------------------------------------ kapasiteetti

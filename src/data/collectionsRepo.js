@@ -24,7 +24,9 @@ import {
   stripLoweredColumns, noteSchemaError
 } from './schema.js';
 import { createMemoryRepository } from './memoryStore.js';
-import { ok, fail, failWith, ERROR_CODE } from '../lib/result.js';
+import { ok, failWith, ERROR_CODE } from '../lib/result.js';
+import { NOT_FOUND_MESSAGE } from '../lib/errorMessages.js';
+import { failFromCause, failFromThrown } from './repoErrors.js';
 import { normalizeRoutine, normalizeException } from '../domain/routine.js';
 import { normalizeGoal, isStorableGoalStatus } from '../domain/goal.js';
 import { normalizeProject } from '../domain/project.js';
@@ -127,11 +129,11 @@ export function createRepository({ table, schemaKey, normalize, toRow, fromRow, 
           .eq('user_id', requireUserId());
         if (error) {
           noteSchemaError(table, error);
-          return fail('Tietojen lataus ei onnistunut.', { cause: error, code: table + '.list' });
+          return failFromCause(error, { op: 'load', fallback: 'Tietojen lataus ei onnistunut.', code: table + '.list' });
         }
         return ok((data || []).map(fromRow));
       } catch (cause) {
-        return fail('Tietojen lataus ei onnistunut.', { cause, code: table + '.list' });
+        return failFromThrown(cause, { op: 'load', fallback: 'Tietojen lataus ei onnistunut.', code: table + '.list' });
       }
     },
 
@@ -146,32 +148,43 @@ export function createRepository({ table, schemaKey, normalize, toRow, fromRow, 
           .insert(stripLoweredColumns(table, assertClientSafe(toRow(normalized))));
         if (error) {
           noteSchemaError(table, error, Object.keys(toRow(normalized)));
-          return fail('Tallennus ei onnistunut.', { cause: error, code: table + '.insert' });
+          return failFromCause(error, { op: 'save', fallback: 'Tallennus ei onnistunut.', code: table + '.insert' });
         }
         return ok(normalized);
       } catch (cause) {
-        return fail('Tallennus ei onnistunut.', { cause, code: table + '.insert' });
+        return failFromThrown(cause, { op: 'save', fallback: 'Tallennus ei onnistunut.', code: table + '.insert' });
       }
     },
 
+    /**
+     * Päivitys palauttaa osuneiden rivien tunnisteet (`.select('id')`).
+     * Ilman sitä PostgREST kuittasi nollan rivin päivityksen (rivi
+     * poistettu toisella laitteella tai RLS suodatti sen) onnistuneeksi:
+     * näkymä väitti tallentaneensa, ja seuraava lataus pudotti muutoksen
+     * sanomatta mitään. Nyt nolla riviä on NOT_FOUND, ja kutsuja peruu.
+     */
     async update(entity) {
       const normalized = normalize(entity);
       if (!usesDatabase()) return memory.update(normalized);
       const refused = refusal(normalized);
       if (refused) return refused;
       try {
-        const { error } = await getClient()
+        const { data, error } = await getClient()
           .from(table)
           .update(stripLoweredColumns(table, assertClientSafe(toRow(normalized))))
           .eq('user_id', requireUserId())
-          .eq('id', normalized.id);
+          .eq('id', normalized.id)
+          .select('id');
         if (error) {
           noteSchemaError(table, error, Object.keys(toRow(normalized)));
-          return fail('Muutoksen tallennus ei onnistunut.', { cause: error, code: table + '.update' });
+          return failFromCause(error, { op: 'save', fallback: 'Muutoksen tallennus ei onnistunut.', code: table + '.update' });
+        }
+        if (!Array.isArray(data) || data.length === 0) {
+          return failWith(ERROR_CODE.NOT_FOUND, NOT_FOUND_MESSAGE, { op: table + '.update' });
         }
         return ok(normalized);
       } catch (cause) {
-        return fail('Muutoksen tallennus ei onnistunut.', { cause, code: table + '.update' });
+        return failFromThrown(cause, { op: 'save', fallback: 'Muutoksen tallennus ei onnistunut.', code: table + '.update' });
       }
     },
 
@@ -187,11 +200,11 @@ export function createRepository({ table, schemaKey, normalize, toRow, fromRow, 
           .eq('id', id);
         if (error) {
           noteSchemaError(table, error, [], { write: true });
-          return fail('Poisto ei onnistunut.', { cause: error, code: table + '.delete' });
+          return failFromCause(error, { op: 'delete', fallback: 'Poisto ei onnistunut.', code: table + '.delete' });
         }
         return ok({ id });
       } catch (cause) {
-        return fail('Poisto ei onnistunut.', { cause, code: table + '.delete' });
+        return failFromThrown(cause, { op: 'delete', fallback: 'Poisto ei onnistunut.', code: table + '.delete' });
       }
     },
 

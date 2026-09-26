@@ -6,7 +6,10 @@
 // epäonnistui. Tämä moduuli tekee erottelusta pakollisen.
 //
 // PERIAATE: käyttäjä ei koskaan näe Supabasen sisäistä viestiä, pinojälkeä
-// eikä palvelimen konfiguraatiota. Kehittäjä näkee ne konsolissa.
+// eikä palvelimen konfiguraatiota. Kehittäjä näkee ne konsolissa -- ilman
+// käyttäjän arvoja (redactDbDetail, redactQuotedValues).
+
+import { logEvent, LOG_LEVEL } from './logger.js';
 
 /**
  * Sovellusvirhe, jolla on erikseen käyttäjäviesti ja diagnostiikka.
@@ -17,27 +20,51 @@ export class AppError extends Error {
    * @param {object} [options]
    * @param {unknown} [options.cause]  Alkuperäinen virhe (vain diagnostiikkaan).
    * @param {string}  [options.code]   Lyhyt tunniste lokitusta varten.
+   * @param {string}  [options.op]     Operaatio lokitusta varten (esim. 'tasks.insert').
+   *   Tyypitetyssä virheessä (failWith) koodi on ERROR_CODE-arvo, joten
+   *   operaatio kulkee erikseen.
    */
   constructor(userMessage, options = {}) {
     super(userMessage);
     this.name = 'AppError';
     this.userMessage = userMessage;
     this.code = options.code || 'unknown';
+    this.op = options.op || null;
     this.cause = options.cause;
   }
 
   /** Kehittäjälle tarkoitettu esitys. Ei näytetä käyttäjälle. */
   toDiagnostic() {
-    const parts = [`[${this.code}] ${this.userMessage}`];
+    const head = this.op ? `[${this.code} ${this.op}]` : `[${this.code}]`;
+    const parts = [`${head} ${this.userMessage}`];
     if (this.cause) {
-      const c = this.cause;
-      parts.push(String((c && c.message) || c));
-      if (c && c.details) parts.push(redactDbDetail(c.details));
-      if (c && c.hint) parts.push(String(c.hint));
+      const c = redactedCause(this.cause);
+      if (typeof c === 'string') parts.push(c);
+      else {
+        if (c.code) parts.push(String(c.code));
+        if (c.message) parts.push(c.message);
+        if (c.details) parts.push(c.details);
+        if (c.hint) parts.push(c.hint);
+      }
     }
-    return parts.join(' | ');
+    return parts.filter(Boolean).join(' | ');
   }
 }
+
+/** Korvaava merkintä, kun rakennetta ei tunnisteta: arvoa ei tulosteta. */
+const REDACTED_DETAIL = '[poistettu]';
+
+/**
+ * PostgreSQL:n `Key (sarakkeet)=(arvot) <loppu>` -muodot. Loppu on
+ * kiinteä teksti, joten arvot ovat AINA avaimen ja lopun välissä --
+ * sulkeiden tasapainoon ei luoteta (nimi "Terapia (oma" tai rivinvaihto
+ * pohdinnassa rikkoi aiemman sulkulaskennan).
+ */
+const KEY_TAILS = [
+  /( already exists\.?\s*)$/,
+  /( is not present in table "[^"\n]*"\.?\s*)$/,
+  /( is still referenced from table "[^"\n]*"\.?\s*)$/
+];
 
 /**
  * Poista käyttäjän arvot PostgreSQL:n virhetiedoista ennen lokitusta.
@@ -48,21 +75,71 @@ export class AppError extends Error {
  * Rakenne (sarakkeiden nimet, rajoite) säilyy diagnostiikkaa varten,
  * arvot korvataan. Löydös yön Suunta-tietoturvakatselmoinnissa:
  * console.error tulosti ne tuotannossakin.
+ *
+ * RAKENTEELLINEN, EI SULKULASKENTAA. Arvo voi sisältää rivinvaihtoja
+ * (pohdinta, kuvaus), sisäkkäisiä tai parittomia sulkeita ja jopa
+ * tekstin "already exists". Siksi tunnistetaan vain kiinteät osat
+ * (alku "Key (…)=" tai "Failing row contains", loppu merkkijonon
+ * lopussa) ja KAIKKI niiden välissä korvataan. Tuntematon muoto
+ * korvataan kokonaan: mieluummin vähemmän diagnostiikkaa kuin vuoto.
+ *
+ * @param {unknown} detail
+ * @returns {string} '' kun tietoa ei ole
  */
 export function redactDbDetail(detail) {
-  return String(detail)
-    .replace(/\)=\((?:[^()]|\([^()]*\))*\)/g, ')=(…)')
-    .replace(/(Failing row contains )\(.*\)/g, '$1(…)');
+  if (detail === null || detail === undefined || detail === '') return '';
+  const text = String(detail);
+
+  const failing = /^([\s\S]*?)Failing row contains[\s\S]*?(\.?)\s*$/.exec(text);
+  if (failing) return `${redactQuotedValues(failing[1])}Failing row contains (…)${failing[2]}`;
+
+  // Sarakeosa päättyy ensimmäiseen ")=": sarakkeiden nimissä sitä ei ole,
+  // ja arvot tulevat vasta sen jälkeen.
+  const key = /^([\s\S]*?Key \()([\s\S]*?)\)=[\s\S]*$/.exec(text);
+  if (key) {
+    const columns = /^[a-z0-9_ ,.():"]*$/i.test(key[2]) ? key[2] : '…';
+    for (const tail of KEY_TAILS) {
+      const end = tail.exec(text);
+      if (end) return `${redactQuotedValues(key[1])}${columns})=(…)${end[1]}`;
+    }
+    // "conflicts with existing key (…)=(…)" ja muut: toinenkin avain
+    // sisältää arvoja, joten loppu jätetään kokonaan pois.
+    return `${redactQuotedValues(key[1])}${columns})=(…)`;
+  }
+  return REDACTED_DETAIL;
 }
 
-/** Syyolio lokitukseen ilman käyttäjän arvoja. */
+/**
+ * Lainausmerkeissä olevat ARVOT pois virheviestistä ja vihjeestä.
+ *
+ * PostgreSQL toistaa syötteen viestissä: 22P02 'invalid input syntax for
+ * type integer: "Salainen arvo"', 22007 'invalid input value for enum
+ * …: "…"'. Kaksoispisteen jälkeinen lainaus on aina arvo; rajoitteen ja
+ * taulun nimet (`constraint "x"`, `relation "y"`) säilyvät, koska ne
+ * ovat skeemaa eivätkä käyttäjän tietoa. Arvo voi itse sisältää
+ * lainausmerkkejä, joten KAIKKI ensimmäisen `: "` jälkeen korvataan.
+ */
+export function redactQuotedValues(text) {
+  if (text === null || text === undefined) return '';
+  return String(text).replace(/:\s*"[\s\S]*$/, ': "…"');
+}
+
+/** Syyolio lokitukseen ilman käyttäjän arvoja. Ei koskaan palauta raakaa oliota. */
 function redactedCause(cause) {
-  if (!cause || typeof cause !== 'object') return cause ?? '';
-  const out = {};
-  for (const key of ['code', 'message', 'hint', 'status', 'name']) {
-    if (cause[key] !== undefined) out[key] = cause[key];
+  if (cause === null || cause === undefined) return '';
+  if (typeof cause !== 'object') {
+    // Merkkijonosyy voi olla mitä tahansa (myös käyttäjän tekstiä):
+    // tulostetaan vain tyyppi ja pituus.
+    return typeof cause === 'string' ? `[teksti ${cause.length} merkkiä]` : String(cause);
   }
-  if (cause.details !== undefined) out.details = redactDbDetail(cause.details);
+  const out = {};
+  for (const key of ['code', 'status', 'name']) {
+    const value = cause[key];
+    if (typeof value === 'string' || typeof value === 'number') out[key] = value;
+  }
+  if (cause.message !== undefined && cause.message !== null) out.message = redactQuotedValues(cause.message);
+  if (cause.hint !== undefined && cause.hint !== null) out.hint = redactQuotedValues(cause.hint);
+  if (cause.details !== undefined && cause.details !== null) out.details = redactDbDetail(cause.details);
   return out;
 }
 
@@ -80,10 +157,42 @@ export function fail(userMessage, options = {}) {
 /**
  * Kirjaa virheen konsoliin diagnostisessa muodossa.
  * Erotettu omaksi funktiokseen, jotta lokitus voidaan myöhemmin ohjata muualle.
+ *
+ * JOKAINEN SYÖTE SUODATETAAN. Aiemmin muu kuin AppError tulostettiin
+ * sellaisenaan: PostgREST-muotoinen olio vei `details`-kentän arvot ja
+ * 22P02-viesti syötteen konsoliin. Nyt Error ja tavallinen olio kulkevat
+ * saman suodatuksen läpi kuin AppErrorin syy.
  */
 export function logError(error) {
-  if (error instanceof AppError) console.error('Manifestival:', error.toDiagnostic(), redactedCause(error.cause));
-  else console.error('Manifestival:', error);
+  if (error instanceof AppError) {
+    console.error('Manifestival:', error.toDiagnostic(), redactedCause(error.cause));
+    return;
+  }
+  console.error('Manifestival:', redactedCause(error));
+}
+
+/**
+ * Kirjaa epäonnistuminen tapahtumana: vain nimi, koodi ja HTTP-tila.
+ *
+ * Sovelluskoodin console.warn/error(…, error) tulosti koko virheolion
+ * (viesti voi sisältää käyttäjän tekstiä). Tämä kirjaa vain tunnisteet.
+ * Sama allekirjoitus kuin tietoturvapaketin src/lib/logger.js:n
+ * logFailure-apurilla, jotta kutsupaikat voidaan siirtää sinne.
+ *
+ * @param {string} event esim. 'auth.signout_failed'
+ * @param {unknown} error
+ * @param {string} [level] LOG_LEVEL; oletus ERROR
+ */
+export function logFailure(event, error, level = LOG_LEVEL.ERROR) {
+  const cause = error && typeof error === 'object' ? error : {};
+  const inner = cause.cause && typeof cause.cause === 'object' ? cause.cause : {};
+  const text = value => (typeof value === 'string' || typeof value === 'number' ? value : null);
+  logEvent(event, {
+    errorName: text(cause.name),
+    code: text(cause.code),
+    status: typeof cause.status === 'number' ? cause.status : null,
+    causeCode: text(inner.code)
+  }, level);
 }
 
 /**
@@ -114,6 +223,12 @@ export const ERROR_CODE = Object.freeze({
   PERSISTENCE_UNAVAILABLE: 'persistence_unavailable',
   /** Verkkoyhteys puuttuu tai katkesi. */
   NETWORK_ERROR: 'network_error',
+  /**
+   * Palvelin vastasi, mutta on tilapäisesti poissa käytöstä (503,
+   * aikakatkaisu, kanta ei vastaa). Eri asia kuin verkko: laitteen
+   * yhteys on kunnossa, eikä "tarkista yhteys" auttaisi.
+   */
+  SERVICE_UNAVAILABLE: 'service_unavailable',
   /** Tuntematon. Käytetään vain kun mikään muu ei sovi. */
   UNKNOWN: 'unknown'
 });

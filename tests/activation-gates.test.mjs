@@ -208,6 +208,9 @@ test('KRIITTINEN: portti kiinni ei väitä tallennuksen onnistuneen pysyvästi',
 // =====================================================================
 
 /** Repositoriomoduulin koodi ilman kommentteja. */
+/** Epäonnistunut tulos palautettuna: fail, failWith tai syystä kuvattu (repoErrors.js). */
+const RETURN_FAIL = /return (?:fail|failWith|failFromCause|failFromThrown)\(/g;
+
 function repoKoodi() {
   return read('src/data/collectionsRepo.js').split(NEWLINE)
     .filter(line => !line.trim().startsWith('//') && !line.trim().startsWith('*'))
@@ -263,7 +266,9 @@ test('KRIITTINEN: jokainen tietokantapolku epäonnistuu näkyvästi', () => {
     `try/catch-lohkoja on vain ${yritykset} — list, insert, update ja remove tarvitsevat omansa`);
 
   // Virhe palautetaan aina failina, ei heitetä kutsujalle eikä nielaista.
-  const failit = (koodi.match(/return fail\(/g) || []).length;
+  // failFromCause/failFromThrown (src/data/repoErrors.js) ovat fail-tuloksen
+  // tyypitettyjä muotoja: syy -> kiinteä käyttäjäviesti (describeError).
+  const failit = (koodi.match(RETURN_FAIL) || []).length;
   assert.ok(failit >= 8,
     `fail-paluita on vain ${failit} — jokaisessa metodissa tarvitaan kaksi`);
 
@@ -282,7 +287,7 @@ test('KRIITTINEN: muistutusasetusten tietokantapolku noudattaa samaa sopimusta',
 
   assert.ok(koodi.includes('requireUserId()'),
     'muistutusasetukset eivät rajaa omistajaan');
-  assert.ok((koodi.match(/return fail\(/g) || []).length >= 4,
+  assert.ok((koodi.match(RETURN_FAIL) || []).length >= 4,
     'muistutusasetusten virhehaarat eivät palauta failia');
   assert.ok(koodi.includes('isPersistent()'),
     'muistutusasetukset eivät tarkista porttia');

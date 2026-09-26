@@ -17,7 +17,9 @@ import { normalizeTask } from '../domain/task.js';
 import {
   toRow, fromRow, assertClientSafe, sameColumnValue, pgArrayLiteral
 } from '../lib/rows.js';
-import { ok, fail } from '../lib/result.js';
+import { ok, failWith, ERROR_CODE } from '../lib/result.js';
+import { NOT_FOUND_MESSAGE } from '../lib/errorMessages.js';
+import { failFromCause, failFromThrown } from './repoErrors.js';
 
 const TABLE = 'tasks';
 
@@ -65,11 +67,11 @@ export async function listTasks() {
 
     if (error) {
       noteSchemaError(TABLE, error);
-      return fail('Tehtävien lataus ei onnistunut.', { cause: error, code: 'tasks.list' });
+      return failFromCause(error, { op: 'load', fallback: 'Tehtävien lataus ei onnistunut.', code: 'tasks.list' });
     }
     return ok((data || []).map(fromRow));
   } catch (cause) {
-    return fail('Tehtävien lataus ei onnistunut.', { cause, code: 'tasks.list' });
+    return failFromThrown(cause, { op: 'load', fallback: 'Tehtävien lataus ei onnistunut.', code: 'tasks.list' });
   }
 }
 
@@ -91,12 +93,24 @@ export async function insertTask(task) {
 
     if (error) {
       noteSchemaError(TABLE, error, [], { write: true });
-      return fail('Tehtävän tallennus ei onnistunut.', { cause: error, code: 'tasks.insert' });
+      return failFromCause(error, { op: 'save', fallback: 'Tehtävän tallennus ei onnistunut.', code: 'tasks.insert' });
     }
     return ok(task);
   } catch (cause) {
-    return fail('Tehtävän tallennus ei onnistunut.', { cause, code: 'tasks.insert' });
+    return failFromThrown(cause, { op: 'save', fallback: 'Tehtävän tallennus ei onnistunut.', code: 'tasks.insert' });
   }
+}
+
+/**
+ * Nolla päivitettyä riviä ei ole onnistuminen: tehtävä on poistettu
+ * toisella laitteella (tai RLS suodatti sen). Ilman `.select('id')`
+ * PostgREST kuittasi sen onnistuneeksi ja muutos katosi seuraavassa
+ * latauksessa sanomatta mitään.
+ */
+function missingRow(data, op) {
+  return Array.isArray(data) && data.length > 0
+    ? null
+    : failWith(ERROR_CODE.NOT_FOUND, NOT_FOUND_MESSAGE, { op });
 }
 
 /** Päivitä tehtävä kokonaisuudessaan. */
@@ -104,19 +118,22 @@ export async function updateTask(task) {
   const refused = writeRefusal();
   if (refused) return refused;
   try {
-    const { error } = await getClient()
+    const { data, error } = await getClient()
       .from(TABLE)
       .update(payloadFor(task))
       .eq('user_id', requireUserId())
-      .eq('id', task.id);
+      .eq('id', task.id)
+      .select('id');
 
     if (error) {
       noteSchemaError(TABLE, error, [], { write: true });
-      return fail('Muutoksen tallennus ei onnistunut.', { cause: error, code: 'tasks.update' });
+      return failFromCause(error, { op: 'save', fallback: 'Muutoksen tallennus ei onnistunut.', code: 'tasks.update' });
     }
+    const missing = missingRow(data, 'tasks.update');
+    if (missing) return missing;
     return ok(task);
   } catch (cause) {
-    return fail('Muutoksen tallennus ei onnistunut.', { cause, code: 'tasks.update' });
+    return failFromThrown(cause, { op: 'save', fallback: 'Muutoksen tallennus ei onnistunut.', code: 'tasks.update' });
   }
 }
 
@@ -125,19 +142,22 @@ export async function setCompleted(id, completed) {
   const refused = writeRefusal();
   if (refused) return refused;
   try {
-    const { error } = await getClient()
+    const { data, error } = await getClient()
       .from(TABLE)
       .update({ completed })
       .eq('user_id', requireUserId())
-      .eq('id', id);
+      .eq('id', id)
+      .select('id');
 
     if (error) {
       noteSchemaError(TABLE, error, [], { write: true });
-      return fail('Merkinnän tallennus ei onnistunut.', { cause: error, code: 'tasks.complete' });
+      return failFromCause(error, { op: 'save', fallback: 'Merkinnän tallennus ei onnistunut.', code: 'tasks.complete' });
     }
+    const missing = missingRow(data, 'tasks.complete');
+    if (missing) return missing;
     return ok({ id, completed });
   } catch (cause) {
-    return fail('Merkinnän tallennus ei onnistunut.', { cause, code: 'tasks.complete' });
+    return failFromThrown(cause, { op: 'save', fallback: 'Merkinnän tallennus ei onnistunut.', code: 'tasks.complete' });
   }
 }
 
@@ -154,11 +174,11 @@ export async function deleteTask(id) {
 
     if (error) {
       noteSchemaError(TABLE, error, [], { write: true });
-      return fail('Poisto ei onnistunut.', { cause: error, code: 'tasks.delete' });
+      return failFromCause(error, { op: 'delete', fallback: 'Poisto ei onnistunut.', code: 'tasks.delete' });
     }
     return ok({ id });
   } catch (cause) {
-    return fail('Poisto ei onnistunut.', { cause, code: 'tasks.delete' });
+    return failFromThrown(cause, { op: 'delete', fallback: 'Poisto ei onnistunut.', code: 'tasks.delete' });
   }
 }
 
@@ -179,11 +199,11 @@ export async function clearOtherWakeFlags(dateIso, exceptId) {
 
     if (error) {
       noteSchemaError(TABLE, error, [], { write: true });
-      return fail('Herätysmerkinnän päivitys ei onnistunut.', { cause: error, code: 'tasks.wake' });
+      return failFromCause(error, { op: 'save', fallback: 'Herätysmerkinnän päivitys ei onnistunut.', code: 'tasks.wake' });
     }
     return ok(true);
   } catch (cause) {
-    return fail('Herätysmerkinnän päivitys ei onnistunut.', { cause, code: 'tasks.wake' });
+    return failFromThrown(cause, { op: 'save', fallback: 'Herätysmerkinnän päivitys ei onnistunut.', code: 'tasks.wake' });
   }
 }
 
@@ -202,11 +222,11 @@ export async function getTask(id) {
 
     if (error) {
       noteSchemaError(TABLE, error);
-      return fail('Tehtävän haku ei onnistunut.', { cause: error, code: 'tasks.get' });
+      return failFromCause(error, { op: 'load', fallback: 'Tehtävän haku ei onnistunut.', code: 'tasks.get' });
     }
     return ok(data ? fromRow(data) : null);
   } catch (cause) {
-    return fail('Tehtävän haku ei onnistunut.', { cause, code: 'tasks.get' });
+    return failFromThrown(cause, { op: 'load', fallback: 'Tehtävän haku ei onnistunut.', code: 'tasks.get' });
   }
 }
 
@@ -344,10 +364,10 @@ export async function patchTask(id, changes, expected) {
     const { data, error } = await query.select('id');
     if (error) {
       noteSchemaError(TABLE, error, Object.keys(diff));
-      return fail('Muutoksen tallennus ei onnistunut.', { cause: error, code: 'tasks.patch' });
+      return failFromCause(error, { op: 'save', fallback: 'Muutoksen tallennus ei onnistunut.', code: 'tasks.patch' });
     }
     return ok({ applied: Array.isArray(data) && data.length > 0, noop: false, unwritable });
   } catch (cause) {
-    return fail('Muutoksen tallennus ei onnistunut.', { cause, code: 'tasks.patch' });
+    return failFromThrown(cause, { op: 'save', fallback: 'Muutoksen tallennus ei onnistunut.', code: 'tasks.patch' });
   }
 }

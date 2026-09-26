@@ -16,6 +16,7 @@ import { getClient } from './client.js';
 import { requireUserId, sessionSnapshot, isSameSession } from './session.js';
 import { hasTable, isTableMissing, writeRefusal, noteSchemaError } from './schema.js';
 import { ok, fail, failWith, ERROR_CODE } from '../lib/result.js';
+import { failFromCause, failFromThrown } from './repoErrors.js';
 import { normalizePreferences, DEFAULT_PREFERENCES } from '../domain/notification.js';
 
 const TABLE = 'notification_preferences';
@@ -115,8 +116,10 @@ export async function loadPreferences() {
 
   const loaded = await readServerRow();
   if (!loaded.ok) {
-    return fail('Muistutusasetusten lataus ei onnistunut.',
-      { cause: loaded.cause, code: 'notificationPrefs.load' });
+    return failFromCause(loaded.cause, {
+      op: 'load', fallback: 'Muistutusasetusten lataus ei onnistunut.', code: 'notificationPrefs.load',
+      thrown: loaded.thrown
+    });
   }
   if (loaded.current && generation === loadGeneration) serverLoadedFor = loaded.userId;
   return ok(preferencesFromRow(loaded.row));
@@ -142,7 +145,7 @@ async function readServerRow() {
     }
     return { ok: true, row: data || null, userId, current: isSameSession(session) };
   } catch (cause) {
-    return { ok: false, cause };
+    return { ok: false, cause, thrown: true };
   }
 }
 
@@ -159,8 +162,10 @@ async function ensureServerBaseline() {
   if (userId && serverLoadedFor === userId) return null;
   const loaded = await readServerRow();
   if (!loaded.ok) {
-    return fail('Muistutusasetusten tallennus ei onnistunut.',
-      { cause: loaded.cause, code: 'notificationPrefs.save' });
+    return failFromCause(loaded.cause, {
+      op: 'save', fallback: 'Muistutusasetusten tallennus ei onnistunut.', code: 'notificationPrefs.save',
+      thrown: loaded.thrown
+    });
   }
   if (loaded.row) return failWith(ERROR_CODE.CONFLICT, PREFERENCES_NOT_LOADED_MESSAGE);
   if (!loaded.current) {
@@ -197,13 +202,13 @@ export async function savePreferences(preferences) {
 
     if (error) {
       noteSchemaError(TABLE, error, [], { write: true });
-      return fail('Muistutusasetusten tallennus ei onnistunut.',
-        { cause: error, code: 'notificationPrefs.save' });
+      return failFromCause(error,
+        { op: 'save', fallback: 'Muistutusasetusten tallennus ei onnistunut.', code: 'notificationPrefs.save' });
     }
     return ok(normalized);
   } catch (cause) {
-    return fail('Muistutusasetusten tallennus ei onnistunut.',
-      { cause, code: 'notificationPrefs.save' });
+    return failFromThrown(cause,
+      { op: 'save', fallback: 'Muistutusasetusten tallennus ei onnistunut.', code: 'notificationPrefs.save' });
   }
 }
 

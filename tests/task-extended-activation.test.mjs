@@ -70,17 +70,23 @@ const EXTENDED_WITH_LINKS = Object.freeze([
 /**
  * Kirjaava tekoclient. Ottaa talteen TÄSMÄLLEEN sen payloadin, joka
  * lähtisi verkkoon — ei sitä, mitä kutsuja luuli lähettävänsä.
+ *
+ * Onnistunut päivitys vastaa lähetetyllä rivillä: repositorio ketjuttaa
+ * päivitykseen `.select('id')` ja pitää nollaa riviä "kohdetta ei enää
+ * ole" -virheenä (ERR-06).
  */
 function recordingClient(response = { data: null, error: null }) {
   const kirjatut = [];
-  const chain = op => {
+  const chain = (op, payload = null) => {
     const q = {
       op,
       eq() { return q; },
       neq() { return q; },
       select() { return q; },
       then(resolve, reject) {
-        return Promise.resolve(response).then(resolve, reject);
+        const updated = op === 'update' && !response.error && response.data == null
+          ? { ...response, data: [{ ...payload }] } : response;
+        return Promise.resolve(updated).then(resolve, reject);
       }
     };
     return q;
@@ -90,7 +96,7 @@ function recordingClient(response = { data: null, error: null }) {
     from() {
       return {
         insert(payload) { kirjatut.push({ op: 'insert', payload }); return chain('insert'); },
-        update(payload) { kirjatut.push({ op: 'update', payload }); return chain('update'); },
+        update(payload) { kirjatut.push({ op: 'update', payload }); return chain('update', payload); },
         delete() { kirjatut.push({ op: 'delete', payload: null }); return chain('delete'); },
         select() { return chain('select'); }
       };
@@ -461,7 +467,11 @@ test('TILA C: puuttuva sarake tuottaa näkyvän virheen, ei hiljaista onnistumis
 
   assert.equal(tulos.ok, false, 'puuttuva sarake näytti onnistumiselta');
   assert.ok(tulos.error, 'virhe ei päätynyt kutsujalle');
-  assert.equal(tulos.error.code, 'tasks.insert');
+  // Tyypitetty koodi (ERR-05): skeemavirhe on "ei vielä tallennettavissa",
+  // ei yleinen tallennusvirhe. Operaatio säilyy lokitusta varten.
+  assert.equal(tulos.error.code, 'persistence_unavailable');
+  assert.equal(tulos.error.op, 'tasks.insert');
+  assert.match(tulos.error.userMessage, /päivitys kesken/);
 
   // UUSI SÄÄNTÖ (ajonaikainen skeematarkistus): sama virhe laskee
   // sarakeportin istunnon ajaksi, joten SEURAAVA tallennus lähtee ilman

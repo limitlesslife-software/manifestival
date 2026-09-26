@@ -53,19 +53,38 @@ export function openRepositories() {
  *   from(t).select('*').eq(...)          -> { data, error }
  *   from(t).insert(row)                  -> { data, error }
  *   from(t).update(row).eq(...).eq(...)  -> { data, error }
+ *   from(t).update(row).eq(...).select('id') -> { data: [rivi], error }
  *   from(t).delete().eq(...).eq(...)     -> { data, error }
  *   from(t).select('*').eq(...).maybeSingle()
  *   from(t).upsert(row)
  *
- * @param {object} response { data, error } tai { throws: Error }
+ * PÄIVITYS PALAUTTAA LÄHETETYN RIVIN. Repositoriot ketjuttavat
+ * päivitykseen `.select('id')` ja pitävät nollaa riviä "kohdetta ei
+ * enää ole" -virheenä. Oletusvastaus (`data: []`) tarkoittaa hauille
+ * tyhjää listaa, ei "päivitys ei osunut", joten päivitys vastaa
+ * lähetetyllä rivillä. Nollan rivin päivitys: `{ updateData: [] }`.
+ *
+ * @param {object} response { data, error, updateData? } tai { throws: Error }
  */
 export function fakeClient(response = { data: [], error: null }) {
   const calls = [];
+
+  const dataFor = entry => {
+    if (entry.operation === 'update' && !response.error) {
+      if (response.updateData !== undefined) return response.updateData;
+      return [{ ...(entry.payload || {}) }];
+    }
+    return response.data === undefined ? [] : response.data;
+  };
 
   const chain = (entry) => {
     const query = {
       eq(column, value) {
         entry.filters.push([column, value]);
+        return query;
+      },
+      select(columns) {
+        entry.returning = columns === undefined ? '*' : columns;
         return query;
       },
       maybeSingle() {
@@ -77,7 +96,7 @@ export function fakeClient(response = { data: [], error: null }) {
           return Promise.reject(response.throws).then(resolve, reject);
         }
         return Promise.resolve({
-          data: response.data === undefined ? [] : response.data,
+          data: dataFor(entry),
           error: response.error || null
         }).then(resolve, reject);
       }
