@@ -35,7 +35,7 @@ deployataan ehdokashaarasta; SQL ajetaan aina tästä taulukosta.
 <!-- blob-taulukko:alku (node tools/pg-rehearsal/bundle-hashes.mjs --write) -->
 | Migraatio | Tiedosto | git-blob (`git hash-object <polku>`) |
 |---|---|---|
-| 0009 | `supabase/preflight/preflight_0009.sql` | `2d4a1d9fb613f7e9364de5e68b482059ad6b24c1` |
+| 0009 | `supabase/preflight/preflight_0009.sql` | `5818030a69b0d2b61a4f5bd1a922da86050092f2` |
 | 0009 | `supabase/migrations/0009_finance_2.sql` | `278a806757e7ed10ee97a0a8f4837f07633f5a97` |
 | 0009 | `supabase/verify/verify_0009.sql` | `470176835858356ecbafd0cef5653fd60ce29961` |
 | 0010 | `supabase/preflight/preflight_0010.sql` | `b9279498e587bdb6609941d28c338415ee5205af` |
@@ -49,7 +49,7 @@ deployataan ehdokashaarasta; SQL ajetaan aina tästä taulukosta.
 | 0012 | `supabase/verify/verify_0012.sql` | `3d511f251ed96ebb87118a9b5f17e889d7a07b14` |
 | 0013 | `supabase/preflight/preflight_0013.sql` | `04aaf286a0e87da2129f330c4ddcfca31891a5d1` |
 | 0013 | `supabase/migrations/0013_alignment_reality.sql` | `3825a11a172150f408761f613cf1c9a50d9616ac` |
-| 0013 | `supabase/verify/verify_0013.sql` | `6545487363e646ceb44ae683c4fa851d4051ebf9` |
+| 0013 | `supabase/verify/verify_0013.sql` | `7b5b7fdb0c07d250bb523d1794080e3e11974783` |
 <!-- blob-taulukko:loppu -->
 
 ## Yhteiset säännöt
@@ -92,7 +92,7 @@ tulostaa ajettavat tiedostot tiivisteineen.
 | Elävät taulut | `bills` (ALTER, lyhyt ACCESS EXCLUSIVE -lukko), viittaus `auth.users` |
 | Riski | Matala. Ei täyttöä, ei olemassa olevien rivien muutosta |
 | Varmuuskopio | Suositeltava (Dashboard → Database → Backups, tämän päivän) |
-| 1 Preflight | `supabase/preflight/preflight_0009.sql` → 0 FAIL |
+| 1 Preflight | `supabase/preflight/preflight_0009.sql` → 0 FAIL (sisältää junan alun rivit 18–19: muut public-taulut kuin migraatioiden 26 (INFO) ja jokainen public-taulun vierasavain `auth.users`-tauluun CASCADE — `verify_0013`:n tilin poiston oletus tarkistetaan ennen junaa eikä vasta sen lopussa) |
 | 2 Ajo | `supabase/migrations/0009_finance_2.sql` |
 | 3 Verify | `supabase/verify/verify_0009.sql` → `poikkeavia_yhteensa = 0` (harjoitus: 29 PASS / 0 FAIL) |
 | 4 Deploy | aalto F (`rehearsal/wave-f-v3`, ks. GO/NO-GO) |
@@ -152,7 +152,7 @@ tulostaa ajettavat tiedostot tiivisteineen.
 |---|---|
 | Tekee | 2 uutta taulua (`running_timers`: **yksi per käyttäjä**, `alignment_item_settings`); sarakkeita 0012:n tauluihin: `time_entries` +6 (`operation_id` uniikki per käyttäjä = idempotentti kirjaus, `started_at`/`ended_at`, projekti, rutiini, esiintymä), `weekly_capacities.energy_budget_minutes`, `alignment_reviews.policy_version`/`reflection_answers`; korvaa lähderajoitteen (`manual` → `manual`/`timer`) |
 | Elävät taulut | Ei tuotannossa ennestään auki olevia (vain 0012:n omia); viittaukset `tasks`, `goals`, `projects`, `routines`, `life_areas`, `auth.users` |
-| Todennettu | 1 ajastin/käyttäjä (23505 toiselle), sama `operation_id` hylätään, 0 ja 1441 min hylätään, loppu ennen alkua hylätään, tilin poisto poistaa kaiken; verify todistaa, että jokainen vierasavain `auth.users`-tauluun on CASCADE (rivit 25–27) |
+| Todennettu | 1 ajastin/käyttäjä (23505 toiselle), sama `operation_id` hylätään, 0 ja 1441 min hylätään, loppu ennen alkua hylätään, tilin poisto poistaa kaiken; verify todistaa, että migraatioiden 26 taulun (tilin poiston kartta) jokainen vierasavain `auth.users`-tauluun on CASCADE ja jokaisella on sellainen (rivit 25–27). Muut public-taulut eivät kaada varmistusta: ne näkyvät rivillä 28 (INFO), ja `preflight_0009` on tarkistanut niiden vierasavaimet jo ennen junaa |
 | 1 Preflight | `supabase/preflight/preflight_0013.sql` → 0 FAIL (sisältää: 8 taulun 32 politiikkaa) |
 | 2 Ajo | `supabase/migrations/0013_alignment_reality.sql` |
 | 3 Verify | `supabase/verify/verify_0013.sql` → 0 (harjoitus: 30 PASS / 0 FAIL) |

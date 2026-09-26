@@ -37,8 +37,9 @@ const PREFLIGHT_0009 = countChecksInSql(read('supabase/preflight/preflight_0009.
 const VERIFY_0011 = countChecksInSql(read('supabase/verify/verify_0011.sql'));
 
 test('tarkistusmäärä luetaan generoidusta SQL:stä', () => {
-  // 16 + rivi "muiden istuntojen lukot migraation tauluissa" (loppuharjoitus F10).
-  assert.equal(PREFLIGHT_0009, 17);
+  // 16 + rivi "muiden istuntojen lukot migraation tauluissa" (loppuharjoitus F10)
+  // + junan alun kaksi riviä (muut public-taulut, CASCADE auth.usersiin).
+  assert.equal(PREFLIGHT_0009, 19);
   assert.ok(VERIFY_0011 > 20, `verify_0011: ${VERIFY_0011}`);
   for (const n of ['0009', '0010', '0011', '0012', '0013']) {
     assert.ok(countChecksInSql(read(`supabase/preflight/preflight_${n}.sql`)) >= 10, n);

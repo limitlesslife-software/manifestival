@@ -10,7 +10,9 @@
 //   verify:null          verify_0009..0013: poikkeavia_yhteensa = FAIL-rivit
 //                        myös kun tarkistus palauttaa NULLin
 //   preflight:blockers   uudet esteet-rivit (lukitut taulut) ja
-//                        politiikkamäärät havaitsevat esteen ETUKÄTEEN
+//                        politiikkamäärät havaitsevat esteen ETUKÄTEEN;
+//                        tilin poiston oletukset (F13): vieras public-taulu
+//                        preflight_0009:ssä ja verify_0013:n riveillä 26–28
 //   role:nonsuper        migraatiot NOSUPERUSER-omistajaroolina; preflightin
 //                        esteet-rivit pg_read_all_stats-oikeuden kanssa/ilman
 
@@ -501,6 +503,75 @@ export async function preflightBlockerScenario({ fail }) {
                      row: row ? `${row.check_no} ${row.status} ${row.details}` : null,
                      migration: run.ok ? 'meni läpi' : run.error.message, catalogUnchanged: !d.added.length && !d.removed.length });
       if (!pass) fail(scenario, `politiikkamäärä ${n}: ${JSON.stringify(results.at(-1))}`);
+    } finally { await client.end(); await dropDatabase(db); }
+  }
+  results.push(...await accountCascadeCases({ fail, scenario }));
+  return results;
+}
+
+/** Kaksi public-taulua, joita mikään migraatio ei luo (esim. Dashboardista). */
+const FOREIGN_TABLES_SQL = `
+  create table public.mv_rehearsal_vieras (id text primary key, user_id uuid references auth.users(id));
+  create table public.mv_rehearsal_ilman_avainta (id text primary key);`;
+const FOREIGN_INFO = '2: mv_rehearsal_ilman_avainta, mv_rehearsal_vieras';
+
+/**
+ * F13: tilin poiston oletukset. Muu kuin migraatioiden public-taulu ei
+ * kaada verify_0013:a (rivit 26–27 rajattu migraatioiden 26 tauluun,
+ * rivi 28 INFO), mutta sen ei-CASCADE-vierasavain auth.usersiin
+ * pysäyttää junan jo preflight_0009:ssä. Migraatioiden taulun
+ * ei-CASCADE-avain tai puuttuva avain kaatuu yhä riveille 26 ja 27.
+ */
+async function accountCascadeCases({ fail, scenario }) {
+  const results = [];
+  const check = (label, v, pass, extra = {}) => {
+    const detail = { failed: v.ok ? v.failed.map(r => r.check_no) : v.error.message, poikkeavia: v.poikkeavia ?? null, ...extra };
+    const ok = Boolean(pass) && v.ok && !v.countMismatch;
+    results.push({ preflight: label.split(':')[0], blocker: label, pass: ok, ...detail });
+    if (!ok) fail(scenario, `${label}: ${JSON.stringify(detail)}`);
+  };
+  const failedNos = v => (v.ok ? v.failed.map(r => r.check_no).join(',') : null);
+  {
+    const db = 'mv_rehearsal_pfc_0008';
+    const client = await cloneProdShape('0008', db);
+    try {
+      const clean = await runVerify(client, 'supabase/preflight/preflight_0009.sql');
+      const cleanInfo = clean.ok ? rowByName(clean.rows, /Muut public-taulut/) : null;
+      check('preflight_0009: vain migraatioiden taulut -> 0 FAIL, INFO 0', clean,
+        failedNos(clean) === '' && cleanInfo?.status === 'INFO' && cleanInfo.details === '0', { info: cleanInfo?.details });
+      await client.query(FOREIGN_TABLES_SQL);
+      const v = await runVerify(client, 'supabase/preflight/preflight_0009.sql');
+      const info = v.ok ? rowByName(v.rows, /Muut public-taulut/) : null;
+      const cascade = v.ok ? rowByName(v.rows, /vierasavain auth\.usersiin on CASCADE/) : null;
+      check('preflight_0009: vieras taulu ei-CASCADE-avaimella -> FAIL ennen junaa', v,
+        v.ok && v.failed.length === 1 && cascade?.status === 'FAIL' && info?.details === FOREIGN_INFO,
+        { info: info?.details, cascade: cascade ? `${cascade.check_no} ${cascade.status} ${cascade.details}` : null });
+      await client.query(`alter table public.mv_rehearsal_vieras drop constraint mv_rehearsal_vieras_user_id_fkey,
+        add constraint mv_rehearsal_vieras_user_id_fkey foreign key (user_id) references auth.users(id) on delete cascade`);
+      const v2 = await runVerify(client, 'supabase/preflight/preflight_0009.sql');
+      const info2 = v2.ok ? rowByName(v2.rows, /Muut public-taulut/) : null;
+      check('preflight_0009: vieras taulu CASCADE-avaimella -> 0 FAIL, INFO 2', v2,
+        failedNos(v2) === '' && info2?.details === FOREIGN_INFO, { info: info2?.details });
+    } finally { await client.end(); await dropDatabase(db); }
+  }
+  {
+    const db = 'mv_rehearsal_pfc_0013';
+    const client = await cloneProdShape('0013', db);
+    try {
+      await client.query(FOREIGN_TABLES_SQL);
+      const v = await runVerify(client, 'supabase/verify/verify_0013.sql');
+      const r28 = v.ok ? v.rows.find(r => r.check_no === '28') : null;
+      check('verify_0013: vieraat taulut eivät kaada riviä 26–27, rivi 28 INFO', v,
+        failedNos(v) === '' && r28?.status === 'INFO' && r28.details === FOREIGN_INFO, { r28: r28?.details });
+      const fk = await scalar(client,
+        `select conname from pg_constraint where conrelid = 'public.goals'::regclass and confrelid = 'auth.users'::regclass`);
+      await client.query(`alter table public.goals drop constraint ${fk},
+        add constraint ${fk} foreign key (user_id) references auth.users(id)`);
+      const v2 = await runVerify(client, 'supabase/verify/verify_0013.sql');
+      check('verify_0013: goals-avain ei CASCADE -> rivi 26 FAIL', v2, failedNos(v2) === '26' && v2.poikkeavia === 1);
+      await client.query(`alter table public.goals drop constraint ${fk}`);
+      const v3 = await runVerify(client, 'supabase/verify/verify_0013.sql');
+      check('verify_0013: goals ilman avainta auth.usersiin -> rivi 27 FAIL', v3, failedNos(v3) === '27' && v3.poikkeavia === 1);
     } finally { await client.end(); await dropDatabase(db); }
   }
   return results;
