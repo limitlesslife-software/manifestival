@@ -159,31 +159,41 @@ test('CRIT-03: tavoitteen aluevalinta säilyttää fokuksen, vaikka rivi siirtyy
   assert.equal(after.value, getState().lifeAreas[0].id);
 });
 
-test('CRIT-03: arviojonon painike säilyy muun tilamuutoksen yli; tallennuksen ajan fokus on kortin otsikossa', async (t) => {
+// Pidätys koskee VAIN tehtävän päivitystä: auki olevalla lifeAreas-portilla
+// (aktivointiaalto J) alueen luonti kulkee samaa korviketta ja jäi ennen
+// odottamaan, jolloin koko `node --test` jumittui. Aikaraja kaataa testin
+// nopeasti, jos jokin kirjoitus silti jää odottamaan.
+test('CRIT-03: arviojonon painike säilyy muun tilamuutoksen yli; tallennuksen ajan fokus on kortin otsikossa', { timeout: 10_000 }, async (t) => {
   freezeLocalDate(t, THURSDAY);
   let release;
   const hold = new Promise(resolve => { release = resolve; });
-  const { doc } = mount({ client: echoClient({ hold }) });
-  t.after(() => release());
-  await createLifeArea({ name: 'Työ', importance: 3, categoryKey: 'tyo' });
-  setTasks([task('q1', THURSDAY, null, { category: 'tyo' }), task('q2', THURSDAY, null, { category: 'tyo' })]);
-  doc.getElementById('dirOpenEstimate').focus();
-  press(doc, 'Enter');
-  const chip = doc.querySelector('#dirEstimate [data-queue-estimate="task:q1"][data-minutes="30"]');
-  chip.focus();
-  const progress = doc.querySelector('#dirEstimate [role="status"]');
-  setGoals([normalizeGoal({ id: 'g9', title: 'Muu', status: 'active' })]);
-  assertSameNode(doc.activeElement, chip, 'sama painike muun tilamuutoksen jälkeen');
-  assertSameNode(doc.querySelector('#dirEstimate [role="status"]'), progress, 'edistyminen (role=status) ei kirjoitu uudelleen');
+  const client = echoClient({ hold, holdWhen: (table, operation) => table === 'tasks' && operation === 'update' });
+  const { doc } = mount({ client });
+  try {
+    await createLifeArea({ name: 'Työ', importance: 3, categoryKey: 'tyo' });
+    setTasks([task('q1', THURSDAY, null, { category: 'tyo' }), task('q2', THURSDAY, null, { category: 'tyo' })]);
+    doc.getElementById('dirOpenEstimate').focus();
+    press(doc, 'Enter');
+    const chip = doc.querySelector('#dirEstimate [data-queue-estimate="task:q1"][data-minutes="30"]');
+    chip.focus();
+    const progress = doc.querySelector('#dirEstimate [role="status"]');
+    setGoals([normalizeGoal({ id: 'g9', title: 'Muu', status: 'active' })]);
+    assertSameNode(doc.activeElement, chip, 'sama painike muun tilamuutoksen jälkeen');
+    assertSameNode(doc.querySelector('#dirEstimate [role="status"]'), progress, 'edistyminen (role=status) ei kirjoitu uudelleen');
 
-  press(doc, 'Enter');
-  await flush(3);
-  assertSameNode(doc.activeElement, doc.getElementById('dirQueueTitle-main'), 'tallennus kesken: otsikko, ei <body>');
-  release();
-  await flush();
-  assert.equal(getState().tasks.find(x => x.id === 'q1').durationMinutes, 30);
-  assertSameNode(doc.activeElement, doc.getElementById('dirQueueTitle-main'));
-  assert.match(doc.getElementById('dirQueueTitle-main').textContent, /Tehtävä q2/);
+    press(doc, 'Enter');
+    await flush(3);
+    assert.ok(client.calls.some(call => call.table === 'tasks' && call.operation === 'update'),
+      'arvio lähti tehtävän päivityksenä, joka on pidätetty');
+    assertSameNode(doc.activeElement, doc.getElementById('dirQueueTitle-main'), 'tallennus kesken: otsikko, ei <body>');
+    release();
+    await flush();
+    assert.equal(getState().tasks.find(x => x.id === 'q1').durationMinutes, 30);
+    assertSameNode(doc.activeElement, doc.getElementById('dirQueueTitle-main'));
+    assert.match(doc.getElementById('dirQueueTitle-main').textContent, /Tehtävä q2/);
+  } finally {
+    release();
+  }
 });
 
 // ================================================================ LIVE-ALUEET
