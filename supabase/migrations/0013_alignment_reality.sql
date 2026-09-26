@@ -626,6 +626,20 @@ commit;
 -- ROLLBACK
 -- =====================================================================
 --
+-- PERUUTUS AINA KÄÄNTEISESSÄ JÄRJESTYKSESSÄ: tämä ensin, sitten 0012.
+--
+-- ENNEN PERUUTUSTA (vain lukeva): montako ajastinkirjausta muuttuu
+-- manual-lähteeksi ja montako kirjausta menettää kohteensa kokonaan
+-- (ainoa kohde oli projekti tai rutiini). Kirjaa luvut ylös.
+--
+--   select count(*) filter (where source = 'timer') as ajastinkirjauksia,
+--          count(*) filter (where project_id is not null or routine_id is not null)
+--            as projekti_tai_rutiinikytkentaisia,
+--          count(*) filter (where (project_id is not null or routine_id is not null)
+--                             and life_area_id is null and goal_id is null and task_id is null)
+--            as menettaa_kohteen_kokonaan
+--     from public.time_entries;
+--
 --   begin;
 --   set local lock_timeout = '5s';
 --
@@ -657,7 +671,15 @@ commit;
 -- Sarakkeen pudotus poistaa sen rajoitteet ja vierasavaimet mukanaan.
 -- HUOM. Peruutus POISTAA käynnissä olevat ajastimet, kuormittavuus-
 -- merkinnät, energiarajat ja jäsennellyt pohdinnat. Sulje portit ensin
--- (src/data/schema.js) ja ota varmuuskopio. Kirjattu aika säilyy.
+-- (src/data/schema.js) ja ota varmuuskopio. Kirjattu aika säilyy:
+-- minuutit, päivä sekä alue-, tavoite- ja tehtäväkytkentä pysyvät
+-- (harjoiteltu: tools/pg-rehearsal rollback:data).
+--
+-- KOHDISTUS KATOAA OSITTAIN: project_id, routine_id, occurrence_date,
+-- started_at, ended_at ja operation_id pudotetaan. Kirjaus, jonka ainoa
+-- kohde oli projekti tai rutiini, jää ilman kohdetta (minuutit säilyvät,
+-- mutta ne eivät enää kuulu mihinkään). Laske määrä yllä olevalla
+-- kyselyllä ennen peruutusta.
 --
 -- =====================================================================
 -- RISKIT

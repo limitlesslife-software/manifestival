@@ -208,25 +208,33 @@ from (
   union all
   select '17'::text as check_no, 'esteet'::text as section,
          'Odottavia lukkoja ei ole'::text as check_name, '0'::text as odotus,
-         (select count(*)::text from pg_locks where not granted and pid <> pg_backend_pid()) as toteutui
+         (select count(*)::text from pg_locks l where not l.granted and l.pid <> pg_backend_pid()
+             and l.pid in (select a.pid from pg_stat_activity a where a.datname = current_database())) as toteutui
 
   union all
-  select '18'::text as check_no, 'kirjattavat'::text as section,
+  select '18'::text as check_no, 'esteet'::text as section,
+         'Muut istunnot eivät lukitse tauluja, joita 0010 muuttaa tai joihin se viittaa (public.goals, public.projects, public.tasks, public.profile, auth.users)'::text as check_name, '0'::text as odotus,
+         (select count(*)::text from pg_locks l where l.locktype = 'relation' and l.pid <> pg_backend_pid()
+             and l.database = (select oid from pg_database where datname = current_database())
+             and l.relation in (to_regclass('public.goals'), to_regclass('public.projects'), to_regclass('public.tasks'), to_regclass('public.profile'), to_regclass('auth.users'))) as toteutui
+
+  union all
+  select '19'::text as check_no, 'kirjattavat'::text as section,
          'Tehtävien lukumäärä'::text as check_name, 'INFO'::text as odotus,
          (select count(*)::text from public.tasks) as toteutui
 
   union all
-  select '19'::text as check_no, 'kirjattavat'::text as section,
+  select '20'::text as check_no, 'kirjattavat'::text as section,
          'Tietokanta'::text as check_name, 'INFO'::text as odotus,
          current_database() as toteutui
 
   union all
-  select '20'::text as check_no, 'kirjattavat'::text as section,
+  select '21'::text as check_no, 'kirjattavat'::text as section,
          'Palvelimen versio'::text as check_name, 'INFO'::text as odotus,
          current_setting('server_version') as toteutui
 
   union all
-  select '21'::text as check_no, 'kirjattavat'::text as section,
+  select '22'::text as check_no, 'kirjattavat'::text as section,
          'Tarkistuksen hetki (UTC)'::text as check_name, 'INFO'::text as odotus,
          to_char(now() at time zone 'UTC', 'YYYY-MM-DD HH24:MI:SS') as toteutui
 ) c

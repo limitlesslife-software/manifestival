@@ -727,8 +727,9 @@ commit;
 -- Ennen ajoa vaaditaan:
 --   1. Panun kirjallinen hyväksyntä
 --   2. Varmuuskopio
---   3. Vain lukeva inventaario:
---        supabase/acceptance/life_alignment_readonly_inventory.sql
+--   3. Vain lukeva inventaario ja esitarkistus:
+--        supabase/acceptance/activation_readonly_inventory.sql
+--        supabase/preflight/preflight_0012.sql
 --   4. Ajo postgres-roolilla Supabasen SQL-editorissa
 --   5. supabase/verify/verify_0012.sql
 --   6. Vasta sitten portit src/data/schema.js:ssä (TABLES.lifeAreas,
@@ -755,8 +756,25 @@ commit;
 -- ROLLBACK
 -- =====================================================================
 --
+-- PERUUTUS AINA KÄÄNTEISESSÄ JÄRJESTYKSESSÄ: 0013 ensin, sitten tämä.
+--
 --   begin;
 --   set local lock_timeout = '5s';
+--
+--   -- VARTIJA: jos 0013 on yhä ajettu, sen taulut viittaavat
+--   -- life_areas-tauluun ja tämä peruutus kaatuisi kesken
+--   -- selittämättä. Tunnistus kuten 0012:n uudelleenajossa: 0013:n
+--   -- korvaava lähderajoite tai muu kuin 0012:n oma viittaus
+--   -- life_areas-tauluun (0013:n tauluja ei nimetä tässä tiedostossa).
+--   do $$
+--   begin
+--     if exists (select 1 from pg_constraint where conname = 'time_entries_source_v2_check')
+--        or exists (select 1 from pg_constraint c join pg_class t on t.oid = c.conrelid
+--                    where c.contype = 'f' and c.confrelid = to_regclass('public.life_areas')
+--                      and t.relname not in ('goals', 'time_entries')) then
+--       raise exception 'Peruutus keskeytetty: migraatio 0013 on yha ajettu. Peruuta ensin 0013 (sen ROLLBACK-osio) ja aja vasta sitten tama.';
+--     end if;
+--   end $$;
 --
 --   drop table public.alignment_reviews;
 --   drop table public.time_entries;

@@ -12,7 +12,7 @@
 -- verify_0012 ENNEN 0013:a. Taman tiedoston tarkistus 12 todistaa
 -- korvaavan rajoitteen.
 --
--- NELJA ASIAA, JOTKA TAMA ERITYISESTI TODISTAA
+-- VIISI ASIAA, JOTKA TAMA ERITYISESTI TODISTAA
 --
 -- 1. YKSI AJASTIN KAYTTAJAA KOHTI (tarkistus 20).
 -- 2. SAMA OPERAATIO KERRAN: time_entries (user_id, operation_id) on
@@ -20,16 +20,23 @@
 -- 3. POISTOSAANTO RAJAA NOLLAUKSEN SARAKKEESEEN: kohteen poisto ei vie
 --    kirjattua aikaa eika kaynnissa olevaa ajastinta (tarkistus 24).
 -- 4. TUOTANNOSSA AUKI OLEVIIN TAULUIHIN EI KOSKETTU (tarkistukset 40-41).
+-- 5. TILIN POISTO VIE KAIKEN: jokainen public-taulun vierasavain
+--    auth.usersiin on CASCADE, myos kahdessa uudessa taulussa
+--    (tarkistukset 25-27).
 --
 -- Tama tiedosto EI lue sarakkeita note, reflection, reflection_answers,
 -- snapshot eika adjustments. Ne ovat kayttajan omaa sisaltoa.
 
+-- NULL-TULOS ON POIKKEAMA. Puuttuva objekti tuottaa tarkistukseen NULLin:
+-- se on FAIL, se lasketaan poikkeavia_yhteensa-lukuun (is distinct from)
+-- ja details kertoo "toteutui null". Harjoiteltu: tools/pg-rehearsal
+-- (verify:null).
 select c.check_no, c.section, c.check_name,
        case when c.odotus = 'INFO' then 'INFO'
             when c.toteutui = c.odotus then 'PASS' else 'FAIL' end as status,
        case when c.odotus = 'INFO' then c.toteutui
-            else 'odotus ' || c.odotus || ', toteutui ' || c.toteutui end as details,
-       count(*) filter (where c.odotus <> 'INFO' and c.toteutui <> c.odotus)
+            else 'odotus ' || c.odotus || ', toteutui ' || coalesce(c.toteutui, 'null') end as details,
+       count(*) filter (where c.odotus <> 'INFO' and c.toteutui is distinct from c.odotus)
          over () as poikkeavia_yhteensa
 from (
 
@@ -172,6 +179,36 @@ from (
                              'running_timers_task_fkey', 'running_timers_project_fkey',
                              'running_timers_routine_fkey')
              and confdeltype = 'n' and array_length(confdelsetcols, 1) = 1)
+
+  union all
+  -- TILIN POISTO VIE MYOS AJASTIMEN JA ASETUKSET. user_id-vierasavain
+  -- auth.usersiin on CASCADE molemmissa uusissa tauluissa; muuten tilin
+  -- poisto kaatuisi naihin tauluihin (sama kuin verify_0012 tarkistus 27).
+  select '25', 'omistajuus', 'running_timers ja alignment_item_settings: user_id -> auth.users on CASCADE', '2',
+         (select count(*)::text from pg_constraint
+           where contype = 'f' and confdeltype = 'c'
+             and confrelid = 'auth.users'::regclass
+             and conrelid in (to_regclass('public.running_timers'),
+                              to_regclass('public.alignment_item_settings')))
+
+  union all
+  -- KOKO KANTA: yksikaan public-taulun vierasavain auth.usersiin ei saa
+  -- olla muu kuin CASCADE (migraatiot 0001-0013).
+  select '26', 'omistajuus', 'Jokainen public-taulun vierasavain auth.usersiin on CASCADE', '0',
+         (select count(*)::text from pg_constraint
+           where contype = 'f' and confrelid = 'auth.users'::regclass
+             and connamespace = 'public'::regnamespace
+             and confdeltype <> 'c')
+
+  union all
+  -- Ja jokaisella public-taululla on sellainen: taulu ilman omistajan
+  -- vierasavainta jaisi tilin poistossa jaljelle.
+  select '27', 'omistajuus', 'Jokaisella public-taululla on vierasavain auth.usersiin', '0',
+         (select count(*)::text from pg_class c
+           where c.relnamespace = 'public'::regnamespace and c.relkind = 'r'
+             and not exists (select 1 from pg_constraint f
+                              where f.conrelid = c.oid and f.contype = 'f'
+                                and f.confrelid = 'auth.users'::regclass))
 
   -- ================================================================
   -- RLS JA OIKEUDET

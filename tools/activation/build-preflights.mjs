@@ -62,14 +62,16 @@ const SPECIFIC = Object.freeze({
   ],
   '0011': [
     ['0011', 'tasks_owner_row_key on olemassa (matka- ja sijaintiviitteet)', '1',
-      "(select count(*)::text from pg_constraint where conname = 'tasks_owner_row_key')"]
+      "(select count(*)::text from pg_constraint where conname = 'tasks_owner_row_key')"],
+    ['0011', 'tasks/goals/projects: 12 politiikkaa (0011 vaatii ennen committia)', '12', policyCount(['tasks', 'goals', 'projects'])]
   ],
   '0012': [
     ['0012', 'Omistajan rivin avaimet goals ja tasks', '2',
       "(select count(*)::text from pg_constraint where contype = 'u' and conname in ('goals_owner_row_key', 'tasks_owner_row_key'))"],
     ['0012', 'goals.life_area_id -saraketta ei vielä ole', '0',
       "(select count(*)::text from information_schema.columns where table_schema = 'public' and table_name = 'goals' and column_name = 'life_area_id')"],
-    ['kirjattavat', 'Tavoitteita (saavat nullable-sarakkeen, ei täyttöä)', 'INFO', '(select count(*)::text from public.goals)']
+    ['kirjattavat', 'Tavoitteita (saavat nullable-sarakkeen, ei täyttöä)', 'INFO', '(select count(*)::text from public.goals)'],
+    ['0012', 'tasks/goals/projects: 12 politiikkaa (0012 vaatii ennen committia)', '12', policyCount(['tasks', 'goals', 'projects'])]
   ],
   '0013': [
     ['0013', '0012:n alkuperäinen lähderajoite on olemassa (korvataan)', '1',
@@ -77,8 +79,30 @@ const SPECIFIC = Object.freeze({
     ['0013', 'Omistajan rivin avaimet life_areas, goals, tasks, projects, routines', '5',
       "(select count(*)::text from pg_constraint where contype = 'u' and conname in ('life_areas_owner_row_key', 'goals_owner_row_key', 'tasks_owner_row_key', 'projects_owner_row_key', 'routines_owner_row_key'))"],
     ['kirjattavat', 'Kirjattuja aikoja (saavat 6 nullable-saraketta)', 'INFO',
-      "(select case when to_regclass('public.time_entries') is null then 'puuttuu' else (xpath('/row/c/text()', query_to_xml('select count(*) as c from public.time_entries', false, true, '')))[1]::text end)"]
+      "(select case when to_regclass('public.time_entries') is null then 'puuttuu' else (xpath('/row/c/text()', query_to_xml('select count(*) as c from public.time_entries', false, true, '')))[1]::text end)"],
+    ['0013', 'tasks, goals, projects, routines, life_areas, weekly_capacities, time_entries, alignment_reviews: 32 politiikkaa (0013 vaatii ennen committia)', '32',
+      policyCount(['tasks', 'goals', 'projects', 'routines', 'life_areas', 'weekly_capacities', 'time_entries', 'alignment_reviews'])]
   ]
+});
+
+/** Politiikkojen määrä tauluissa — sama joukko kuin migraation oma invariantti. */
+function policyCount(tables) {
+  return `(select count(*)::text from pg_policies where schemaname = 'public' and tablename in (${tables.map(t => `'${t}'`).join(', ')}))`;
+}
+
+/**
+ * Taulut, jotka migraatio lukitsee: ALTER TABLE (ACCESS EXCLUSIVE) tai
+ * vierasavaimen kohde (SHARE ROW EXCLUSIVE). auth.users kaikissa, koska
+ * jokainen uusi taulu viittaa siihen. Muun istunnon lukko näissä =
+ * migraatio odottaa lock_timeoutin (5 s) ja peruuntuu.
+ */
+export const LOCKED_TABLES = Object.freeze({
+  '0009': Object.freeze(['public.bills', 'auth.users']),
+  '0010': Object.freeze(['public.goals', 'public.projects', 'public.tasks', 'public.profile', 'auth.users']),
+  '0011': Object.freeze(['public.tasks', 'auth.users']),
+  '0012': Object.freeze(['public.goals', 'public.tasks', 'auth.users']),
+  '0013': Object.freeze(['public.time_entries', 'public.weekly_capacities', 'public.alignment_reviews', 'public.goals',
+    'public.tasks', 'public.projects', 'public.routines', 'public.life_areas', 'auth.users'])
 });
 
 function previous(number) {
@@ -116,7 +140,16 @@ export function buildPreflight(number) {
   add('esteet', 'Yli minuutin kestäneitä kyselyitä ei ole käynnissä', '0',
     `(select count(*)::text from pg_stat_activity where datname = current_database() and state = 'active'
              and pid <> pg_backend_pid() and now() - query_start > interval '1 minute')`);
-  add('esteet', 'Odottavia lukkoja ei ole', '0', '(select count(*)::text from pg_locks where not granted and pid <> pg_backend_pid())');
+  add('esteet', 'Odottavia lukkoja ei ole', '0',
+    `(select count(*)::text from pg_locks l where not l.granted and l.pid <> pg_backend_pid()
+             and l.pid in (select a.pid from pg_stat_activity a where a.datname = current_database()))`);
+  // pg_locks näkyy kaikille rooleille (toisin kuin pg_stat_activityn tila
+  // ilman pg_read_all_stats-oikeutta), joten tämä rivi havaitsee esteen
+  // myös silloin, kun idle in transaction -rivi ei näe muiden istuntoja.
+  add('esteet', `Muut istunnot eivät lukitse tauluja, joita ${number} muuttaa tai joihin se viittaa (${LOCKED_TABLES[number].join(', ')})`, '0',
+    `(select count(*)::text from pg_locks l where l.locktype = 'relation' and l.pid <> pg_backend_pid()
+             and l.database = (select oid from pg_database where datname = current_database())
+             and l.relation in (${LOCKED_TABLES[number].map(t => `to_regclass('${t}')`).join(', ')}))`);
   add('kirjattavat', 'Tehtävien lukumäärä', 'INFO', '(select count(*)::text from public.tasks)');
   add('kirjattavat', 'Tietokanta', 'INFO', 'current_database()');
   add('kirjattavat', 'Palvelimen versio', 'INFO', "current_setting('server_version')");
