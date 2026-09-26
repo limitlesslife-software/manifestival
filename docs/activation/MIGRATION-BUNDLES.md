@@ -27,6 +27,15 @@ migraatio päättyy virheeseen (ei ole vaarallista — mikään ei muuttunut —
 mutta älä yritä uudelleen ennen kuin syy on selvä) · verify antaa
 `poikkeavia_yhteensa > 0` → **aallon commitia ei deployata**.
 
+**Koneellinen luku (ACT-12):** liitetty preflight- tai verify-tulos
+pisteytetään, ei lueta silmällä: `node tools/activation/score-sql-result.mjs
+--sql=<tiedosto.sql> tulos.txt` (GO vain kun jokainen rivi on liitetty, 0 FAIL
+ja `poikkeavia_yhteensa` = 0). Orkestroija tekee saman lipuilla
+`--preflight-result=` ja `--verify-result=`. SQL-tiedostot ajetaan aina
+**lukon SQL-lähteestä** (`docs/activation/release-train-c-j.json` →
+`sqlSource`, sha256 jokaiselle tiedostolle); `npm run activation:dry-run`
+tulostaa ajettavat tiedostot tiivisteineen.
+
 ---
 
 ## 0009 — Talous 2.0 (aalto F, v19)
