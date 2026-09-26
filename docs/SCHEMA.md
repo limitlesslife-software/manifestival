@@ -202,7 +202,10 @@ Migraation jälkeen PostgRESTin skeemavälimuisti on ladattava uudelleen
 (ajo-ohjeen "Reload schema cache"). Jos se unohtuu, tarkistus voi mennä
 läpi (se kysyy PostgreSQL:ltä), mutta kirjoitus kaatuu PGRST204:ään.
 Reaktiivinen kerros laskee silloin portin istunnon ajaksi, joten tehtävät
-ja tavoitteet tallentuvat silti — ilman uusia kenttiä.
+ja tavoitteet tallentuvat silti — ilman uusia kenttiä. Sama koskee jokaista
+kirjoituksen `PGRST204`/`42703`/`42P01`-virhettä: onnistunut tarkistus ei
+kumoa sitä (muuten toisto ja tarkistus kiertäisivät kehää). Lukemisen puute
+ja `PGRST205` kumoutuvat, kun seuraava tarkistus näkee vaatimuksen kunnossa.
 
 ---
 

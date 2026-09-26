@@ -570,6 +570,12 @@ export function isTableMissing(tableKey) {
 
 const MISSING_TABLE_CODES = new Set(['PGRST205', '42P01']);
 const MISSING_COLUMN_CODES = new Set(['PGRST204', '42703']);
+/**
+ * Kirjoituksen virheet, jotka ovat pysyviä istunnon ajan. PGRST205 puuttuu
+ * tarkoituksella: se tulee PostgRESTin skeemavälimuistista, jota myös
+ * tarkistuksen GET käyttää, joten tarkistus näkee saman puutteen.
+ */
+const STICKY_WRITE_CODES = new Set(['PGRST204', '42703', '42P01']);
 
 /** Sarakkeen nimi PostgRESTin tai PostgreSQL:n viestistä, tai null. */
 function columnFromMessage(message) {
@@ -601,17 +607,26 @@ function columnFromMessage(message) {
  * tallentuisivat ilman kuvausta, kestoa ja määräaikaa sivun lataukseen
  * asti). Uusi tarkistus pyydetään silti.
  *
- * Vain kirjoituksen PGRST204 (PostgRESTin vanhentunut skeemavälimuisti)
- * on pysyvä istunnon ajan. Muut puutteet kumoutuvat, kun myöhempi
- * tarkistus näkee vaatimuksen kunnossa (ks. schemaRuntime.js).
- * Palauttaa true, jos jokin laski. Ei heitä.
+ * KIRJOITUKSEN PUUTE ON PYSYVÄ ISTUNNON AJAN (PGRST204, 42703, 42P01):
+ * tarkistuksen GET voi nähdä vaatimuksen kunnossa, vaikka sama kirjoitus
+ * kaatuu yhä (PostgRESTin vanhentunut skeemavälimuisti, liipaisin tai
+ * näkymä). Jos "ok" kumoaisi sen, kehä pyörisi 30 s välein: lasku ->
+ * tarkistus ok -> kumous -> uusi lataus ja toisto -> sama virhe. Vain
+ * LUKEMISEN puute (ja PGRST205, jonka tarkistus näkee samasta välimuistista)
+ * kumoutuu, kun myöhempi tarkistus näkee vaatimuksen kunnossa (ks.
+ * schemaRuntime.js). Palauttaa true, jos jokin laski. Ei heitä.
  *
  * @param {string} table kannan taulu
  * @param {unknown} error Supabase-virhe (tai AppError, jonka cause se on)
  * @param {string[]} [payloadKeys] lähetetyt sarakkeet, jos viestistä ei selviä
+ * @param {{write?: boolean}} [options] write: virhe tuli kirjoituksesta
+ *   (oletus: payloadKeys ei ole tyhjä). Kirjoitus ilman payloadin avaimia
+ *   (lisäys, poisto, upsert) kertoo sen tällä.
  */
-export function noteSchemaError(table, error, payloadKeys = []) {
+export function noteSchemaError(table, error, payloadKeys = [], options = {}) {
   try {
+    const write = options && typeof options.write === 'boolean'
+      ? options.write : Array.isArray(payloadKeys) && payloadKeys.length > 0;
     const cause = (error && error.cause) || error || {};
     const code = String(cause.code || '');
     if (!MISSING_TABLE_CODES.has(code) && !MISSING_COLUMN_CODES.has(code)) return false;
@@ -645,7 +660,10 @@ export function noteSchemaError(table, error, payloadKeys = []) {
       }
     }
 
-    const changed = recordReactiveFailures(failures, { sticky: code === 'PGRST204' })
+    // PGRST204 tulee aina kirjoituksesta (payloadin sarake), joten se on
+    // pysyvä, vaikka kutsuja ei kertoisi kirjoittavansa.
+    const sticky = code === 'PGRST204' || (write && STICKY_WRITE_CODES.has(code));
+    const changed = recordReactiveFailures(failures, { sticky })
       && recomputeSchemaCapabilities();
     // 'lowered' kertoo sovelluskerrokselle, että odottavat muutokset voi
     // lähettää uudelleen heti tarkistuksen jälkeen (ks. src/app/schemaStatus.js).

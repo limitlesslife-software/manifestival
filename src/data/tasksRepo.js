@@ -27,6 +27,8 @@ const TABLE = 'tasks';
 //   - skeemavirhe (PGRST204/42703) laskee sen sarakeportin, jolle puuttuva
 //     sarake kuuluu (noteSchemaError); seuraava kirjoitus lähtee ilman sitä,
 //     koska payloadFor laskee sarakejoukon joka kerta uudelleen
+//   - kirjoitus kertoo olevansa kirjoitus ({ write: true } tai payloadin
+//     avaimet): sen skeemavirhe on pysyvä istunnon ajan, lukemisen ei
 
 /**
  * Rakentaa kirjoitus-payloadin nykyisen skeemakyvykkyyden mukaan.
@@ -81,7 +83,7 @@ export async function insertTask(task) {
       .insert(payloadFor(task));
 
     if (error) {
-      noteSchemaError(TABLE, error);
+      noteSchemaError(TABLE, error, [], { write: true });
       return fail('Tehtävän tallennus ei onnistunut.', { cause: error, code: 'tasks.insert' });
     }
     return ok(task);
@@ -102,7 +104,7 @@ export async function updateTask(task) {
       .eq('id', task.id);
 
     if (error) {
-      noteSchemaError(TABLE, error);
+      noteSchemaError(TABLE, error, [], { write: true });
       return fail('Muutoksen tallennus ei onnistunut.', { cause: error, code: 'tasks.update' });
     }
     return ok(task);
@@ -123,7 +125,7 @@ export async function setCompleted(id, completed) {
       .eq('id', id);
 
     if (error) {
-      noteSchemaError(TABLE, error);
+      noteSchemaError(TABLE, error, [], { write: true });
       return fail('Merkinnän tallennus ei onnistunut.', { cause: error, code: 'tasks.complete' });
     }
     return ok({ id, completed });
@@ -144,7 +146,7 @@ export async function deleteTask(id) {
       .eq('id', id);
 
     if (error) {
-      noteSchemaError(TABLE, error);
+      noteSchemaError(TABLE, error, [], { write: true });
       return fail('Poisto ei onnistunut.', { cause: error, code: 'tasks.delete' });
     }
     return ok({ id });
@@ -169,7 +171,7 @@ export async function clearOtherWakeFlags(dateIso, exceptId) {
       .neq('id', exceptId || '');
 
     if (error) {
-      noteSchemaError(TABLE, error);
+      noteSchemaError(TABLE, error, [], { write: true });
       return fail('Herätysmerkinnän päivitys ei onnistunut.', { cause: error, code: 'tasks.wake' });
     }
     return ok(true);

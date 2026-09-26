@@ -186,7 +186,7 @@ export function createRepository({ table, schemaKey, normalize, toRow, fromRow, 
           .eq('user_id', requireUserId())
           .eq('id', id);
         if (error) {
-          noteSchemaError(table, error);
+          noteSchemaError(table, error, [], { write: true });
           return fail('Poisto ei onnistunut.', { cause: error, code: table + '.delete' });
         }
         return ok({ id });

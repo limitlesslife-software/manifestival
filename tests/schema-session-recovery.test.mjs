@@ -508,6 +508,92 @@ graphTest('aalto J: oletuksiin päättynyttä latausta vanhempi, myöhässä val
   g.session.clearUser();
 });
 
+/** Palvelin, jonka `table`-tauluun jokainen kirjoitus vastaa `error`:lla; luku toimii. */
+function failingWrites(server, table, error) {
+  return {
+    from(name) {
+      const target = server.from(name);
+      if (name !== table) return target;
+      let writing = false;
+      const wrapped = new Proxy(target, {
+        get(object, prop) {
+          if (prop === 'then') {
+            return (resolve, reject) => (writing
+              ? Promise.resolve({ data: null, error, status: 400 }) : object).then(resolve, reject);
+          }
+          const value = object[prop];
+          if (typeof value !== 'function') return value;
+          return (...args) => {
+            if (['insert', 'update', 'upsert', 'delete'].includes(prop)) writing = true;
+            const result = value.apply(object, args);
+            return result === object ? wrapped : result;
+          };
+        }
+      });
+      return wrapped;
+    }
+  };
+}
+
+graphTest('KRIITTINEN aalto J: kirjoituksen skeemavirhe on pysyvä istunnon ajan, lukemisen puute kumoutuu tarkistuksen "ok":lla', async () => {
+  const g = await loadWaveJ();
+  await freshSession(g);
+  const server = createSchemaServer({ applied: ALL, currentUserId: () => USER.id });
+  g.client.setClient(server);
+  const reprobe = () => g.probe.ensureSchemaCompatibility({
+    client: server, isOnline: ONLINE, storage: memoryStorage(), force: true
+  });
+  await reprobe();
+  assert.equal(g.runtime.schemaSnapshot().status, SCHEMA_STATUS.OK, 'lähtötilanne: kanta on ajan tasalla');
+
+  // Kirjoitukset (payloadin avaimet tai { write: true }).
+  g.schema.noteSchemaError('tasks', {
+    code: 'PGRST204', message: "Could not find the 'milestone_id' column of 'tasks' in the schema cache"
+  }, ['title', 'milestone_id']);
+  g.schema.noteSchemaError('goals', {
+    code: '42703', message: 'column "life_area_id" of relation "goals" does not exist'
+  }, ['title', 'life_area_id']);
+  g.schema.noteSchemaError('time_entries', {
+    code: '42P01', message: 'relation "public.time_entries" does not exist'
+  }, [], { write: true });
+  // Kirjoitus ilman avaimia oikean repositorion kautta: tehtävän lisäys.
+  g.client.setClient(failingWrites(server, 'tasks', {
+    code: '42703', message: 'column "deadline" of relation "tasks" does not exist'
+  }));
+  const tasksRepo = await importAtWave('J', 'data/tasksRepo.js');
+  const inserted = await tasksRepo.insertTask(normalizeTask({ id: 'st-1', title: 'T', date: '2026-09-26' }));
+  assert.equal(inserted.error.cause.code, '42703');
+  g.client.setClient(server);
+  // Lukemiset: sama koodi ilman kirjoitusta.
+  g.schema.noteSchemaError('bills', { code: '42703', message: 'column bills.payee does not exist' });
+  g.schema.noteSchemaError('notification_preferences', {
+    code: 'PGRST205', message: "Could not find the table 'public.notification_preferences' in the schema cache"
+  });
+  g.schema.noteSchemaError('savings_goals', { code: '42P01', message: 'relation "public.savings_goals" does not exist' });
+
+  const lowered = () => ({
+    planning: g.schema.columnGateOpen('GOAL_PLANNING_FIELDS'),
+    lifeArea: g.schema.columnGateOpen('GOAL_LIFE_AREA_FIELD'),
+    links: g.schema.columnGateOpen('TASK_LINK_FIELDS'),
+    timeEntries: g.schema.isTableAvailable('timeEntries'),
+    billPayment: g.schema.columnGateOpen('BILL_PAYMENT_FIELDS'),
+    preferences: g.schema.isTableAvailable('notificationPreferences'),
+    savings: g.schema.isTableAvailable('savingsGoals')
+  });
+  assert.deepEqual(lowered(), {
+    planning: false, lifeArea: false, links: false, timeEntries: false,
+    billPayment: false, preferences: false, savings: false
+  }, 'lähtötilanne: kaikki laskettu');
+
+  // Uusi tarkistus näkee kaiken kunnossa: vain lukemisen puutteet kumoutuvat.
+  await reprobe();
+  assert.deepEqual(lowered(), {
+    planning: false, lifeArea: false, links: false, timeEntries: false,
+    billPayment: true, preferences: true, savings: true
+  }, 'kirjoituksen puute kumoutui (kehä) tai lukemisen puute jäi voimaan');
+  g.session.clearUser();
+});
+
 graphTest('KRIITTINEN aalto J: puuttuva taulu (PGRST205) ei jää voimaan, kun uusi tarkistus löytää sen', async () => {
   const g = await loadWaveJ();
   await freshSession(g);

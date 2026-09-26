@@ -165,16 +165,16 @@ let probeResults = {};
  *
  * KAKSI LAJIA:
  *
- *   sticky   kirjoituksen PGRST204 (payloadin sarake puuttuu PostgRESTin
- *            skeemavälimuistista). PYSYVÄ ISTUNNON AJAN: GET-tarkistus
- *            kysyy PostgreSQL:ltä, mutta kirjoitus voi yhä kaatua
- *            vanhentuneeseen välimuistiin. Jos onnistunut tarkistus
+ *   sticky   KIRJOITUKSEN virhe PGRST204, 42703 tai 42P01 (esim. payloadin
+ *            sarake puuttuu PostgRESTin skeemavälimuistista). PYSYVÄ
+ *            ISTUNNON AJAN: GET-tarkistus voi nähdä vaatimuksen kunnossa,
+ *            mutta kirjoitus voi yhä kaatua. Jos onnistunut tarkistus
  *            nollaisi tämän, toisto ja tarkistus ajaisivat toisiaan kehässä.
- *   muu      puuttuva taulu (PGRST205/42P01) tai PostgreSQL:n 42703.
- *            Tarkistus näkee saman asian kuin virhe, joten myöhempi varma
- *            "ok" samalle vaatimukselle poistaa puutteen. Muuten yksi
- *            hetkellinen virhe (esim. huoltokatkon aikana ladattu lista)
- *            pitäisi ominaisuuden poissa sivun lataukseen asti.
+ *   muu      lukemisen puute (PGRST205/42P01/42703) ja kirjoituksen
+ *            PGRST205. Tarkistus näkee saman asian kuin virhe, joten
+ *            myöhempi varma "ok" samalle vaatimukselle poistaa puutteen.
+ *            Muuten yksi hetkellinen virhe (esim. huoltokatkon aikana
+ *            ladattu lista) pitäisi ominaisuuden poissa sivun lataukseen asti.
  *
  * `seq` kertoo järjestyksen: tarkistus poistaa vain ne puutteet, jotka
  * kirjattiin ENNEN kuin se lähti (ks. reactiveMark).
@@ -276,7 +276,7 @@ export function recordProbeResults(results, { from = 'probe', reactiveUpTo = -In
  *
  * @param {Record<string,string>} failures vaatimus -> PROBE_RESULT
  * @param {{sticky?: boolean}} [options] sticky: pysyy istunnon loppuun
- *   (kirjoituksen PGRST204); muuten seuraava varma "ok" kumoaa sen
+ *   (kirjoituksen PGRST204/42703/42P01); muuten seuraava varma "ok" kumoaa sen
  */
 export function recordReactiveFailures(failures, { sticky = false } = {}) {
   let changed = false;

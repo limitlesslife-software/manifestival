@@ -78,7 +78,7 @@ export async function saveProfile(profile) {
       .upsert(profileToRow(profile, requireUserId()));
 
     if (error) {
-      noteSchemaError(TABLE, error);
+      noteSchemaError(TABLE, error, [], { write: true });
       return fail('Profiilin tallennus ei onnistunut.', { cause: error, code: 'profile.save' });
     }
     return ok(profile);

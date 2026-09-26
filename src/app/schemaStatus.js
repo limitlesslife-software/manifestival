@@ -184,8 +184,9 @@ async function signOutFromMaintenance() {
  * Kannan skeemavirhe pyysi uutta tarkistusta (src/data/schema.js).
  *
  * Jos virhe laski portin ('lowered') tai tarkistus muutti kyvykkyyttä,
- * odottavat muutokset lähetetään heti uudelleen (onRecovered). Laskettu
- * tieto on pysyvä istunnon ajan, joten tämä ei voi kiertää kehää.
+ * odottavat muutokset lähetetään heti uudelleen (onRecovered). Kirjoituksen
+ * laskema tieto on pysyvä istunnon ajan (ks. noteSchemaError), joten
+ * toisto ei voi kiertää kehää saman kirjoitusvirheen kanssa.
  */
 function handleReprobeRequest(reason) {
   if (reason === 'lowered') loweredSinceReprobe = true;

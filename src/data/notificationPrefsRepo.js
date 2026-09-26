@@ -196,7 +196,7 @@ export async function savePreferences(preferences) {
       .upsert(preferencesToRow(normalized, requireUserId()));
 
     if (error) {
-      noteSchemaError(TABLE, error);
+      noteSchemaError(TABLE, error, [], { write: true });
       return fail('Muistutusasetusten tallennus ei onnistunut.',
         { cause: error, code: 'notificationPrefs.save' });
     }
