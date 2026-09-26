@@ -101,6 +101,7 @@ const SHELL = [
   '/src/data/client.js',
   '/src/data/collectionsRepo.js',
   '/src/data/config.js',
+  '/src/data/deviceData.js',
   '/src/data/memoryStore.js',
   '/src/data/notificationPrefsRepo.js',
   '/src/data/offlineQueueStore.js',
