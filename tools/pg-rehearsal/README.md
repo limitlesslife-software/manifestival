@@ -85,7 +85,7 @@ Pysäytys: sama komento `stop`-sanalla. Poisto: poista `.claude/pg-local`.
 ## Ajo
 
 ```sh
-node tools/pg-rehearsal/rehearse.mjs                    # kaikki skenaariot (~10 min)
+node tools/pg-rehearsal/rehearse.mjs                    # kaikki 18 skenaariota (~6 min)
 node tools/pg-rehearsal/rehearse.mjs --only=failure     # failure + failure:0010-locks
 node tools/pg-rehearsal/rehearse.mjs --only=prodshape   # tuotannon muotoiset
 node tools/pg-rehearsal/rehearse.mjs --only=prodshape:chain --write-golden   # päivitä kultaiset skeemaerot
