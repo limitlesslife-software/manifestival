@@ -46,13 +46,17 @@ test('katkaisin on ennen todennusta: suljettuna ei yhtään verkkokutsua', () =>
 
 // ================================================================ AIKARAJAT
 
-test('aikarajat: palvelin luovuttaa ennen asiakasta', () => {
+/** Asiakkaan väljyys palvelimen pahimman tapauksen päälle (verkko, kylmäkäynnistys). */
+const CLIENT_HEADROOM_MS = 2000;
+
+test('aikarajat: palvelin luovuttaa selvästi ennen asiakasta', () => {
   // Muuten asiakas näyttää jo varapolun, kun palvelin vielä maksaa
-  // ylävirran kutsusta.
+  // ylävirran kutsusta. Pelkkä "suurempi" ei riitä: 1 s väli syöttyy
+  // verkkoon ja funktion kylmäkäynnistykseen.
   const serverWorstCase = VERIFY_TIMEOUT_MS + explain.UPSTREAM_TIMEOUT_MS;
-  assert.ok(EXPLAIN_TIMEOUT_MS > serverWorstCase,
-    `asiakas ${EXPLAIN_TIMEOUT_MS} ms, palvelin enintään ${serverWorstCase} ms`);
-  assert.ok(explain.UPSTREAM_TIMEOUT_MS <= 10000, 'lyhyt selitys ei tarvitse yli 10 s');
+  assert.ok(EXPLAIN_TIMEOUT_MS >= serverWorstCase + CLIENT_HEADROOM_MS,
+    `asiakas ${EXPLAIN_TIMEOUT_MS} ms, palvelin enintään ${serverWorstCase} ms + väljyys ${CLIENT_HEADROOM_MS} ms`);
+  assert.ok(explain.UPSTREAM_TIMEOUT_MS <= 8000, 'lyhyt selitys ei tarvitse yli 8 s');
 });
 
 test('vercel.json antaa selitysfunktiolle riittävän enimmäiskeston', () => {

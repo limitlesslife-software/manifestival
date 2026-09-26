@@ -46,7 +46,7 @@
 //      on puheohjauksen hätävara eikä avaa tätä
 //   4. käyttäjäkohtainen pyyntörajoitin (api/_ratelimit.js)
 //   5. syöte- ja kokovalidointi (api/_validateExplain.js)
-//   6. aikakatkaisu ylävirran kutsulle (10 s; asiakas odottaa 16 s)
+//   6. aikakatkaisu ylävirran kutsulle (8 s; asiakas odottaa 16 s)
 //   7. vain luonnollisesti päättynyt, rajan mittainen vastaus kelpaa;
 //      siitä palautetaan vain tekstiosa
 //   8. virheviestit ovat yleisiä eivätkä paljasta palvelimen tilaa
@@ -60,9 +60,11 @@ const { applyCors } = require('./_cors.js');
  * Ylävirran aikakatkaisu. Pidettävä selvästi asiakkaan odotusta
  * (EXPLAIN_TIMEOUT_MS, 16 s) lyhyempänä: todennus voi viedä 5 s, eikä
  * palvelin saa jatkaa maksullista kutsua sen jälkeen kun asiakas on jo
- * luovuttanut. vercel.json antaa funktiolle 20 s.
+ * luovuttanut. 5 s + 8 s jättää asiakkaalle vähintään 2 s väljyyttä
+ * (verkko, kylmäkäynnistys); testi pitää välin. vercel.json antaa
+ * funktiolle 20 s.
  */
-const UPSTREAM_TIMEOUT_MS = 10000;
+const UPSTREAM_TIMEOUT_MS = 8000;
 const MODEL = 'claude-haiku-4-5-20251001';
 const RATE_LIMIT = 20;
 const MAX_TOKENS = 600;

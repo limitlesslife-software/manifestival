@@ -37,7 +37,7 @@ import { SIGNAL } from '../domain/alignment.js';
  */
 export const AI_EXPLAIN_ENABLED = false;
 
-/** Asiakkaan odotus. Palvelin: todennus 5 s + ylävirta 10 s, joten tämä on pidempi. */
+/** Asiakkaan odotus. Palvelin: todennus 5 s + ylävirta 8 s; tämä on vähintään 2 s pidempi. */
 export const EXPLAIN_TIMEOUT_MS = 16000;
 /** Pisin kelpaava selitys. Sama raja kuin palvelimella (api/explain.js MAX_TEXT_LENGTH). */
 export const MAX_EXPLANATION_LENGTH = 1200;

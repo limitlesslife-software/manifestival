@@ -110,8 +110,9 @@ kirjautuneen käyttäjän. Hätävara koskee puheohjausta ja muita
 AI-päätepisteitä (`parse`, `extract`, `plan`, `capture`, `command`).
 
 Funktion enimmäiskesto on `vercel.json`issa 20 s: todennus enintään 5 s +
-Anthropic-kutsu enintään 10 s. Selain odottaa 16 s ja näyttää sitten
-deterministisen selityksen.
+Anthropic-kutsu enintään 8 s. Selain odottaa 16 s (vähintään 2 s palvelimen
+pahimman tapauksen yli) ja näyttää sitten deterministisen selityksen.
+`tests/api-explain-readiness.test.mjs` pitää nämä välit.
 
 Asetetaan: Vercel -> projekti -> **Settings** -> **Environment Variables**.
 
