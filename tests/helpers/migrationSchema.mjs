@@ -247,6 +247,42 @@ export function alterTableActions(sql) {
   return actions;
 }
 
+const ANY_REFERENCE = new RegExp(`\\breferences\\s+${QUALIFIED}`, 'gi');
+
+/**
+ * Jokainen REFERENCES-viittaus (mihin tahansa tauluun) ja sen ON DELETE
+ * -sääntö. `target` on normalisoitu nimi ('public.goals', 'auth.users').
+ */
+export function tableReferences(sql) {
+  const code = stripSqlComments(sql);
+  const references = [];
+  for (const match of code.matchAll(ANY_REFERENCE)) {
+    const parsed = qualifiedName(match[1]);
+    const clause = clauseFrom(code, match.index, match.index + match[0].length);
+    references.push({
+      target: `${parsed.schema || 'public'}.${parsed.name}`,
+      line: code.slice(0, match.index).split(NEWLINE).length,
+      clause,
+      onDelete: onDeleteRule(clause)
+    });
+  }
+  return references;
+}
+
+/** Viittauslauseke seuraavaan pilkkuun/puolipisteeseen/sulkevaan sulkuun asti. */
+function clauseFrom(code, start, from) {
+  let end = from;
+  let depth = 0;
+  while (end < code.length) {
+    const char = code[end];
+    if (char === '(') depth += 1;
+    if (char === ')') { if (depth === 0) break; depth -= 1; }
+    if ((char === ',' || char === ';') && depth === 0) break;
+    end += 1;
+  }
+  return code.slice(start, end).trim();
+}
+
 /**
  * Jokainen viittaus auth.users-tauluun ja sen ON DELETE -sääntö.
  * Lauseke luetaan viittauksesta seuraavaan pilkkuun, puolipisteeseen tai
@@ -256,17 +292,8 @@ export function authUserReferences(sql) {
   const code = stripSqlComments(sql);
   const references = [];
   for (const match of code.matchAll(AUTH_USERS_GLOBAL)) {
-    let end = match.index + match[0].length;
-    let depth = 0;
-    while (end < code.length) {
-      const char = code[end];
-      if (char === '(') depth += 1;
-      if (char === ')') { if (depth === 0) break; depth -= 1; }
-      if ((char === ',' || char === ';') && depth === 0) break;
-      end += 1;
-    }
-    const line = code.slice(0, match.index).split(NEWLINE).length;
-    references.push({ line, clause: code.slice(match.index, end).trim(), onDelete: onDeleteRule(code.slice(match.index, end)) });
+    const clause = clauseFrom(code, match.index, match.index + match[0].length);
+    references.push({ line: code.slice(0, match.index).split(NEWLINE).length, clause, onDelete: onDeleteRule(clause) });
   }
   return references;
 }

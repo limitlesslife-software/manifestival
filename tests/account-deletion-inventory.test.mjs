@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { ROOT, read } from './helpers/sources.mjs';
-import { classifyAccountSchema } from './helpers/migrationSchema.mjs';
+import { classifyAccountSchema, tableReferences } from './helpers/migrationSchema.mjs';
 import { EXPORTED_COLLECTIONS } from '../src/domain/dataExport.js';
 import {
   ACCOUNT_DATA_MAP, RETENTION_DECISIONS, ACCOUNT_OWNED_COLLECTIONS
@@ -111,6 +111,28 @@ test('KRIITTINEN: jokainen viittaus auth.users-tauluun on ON DELETE CASCADE', ()
   const { nonCascade, nonCascadeReferences } = schemaClassification();
   assert.deepEqual(nonCascade, [], 'omistajasarake ei kaskadoidu');
   assert.deepEqual(nonCascadeReferences, [], 'auth.users-viittaus ilman on delete cascade');
+});
+
+test('KRIITTINEN: taulujen väliset viiteet ovat CASCADE tai SET NULL (kaskadi ei riipu järjestyksestä)', () => {
+  // RESTRICT tarkistetaan heti: jos kaskadi poistaa viitatun rivin ennen
+  // viittaavaa, auth.admin.deleteUser kaatuu. NO ACTION (myös puuttuva
+  // ON DELETE) sallitaan vain, jos se on tietoinen -- nyt yhtään ei ole.
+  const references = tableReferences(migrationsText());
+  assert.ok(references.length > 26, 'viittaushaku ei löydä tunnettuja viittauksia -- haku on rikki');
+  const offenders = references
+    .filter(reference => reference.target !== 'auth.users')
+    .filter(reference => !['cascade', 'set null'].includes(reference.onDelete))
+    .map(reference => `rivi ${reference.line}: ${reference.clause} (${reference.onDelete || 'no action'})`);
+  assert.deepEqual(offenders, []);
+});
+
+test('näyte: RESTRICT-viite taulujen välillä havaitaan', () => {
+  const [reference] = tableReferences('create table public.a (b_id text references public.b(id) on delete restrict);');
+  assert.equal(reference.target, 'public.b');
+  assert.equal(reference.onDelete, 'restrict');
+  const [composite] = tableReferences(
+    'create table public.a (x text, y uuid, foreign key (x, y) references public.b (id, user_id) on delete set null (x));');
+  assert.equal(composite.onDelete, 'set null');
 });
 
 test('KRIITTINEN: kaskadoituvat taulut ovat TÄSMÄLLEEN poistokartan taulut omistajasarakkeineen', () => {
