@@ -261,12 +261,29 @@ git push origin HEAD:main
 Palauttaa **aallon F** tilan.
 
 > **Kantaa ei peruuteta ensin.** Porttien sulkeminen riittää: sarakkeet
-> jäävät paikoilleen ja sovellus lakkaa kirjoittamasta niihin.
+> jäävät paikoilleen ja sovellus lakkaa kirjoittamasta niihin — **paitsi
+> tila `maintenance`**, ks. alla.
 >
 > Migraation peruutus on erikseen migraatiotiedoston lopussa. **Se
 > epäonnistuu tarkoituksella**, jos yksikin tavoite on ehtinyt tilaan
 > `maintenance` — peruutus ei saa hiljaa hylätä käyttäjän tekemää
 > valintaa. Päätä ensin, mihin tilaan ne rivit siirretään.
+
+> **Ennen revertiä: `maintenance`-tavoitteet.** Aallon F koodi ei tunne
+> tilaa `maintenance`. Kun F:ssä muokataan tavoitetta, joka on tilassa
+> `maintenance`, F kirjoittaa sen tilaksi `active` — hiljaa. Siksi ennen
+> `git revert`iä:
+>
+> 1. Aja `supabase/backup/snapshot_state_0010.sql` ja tarkista tulos:
+>    `node tools/activation/restore-snapshot.mjs check <vienti> --save`.
+> 2. Kirjaa `verify_0010.sql`:n rivi 44 ja `maintenance`-tavoitteiden
+>    tunnisteet.
+> 3. Revertin jälkeen älä muokkaa niitä tavoitteita. Jos niin kävi,
+>    palauta tila aallon G palattua: `restore <vienti> --tables=goals`
+>    (kuivaharjoitus `--dry-run` ensin).
+>
+> Varmuuskopio, palautus ja päätöspuu:
+> [`docs/activation/0010-BACKUP-AND-RECOVERY.md`](../activation/0010-BACKUP-AND-RECOVERY.md).
 
 ---
 
