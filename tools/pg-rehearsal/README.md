@@ -1,9 +1,18 @@
 # Migraatioharjoittelu oikealla PostgreSQL:llä
 
 **EI TUOTANTOA.** Kaikki tässä hakemistossa ajetaan paikalliseen,
-kertakäyttöiseen PostgreSQL-palvelimeen osoitteessa `127.0.0.1`.
+kertakäyttöiseen PostgreSQL 17 -klusteriin osoitteessa `127.0.0.1`.
 `lib.mjs` kieltäytyy muista osoitteista, ja jokainen kanta on nimeltään
 `mv_rehearsal_*` ja poistetaan ajon lopuksi.
+
+**Oma klusteri, ei mikä tahansa palvelin.** Silmukkaosoite ei riitä:
+2026-09-26 portissa 54329 vastasi toisen projektin PostgreSQL 15.
+Jokainen yhteys tarkistaa ensin (`lib.assertRehearsalServer`), että
+palvelin on vähintään PostgreSQL 17 ja sen `data_directory` on projektin
+omassa `.claude/pg-local/`-hakemistossa (myös worktreestä ajettaessa:
+pääkansion `.claude/pg-local`). Ohitus vain tarkoituksella:
+`PG_REHEARSAL_ALLOW_FOREIGN=1`. Oletusportti on **54349**. Pelkkä
+moduulien importti ei avaa yhteyttä eikä aja skenaarioita.
 
 ## Mitä tämä todistaa
 
@@ -14,29 +23,40 @@ ja jokaisen jälkeen sen oman `supabase/verify/verify_XXXX.sql`:n.
 
 | Skenaario | Sisältö |
 |---|---|
-| `upgrade:text` / `upgrade:typed` | Ketju kahdella lähtötilalla: `tasks.date/time` tekstinä tai omina tyyppeinään (tuotannon tyyppiä ei ole todennettu, `docs/SCHEMA.md`). Sovellusdata siemennetään kahdelle käyttäjälle **roolina `authenticated`** heti kunkin taulun synnyttyä, joten myöhemmät migraatiot ajetaan olemassa olevaa dataa vasten. Todennetaan, ettei yksikään migraatio muuta vanhojen taulujen rivimääriä, alkuperäiset 36 tehtävää säilyvät ja 0012 ei liitä yhtään tavoitetta alueeseen. |
+| `upgrade:text` / `upgrade:typed` | Ketju kahdella lähtötilalla: `tasks.date/time` tekstinä tai omina tyyppeinään. Sovellusdata siemennetään kahdelle käyttäjälle **roolina `authenticated`** heti kunkin taulun synnyttyä. 0003:sta alkaen jokaisen migraation ympärillä: jokaisen vanhan rivin arvot vanhoissa sarakkeissa (md5), rivin `xmin` (ei UPDATEa) ja taulun `relfilenode` (ei uudelleenkirjoitusta) täsmälleen ennallaan; alkuperäiset 36 tehtävää säilyvät; 0012 ei liitä yhtään tavoitetta alueeseen. |
 | `rls` | Jokaiselle 26 taululle: A ei voi lukea, päivittää, poistaa, lisätä B:n nimissä, siirtää omaa riviään B:lle eikä viitata B:n riviin yhdistelmävierasavaimella; `anon` ei pääse mihinkään; `authenticated` ilman `sub`-väitettä ei näe mitään; PUBLIC/anon-oikeuksia ei ole. |
-| `lifecycle` | Poistosäännöt (tavoite, alue, tehtävä), yksi ajastin per käyttäjä, `operation_id`-idempotenssi, rajat (0 min, > 1440 min, maanantai, nimen pituus, ajastimen loppu ennen alkua) ja tilin poiston cascade kaikkiin tauluihin. Lisäksi taaksepäin yhteensopivuus: vanhojen aaltojen rivimuodot (ilman myöhempien migraatioiden sarakkeita) ovat yhä kirjoitettavissa 0013:n jälkeen — migraatio ajetaan aina edellisen aallon koodin ollessa tuotannossa. |
-| `preflight` | Jokainen `supabase/preflight/preflight_0009…0013.sql` jokaisessa tilassa 0007–0013: PASS vain juuri ennen omaa migraatiotaan (35 tapausta). Upgrade-ketjussa 0009+ esitarkistuksen FAIL on hylkäys. |
-| `inventory` | `activation_readonly_inventory.sql` jokaisessa junan tilassa molemmilla lähtötiloilla READ ONLY -transaktiossa + `score-inventory.mjs`:n päätös (GO/STOP, seuraava migraatio), keskeneräinen 0012 ja puuttuva omistaja -> STOP. `--fixtures=DIR` kirjoittaa tulokset yksikkötesteille. |
-| `rollback` | Jokaiselle 0009–0013: ajo → migraation oma kommentoitu ROLLBACK-osio → katalogin sormenjälki täsmälleen sama kuin ennen ajoa → migraatio ajettavissa uudelleen (5/5). |
-| `failure` | Uudelleenajo heti ja koko ketjun jälkeen (viestin on oltava "JO AJETTU"), puuttuva esiehto, osittainen tila (yksi objekti etukäteen), lukon aikakatkaisu avoimen transaktion takia (5 s) ja uudelleenajo lukon vapauduttua, myöhäinen esiehto. Jokaisessa todennetaan katalogin sormenjäljellä, ettei epäonnistunut ajo jättänyt **mitään** jälkeä. |
+| `lifecycle` | Poistosäännöt, yksi ajastin per käyttäjä, `operation_id`-idempotenssi, rajat ja tilin poiston cascade kaikkiin tauluihin; vanhojen aaltojen käsin kirjoitetut rivimuodot 0013:n jälkeen. |
+| `preflight` | Jokainen `preflight_0009…0013.sql` jokaisessa tilassa 0007–0013: PASS vain juuri ennen omaa migraatiotaan (35 tapausta). |
+| `inventory` | `activation_readonly_inventory.sql` jokaisessa junan tilassa READ ONLY -transaktiossa + `score-inventory.mjs`:n päätös. `--fixtures=DIR` kirjoittaa tulokset yksikkötesteille. |
+| `rollback` | Jokaiselle 0009–0013: ajo → oma ROLLBACK-osio → **katalogirivit** (`lib.catalogItems`) täsmälleen samat → ajo uudelleen. |
+| `failure` | Uudelleenajo ("JO AJETTU"), puuttuva esiehto, osittainen tila, lukon aikakatkaisu, myöhäinen esiehto — katalogi ennallaan jokaisen epäonnistumisen jälkeen. |
+| `prodshape:fixture` | Tuotannon tila 0008 (`prodshape.mjs`) = omistajan inventaario 2026-09-26 (`expected/production-inventory-0008.json`): omistajan antamat rivit verrataan, johdetut merkitty `derived`, antamattomat `absent`. 5 tavoitteen tilaa × projekti kytketty/irti. |
+| `values:0010` | 0010 tuotannon muotoiseen kantaan (10 muunnelmaa): yksikään vanha arvo ei muutu, yhtään riviä ei kirjoiteta uudelleen (`xmin`), yhtään taulua ei kirjoiteta uudelleen (`relfilenode`); uudet sarakkeet vanhoilla riveillä: `depends_on = '{}'`, muut null, `automation_level = 1`, `planning_buffer_ratio = 0.25`. |
+| `prodshape:chain` | 0009–0013 tuotannon datalla: tiivisteet jokaisen migraation ympärillä + skeemaero = kultainen tiedosto `expected/schema-diff-00NN.txt`; poistoja vain sallitut (`ALLOWED_REMOVALS`: 0010 goals_status_check, 0013 time_entries_source_check). |
+| `prodshape:pause` | Junan taukopisteet (`waves.mjs`): elävän ja seuraavan aallon kirjoitukset sovelluksen **omilla rivimuunnoksilla** (`repo.mapping.toRow`, `rows.js toRow`, `profileToRow`, `preferencesToRow`) aallon sarakeporteilla PostgREST-muodossa (insert/update/upsert/delete roolina authenticated), verify uudelleen, seuraava preflight, peruutuksen kuiva-ajo (estääkö data peruutuksen). |
+| `failure:0010-locks` | Estäjämatriisi goals/tasks/projects/profile/auth.users × ACCESS SHARE / ROW EXCLUSIVE (+ 0009 bills, 0011 tasks): odotus 4,5–7 s, katalogi, rivit ja tilarajoite ennallaan, ei jääneitä lukkoja, uudelleenajo läpi. Myöhäinen virhe tilarajoitteen vaihdon jälkeen (event trigger skeemassa `rehearsal_inject`), sovelluksen jumin mittaus, lukkiutuminen (40P01), keskeytynyt istunto. Vertailu 0010:aan ennen lukitusjärjestystä (git). |
+| `verify:null` | Rikottu objekti → NULL-tulos on FAIL ja lasketaan `poikkeavia_yhteensa`-lukuun. |
+| `preflight:blockers` | Uusi esteet-rivi (lukitut taulut, `pg_locks`) ja politiikkamäärärivit havaitsevat esteen ennen migraatiota. |
+| `rollback:data` | 0010 (ylläpitotila → selkeä kieltäytyminen, korjauksen jälkeen läpi), 0012 (liitetty tavoite + kirjattu aika), 0013 (minuutit säilyvät, kohdistuksen menetys ennakkokyselystä) — vanhat rivit ja katalogi täsmälleen ennallaan. |
+| `rollback:reverse-chain` | 0008 → 0013 datan kanssa → peruutukset 0013…0009 → katalogi = tuotannon 0008; 0012 ennen 0013:a kaatuu vartijaan. |
+| `role:nonsuper` | Migraatiot NOSUPERUSER-omistajaroolina; preflightin esteet-rivit `pg_read_all_stats`-oikeuden kanssa ja ilman. |
 
 ## Mitä tämä EI todista (tunnetut erot Supabaseen)
 
 - **PostgREST-kerros** (HTTP, JSON, `Prefer`-otsakkeet) ei ole mukana.
-  RLS todennetaan samalla mekanismilla, jota PostgREST käyttää
-  (`set local role authenticated` + `request.jwt.claims`), mutta ei
-  HTTP:n kautta.
-- **Roolit.** Migraatiot ajetaan täällä superuserina. Supabasen
-  `postgres`-rooli ei ole superuser. Migraatiot eivät tarvitse
-  superuser-oikeuksia (ne luovat tauluja, politiikkoja ja oikeuksia omiin
-  tauluihinsa), mutta ero on olemassa.
-- **Versio.** Paikallinen palvelin on PostgreSQL 17. Tuotannon versio
-  luetaan `supabase/acceptance/life_alignment_readonly_inventory.sql`:llä.
-  Migraatiot vaativat vähintään 15:n ja tarkistavat sen itse.
+  Kirjoitukset jäljitellään PostgREST 12:n SQL-muodolla samassa
+  roolissa (`set local role authenticated` + `request.jwt.claims`),
+  mutta ei HTTP:n kautta.
+- **Roolit.** Supabasen `postgres`-rooli ei ole superuser, ja sen
+  tarkat jäsenyydet (esim. `pg_read_all_stats`) ja omistukset ovat
+  tuotannon asia. `role:nonsuper` jäljittelee NOSUPERUSER-omistajaa,
+  ei Supabasen roolia sellaisenaan.
+- **SQL-editori.** Editorin tapa ajaa monilauseinen tiedosto,
+  näyttää tulokset ja pitää istuntoa auki virheen jälkeen ei ole mukana
+  (harjoittelu: yksi simple-query-kutsu, kuten editori).
+- **Versio.** Paikallinen palvelin on PostgreSQL 17.10, tuotanto 17.6.
+  Tuotannon versio luetaan `supabase/acceptance/activation_readonly_inventory.sql`:llä.
 - **GoTrue** (kirjautuminen, tokenien voimassaolo) ei ole mukana.
-- **Samanaikaisuus** todennetaan vain lukon aikakatkaisun osalta.
 
 ## Käyttöönotto (kerran, paikallisesti, ei asennusta)
 
@@ -48,15 +68,16 @@ poistettavissa poistamalla hakemisto.
 mkdir -p .claude/pg-local && cd .claude/pg-local
 npm pack @embedded-postgres/windows-x64@17.10.0-beta.17   # PostgreSQL 17.10 -binäärit
 tar -xzf embedded-postgres-windows-x64-17.10.0-beta.17.tgz
-package/native/bin/initdb.exe -D "$PWD/data" -U postgres --auth=trust --encoding=UTF8 --locale=C
+package/native/bin/initdb.exe -D "$PWD/data-rehearsal" -U postgres --auth=trust --encoding=UTF8 --locale=C
 echo '{"name":"pg-local-harness","private":true}' > package.json && npm install pg@8
 ```
 
-Käynnistys (PowerShell), vain silmukkaosoitteeseen:
+Käynnistys (PowerShell), vain silmukkaosoitteeseen. Tarkista ensin, ettei
+portti ole muun prosessin käytössä (`Get-NetTCPConnection -LocalPort 54349`):
 
 ```powershell
 $b = ".claude\pg-local"
-& "$b\package\native\bin\pg_ctl.exe" -D "$b\data" -l "$b\pg.log" -o "-p 54329 -c listen_addresses=127.0.0.1" -w start
+& "$b\package\native\bin\pg_ctl.exe" -D "$b\data-rehearsal" -l "$b\pg-rehearsal.log" -o "-p 54349 -c listen_addresses=127.0.0.1" -w start
 ```
 
 Pysäytys: sama komento `stop`-sanalla. Poisto: poista `.claude/pg-local`.
@@ -64,14 +85,30 @@ Pysäytys: sama komento `stop`-sanalla. Poisto: poista `.claude/pg-local`.
 ## Ajo
 
 ```sh
-node tools/pg-rehearsal/rehearse.mjs                    # kaikki skenaariot (~1 min)
-node tools/pg-rehearsal/rehearse.mjs --only=failure     # vain virhetilanteet
+node tools/pg-rehearsal/rehearse.mjs                    # kaikki skenaariot (~10 min)
+node tools/pg-rehearsal/rehearse.mjs --only=failure     # failure + failure:0010-locks
+node tools/pg-rehearsal/rehearse.mjs --only=prodshape   # tuotannon muotoiset
+node tools/pg-rehearsal/rehearse.mjs --only=prodshape:chain --write-golden   # päivitä kultaiset skeemaerot
 node tools/pg-rehearsal/rehearse.mjs --only=inventory --fixtures=tests/fixtures/activation-inventory
 node tools/pg-rehearsal/rehearse.mjs --json=raportti.json
 node tools/pg-rehearsal/chain.mjs text                  # pelkkä ketju + verify
+node tools/pg-rehearsal/bundle-hashes.mjs               # MIGRATION-BUNDLES.md:n blob-taulukko
 ```
 
-Poistumiskoodi on 0 vain, jos yksikään tarkistus ei hylätty.
+Poistumiskoodi on 0 vain, jos yksikään tarkistus ei hylätty. Raportti
+(`--json`) sisältää alkuperätiedon: git HEAD, palvelimen versio ja
+data-hakemisto sekä jokaisen luetun SQL-tiedoston git-blob-tiivisteen.
+
+## Tiedostot
+
+| Tiedosto | Sisältö |
+|---|---|
+| `lib.mjs` | yhteys + palvelinvahti, `catalogItems`/`diffCatalog`, `rowDigests`/`compareDigests`, PostgREST-jäljitelmä, `extractRollback`, alkuperätieto |
+| `chain.mjs`, `baseline.mjs`, `seeds.mjs` | ketju, lähtötila ennen 0001:tä, kahden käyttäjän siemenet |
+| `prodshape.mjs` | tuotannon tila 0008 mallikantana, kloonit, inventaarion vertailu, todisteet migraation ympärillä |
+| `waves.mjs`, `app-gate-hooks.mjs` | junan taukopisteet ja sovelluksen rivimuunnokset aallon sarakeporteilla |
+| `*-scenarios.mjs` | uudet skenaariot (tuotannon muoto, virheet ja lukot, peruutukset) |
+| `expected/` | omistajan inventaario 0008 ja kultaiset skeemaerot 0009–0013 |
 
 ## Löydökset, jotka tämä on jo tehnyt
 
@@ -83,6 +120,16 @@ Poistumiskoodi on 0 vain, jos yksikään tarkistus ei hylätty.
    Korjattu; `tests/migration-rerun-detection.test.mjs`.
 3. 0012:n uudelleenajo 0013:n jälkeen ilmoitti "kesken 57/58", koska 0013
    korvaa yhden 0012:n rajoitteen. Korjattu omalla haaralla.
-4. `supabase/acceptance/life_alignment_readonly_inventory.sql` kaatui
-   kokonaan (`date_trunc(text)`), jos `tasks.date` on tekstiä. Korjattu;
-   uusi yksilauseinen `activation_readonly_inventory.sql` korvaa sen.
+4. Vanha 16-lauseinen inventaario kaatui kokonaan (`date_trunc(text)`),
+   jos `tasks.date` on tekstiä. Korjattu; yksilauseinen
+   `activation_readonly_inventory.sql` korvaa sen.
+5. `verify_0009…0013`: NULL-tulos (puuttuva objekti) näkyi FAIL-rivinä
+   mutta ei `poikkeavia_yhteensa`-luvussa (esim. 2 vs. 3 FAIL-riviä).
+   Korjattu (`is distinct from`, `coalesce`); `verify:null`.
+6. 0010 muutti goals-, tasks- ja projects-tauluja (42 DDL-komentoa)
+   ennen kuin jäi odottamaan profile-lukkoa. Nyt kaikki neljä lukitaan
+   ensin kiinteässä järjestyksessä: 0 DDL-komentoa ennen lukon
+   aikakatkaisua (`failure:0010-locks`).
+7. Ilman `pg_read_all_stats`-oikeutta preflightin idle in transaction
+   -rivi ei näe muiden roolien istuntoja (väärä PASS). Uusi esteet-rivi
+   lukee `pg_locks`-näkymää ja näkee estäjän aina (`role:nonsuper`).

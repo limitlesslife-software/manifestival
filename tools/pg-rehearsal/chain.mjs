@@ -7,7 +7,7 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  ROOT, connect, runSql, runVerify, readSql, catalogFingerprint
+  ROOT, OWNER, USER_B, connect, runSql, runVerify, readSql, catalogItems, diffCatalog, isMain
 } from './lib.mjs';
 import { baselineSql, usersSql } from './baseline.mjs';
 
@@ -19,11 +19,16 @@ export const MIGRATIONS = Object.freeze([
 ]);
 
 export const numberOf = name => name.slice(0, 4);
+export const migrationName = n => MIGRATIONS.find(m => numberOf(m) === n);
 
-export async function prepareBaseline(client, variant) {
+/**
+ * Lähtötila ennen 0001:tä. `users` = auth.users-rivit (oletus omistaja +
+ * käyttäjä B; tuotannon muoto on pelkkä omistaja, ks. prodshape.mjs).
+ */
+export async function prepareBaseline(client, variant, { users = [OWNER, USER_B] } = {}) {
   const steps = [
     ['supabase-shim', readSql('tools/pg-rehearsal/supabase-shim.sql')],
-    ['synthetic-users', usersSql()],
+    ['synthetic-users', usersSql(users)],
     [`baseline-pre0001(${variant})`, baselineSql(variant)]
   ];
   for (const [label, sql] of steps) {
@@ -32,40 +37,47 @@ export async function prepareBaseline(client, variant) {
   }
 }
 
+function summarizeVerify(v) {
+  return v.ok
+    ? { rows: v.rows.length, pass: v.rows.filter(r => r.status === 'PASS').length,
+        fail: v.failed.map(r => `${r.check_no} ${r.check_name}: ${r.details}`),
+        poikkeavia: v.poikkeavia, countMismatch: v.countMismatch }
+    : { error: v.error.message };
+}
+
 /**
  * Aja yksi migraatio + sen todennus. Palauttaa raporttirivin.
- * `expectFailure` = migraation kuuluu keskeytyä (virhetestit).
+ * `diff: true` tallentaa katalogin eron (record.schemaDiff).
  */
-export async function applyMigration(client, name, { verify = true, preflight = true } = {}) {
+export async function applyMigration(client, name, { verify = true, preflight = true, diff = false } = {}) {
   const n = numberOf(name);
   const record = { migration: name };
   const pre = `supabase/preflight/preflight_${n}.sql`;
   if (preflight && existsSync(join(ROOT, pre))) {
     const p = await runVerify(client, pre);
     record.preflight = p.ok
-      ? { rows: p.rows.length, fail: p.failed.map(r => `${r.check_no} ${r.check_name}: ${r.details}`) }
+      ? { rows: p.rows.length, fail: p.failed.map(r => `${r.check_no} ${r.check_name}: ${r.details}`),
+          poikkeavia: p.poikkeavia, countMismatch: p.countMismatch }
       : { error: p.error.message };
   }
-  const before = await catalogFingerprint(client);
+  const before = await catalogItems(client);
   const t0 = Date.now();
   const out = await runSql(client, readSql(`supabase/migrations/${name}.sql`));
   record.ms = Date.now() - t0;
   record.ok = out.ok;
   if (!out.ok) record.error = out.error;
-  const after = await catalogFingerprint(client);
-  record.catalogChanged = before.hash !== after.hash;
+  const after = await catalogItems(client);
+  const d = diffCatalog(before, after);
+  record.catalogChanged = d.added.length > 0 || d.removed.length > 0;
+  if (diff) record.schemaDiff = d;
   const ver = `supabase/verify/verify_${n}.sql`;
   if (verify && out.ok && existsSync(join(ROOT, ver))) {
-    const v = await runVerify(client, ver);
-    record.verify = v.ok
-      ? { rows: v.rows.length, pass: v.rows.filter(r => r.status === 'PASS').length,
-          fail: v.failed.map(r => `${r.check_no} ${r.check_name}: ${r.details}`) }
-      : { error: v.error.message };
+    record.verify = summarizeVerify(await runVerify(client, ver));
   }
   return record;
 }
 
-if (process.argv[1] && process.argv[1].endsWith('chain.mjs')) {
+if (isMain(import.meta.url)) {
   const { createDatabase, dropDatabase } = await import('./lib.mjs');
   const variant = process.argv[2] || 'text';
   const db = `mv_rehearsal_chain_${variant}`;

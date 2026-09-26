@@ -2,38 +2,64 @@
 //
 // Käyttö:
 //   node tools/pg-rehearsal/rehearse.mjs [--json=raportti.json] [--only=upgrade,rls,failure]
+//                                        [--write-golden] [--fixtures=DIR]
 //
-// Vaatii paikallisen PostgreSQL 15+ -palvelimen osoitteessa 127.0.0.1
-// (portti PG_REHEARSAL_PORT, oletus 54329) ja pg-ajurin, ks. README.md.
+// Vaatii paikallisen PostgreSQL 17 -klusterin osoitteessa 127.0.0.1
+// (portti PG_REHEARSAL_PORT, oletus 54349), jonka data-hakemisto on
+// projektin .claude/pg-local-hakemistossa (lib.assertRehearsalServer),
+// ja pg-ajurin, ks. README.md.
 //
-// Skenaariot:
-//   upgrade:text   lähtötila (date/time tekstinä) -> 0001..0013, siemennys joka välissä
+// Skenaariot (--only hyväksyy nimen tai etuliitteen, esim. prodshape):
+//   upgrade:text   lähtötila (date/time tekstinä) -> 0001..0013, siemennys joka välissä;
+//                  vanhat rivit (vanhat sarakkeet, xmin, relfilenode) ennallaan 0003:sta alkaen
 //   upgrade:typed  sama, date/time omina tyyppeinään
 //   rls            eristysmatriisi kaikille tauluille lopputilassa
 //   lifecycle      poistosäännöt: alue/tavoite/tehtävä/käyttäjä
 //   failure        uudelleenajo, puuttuva esiehto, osittainen tila, lukon aikakatkaisu
+//   rollback       jokaisen ROLLBACK-osion ajo tyhjillä uusilla objekteilla
+//   preflight      jokainen preflight jokaisessa tilassa 0007..0013
+//   inventory      aktivoinnin inventaario + pisteytys jokaisessa tilassa
+//   prodshape:fixture      tuotannon 0008-tila = omistajan inventaario (prodshape.mjs)
+//   values:0010            0010 säilyttää jokaisen vanhan arvon (5 tilaa × projekti)
+//   prodshape:chain        0009..0013 tuotannon datalla + kultaiset skeemaerot
+//   prodshape:pause        taukopisteet: aaltojen oikeat kirjoitukset, verify, preflight
+//   failure:0010-locks     estäjämatriisi, myöhäinen virhe, jumi, lukkiutuminen (+0009, 0011)
+//   verify:null            poikkeavia_yhteensa = FAIL-rivit myös NULL-tuloksilla
+//   preflight:blockers     lukitut taulut ja politiikkamäärät havaitaan etukäteen
+//   rollback:data          peruutukset datan kanssa (0010, 0012, 0013)
+//   rollback:reverse-chain 0013..0009 käänteisessä järjestyksessä -> tuotannon 0008
+//   role:nonsuper          migraatiot NOSUPERUSER-omistajana, preflightin näkyvyys
 //
 // Jokainen kanta on kertakäyttöinen (mv_rehearsal_*) ja poistetaan lopuksi.
+// Pelkkä importti ei aja mitään (pääohjelmavahti alla).
 
 import fs, { writeFileSync } from 'node:fs';
 import path from 'node:path';
 import {
   connect, createDatabase, dropDatabase, runSql, runVerify, readSql, asUser, tryAs,
-  catalogFingerprint, scalar, OWNER, USER_B
+  catalogItems, diffCatalog, scalar, provenance, isMain, extractRollback, SERVER, OWNER, USER_B
 } from './lib.mjs';
 import { MIGRATIONS, numberOf, prepareBaseline, applyMigration } from './chain.mjs';
 import { SEEDS, ID_OWNED } from './seeds.mjs';
+import { runInventory, snapshotTables, compareSnapshot, dropTemplates } from './prodshape.mjs';
+
+export { extractRollback };
 
 const USER_C = 'cccccccc-0000-4000-8000-00000000000c';
-const args = Object.fromEntries(process.argv.slice(2).map(a => {
-  const [k, v] = a.replace(/^--/, '').split('=');
-  return [k, v ?? true];
-}));
-const only = args.only ? new Set(String(args.only).split(',')) : null;
+
+/** Kaikki skenaariot ajojärjestyksessä. */
+export const SCENARIOS = Object.freeze([
+  'preflight', 'rollback', 'inventory', 'upgrade:text', 'upgrade:typed', 'rls', 'lifecycle', 'failure',
+  'prodshape:fixture', 'values:0010', 'prodshape:chain', 'prodshape:pause', 'verify:null', 'preflight:blockers',
+  'rollback:data', 'rollback:reverse-chain', 'failure:0010-locks', 'role:nonsuper'
+]);
+
+let args = {};
+let only = null;
 const want = name => !only || only.has(name) || only.has(name.split(':')[0]);
 
 const report = {
-  startedAt: new Date().toISOString(),
+  startedAt: null,
   server: null,
   scenarios: {},
   failures: []
@@ -41,6 +67,11 @@ const report = {
 
 function fail(scenario, message) {
   report.failures.push(`${scenario}: ${message}`);
+}
+
+/** Todennuksen / esitarkistuksen ristiintarkistus (lib.runVerify). */
+function checkCounts(scenario, label, part) {
+  if (part?.countMismatch) fail(scenario, `${label}: poikkeavia_yhteensa (${part.poikkeavia}) ≠ FAIL-rivien määrä`);
 }
 
 async function seedFor(client, number, scenario) {
@@ -56,19 +87,6 @@ async function seedFor(client, number, scenario) {
   }
 }
 
-/** Olemassa olevan datan sormenjälki: rivimäärät ja sisällön tiiviste per taulu. */
-async function dataFingerprint(client, tables) {
-  const out = {};
-  for (const t of tables) {
-    const exists = await scalar(client, `select to_regclass($1) is not null`, [`public.${t}`]);
-    if (!exists) continue;
-    out[t] = await scalar(client,
-      `select count(*)::text || ':' || coalesce(md5(string_agg(x::text, '|' order by x::text)), '-')
-         from (select * from public.${t}) x`);
-  }
-  return out;
-}
-
 async function upgradeScenario(variant) {
   const scenario = `upgrade:${variant}`;
   const db = `mv_rehearsal_upgrade_${variant}`;
@@ -76,15 +94,14 @@ async function upgradeScenario(variant) {
   const client = await connect(db);
   const steps = [];
   try {
-    report.server = report.server || await scalar(client, 'select version()');
     await prepareBaseline(client, variant);
-    const baselineTasks = await dataFingerprint(client, ['tasks']);
     for (const name of MIGRATIONS) {
       const n = numberOf(name);
       // Vanha data ennen migraatiota. Uusi migraatio EI saa muuttaa sitä —
       // paitsi 0001, joka tarkoituksella lisää omistajan (ja 0002 ajan).
-      const legacyTables = SEEDS.filter(s => s.since < n).map(s => s.table);
-      const before = await dataFingerprint(client, [...new Set(legacyTables)]);
+      // Tilannekuva: jokaisen taulun rivit rajattuina migraatiota edeltäviin
+      // sarakkeisiin (md5), rivin xmin ja taulun relfilenode.
+      const before = n >= '0003' ? await snapshotTables(client) : null;
       const record = await applyMigration(client, name);
       steps.push(record);
       if (!record.ok) { fail(scenario, `${name} kaatui: ${record.error.message}`); break; }
@@ -92,6 +109,7 @@ async function upgradeScenario(variant) {
         for (const f of record.verify.fail) fail(scenario, `verify_${n}: ${f}`);
       }
       if (record.verify?.error) fail(scenario, `verify_${n} kaatui: ${record.verify.error}`);
+      checkCounts(scenario, `verify_${n}`, record.verify);
       // 0009+ esitarkistukset (tools/activation/build-preflights.mjs) on
       // ajettava puhtaasti juuri ennen omaa migraatiotaan. (0003:n
       // "yksi auth-käyttäjä" on tuotantokohtainen eikä koske tätä.)
@@ -99,24 +117,24 @@ async function upgradeScenario(variant) {
         if (!record.preflight) fail(scenario, `preflight_${n}.sql puuttuu`);
         else if (record.preflight.error) fail(scenario, `preflight_${n} kaatui: ${record.preflight.error}`);
         else for (const f of record.preflight.fail) fail(scenario, `preflight_${n}: ${f}`);
+        checkCounts(scenario, `preflight_${n}`, record.preflight);
       }
-      if (n >= '0003') {
-        const after = await dataFingerprint(client, Object.keys(before));
-        const changed = Object.keys(before).filter(t => before[t].split(':')[0] !== after[t].split(':')[0]);
-        record.legacyRowCountsChanged = changed;
-        if (changed.length) fail(scenario, `${name} muutti vanhojen taulujen rivimääriä: ${changed.join(', ')}`);
-        // Sisältö: sarakkeiden lisäys muuttaa rivin tekstiesitystä, joten
-        // sisällön säilyminen todennetaan sarakekohtaisesti alla (tasks).
+      if (before) {
+        // Arvot vanhoissa sarakkeissa, rivien xmin (ei UPDATEa) ja taulun
+        // relfilenode (ei uudelleenkirjoitusta) — ei pelkkä rivimäärä.
+        const cmp = await compareSnapshot(client, before);
+        record.legacy = cmp.perTable;
+        for (const p of cmp.problems) fail(scenario, `${name}: ${p}`);
       }
       await seedFor(client, n, scenario);
     }
-    // Alkuperäiset 36 tehtävää: jokainen alkuperäinen sarake ennallaan.
+    // Alkuperäiset 36 tehtävää säilyivät ja kuuluvat omistajalle.
     const orig = await client.query(
       `select count(*) filter (where user_id = $1) as owned, count(*) as total,
               count(*) filter (where id like 'seed%' or id like 'm%') as legacy
          from public.tasks`, [OWNER]);
     const legacy = orig.rows[0];
-    steps.push({ legacyTasks: legacy, baseline: baselineTasks.tasks });
+    steps.push({ legacyTasks: legacy });
     if (Number(legacy.legacy) !== 36) fail(scenario, `alkuperäisiä tehtäviä ${legacy.legacy}, odotettiin 36`);
     const goalsWithArea = await scalar(client,
       `select count(*) from public.goals where life_area_id is not null`);
@@ -406,17 +424,18 @@ async function freshAt(db, lastNumber, variant = 'text') {
 }
 
 async function expectClosedFailure(client, label, name, expect) {
-  const before = await catalogFingerprint(client);
+  const before = await catalogItems(client);
   const out = await runSql(client, readSql(`supabase/migrations/${name}.sql`));
-  const after = await catalogFingerprint(client);
+  const d = diffCatalog(before, await catalogItems(client));
+  const unchanged = !d.added.length && !d.removed.length;
   const msgOk = !expect || (out.error && expect.test(out.error.message));
-  const pass = !out.ok && before.hash === after.hash && msgOk;
+  const pass = !out.ok && unchanged && msgOk;
   if (!pass) {
     fail('failure', `${label}: ${out.ok ? 'MIGRAATIO MENI LÄPI' : 'virhe ' + out.error.message}`
-      + `${before.hash !== after.hash ? ' — KATALOGI MUUTTUI' : ''}`);
+      + `${unchanged ? '' : ` — KATALOGI MUUTTUI ${JSON.stringify(d).slice(0, 300)}`}`);
   }
   return { label, migration: name, pass, error: out.error?.message, code: out.error?.code,
-           catalogUnchanged: before.hash === after.hash };
+           catalogUnchanged: unchanged };
 }
 
 async function failureScenario() {
@@ -558,21 +577,8 @@ async function failureScenario() {
 // Aktivoinnin inventaario ja pisteytys jokaisessa junan tilassa
 // ---------------------------------------------------------------------
 
-async function runInventory(client) {
-  // Vain luku todennetaan kannalla, ei lupauksena: READ ONLY -transaktio
-  // kaataa minkä tahansa kirjoituksen.
-  const before = await catalogFingerprint(client);
-  await client.query('begin read only');
-  let result;
-  try {
-    result = await client.query(readSql('supabase/acceptance/activation_readonly_inventory.sql'));
-  } finally {
-    await client.query('rollback');
-  }
-  const after = await catalogFingerprint(client);
-  const cell = result.rows.find(r => r.nro === '00').arvo;
-  return { cell, table: result.rows, unchanged: before.hash === after.hash };
-}
+// runInventory (prodshape.mjs): vain luku todennetaan kannalla, ei
+// lupauksena — READ ONLY -transaktio kaataa minkä tahansa kirjoituksen.
 
 async function inventoryScenario(fixtureDir) {
   const { parseInventory, scoreInventory } = await import('../activation/score-inventory.mjs');
@@ -644,22 +650,8 @@ async function inventoryScenario(fixtureDir) {
 // Peruutus: migraation oma ROLLBACK-osio palauttaa skeeman
 // ---------------------------------------------------------------------
 
-/** Poimi migraation kommentoitu ROLLBACK-lohko (begin; ... commit;). */
-export function extractRollback(sql) {
-  const lines = sql.replace(/\r\n/g, '\n').split('\n');
-  const start = lines.findIndex(l => /^-- ROLLBACK\s*$/.test(l));
-  if (start === -1) return null;
-  const out = [];
-  let inside = false;
-  for (const line of lines.slice(start + 1)) {
-    const m = /^--   (.*)$/.exec(line);
-    const body = m ? m[1] : null;
-    if (!inside && body && /^begin;\s*$/.test(body.trim())) inside = true;
-    if (inside && body !== null) out.push(body);
-    if (inside && body && /^commit;\s*$/.test(body.trim())) break;
-  }
-  return out.length ? out.join('\n') : null;
-}
+// extractRollback on siirretty lib.mjs:ään (yksikkötestattava ilman
+// palvelinta); tämä moduuli vie sen edelleen vanhoille kutsujille.
 
 async function rollbackScenario() {
   const results = [];
@@ -671,19 +663,20 @@ async function rollbackScenario() {
     try {
       const sql = readSql(`supabase/migrations/${name}.sql`);
       const rollback = extractRollback(sql);
-      const before = await catalogFingerprint(client);
+      const before = await catalogItems(client);
       const applied = await runSql(client, sql);
       const rolled = rollback ? await runSql(client, rollback) : { ok: false, error: { message: 'ROLLBACK-lohkoa ei löytynyt' } };
-      const after = await catalogFingerprint(client);
+      const d = diffCatalog(before, await catalogItems(client));
+      const restored = !d.added.length && !d.removed.length;
       // Ja migraatio on ajettavissa uudelleen peruutuksen jälkeen.
       const again = await runSql(client, sql);
-      const pass = applied.ok && rolled.ok && before.hash === after.hash && again.ok;
+      const pass = applied.ok && rolled.ok && restored && again.ok;
       results.push({ migration: n, pass, applied: applied.ok, rolledBack: rolled.ok,
-                     schemaRestored: before.hash === after.hash, reapplied: again.ok,
+                     schemaRestored: restored, schemaDiff: restored ? null : d, reapplied: again.ok,
                      error: applied.error?.message || rolled.error?.message || again.error?.message });
       if (!pass) {
         fail('rollback', `${n}: ${!applied.ok ? 'migraatio kaatui' : !rolled.ok ? 'peruutus kaatui: ' + rolled.error.message
-          : before.hash !== after.hash ? 'skeema ei palautunut' : 'uudelleenajo kaatui: ' + again.error?.message}`);
+          : !restored ? `skeema ei palautunut: ${JSON.stringify(d).slice(0, 600)}` : 'uudelleenajo kaatui: ' + again.error?.message}`);
       }
     } finally { await client.end(); await dropDatabase(db); }
   }
@@ -712,6 +705,7 @@ async function preflightScenario() {
           fail('preflight', `preflight_${n} tilassa ${state}: odotus ${shouldPass ? 'PASS' : 'FAIL'}, `
             + (out.ok ? `hylättyjä ${out.failed.length}: ${out.failed.map(r => r.check_name).join('; ')}` : out.error.message));
         }
+        checkCounts('preflight', `preflight_${n} tilassa ${state}`, out);
       }
     } finally { await client.end(); await dropDatabase(db); }
   }
@@ -719,50 +713,114 @@ async function preflightScenario() {
 }
 
 // ---------------------------------------------------------------------
+// Pääohjelma
+// ---------------------------------------------------------------------
 
-try {
-  if (want('preflight')) report.scenarios.preflight = await preflightScenario();
-  if (want('rollback')) report.scenarios.rollback = await rollbackScenario();
-  if (want('inventory')) {
-    const dir = args.fixtures ? String(args.fixtures) : null;
-    if (dir) fs.mkdirSync(dir, { recursive: true });
-    report.scenarios.inventory = await inventoryScenario(dir);
-  }
-  for (const variant of ['text', 'typed']) {
-    if (want(`upgrade:${variant}`) || (variant === 'text' && (want('rls') || want('lifecycle')))) {
-      report.scenarios[`upgrade:${variant}`] = await upgradeScenario(variant);
-    }
-  }
-  if (want('failure')) report.scenarios.failure = await failureScenario();
-} catch (error) {
-  report.failures.push(`KESKEYTYS: ${error.stack || error.message}`);
-}
-report.finishedAt = new Date().toISOString();
-
-const summary = [];
-summary.push(`PostgreSQL: ${report.server}`);
-for (const [name, value] of Object.entries(report.scenarios)) {
+/** Tiivis rivi skenaariosta (konsoli ja REHEARSAL-REPORT.md). */
+function summarize(name, value) {
+  const passCount = list => `${list.filter(r => r.pass).length}/${list.length}`;
   if (name.startsWith('upgrade')) {
     const ok = value.filter(s => s.migration).map(s => `${numberOf(s.migration)}${s.ok ? '' : '!'}`
       + (s.verify ? `(${s.verify.pass}P/${s.verify.fail?.length ?? '?'}F)` : ''));
-    summary.push(`${name}: ${ok.join(' ')}`);
-  } else if (name === 'rls') {
-    summary.push(`rls: ${value.tables} taulua, ${value.checks} tarkistusta, ${value.failed} hylättyä`);
-  } else if (name === 'lifecycle') {
-    const vals = Object.entries(value).filter(([k]) => k !== 'userBRowsBeforeDelete');
-    summary.push(`lifecycle: ${vals.filter(([, v]) => v === 'PASS').length}/${vals.length} PASS`);
-  } else if (name === 'rollback') {
-    summary.push(`rollback: ${value.filter(r => r.pass).length}/${value.length} (ajo -> ROLLBACK-osio -> skeema täsmälleen ennallaan -> ajo uudelleen)`);
-  } else if (name === 'preflight') {
-    summary.push(`preflight: ${value.filter(r => r.pass).length}/${value.length} odotetusti (PASS vain omassa tilassaan)`);
-  } else if (name === 'inventory') {
-    summary.push(`inventory: ${value.filter(r => r.pass).length}/${value.length} PASS`);
-  } else if (name === 'failure') {
-    summary.push(`failure: ${value.filter(r => r.pass).length}/${value.length} kaatui kiinni/odotetusti`);
+    return `${name}: ${ok.join(' ')}`;
+  }
+  switch (name) {
+    case 'rls': return `rls: ${value.tables} taulua, ${value.checks} tarkistusta, ${value.failed} hylättyä`;
+    case 'lifecycle': {
+      const vals = Object.entries(value).filter(([k]) => k !== 'userBRowsBeforeDelete');
+      return `lifecycle: ${vals.filter(([, v]) => v === 'PASS').length}/${vals.length} PASS`;
+    }
+    case 'rollback': return `rollback: ${passCount(value)} (ajo -> ROLLBACK-osio -> katalogi täsmälleen ennallaan -> ajo uudelleen)`;
+    case 'preflight': return `preflight: ${passCount(value)} odotetusti (PASS vain omassa tilassaan)`;
+    case 'inventory': return `inventory: ${passCount(value)} PASS`;
+    case 'failure': return `failure: ${passCount(value)} kaatui kiinni/odotetusti`;
+    case 'prodshape:fixture': return `prodshape:fixture: ${passCount(value.filter(r => !r.informational))} muunnelmaa = omistajan inventaario`;
+    case 'values:0010': return `values:0010: ${passCount(value)} muunnelmaa, vanhat arvot/xmin/relfilenode ennallaan`;
+    case 'prodshape:chain': return `prodshape:chain: ${passCount(value)} migraatiota, skeemaero = kultainen`;
+    case 'prodshape:pause': return `prodshape:pause: ${passCount(value)} taukoa, kirjoituksia ${value.reduce((n, p) => n + (p.liveWrites?.count || 0) + (p.nextWrites?.count || 0), 0)}`;
+    case 'verify:null': return `verify:null: ${passCount(value)}`;
+    case 'preflight:blockers': return `preflight:blockers: ${passCount(value)}`;
+    case 'rollback:data': return `rollback:data: ${passCount(value)}`;
+    case 'rollback:reverse-chain': return `rollback:reverse-chain: ${value.pass ? 'PASS' : 'FAIL'} (0013..0009 -> katalogi = tuotannon 0008)`;
+    case 'failure:0010-locks': {
+      const m = value.matrix || [];
+      const parts = [value.late, ...(value.stall || []), ...(value.deadlock || []), value.aborted].filter(Boolean);
+      return `failure:0010-locks: estäjämatriisi ${passCount(m)}, muut ${passCount(parts)}`;
+    }
+    case 'role:nonsuper': return `role:nonsuper: ${passCount(value.migrations || [])} migraatiota NOSUPERUSER-roolina`;
+    default: return `${name}: ajettu`;
   }
 }
-summary.push(`HYLÄTYT: ${report.failures.length}`);
-for (const f of report.failures) summary.push(`  - ${f}`);
-console.log(summary.join('\n'));
-if (args.json) writeFileSync(args.json, JSON.stringify(report, null, 2));
-process.exitCode = report.failures.length ? 1 : 0;
+
+async function runScenario(name, fn) {
+  const t0 = Date.now();
+  try {
+    report.scenarios[name] = await fn();
+  } catch (error) {
+    report.failures.push(`KESKEYTYS ${name}: ${error.stack || error.message}`);
+  }
+  report.durationsMs = { ...(report.durationsMs || {}), [name]: Date.now() - t0 };
+}
+
+export async function main(argv = process.argv.slice(2)) {
+  args = Object.fromEntries(argv.map(a => {
+    const [k, v] = a.replace(/^--/, '').split('=');
+    return [k, v ?? true];
+  }));
+  only = args.only ? new Set(String(args.only).split(',')) : null;
+  report.startedAt = new Date().toISOString();
+  const ctx = { fail, writeGolden: Boolean(args['write-golden']) };
+  const ps = () => import('./prodshape-scenarios.mjs');
+  const fs2 = () => import('./failure-scenarios.mjs');
+  const rb = () => import('./rollback-scenarios.mjs');
+  try {
+    // Ensimmäinen yhteys todentaa palvelimen (versio + data-hakemisto).
+    const probe = await connect();
+    report.server = { ...SERVER, versionString: await scalar(probe, 'select version()') };
+    await probe.end();
+
+    if (want('preflight')) await runScenario('preflight', preflightScenario);
+    if (want('rollback')) await runScenario('rollback', rollbackScenario);
+    if (want('inventory')) {
+      const dir = args.fixtures ? String(args.fixtures) : null;
+      if (dir) fs.mkdirSync(dir, { recursive: true });
+      await runScenario('inventory', () => inventoryScenario(dir));
+    }
+    for (const variant of ['text', 'typed']) {
+      if (want(`upgrade:${variant}`) || (variant === 'text' && (want('rls') || want('lifecycle')))) {
+        await runScenario(`upgrade:${variant}`, () => upgradeScenario(variant));
+      }
+    }
+    if (want('failure')) await runScenario('failure', failureScenario);
+    if (want('prodshape:fixture')) await runScenario('prodshape:fixture', async () => (await ps()).fixtureScenario(ctx));
+    if (want('values:0010')) await runScenario('values:0010', async () => (await ps()).valuesScenario(ctx));
+    if (want('prodshape:chain')) await runScenario('prodshape:chain', async () => (await ps()).chainScenario(ctx));
+    if (want('prodshape:pause')) await runScenario('prodshape:pause', async () => (await ps()).pauseScenario(ctx));
+    if (want('verify:null')) await runScenario('verify:null', async () => (await fs2()).verifyNullScenario(ctx));
+    if (want('preflight:blockers')) await runScenario('preflight:blockers', async () => (await fs2()).preflightBlockerScenario(ctx));
+    if (want('rollback:data')) await runScenario('rollback:data', async () => (await rb()).rollbackDataScenario(ctx));
+    if (want('rollback:reverse-chain')) await runScenario('rollback:reverse-chain', async () => (await rb()).reverseChainScenario(ctx));
+    if (want('failure:0010-locks')) await runScenario('failure:0010-locks', async () => (await fs2()).locksScenario(ctx));
+    if (want('role:nonsuper')) await runScenario('role:nonsuper', async () => (await fs2()).roleNonsuperScenario(ctx));
+  } catch (error) {
+    report.failures.push(`KESKEYTYS: ${error.stack || error.message}`);
+  } finally {
+    try { await dropTemplates(); } catch (error) { report.failures.push(`mallikantojen poisto: ${error.message}`); }
+  }
+  report.finishedAt = new Date().toISOString();
+  report.git = provenance();
+
+  const summary = [];
+  summary.push(`PostgreSQL: ${report.server?.versionString || '?'} (data ${report.server?.dataDirectory || '?'}, portti ${report.server?.port || '?'})`);
+  summary.push(`git: ${report.git.head} (${report.git.branch}); luettuja tiedostoja ${Object.keys(report.git.blobs).length}`
+    + (report.git.uncommittedReadFiles.length ? `, COMMITOIMATTOMIA ${report.git.uncommittedReadFiles.length}` : ''));
+  for (const [name, value] of Object.entries(report.scenarios)) summary.push(summarize(name, value));
+  summary.push(`HYLÄTYT: ${report.failures.length}`);
+  for (const f of report.failures) summary.push(`  - ${f}`);
+  console.log(summary.join('\n'));
+  if (args.json) writeFileSync(args.json, JSON.stringify(report, (k, v) => (v instanceof Map ? Object.fromEntries(v) : v), 2));
+  process.exitCode = report.failures.length ? 1 : 0;
+  return report;
+}
+
+if (isMain(import.meta.url)) await main();

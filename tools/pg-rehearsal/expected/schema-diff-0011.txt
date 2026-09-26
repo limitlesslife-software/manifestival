@@ -1,0 +1,180 @@
++ col:inbox_items.captured_at:timestamp with time zone:notnull=true:default=now():identity=:generated=:acl=
++ col:inbox_items.converted_id:text:notnull=false:default=:identity=:generated=:acl=
++ col:inbox_items.converted_kind:text:notnull=false:default=:identity=:generated=:acl=
++ col:inbox_items.created_at:timestamp with time zone:notnull=true:default=now():identity=:generated=:acl=
++ col:inbox_items.id:text:notnull=true:default=:identity=:generated=:acl=
++ col:inbox_items.proposal:jsonb:notnull=false:default=:identity=:generated=:acl=
++ col:inbox_items.source:text:notnull=true:default='text'::text:identity=:generated=:acl=
++ col:inbox_items.status:text:notnull=true:default='unprocessed'::text:identity=:generated=:acl=
++ col:inbox_items.text:text:notnull=true:default=:identity=:generated=:acl=
++ col:inbox_items.updated_at:timestamp with time zone:notnull=true:default=now():identity=:generated=:acl=
++ col:inbox_items.user_id:uuid:notnull=true:default=auth.uid():identity=:generated=:acl=
++ col:location_rules.active:boolean:notnull=true:default=false:identity=:generated=:acl=
++ col:location_rules.created_at:timestamp with time zone:notnull=true:default=now():identity=:generated=:acl=
++ col:location_rules.id:text:notnull=true:default=:identity=:generated=:acl=
++ col:location_rules.message:text:notnull=false:default=:identity=:generated=:acl=
++ col:location_rules.place:text:notnull=true:default=:identity=:generated=:acl=
++ col:location_rules.task_id:text:notnull=false:default=:identity=:generated=:acl=
++ col:location_rules.trigger_type:text:notnull=true:default='arriving'::text:identity=:generated=:acl=
++ col:location_rules.updated_at:timestamp with time zone:notnull=true:default=now():identity=:generated=:acl=
++ col:location_rules.user_id:uuid:notnull=true:default=auth.uid():identity=:generated=:acl=
++ col:notices.created_at:timestamp with time zone:notnull=true:default=now():identity=:generated=:acl=
++ col:notices.created_date:date:notnull=true:default=((now() AT TIME ZONE 'UTC'::text))::date:identity=:generated=:acl=
++ col:notices.id:text:notnull=true:default=:identity=:generated=:acl=
++ col:notices.kind:text:notnull=true:default=:identity=:generated=:acl=
++ col:notices.level:text:notnull=true:default='info'::text:identity=:generated=:acl=
++ col:notices.notice_key:text:notnull=true:default=:identity=:generated=:acl=
++ col:notices.reason:text:notnull=false:default=:identity=:generated=:acl=
++ col:notices.status:text:notnull=true:default='unread'::text:identity=:generated=:acl=
++ col:notices.target_id:text:notnull=false:default=:identity=:generated=:acl=
++ col:notices.target_type:text:notnull=false:default=:identity=:generated=:acl=
++ col:notices.title:text:notnull=true:default=:identity=:generated=:acl=
++ col:notices.updated_at:timestamp with time zone:notnull=true:default=now():identity=:generated=:acl=
++ col:notices.user_id:uuid:notnull=true:default=auth.uid():identity=:generated=:acl=
++ col:reminders.alert_count:integer:notnull=true:default=0:identity=:generated=:acl=
++ col:reminders.created_at:timestamp with time zone:notnull=true:default=now():identity=:generated=:acl=
++ col:reminders.due_date:date:notnull=false:default=:identity=:generated=:acl=
++ col:reminders.due_time:time without time zone:notnull=false:default=:identity=:generated=:acl=
++ col:reminders.escalate:boolean:notnull=true:default=false:identity=:generated=:acl=
++ col:reminders.id:text:notnull=true:default=:identity=:generated=:acl=
++ col:reminders.lead_minutes:integer:notnull=false:default=:identity=:generated=:acl=
++ col:reminders.note:text:notnull=false:default=:identity=:generated=:acl=
++ col:reminders.snooze_count:integer:notnull=true:default=0:identity=:generated=:acl=
++ col:reminders.status:text:notnull=true:default='scheduled'::text:identity=:generated=:acl=
++ col:reminders.target_id:text:notnull=false:default=:identity=:generated=:acl=
++ col:reminders.target_type:text:notnull=true:default='standalone'::text:identity=:generated=:acl=
++ col:reminders.title:text:notnull=true:default=:identity=:generated=:acl=
++ col:reminders.trigger_type:text:notnull=true:default='at_time'::text:identity=:generated=:acl=
++ col:reminders.until_time:time without time zone:notnull=false:default=:identity=:generated=:acl=
++ col:reminders.updated_at:timestamp with time zone:notnull=true:default=now():identity=:generated=:acl=
++ col:reminders.user_id:uuid:notnull=true:default=auth.uid():identity=:generated=:acl=
++ col:travel_plans.arrival_buffer_minutes:integer:notnull=true:default=5:identity=:generated=:acl=
++ col:travel_plans.arrival_date:date:notnull=false:default=:identity=:generated=:acl=
++ col:travel_plans.arrival_time:time without time zone:notnull=false:default=:identity=:generated=:acl=
++ col:travel_plans.created_at:timestamp with time zone:notnull=true:default=now():identity=:generated=:acl=
++ col:travel_plans.destination:text:notnull=false:default=:identity=:generated=:acl=
++ col:travel_plans.estimated_at:timestamp with time zone:notnull=false:default=:identity=:generated=:acl=
++ col:travel_plans.id:text:notnull=true:default=:identity=:generated=:acl=
++ col:travel_plans.mode:text:notnull=true:default='driving'::text:identity=:generated=:acl=
++ col:travel_plans.note:text:notnull=false:default=:identity=:generated=:acl=
++ col:travel_plans.origin:text:notnull=false:default=:identity=:generated=:acl=
++ col:travel_plans.preparation_minutes:integer:notnull=true:default=10:identity=:generated=:acl=
++ col:travel_plans.task_id:text:notnull=false:default=:identity=:generated=:acl=
++ col:travel_plans.title:text:notnull=true:default=:identity=:generated=:acl=
++ col:travel_plans.travel_minutes:integer:notnull=false:default=:identity=:generated=:acl=
++ col:travel_plans.travel_source:text:notnull=true:default='unknown'::text:identity=:generated=:acl=
++ col:travel_plans.updated_at:timestamp with time zone:notnull=true:default=now():identity=:generated=:acl=
++ col:travel_plans.user_id:uuid:notnull=true:default=auth.uid():identity=:generated=:acl=
++ con:inbox_items:inbox_items_converted_check:CHECK ((((status = 'converted'::text) AND (converted_kind IS NOT NULL)) OR ((status <> 'converted'::text) AND (converted_kind IS NULL)))):validated=true
++ con:inbox_items:inbox_items_owner_row_key:UNIQUE (user_id, id):validated=true
++ con:inbox_items:inbox_items_pkey:PRIMARY KEY (id):validated=true
++ con:inbox_items:inbox_items_source_check:CHECK ((source = ANY (ARRAY['text'::text, 'voice'::text, 'system'::text]))):validated=true
++ con:inbox_items:inbox_items_status_check:CHECK ((status = ANY (ARRAY['unprocessed'::text, 'proposed'::text, 'needs_review'::text, 'accepted'::text, 'converted'::text, 'dismissed'::text]))):validated=true
++ con:inbox_items:inbox_items_text_check:CHECK (((length(btrim(text)) > 0) AND (length(text) <= 1000))):validated=true
++ con:inbox_items:inbox_items_user_id_fkey:FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE:validated=true
++ con:location_rules:location_rules_owner_row_key:UNIQUE (user_id, id):validated=true
++ con:location_rules:location_rules_pkey:PRIMARY KEY (id):validated=true
++ con:location_rules:location_rules_place_check:CHECK (((length(btrim(place)) > 0) AND (length(place) <= 200))):validated=true
++ con:location_rules:location_rules_task_fkey:FOREIGN KEY (user_id, task_id) REFERENCES tasks(user_id, id) ON DELETE SET NULL (task_id):validated=true
++ con:location_rules:location_rules_trigger_check:CHECK ((trigger_type = ANY (ARRAY['arriving'::text, 'leaving'::text, 'nearby'::text]))):validated=true
++ con:location_rules:location_rules_user_id_fkey:FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE:validated=true
++ con:notices:notices_key_unique:UNIQUE (user_id, notice_key):validated=true
++ con:notices:notices_kind_check:CHECK ((kind = ANY (ARRAY['reminder'::text, 'overdue'::text, 'leave_now'::text, 'conflict'::text, 'goal_risk'::text, 'proposal'::text, 'bill_due'::text, 'savings'::text, 'replan'::text]))):validated=true
++ con:notices:notices_level_check:CHECK ((level = ANY (ARRAY['info'::text, 'warning'::text, 'urgent'::text]))):validated=true
++ con:notices:notices_owner_row_key:UNIQUE (user_id, id):validated=true
++ con:notices:notices_pkey:PRIMARY KEY (id):validated=true
++ con:notices:notices_status_check:CHECK ((status = ANY (ARRAY['unread'::text, 'read'::text, 'acted'::text, 'dismissed'::text]))):validated=true
++ con:notices:notices_target_pair_check:CHECK ((((target_type IS NULL) AND (target_id IS NULL)) OR ((target_type IS NOT NULL) AND (target_id IS NOT NULL)))):validated=true
++ con:notices:notices_title_check:CHECK (((length(btrim(title)) > 0) AND (length(title) <= 200))):validated=true
++ con:notices:notices_user_id_fkey:FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE:validated=true
++ con:reminders:reminders_alert_count_check:CHECK (((alert_count >= 0) AND (alert_count <= 5))):validated=true
++ con:reminders:reminders_lead_check:CHECK (((lead_minutes IS NULL) OR ((lead_minutes >= 0) AND (lead_minutes <= 10080)))):validated=true
++ con:reminders:reminders_owner_row_key:UNIQUE (user_id, id):validated=true
++ con:reminders:reminders_pkey:PRIMARY KEY (id):validated=true
++ con:reminders:reminders_snooze_count_check:CHECK (((snooze_count >= 0) AND (snooze_count <= 10))):validated=true
++ con:reminders:reminders_status_check:CHECK ((status = ANY (ARRAY['scheduled'::text, 'due'::text, 'delivered'::text, 'acknowledged'::text, 'snoozed'::text, 'completed'::text, 'expired'::text, 'cancelled'::text]))):validated=true
++ con:reminders:reminders_target_check:CHECK ((target_type = ANY (ARRAY['task'::text, 'routine'::text, 'bill'::text, 'milestone'::text, 'goal'::text, 'travel'::text, 'standalone'::text]))):validated=true
++ con:reminders:reminders_target_pair_check:CHECK ((((target_type = 'standalone'::text) AND (target_id IS NULL)) OR ((target_type <> 'standalone'::text) AND (target_id IS NOT NULL)))):validated=true
++ con:reminders:reminders_title_check:CHECK (((length(btrim(title)) > 0) AND (length(title) <= 200))):validated=true
++ con:reminders:reminders_trigger_check:CHECK ((trigger_type = ANY (ARRAY['at_time'::text, 'before_target'::text, 'when_overdue'::text, 'leave_by'::text]))):validated=true
++ con:reminders:reminders_user_id_fkey:FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE:validated=true
++ con:travel_plans:travel_plans_buffer_check:CHECK (((preparation_minutes >= 0) AND (preparation_minutes <= 480) AND (arrival_buffer_minutes >= 0) AND (arrival_buffer_minutes <= 480))):validated=true
++ con:travel_plans:travel_plans_minutes_check:CHECK (((travel_minutes IS NULL) OR ((travel_minutes > 0) AND (travel_minutes <= 1440)))):validated=true
++ con:travel_plans:travel_plans_mode_check:CHECK ((mode = ANY (ARRAY['driving'::text, 'transit'::text, 'walking'::text, 'cycling'::text, 'other'::text]))):validated=true
++ con:travel_plans:travel_plans_owner_row_key:UNIQUE (user_id, id):validated=true
++ con:travel_plans:travel_plans_pkey:PRIMARY KEY (id):validated=true
++ con:travel_plans:travel_plans_source_check:CHECK ((travel_source = ANY (ARRAY['manual'::text, 'provider'::text, 'unknown'::text]))):validated=true
++ con:travel_plans:travel_plans_task_fkey:FOREIGN KEY (user_id, task_id) REFERENCES tasks(user_id, id) ON DELETE SET NULL (task_id):validated=true
++ con:travel_plans:travel_plans_title_check:CHECK (((length(btrim(title)) > 0) AND (length(title) <= 200))):validated=true
++ con:travel_plans:travel_plans_unknown_source_check:CHECK (((travel_minutes IS NOT NULL) OR (travel_source = 'unknown'::text))):validated=true
++ con:travel_plans:travel_plans_user_id_fkey:FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE:validated=true
++ idx:inbox_items_owner_row_key:CREATE UNIQUE INDEX inbox_items_owner_row_key ON public.inbox_items USING btree (user_id, id)
++ idx:inbox_items_pkey:CREATE UNIQUE INDEX inbox_items_pkey ON public.inbox_items USING btree (id)
++ idx:inbox_items_user_captured_idx:CREATE INDEX inbox_items_user_captured_idx ON public.inbox_items USING btree (user_id, captured_at DESC)
++ idx:inbox_items_user_status_idx:CREATE INDEX inbox_items_user_status_idx ON public.inbox_items USING btree (user_id, status)
++ idx:location_rules_owner_row_key:CREATE UNIQUE INDEX location_rules_owner_row_key ON public.location_rules USING btree (user_id, id)
++ idx:location_rules_pkey:CREATE UNIQUE INDEX location_rules_pkey ON public.location_rules USING btree (id)
++ idx:location_rules_user_active_idx:CREATE INDEX location_rules_user_active_idx ON public.location_rules USING btree (user_id, active)
++ idx:notices_key_unique:CREATE UNIQUE INDEX notices_key_unique ON public.notices USING btree (user_id, notice_key)
++ idx:notices_owner_row_key:CREATE UNIQUE INDEX notices_owner_row_key ON public.notices USING btree (user_id, id)
++ idx:notices_pkey:CREATE UNIQUE INDEX notices_pkey ON public.notices USING btree (id)
++ idx:notices_user_created_idx:CREATE INDEX notices_user_created_idx ON public.notices USING btree (user_id, created_date DESC)
++ idx:notices_user_status_idx:CREATE INDEX notices_user_status_idx ON public.notices USING btree (user_id, status)
++ idx:reminders_owner_row_key:CREATE UNIQUE INDEX reminders_owner_row_key ON public.reminders USING btree (user_id, id)
++ idx:reminders_pkey:CREATE UNIQUE INDEX reminders_pkey ON public.reminders USING btree (id)
++ idx:reminders_user_due_idx:CREATE INDEX reminders_user_due_idx ON public.reminders USING btree (user_id, due_date, due_time)
++ idx:reminders_user_status_idx:CREATE INDEX reminders_user_status_idx ON public.reminders USING btree (user_id, status)
++ idx:reminders_user_target_idx:CREATE INDEX reminders_user_target_idx ON public.reminders USING btree (user_id, target_type, target_id)
++ idx:travel_plans_owner_row_key:CREATE UNIQUE INDEX travel_plans_owner_row_key ON public.travel_plans USING btree (user_id, id)
++ idx:travel_plans_pkey:CREATE UNIQUE INDEX travel_plans_pkey ON public.travel_plans USING btree (id)
++ idx:travel_plans_user_arrival_idx:CREATE INDEX travel_plans_user_arrival_idx ON public.travel_plans USING btree (user_id, arrival_date, arrival_time)
++ pol:inbox_items:inbox_items_delete_own:PERMISSIVE:DELETE:(auth.uid() = user_id)::authenticated
++ pol:inbox_items:inbox_items_insert_own:PERMISSIVE:INSERT::(auth.uid() = user_id):authenticated
++ pol:inbox_items:inbox_items_select_own:PERMISSIVE:SELECT:(auth.uid() = user_id)::authenticated
++ pol:inbox_items:inbox_items_update_own:PERMISSIVE:UPDATE:(auth.uid() = user_id):(auth.uid() = user_id):authenticated
++ pol:location_rules:location_rules_delete_own:PERMISSIVE:DELETE:(auth.uid() = user_id)::authenticated
++ pol:location_rules:location_rules_insert_own:PERMISSIVE:INSERT::(auth.uid() = user_id):authenticated
++ pol:location_rules:location_rules_select_own:PERMISSIVE:SELECT:(auth.uid() = user_id)::authenticated
++ pol:location_rules:location_rules_update_own:PERMISSIVE:UPDATE:(auth.uid() = user_id):(auth.uid() = user_id):authenticated
++ pol:notices:notices_delete_own:PERMISSIVE:DELETE:(auth.uid() = user_id)::authenticated
++ pol:notices:notices_insert_own:PERMISSIVE:INSERT::(auth.uid() = user_id):authenticated
++ pol:notices:notices_select_own:PERMISSIVE:SELECT:(auth.uid() = user_id)::authenticated
++ pol:notices:notices_update_own:PERMISSIVE:UPDATE:(auth.uid() = user_id):(auth.uid() = user_id):authenticated
++ pol:reminders:reminders_delete_own:PERMISSIVE:DELETE:(auth.uid() = user_id)::authenticated
++ pol:reminders:reminders_insert_own:PERMISSIVE:INSERT::(auth.uid() = user_id):authenticated
++ pol:reminders:reminders_select_own:PERMISSIVE:SELECT:(auth.uid() = user_id)::authenticated
++ pol:reminders:reminders_update_own:PERMISSIVE:UPDATE:(auth.uid() = user_id):(auth.uid() = user_id):authenticated
++ pol:travel_plans:travel_plans_delete_own:PERMISSIVE:DELETE:(auth.uid() = user_id)::authenticated
++ pol:travel_plans:travel_plans_insert_own:PERMISSIVE:INSERT::(auth.uid() = user_id):authenticated
++ pol:travel_plans:travel_plans_select_own:PERMISSIVE:SELECT:(auth.uid() = user_id)::authenticated
++ pol:travel_plans:travel_plans_update_own:PERMISSIVE:UPDATE:(auth.uid() = user_id):(auth.uid() = user_id):authenticated
++ rel:inbox_items:r:rls=true:force=false:owner=postgres:acl=postgres=arwdDxtm/postgres,service_role=arwdDxtm/postgres,authenticated=arwd/postgres
++ rel:inbox_items_owner_row_key:i:rls=false:force=false:owner=postgres:acl=
++ rel:inbox_items_pkey:i:rls=false:force=false:owner=postgres:acl=
++ rel:inbox_items_user_captured_idx:i:rls=false:force=false:owner=postgres:acl=
++ rel:inbox_items_user_status_idx:i:rls=false:force=false:owner=postgres:acl=
++ rel:location_rules:r:rls=true:force=false:owner=postgres:acl=postgres=arwdDxtm/postgres,service_role=arwdDxtm/postgres,authenticated=arwd/postgres
++ rel:location_rules_owner_row_key:i:rls=false:force=false:owner=postgres:acl=
++ rel:location_rules_pkey:i:rls=false:force=false:owner=postgres:acl=
++ rel:location_rules_user_active_idx:i:rls=false:force=false:owner=postgres:acl=
++ rel:notices:r:rls=true:force=false:owner=postgres:acl=postgres=arwdDxtm/postgres,service_role=arwdDxtm/postgres,authenticated=arwd/postgres
++ rel:notices_key_unique:i:rls=false:force=false:owner=postgres:acl=
++ rel:notices_owner_row_key:i:rls=false:force=false:owner=postgres:acl=
++ rel:notices_pkey:i:rls=false:force=false:owner=postgres:acl=
++ rel:notices_user_created_idx:i:rls=false:force=false:owner=postgres:acl=
++ rel:notices_user_status_idx:i:rls=false:force=false:owner=postgres:acl=
++ rel:reminders:r:rls=true:force=false:owner=postgres:acl=postgres=arwdDxtm/postgres,service_role=arwdDxtm/postgres,authenticated=arwd/postgres
++ rel:reminders_owner_row_key:i:rls=false:force=false:owner=postgres:acl=
++ rel:reminders_pkey:i:rls=false:force=false:owner=postgres:acl=
++ rel:reminders_user_due_idx:i:rls=false:force=false:owner=postgres:acl=
++ rel:reminders_user_status_idx:i:rls=false:force=false:owner=postgres:acl=
++ rel:reminders_user_target_idx:i:rls=false:force=false:owner=postgres:acl=
++ rel:travel_plans:r:rls=true:force=false:owner=postgres:acl=postgres=arwdDxtm/postgres,service_role=arwdDxtm/postgres,authenticated=arwd/postgres
++ rel:travel_plans_owner_row_key:i:rls=false:force=false:owner=postgres:acl=
++ rel:travel_plans_pkey:i:rls=false:force=false:owner=postgres:acl=
++ rel:travel_plans_user_arrival_idx:i:rls=false:force=false:owner=postgres:acl=
++ trg:inbox_items:inbox_items_touch_updated_at:enabled=O:CREATE TRIGGER inbox_items_touch_updated_at BEFORE UPDATE ON public.inbox_items FOR EACH ROW EXECUTE FUNCTION touch_updated_at()
++ trg:location_rules:location_rules_touch_updated_at:enabled=O:CREATE TRIGGER location_rules_touch_updated_at BEFORE UPDATE ON public.location_rules FOR EACH ROW EXECUTE FUNCTION touch_updated_at()
++ trg:notices:notices_touch_updated_at:enabled=O:CREATE TRIGGER notices_touch_updated_at BEFORE UPDATE ON public.notices FOR EACH ROW EXECUTE FUNCTION touch_updated_at()
++ trg:reminders:reminders_touch_updated_at:enabled=O:CREATE TRIGGER reminders_touch_updated_at BEFORE UPDATE ON public.reminders FOR EACH ROW EXECUTE FUNCTION touch_updated_at()
++ trg:travel_plans:travel_plans_touch_updated_at:enabled=O:CREATE TRIGGER travel_plans_touch_updated_at BEFORE UPDATE ON public.travel_plans FOR EACH ROW EXECUTE FUNCTION touch_updated_at()

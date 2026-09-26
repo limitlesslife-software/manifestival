@@ -29,7 +29,7 @@ Supabasessa, public-skeeman oletusoikeudet kuten Supabasessa.
 2. **Uudelleenajon viesti väärä** — täysin ajettu 0010 ("kesken 38/41")
    ja 0011 ("kesken 72/63"), sekä 0012 0013:n jälkeen ("kesken 57/58"),
    ohjasivat palautuspolulle ehjän kannan kohdalla.
-3. **Inventaario kaatui** — `life_alignment_readonly_inventory.sql`
+3. **Inventaario kaatui** — vanha 16-lauseinen inventaario
    päättyi virheeseen `date_trunc(text)`, jos `tasks.date` on tekstiä, eikä
    Supabasen editori olisi näyttänyt 16 lauseesta kuin viimeisen.
 

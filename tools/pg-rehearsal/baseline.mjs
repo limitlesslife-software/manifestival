@@ -72,11 +72,23 @@ insert into public.profile (id, age, weight_kg, height_cm) values ('me', 40, 80,
 `;
 }
 
-export function usersSql() {
+const OWNER_ID = '2cc00622-f927-4604-a518-361a4328481b';
+const USER_B_ID = 'bbbbbbbb-0000-4000-8000-00000000000b';
+
+/**
+ * auth.users-rivit. Oletus: omistaja + käyttäjä B (eristystestit).
+ * Tuotannon muoto (inventaario 2026-09-26) on pelkkä omistaja:
+ * usersSql([OWNER]).
+ */
+export function usersSql(users = [OWNER_ID, USER_B_ID]) {
+  const email = id => (id === OWNER_ID ? 'owner@rehearsal.invalid'
+    : id === USER_B_ID ? 'user-b@rehearsal.invalid' : `${id.slice(0, 8)}@rehearsal.invalid`);
+  for (const id of users) {
+    if (!/^[0-9a-f-]{36}$/.test(id)) throw new Error(`Kelvoton käyttäjätunniste ${id}`);
+  }
   return `
 insert into auth.users (id, email) values
-  ('2cc00622-f927-4604-a518-361a4328481b', 'owner@rehearsal.invalid'),
-  ('bbbbbbbb-0000-4000-8000-00000000000b', 'user-b@rehearsal.invalid')
+  ${users.map(id => `('${id}', '${email(id)}')`).join(',\n  ')}
 on conflict (id) do nothing;
 `;
 }

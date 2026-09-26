@@ -1,0 +1,90 @@
+- con:time_entries:time_entries_source_check:CHECK ((source = 'manual'::text)):validated=true
++ col:alignment_item_settings.alignment_opt_out:boolean:notnull=true:default=false:identity=:generated=:acl=
++ col:alignment_item_settings.created_at:timestamp with time zone:notnull=true:default=now():identity=:generated=:acl=
++ col:alignment_item_settings.energy_demand:smallint:notnull=false:default=:identity=:generated=:acl=
++ col:alignment_item_settings.estimate_approximate:boolean:notnull=true:default=false:identity=:generated=:acl=
++ col:alignment_item_settings.id:text:notnull=true:default=:identity=:generated=:acl=
++ col:alignment_item_settings.item_id:text:notnull=true:default=:identity=:generated=:acl=
++ col:alignment_item_settings.item_kind:text:notnull=true:default=:identity=:generated=:acl=
++ col:alignment_item_settings.updated_at:timestamp with time zone:notnull=true:default=now():identity=:generated=:acl=
++ col:alignment_item_settings.user_id:uuid:notnull=true:default=auth.uid():identity=:generated=:acl=
++ col:alignment_reviews.policy_version:smallint:notnull=true:default=1:identity=:generated=:acl=
++ col:alignment_reviews.reflection_answers:jsonb:notnull=true:default='{}'::jsonb:identity=:generated=:acl=
++ col:running_timers.created_at:timestamp with time zone:notnull=true:default=now():identity=:generated=:acl=
++ col:running_timers.goal_id:text:notnull=false:default=:identity=:generated=:acl=
++ col:running_timers.id:text:notnull=true:default=:identity=:generated=:acl=
++ col:running_timers.life_area_id:text:notnull=false:default=:identity=:generated=:acl=
++ col:running_timers.note:text:notnull=false:default=:identity=:generated=:acl=
++ col:running_timers.occurrence_date:date:notnull=false:default=:identity=:generated=:acl=
++ col:running_timers.paused_at:timestamp with time zone:notnull=false:default=:identity=:generated=:acl=
++ col:running_timers.paused_seconds:integer:notnull=true:default=0:identity=:generated=:acl=
++ col:running_timers.project_id:text:notnull=false:default=:identity=:generated=:acl=
++ col:running_timers.routine_id:text:notnull=false:default=:identity=:generated=:acl=
++ col:running_timers.started_at:timestamp with time zone:notnull=true:default=:identity=:generated=:acl=
++ col:running_timers.target_kind:text:notnull=true:default='none'::text:identity=:generated=:acl=
++ col:running_timers.task_id:text:notnull=false:default=:identity=:generated=:acl=
++ col:running_timers.updated_at:timestamp with time zone:notnull=true:default=now():identity=:generated=:acl=
++ col:running_timers.user_id:uuid:notnull=true:default=auth.uid():identity=:generated=:acl=
++ col:time_entries.ended_at:timestamp with time zone:notnull=false:default=:identity=:generated=:acl=
++ col:time_entries.occurrence_date:date:notnull=false:default=:identity=:generated=:acl=
++ col:time_entries.operation_id:text:notnull=false:default=:identity=:generated=:acl=
++ col:time_entries.project_id:text:notnull=false:default=:identity=:generated=:acl=
++ col:time_entries.routine_id:text:notnull=false:default=:identity=:generated=:acl=
++ col:time_entries.started_at:timestamp with time zone:notnull=false:default=:identity=:generated=:acl=
++ col:weekly_capacities.energy_budget_minutes:integer:notnull=false:default=:identity=:generated=:acl=
++ con:alignment_item_settings:alignment_item_settings_energy_check:CHECK (((energy_demand IS NULL) OR ((energy_demand >= 1) AND (energy_demand <= 5)))):validated=true
++ con:alignment_item_settings:alignment_item_settings_item_id_check:CHECK (((length(item_id) >= 1) AND (length(item_id) <= 100))):validated=true
++ con:alignment_item_settings:alignment_item_settings_item_unique:UNIQUE (user_id, item_kind, item_id):validated=true
++ con:alignment_item_settings:alignment_item_settings_kind_check:CHECK ((item_kind = ANY (ARRAY['task'::text, 'routine'::text, 'project'::text]))):validated=true
++ con:alignment_item_settings:alignment_item_settings_owner_row_key:UNIQUE (user_id, id):validated=true
++ con:alignment_item_settings:alignment_item_settings_pkey:PRIMARY KEY (id):validated=true
++ con:alignment_item_settings:alignment_item_settings_user_id_fkey:FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE:validated=true
++ con:alignment_reviews:alignment_reviews_policy_version_check:CHECK (((policy_version >= 1) AND (policy_version <= 100))):validated=true
++ con:alignment_reviews:alignment_reviews_reflection_answers_check:CHECK (((jsonb_typeof(reflection_answers) = 'object'::text) AND (pg_column_size(reflection_answers) <= 16384))):validated=true
++ con:running_timers:running_timers_goal_fkey:FOREIGN KEY (user_id, goal_id) REFERENCES goals(user_id, id) ON DELETE SET NULL (goal_id):validated=true
++ con:running_timers:running_timers_life_area_fkey:FOREIGN KEY (user_id, life_area_id) REFERENCES life_areas(user_id, id) ON DELETE SET NULL (life_area_id):validated=true
++ con:running_timers:running_timers_note_check:CHECK (((note IS NULL) OR (length(note) <= 500))):validated=true
++ con:running_timers:running_timers_one_per_user:UNIQUE (user_id):validated=true
++ con:running_timers:running_timers_owner_row_key:UNIQUE (user_id, id):validated=true
++ con:running_timers:running_timers_paused_check:CHECK (((paused_seconds >= 0) AND (paused_seconds <= 604800))):validated=true
++ con:running_timers:running_timers_pkey:PRIMARY KEY (id):validated=true
++ con:running_timers:running_timers_project_fkey:FOREIGN KEY (user_id, project_id) REFERENCES projects(user_id, id) ON DELETE SET NULL (project_id):validated=true
++ con:running_timers:running_timers_routine_fkey:FOREIGN KEY (user_id, routine_id) REFERENCES routines(user_id, id) ON DELETE SET NULL (routine_id):validated=true
++ con:running_timers:running_timers_target_kind_check:CHECK ((target_kind = ANY (ARRAY['none'::text, 'life_area'::text, 'goal'::text, 'task'::text, 'project'::text, 'routine'::text]))):validated=true
++ con:running_timers:running_timers_task_fkey:FOREIGN KEY (user_id, task_id) REFERENCES tasks(user_id, id) ON DELETE SET NULL (task_id):validated=true
++ con:running_timers:running_timers_user_id_fkey:FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE:validated=true
++ con:time_entries:time_entries_operation_check:CHECK (((operation_id IS NULL) OR (((length(operation_id) >= 1) AND (length(operation_id) <= 100)) AND (operation_id ~ '^[A-Za-z0-9:_.-]+$'::text)))):validated=true
++ con:time_entries:time_entries_operation_unique:UNIQUE (user_id, operation_id):validated=true
++ con:time_entries:time_entries_project_fkey:FOREIGN KEY (user_id, project_id) REFERENCES projects(user_id, id) ON DELETE SET NULL (project_id):validated=true
++ con:time_entries:time_entries_routine_fkey:FOREIGN KEY (user_id, routine_id) REFERENCES routines(user_id, id) ON DELETE SET NULL (routine_id):validated=true
++ con:time_entries:time_entries_source_v2_check:CHECK ((source = ANY (ARRAY['manual'::text, 'timer'::text]))):validated=true
++ con:time_entries:time_entries_span_check:CHECK ((((started_at IS NULL) AND (ended_at IS NULL)) OR ((started_at IS NOT NULL) AND (ended_at IS NOT NULL) AND (ended_at >= started_at)))):validated=true
++ con:weekly_capacities:weekly_capacities_energy_budget_check:CHECK (((energy_budget_minutes IS NULL) OR ((energy_budget_minutes >= 0) AND (energy_budget_minutes <= 10080)))):validated=true
++ idx:alignment_item_settings_item_unique:CREATE UNIQUE INDEX alignment_item_settings_item_unique ON public.alignment_item_settings USING btree (user_id, item_kind, item_id)
++ idx:alignment_item_settings_owner_row_key:CREATE UNIQUE INDEX alignment_item_settings_owner_row_key ON public.alignment_item_settings USING btree (user_id, id)
++ idx:alignment_item_settings_pkey:CREATE UNIQUE INDEX alignment_item_settings_pkey ON public.alignment_item_settings USING btree (id)
++ idx:running_timers_one_per_user:CREATE UNIQUE INDEX running_timers_one_per_user ON public.running_timers USING btree (user_id)
++ idx:running_timers_owner_row_key:CREATE UNIQUE INDEX running_timers_owner_row_key ON public.running_timers USING btree (user_id, id)
++ idx:running_timers_pkey:CREATE UNIQUE INDEX running_timers_pkey ON public.running_timers USING btree (id)
++ idx:time_entries_operation_unique:CREATE UNIQUE INDEX time_entries_operation_unique ON public.time_entries USING btree (user_id, operation_id)
++ idx:time_entries_user_routine_idx:CREATE INDEX time_entries_user_routine_idx ON public.time_entries USING btree (user_id, routine_id, occurrence_date)
++ pol:alignment_item_settings:alignment_item_settings_delete_own:PERMISSIVE:DELETE:(auth.uid() = user_id)::authenticated
++ pol:alignment_item_settings:alignment_item_settings_insert_own:PERMISSIVE:INSERT::(auth.uid() = user_id):authenticated
++ pol:alignment_item_settings:alignment_item_settings_select_own:PERMISSIVE:SELECT:(auth.uid() = user_id)::authenticated
++ pol:alignment_item_settings:alignment_item_settings_update_own:PERMISSIVE:UPDATE:(auth.uid() = user_id):(auth.uid() = user_id):authenticated
++ pol:running_timers:running_timers_delete_own:PERMISSIVE:DELETE:(auth.uid() = user_id)::authenticated
++ pol:running_timers:running_timers_insert_own:PERMISSIVE:INSERT::(auth.uid() = user_id):authenticated
++ pol:running_timers:running_timers_select_own:PERMISSIVE:SELECT:(auth.uid() = user_id)::authenticated
++ pol:running_timers:running_timers_update_own:PERMISSIVE:UPDATE:(auth.uid() = user_id):(auth.uid() = user_id):authenticated
++ rel:alignment_item_settings:r:rls=true:force=false:owner=postgres:acl=postgres=arwdDxtm/postgres,service_role=arwdDxtm/postgres,authenticated=arwd/postgres
++ rel:alignment_item_settings_item_unique:i:rls=false:force=false:owner=postgres:acl=
++ rel:alignment_item_settings_owner_row_key:i:rls=false:force=false:owner=postgres:acl=
++ rel:alignment_item_settings_pkey:i:rls=false:force=false:owner=postgres:acl=
++ rel:running_timers:r:rls=true:force=false:owner=postgres:acl=postgres=arwdDxtm/postgres,service_role=arwdDxtm/postgres,authenticated=arwd/postgres
++ rel:running_timers_one_per_user:i:rls=false:force=false:owner=postgres:acl=
++ rel:running_timers_owner_row_key:i:rls=false:force=false:owner=postgres:acl=
++ rel:running_timers_pkey:i:rls=false:force=false:owner=postgres:acl=
++ rel:time_entries_operation_unique:i:rls=false:force=false:owner=postgres:acl=
++ rel:time_entries_user_routine_idx:i:rls=false:force=false:owner=postgres:acl=
++ trg:alignment_item_settings:alignment_item_settings_touch_updated_at:enabled=O:CREATE TRIGGER alignment_item_settings_touch_updated_at BEFORE UPDATE ON public.alignment_item_settings FOR EACH ROW EXECUTE FUNCTION touch_updated_at()
++ trg:running_timers:running_timers_touch_updated_at:enabled=O:CREATE TRIGGER running_timers_touch_updated_at BEFORE UPDATE ON public.running_timers FOR EACH ROW EXECUTE FUNCTION touch_updated_at()
