@@ -382,7 +382,9 @@ for (const failMode of ['503', 'jwt', 'offline', 'hang']) {
     await g.probe.ensureSchemaCompatibility({
       client: server, isOnline: () => true, storage: memoryStorage(), timeoutMs: 100
     });
-    assert.ok(Date.now() - started < 100 + 150);
+    // Yläraja vain varmistaa, ettei tarkistus jää odottamaan; rinnakkaisajossa
+    // ajastimet voivat myöhästyä (tarkka aikaraja: tests/schema-probe.test.mjs).
+    assert.ok(Date.now() - started < 100 + 2000);
     assert.equal(g.runtime.schemaSnapshot().status, SCHEMA_STATUS.UNVERIFIED);
     for (const gate of Object.keys(g.schema.COMPILE_COLUMN_GATES)) {
       assert.equal(g.schema.columnGateOpen(gate), g.schema.COMPILE_COLUMN_GATES[gate], gate);
