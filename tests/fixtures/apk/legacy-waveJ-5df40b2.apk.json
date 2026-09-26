@@ -1,0 +1,19 @@
+﻿{
+    "file":  "manifestival-suunta-waveJ-v23-5df40b2-debug.apk",
+    "bytes":  5807831,
+    "sha256":  "649529244E002E40F9AF988D3C94D9C2C4ABD4FF190E9913EB2596E5250FE405",
+    "gitCommit":  "5df40b20cee4f35279a79888959d49c9af88bcc7",
+    "branch":  "rehearsal/wave-j-v1",
+    "waveCommit":  "e96942c296944b4ac1a86d96563f2a1370678d97",
+    "cacheVersion":  "v23",
+    "applicationId":  "fi.limitlesslife.manifestival",
+    "versionCode":  1,
+    "versionName":  "1.0",
+    "minSdk":  24,
+    "targetSdk":  36,
+    "jdk":  "21.0.12 (org.gradle.java.home)",
+    "buildType":  "debug",
+    "includesDay1Fixes":  true,
+    "builtAt":  "2026-09-25T00.07.56Z",
+    "status":  "EI HYVAKSYTTY LAITTEELLA. Asenna vasta kun verify_0013 = 0 poikkeavaa ja aalto J on deployattu."
+}
