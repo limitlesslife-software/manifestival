@@ -515,8 +515,10 @@ ei ole ajettu puhelimessa. Asenna tuore debug-APK (`npm run build:android`).
       suljettu eikä myöhäistä tekstiä ilmesty
 - [P0] Lupadialogin aikana Koti-painike → palatessa ja sallittaessa mikrofoni
       **ei** aukea itsestään (odotus perutaan `onStop`issa)
-- [P0] Kirjauspalkin sanelu: napautus aloittaa, toinen napautus lopettaa ilman
-      virheilmoitusta; mikrofoni-ilmaisin sammuu
+- [P0] Kirjauspalkin sanelu: napautus aloittaa, toinen napautus lopettaa ja
+      sanottu teksti tulee kenttään (tila "Lopetetaan kuuntelu…" hetken);
+      jos mitään ei kuultu: "En kuullut mitään. Yritä uudelleen.";
+      mikrofoni-ilmaisin sammuu
 - [P1] Hiljaisuus 15 s → "Kuuntelu keskeytyi" tai "En kuullut mitään";
       mikrofoni-ilmaisin sammuu
 - [P1] Lentotila → selkeä verkkoviesti (järjestelmän tunnistin tarvitsee
