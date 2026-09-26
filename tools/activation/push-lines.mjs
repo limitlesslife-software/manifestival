@@ -165,13 +165,14 @@ export function syncSqlSourceRefs(text, { lock }) {
     .replace(SQL_SOURCE, (whole, a, ref, b, sha, c) => `${a}${source.ref}${b}${source.sha}${c}`);
 }
 
-const WAVE_ARG = /--(?:wave|record-acceptance|record-candidate-tests)=([A-J])\b/;
-const SHA_ARG = /(--sha=)([0-9a-f]{40})/g;
+const WAVE_ARG = /--(?:(?:wave|record-acceptance|record-candidate-tests|record-boot-smoke)=|label[= ])([A-J])\b/;
+const SHA_ARG = /(--sha=|--expect-sha[= ])([0-9a-f]{40})/g;
 
 /**
- * `--sha=<40>`-argumentit riveillä, joilla on aaltomerkki (`--wave=X`,
- * `--record-acceptance=X`, `--record-candidate-tests=X`): SHA = lukon
- * deployTarget.
+ * `--sha=<40>`- ja `--expect-sha <40>`-argumentit riveillä, joilla on
+ * aaltomerkki (`--wave=X`, `--record-acceptance=X`,
+ * `--record-candidate-tests=X`, `--record-boot-smoke=X`, käynnistyssavun
+ * `--label X`): SHA = lukon deployTarget.
  */
 export function syncWaveShaArgs(text, { lock }) {
   return String(text).split('\n').map(line => {
@@ -188,7 +189,7 @@ export function waveShaArgProblems(text, { lock, file = '' }) {
     const w = WAVE_ARG.exec(line);
     if (!w) continue;
     for (const m of line.matchAll(SHA_ARG)) {
-      if (m[2] !== deployTargetOf(lock, w[1])) problems.push(`${file}: --sha=${m[2].slice(0, 7)} ei ole aallon ${w[1]} lukittu deployTarget`);
+      if (m[2] !== deployTargetOf(lock, w[1])) problems.push(`${file}: ${m[1]}${m[2].slice(0, 7)} ei ole aallon ${w[1]} lukittu deployTarget`);
     }
   }
   return problems;

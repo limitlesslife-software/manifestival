@@ -8,7 +8,7 @@ import path from 'node:path';
 
 import { ROOT, read } from './helpers/sources.mjs';
 import {
-  ROOT_STUB, acceptanceEntry, journalOf, lockFrom, projectFiles, shaOf, stubFetch, stubFs, stubGit, testsEntry
+  ROOT_STUB, acceptanceEntry, journalOf, lockFrom, projectFiles, shaOf, smokeEntry, stubFetch, stubFs, stubGit, testsEntry
 } from './helpers/activation-history.mjs';
 import { runDryRun } from '../tools/activation/orchestrate.mjs';
 import { createGit } from '../tools/release/git-layer.mjs';
@@ -54,11 +54,11 @@ test('KRIITTINEN: kanta 0008 + tuotanto C -> seuraava deploy D, välimuisti v17,
 test('KRIITTINEN: REQUIRED_OWNER_GATE listaa VAIN omistajan hyväksynnät; tekninen hyväksyntä ja käyttötodennus erikseen', async () => {
   const { lines, report } = await runDryRun(deps(), { live: false, inventoryPath: 'inventaario.json' });
   const owner = lineOf(lines, 'REQUIRED_OWNER_GATE');
-  for (const notOwner of [/TECHNICAL_ACCEPTANCE_REQUIRED/, /CANDIDATE_TESTS_REQUIRED/, /OWNER_READ_ONLY_SQL_REQUIRED/, /LIVE_USE/, /\bUI\b/, /selain/i]) {
+  for (const notOwner of [/TECHNICAL_ACCEPTANCE_REQUIRED/, /CANDIDATE_TESTS_REQUIRED/, /BOOT_SMOKE_REQUIRED/, /OWNER_READ_ONLY_SQL_REQUIRED/, /LIVE_USE/, /\bUI\b/, /selain/i]) {
     assert.equal(notOwner.test(owner), false, `REQUIRED_OWNER_GATE sisältää: ${notOwner}`);
   }
   assert.deepEqual(report.REQUIRED_OWNER_GATE.map(g => g.class), ['OWNER_DEPLOY_APPROVAL_REQUIRED']);
-  assert.deepEqual(report.REQUIRED_TECHNICAL_GATE.map(g => g.class), ['TECHNICAL_ACCEPTANCE_REQUIRED', 'CANDIDATE_TESTS_REQUIRED']);
+  assert.deepEqual(report.REQUIRED_TECHNICAL_GATE.map(g => g.class), ['TECHNICAL_ACCEPTANCE_REQUIRED', 'CANDIDATE_TESTS_REQUIRED', 'BOOT_SMOKE_REQUIRED']);
   assert.match(lineOf(lines, 'REQUIRED_TECHNICAL_GATE'), new RegExp(`--wave=C --sha=${shaOf('C')} --record-acceptance`));
   assert.match(lineOf(lines, 'TECHNICAL_ACCEPTANCE'), /^TECHNICAL_ACCEPTANCE: C 0101010 PUUTTUU — npm run production:verify-assets/);
   // Käyttötodennus tulostetaan tiedoksi, ei porttina eikä PASSina.
@@ -70,13 +70,33 @@ test('KRIITTINEN: REQUIRED_OWNER_GATE listaa VAIN omistajan hyväksynnät; tekni
   assert.match(lines.at(-1), /^GO: seuraava askel DEPLOY D — odottaa: koneelliset .*omistajan hyväksyntä "hyväksyn D"/);
 });
 
-test('kirjattu tekninen hyväksyntä ja testiajo: vain omistajan deployhyväksyntä jää', async () => {
+test('kirjattu tekninen hyväksyntä, testiajo ja käynnistyssavu: vain omistajan deployhyväksyntä jää', async () => {
   const d = deps();
-  d.fs.store.set(path.resolve(ROOT_STUB, '.claude/activation/journal.jsonl'), journalOf(acceptanceEntry('C'), testsEntry('D')));
+  d.fs.store.set(path.resolve(ROOT_STUB, '.claude/activation/journal.jsonl'), journalOf(acceptanceEntry('C'), testsEntry('D'), smokeEntry('D')));
   const { lines, report } = await runDryRun(d, { live: false, inventoryPath: 'inventaario.json' });
   assert.match(lineOf(lines, 'TECHNICAL_ACCEPTANCE'), /^TECHNICAL_ACCEPTANCE: C 0101010 = AUTOMATED_TECHNICAL_ACCEPTANCE/);
   assert.equal(lineOf(lines, 'REQUIRED_TECHNICAL_GATE'), 'REQUIRED_TECHNICAL_GATE: -');
   assert.deepEqual(report.REQUIRED_OWNER_GATE.map(g => g.message), ['hyväksyn D']);
+});
+
+test('KRIITTINEN: dry-run nimeää puuttuvan käynnistyssavun ja antaa sen tarkan ajo- ja kirjauskomennon', async () => {
+  const d = deps();
+  d.fs.store.set(path.resolve(ROOT_STUB, '.claude/activation/journal.jsonl'), journalOf(acceptanceEntry('C'), testsEntry('D')));
+  const { lines, report } = await runDryRun(d, { live: false, inventoryPath: 'inventaario.json' });
+  const sha = shaOf('D');
+  const out = '.claude/activation/smoke-D-0202020.txt';
+  assert.equal(lineOf(lines, 'REQUIRED_TECHNICAL_GATE'),
+    'REQUIRED_TECHNICAL_GATE: BOOT_SMOKE_REQUIRED — ehdokkaan D (0202020) käynnistyssavu omalla koodilla ja porteilla ei ole kirjattu PASSiksi: '
+    + `git worktree add --detach .claude/worktrees/rc-D-smoke ${sha} && npm run e2e:boot-smoke -- --root .claude/worktrees/rc-D-smoke --label D --expect-sha ${sha} > ${out}; `
+    + `npm run activation:orchestrate -- --record-boot-smoke=D --sha=${sha} --smoke-result=${out}`);
+  assert.deepEqual(report.REQUIRED_TECHNICAL_GATE.map(g => [g.class, g.kind]), [['BOOT_SMOKE_REQUIRED', 'TECHNICAL']]);
+  assert.match(lines.at(-1), /^GO: seuraava askel DEPLOY D — odottaa: koneelliset \(BOOT_SMOKE_REQUIRED\); omistajan hyväksyntä "hyväksyn D"/);
+  // FAIL-kirjaus ei kelpaa: portti pysyy.
+  d.fs.store.set(path.resolve(ROOT_STUB, '.claude/activation/journal.jsonl'),
+    journalOf(acceptanceEntry('C'), testsEntry('D'), smokeEntry('D', sha, { result: 'FAIL', pass: 26 })));
+  const failed = await runDryRun(d, { live: false, inventoryPath: 'inventaario.json' });
+  assert.match(lineOf(failed.lines, 'REQUIRED_TECHNICAL_GATE'), /^REQUIRED_TECHNICAL_GATE: BOOT_SMOKE_REQUIRED — /);
+  assert.deepEqual(d.fs.writes, [], 'dry-run kirjoitti');
 });
 
 test('KRIITTINEN: ilman inventaariota -> OWNER_READ_ONLY_SQL_REQUIRED ja exit 1', async () => {

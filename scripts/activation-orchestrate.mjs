@@ -12,8 +12,9 @@
 //
 //   npm run activation:orchestrate -- --execute-deploy --approved-sha=<40 merkkiä>
 //       DEPLOY: vain kun --approved-sha on lukon deployTarget, tuotannon
-//       aallon tekninen hyväksyntä ja ehdokkaan vihreä testiajo on
-//       kirjattu päiväkirjaan. Compare-and-swap (ls-remote main ==
+//       aallon tekninen hyväksyntä, ehdokkaan vihreä testiajo ja
+//       ehdokkaan käynnistyssavu (PASS) on kirjattu päiväkirjaan.
+//       Compare-and-swap (ls-remote main ==
 //       odotettu edellinen), sitten git push origin <sha>:refs/heads/main
 //       (ei koskaan force), sitten VERIFY_LIVE, TECH_ACCEPTANCE ja
 //       päiväkirja.
@@ -25,6 +26,13 @@
 //
 //   npm run activation:orchestrate -- --record-candidate-tests=D --sha=<40> --tests-result=tulos.txt
 //       kirjaa ehdokkaan oman `node --test` -ajon (vain vihreä kirjataan)
+//
+//   npm run activation:orchestrate -- --record-boot-smoke=D --sha=<40> --smoke-result=savu.txt
+//       kirjaa ehdokkaan käynnistyssavun tulosteen (npm run e2e:boot-smoke --
+//       --root <ehdokkaan irrotettu työpuu> --label D --expect-sha <40> > savu.txt):
+//       vain viimeinen rivi "KÄYNNISTYSSAVU [D]: PASS (n/n; poikkeuksia 0,
+//       hylkäyksiä 0, konsolivirheitä 0, tuotantopyyntöjä 0)" ja EHDOKAS-rivi
+//       samalla täydellä SHA:lla (omat portit) kirjataan
 //
 //   npm run activation:orchestrate -- --verify-rollback-of=D [--record]
 //       todenna peruutus (ACT-10); --record kirjaa sen, ja juna pysähtyy
@@ -53,7 +61,8 @@ import { createGit, isFullSha } from '../tools/release/git-layer.mjs';
 import { getOnlyFetch } from '../tools/release/live-assets.mjs';
 import { WAVE_IDS } from '../tools/release/waves.mjs';
 import {
-  JOURNAL_PATH, recordCandidateTests, recordTechnicalAcceptance, resolveJournalPath, runOrchestrator, verifyRollback
+  JOURNAL_PATH, recordBootSmoke, recordCandidateTests, recordTechnicalAcceptance, resolveJournalPath, runOrchestrator,
+  verifyRollback
 } from '../tools/activation/orchestrate.mjs';
 
 const args = process.argv.slice(2);
@@ -136,6 +145,17 @@ if (testsWave) {
   });
   out(result.ok
     ? `  KIRJATTU: ehdokkaan ${testsWave} testit ${result.entry.pass}/${result.entry.tests} PASS -> ${result.journal.path}`
+    : `  EI KIRJATTU: ${result.reason}`);
+  process.exit(result.ok ? 0 : 1);
+}
+
+const smokeWave = waveArg('record-boot-smoke');
+if (smokeWave) {
+  const result = recordBootSmoke(deps, {
+    wave: smokeWave, sha: arg('sha'), smokeText: readInput('smoke-result'), journalPath
+  });
+  out(result.ok
+    ? `  KIRJATTU: ehdokkaan ${smokeWave} käynnistyssavu ${result.entry.pass}/${result.entry.total} PASS (${result.entry.sha.slice(0, 7)}, omat portit) -> ${result.journal.path}`
     : `  EI KIRJATTU: ${result.reason}`);
   process.exit(result.ok ? 0 : 1);
 }

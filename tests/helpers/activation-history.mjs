@@ -266,6 +266,44 @@ export function testsEntry(wave, sha = shaOf(wave), { pass = 1600, fail = 0 } = 
   return { at: '2026-09-26T09:00:00.000Z', type: 'candidate-tests', wave, sha, result: fail ? 'FAIL' : 'PASS', tests: pass + fail, pass, fail, cancelled: 0, skipped: 0, todo: 0 };
 }
 
+/** Päiväkirjarivi: ehdokkaan käynnistyssavu (oletus PASS 27/27, laskurit 0). */
+export function smokeEntry(wave, sha = shaOf(wave), { pass = 27, total = 27, result = 'PASS', exceptions = 0 } = {}) {
+  return {
+    at: '2026-09-26T09:30:00.000Z', type: 'boot-smoke', wave, sha, result, command: `npm run e2e:boot-smoke -- --label ${wave} --expect-sha ${sha}`,
+    gates: 'omat', pass, total, exceptions, rejections: 0, consoles: 0, production: 0, outputSha256: 'ab'.repeat(32)
+  };
+}
+
+/**
+ * `npm run e2e:boot-smoke -- --root … --label X --expect-sha <sha> > tiedosto`
+ * -tuloste (tools/e2e/boot-smoke.mjs reportLines-muoto, npm:n otsake mukana).
+ * Oletus: PASS 27/27 omilla porteilla, HEAD = expectSha = sha.
+ */
+export function smokeOutput({
+  label = 'D', sha = shaOf('D'), head = sha, expectSha = sha, gates = 'omat', result = 'PASS', pass = 27, total = 27,
+  exceptions = 0, rejections = 0, consoles = 0, production = 0, candidateLine = true, verdictLine = true, trailing = ''
+} = {}) {
+  const checks = [
+    ...(expectSha ? [
+      `PASS  HEAD on odotettu commit\n      HEAD ${head.slice(0, 7)}, odotettu ${expectSha.slice(0, 7)}`,
+      'PASS  tarjoiltu puu = commit (src, index.html, sw.js, manifest.json, vendor)\n      412 tiedostoa'
+    ] : []),
+    'PASS  käynnistys: istunto palautui, sovellus näkyy\n      57 kyselyä; opastus: ohitettu',
+    `${exceptions ? 'FAIL' : 'PASS'}  ei käsittelemättömiä poikkeuksia\n      ${exceptions ? '[Talous] Uncaught ReferenceError: key is not defined' : 'ei yhtään'}`
+  ];
+  return [
+    '', `> manifestival@1.0.0 e2e:boot-smoke`, `> node tools/e2e/boot-smoke.mjs --root .claude/worktrees/rc-${label}-smoke --label ${label} --expect-sha ${expectSha || ''}`, '',
+    `KÄYNNISTYSSAVU [${label}] — C:\\Users\\x\\Manifestival\\.claude\\worktrees\\rc-${label}-smoke`,
+    `  HEAD ${head.slice(0, 7)} (irrotettu); puu = HEAD: kyllä (412 tiedostoa)`,
+    '  käynnistyksen ja napautusten kirjoitukset kantaan: ei yhtään',
+    ...checks,
+    '',
+    ...(candidateLine ? [`EHDOKAS [${label}]: ${head} (portit: ${gates}; --expect-sha: ${expectSha || '-'})`] : []),
+    ...(verdictLine ? [`KÄYNNISTYSSAVU [${label}]: ${result} (${pass}/${total}; poikkeuksia ${exceptions}, hylkäyksiä ${rejections}, konsolivirheitä ${consoles}, tuotantopyyntöjä ${production})`] : []),
+    trailing
+  ].join('\n');
+}
+
 /** Päiväkirja (JSONL) riveistä. */
 export function journalOf(...entries) {
   return entries.map(e => JSON.stringify(e)).join('\n') + '\n';
