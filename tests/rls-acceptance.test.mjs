@@ -2383,6 +2383,26 @@ test('TURVA: työkalun sivu lataa skriptit vain omasta originista ja valitsee aa
   assert.match(html, /http-equiv="Content-Security-Policy"/, 'työkalun sivulla ei ole CSP:tä');
 });
 
+test('TURVA: tuotantoa vasten ajettavaa työkalua ei ajeta automaattisesti eikä julkaista', () => {
+  // Työkalu kirjaa sisään oikeita tuotantotilejä. Sitä ajaa vain ihminen
+  // omistajan luvalla (docs/RLS-ACCEPTANCE.md); yksikään skripti, testi
+  // tai koonti ei käynnistä eikä pakkaa sitä.
+  const pkg = JSON.parse(read('package.json'));
+  for (const [name, command] of Object.entries(pkg.scripts)) {
+    assert.equal(/rls-acceptance/.test(command), false, `npm-skripti ${name} ajaa työkalun`);
+  }
+  assert.equal(/'tools'/.test(read('scripts/build-web.mjs')), false, 'työkalu pakattaisiin APK:hon');
+  for (const file of fs.readdirSync(path.join(ROOT, 'tests')).filter(name => /\.(mjs|cjs|js)$/.test(name))) {
+    const source = read(`tests/${file}`);
+    assert.equal(/(?:from\s+|import\(\s*|require\(\s*)['"][^'"]*rls-acceptance\/main\.js['"]/.test(source), false,
+      `${file} tuo ajurin, joka kirjautuu tuotantoon`);
+  }
+  const doc = read('docs/RLS-ACCEPTANCE.md');
+  assert.match(doc, /kertakäyttöisen toisen tilin/);
+  assert.match(doc, /nimenomaisen luvan/);
+  assert.match(doc, /Aallot I ja J/);
+});
+
 test('TURVA: tableSpecs ei sisällä avaimia eikä kirjoita vapaata tekstiä muistiinpanoihin', () => {
   const source = read('tools/rls-acceptance/tableSpecs.js');
   assert.equal(source.includes('service_role'), false);

@@ -18,6 +18,7 @@ import {
   logFailure, failureFields
 } from '../src/lib/logger.js';
 import { jsFilesIn, readCode } from './helpers/sources.mjs';
+import { callArguments, STRING_LITERAL } from './helpers/callArgs.mjs';
 
 // ---------------------------------------------------------- virhekoodit
 
@@ -313,46 +314,6 @@ test('logFailure: kääreen syy luetaan, vapaa teksti ei kelpaa koodiksi', () =>
 function postgrestLike() {
   return { name: 'PostgrestError', code: '23505', message: 'Terapia' };
 }
-
-/**
- * Kutsun ylätason argumentit: `source[open]` on avaava sulku. Merkkijonot
- * ja sisäkkäiset sulut huomioidaan, jotta pilkku lauseen sisällä ei jaa
- * argumenttia.
- */
-function callArguments(source, open) {
-  const args = [];
-  let depth = 0;
-  let quote = null;
-  let current = '';
-  for (let index = open; index < source.length; index += 1) {
-    const ch = source[index];
-    if (quote) {
-      current += ch;
-      if (ch === '\\') { current += source[index + 1]; index += 1; continue; }
-      if (ch === quote) quote = null;
-      continue;
-    }
-    if (ch === '\'' || ch === '"' || ch === '`') { quote = ch; current += ch; continue; }
-    if ('([{'.includes(ch)) {
-      depth += 1;
-      if (depth === 1) continue;
-    } else if (')]}'.includes(ch)) {
-      depth -= 1;
-      if (depth === 0) {
-        if (current.trim()) args.push(current.trim());
-        return args;
-      }
-    } else if (ch === ',' && depth === 1) {
-      args.push(current.trim());
-      current = '';
-      continue;
-    }
-    current += ch;
-  }
-  return args;
-}
-
-const STRING_LITERAL = /^(?:'[^'\\]*(?:\\.[^'\\]*)*'|"[^"\\]*(?:\\.[^"\\]*)*"|`[^`$]*`)$/;
 
 test('KRIITTINEN: src/app ei tulosta raakoja virheolioita konsoliin', () => {
   // PostgRESTin virheolio kantaa rivin arvoja (details, message), ja
