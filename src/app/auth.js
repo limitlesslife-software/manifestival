@@ -14,6 +14,7 @@ import { offline } from './offline.js';
 // Suoraan tallennuksesta eikä alignment.js:n kautta: se importoi tämän
 // moduulin (currentAccessToken), ja sykli olisi arkkitehtuurivirhe.
 import { loadOutbox, loadTimer } from '../data/timerStore.js';
+import { saveAuthNote, takeAuthNote } from '../data/deviceData.js';
 
 export const MIN_PASSWORD_LENGTH = 8;
 
@@ -190,16 +191,33 @@ export function queueAuthNote(message) {
   pendingAuthNote = typeof message === 'string' && message ? message : null;
 }
 
+/**
+ * Säilytä jonossa oleva viesti sivun uudelleenlatauksen yli.
+ *
+ * Tilin poiston varapolku (accountDeletion.js signOutAndClean) lataa sivun
+ * uudelleen, ja lataus hävittää muistissa olevan viestin: käyttäjä ei
+ * näkisi, että tili poistettiin, eikä varoitusta kesken jääneestä
+ * jälkitarkistuksesta. Viesti tallennetaan laitteelle, ja seuraava
+ * showAuthGate() näyttää ja poistaa sen.
+ *
+ * @returns {boolean} tallentuiko viesti
+ */
+export function persistQueuedAuthNote() {
+  return pendingAuthNote ? saveAuthNote(pendingAuthNote) : false;
+}
+
 /** Näytä kirjautumisportti ja piilota sovellus. */
 export function showAuthGate() {
   el('app').classList.add('app-hidden');
   el('authGate').classList.add('open');
   el('authPassword').value = '';
   setMode('signin');
-  if (pendingAuthNote) {
-    showNote(pendingAuthNote);
-    pendingAuthNote = null;
-  }
+  // Tallennettu viesti luetaan (ja poistetaan) aina, jottei se jää
+  // odottamaan myöhempää porttia muistissa olevan viestin rinnalle.
+  const stored = takeAuthNote();
+  const note = pendingAuthNote || stored;
+  pendingAuthNote = null;
+  if (note) showNote(note);
 }
 
 /** Piilota kirjautumisportti ja näytä sovellus. */

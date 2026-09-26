@@ -154,7 +154,8 @@ selain:  1. offline.purge                 offline-jonon muistikopio
                                           odotetaan enintään 3 s
          4. queueAuthNote                 päätetila kirjautumisporttiin
          5. signOut({ scope: 'local' })   -> SIGNED_OUT -> onSignedOut
-            virhe tai poikkeus            -> forceLocalSignOut + uudelleenlataus
+            virhe tai poikkeus            -> forceLocalSignOut + viesti talteen
+                                             (persistQueuedAuthNote) + uudelleenlataus
 ```
 
 - Käyttäjän tunniste tulee **vain tokenista**. Rungossa oleva `userId`,
@@ -171,6 +172,10 @@ selain:  1. offline.purge                 offline-jonon muistikopio
   `forceLocalSignOut()` tekee saman siivouksen kuin `onSignedOut`
   (käyttäjä, offline-jono, muistivarastot, laiteasetukset, tila), poistaa
   istuntoavaimen `sb-<projekti>-auth-token` ja lataa sivun uudelleen.
+  Lataus hävittäisi muistissa jonottavan päätetilan ("tili on poistettu" /
+  "jälkitarkistus jäi kesken"), joten `persistQueuedAuthNote()` tallentaa
+  sen ennen latausta avaimelle `manifestival.authNote.v1`, ja
+  kirjautumisportti näyttää ja poistaa sen latauksen jälkeen.
 
 ### Poistojärjestys: yksi atominen kaskadi, ei käsin kirjoitettu lista
 
@@ -275,6 +280,7 @@ selaintallennusta ilman rekisterimerkintää.
 | `manifestival:<asetus>` | Laitekohtaiset asetukset (`DEVICE_DEFAULTS`) | tyhjennetään | tyhjennetään |
 | `manifestival.schemaCompat.v1.<tiiviste>` | Viimeisimmän skeematarkistuksen tulos tälle käännökselle ja palvelimelle (migraatiotunnisteet, ei käyttäjän dataa) | säilyy | tyhjennetään (`clearSchemaCache`) |
 | `__manifestival_probe__` | Tallennuskokeilu, kirjoitetaan ja poistetaan heti | — | — |
+| `manifestival.authNote.v1` | Kirjautumisportin kertaluonteinen viesti tilin poiston tuloksesta (vakioteksti, ei käyttäjän dataa eikä tunnistetta) | — | kirjoitetaan vain uloskirjautumisen varapolulla ennen uudelleenlatausta; kirjautumisportti näyttää ja poistaa sen heti |
 | `sb-<projekti>-auth-token` | supabase-js:n istunto | supabase-js poistaa | supabase-js poistaa; varapolulla `clearAuthSession()` |
 
 Käyttäjäkohtaiset avaimet säilyvät uloskirjautumisen yli tarkoituksella:

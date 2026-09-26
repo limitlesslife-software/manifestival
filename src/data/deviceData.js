@@ -105,6 +105,16 @@ export const DEVICE_STORAGE = Object.freeze([
     onDelete: DEVICE_ACTION.NONE
   }),
   entry({
+    prefix: 'manifestival.authNote.v1',
+    owner: 'src/data/deviceData.js',
+    contains: 'Kirjautumisportin kertaluonteinen viesti tilin poiston tuloksesta (vakioteksti, '
+      + 'ei käyttäjän dataa eikä käyttäjätunnusta). Kirjoitetaan vain uloskirjautumisen '
+      + 'varapolulla ennen uudelleenlatausta (saveAuthNote); kirjautumisportti lukee ja '
+      + 'poistaa sen heti (takeAuthNote)',
+    onSignOut: DEVICE_ACTION.NONE,
+    onDelete: DEVICE_ACTION.NONE
+  }),
+  entry({
     prefix: 'sb-',
     owner: 'src/data/deviceData.js',
     contains: 'Kirjautumisistunto (supabase-js:n oma avain sb-<projekti>-auth-token). '
@@ -169,4 +179,49 @@ export function clearAuthSession() {
     } catch { /* yksittäisen avaimen poiston epäonnistuminen ei estä muita */ }
   }
   return removed;
+}
+
+/** Kirjautumisportin kertaluonteinen viesti (ks. DEVICE_STORAGE). */
+const AUTH_NOTE_KEY = 'manifestival.authNote.v1';
+/** Viestit ovat sovelluksen omia vakiolauseita; pidempi arvo ei ole meidän. */
+const AUTH_NOTE_MAX_LENGTH = 500;
+
+/**
+ * Säilytä kirjautumisportin viesti sivun uudelleenlatauksen yli.
+ *
+ * VAIN VARAPOLKU. Tilin poiston jälkeen epäonnistunut uloskirjautuminen
+ * siivoaa laitteen itse ja lataa sivun uudelleen, mikä hävittäisi
+ * muistissa jonottavan viestin ("tili on poistettu" / "jälkitarkistus jäi
+ * kesken"). Viestissä ei ole käyttäjän dataa eikä tunnistetta. Palauttaa
+ * true, jos tallennus onnistui; ei koskaan heitä.
+ */
+export function saveAuthNote(message) {
+  const store = storage();
+  if (!store || typeof message !== 'string' || !message || message.length > AUTH_NOTE_MAX_LENGTH) return false;
+  try {
+    store.setItem(AUTH_NOTE_KEY, message);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Lue ja poista kirjautumisportin viesti (kertaluonteinen). Palauttaa
+ * tekstin tai null; ei koskaan heitä. Kelvoton arvo poistetaan näyttämättä.
+ */
+export function takeAuthNote() {
+  const store = storage();
+  if (!store) return null;
+  let value = null;
+  try {
+    value = store.getItem(AUTH_NOTE_KEY);
+  } catch {
+    return null;
+  }
+  if (value == null) return null;
+  try {
+    store.removeItem(AUTH_NOTE_KEY);
+  } catch { /* näytetään silti; seuraava portti yrittää poistaa uudelleen */ }
+  return typeof value === 'string' && value && value.length <= AUTH_NOTE_MAX_LENGTH ? value : null;
 }

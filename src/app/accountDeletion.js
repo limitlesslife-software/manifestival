@@ -30,7 +30,7 @@ import {
 import {
   FLOW, FLOW_EVENT, DELETION_PHRASE, initialFlowState, nextFlowState, confirmationStatus
 } from '../domain/accountDeletionFlow.js';
-import { currentAccessToken, queueAuthNote } from './auth.js';
+import { currentAccessToken, queueAuthNote, persistQueuedAuthNote } from './auth.js';
 import { clearLocalUserData } from './actions.js';
 import { resetState } from './state.js';
 import { offline } from './offline.js';
@@ -261,6 +261,10 @@ export function forceLocalSignOut() {
  * jättää istunnon laitteelle eikä laukaise SIGNED_OUT:ia. Tili on jo
  * poistettu palvelimelta, joten laite siivotaan silloin itse -- sekä
  * virhepalautuksessa että poikkeuksessa.
+ *
+ * Uudelleenlataus hävittäisi muistissa jonottavan kirjautumisportin
+ * viestin (queueAuthNote), joten se tallennetaan laitteelle ennen latausta
+ * ja portti näyttää sen latauksen jälkeen (persistQueuedAuthNote).
  */
 export async function signOutAndClean() {
   let failed = false;
@@ -272,6 +276,7 @@ export async function signOutAndClean() {
   }
   if (!failed) return;
   forceLocalSignOut();
+  persistQueuedAuthNote();
   reloadPage();
 }
 

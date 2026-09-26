@@ -15,7 +15,7 @@ import assert from 'node:assert/strict';
 
 import { jsFilesIn, read, readCode } from './helpers/sources.mjs';
 import {
-  DEVICE_STORAGE, DEVICE_ACTION, purgeDeviceDataForUser, clearAuthSession
+  DEVICE_STORAGE, DEVICE_ACTION, purgeDeviceDataForUser, clearAuthSession, saveAuthNote, takeAuthNote
 } from '../src/data/deviceData.js';
 import { DEVICE_DEFAULTS } from '../src/data/preferences.js';
 import { resetQueueStoreForTests } from '../src/data/offlineQueueStore.js';
@@ -25,6 +25,8 @@ import { setUser, getUser, clearUser } from '../src/data/session.js';
 import { resetState, setTasks, getState } from '../src/app/state.js';
 import { normalizeTask } from '../src/domain/task.js';
 import { signOutAndClean, forceLocalSignOut } from '../src/app/accountDeletion.js';
+import { queueAuthNote, showAuthGate } from '../src/app/auth.js';
+import { offline } from '../src/app/offline.js';
 
 const DELETED = 'dddddddd-0000-4000-8000-00000000000d';
 const OTHER = 'eeeeeeee-0000-4000-8000-00000000000e';
@@ -53,7 +55,10 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  offline.deactivate();
+  queueAuthNote(null);
   delete globalThis.localStorage;
+  delete globalThis.document;
   if (ORIGINAL_LOCATION === undefined) delete globalThis.location;
   else globalThis.location = ORIGINAL_LOCATION;
   setClient(null);
@@ -235,4 +240,107 @@ test('onnistunut uloskirjautuminen ei tee pakkosiivousta (SIGNED_OUT hoitaa sen)
 test('forceLocalSignOut toimii myös ilman selaintallennusta ja ilman käyttäjää', () => {
   assert.doesNotThrow(() => forceLocalSignOut());
   assert.equal(getUser(), null);
+});
+
+// ------------------------------- päätetila näkyy myös varapolun latauksen jälkeen
+
+const NOTE_KEY = 'manifestival.authNote.v1';
+const UNVERIFIED_NOTE = 'Tilisi on poistettu, mutta poiston jälkitarkistus jäi kesken. '
+  + 'Ota yhteyttä tukeen, jos tietoja jäi näkyviin.';
+
+/** Kirjautumisportin tynkä-DOM: vain ne tunnisteet, joita auth.js koskee. */
+function installAuthGateDom() {
+  const nodes = new Map();
+  const node = id => {
+    if (!nodes.has(id)) {
+      const classes = new Set();
+      nodes.set(id, {
+        id, value: '', textContent: '', style: {},
+        classList: {
+          add: c => classes.add(c), remove: c => classes.delete(c), contains: c => classes.has(c),
+          toggle: (c, on) => (on ? classes.add(c) : classes.delete(c))
+        },
+        setAttribute() {}
+      });
+    }
+    return nodes.get(id);
+  };
+  globalThis.document = { getElementById: node };
+  return node;
+}
+
+let reloads = 0;
+/** Uudelleenlataus: auth.js alusta, jolloin muistissa jonottanut viesti on poissa. */
+function reloadedAuth() {
+  reloads += 1;
+  return import(`../src/app/auth.js?uudelleenlataus=${reloads}`);
+}
+
+for (const [label, signOut] of [
+  ['palauttaa virheen', async () => ({ error: { status: 0, name: 'AuthRetryableFetchError' } })],
+  ['heittää', async () => { throw new Error('verkko poikki'); }]
+]) {
+  test(`KRIITTINEN: uloskirjautuminen poiston jälkeen ${label} -> kirjautumisportti kertoo poistosta latauksen jälkeen`, async () => {
+    const data = seedSignedIn();
+    const calls = trackReload();
+    setClient({ auth: { signOut } });
+    queueAuthNote(UNVERIFIED_NOTE);
+
+    await signOutAndClean();
+    assert.equal(calls.reload, 1, 'esiehto: varapolku lataa sivun uudelleen');
+
+    const auth = await reloadedAuth();
+    const dom = installAuthGateDom();
+    auth.showAuthGate();
+    assert.equal(dom('authNote').textContent, UNVERIFIED_NOTE,
+      'uudelleenlataus hävitti viestin: käyttäjä ei näe, että tili poistettiin eikä että jälkitarkistus jäi kesken');
+    assert.equal(dom('authNote').style.display, 'block');
+    assert.equal(dom('authGate').classList.contains('open'), true);
+    assert.equal(data.has(NOTE_KEY), false, 'viesti on kertaluonteinen');
+
+    // Seuraava portti (uloskirjautuminen myöhemmin) ei näytä vanhaa viestiä.
+    auth.showAuthGate();
+    assert.equal(dom('authNote').textContent, '');
+  });
+}
+
+test('onnistunut uloskirjautuminen ei tallenna viestiä laitteelle (SIGNED_OUT näyttää sen muistista)', async () => {
+  const data = seedSignedIn();
+  trackReload();
+  setClient({ auth: { signOut: async () => ({ error: null }) } });
+  queueAuthNote(UNVERIFIED_NOTE);
+
+  await signOutAndClean();
+  assert.equal(data.has(NOTE_KEY), false);
+
+  const dom = installAuthGateDom();
+  showAuthGate();
+  assert.equal(dom('authNote').textContent, UNVERIFIED_NOTE);
+});
+
+test('kirjautumisportti poistaa tallennetun viestin aina, myös kun muistissa on uudempi', () => {
+  const data = installStorage({ [NOTE_KEY]: 'Vanha viesti' });
+  const dom = installAuthGateDom();
+  queueAuthNote('Uusi viesti');
+  showAuthGate();
+  assert.equal(dom('authNote').textContent, 'Uusi viesti');
+  assert.equal(data.has(NOTE_KEY), false);
+});
+
+test('portin viestin tallennus ei heitä eikä hyväksy kelvotonta arvoa', () => {
+  assert.equal(saveAuthNote('x'), false, 'ilman tallennusta ei väitetä tallennetuksi');
+  assert.equal(takeAuthNote(), null);
+
+  const data = installStorage();
+  assert.equal(saveAuthNote(''), false);
+  assert.equal(saveAuthNote(null), false);
+  assert.equal(saveAuthNote('x'.repeat(501)), false);
+  assert.equal(data.size, 0);
+
+  data.set(NOTE_KEY, 'y'.repeat(501));
+  assert.equal(takeAuthNote(), null, 'liian pitkä arvo ei ole sovelluksen oma viesti');
+  assert.equal(data.has(NOTE_KEY), false, 'kelvoton arvo poistetaan');
+
+  globalThis.localStorage.setItem = () => { throw new Error('QuotaExceededError'); };
+  assert.equal(saveAuthNote('z'), false);
 });
