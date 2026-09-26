@@ -1,0 +1,18 @@
+check_no	section	check_name	status	details	poikkeavia_yhteensa
+01	0001	Omistajasarake tasks.user_id on olemassa	PASS	odotus 1, toteutui 1	0
+02	0001	RLS on päällä taulussa tasks	PASS	odotus 1, toteutui 1	0
+03	esiehto	Hyväksytty omistaja löytyy auth.users-taulusta	PASS	odotus 1, toteutui 1	0
+04	esiehto	PostgreSQL 15 tai uudempi	PASS	odotus true, toteutui true	0
+05	esiehto	touch_updated_at on INVOKER ja search_path kiinnitetty	PASS	odotus 1, toteutui 1	0
+06	järjestys	Edellinen migraatio 0010 on ajettu kokonaan (38 objektia)	PASS	odotus 38, toteutui 38	0
+07	0011	tasks_owner_row_key on olemassa (matka- ja sijaintiviitteet)	PASS	odotus 1, toteutui 1	0
+08	0011	tasks/goals/projects: 12 politiikkaa (0011 vaatii ennen committia)	PASS	odotus 12, toteutui 12	0
+09	0011	Migraation 0011 objekteja ei vielä ole (0/72)	PASS	odotus 0, toteutui 0	0
+10	esteet	Avoimia idle in transaction -istuntoja ei ole	PASS	odotus 0, toteutui 0	0
+11	esteet	Yli minuutin kestäneitä kyselyitä ei ole käynnissä	PASS	odotus 0, toteutui 0	0
+12	esteet	Odottavia lukkoja ei ole	PASS	odotus 0, toteutui 0	0
+13	esteet	Muut istunnot eivät lukitse tauluja, joita 0011 muuttaa tai joihin se viittaa (public.tasks, auth.users)	PASS	odotus 0, toteutui 0	0
+14	kirjattavat	Tehtävien lukumäärä	INFO	36	0
+15	kirjattavat	Tietokanta	INFO	mv_rehearsal_sqlres_0010	0
+16	kirjattavat	Palvelimen versio	INFO	17.10	0
+17	kirjattavat	Tarkistuksen hetki (UTC)	INFO	2026-09-26 16:22:49	0

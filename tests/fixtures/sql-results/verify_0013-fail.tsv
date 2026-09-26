@@ -1,0 +1,34 @@
+check_no	section	check_name	status	details	poikkeavia_yhteensa
+01	taulut	Kaksi uutta taulua on olemassa	PASS	odotus 2, toteutui 2	2
+02	taulut	running_timers: viisitoista odotettua saraketta	FAIL	odotus 15, toteutui 14	2
+03	taulut	alignment_item_settings: kahdeksan odotettua saraketta	PASS	odotus 8, toteutui 8	2
+04	sarakkeet	time_entries: kuusi uutta saraketta	PASS	odotus 6, toteutui 6	2
+05	sarakkeet	weekly_capacities.energy_budget_minutes on nullable	PASS	odotus YES, toteutui YES	2
+06	sarakkeet	alignment_reviews.policy_version NOT NULL, oletus 1	PASS	odotus NO|1, toteutui NO|1	2
+07	sarakkeet	alignment_reviews.reflection_answers on jsonb NOT NULL	PASS	odotus jsonb|NO, toteutui jsonb|NO	2
+08	sarakkeet	Omistaja: user_id NOT NULL default auth.uid() molemmissa	PASS	odotus 2, toteutui 2	2
+10	rajoitteet	Kaikki 24 uutta rajoitetta ovat olemassa	FAIL	odotus 24, toteutui 23	2
+11	rajoitteet	Vanha time_entries_source_check on poistettu	PASS	odotus 0, toteutui 0	2
+12	rajoitteet	Lahde sallii tasmalleen manual ja timer	PASS	odotus true, toteutui true	2
+13	idempotenssi	Operaatiotunniste on uniikki kayttajaa kohti (user_id, operation_id)	PASS	odotus true, toteutui true	2
+14	rajoitteet	Kuormittavuus on 1-5 tai tyhja	PASS	odotus true, toteutui true	2
+15	rajoitteet	Yksi asetusrivi kohdetta kohti	PASS	odotus true, toteutui true	2
+20	ajastin	YKSI AJASTIN KAYTTAJAA KOHTI: unique (user_id)	PASS	odotus true, toteutui true	2
+21	ajastin	Tauko ei ole negatiivinen	PASS	odotus true, toteutui true	2
+22	omistajuus	Vierasavaimet ovat yhdistelmaavaimia (user_id, x)	PASS	odotus 7, toteutui 7	2
+24	omistajuus	Poisto nollaa vain oman sarakkeensa (ON DELETE SET NULL (x))	PASS	odotus 7, toteutui 7	2
+25	omistajuus	running_timers ja alignment_item_settings: user_id -> auth.users on CASCADE	PASS	odotus 2, toteutui 2	2
+26	omistajuus	Migraatioiden 26 taulun jokainen vierasavain auth.usersiin on CASCADE	PASS	odotus 0, toteutui 0	2
+27	omistajuus	Jokaisella migraatioiden 26 taululla on vierasavain auth.usersiin	PASS	odotus 0, toteutui 0	2
+28	omistajuus	Muut public-taulut kuin migraatioiden 26 (INFO, eivat kuulu riveihin 26-27)	INFO	0	2
+30	rls	RLS paalla molemmissa uusissa tauluissa	PASS	odotus 2, toteutui 2	2
+31	rls	Kahdeksan politiikkaa, kaikki authenticated-roolille	PASS	odotus 8, toteutui 8	2
+32	rls	Jokainen politiikka rajaa omistajaan auth.uid() = user_id	PASS	odotus 8, toteutui 8	2
+33	oikeudet	anon: ei mitaan oikeutta	PASS	odotus 0, toteutui 0	2
+34	oikeudet	PUBLIC: ei mitaan oikeutta	PASS	odotus 0, toteutui 0	2
+35	oikeudet	authenticated: select/insert/update/delete (8)	PASS	odotus 8, toteutui 8	2
+36	liipaisimet	updated_at-liipaisin molemmissa tauluissa	PASS	odotus 2, toteutui 2	2
+40	koskematon	tasks/goals/projects/routines: 16 politiikkaa kuten ennen	PASS	odotus 16, toteutui 16	2
+41	koskematon	tasks/goals/projects/routines: ei uusia sarakkeita energiasta	PASS	odotus 0, toteutui 0	2
+50	rivit	running_timers: riveja (INFO, tuore ajo = 0)	INFO	0	2
+51	rivit	alignment_item_settings: riveja (INFO, tuore ajo = 0)	INFO	0	2

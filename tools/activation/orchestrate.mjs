@@ -69,7 +69,13 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 
 import { classifyActivation, parseInventory } from './score-inventory.mjs';
-import { countChecksInSql, decide, parseCheckTable } from './score-sql-result.mjs';
+import { checkNumbersInSql, decide, parseCheckTable } from './score-sql-result.mjs';
+
+/** SQL-tiedoston tarkistusnumerot (aukot sallittu) ja niiden määrä. */
+function expectedChecksOf(sql) {
+  const expectedNumbers = checkNumbersInSql(sql);
+  return { expectedNumbers, expectedChecks: expectedNumbers.length };
+}
 import { LOCK_PATH, checkTrainMap } from './train-map.mjs';
 import {
   LIVE_USE_PENDING, LIVE_USE_VALIDATION, OWNER_APPROVAL, OWNER_INPUT, PRE_TOOLING_WAVE,
@@ -622,8 +628,8 @@ export function planNext(state, input = {}, { git }) {
     } else {
       const parsed = parseCheckTable(input.preflightResult);
       if (!parsed) { step('PREFLIGHT_DB', 'STOP', 'tulosta ei voitu lukea'); return stop('PREFLIGHT_RESULT_UNREADABLE', `${action.preflight}: tulosta ei voitu lukea`, 2); }
-      const expectedChecks = countChecksInSql(git.show(lock.sqlSource.sha, action.preflight));
-      const verdict = decide(parsed, { expectedChecks });
+      const { expectedChecks, expectedNumbers } = expectedChecksOf(git.show(lock.sqlSource.sha, action.preflight));
+      const verdict = decide(parsed, { expectedChecks, expectedNumbers });
       if (verdict.decision !== 'GO') { step('PREFLIGHT_DB', 'STOP', verdict.reasons); return stop('PREFLIGHT_DB_FAILED', `${action.preflight}: ${verdict.reasons.join('; ')}`); }
       step('PREFLIGHT_DB', 'OK', `${parsed.rows.length}/${expectedChecks} tarkistusta, 0 FAIL, 0 poikkeavaa`);
     }
@@ -652,8 +658,8 @@ export function planNext(state, input = {}, { git }) {
     } else {
       const parsed = parseCheckTable(input.verifyResult);
       if (!parsed) { step('VERIFY', 'STOP', 'tulosta ei voitu lukea'); return stop('VERIFY_RESULT_UNREADABLE', `${action.verify}: tulosta ei voitu lukea`, 2); }
-      const expectedChecks = countChecksInSql(git.show(lock.sqlSource.sha, action.verify));
-      const verdict = decide(parsed, { expectedChecks });
+      const { expectedChecks, expectedNumbers } = expectedChecksOf(git.show(lock.sqlSource.sha, action.verify));
+      const verdict = decide(parsed, { expectedChecks, expectedNumbers });
       if (verdict.decision !== 'GO') { step('VERIFY', 'STOP', verdict.reasons); return stop('VERIFY_FAILED', `${action.verify}: ${verdict.reasons.join('; ')}`); }
       step('VERIFY', 'OK', [`${parsed.rows.length}/${expectedChecks} tarkistusta, 0 poikkeavaa`, `inventaario: migraatio ${action.migration} ajettu`]);
       plan.evidence.migrationVerify = `${path.posix.basename(action.verify)}: ${parsed.rows.length}/${expectedChecks} tarkistusta, 0 poikkeavaa`;
@@ -1001,8 +1007,8 @@ export async function technicalAcceptance(deps, { wave, sha, verifyResult = null
     else {
       const parsed = parseCheckTable(verifyResult);
       const source = lock && lock.sqlSource ? lock.sqlSource.sha : null;
-      const expectedChecks = source ? countChecksInSql(git.show(source, verifyPath)) : null;
-      const verdict = parsed ? decide(parsed, { expectedChecks }) : null;
+      const { expectedChecks = null, expectedNumbers = null } = source ? expectedChecksOf(git.show(source, verifyPath)) : {};
+      const verdict = parsed ? decide(parsed, { expectedChecks, expectedNumbers }) : null;
       if (!parsed) problems.push(`${verifyPath}: tulosta ei voitu lukea`);
       else if (verdict.decision !== 'GO') problems.push(`${verifyPath}: ${verdict.reasons.join('; ')}`);
       else checks.migrationVerify = `${path.posix.basename(verifyPath)}: ${parsed.rows.length}/${expectedChecks} tarkistusta, 0 poikkeavaa`;

@@ -75,8 +75,10 @@ mutta älä yritä uudelleen ennen kuin syy on selvä) · verify antaa
 
 **Koneellinen luku (ACT-12):** liitetty preflight- tai verify-tulos
 pisteytetään, ei lueta silmällä: `node tools/activation/score-sql-result.mjs
---sql=<tiedosto.sql> tulos.txt` (GO vain kun jokainen rivi on liitetty, 0 FAIL
-ja `poikkeavia_yhteensa` = 0). Orkestroija tekee saman lipuilla
+--sql=<tiedosto.sql> tulos.txt` (GO vain kun täsmälleen tiedoston omat
+tarkistusnumerot on liitetty — numeroinnissa voi olla aukkoja, esim.
+`verify_0013` — 0 FAIL ja `poikkeavia_yhteensa` = 0; todennettu oikean
+kannan tuloksilla `tests/fixtures/sql-results`). Orkestroija tekee saman lipuilla
 `--preflight-result=` ja `--verify-result=`. SQL-tiedostot ajetaan aina
 **lukon SQL-lähteestä** (`docs/activation/release-train-c-j.json` →
 `sqlSource`, sha256 jokaiselle tiedostolle); `npm run activation:dry-run`

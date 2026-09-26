@@ -94,7 +94,15 @@ node tools/pg-rehearsal/rehearse.mjs --only=inventory --fixtures=tests/fixtures/
 node tools/pg-rehearsal/rehearse.mjs --json=raportti.json
 node tools/pg-rehearsal/chain.mjs text                  # pelkkä ketju + verify
 node tools/pg-rehearsal/bundle-hashes.mjs               # MIGRATION-BUNDLES.md:n blob-taulukko
+node tools/pg-rehearsal/sql-result-fixtures.mjs         # oikean kannan preflight/verify-tulokset -> tests/fixtures/sql-results
 ```
+
+`sql-result-fixtures.mjs` ajaa jokaisen `preflight_0009…0013`:n PASS-tilassa
+(juuri ennen migraatiota) ja FAIL-tilassa (migraatio jo ajettu) sekä jokaisen
+`verify_0009…0013`:n puhtaana ja rikottuna (`NULL_SABOTAGE`) tuotannon
+muotoisessa synteettisessä kannassa, kirjoittaa tulokset sarkainerotettuina
+ja pisteyttää ne (`score-sql-result.mjs`, SQL-tiedoston omat
+tarkistusnumerot); `manifest.json` sisältää alkuperän.
 
 ### Varmuuskopioharjoittelu (`backup`)
 
@@ -140,6 +148,7 @@ data-hakemisto sekä jokaisen luetun SQL-tiedoston git-blob-tiivisteen.
 | `waves.mjs`, `app-gate-hooks.mjs` | junan taukopisteet ja sovelluksen rivimuunnokset aallon sarakeporteilla |
 | `*-scenarios.mjs` | uudet skenaariot (tuotannon muoto, virheet ja lukot, peruutukset) |
 | `backup-scenario.mjs`, `rehearse-backup.mjs` | looginen tilannekuva ja palautus B1–B15 (`--only=backup` tai erillinen ajo) |
+| `sql-result-fixtures.mjs` | oikean kannan preflight- ja verify-tulokset pisteytyksen yksikkötesteille (`tests/fixtures/sql-results`) |
 | `expected/` | omistajan inventaario 0008 ja kultaiset skeemaerot 0009–0013 |
 
 ## Löydökset, jotka tämä on jo tehnyt
@@ -169,3 +178,8 @@ data-hakemisto sekä jokaisen luetun SQL-tiedoston git-blob-tiivisteen.
    kaatui lukon aikakatkaisuun ("canceling statement due to lock
    timeout") eikä sanonut "JO AJETTU". Katalogitarkistukset ajetaan nyt
    ennen lukitusta: "JO AJETTU" 55 ms:ssa (`failure:0010-locks`).
+9. Oikean kannan `verify_0013`-tulos pisteytyi STOP:ksi, vaikka se oli
+   puhdas: numeroinnissa on tarkoituksellisia aukkoja (01–08, 10–15, …)
+   ja `score-sql-result.mjs` oletti 01..N. Nyt vertailu on SQL-tiedoston
+   omiin numeroihin (`sql-result-fixtures.mjs`,
+   `tests/activation-sql-result.test.mjs`).

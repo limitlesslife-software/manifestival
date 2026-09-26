@@ -1,0 +1,20 @@
+check_no	section	check_name	status	details	poikkeavia_yhteensa
+01	0001	Omistajasarake tasks.user_id on olemassa	PASS	odotus 1, toteutui 1	2
+02	0001	RLS on päällä taulussa tasks	PASS	odotus 1, toteutui 1	2
+03	esiehto	Hyväksytty omistaja löytyy auth.users-taulusta	PASS	odotus 1, toteutui 1	2
+04	esiehto	PostgreSQL 15 tai uudempi	PASS	odotus true, toteutui true	2
+05	esiehto	touch_updated_at on INVOKER ja search_path kiinnitetty	PASS	odotus 1, toteutui 1	2
+06	järjestys	Edellinen migraatio 0008 on ajettu kokonaan (11 objektia)	PASS	odotus 11, toteutui 11	2
+07	0009	bills-taulu on olemassa (0007)	PASS	odotus 1, toteutui 1	2
+08	0009	bills: maksutietosarakkeita ei vielä ole	FAIL	odotus 0, toteutui 3	2
+09	0009	Migraation 0009 objekteja ei vielä ole (0/39)	FAIL	odotus 0, toteutui 39	2
+10	esteet	Avoimia idle in transaction -istuntoja ei ole	PASS	odotus 0, toteutui 0	2
+11	esteet	Yli minuutin kestäneitä kyselyitä ei ole käynnissä	PASS	odotus 0, toteutui 0	2
+12	esteet	Odottavia lukkoja ei ole	PASS	odotus 0, toteutui 0	2
+13	esteet	Muut istunnot eivät lukitse tauluja, joita 0009 muuttaa tai joihin se viittaa (public.bills, auth.users)	PASS	odotus 0, toteutui 0	2
+14	kirjattavat	Tehtävien lukumäärä	INFO	36	2
+15	kirjattavat	Tietokanta	INFO	mv_rehearsal_sqlres_0009	2
+16	kirjattavat	Palvelimen versio	INFO	17.10	2
+17	kirjattavat	Tarkistuksen hetki (UTC)	INFO	2026-09-26 16:22:42	2
+18	junan alku	Muut public-taulut kuin migraatioiden 0001–0013 (lukumäärä ja nimet, verify_0013 rivi 28)	INFO	0	2
+19	junan alku	Jokainen public-taulun vierasavain auth.usersiin on CASCADE (tilin poisto, verify_0013 rivit 26–27)	PASS	odotus 0, toteutui 0	2
