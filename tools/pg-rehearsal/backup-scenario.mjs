@@ -15,7 +15,7 @@
 //       liipaisimet päällä
 //   B8  peukaloitu palautus kaatuu: mikään ei muutu
 //   B9  ROLLBACK(N) + palautus(--prune) -> katalogi == ennen N:ää ja data sama
-//       (0010: ROLLBACK kieltäytyy, kun tavoite on 'maintenance')
+//       (0010: ROLLBACK:n vartija kieltäytyy (P0001), kun tavoite on 'maintenance')
 //   B10 N:n jälkeinen kuva peruutettuun skeemaan hylätään, katalogi ennallaan
 //   B11 N:n jälkeinen kuva -> ROLLBACK -> N uudelleen -> palautus identtinen
 //   B12 väärä kanta, puuttuva käyttäjä, puuttuva omistaja, väärä saraketyyppi hylätään
@@ -23,7 +23,10 @@
 //   B14 kuivaharjoitus: katalogi ja sisältö ennallaan, skripti päättyy rollback;iin
 //   B15 RLS:n suodattama kuva ei läpäise tarkistusta: taulujen omistaja (ei FORCE)
 //       ja BYPASSRLS-rooli kelpaavat; FORCE RLS omistajalle ja ei-omistaja ilman
-//       BYPASSRLS:ää hylätään (manifestin rlsFiltered)
+//       BYPASSRLS:ää hylätään (manifestin rlsFiltered). Kuva otetaan kannan
+//       NYKYISESTÄ tilasta N (snapshot_state_N): tilan P kuva N:n kannassa on
+//       ristiriitainen (0010: projects/tasks -> milestones, 0012: goals ->
+//       life_areas), ja parseSnapshot hylkää sen oikein.
 //
 // Kytkentä: node tools/pg-rehearsal/rehearse-backup.mjs (erillinen ajo) tai
 // node tools/pg-rehearsal/rehearse.mjs --only=backup
@@ -397,7 +400,11 @@ export async function backupScenario({ fixtureDir = null, variants = ['text', 't
         await c.query(`grant usage on schema auth, public to ${owner}`);
         await c.query(`grant select, references on auth.users to ${owner}`);
         await c.query(`grant temporary on database ${db1} to ${owner}`);
-        for (const t of Object.keys(snapP.manifest.tables)) await c.query(`alter table public.${t} owner to ${owner}`);
+        // Kaikki nykyiset public-taulut (tila N): B13 palauttaa tilan P kuvan
+        // (osajoukko), B15 ottaa tilan N kuvan.
+        const currentTables = (await c.query(
+          `select relname from pg_class where relnamespace = 'public'::regnamespace and relkind = 'r' order by 1`)).rows.map(r => r.relname);
+        for (const t of currentTables) await c.query(`alter table public.${t} owner to ${owner}`);
         const asRole = async (role, sql) => {
           try { return await runSql(c, `set role ${role};\n${sql}`); } finally { await c.query('reset role'); }
         };
@@ -408,7 +415,7 @@ export async function backupScenario({ fixtureDir = null, variants = ['text', 't
           out.ok && differ.length === 0, out.error?.message || differ.join(','));
 
         // B15: taulujen omistaja ohittaa RLS:n (ei FORCE): kuva kelpaa.
-        let asOwner = await parsedAs(c, p, owner);
+        let asOwner = await parsedAs(c, n, owner);
         check('B15', 'tilannekuva taulujen omistajana (nobypassrls, ei FORCE): kelpaa, rlsFiltered = false',
           !(asOwner instanceof Error) && Object.values(asOwner.manifest.tables).every(m => m.rlsFiltered === false),
           asOwner instanceof Error ? asOwner.message : 'rlsFiltered ei ole false kaikissa tauluissa');
@@ -421,7 +428,7 @@ export async function backupScenario({ fixtureDir = null, variants = ['text', 't
           !out.ok && /FORCE ROW LEVEL SECURITY/.test(out.error.message) && forced === 'RIKKI-FORCE',
           out.error?.message || 'meni läpi');
         // B15: FORCE RLS: omistajakin näkee vain politiikan sallimat rivit -> hylätään.
-        asOwner = await parsedAs(c, p, owner);
+        asOwner = await parsedAs(c, n, owner);
         check('B15', 'FORCE RLS: omistajan tilannekuva hylätään (tasks: RLS suodatti rivit)',
           asOwner instanceof Error && /tasks: RLS suodatti rivit/.test(asOwner.message),
           asOwner instanceof Error ? asOwner.message : 'suodatettu kuva kelpasi');
@@ -442,7 +449,7 @@ export async function backupScenario({ fixtureDir = null, variants = ['text', 't
 
         // B15: BYPASSRLS ohittaa RLS:n; ei-omistaja ilman sitä näkee vain
         // politiikan sallimat rivit (tässä ei yhtään) -> hylätään.
-        const asBypass = await parsedAs(c, p, notOwner);
+        const asBypass = await parsedAs(c, n, notOwner);
         check('B15', 'tilannekuva ei-omistajana BYPASSRLS-oikeudella: kelpaa, rlsFiltered = false',
           !(asBypass instanceof Error) && Object.values(asBypass.manifest.tables).every(m => m.rlsFiltered === false),
           asBypass instanceof Error ? asBypass.message : 'rlsFiltered ei ole false kaikissa tauluissa');
@@ -451,7 +458,7 @@ export async function backupScenario({ fixtureDir = null, variants = ['text', 't
         await c.query(`grant usage on schema auth, public to ${reader}`);
         await c.query(`grant select on auth.users to ${reader}`);
         await c.query(`grant select on all tables in schema public to ${reader}`);
-        const asReader = await parsedAs(c, p, reader);
+        const asReader = await parsedAs(c, n, reader);
         check('B15', 'tilannekuva ei-omistajana ilman BYPASSRLS:ää hylätään (RLS suodatti rivit)',
           asReader instanceof Error && /tasks: RLS suodatti rivit/.test(asReader.message)
             && /goals: RLS suodatti rivit/.test(asReader.message),
@@ -470,8 +477,10 @@ export async function backupScenario({ fixtureDir = null, variants = ['text', 't
         if (n === '0010') {
           const fpm = await catalogFingerprint(c);
           const refused = await runSql(c, rollbackSql);
-          check('B9', '0010:n ROLLBACK kieltäytyy, kun tavoite on maintenance (23514), katalogi ennallaan',
-            !refused.ok && refused.error.code === '23514' && /goals_status_check/.test(refused.error.message)
+          // ROLLBACK-osion vartija (F8) kieltäytyy ennen yhtäkään DDL:ää
+          // selkeällä viestillä (P0001) — ei enää tilarajoitteen 23514:ää.
+          check('B9', '0010:n ROLLBACK:n vartija kieltäytyy, kun tavoite on maintenance (P0001), katalogi ennallaan',
+            !refused.ok && refused.error.code === 'P0001' && /tilassa maintenance/.test(refused.error.message)
               && fpm.hash === (await catalogFingerprint(c)).hash,
             refused.error?.message || 'meni läpi');
           await c.query(`update public.goals set status = 'active' where status = 'maintenance'`);
