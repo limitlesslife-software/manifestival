@@ -1,4 +1,4 @@
-// Generoi supabase/preflight/preflight_0009.sql ... preflight_0013.sql.
+// Generoi supabase/preflight/preflight_0009.sql ... preflight_0014.sql.
 //
 //   node tools/activation/build-preflights.mjs          kirjoita tiedostot
 //   node tools/activation/build-preflights.mjs --check  vertaa levyyn (testit)
@@ -83,6 +83,15 @@ const SPECIFIC = Object.freeze({
       "(select case when to_regclass('public.time_entries') is null then 'puuttuu' else (xpath('/row/c/text()', query_to_xml('select count(*) as c from public.time_entries', false, true, '')))[1]::text end)"],
     ['0013', 'tasks, goals, projects, routines, life_areas, weekly_capacities, time_entries, alignment_reviews: 32 politiikkaa (0013 vaatii ennen committia)', '32',
       policyCount(['tasks', 'goals', 'projects', 'routines', 'life_areas', 'weekly_capacities', 'time_entries', 'alignment_reviews'])]
+  ],
+  '0014': [
+    ['0014', 'goals_owner_row_key on olemassa (menon ja liikuntakerran tavoitekytkentä)', '1',
+      "(select count(*)::text from pg_constraint where contype = 'u' and conname = 'goals_owner_row_key')"],
+    ['0014', 'Suunta 2:n taulut running_timers ja alignment_item_settings ovat olemassa (0013)', '2',
+      "(select count(*)::text from pg_tables where schemaname = 'public' and tablename in ('running_timers', 'alignment_item_settings'))"],
+    ['0014', 'tasks, goals, projects, routines, 0012:n ja 0013:n taulut: 40 politiikkaa (0014 vaatii ennen committia)', '40',
+      policyCount(['tasks', 'goals', 'projects', 'routines', 'life_areas', 'weekly_capacities', 'time_entries',
+        'alignment_reviews', 'running_timers', 'alignment_item_settings'])]
   ]
 });
 
@@ -103,7 +112,9 @@ export const LOCKED_TABLES = Object.freeze({
   '0011': Object.freeze(['public.tasks', 'auth.users']),
   '0012': Object.freeze(['public.goals', 'public.tasks', 'auth.users']),
   '0013': Object.freeze(['public.time_entries', 'public.weekly_capacities', 'public.alignment_reviews', 'public.goals',
-    'public.tasks', 'public.projects', 'public.routines', 'public.life_areas', 'auth.users'])
+    'public.tasks', 'public.projects', 'public.routines', 'public.life_areas', 'auth.users']),
+  // 0014 luo vain uusia tauluja: ainoat lukot ovat vierasavainten kohteet.
+  '0014': Object.freeze(['public.goals', 'auth.users'])
 });
 
 function previous(number) {
@@ -111,10 +122,26 @@ function previous(number) {
 }
 
 /**
- * Migraatioiden 0001–0013 taulut = tilin poiston kartta (ACCOUNT_DATA_MAP).
- * verify_0013:n rivit 26–28 käyttävät samaa listaa (testi vertaa).
+ * Migraatioiden 0001–0013 taulut: verify_0013:n rivien 26–28 ja
+ * preflight_0009:n junan alun lista (testi vertaa).
+ *
+ * JÄÄDYTETTY 0013:N AIKAISEKSI. Lista oli ennen johdettu tilin poiston
+ * kartasta (ACCOUNT_DATA_MAP), mutta kartta kasvaa jokaisen uuden taulun
+ * myötä, ja silloin jo lukittu preflight_0009.sql muuttuisi — sen on
+ * pysyttävä tavulleen samana kuin junan SQL-lähteessä (J, cba9463).
+ * 0014:n taulut tarkistaa verify_0014 (rivit 34–36), jonka lista on koko
+ * kartta (ACCOUNT_TABLES_THROUGH_0014).
  */
-export const MIGRATION_TABLES = Object.freeze(Object.values(ACCOUNT_DATA_MAP).map(entry => entry.table));
+export const MIGRATION_TABLES = Object.freeze([
+  'tasks', 'routines', 'routine_exceptions', 'goals', 'projects', 'bills', 'recurring_expenses',
+  'savings_goals', 'wellbeing_entries', 'notification_preferences', 'profile', 'ai_action_audit',
+  'transactions', 'investments', 'milestones', 'inbox_items', 'reminders', 'notices',
+  'travel_plans', 'location_rules', 'life_areas', 'weekly_capacities', 'time_entries',
+  'alignment_reviews', 'alignment_item_settings', 'running_timers'
+]);
+
+/** Migraatioiden 0001–0014 taulut = tilin poiston kartta (verify_0014 rivit 34–36). */
+export const ACCOUNT_TABLES_THROUGH_0014 = Object.freeze(Object.values(ACCOUNT_DATA_MAP).map(entry => entry.table));
 
 /**
  * Junan alussa (vain preflight_0009, rivien loppuun): oletukset, joihin

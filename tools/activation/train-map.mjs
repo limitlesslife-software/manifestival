@@ -163,9 +163,18 @@ function missingRecord(entry, previous) {
   };
 }
 
-/** SQL-lähteen tiedostot ja niiden sha256 (lukittu SHA). */
-export function sqlSourceFiles(git, sha) {
-  const paths = WAVES.filter(w => w.migration)
+/**
+ * SQL-lähteen tiedostot ja niiden sha256 (lukittu SHA).
+ *
+ * VAIN SQL-LÄHDEAALTOON ASTI. Lähdeaallon kärjessä on sen omat ja kaikkien
+ * aiempien aaltojen tiedostot, ei myöhempien: aallon K migraatio 0014 ei
+ * ole J:n kärjessä (cba9463), eikä sen puuttuminen sieltä ole virhe. Kun
+ * K leikataan ja SQL_SOURCE_WAVE siirtyy K:hon, 0014:n tiedostot tulevat
+ * lukkoon samalla --write-ajolla.
+ */
+export function sqlSourceFiles(git, sha, sourceWave = SQL_SOURCE_WAVE) {
+  const last = waveIndex(sourceWave);
+  const paths = WAVES.filter(w => w.migration && (last === null || waveIndex(w.id) <= last))
     .flatMap(wave => [wave.migrationFile, preflightPathOf(wave.migration), verifyPathOf(wave.migration)]);
   if (typeof git.showMany === 'function') git.showMany(sha, paths);
   const files = {};

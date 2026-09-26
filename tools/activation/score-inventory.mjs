@@ -45,7 +45,8 @@ export const ROW = Object.freeze({
   m0001: '10',
   migrations: Object.freeze({
     '0002': '11', '0003': '12', '0004': '13', '0005': '14', '0006': '15', '0007': '16',
-    '0008': '17', '0009': '18', '0010': '19', '0011': '20', '0012': '21', '0013': '22'
+    '0008': '17', '0009': '18', '0010': '19', '0011': '20', '0012': '21', '0013': '22',
+    '0014': '23'
   }),
   v2Check: '30',
   owner: '40', authUsers: '41', ownerKeys: '42', touchFn: '43', badGoalStatus: '44', idleTx: '45',
@@ -56,20 +57,33 @@ export const ROW = Object.freeze({
 });
 
 /**
+ * Migraatiot, joiden inventaariorivi on VALINNAINEN: niitä edeltävä
+ * inventaarioversio ei tunne riviä, ja omistajan jo liittämät inventaariot
+ * (fixturet, docs/activation/PRODUCTION-INVENTORY-*) on voitava pisteyttää
+ * yhä samoin. Puuttuva rivi = migraatiota ei ole ajettu: seuraava askel
+ * ajaa ensin sen esitarkistuksen (preflight_0014.sql), joka laskee
+ * objektit uudelleen ja pysäyttää, jos ne ovatkin jo kannassa.
+ */
+export const OPTIONAL_MIGRATION_ROWS = Object.freeze(['0014']);
+
+const REQUIRED_MIGRATION_ROWS = Object.freeze(Object.entries(ROW.migrations)
+  .filter(([number]) => !OPTIONAL_MIGRATION_ROWS.includes(number)).map(([, row]) => row));
+
+/**
  * Rivit, joita ilman päätöstä EI tehdä (ACT-11). Puuttuva rivi tarkoittaa
  * joko vanhempaa inventaarioversiota tai vajaata liitosta — kummassakin
  * tapauksessa hiljainen oletus olisi arvaus. Aiemmin puuttuva rivi 44 tai
  * 45 meni läpi GO:na, koska "ei lukua" ei ollut "> 0".
  */
 export const REQUIRED_ROWS = Object.freeze([
-  ROW.pgNum, ROW.m0001, ...Object.values(ROW.migrations),
+  ROW.pgNum, ROW.m0001, ...REQUIRED_MIGRATION_ROWS,
   ROW.owner, ROW.ownerKeys, ROW.touchFn, ROW.badGoalStatus, ROW.idleTx,
   ROW.noRls, ROW.anonGrants, ROW.publicGrants
 ]);
 
 /** Taulukkomuodossa vaaditut rivit (ACT-11): muuten syöte ei ole inventaario. */
 export const TABLE_REQUIRED_ROWS = Object.freeze([
-  '01', '10', ...Object.values(ROW.migrations), '30',
+  '01', '10', ...REQUIRED_MIGRATION_ROWS, '30',
   '40', '41', '42', '43', '44', '45', '50', '51', '52'
 ]);
 
@@ -128,6 +142,10 @@ const num = value => (missing(value) || value === 'puuttuu' ? null : Number(valu
 
 function migrationState(number, rows) {
   const raw = rows[ROW.migrations[number]];
+  // Valinnainen rivi puuttuu: inventaario edeltää migraatiota -> ajamaton.
+  if (missing(raw) && OPTIONAL_MIGRATION_ROWS.includes(number)) {
+    return { state: 'not_run', count: null, expected: EXPECTED[number] };
+  }
   if (missing(raw)) return { state: 'missing', count: null, expected: EXPECTED[number] };
   const count = num(raw);
   if (count === null || Number.isNaN(count)) return { state: 'unknown', count: raw, expected: EXPECTED[number] };
@@ -195,7 +213,7 @@ export function scoreInventory(rows) {
   facts.ownerPresent = num(rows[ROW.owner]) === 1;
   facts.authUsers = num(rows[ROW.authUsers]);
   if (!missing(rows[ROW.owner]) && !facts.ownerPresent) {
-    stops.push('Hyväksyttyä omistajaa (2cc00622-…) ei löydy auth.users-taulusta: jokainen migraatio 0002–0013 keskeytyy. Väärä projekti?');
+    stops.push('Hyväksyttyä omistajaa (2cc00622-…) ei löydy auth.users-taulusta: jokainen migraatio 0002–0014 keskeytyy. Väärä projekti?');
   }
   if (!missing(rows[ROW.ownerKeys]) && num(rows[ROW.ownerKeys]) !== 5) {
     stops.push(`Omistajan rivin avaimia ${rows[ROW.ownerKeys]}/5.`);
@@ -236,13 +254,14 @@ export function scoreInventory(rows) {
   if (stops.length) {
     nextAction = 'PYSÄHDY. Älä aja migraatioita eikä deployaa. Liitä tämä raportti Claudelle.';
   } else if (!next) {
-    nextAction = 'Kaikki migraatiot 0009–0013 on ajettu. Seuraava: aallon J deploy/hyväksyntä, sitten Day 1 -hyväksyntä puhelimella.';
+    nextAction = 'Kaikki migraatiot 0009–0014 on ajettu. Seuraava: aallon K deploy/hyväksyntä, sitten Day 1 -hyväksyntä puhelimella.';
   } else {
     const wave = MIGRATION_WAVE[next];
     const accepted = 'teknisesti hyväksytty (AUTOMATED_TECHNICAL_ACCEPTANCE)';
     const before = { F: `aallot D ja E on deployattu ja E ${accepted}`, G: `aalto F on deployattu ja ${accepted}`,
       H: `aalto G on deployattu ja ${accepted}`, I: `aalto H on deployattu ja ${accepted}`,
-      J: `aalto I on deployattu ja ${accepted}, ja verify_0012 on ajettu` }[wave];
+      J: `aalto I on deployattu ja ${accepted}, ja verify_0012 on ajettu`,
+      K: `aalto J on deployattu ja ${accepted}, ja verify_0013 on ajettu` }[wave];
     nextAction = `Seuraava migraatio on ${next} (aalto ${wave}). Aja se VASTA kun ${before}. `
       + `Ensin supabase/preflight/preflight_${next}.sql (vain luku) -> 0 FAIL, sitten Panun hyväksyntä ("hyväksyn ${next}/${wave}"), sitten migraatio, sitten verify_${next}.sql.`;
   }
@@ -263,7 +282,7 @@ export function scoreInventory(rows) {
 // =====================================================================
 
 /**
- * Viimeisin täysin ajettu migraatio väliltä 0008–0013, tai null.
+ * Viimeisin täysin ajettu migraatio väliltä 0008–0014, tai null.
  */
 export function lastRunMigration(base) {
   const order = [DB_FLOOR.migration, ...TRAIN_MIGRATIONS];
@@ -302,8 +321,8 @@ function emptyAction(kind) {
  *   codeWave > kannan aalto              -> STOP / ROLLBACK_CODE (koodi edellä kantaa)
  *   codeWave ei sallittu                 -> STOP
  *   codeWave < kannan aalto              -> GO / DEPLOY seuraava aalto
- *   codeWave == kannan aalto < J         -> GO / MIGRATE seuraava migraatio
- *   J + 0013                             -> GO / DONE
+ *   codeWave == kannan aalto < K         -> GO / MIGRATE seuraava migraatio
+ *   K + 0014                             -> GO / DONE
  *
  * @param {object} rows parseInventory()-tulos
  * @param {object} [options]

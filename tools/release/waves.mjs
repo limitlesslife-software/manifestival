@@ -46,7 +46,9 @@ export const ALL_GATES = Object.freeze([
   'milestones',
   'inboxItems', 'reminders', 'notices', 'travelPlans', 'locationRules',
   'lifeAreas', 'weeklyCapacities', 'timeEntries', 'alignmentReviews',
-  'runningTimers', 'alignmentItemSettings'
+  'runningTimers', 'alignmentItemSettings',
+  'savedPlaces', 'placeAliases', 'calendarEvents', 'commuteObservations', 'lifeSettings',
+  'sleepLogs', 'habitPlans', 'habitEvents', 'exerciseSessions', 'wellbeingCheckins'
 ]);
 
 /**
@@ -348,6 +350,40 @@ export const WAVES = Object.freeze([
       + 'viitataan vain yhdistelmävierasavaimilla. Siksi oma aalto: I voi '
       + 'mennä tuotantoon ilman J:tä, mutta ei päinvastoin.',
     tables: Object.freeze(['running_timers', 'alignment_item_settings'])
+  }),
+  Object.freeze({
+    id: 'K',
+    cacheVersion: 'v24',
+    // Aktivoinnin metatiedot (ACT-12): ks. "AKTIVOINNIN METATIEDOT" alla.
+    migration: '0014',
+    migrationFile: 'supabase/migrations/0014_daily_life.sql',
+    // MATALA: vain uusia tyhjiä tauluja, ei yhtään olemassa olevan datan
+    // uudelleenkirjoitusta eikä ALTER TABLEa olemassa olevaan tauluun.
+    risk: 'low',
+    ownerGates: Object.freeze(['OWNER_PRODUCTION_MIGRATION_APPROVAL_REQUIRED', 'OWNER_DEPLOY_APPROVAL_REQUIRED']),
+    // Ei pakollista varmuuskopiota: migraatio ei kirjoita yhteenkään
+    // olemassa olevaan riviin, ja peruutus on taulujen pudotus.
+    backupRequired: false,
+    verifyPrerequisite: '0013',
+
+    // READY koskee käyttöliittymää, `blockedBy` kantaa. Ks. aalto F.
+    readiness: 'READY',
+    blockedBy: 'supabase/migrations/0014_daily_life.sql — EI AJETTU',
+    gates: Object.freeze(['savedPlaces', 'placeAliases', 'calendarEvents', 'commuteObservations',
+                          'lifeSettings', 'sleepLogs', 'habitPlans', 'habitEvents',
+                          'exerciseSessions', 'wellbeingCheckins']),
+    title: 'Arjen käyttöjärjestelmä: kalenteri, paikat, uni, herätys, tavat ja liikunta',
+    rationale:
+      'Kymmenen uutta taulua (0014) eikä yhtään muutosta olemassa olevaan '
+      + 'tauluun tai sarakeporttia. calendar_events ja exercise_sessions '
+      + 'viittaavat goals-tauluun yhdistelmävierasavaimella (aalto B on '
+      + 'tuotannossa); muut viitteet ovat aallon omien taulujen välisiä. '
+      + 'Viimeisenä, koska 0014 edellyttää 0013:n (verify_0013 = 0 '
+      + 'poikkeavaa): juna etenee järjestyksessä. Riski on matala — vain '
+      + 'uusia tyhjiä tauluja, joten tuore varmuuskopio ei ole pakollinen.',
+    tables: Object.freeze(['saved_places', 'place_aliases', 'calendar_events', 'commute_observations',
+                           'life_settings', 'sleep_logs', 'habit_plans', 'habit_events',
+                           'exercise_sessions', 'wellbeing_checkins'])
   })
 ]);
 
@@ -553,7 +589,7 @@ export const TRAIN_FLOOR_WAVE = 'C';
  */
 export const DB_FLOOR = Object.freeze({ migration: '0008', wave: 'E' });
 
-/** Junan migraatiot järjestyksessä ('0009' … '0013'). */
+/** Junan migraatiot järjestyksessä ('0009' … '0014'). */
 export const TRAIN_MIGRATIONS = Object.freeze(
   WAVES.filter(w => w.migration).map(w => w.migration));
 
@@ -564,7 +600,7 @@ export const MIGRATION_WAVE = Object.freeze(Object.fromEntries(
 /** Riskiluokan suomenkielinen nimi (GO/NO-GO-taulukon sanasto). */
 export const RISK_LABEL_FI = Object.freeze({ low: 'matala', medium: 'keski', high: 'KORKEA' });
 
-/** Seuraava aalto, tai null (J on viimeinen). BASE -> A. */
+/** Seuraava aalto, tai null (K on viimeinen). BASE -> A. */
 export function nextWaveId(id) {
   const index = waveIndex(id);
   if (index === null) return null;
@@ -580,7 +616,7 @@ export function previousWaveId(id) {
 
 /**
  * Minkä aallon koodia kanta tukee, kun `lastMigration` on viimeisin
- * täysin ajettu migraatio? 0008 -> E, 0009 -> F … 0013 -> J.
+ * täysin ajettu migraatio? 0008 -> E, 0009 -> F … 0014 -> K.
  */
 export function schemaWaveOfMigration(lastMigration) {
   if (lastMigration === DB_FLOOR.migration) return DB_FLOOR.wave;
