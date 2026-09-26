@@ -143,6 +143,25 @@ export async function cancelAll() {
 }
 
 /**
+ * Poista ilmoitusalueelta tämän sovelluksen jo toimitetut ilmoitukset.
+ *
+ * Vain natiivikuoressa: cancelAll() koskee vain odottavia, ja jo näytetty
+ * muistutus jäisi ilmoitusalueelle tehtävän otsikkoineen myös
+ * uloskirjautumisen ja tilin poiston jälkeen. Selaimessa sovellus ei
+ * ajasta eikä hallitse ilmoitusaluetta, joten vastaus on rehellisesti
+ * `{ ok: false }`. Ei koskaan heitä.
+ *
+ * @returns {Promise<{ok:boolean, reason:string}>}
+ */
+export async function removeAllDelivered() {
+  if (isNativeShell() && native.isAvailable()) return native.removeAllDelivered();
+  return {
+    ok: false,
+    reason: isNativeShell() ? NATIVE_PENDING : 'Selaimessa ei ole laitteelle toimitettuja muistutuksia'
+  };
+}
+
+/**
  * Lue lupatila laitteelta ja päivitä välimuisti.
  *
  * Natiivikuoressa lupatila on luettavissa vain asynkronisesti. Sovelluksen

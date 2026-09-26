@@ -16,7 +16,7 @@ import { normalizeTask } from '../src/domain/task.js';
 import { normalizeRoutine, RECURRENCE } from '../src/domain/routine.js';
 import * as capabilities from '../src/platform/capabilities.js';
 import { setUser, clearUser } from '../src/data/session.js';
-import { readCode } from './helpers/sources.mjs';
+import { jsFilesIn, readCode } from './helpers/sources.mjs';
 
 const USER_A = { id: 'aaaaaaaa-0000-0000-0000-000000000001', email: 'a@example.com' };
 const USER_B = { id: 'bbbbbbbb-0000-0000-0000-000000000002', email: 'b@example.com' };
@@ -512,7 +512,42 @@ test('KRIITTINEN: uloskirjautuminen perii laitteen muistutukset odottamatta niit
   const source = readCode('src/app/notifications.js');
   const helper = source.slice(source.indexOf('export async function cancelDeviceNotifications'));
   assert.match(helper, /cancelScheduledResync\(\)/, 'viivästetty uudelleenajastus ei saa herätä peruutuksen jälkeen');
-  assert.match(helper, /removeAllDelivered\(\)/, 'toimitetut ilmoitukset jäisivät ilmoitusalueelle');
+  assert.match(helper, /platformNotifications\.removeAllDelivered\(\)/,
+    'toimitetut ilmoitukset jäisivät ilmoitusalueelle (tai ne poistetaan alustasovittimen ohi)');
+});
+
+test('alustasovitin: toimitettujen poisto on natiivissa liitännäisen kutsu, selaimessa rehellinen ei', async () => {
+  const { notifications } = await import('../src/platform/index.js');
+
+  // Selain: ei laitteen ilmoitusaluetta, ei heitä.
+  const web = await notifications.removeAllDelivered();
+  assert.equal(web.ok, false);
+  assert.match(web.reason, /\S/);
+
+  // Natiivikuori ilman liitännäistä.
+  installNativeShell(null);
+  assert.equal((await notifications.removeAllDelivered()).ok, false);
+
+  // Natiivikuori liitännäisen kanssa.
+  const plugin = fakePlugin({ display: 'granted', delivered: [{ id: 3, title: 'Toimitettu' }] });
+  installNativeShell(plugin);
+  assert.deepEqual(await notifications.removeAllDelivered(), { ok: true, reason: '' });
+  assert.equal(plugin.calls.removeAllDelivered, 1);
+  assert.deepEqual((await plugin.getDeliveredNotifications()).notifications, []);
+});
+
+test('KRIITTINEN: sovelluskerros käyttää alustaa vain sovittimen (src/platform/index.js) kautta', () => {
+  // Suora natiivimoduulin tuonti ohittaa sovittimen alustavalinnan: selaimessa
+  // ja kuoressa ilman liitännäistä sen käytös ei ole sama kuin muiden kutsujen.
+  const bypass = [];
+  for (const dir of ['src/app', 'src/ui', 'src/ai', 'src/data', 'src/domain', 'src/lib']) {
+    for (const file of jsFilesIn(dir)) {
+      for (const match of readCode(file).matchAll(/from\s+['"]((?:\.\.\/)+platform\/[^'"]+)['"]/g)) {
+        if (!match[1].endsWith('/platform/index.js')) bypass.push(`${file}: ${match[1]}`);
+      }
+    }
+  }
+  assert.deepEqual(bypass, [], 'alustamoduuli tuotu sovittimen ohi');
 });
 
 test('sama istunto ajastaa muistutukset normaalisti', async () => {

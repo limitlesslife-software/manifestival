@@ -84,6 +84,8 @@ export const notifications = Object.freeze({
   showNow: notificationPlatform.showNow,
   schedule: notificationPlatform.schedule,
   cancel: notificationPlatform.cancelAll,
+  /** Poista jo toimitetut ilmoitukset ilmoitusalueelta (uloskirjautuminen, tilin poisto). */
+  removeAllDelivered: notificationPlatform.removeAllDelivered,
   describeSupport: notificationPlatform.describeSupport,
   /** Montako ilmoitusta on tällä hetkellä ajastettuna laitteelle. */
   pendingCount: notificationPlatform.pendingCount

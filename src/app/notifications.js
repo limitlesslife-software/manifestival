@@ -18,9 +18,7 @@
 import { fmtISO, todayMidnight, addDays } from '../lib/datetime.js';
 import { planRange, summarizeIntents, normalizePreferences } from '../domain/notification.js';
 import { expandRoutines } from '../domain/routine.js';
-import { notifications as platformNotifications } from '../platform/index.js';
-import { removeAllDelivered } from '../platform/nativeNotifications.js';
-import { PERMISSION } from '../platform/capabilities.js';
+import { notifications as platformNotifications, PERMISSION } from '../platform/index.js';
 import { getState, setNotificationPreferences } from './state.js';
 import { savePreferences, isPersistent } from '../data/notificationPrefsRepo.js';
 import { sessionSnapshot, isSameSession } from '../data/session.js';
@@ -296,7 +294,7 @@ export async function cancelDeviceNotifications({ timeoutMs = DEVICE_CANCEL_TIME
   const settle = task => Promise.resolve().then(task).catch(() => null);
   const work = Promise.all([
     settle(() => platformNotifications.cancel()),
-    settle(() => removeAllDelivered())
+    settle(() => platformNotifications.removeAllDelivered())
   ]).then(([cancelled, delivered]) => ({
     timedOut: false,
     cancelled: (cancelled && cancelled.cancelled) || 0,
