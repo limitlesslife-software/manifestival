@@ -14,8 +14,10 @@ import path from 'node:path';
 import { ROOT, read } from './helpers/sources.mjs';
 import {
   DB_FLOOR, MIGRATION_WAVE, RISK_LABEL_FI, TRAIN_FLOOR_WAVE, TRAIN_MIGRATIONS, WAVES,
-  classifyDeployedState, expectedMatrix, nextWaveId, previousWaveId, schemaWaveOfMigration, waveById
+  classifyDeployedState, expectedMatrix, nextWaveId, previousWaveId, schemaWaveOfMigration, waveById,
+  resolveWave, waveIndex
 } from '../tools/release/waves.mjs';
+import { TABLES } from '../src/data/schema.js';
 import { goNoGoTableRows } from '../tools/activation/push-lines.mjs';
 
 const GO_NOGO = 'docs/SUUNTA-ACTIVATION-GO-NOGO.md';
@@ -33,10 +35,25 @@ test('KRIITTINEN: jokaisella aallolla on aktivointimetatiedot', () => {
 test('KRIITTINEN: migraatiot 0009–0013 kuuluvat aalloille F–J järjestyksessä ja tiedostot ovat olemassa', () => {
   assert.deepEqual(TRAIN_MIGRATIONS, ['0009', '0010', '0011', '0012', '0013']);
   assert.deepEqual(MIGRATION_WAVE, { '0009': 'F', '0010': 'G', '0011': 'H', '0012': 'I', '0013': 'J' });
+  // AALTOCOMMITISSA aallon migraatio on commitin EDELLYTYS, ei avoin este:
+  // portit ovat auki (src/data/schema.js), blockedBy on null ja kommentti
+  // nimeää migraation ja sen varmistuksen. Aallot, joiden portit ovat
+  // kiinni, nimeävät migraation esteenään.
+  const auki = resolveWave(TABLES);
+  assert.ok(auki, 'porttimatriisi ei vastaa yhtäkään aaltoa');
+  const lahde = read('tools/release/waves.mjs');
   for (const wave of WAVES.filter(w => w.migration)) {
     assert.ok(fs.existsSync(path.join(ROOT, wave.migrationFile)), wave.migrationFile);
     assert.ok(wave.migrationFile.includes(`/${wave.migration}_`), wave.migrationFile);
-    assert.ok(wave.blockedBy.startsWith(wave.migrationFile), `${wave.id}.blockedBy ei nimeä migraatiota ${wave.migrationFile}`);
+    if (waveIndex(wave.id) <= waveIndex(auki)) {
+      assert.equal(wave.blockedBy, null, `${wave.id}: portit ovat auki, mutta este on yhä voimassa`);
+      assert.ok(lahde.includes(`// Este poistettu aaltocommitissa: ${path.posix.basename(wave.migrationFile)} on tämän commitin`),
+        `${wave.id}: kommentti ei nimeä migraatiota edellytykseksi`);
+      assert.ok(lahde.includes(`Deploy vasta kun verify_${wave.migration}.sql = 0 poikkeavaa.`),
+        `${wave.id}: kommentti ei nimeä varmistusta`);
+    } else {
+      assert.ok(wave.blockedBy.startsWith(wave.migrationFile), `${wave.id}.blockedBy ei nimeä migraatiota ${wave.migrationFile}`);
+    }
     assert.ok(wave.ownerGates.includes('OWNER_PRODUCTION_MIGRATION_APPROVAL_REQUIRED'), wave.id);
   }
   for (const wave of WAVES.filter(w => !w.migration)) assert.equal(wave.migrationFile, null, wave.id);

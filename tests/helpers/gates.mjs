@@ -55,7 +55,7 @@ export function openRepositories() {
  *   from(t).update(row).eq(...).eq(...)  -> { data, error }
  *   from(t).update(row).eq(...).select('id') -> { data: [rivi], error }
  *   from(t).delete().eq(...).eq(...)     -> { data, error }
- *   from(t).select('*').eq(...).maybeSingle()
+ *   from(t).select('*').eq(...).maybeSingle()   -> { data: null } ilman riviä
  *   from(t).upsert(row)
  *
  * PÄIVITYS PALAUTTAA LÄHETETYN RIVIN. Repositoriot ketjuttavat
@@ -74,7 +74,13 @@ export function fakeClient(response = { data: [], error: null }) {
       if (response.updateData !== undefined) return response.updateData;
       return [{ ...(entry.payload || {}) }];
     }
-    return response.data === undefined ? [] : response.data;
+    const data = response.data === undefined ? [] : response.data;
+    // maybeSingle() palauttaa oikealla asiakkaalla rivin tai null, ei
+    // taulukkoa. Tyhjä taulukko näytti olemassa olevalta riviltä, mikä
+    // paljastui vasta notificationPreferences-portin ollessa auki
+    // (tallennus lukee ensin palvelimen lähtötiedon).
+    if (entry.maybeSingle && Array.isArray(data) && data.length === 0) return null;
+    return data;
   };
 
   const chain = (entry) => {

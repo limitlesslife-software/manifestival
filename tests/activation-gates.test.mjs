@@ -442,25 +442,31 @@ test('KRIITTINEN: tilannedokumentti luettelee jokaisen migraation', () => {
       `tilannedokumentti ei mainitse migraatiota ${nimi}`);
   }
 
-  // KAHDEKSAN AJETTUA, YKSI AJAMATON.
+  // AALTOCOMMIT J: KAIKKI KOLMETOISTA AJETTUA.
   //
-  // Migraatio 0009 (Talous 2.0) on suunniteltu mutta EI AJETTU. Jos
-  // tämä luku nousisi yhdeksään ilman että migraatio on todella
-  // ajettu, dokumentti väittäisi tuotannosta jotain mitä siellä ei
-  // ole -- ja porttien avaaminen sen perusteella kaataisi jokaisen
-  // kirjoituksen.
-  assert.equal((doc.match(/\*\*AJETTU\*\*/g) || []).length, 8,
-    'tilannedokumentti ei merkitse kahdeksaa ajetuksi');
+  // 0001–0008 on ajettu ja hyväksytty tuotannossa. 0009–0013 ovat
+  // aaltojen F–J EDELLYTYKSIÄ: rivi saa sanoa AJETTU vain, jos se
+  // samalla nimeää edellytyksen ja oman varmistuksensa. Pelkkä "AJETTU"
+  // ilman ehtoa väittäisi tuotannosta jotain, mitä commitin
+  // valmisteluhetkellä ei ollut tapahtunut.
+  assert.equal((doc.match(/\*\*AJETTU\*\*/g) || []).length, 13,
+    'tilannedokumentti ei merkitse kolmeatoista ajetuksi');
 
-  for (const [numero, tiedosto] of [
-    ['0009', '0009_finance_2.sql'],
-    ['0010', '0010_goal_to_action.sql']
-  ]) {
-    const rivi = doc.split(NEWLINE).find(r => r.includes(tiedosto));
-    assert.ok(rivi, `tilannedokumentti ei mainitse migraatiota ${numero}`);
-    assert.match(rivi, /EI AJETTU/,
-      `migraatio ${numero} ei ole merkitty ajamattomaksi`);
+  const rivit = doc.split(NEWLINE);
+  for (const nimi of migraatiot) {
+    const numero = nimi.slice(0, 4);
+    const rivi = rivit.find(r => r.includes('|') && r.includes('`' + nimi + '`'));
+    assert.ok(rivi, `tilannedokumentin migraatiotaulukossa ei ole riviä ${nimi}`);
+    assert.match(rivi, /\*\*AJETTU\*\*/, `${nimi} ei ole merkitty ajetuksi`);
+    if (numero <= '0008') continue;
+    assert.match(rivi, new RegExp(`EDELLYTYS[^|]*\`verify_${numero}\\.sql\` 0 poikkeavaa`),
+      `${nimi}: AJETTU ilman edellytystä ja omaa varmistusta`);
   }
+
+  // Aallon J oma migraatio on TÄMÄN commitin edellytys.
+  const rivi0013 = rivit.find(r => r.includes('0013_alignment_reality.sql'));
+  assert.match(rivi0013, /EDELLYTYS: `verify_0013\.sql` 0 poikkeavaa ennen tämän commitin deployta/,
+    'migraation 0013 rivi ei nimeä deployn edellytystä');
 });
 
 test('KRIITTINEN: tilannedokumentin porttitaulukko vastaa koodia', () => {

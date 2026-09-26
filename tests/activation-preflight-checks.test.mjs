@@ -9,6 +9,7 @@ import { ROOT, read } from './helpers/sources.mjs';
 import { shaOf, stubGit } from './helpers/activation-history.mjs';
 import { BROWSER_PATHSPEC, blockingFailures, preflightVerdict, repoChecks } from '../tools/release/preflight-checks.mjs';
 import { createGit } from '../tools/release/git-layer.mjs';
+import { SQL_SOURCE_WAVE } from '../tools/activation/train-map.mjs';
 
 const lock = JSON.parse(read('docs/activation/release-train-c-j.json'));
 const realGit = createGit({ cwd: ROOT });
@@ -102,9 +103,15 @@ test('oikea historia (ehdollinen): lukitut F..J läpäisevät esitarkistuksen il
   }
 });
 
-test('oikea historia: HEAD (perustila) ja salaisuushaku läpäisevät', t => {
+test('oikea historia: HEAD (aalto J) ja salaisuushaku läpäisevät', t => {
   if (!realGit.revParse('HEAD')) { t.skip('git ei käytettävissä'); return; }
-  const failures = blockingFailures(repoChecks({ ref: 'HEAD', wave: 'BASE', gitShow: realGit.show, gitGrep: realGit.grep, sqlRef: lock.sqlSource.sha }));
+  // Aaltocommit J: HEAD ei ole perustila vaan aallon J deploykohde. Sen
+  // porttimatriisin, välimuistin ja sarakeporttien on vastattava aaltoa J.
+  // Aalto J on itse SQL-lähde (train-map SQL_SOURCE_WAVE): lukon sqlSource
+  // osoittaa edelliseen J-ehdokkaaseen, kunnes lukko kirjoitetaan
+  // uudelleen, joten 0013 ja sen esitarkistus ja varmistus luetaan HEADista.
+  assert.equal(SQL_SOURCE_WAVE, 'J');
+  const failures = blockingFailures(repoChecks({ ref: 'HEAD', wave: 'J', gitShow: realGit.show, gitGrep: realGit.grep, sqlRef: 'HEAD' }));
   assert.deepEqual(failures.map(r => `${r.name}: ${r.detail}`), []);
 });
 
