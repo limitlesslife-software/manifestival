@@ -353,6 +353,18 @@ test('käyttöliittymä puhdistaa paikallisen tilan ja kirjautuu ulos onnistunee
   assert.ok(ui.includes('complete'), 'epätäydellinen jälkitarkistus ei saa näyttää täydeltä onnistumiselta');
 });
 
+test('KRIITTINEN: poiston jälkeen laitteen muistutukset perutaan ja odotetaan ennen uloskirjautumista', () => {
+  // Ajastetut Android-muistutukset sisältävät poistetun tilin tehtävien
+  // otsikoita; ne elävät käyttöjärjestelmässä sovelluksesta riippumatta.
+  const ui = readCode('src/app/accountDeletion.js');
+  const succeededAt = ui.indexOf('FLOW_EVENT.SUCCEEDED');
+  const cancelAt = ui.indexOf('await cancelDeviceNotifications(');
+  const signOutAt = ui.indexOf('await signOutAndClean()');
+  assert.ok(cancelAt > -1, 'poisto ei peru laitteen muistutuksia (tai ei odota peruutusta)');
+  assert.ok(succeededAt < cancelAt, 'peruutus vasta onnistuneen poiston jälkeen');
+  assert.ok(cancelAt < signOutAt, 'peruutus ennen uloskirjautumista');
+});
+
 test('KRIITTINEN: selainkoodissa ei ole korotettua avainta eikä funktion koodia', () => {
   for (const file of ['src/app/accountDeletion.js', 'src/data/accountDeletionClient.js', 'src/domain/accountDeletionFlow.js', 'src/data/config.js']) {
     const text = read(file);

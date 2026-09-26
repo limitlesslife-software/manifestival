@@ -56,7 +56,7 @@ import {
 } from './assistantActions.js';
 import {
   refreshNotificationPermission, syncNotifications,
-  scheduleNotificationResync, cancelScheduledResync
+  scheduleNotificationResync, cancelScheduledResync, cancelDeviceNotifications
 } from './notifications.js';
 import { lifecycle, location as platformLocation } from '../platform/index.js';
 import { clearToasts } from '../ui/toast.js';
@@ -268,6 +268,10 @@ async function onSignedIn() {
 function onSignedOut() {
   signedIn = false;
   cancelScheduledResync();
+  // Laitteelle ajastetut ja jo toimitetut muistutukset (tehtävien otsikot)
+  // eivät saa laueta uloskirjautumisen jälkeen. Ei odoteta: uloskirjautuminen
+  // ei saa jäädä natiivikutsun varaan, ja funktio ei koskaan heitä.
+  cancelDeviceNotifications().catch(() => {});
   reconnect.cancelPending();
   lastNotifiableRefs = { tasks: null, routines: null, routineExceptions: null, travelPlans: null };
   closeForm();

@@ -19,6 +19,7 @@ import { fmtISO, todayMidnight, addDays } from '../lib/datetime.js';
 import { planRange, summarizeIntents, normalizePreferences } from '../domain/notification.js';
 import { expandRoutines } from '../domain/routine.js';
 import { notifications as platformNotifications } from '../platform/index.js';
+import { removeAllDelivered } from '../platform/nativeNotifications.js';
 import { PERMISSION } from '../platform/capabilities.js';
 import { getState, setNotificationPreferences } from './state.js';
 import { savePreferences, isPersistent } from '../data/notificationPrefsRepo.js';
@@ -268,6 +269,48 @@ export function cancelScheduledResync() {
   if (resyncTimer) {
     clearTimeout(resyncTimer);
     resyncTimer = null;
+  }
+}
+
+/** Kuinka kauan tilin poisto enintään odottaa laitteen muistutusten peruutusta. */
+export const DEVICE_CANCEL_TIMEOUT_MS = 3000;
+
+/**
+ * Peru laitteen muistutukset kokonaan: ajastetut JA ilmoitusalueelle jo
+ * toimitetut. Uloskirjautuminen ja tilin poisto.
+ *
+ * MIKSI: natiivikuoressa ajastetut ilmoitukset elävät käyttöjärjestelmässä
+ * sovelluksesta riippumatta, ja niissä on tehtävien otsikot. Ilman tätä
+ * edellisen käyttäjän -- tai poistetun tilin -- muistutukset laukeaisivat
+ * vielä uloskirjautumisen jälkeen. Seuraava kirjautuminen ajastaa omansa
+ * uudelleen (syncNotifications).
+ *
+ * EI KOSKAAN HEITÄ. Selaimessa tämä ei tee mitään (laiteajastusta ei ole).
+ * `timeoutMs` rajaa odotuksen: tilin poisto odottaa peruutusta ennen
+ * uloskirjautumista, mutta jumiin jäänyt natiivikutsu ei saa estää sitä.
+ *
+ * @returns {Promise<{timedOut:boolean, cancelled:number, deliveredRemoved:boolean}>}
+ */
+export async function cancelDeviceNotifications({ timeoutMs = DEVICE_CANCEL_TIMEOUT_MS } = {}) {
+  cancelScheduledResync();
+  const settle = task => Promise.resolve().then(task).catch(() => null);
+  const work = Promise.all([
+    settle(() => platformNotifications.cancel()),
+    settle(() => removeAllDelivered())
+  ]).then(([cancelled, delivered]) => ({
+    timedOut: false,
+    cancelled: (cancelled && cancelled.cancelled) || 0,
+    deliveredRemoved: Boolean(delivered && delivered.ok)
+  }));
+
+  let timer = null;
+  const timeout = new Promise(resolve => {
+    timer = setTimeout(() => resolve({ timedOut: true, cancelled: 0, deliveredRemoved: false }), timeoutMs);
+  });
+  try {
+    return await Promise.race([work, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 

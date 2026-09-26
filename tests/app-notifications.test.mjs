@@ -16,6 +16,7 @@ import { normalizeTask } from '../src/domain/task.js';
 import { normalizeRoutine, RECURRENCE } from '../src/domain/routine.js';
 import * as capabilities from '../src/platform/capabilities.js';
 import { setUser, clearUser } from '../src/data/session.js';
+import { readCode } from './helpers/sources.mjs';
 
 const USER_A = { id: 'aaaaaaaa-0000-0000-0000-000000000001', email: 'a@example.com' };
 const USER_B = { id: 'bbbbbbbb-0000-0000-0000-000000000002', email: 'b@example.com' };
@@ -32,9 +33,10 @@ const ORIGINAL_NOTIFICATION = globalThis.Notification;
 const orchestration = await import('../src/app/notifications.js');
 
 /** Muistissa elävä Local Notifications -kaksoiskappale. */
-function fakePlugin({ display = 'granted' } = {}) {
-  const calls = { schedule: [], cancel: 0, getPending: 0 };
+function fakePlugin({ display = 'granted', delivered = [] } = {}) {
+  const calls = { schedule: [], cancel: 0, getPending: 0, removeAllDelivered: 0 };
   let pending = [];
+  let shown = [...delivered];
   return {
     calls,
     async checkPermissions() { return { display }; },
@@ -42,7 +44,7 @@ function fakePlugin({ display = 'granted' } = {}) {
     async createChannel() {},
     async schedule(options) {
       calls.schedule.push(options);
-      pending = [...pending, ...options.notifications.map(n => ({ id: n.id }))];
+      pending = [...pending, ...options.notifications.map(n => ({ id: n.id, title: n.title }))];
     },
     async getPending() { calls.getPending++; return { notifications: pending }; },
     async cancel(options) {
@@ -50,6 +52,9 @@ function fakePlugin({ display = 'granted' } = {}) {
       const removed = new Set(options.notifications.map(n => n.id));
       pending = pending.filter(item => !removed.has(item.id));
     },
+    /** Ilmoitusalueelle jo toimitetut (näytetyt) ilmoitukset. */
+    async getDeliveredNotifications() { return { notifications: shown }; },
+    async removeAllDeliveredNotifications() { calls.removeAllDelivered++; shown = []; },
     /** Kaikki ajastetut ilmoitukset yhtenä listana. */
     allScheduled() {
       return calls.schedule.flatMap(call => call.notifications);
@@ -433,6 +438,81 @@ test('KRIITTINEN: uloskirjautuminen kesken synkronoinnin ei ajasta mitään', as
   assert.equal(plugin.allScheduled().length, 0,
     'muistutuksia ajastettiin uloskirjautumisen jälkeen');
   assert.equal(result.scheduled, 0);
+});
+
+// ----------------------- uloskirjautuminen ja tilin poisto (laitteen muistutukset)
+
+test('KRIITTINEN: laitteen peruutus tyhjentää ajastetut JA toimitetut muistutukset', async () => {
+  // Androidilla ajastettu ilmoitus elää käyttöjärjestelmässä sovelluksesta
+  // riippumatta. Ilman peruutusta poistetun tilin tehtävän otsikko
+  // laukeaisi ilmoitukseksi vielä poiston jälkeen.
+  setUser(USER_A);
+  setNotificationPreferences({ enabled: true, maxPerDay: 50 });
+  setTasks([normalizeTask({
+    id: 't1', title: 'Salainen tapaaminen', date: '2099-06-01', time: '10:00', completed: false
+  })]);
+  const plugin = fakePlugin({ display: 'granted', delivered: [{ id: 7, title: 'Eilinen muistutus' }] });
+  installNativeShell(plugin);
+  await orchestration.refreshNotificationPermission();
+  await orchestration.syncNotifications();
+  assert.ok((await plugin.getPending()).notifications.length > 0, 'esiehto: muistutus on ajastettu');
+
+  const result = await orchestration.cancelDeviceNotifications();
+
+  assert.deepEqual((await plugin.getPending()).notifications, [], 'ajastettu muistutus jäi laitteelle');
+  assert.deepEqual((await plugin.getDeliveredNotifications()).notifications, [],
+    'toimitettu muistutus jäi ilmoitusalueelle');
+  assert.equal(result.timedOut, false);
+  assert.equal(result.deliveredRemoved, true);
+  assert.ok(result.cancelled >= 1);
+});
+
+test('laitteen peruutus on rajattu: jumiin jäänyt natiivikutsu ei estä uloskirjautumista', async () => {
+  const plugin = fakePlugin({ display: 'granted' });
+  plugin.getPending = () => new Promise(() => {});
+  plugin.removeAllDeliveredNotifications = () => new Promise(() => {});
+  installNativeShell(plugin);
+
+  const started = Date.now();
+  const result = await orchestration.cancelDeviceNotifications({ timeoutMs: 30 });
+  assert.equal(result.timedOut, true);
+  assert.ok(Date.now() - started < 2000, 'odotus ei ollut rajattu');
+  assert.ok(orchestration.DEVICE_CANCEL_TIMEOUT_MS > 0 && orchestration.DEVICE_CANCEL_TIMEOUT_MS <= 5000);
+});
+
+test('laitteen peruutus ei koskaan heitä: selain, puuttuva liitännäinen, heittävä liitännäinen', async () => {
+  // Selain: ei laiteajastusta.
+  const web = await orchestration.cancelDeviceNotifications({ timeoutMs: 500 });
+  assert.equal(web.timedOut, false);
+  assert.equal(web.cancelled, 0);
+
+  // Natiivikuori ilman liitännäistä.
+  installNativeShell(null);
+  assert.equal((await orchestration.cancelDeviceNotifications({ timeoutMs: 500 })).timedOut, false);
+
+  // Liitännäinen heittää kaikesta.
+  const plugin = fakePlugin({ display: 'granted' });
+  plugin.getPending = async () => { throw new Error('native boom'); };
+  plugin.removeAllDeliveredNotifications = async () => { throw new Error('native boom'); };
+  installNativeShell(plugin);
+  const broken = await orchestration.cancelDeviceNotifications({ timeoutMs: 500 });
+  assert.equal(broken.timedOut, false);
+  assert.equal(broken.deliveredRemoved, false);
+});
+
+test('KRIITTINEN: uloskirjautuminen perii laitteen muistutukset odottamatta niitä', () => {
+  const main = readCode('src/app/main.js');
+  const start = main.indexOf('function onSignedOut');
+  const body = main.slice(start, main.indexOf('\n}', start));
+  assert.match(body, /cancelDeviceNotifications\(\)\.catch\(/,
+    'onSignedOut ei peru laitteelle ajastettuja muistutuksia');
+  assert.equal(/await\s+cancelDeviceNotifications/.test(body), false,
+    'uloskirjautuminen ei saa jäädä odottamaan natiivikutsua');
+
+  const source = readCode('src/app/notifications.js');
+  const helper = source.slice(source.indexOf('export async function cancelDeviceNotifications'));
+  assert.match(helper, /cancelScheduledResync\(\)/, 'viivästetty uudelleenajastus ei saa herätä peruutuksen jälkeen');
+  assert.match(helper, /removeAllDelivered\(\)/, 'toimitetut ilmoitukset jäisivät ilmoitusalueelle');
 });
 
 test('sama istunto ajastaa muistutukset normaalisti', async () => {

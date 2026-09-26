@@ -250,6 +250,28 @@ export async function cancelAll() {
   }
 }
 
+/**
+ * Poista ilmoitusalueelta tämän sovelluksen jo toimitetut ilmoitukset.
+ *
+ * cancelAll() koskee vain ODOTTAVIA. Jo näytetty muistutus jää
+ * ilmoitusalueelle tehtävän otsikkoineen, kunnes käyttäjä pyyhkii sen --
+ * myös uloskirjautumisen ja tilin poiston jälkeen. Siksi erillinen kutsu.
+ * Ei kutsuta tavallisessa uudelleenajastuksessa: se pyyhkisi käyttäjän
+ * lukemattomat muistutukset joka kerta.
+ */
+export async function removeAllDelivered() {
+  const api = plugin();
+  if (!api || typeof api.removeAllDeliveredNotifications !== 'function') {
+    return { ok: false, reason: 'Natiivi-ilmoitukset eivät ole käytettävissä' };
+  }
+  try {
+    await api.removeAllDeliveredNotifications();
+    return { ok: true, reason: '' };
+  } catch {
+    return { ok: false, reason: 'Toimitettujen ilmoitusten poisto ei onnistunut' };
+  }
+}
+
 /** Näytä ilmoitus heti. Käytetään testaukseen ja välittömiin viesteihin. */
 export async function showNow(intent, now = new Date()) {
   const api = plugin();

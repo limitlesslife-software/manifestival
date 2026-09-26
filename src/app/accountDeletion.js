@@ -33,6 +33,7 @@ import {
 import { currentAccessToken, queueAuthNote } from './auth.js';
 import { clearLocalUserData } from './actions.js';
 import { offline } from './offline.js';
+import { cancelDeviceNotifications } from './notifications.js';
 import { purgeTimerData } from '../data/timerStore.js';
 import { getUser } from '../data/session.js';
 
@@ -275,6 +276,10 @@ const submitDeletion = singleFlight(async () => {
   offline.purge(deleted && deleted.id ? deleted.id : null);
   // Ajastin ja lähettämättömät aikakirjaukset samoin.
   purgeTimerData(deleted && deleted.id ? deleted.id : null);
+  // Laitteelle ajastetut muistutukset sisältävät poistetun tilin tehtävien
+  // otsikoita. Ne perutaan ENNEN uloskirjautumista ja odotetaan (rajatusti,
+  // DEVICE_CANCEL_TIMEOUT_MS), jottei yksikään laukea poiston jälkeen.
+  await cancelDeviceNotifications();
   const complete = result.value.complete === true;
   queueAuthNote(complete
     ? 'Tilisi ja kaikki siihen liittynyt tieto on poistettu.'
