@@ -21,6 +21,8 @@ import { renderTravel } from './travel.js';
 import { ESTIMATE_PRESETS } from '../../domain/alignmentPolicy.js';
 import { formatMinutes } from '../../domain/lifeArea.js';
 import { estimateQueueCount, openEstimateQueue } from './direction.js';
+import { loadFailureHtml } from './loadNotice.js';
+import { showError } from '../../ui/toast.js';
 
 /**
  * Osion painike ja lohko.
@@ -66,6 +68,12 @@ export function populateSelects() {
 
 function renderList(container, tasks) {
   if (tasks.length === 0) {
+    // Epäonnistunut ensimmäinen lataus ei ole "ei yhtään tehtävää".
+    const notice = loadFailureHtml(getState(), ['tasks']);
+    if (notice) {
+      container.innerHTML = notice;
+      return;
+    }
     container.innerHTML = `
       <div class="empty-state">
         <div class="empty-title">Ei vielä yhtään tehtävää.</div>
@@ -190,7 +198,8 @@ function clearFieldErrors() {
   });
 }
 
-const FIELD_TO_INPUT = {
+/** Domainin virhekenttä -> lomakkeen kenttä (virheteksti: `<id>Error`). */
+export const FIELD_TO_INPUT = {
   title: 'afTitle',
   date: 'afDate',
   time: 'afTime',
@@ -200,14 +209,25 @@ const FIELD_TO_INPUT = {
   deadline: 'afDeadline'
 };
 
-function showFieldErrors(errors) {
+/**
+ * Näytä validointivirheet kenttien alla.
+ *
+ * YKSIKÄÄN VIRHE EI SAA KADOTA. Aiemmin kenttä, jota FIELD_TO_INPUT ei
+ * tuntenut, ohitettiin hiljaa (esim. uusi validointisääntö), ja Tallenna ei tehnyt mitään
+ * eikä kertonut miksi. Nyt kentätön virhe näytetään lomakkeen tasolla
+ * (ilmoituksena) -- domainin kiinteä teksti, ei koodia.
+ *
+ * @returns {string[]} virheet, joilla ei ollut kenttää (testejä varten)
+ */
+export function showFieldErrors(errors) {
   clearFieldErrors();
   let firstInvalid = null;
-  for (const [field, message] of Object.entries(errors)) {
+  const unplaced = [];
+  for (const [field, message] of Object.entries(errors || {})) {
     const inputId = FIELD_TO_INPUT[field];
-    if (!inputId) continue;
-    const input = maybe(inputId);
-    const errorNode = maybe(inputId + 'Error');
+    const input = inputId ? maybe(inputId) : null;
+    const errorNode = inputId ? maybe(inputId + 'Error') : null;
+    if (!errorNode) unplaced.push(message);
     if (input) {
       input.classList.add('invalid');
       input.setAttribute('aria-invalid', 'true');
@@ -218,7 +238,9 @@ function showFieldErrors(errors) {
       errorNode.style.display = 'block';
     }
   }
+  if (unplaced.length > 0) showError(unplaced.join(' '));
   if (firstInvalid) focus(firstInvalid);
+  return unplaced;
 }
 
 function readForm() {

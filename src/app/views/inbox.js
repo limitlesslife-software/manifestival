@@ -70,6 +70,17 @@ function setCaptureStatus(message) {
 }
 
 /**
+ * Tulkinnan epäonnistumisen syy tilariville. Syy on merkkijono; jos
+ * kutsuja antaa virheolion, näytetään vain sen käyttäjäviesti -- ei
+ * koskaan "AppError: …" eikä palvelimen tekstiä.
+ */
+export function captureReasonText(reason) {
+  if (typeof reason === 'string' && reason) return reason;
+  if (reason && typeof reason.userMessage === 'string' && reason.userMessage) return reason.userMessage;
+  return 'Tuntematon syy.';
+}
+
+/**
  * Kirjaa kentän sisältö.
  *
  * KENTTÄ TYHJENNETÄÄN VASTA KUN RIVI ON SYNTYNYT. Jos se tyhjennettäisiin
@@ -113,7 +124,7 @@ async function submitCapture(source = CAPTURE_SOURCE.TEXT) {
       setCaptureStatus('');
     } else {
       setCaptureStatus(result.reason
-        ? `Kirjattu saapuviin. Tulkinta ei onnistunut: ${result.reason}`
+        ? `Kirjattu saapuviin. Tulkinta ei onnistunut: ${captureReasonText(result.reason)}`
         : 'Kirjattu saapuviin.');
     }
   } finally {

@@ -233,7 +233,7 @@ test('F5 KRIITTINEN: ajastimen pysäytys ilman yhteyttä kertoo jonotuksesta', a
   assert.equal(stop.queued, true, 'pysäytys ei kertonut, että kirjaus odottaa yhteyttä');
   assert.equal(loadOutbox(USER.id).length, 1);
   assert.match(read('src/app/views/timeLog.js'),
-    /announceLogged\(result\.totalMinutes, \{ queued: Boolean\(result\.queued\) \}\)/);
+    /announceLogged\(result\.totalMinutes, \{ queued: Boolean\(result\.queued\), sessionOnly: Boolean\(result\.sessionOnly\) \}\)/);
 });
 
 // ================================================================ F6

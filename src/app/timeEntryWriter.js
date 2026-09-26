@@ -48,6 +48,7 @@
 //     kunnes kesken oleva lähetys on valmis.
 
 import { classifyError, ERROR_CLASS } from '../domain/offlineQueue.js';
+import { fail } from '../lib/result.js';
 
 /** Pysyvästi epäonnistuvan kirjauksen automaattiset yritykset ennen näkyvää "epäonnistui"-tilaa. */
 export const MAX_FLUSH_ATTEMPTS = 3;
@@ -152,11 +153,14 @@ export function createTimeEntryWriter({
     const outbox = loadOutbox(owner);
     const same = outbox.find(other => other.operationId === entry.operationId);
     if (same) return same.id === entry.id ? { ok: true } : { ok: true, duplicate: true };
-    if (outbox.length >= maxOutbox) return { ok: false };
-    const saved = Boolean(saveOutbox(owner, [...outbox, entry]).ok);
+    if (outbox.length >= maxOutbox) return { ok: false, full: true };
+    const written = saveOutbox(owner, [...outbox, entry]) || {};
+    const saved = Boolean(written.ok);
     // Palautettu (esim. epäonnistunut poisto): lähetys saa taas koskea siihen.
     if (saved) forgotten.delete(keyOf(owner, entry.operationId));
-    return { ok: saved };
+    // persistent:false = laitteen tallennus ei toimi (yksityinen tila,
+    // kiintiö): kirjaus on vain tämän istunnon muistissa (ERR-19).
+    return { ok: saved, persistent: written.persistent !== false };
   }
 
   /** Poista korista ne, joihin `matches` osuu. Palauttaa poistetut. */
@@ -195,10 +199,12 @@ export function createTimeEntryWriter({
     const owner = userId();
     const persistent = repo.isPersistent();
     let ahead = false;
+    let aheadQueued = null;
     if (persistent && owner) {
       const queued = queue(entry, owner);
       if (queued.duplicate) return { ok: true, duplicate: true };
       ahead = queued.ok;
+      aheadQueued = queued;
     }
     const mine = other => other.id === entry.id;
     const { result, entry: stored, detached } = await insertOnce(entry);
@@ -217,9 +223,19 @@ export function createTimeEntryWriter({
       return { ok: true, duplicate: true };
     }
     if (persistent && retryable(result.error)) {
-      const queued = ahead ? { ok: true } : queue(entry, owner);
+      const queued = ahead ? aheadQueued : queue(entry, owner);
       if (queued.duplicate) return { ok: true, duplicate: true };
-      if (queued.ok) return { ok: true, queued: true };
+      if (queued.ok) return { ok: true, queued: true, sessionOnly: queued.persistent === false };
+      if (queued.full) {
+        // Täysi kori: kirjausta EI jonotettu. Oma viesti yleisen
+        // "Tallennus ei onnistunut." sijaan -- käyttäjä voi tehdä jotain.
+        return {
+          ok: false,
+          error: fail(`Laitteella on jo ${maxOutbox} lähettämätöntä aikakirjausta, eikä tätä voitu tallentaa. `
+            + 'Yhdistä verkkoon, jotta ne lähtevät, ja kirjaa tämä sitten uudelleen.',
+          { code: 'timeOutbox.full', cause: result.error }).error
+        };
+      }
     }
     if (ahead) unqueue(owner, mine);
     return { ok: false, error: result.error };

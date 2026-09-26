@@ -81,7 +81,7 @@ module.exports = async (req, res) => {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
     console.error('parse: ANTHROPIC_API_KEY puuttuu palvelimen ymparistosta');
-    res.status(500).json({ error: 'Palvelu ei ole juuri nyt kaytettavissa' });
+    res.status(500).json({ error: 'Palvelu ei ole juuri nyt käytettävissä' });
     return;
   }
 
@@ -111,7 +111,7 @@ module.exports = async (req, res) => {
       let upstream = '';
       try { upstream = JSON.stringify(await response.json()); } catch { /* ohita */ }
       console.error('parse: Anthropic vastasi', response.status, upstream.slice(0, 500));
-      res.status(502).json({ error: 'Tulkinta epaonnistui' });
+      res.status(502).json({ error: 'Tulkinta epäonnistui' });
       return;
     }
 
@@ -124,7 +124,7 @@ module.exports = async (req, res) => {
     const isTimeout = e && e.name === 'AbortError';
     console.error('parse: kutsu epaonnistui', isTimeout ? 'timeout' : String(e && e.message));
     res.status(isTimeout ? 504 : 500).json({
-      error: isTimeout ? 'Tulkinta kesti liian kauan' : 'Tulkinta epaonnistui'
+      error: isTimeout ? 'Tulkinta kesti liian kauan' : 'Tulkinta epäonnistui'
     });
   } finally {
     clearTimeout(timer);

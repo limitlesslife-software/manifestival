@@ -31,8 +31,8 @@ import {
   FLOW, FLOW_EVENT, DELETION_PHRASE, initialFlowState, nextFlowState, confirmationStatus
 } from '../domain/accountDeletionFlow.js';
 import { currentAccessToken, queueAuthNote, persistQueuedAuthNote } from './auth.js';
-import { clearLocalUserData } from './actions.js';
-import { resetState } from './state.js';
+import { clearLocalUserData, incompleteExportCollections } from './actions.js';
+import { resetState, getState } from './state.js';
 import { offline } from './offline.js';
 import { cancelDeviceNotifications } from './notifications.js';
 import { purgeDeviceDataForUser, clearAuthSession } from '../data/deviceData.js';
@@ -208,6 +208,20 @@ function refreshSubmitState() {
   else hint.textContent = 'Vahvistus täsmää.';
 }
 
+/**
+ * Paikallisen esikatselun huomautus. Luvut tulevat tilasta: jos jonkin
+ * kokoelman haku epäonnistui, sen luku voi olla 0, vaikka kannassa on
+ * rivejä (ERR-03) -- ja käyttäjä päättää poistosta näiden lukujen varassa.
+ *
+ * @param {object} [state]
+ */
+export function localPreviewNote(state = getState()) {
+  const base = 'Laskettu tällä laitteella olevasta datasta.';
+  return incompleteExportCollections(state).length > 0
+    ? base + ' Osa tiedoista ei latautunut – luvut voivat olla vajaita.'
+    : base;
+}
+
 /** Esikatselu: palvelimelta jos käytössä (auktoritatiivinen), muuten paikallinen laskenta. */
 const openPreview = singleFlight(async () => {
   dispatch(FLOW_EVENT.OPEN_PREVIEW);
@@ -215,7 +229,7 @@ const openPreview = singleFlight(async () => {
 
   const local = dryRunDeletion(readData(), { endpointEnabled: endpointEnabled() });
   previewRows = local.collections.map(entry => ({ name: entry.name, count: entry.count }));
-  previewNote = 'Laskettu tällä laitteella olevasta datasta.';
+  previewNote = localPreviewNote();
 
   if (endpointEnabled()) {
     const result = await previewAccountDeletion({ accessToken: await currentAccessToken() });

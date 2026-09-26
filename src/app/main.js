@@ -74,6 +74,7 @@ import { offline, setSyncedHandler, isOnlineNow } from './offline.js';
 import { initOfflineStatus, refreshSyncStatus } from './offlineStatus.js';
 import { ensureSchemaCompatibility, SCHEMA_PROBE_TIMEOUT_MS } from '../data/schemaProbe.js';
 import { initSchemaStatus, setSchemaStatusActive } from './schemaStatus.js';
+import { installGlobalErrorHandlers, showStartupFailure } from './globalErrors.js';
 
 /** Kuinka usein NYT-tila päivitetään ilman sivun uudelleenlatausta. */
 const NOW_REFRESH_MS = 30000;
@@ -435,6 +436,10 @@ function onSignedOut() {
 }
 
 async function start() {
+  // 0. Odottamaton virhe (käsittelemätön lupaus, poikkeus) näkyy käyttäjälle
+  //    yhtenä kiinteänä viestinä eikä kaadu hiljaa (src/app/globalErrors.js).
+  installGlobalErrorHandlers();
+
   // 1. Tapahtumakytkennät tehdään TASAN KERRAN. Näkymien uudelleenrenderöinti
   //    korvaa vain listojen sisällön, joten kuuntelijat eivät kasaannu.
   initNavigation();
@@ -581,9 +586,6 @@ async function start() {
 }
 
 start().catch(error => {
-  logFailure('app.startup_failed', error, LOG_LEVEL.ERROR);
-  const splash = maybe('authSplash');
-  if (splash) {
-    splash.innerHTML = '<div class="startup-error">Sovelluksen käynnistys ei onnistunut. Päivitä sivu.</div>';
-  }
+  // Teksti riippuu verkosta ja alustasta: natiivissa ei ole sivua päivitettäväksi.
+  showStartupFailure(error, { splash: maybe('authSplash') });
 });

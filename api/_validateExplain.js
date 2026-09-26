@@ -110,16 +110,16 @@ function cleanSignal(input) {
  */
 function validateExplainRequest(body) {
   if (body === null || typeof body !== 'object' || Array.isArray(body)) {
-    return { ok: false, status: 400, error: 'Virheellinen pyynto' };
+    return { ok: false, status: 400, error: 'Virheellinen pyyntö' };
   }
   let approxBytes;
   try {
     approxBytes = Buffer.byteLength(JSON.stringify(body), 'utf8');
   } catch {
-    return { ok: false, status: 400, error: 'Virheellinen pyynto' };
+    return { ok: false, status: 400, error: 'Virheellinen pyyntö' };
   }
   if (approxBytes > MAX_BODY_BYTES) {
-    return { ok: false, status: 413, error: 'Pyynto on liian suuri' };
+    return { ok: false, status: 413, error: 'Pyyntö on liian suuri' };
   }
   const context = body.context;
   if (!context || typeof context !== 'object' || Array.isArray(context)) {
@@ -128,7 +128,7 @@ function validateExplainRequest(body) {
   const signals = (Array.isArray(context.signals) ? context.signals : [])
     .slice(0, MAX_SIGNALS).map(cleanSignal).filter(Boolean);
   if (signals.length === 0) {
-    return { ok: false, status: 400, error: 'Selitettavaa havaintoa ei ole' };
+    return { ok: false, status: 400, error: 'Selitettävää havaintoa ei ole' };
   }
   const value = {
     capacityHours: number(context.capacityHours, 168),

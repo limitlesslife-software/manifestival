@@ -170,7 +170,7 @@ module.exports = async (req, res) => {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
     console.error('extract: ANTHROPIC_API_KEY puuttuu palvelimen ymparistosta');
-    res.status(500).json({ error: 'Palvelu ei ole juuri nyt kaytettavissa' });
+    res.status(500).json({ error: 'Palvelu ei ole juuri nyt käytettävissä' });
     return;
   }
 
@@ -211,7 +211,7 @@ module.exports = async (req, res) => {
       // Lokitetaan vain tilakoodi, EI vastauksen runkoa: se voisi
       // sisältää kuvadataa.
       console.error('extract: Anthropic vastasi', response.status);
-      res.status(502).json({ error: 'Kuvan lukeminen epaonnistui' });
+      res.status(502).json({ error: 'Kuvan lukeminen epäonnistui' });
       return;
     }
 
@@ -229,7 +229,7 @@ module.exports = async (req, res) => {
     // tässä kuva. Lokitetaan vain se, kaatuiko kutsu aikakatkaisuun.
     console.error('extract: kutsu epaonnistui', isTimeout ? 'timeout' : 'virhe');
     res.status(isTimeout ? 504 : 500).json({
-      error: isTimeout ? 'Kuvan lukeminen kesti liian kauan' : 'Kuvan lukeminen epaonnistui'
+      error: isTimeout ? 'Kuvan lukeminen kesti liian kauan' : 'Kuvan lukeminen epäonnistui'
     });
   } finally {
     clearTimeout(timer);

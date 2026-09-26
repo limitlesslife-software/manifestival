@@ -165,7 +165,7 @@ module.exports = async (req, res) => {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
     console.error('capture: ANTHROPIC_API_KEY puuttuu palvelimen ymparistosta');
-    res.status(500).json({ error: 'Palvelu ei ole juuri nyt kaytettavissa' });
+    res.status(500).json({ error: 'Palvelu ei ole juuri nyt käytettävissä' });
     return;
   }
 
@@ -193,7 +193,7 @@ module.exports = async (req, res) => {
       // Lokitetaan vain tilakoodi. Anthropicin virhevastaus voi sisältää
       // osan syötteestä, ja syöte on tässä käyttäjän oma muistiinpano.
       console.error('capture: Anthropic vastasi', response.status);
-      res.status(502).json({ error: 'Tulkinta epaonnistui' });
+      res.status(502).json({ error: 'Tulkinta epäonnistui' });
       return;
     }
 
@@ -207,7 +207,7 @@ module.exports = async (req, res) => {
     // pyyntörungon, ja pyyntörunko sisältää käyttäjän muistiinpanon.
     console.error('capture: kutsu epaonnistui', isTimeout ? 'timeout' : 'virhe');
     res.status(isTimeout ? 504 : 500).json({
-      error: isTimeout ? 'Tulkinta kesti liian kauan' : 'Tulkinta epaonnistui'
+      error: isTimeout ? 'Tulkinta kesti liian kauan' : 'Tulkinta epäonnistui'
     });
   } finally {
     clearTimeout(timer);

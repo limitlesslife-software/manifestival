@@ -8,13 +8,14 @@
 
 import { getClient } from '../data/client.js';
 import { setUser, clearUser, getUser } from '../data/session.js';
-import { el, setBusy, singleFlight } from '../ui/dom.js';
+import { el, maybe, setBusy, singleFlight } from '../ui/dom.js';
 import { confirmAction } from '../ui/confirm.js';
 import { offline } from './offline.js';
 // Suoraan tallennuksesta eikä alignment.js:n kautta: se importoi tämän
 // moduulin (currentAccessToken), ja sykli olisi arkkitehtuurivirhe.
 import { loadOutbox, loadTimer } from '../data/timerStore.js';
 import { saveAuthNote, takeAuthNote } from '../data/deviceData.js';
+import { showError as showToastError } from '../ui/toast.js';
 import { logFailure, LOG_LEVEL } from '../lib/logger.js';
 
 export const MIN_PASSWORD_LENGTH = 8;
@@ -171,13 +172,103 @@ const signOut = singleFlight(async () => {
   const button = el('signoutBtn');
   setBusy(button, true, 'Kirjaudutaan ulos…');
   try {
-    await getClient().auth.signOut();
+    const outcome = await performSignOut(getClient());
+    if (!outcome.ok) showToastError(SIGNOUT_FAILED_MESSAGE);
   } catch (error) {
+    // performSignOut ei heitä; varmistus odottamattomalle poikkeukselle.
     logFailure('auth.sign_out_failed', error, LOG_LEVEL.ERROR);
+    showToastError(SIGNOUT_FAILED_MESSAGE);
   } finally {
     setBusy(button, false);
   }
 });
+
+/** Palvelinta ei tavoitettu: istunto purettiin vain tältä laitteelta (ERR-11). */
+export const SIGNOUT_LOCAL_NOTE = 'Ei yhteyttä: kirjauduit ulos tältä laitteelta. Muut laitteet pysyvät kirjautuneina.';
+/** Palvelin vastasi virheellä, mutta kirjasto purki istunnon tältä laitteelta. */
+export const SIGNOUT_UNCONFIRMED_NOTE = 'Kirjauduit ulos tältä laitteelta. Palvelin ei vahvistanut uloskirjautumista, '
+  + 'joten muut laitteet voivat pysyä kirjautuneina.';
+export const SIGNOUT_FAILED_MESSAGE = 'Uloskirjautuminen ei onnistunut. Yritä uudelleen.';
+
+/** Verkkovirhe: palvelinta ei tavoitettu (laite offline tai haku katkesi). */
+function isSignOutNetworkError(error, offline) {
+  if (offline) return true;
+  const name = String((error && error.name) || '');
+  const message = String((error && error.message) || '');
+  return name === 'AuthRetryableFetchError' || /failed to fetch|network|load failed/i.test(message);
+}
+
+/** Onko laitteella yhä istunto? Tuntematon tila = kyllä: uloskirjautumista ei väitetä. */
+async function hasSession(client) {
+  try {
+    const { data } = await client.auth.getSession();
+    return Boolean(data && data.session);
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Kirjautumisportin viesti: heti, jos portti on jo auki (SIGNED_OUT ehti
+ * avata sen uloskirjautumisen aikana), muuten seuraavalla avauksella.
+ */
+function announceAuthNote(message) {
+  const gate = maybe('authGate');
+  if (gate && gate.classList.contains('open')) showNote(message);
+  else queueAuthNote(message);
+}
+
+/**
+ * Kirjaa ulos.
+ *
+ * SUPABASE-JS EI HEITÄ, VAAN PALAUTTAA { error }. Aiemmin palautettu virhe
+ * ohitettiin: offline-tilassa (AuthRetryableFetchError) painike palasi
+ * ennalleen eikä käyttäjälle sanottu mitään, vaikka palvelin ei saanut
+ * tietoa uloskirjautumisesta.
+ *
+ *   verkkovirhe  -> istunto puretaan tältä laitteelta, ja kirjautumisportti
+ *                   kertoo, että muut laitteet pysyvät kirjautuneina
+ *   muu virhe    -> istunto jäi: { ok: false }, kutsuja näyttää virheen;
+ *                   istunto purkautui: portti kertoo, ettei palvelin vahvistanut
+ *
+ * Vendoroitu supabase-js (2.117) purkaa paikallisen istunnon palvelimen
+ * virheestä huolimatta; vanhempi versio ei. Siksi lopputulos luetaan
+ * istunnosta eikä virheestä, ja verkkovirheessä puretaan tarvittaessa
+ * paikallisesti (scope: 'local').
+ *
+ * Lokiin menee vain virheen nimi, koodi ja HTTP-tila (logFailure).
+ *
+ * @param {object} client Supabase-asiakas
+ * @param {{offline?: boolean, announce?: (message: string) => void}} [context]
+ * @returns {Promise<{ok: boolean, local?: boolean}>}
+ */
+export async function performSignOut(client, {
+  offline = typeof navigator !== 'undefined' && navigator.onLine === false,
+  announce = announceAuthNote
+} = {}) {
+  let error = null;
+  try {
+    const result = await client.auth.signOut();
+    error = (result && result.error) || null;
+  } catch (thrown) {
+    error = thrown || new Error('signOut');
+  }
+  if (!error) return { ok: true };
+  logFailure('auth.signout_failed', error, LOG_LEVEL.WARN);
+  const network = isSignOutNetworkError(error, offline);
+
+  if (network && await hasSession(client)) {
+    try {
+      const local = await client.auth.signOut({ scope: 'local' });
+      if (local && local.error) logFailure('auth.signout_local_failed', local.error);
+    } catch (thrown) {
+      logFailure('auth.signout_local_failed', thrown);
+    }
+  }
+  if (await hasSession(client)) return { ok: false };
+  announce(network ? SIGNOUT_LOCAL_NOTE : SIGNOUT_UNCONFIRMED_NOTE);
+  return { ok: true, local: true };
+}
 
 /**
  * Viesti, joka näytetään seuraavan kerran kun kirjautumisportti avautuu.

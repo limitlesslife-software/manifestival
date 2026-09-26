@@ -24,7 +24,7 @@ import {
   inboxRepo, remindersRepo, noticesRepo, travelPlansRepo, locationRulesRepo,
   lifeAreasRepo, weeklyCapacitiesRepo, timeEntriesRepo, alignmentReviewsRepo,
   alignmentItemSettingsRepo, runningTimersRepo,
-  volatileCollections, clearAllCollections
+  clearAllCollections
 } from '../data/collectionsRepo.js';
 import { newTaskId } from '../lib/rows.js';
 import { offline, isOnlineNow } from './offline.js';
@@ -96,6 +96,8 @@ import { sessionSnapshot, isSameSession, getUser } from '../data/session.js';
 import { showError, success, notify } from '../ui/toast.js';
 import { confirmDelete, confirmAction } from '../ui/confirm.js';
 import { logError } from '../lib/result.js';
+import { loadSummaryMessage } from '../lib/errorMessages.js';
+import { EXPORTED_COLLECTIONS } from '../domain/dataExport.js';
 
 /** Kertaalleen näytettävä huomautus kentistä, jotka eivät vielä tallennu. */
 let volatileWarningShown = false;
@@ -119,14 +121,25 @@ function warnAboutVolatileFields(task) {
 
 // ------------------------------------------------------------------ lataus
 
-/** Kertaalleen näytettävä huomautus tiedoista, jotka eivät vielä säily. */
-let volatileCollectionWarningShown = false;
+/** Taulut, joiden "säilyy vain tämän istunnon" -huomautus on jo näytetty. */
+const volatileWarningsShown = new Set();
 
-function warnAboutVolatileCollections() {
-  if (volatileCollectionWarningShown) return;
-  if (volatileCollections().length === 0) return;
-  volatileCollectionWarningShown = true;
-  notify('Rutiinit, tavoitteet ja hyvinvointimerkinnät säilyvät toistaiseksi vain tämän istunnon ajan.', 7000);
+/**
+ * Kertaalleen näytettävä huomautus: JUURI TÄMÄ tieto ei vielä säily.
+ *
+ * Aiemmin yksi kiinteä teksti ("Rutiinit, tavoitteet ja
+ * hyvinvointimerkinnät ...") näytettiin, jos MIKÄ TAHANSA repositorio oli
+ * muistissa. Tuotannossa tavoitteet tallentuvat mutta laskut eivät, joten
+ * ensimmäinen tavoite väitti virheellisesti, ettei tavoitteita tallenneta.
+ * Nyt huomautus koskee vain kirjoitettavaa repositoriota ja nimeää sen.
+ *
+ * @param {{table: string, isPersistent: () => boolean}} repo
+ * @param {string} label monikko, esim. 'Tavoitteet'
+ */
+function warnIfVolatile(repo, label) {
+  if (!repo || repo.isPersistent() || volatileWarningsShown.has(repo.table)) return;
+  volatileWarningsShown.add(repo.table);
+  notify(`${label} säilyvät toistaiseksi vain tämän istunnon ajan.`, 7000);
 }
 
 /**
@@ -243,7 +256,6 @@ function applyLoadedData(loaded, timerSeq) {
     // Epäonnistunut haku (esim. offline-kylmäkäynnistys): jonossa odottavat
     // näkyvät silti (F6). overlay ei monista jo tilassa olevaa.
     if (offline.pendingIds().size > 0) setTasks(offline.overlay(getState().tasks));
-    showError(tasksResult.error);
   }
 
   if (profileResult.ok) {
@@ -251,7 +263,7 @@ function applyLoadedData(loaded, timerSeq) {
     setDomainLoadStatus('profile', true);
   } else {
     setDomainLoadStatus('profile', false, profileResult.error);
-    showError(profileResult.error);
+    logError(profileResult.error);
   }
 
   // Muistutusasetukset: alkutila on jo hiljainen oletus (normalizePreferences({})),
@@ -304,11 +316,17 @@ function applyLoadedData(loaded, timerSeq) {
   // dataLoadStatus-kenttään, mutta eivät yksitellen ilmoituksena — kaksi
   // tusinaa toastia yhdellä verkkokatkolla olisi pahempi kuin hyödyllinen.
   // Yksi kooste riittää, ja se kertoo suoraan, ettei näkyvä tieto katoa.
-  if (collectionsOk.includes(false)) {
+  //
+  // YKSI ILMOITUS MYÖS TEHTÄVISTÄ JA PROFIILISTA (ERR-17): niillä oli omat
+  // ilmoituksensa, ja yksi verkkokatko tuotti kolme pinottua. Teksti
+  // valitaan yleisimmän syyn mukaan (loadFailureMessage).
+  if (!tasksResult.ok || !profileResult.ok || collectionsOk.includes(false)) {
     // Sama viesti pätee myös ensimmäiseen lataukseen: tieto on tallessa
     // kannassa, vaikka sitä ei nyt näy (aiempaa "pysyy näkyvissä" ei ole).
-    // Kokoelmat ovat indekseissä 2.. (0 = tehtävät, 1 = profiili).
-    notify(loadFailureMessage(loaded.slice(2).filter(result => result && !result.ok)), 6000);
+    // Tehtävät ovat ydintietoa: niiden puuttuminen on virhe, muu tiedote.
+    const summary = loadFailureMessage(loaded.filter(result => result && !result.ok));
+    if (!tasksResult.ok) showError(summary);
+    else notify(summary, 6000);
   }
 
   return { tasksOk: tasksResult.ok, profileOk: profileResult.ok, discarded: false };
@@ -325,11 +343,27 @@ function applyLoadedData(loaded, timerSeq) {
  * @param {Array<{ok:false, error:object}>} failures
  */
 export function loadFailureMessage(failures = []) {
-  const schemaOnly = failures.length > 0
-    && failures.every(result => classifyError(result && result.error) === ERROR_CLASS.SCHEMA);
-  return schemaOnly
-    ? 'Osa tiedoista ei ole vielä käytettävissä, koska palvelua päivitetään. Mitään ei kadonnut.'
-    : 'Osa tiedoista ei latautunut. Mitään ei kadonnut — päivitä, kun yhteys toimii.';
+  // Yleisin syy valitsee tekstin (src/lib/errorMessages.js): istunto ->
+  // kirjaudu uudelleen, skeema -> palvelua päivitetään, palvelin ei vastaa
+  // -> yritä hetken päästä, verkko -> päivitä, kun yhteys toimii.
+  const offline = !isOnlineNow();
+  return loadSummaryMessage(failures.map(result => classifyError(result && result.error, { offline })));
+}
+
+/**
+ * Viennin kokoelmat, joiden viimeisin haku epäonnistui (ERR-03).
+ *
+ * Vienti ja poiston esikatselu lukevat tilasta. Epäonnistunut haku jättää
+ * kokoelman tyhjäksi (ensimmäinen lataus) tai vanhaksi, ja vienti olisi
+ * kirjoittanut sen tyhjänä ja sanonut "Tiedosto ladattu.". Nimet ovat
+ * EXPORTED_COLLECTIONS-muodossa (samat kuin tilan avaimet).
+ *
+ * @param {object} [state]
+ * @returns {string[]}
+ */
+export function incompleteExportCollections(state = getState()) {
+  const status = (state && state.dataLoadStatus) || {};
+  return EXPORTED_COLLECTIONS.filter(name => status[name] && status[name].ok === false);
 }
 
 /**
@@ -633,7 +667,7 @@ export async function createRoutine(input) {
   if (!valid) return { ok: false, errors };
 
   addRoutineToState(routine);
-  warnAboutVolatileCollections();
+  warnIfVolatile(routinesRepo, 'Rutiinit');
 
   const result = await routinesRepo.insert(routine);
   if (!result.ok) {
@@ -751,7 +785,7 @@ export async function createGoal(input) {
   if (!valid) return { ok: false, errors };
 
   addGoalToState(goal);
-  warnAboutVolatileCollections();
+  warnIfVolatile(goalsRepo, 'Tavoitteet');
 
   const result = await goalsRepo.insert(goal);
   if (!result.ok) {
@@ -837,7 +871,7 @@ export async function createProject(input) {
   if (!valid) return { ok: false, errors };
 
   addProjectToState(project);
-  warnAboutVolatileCollections();
+  warnIfVolatile(projectsRepo, 'Projektit');
 
   const result = await projectsRepo.insert(project);
   if (!result.ok) {
@@ -920,7 +954,7 @@ export async function createRecurringExpense(input) {
   if (!valid) return { ok: false, errors };
 
   addRecurringExpenseToState(expense);
-  warnAboutVolatileCollections();
+  warnIfVolatile(recurringExpensesRepo, 'Toistuvat menot');
 
   const result = await recurringExpensesRepo.insert(expense);
   if (!result.ok) {
@@ -996,7 +1030,7 @@ export async function createBill(input) {
   if (!valid) return { ok: false, errors };
 
   addBillToState(bill);
-  warnAboutVolatileCollections();
+  warnIfVolatile(billsRepo, 'Laskut');
 
   const result = await billsRepo.insert(bill);
   if (!result.ok) {
@@ -1082,7 +1116,7 @@ export async function createSavingsGoal(input) {
   if (!valid) return { ok: false, errors };
 
   addSavingsGoalToState(goal);
-  warnAboutVolatileCollections();
+  warnIfVolatile(savingsGoalsRepo, 'Säästötavoitteet');
 
   const result = await savingsGoalsRepo.insert(goal);
   if (!result.ok) {
@@ -1156,7 +1190,7 @@ export async function createTransaction(input) {
   if (!valid) return { ok: false, errors };
 
   addTransactionToState(transaction);
-  warnAboutVolatileCollections();
+  warnIfVolatile(transactionsRepo, 'Tapahtumat');
 
   const result = await transactionsRepo.insert(transaction);
   if (!result.ok) {
@@ -1314,7 +1348,7 @@ export async function createInvestment(input) {
   if (!valid) return { ok: false, errors };
 
   addInvestmentToState(holding);
-  warnAboutVolatileCollections();
+  warnIfVolatile(investmentsRepo, 'Sijoitukset');
 
   const result = await investmentsRepo.insert(holding);
   if (!result.ok) {
@@ -1511,7 +1545,7 @@ export async function saveWellbeingEntry(input) {
   const previous = getState().wellbeing;
 
   upsertWellbeingEntry(entry);
-  warnAboutVolatileCollections();
+  warnIfVolatile(wellbeingRepo, 'Hyvinvointimerkinnät');
 
   const result = existing
     ? await wellbeingRepo.update(entry)
@@ -1568,6 +1602,8 @@ export async function saveProfile(profile) {
 export function clearLocalUserData() {
   clearAllCollections();
   clearNotificationPreferences();
+  // Seuraava käyttäjä saa omat huomautuksensa.
+  volatileWarningsShown.clear();
 }
 
 // ----------------------------------------------------- välitavoitteet
@@ -1597,7 +1633,7 @@ export async function createMilestone(input) {
   if (!valid) return { ok: false, errors };
 
   addMilestoneToState(milestone);
-  warnAboutVolatileCollections();
+  warnIfVolatile(milestonesRepo, 'Välitavoitteet');
 
   const result = await milestonesRepo.insert(milestone);
   if (!result.ok) {

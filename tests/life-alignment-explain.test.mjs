@@ -215,7 +215,7 @@ test('VARAPOLKU: verkkovirhe, palvelinvirhe, aikakatkaisu, ei tokenia -> determi
   const cases = [
     { accessToken: null, fetchImpl: async () => response(200, { text: 'x'.repeat(50) }) },
     { accessToken: 't', fetchImpl: async () => { throw new TypeError('Failed to fetch'); } },
-    { accessToken: 't', fetchImpl: async () => response(502, { error: 'Selitys epaonnistui' }) },
+    { accessToken: 't', fetchImpl: async () => response(502, { error: 'Selitys epäonnistui' }) },
     { accessToken: 't', fetchImpl: async () => response(503, { error: 'Palvelu ei ole käytössä' }) },
     { accessToken: 't', fetchImpl: async () => response(200, {}) },
     { accessToken: 't', fetchImpl: async () => { const e = new Error('abort'); e.name = 'AbortError'; throw e; } }

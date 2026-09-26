@@ -175,7 +175,7 @@ module.exports = async (req, res) => {
   const rate = checkRateLimit(`explain:${auth.userId}`, { limit: RATE_LIMIT });
   if (!rate.allowed) {
     res.setHeader('Retry-After', String(rate.retryAfterSeconds));
-    res.status(429).json({ error: 'Liian monta pyyntoa. Odota hetki.' });
+    res.status(429).json({ error: 'Liian monta pyyntöä. Odota hetki.' });
     return;
   }
 
@@ -189,7 +189,7 @@ module.exports = async (req, res) => {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
     console.error('explain: ANTHROPIC_API_KEY puuttuu palvelimen ymparistosta');
-    res.status(500).json({ error: 'Palvelu ei ole juuri nyt kaytettavissa' });
+    res.status(500).json({ error: 'Palvelu ei ole juuri nyt käytettävissä' });
     return;
   }
 
@@ -211,7 +211,7 @@ module.exports = async (req, res) => {
     if (!response.ok) {
       // Vain tilakoodi lokiin: virhevastaus voi sisältää osan syötteestä.
       console.error('explain: Anthropic vastasi', response.status);
-      res.status(502).json({ error: 'Selitys epaonnistui' });
+      res.status(502).json({ error: 'Selitys epäonnistui' });
       return;
     }
 
@@ -222,14 +222,14 @@ module.exports = async (req, res) => {
     const rejection = rejectionOf(data, answer);
     if (rejection) {
       console.error('explain: vastaus hylattiin', rejection);
-      res.status(502).json({ error: 'Selitys epaonnistui' });
+      res.status(502).json({ error: 'Selitys epäonnistui' });
       return;
     }
     res.status(200).json({ text: answer });
   } catch (e) {
     const isTimeout = e && e.name === 'AbortError';
     console.error('explain: kutsu epaonnistui', isTimeout ? 'timeout' : 'virhe');
-    res.status(isTimeout ? 504 : 500).json({ error: 'Selitys epaonnistui' });
+    res.status(isTimeout ? 504 : 500).json({ error: 'Selitys epäonnistui' });
   } finally {
     clearTimeout(timer);
   }

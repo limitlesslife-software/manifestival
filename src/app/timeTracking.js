@@ -353,6 +353,7 @@ async function finishStop(timer, { now, overrideMinutes, owner, session, slot })
 
   const saved = [];
   let queued = false;
+  let sessionOnly = false;
   for (const entry of result.entries) {
     if ((plan.loggedOperationIds || []).includes(entry.operationId)) continue;
     if (!isSameSession(session)) return { ok: false, code: 'timer.session_changed', entries: saved };
@@ -366,6 +367,7 @@ async function finishStop(timer, { now, overrideMinutes, owner, session, slot })
     }
     if (one.entry) saved.push(one.entry);
     if (one.queued) queued = true;
+    if (one.sessionOnly) sessionOnly = true;
     // Kirjattu osa muistiin omistajan laitteelle (ei tilaan, jos käyttäjä vaihtui).
     plan = { ...plan, loggedOperationIds: [...(plan.loggedOperationIds || []), entry.operationId] };
     if (slot.savePlan(plan, owner).gone) return settledElsewhere(saved);
@@ -373,7 +375,7 @@ async function finishStop(timer, { now, overrideMinutes, owner, session, slot })
   if (!isSameSession(session)) return { ok: false, code: 'timer.session_changed', entries: saved };
   await slot.release(timer, owner);
   logEvent('alignment.timer_stopped', { minutes: result.totalMinutes, parts: result.entries.length });
-  return { ok: true, entries: saved, totalMinutes: result.totalMinutes, queued };
+  return { ok: true, entries: saved, totalMinutes: result.totalMinutes, queued, sessionOnly };
 }
 
 /**
@@ -609,8 +611,17 @@ export function timerDisplay(now = nowMs()) {
   return { timer, status, target: targetOfTimer(timer), label: describeTarget(targetOfTimer(timer)) };
 }
 
-/** Ilmoitus kirjauksesta (yhteinen sanamuoto). */
-export function announceLogged(minutes, { queued = false } = {}) {
+/**
+ * Ilmoitus kirjauksesta (yhteinen sanamuoto). `sessionOnly`: laite ei voinut
+ * tallentaa jonotettua kirjausta (ERR-19), joten se katoaa, jos sovellus
+ * suljetaan ennen kuin yhteys palaa -- ja se sanotaan.
+ */
+export function announceLogged(minutes, { queued = false, sessionOnly = false } = {}) {
+  if (queued && sessionOnly) {
+    notify(`${formatMinutes(minutes)} kirjattu tälle istunnolle – laite ei voi tallentaa sitä `
+      + 'ennen kuin yhteys palaa. Älä sulje sovellusta.', 8000);
+    return;
+  }
   notify(queued
     ? `${formatMinutes(minutes)} kirjattu. Tallentuu, kun yhteys palaa.`
     : `${formatMinutes(minutes)} kirjattu.`, 3000);

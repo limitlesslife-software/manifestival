@@ -305,7 +305,7 @@ test('kesken jäänyt, kieltäytyvä, tyhjä tai liian pitkä vastaus -> 502, ei
       mockNetwork({ anthropic: () => response });
       const res = await call(post());
       assert.equal(res.statusCode, 502);
-      assert.deepEqual(res.body, { error: 'Selitys epaonnistui' });
+      assert.deepEqual(res.body, { error: 'Selitys epäonnistui' });
     }
   } finally {
     console.error = originalError;
@@ -373,7 +373,7 @@ test('avain puuttuu -> 500 yleisellä viestillä, mallia ei kutsuta', async () =
   try {
     const res = await call(post());
     assert.equal(res.statusCode, 500);
-    assert.deepEqual(res.body, { error: 'Palvelu ei ole juuri nyt kaytettavissa' });
+    assert.deepEqual(res.body, { error: 'Palvelu ei ole juuri nyt käytettävissä' });
   } finally {
     console.error = originalError;
   }

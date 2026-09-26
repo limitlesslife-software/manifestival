@@ -39,6 +39,7 @@ import { isTableAvailable } from '../data/schema.js';
 import { newTaskId } from '../lib/rows.js';
 import { fmtISO, todayMidnight } from '../lib/datetime.js';
 import { logError } from '../lib/result.js';
+import { aiEndpointMessage } from '../lib/errorMessages.js';
 import { apiUrl } from '../platform/index.js';
 import { API } from '../data/config.js';
 import { currentAccessToken } from './auth.js';
@@ -229,7 +230,9 @@ export async function interpretItem(id) {
   if (!saved.ok) {
     replaceInboxItemInState(id, item);
     showError(saved.error);
-    return { ok: false, reason: saved.error };
+    // Syy on AINA käyttäjälle kelpaava merkkijono: AppError-olio näkyi
+    // kirjauspalkissa muodossa "AppError: …" (ERR-10).
+    return { ok: false, reason: saved.error.userMessage };
   }
 
   return { ok: true, item: updated, reason: validated.reason };
@@ -268,14 +271,9 @@ async function requestInterpretation(item) {
       })
     });
 
-    if (!response.ok) {
-      let message = 'Tulkinta epäonnistui.';
-      try {
-        const body = await response.json();
-        if (body && typeof body.error === 'string') message = body.error;
-      } catch { /* geneerinen viesti riittää */ }
-      return { ok: false, error: message };
-    }
+    // Palvelimen body.error-tekstiä EI näytetä: kiinteä viesti HTTP-tilan
+    // mukaan (src/lib/errorMessages.js aiEndpointMessage).
+    if (!response.ok) return { ok: false, error: aiEndpointMessage(response.status, { subject: 'capture' }) };
 
     const data = await response.json();
     const text = textFrom(data);
@@ -284,7 +282,7 @@ async function requestInterpretation(item) {
     return { ok: true, text };
   } catch (cause) {
     logError(cause);
-    return { ok: false, error: 'Tulkinta epäonnistui.' };
+    return { ok: false, error: aiEndpointMessage(0, { subject: 'capture' }) };
   }
 }
 

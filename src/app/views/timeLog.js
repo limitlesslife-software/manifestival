@@ -322,7 +322,9 @@ export function openTimeLogDialog(options) {
         return;
       }
       const result = await logQuickTime({ target: chosenTarget, minutes, operationId: operation, entryDate });
-      if (result.ok && !result.duplicate) announceLogged(minutes, { queued: Boolean(result.queued) });
+      if (result.ok && !result.duplicate) {
+        announceLogged(minutes, { queued: Boolean(result.queued), sessionOnly: Boolean(result.sessionOnly) });
+      }
       resolve({ action: 'logged', result });
     };
     dialog.addEventListener('close', onClose);
@@ -416,7 +418,7 @@ function announceStop(result) {
   } else if (result.ok && !result.duplicate) {
     // Ilman yhteyttä kirjaus on lähtökorissa: ei väitetä kirjatuksi ennen
     // kuin se on kannassa.
-    announceLogged(result.totalMinutes, { queued: Boolean(result.queued) });
+    announceLogged(result.totalMinutes, { queued: Boolean(result.queued), sessionOnly: Boolean(result.sessionOnly) });
   }
 }
 

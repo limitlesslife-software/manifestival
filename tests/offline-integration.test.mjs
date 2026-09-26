@@ -262,8 +262,13 @@ test('uloskirjautuminen varoittaa lähettämättömistä muutoksista ennen kuin 
   const body = auth.slice(start, auth.indexOf('\n});', start));
   assert.ok(body.indexOf('offline.status()') > -1);
   assert.ok(body.indexOf('confirmAction(') > -1);
-  assert.ok(body.indexOf('confirmAction(') < body.indexOf('auth.signOut('), 'varoitus ennen uloskirjautumista');
+  // Uloskirjautuminen itse on performSignOut():ssa (ERR-11: palautettu
+  // { error } käsitellään); varoitus tulee ennen sen kutsua.
+  assert.ok(body.indexOf('performSignOut(') > -1, 'uloskirjautumista ei kutsuta');
+  assert.ok(body.indexOf('confirmAction(') < body.indexOf('performSignOut('), 'varoitus ennen uloskirjautumista');
   assert.match(body, /if \(!sure\) return;/);
+  const perform = auth.slice(auth.indexOf('export async function performSignOut'));
+  assert.ok(perform.indexOf('auth.signOut(') > -1, 'performSignOut ei kirjaa ulos');
 });
 
 test('tilin poisto tyhjentää jonon ennen uloskirjautumista', () => {

@@ -26,6 +26,8 @@ import { renderGoalDetail } from './goalDetail.js';
 import { renderPlanning } from './planning.js';
 import { createGoal, editGoal, deleteGoal, setGoalStatus, toggleComplete } from '../actions.js';
 import { openEditForm } from './tasks.js';
+import { loadFailureHtml } from './loadNotice.js';
+import { showError } from '../../ui/toast.js';
 
 const STATUS_ORDER = [
   GOAL_STATUS.ACTIVE, GOAL_STATUS.PAUSED, GOAL_STATUS.COMPLETED, GOAL_STATUS.ARCHIVED
@@ -197,6 +199,12 @@ function renderList(container, state) {
   const summary = summarizeGoals(state.goals, state.tasks, todayIso);
 
   if (summary.all.length === 0) {
+    // Epäonnistunut ensimmäinen lataus ei ole "ei vielä tavoitteita".
+    const notice = loadFailureHtml(state, ['goals']);
+    if (notice) {
+      container.innerHTML = notice;
+      return;
+    }
     container.innerHTML = `
       <div class="empty-state">
         <div class="empty-title">Ei vielä tavoitteita.</div>
@@ -290,13 +298,18 @@ function syncGoalsSegment(state) {
 
 // ----------------------------------------------------------------- lomake
 
-const FIELD_TO_INPUT = {
+/** Domainin virhekenttä -> lomakkeen kenttä (virheteksti: `<id>Error`). */
+export const FIELD_TO_INPUT = Object.freeze({
   title: 'gfTitle',
   targetDate: 'gfTargetDate',
   manualProgress: 'gfManualProgress',
   status: 'gfStatus',
-  progressMode: 'gfProgressMode'
-};
+  progressMode: 'gfProgressMode',
+  // Mitattava tavoite: tavoitearvo ilman mittarin nimeä hylätään
+  // (validateGoal), ja virhe jäi aiemmin näyttämättä.
+  metric: 'gfMetric',
+  targetValue: 'gfTargetValue'
+});
 
 function clearFieldErrors() {
   document.querySelectorAll('#goalForm .field-error').forEach(node => {
@@ -309,14 +322,25 @@ function clearFieldErrors() {
   });
 }
 
-function showFieldErrors(errors) {
+/**
+ * Näytä validointivirheet kenttien alla.
+ *
+ * YKSIKÄÄN VIRHE EI SAA KADOTA. Aiemmin kenttä, jota FIELD_TO_INPUT ei
+ * tuntenut, ohitettiin hiljaa (esim. mittarin nimi), ja Tallenna ei tehnyt mitään
+ * eikä kertonut miksi. Nyt kentätön virhe näytetään lomakkeen tasolla
+ * (ilmoituksena) -- domainin kiinteä teksti, ei koodia.
+ *
+ * @returns {string[]} virheet, joilla ei ollut kenttää (testejä varten)
+ */
+export function showFieldErrors(errors) {
   clearFieldErrors();
   let firstInvalid = null;
-  for (const [field, message] of Object.entries(errors)) {
+  const unplaced = [];
+  for (const [field, message] of Object.entries(errors || {})) {
     const inputId = FIELD_TO_INPUT[field];
-    if (!inputId) continue;
-    const input = maybe(inputId);
-    const errorNode = maybe(inputId + 'Error');
+    const input = inputId ? maybe(inputId) : null;
+    const errorNode = inputId ? maybe(inputId + 'Error') : null;
+    if (!errorNode) unplaced.push(message);
     if (input) {
       input.classList.add('invalid');
       input.setAttribute('aria-invalid', 'true');
@@ -327,7 +351,9 @@ function showFieldErrors(errors) {
       errorNode.style.display = 'block';
     }
   }
+  if (unplaced.length > 0) showError(unplaced.join(' '));
   if (firstInvalid) focus(firstInvalid);
+  return unplaced;
 }
 
 /** Manuaalinen prosentti näytetään vain kun se on käytössä. */

@@ -10,7 +10,8 @@ import { fmtISO } from '../../lib/datetime.js';
 import { computeWakeTime, computeBedtime } from '../../domain/scheduler.js';
 import { el, maybe, setText, toggle, setBusy, singleFlight } from '../../ui/dom.js';
 import { getState, viewDateIso } from '../state.js';
-import { saveProfile } from '../actions.js';
+import { saveProfile, incompleteExportCollections } from '../actions.js';
+import { confirmAction } from '../../ui/confirm.js';
 import { userEmail } from '../../data/session.js';
 import { volatileFields } from '../../data/schema.js';
 import {
@@ -18,7 +19,7 @@ import {
 } from '../../platform/index.js';
 import { buildUserDataExport, serializeExport, EXPORTED_COLLECTIONS } from '../../domain/dataExport.js';
 import { renderAccountDeletionSection } from '../accountDeletion.js';
-import { logEvent } from '../../lib/logger.js';
+import { logEvent, LOG_LEVEL } from '../../lib/logger.js';
 
 function numberOrNull(value) {
   if (value === '' || value === null || value === undefined) return null;
@@ -269,32 +270,69 @@ function triggerDownload(filename, text) {
   URL.revokeObjectURL(url);
 }
 
+/** Vienti olisi vajaa: osa kokoelmista ei latautunut (ERR-03). */
+export const EXPORT_INCOMPLETE_MESSAGE = 'Osa tiedoista ei latautunut, joten vienti olisi vajaa. '
+  + 'Lataa vienti uudelleen, kun kaikki tiedot ovat näkyvissä.';
+
+/**
+ * Koosta ja lataa vienti.
+ *
+ * VAJAA VIENTI EI OLE ONNISTUNUT VIENTI. Vienti lukee tilasta, ja
+ * epäonnistunut haku jättää kokoelman tyhjäksi. Aiemmin tiedosto
+ * kirjoitti sen tyhjänä ja näkymä sanoi "Tiedosto ladattu.", vaikka
+ * vienti lupaa "kaiken oman tietosi". Nyt vajaa vienti ladataan vain
+ * käyttäjän nimenomaisesta valinnasta, ja tiedosto kertoo puuttuvat
+ * kokoelmat (`incomplete`).
+ *
+ * @param {object} [deps] testejä varten
+ * @returns {Promise<{downloaded: boolean, incomplete: string[], message: string}>}
+ */
+export async function exportUserData({
+  state = getState(), confirmFn = confirmAction, download = triggerDownload, now = () => new Date()
+} = {}) {
+  const incomplete = incompleteExportCollections(state);
+  if (incomplete.length > 0) {
+    const proceed = await confirmFn({
+      title: 'Vienti olisi vajaa',
+      message: EXPORT_INCOMPLETE_MESSAGE,
+      confirmLabel: 'Lataa silti vajaana',
+      cancelLabel: 'Peruuta'
+    });
+    if (!proceed) return { downloaded: false, incomplete, message: EXPORT_INCOMPLETE_MESSAGE };
+  }
+  const exported = buildUserDataExport(collectExportData(state), {
+    exportedAt: now().toISOString(),
+    appVersion: null
+  });
+  if (incomplete.length > 0) exported.incomplete = incomplete;
+  download(`manifestival-vienti-${fmtISO(now())}.json`, serializeExport(exported));
+  const message = incomplete.length > 0
+    ? `Vajaa vienti ladattu: ${incomplete.length} tietotyyppiä puuttuu. `
+      + 'Lataa vienti uudelleen, kun kaikki tiedot ovat näkyvissä.'
+    : 'Tiedosto ladattu.';
+  return { downloaded: true, incomplete, message };
+}
+
 const runExport = singleFlight(async () => {
   const button = maybe('pfExportBtn');
   const msg = maybe('pfExportMsg');
   setBusy(button, true, 'Kootaan…');
+  let message = 'Viennin luonti epäonnistui. Yritä uudelleen.';
+  let complete = false;
   try {
-    const state = getState();
-    const exported = buildUserDataExport(collectExportData(state), {
-      exportedAt: new Date().toISOString(),
-      appVersion: null
-    });
-    triggerDownload(
-      `manifestival-vienti-${fmtISO(new Date())}.json`,
-      serializeExport(exported)
-    );
-    if (msg) {
-      msg.textContent = 'Tiedosto ladattu.';
-      msg.style.display = 'block';
-    }
+    const result = await exportUserData();
+    message = result.message;
+    complete = result.downloaded && result.incomplete.length === 0;
   } catch {
-    if (msg) {
-      msg.textContent = 'Viennin luonti epäonnistui. Yritä uudelleen.';
-      msg.style.display = 'block';
-    }
+    logEvent('export.failed', { code: 'exception' }, LOG_LEVEL.WARN);
   } finally {
     setBusy(button, false);
-    if (msg) setTimeout(() => { msg.style.display = 'none'; }, 3000);
+    if (msg) {
+      msg.textContent = message;
+      msg.style.display = 'block';
+      // Onnistuminen häviää, vajaan viennin ohje jää luettavaksi pidemmäksi aikaa.
+      setTimeout(() => { msg.style.display = 'none'; }, complete ? 3000 : 10000);
+    }
   }
 });
 

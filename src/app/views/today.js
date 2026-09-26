@@ -34,6 +34,7 @@ import {
   skipRoutineOccurrence, restoreRoutineOccurrence, saveWellbeingEntry
 } from '../actions.js';
 import { openEditForm } from './tasks.js';
+import { loadFailureHtml } from './loadNotice.js';
 
 const ROW_HEIGHT = 66;
 
@@ -117,7 +118,19 @@ function deadlineTag(task, todayIso) {
 
 // ------------------------------------------------------------- aikajana
 
+/** Aikajanan lähteet: tyhjä aikajana ei ole "avoin päivä", jos jokin näistä ei latautunut. */
+const TIMELINE_DOMAINS = Object.freeze(['tasks', 'routines', 'routineExceptions']);
+
 function renderTimeline(container, items, nowState, todayIso) {
+  // Epäonnistunut lataus: pelkät automaattiset rivit (herätys, aamutoimet,
+  // uni) näyttäisivät päivän tyhjältä, vaikka tehtävät ovat tallessa.
+  if (!items.some(item => !item.virtual)) {
+    const notice = loadFailureHtml(getState(), TIMELINE_DOMAINS);
+    if (notice) {
+      container.innerHTML = notice;
+      return;
+    }
+  }
   if (items.length === 0) {
     container.innerHTML = `
       <div class="empty-state">

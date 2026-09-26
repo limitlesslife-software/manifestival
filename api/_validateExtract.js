@@ -49,7 +49,7 @@ const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
  */
 function validateExtractRequest(body) {
   if (body === null || typeof body !== 'object' || Array.isArray(body)) {
-    return { ok: false, status: 400, error: 'Virheellinen pyynto' };
+    return { ok: false, status: 400, error: 'Virheellinen pyyntö' };
   }
 
   const { image, mediaType, subject, today } = body;
@@ -84,17 +84,17 @@ function validateExtractRequest(body) {
 
   // today menee promptiin, joten se validoidaan tiukasti.
   if (typeof today !== 'string' || !ISO_DATE.test(today)) {
-    return { ok: false, status: 400, error: 'Virheellinen paivamaara' };
+    return { ok: false, status: 400, error: 'Virheellinen päivämäärä' };
   }
   if (Number.isNaN(Date.parse(today))) {
-    return { ok: false, status: 400, error: 'Virheellinen paivamaara' };
+    return { ok: false, status: 400, error: 'Virheellinen päivämäärä' };
   }
 
   // Kokonaisrunko: kuva on jo rajattu, joten tama on halpa.
   const muutBytes = Buffer.byteLength(
     JSON.stringify({ mediaType, subject, today }), 'utf8');
   if (image.length + muutBytes > MAX_BODY_BYTES) {
-    return { ok: false, status: 413, error: 'Pyynto on liian suuri' };
+    return { ok: false, status: 413, error: 'Pyyntö on liian suuri' };
   }
 
   return { ok: true, value: { image, mediaType, subject, today } };

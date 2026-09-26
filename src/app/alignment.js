@@ -723,8 +723,15 @@ export async function logTime(input, { silent = false } = {}) {
       return { ok: true, detached: true, entry: result.entry };
     }
     if (result.queued) {
-      if (!silent) notify('Ei yhteyttä: kirjaus tallennetaan, kun yhteys palaa.', 5000);
-      return { ok: true, queued: true, entry };
+      // Laitteen tallennus ei toimi: kirjaus elää vain istunnon muistissa,
+      // eikä "tallennetaan, kun yhteys palaa" pidä, jos sovellus suljetaan.
+      if (!silent) {
+        notify(result.sessionOnly
+          ? 'Ei yhteyttä, eikä laite voi tallentaa kirjausta: se on tallessa vain tämän istunnon ajan. '
+            + 'Älä sulje sovellusta ennen kuin yhteys palaa.'
+          : 'Ei yhteyttä: kirjaus tallennetaan, kun yhteys palaa.', result.sessionOnly ? 8000 : 5000);
+      }
+      return { ok: true, queued: true, sessionOnly: Boolean(result.sessionOnly), entry };
     }
     rememberWrite('timeEntry', entry);
     logEvent('alignment.time_logged', {
