@@ -18,7 +18,7 @@ import {
   DEVICE_STORAGE, DEVICE_ACTION, purgeDeviceDataForUser, clearAuthSession, saveAuthNote, takeAuthNote
 } from '../src/data/deviceData.js';
 import { DEVICE_DEFAULTS } from '../src/data/preferences.js';
-import { resetQueueStoreForTests } from '../src/data/offlineQueueStore.js';
+import { resetQueueStoreForTests, queueKey } from '../src/data/offlineQueueStore.js';
 import { resetTimerStoreForTests } from '../src/data/timerStore.js';
 import { setClient } from '../src/data/client.js';
 import { setUser, getUser, clearUser } from '../src/data/session.js';
@@ -343,4 +343,74 @@ test('portin viestin tallennus ei heitä eikä hyväksy kelvotonta arvoa', () =>
 
   globalThis.localStorage.setItem = () => { throw new Error('QuotaExceededError'); };
   assert.equal(saveAuthNote('z'), false);
+});
+
+// --------------------- päästä päähän: poistetun tilin tunniste ei jää laitteelle
+
+/**
+ * Kirjautunut käyttäjä, jolla on OIKEA offline-jono (src/app/offline.js)
+ * ja jokainen muu käyttäjäkohtainen avain. Jonon avain syntyy jonon omasta
+ * tallennuksesta, ei käsin: juuri sitä deactivate() voisi kirjoittaa
+ * uudelleen.
+ */
+function seedDeletedAccountDevice() {
+  const data = seedSignedIn();
+  for (const entry of DEVICE_STORAGE) {
+    if (entry.onDelete === DEVICE_ACTION.PURGE && !data.has(entry.prefix + DELETED)) {
+      data.set(entry.prefix + DELETED, JSON.stringify({ v: 1, userId: DELETED }));
+    }
+  }
+  offline.activate(DELETED);
+  const queued = offline.enqueueTaskCreate(normalizeTask({ id: 't2', title: 'Jonossa oleva tehtävä', date: '2026-09-26' }));
+  assert.equal(queued.ok, true, 'esiehto: tehtävä jonotettiin');
+  assert.ok(data.has(queueKey(DELETED)), 'esiehto: jono on laitteella');
+  return data;
+}
+
+/** Poiston jälkeinen laitteen siivous samassa järjestyksessä kuin src/app/accountDeletion.js. */
+function purgeAfterDeletion() {
+  offline.purge(DELETED);
+  purgeDeviceDataForUser(DELETED);
+  queueAuthNote(UNVERIFIED_NOTE);
+}
+
+function leftovers(data) {
+  return [...data.entries()]
+    .filter(([key, value]) => key.includes(DELETED) || String(value).includes(DELETED))
+    .map(([key]) => key);
+}
+
+for (const [label, signOut] of [
+  ['epäonnistuu (varapolku: forceLocalSignOut)', async () => ({ error: { status: 0 } })],
+  ['heittää (varapolku: forceLocalSignOut)', async () => { throw new Error('verkko poikki'); }]
+]) {
+  test(`KRIITTINEN: purge + uloskirjautuminen, joka ${label}, ei jätä poistetun tilin tunnistetta laitteelle`, async () => {
+    const data = seedDeletedAccountDevice();
+    trackReload();
+    setClient({ auth: { signOut } });
+
+    purgeAfterDeletion();
+    await signOutAndClean();
+
+    assert.deepEqual(leftovers(data), [], 'poistetun tilin tunniste jäi laitteelle');
+    assert.equal(data.has(SESSION_KEY), false);
+    assert.equal(data.get('unrelated-key'), 'x');
+  });
+}
+
+test('KRIITTINEN: purge + onnistunut uloskirjautuminen (SIGNED_OUT -> onSignedOut deactivate) ei jätä tunnistetta', async () => {
+  const data = seedDeletedAccountDevice();
+  trackReload();
+  setClient({ auth: { signOut: async () => ({ error: null }) } });
+
+  purgeAfterDeletion();
+  await signOutAndClean();
+  // supabase-js poistaa istunnon ja laukaisee SIGNED_OUT:n; main.js:n
+  // onSignedOut vapauttaa jonon muistista (offline.deactivate).
+  data.delete(SESSION_KEY);
+  clearUser();
+  offline.deactivate();
+  forceLocalSignOut();
+
+  assert.deepEqual(leftovers(data), [], 'poistetun tilin tunniste jäi laitteelle');
 });
