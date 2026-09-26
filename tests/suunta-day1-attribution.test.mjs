@@ -356,6 +356,20 @@ test('F8: ilman alueita tavoitelomake kertoo mistä ne luodaan; tuntematon nykyi
   assert.equal(node('gfLifeArea').value, 'lataamaton-alue', 'tallennus ei katkaise liitosta huomaamatta');
 });
 
+test('F8: tavoitteen näkymä ei väitä liitettyä aluetta valitsemattomaksi, kun alue puuttuu tilasta', async (t) => {
+  freezeLocalDate(t, THURSDAY);
+  // Alueiden lataus kesken tai epäonnistui: liitos on silti olemassa.
+  const { goal } = await createGoal({ title: 'Kitara', lifeAreaId: 'lataamaton-alue' });
+  setOpenGoalId(goal.id);
+  renderGoalDetail();
+  assert.match(html('goalDetailContainer'), /<p class="hint goal-life-area">Elämänalue: ei näkyvissä juuri nyt<\/p>/);
+  assert.doesNotMatch(html('goalDetailContainer'), /ei valittu/);
+  const { goal: plain } = await createGoal({ title: 'Ilman aluetta' });
+  setOpenGoalId(plain.id);
+  renderGoalDetail();
+  assert.match(html('goalDetailContainer'), /<p class="hint goal-life-area">Elämänalue: ei valittu<\/p>/);
+});
+
 // ================================================================ F10 / F11
 
 test('F10: kestokentissä ei ole min=1 step=5 -yhdistelmää (30 min hylättäisiin)', () => {

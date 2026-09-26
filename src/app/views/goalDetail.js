@@ -118,9 +118,11 @@ export function renderGoalDetail() {
 
   // Suunnan elämänalue näkyy otsikon alla (F8): muuten liitos jäi näkymättä
   // kaikkialla muualla kuin Suunnassa.
+  // "ei valittu" vain, kun aluetta ei ole: liitetty mutta tilasta puuttuva
+  // (lataus kesken tai epäonnistui) ei ole valitsematon.
   const area = goal.lifeAreaId ? findLifeArea(goal.lifeAreaId) : null;
-  const alue = `<p class="hint goal-life-area">Elämänalue: ${area
-    ? escapeHtml(area.name) : 'ei valittu'}</p>`;
+  const areaText = area ? escapeHtml(area.name) : goal.lifeAreaId ? 'ei näkyvissä juuri nyt' : 'ei valittu';
+  const alue = `<p class="hint goal-life-area">Elämänalue: ${areaText}</p>`;
 
   container.innerHTML = `
     <div class="eyebrow">TAVOITE</div>
