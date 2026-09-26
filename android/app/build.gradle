@@ -1,5 +1,38 @@
 apply plugin: 'com.android.application'
 
+// ---------------------------------------------------------------- versiointi
+//
+// versionCode ja versionName tulevat Gradle-ominaisuuksista, jotka
+// scripts/android-acceptance-build.mjs antaa:
+//   -Pmanifestival.versionCode=<N> -Pmanifestival.versionName=<nimi>
+// Ilman niita oletukset ovat 1 ja package.jsonin versio, joten tavallinen
+// "npm run build:android" kayttaytyy kuten ennenkin (versionCode 1).
+// Debug-koonti lisaa nimeen paatteen "-debug" (buildTypes alla), esim.
+// 1.0.0-waveJ.v23+5df40b2-debug.
+//
+// versionCode > 1 puhelimeen on OMISTAJAN TUOTEPAATOS (OWNER PRODUCT
+// DECISION): kun laitteessa on suurempi versionCode, vanhempaa APK:ta ei voi
+// asentaa paalle ilman sovelluksen poistoa. Ks.
+// docs/activation/ANDROID-ACCEPTANCE-BUILD.md, kohta "Versiointi".
+//
+// Sovellustunnukseen EI lisata debug-paatetta: hyvaksyntakoonti on laitteella
+// sama sovellus (sama istunto, samat muistutukset). tests/android-version.test.mjs
+// vartioi taman.
+def mfVersionCodeRaw = (project.findProperty('manifestival.versionCode') ?: '1').toString().trim()
+if (!(mfVersionCodeRaw ==~ /\d{1,10}/)) {
+    throw new GradleException("manifestival.versionCode ei ole kokonaisluku: '${mfVersionCodeRaw}'")
+}
+def mfVersionCodeLong = mfVersionCodeRaw.toLong()
+// Google Playn ylaraja on 2100000000; Android vaatii positiivisen luvun.
+if (mfVersionCodeLong < 1L || mfVersionCodeLong > 2100000000L) {
+    throw new GradleException("manifestival.versionCode ${mfVersionCodeLong} ei ole valilla 1..2100000000")
+}
+def mfVersionCode = mfVersionCodeLong.intValue()
+def mfVersionName = (project.findProperty('manifestival.versionName') ?: '1.0.0').toString().trim()
+if (!(mfVersionName ==~ /[0-9A-Za-z.+_-]{1,100}/)) {
+    throw new GradleException("manifestival.versionName sisaltaa kiellettyja merkkeja: '${mfVersionName}'")
+}
+
 android {
     namespace = "fi.limitlesslife.manifestival"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -7,8 +40,8 @@ android {
         applicationId "fi.limitlesslife.manifestival"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        versionCode = mfVersionCode
+        versionName = mfVersionName
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -17,6 +50,10 @@ android {
         }
     }
     buildTypes {
+        debug {
+            // Nakyy laitteella: Asetukset > Sovellukset > Manifestival > versio.
+            versionNameSuffix = "-debug"
+        }
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
