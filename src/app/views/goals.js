@@ -19,7 +19,7 @@ import {
   getState, findGoal, setEditingGoalId, setOpenGoalId, setGoalsSegment,
   GOALS_SEGMENTS
 } from '../state.js';
-import { volatileGoalFields } from '../../data/schema.js';
+import { volatileGoalFields, columnGateOpen } from '../../data/schema.js';
 import { formatNumber as formatMetricNumber } from '../../domain/goalTarget.js';
 import { renderGoalDetail } from './goalDetail.js';
 import { renderPlanning } from './planning.js';
@@ -30,14 +30,34 @@ const STATUS_ORDER = [
   GOAL_STATUS.ACTIVE, GOAL_STATUS.PAUSED, GOAL_STATUS.COMPLETED, GOAL_STATUS.ARCHIVED
 ];
 
+/**
+ * Lomakkeen tilavaihtoehdot.
+ *
+ * Ylläpito tarjotaan vain, kun kanta hyväksyy sen (GOAL_MAINTENANCE_MODE,
+ * myös ajon aikana laskettuna). Tavoitteen NYKYINEN tila on aina mukana:
+ * muuten valikko valitsisi hiljaa ensimmäisen vaihtoehdon, ja tallennus
+ * muuttaisi esimerkiksi ylläpidossa olevan tavoitteen aktiiviseksi.
+ */
+export function goalStatusOptions(current = null) {
+  const options = [...STATUS_ORDER];
+  if (columnGateOpen('GOAL_MAINTENANCE_MODE')) options.splice(2, 0, GOAL_STATUS.MAINTENANCE);
+  if (current && Object.values(GOAL_STATUS).includes(current) && !options.includes(current)) {
+    options.push(current);
+  }
+  return options;
+}
+
+function fillStatusSelect(current = null) {
+  const status = maybe('gfStatus');
+  if (!status) return;
+  status.innerHTML = goalStatusOptions(current)
+    .map(key => `<option value="${escapeHtml(key)}">${escapeHtml(goalStatusLabel(key))}</option>`)
+    .join('');
+}
+
 /** Täytä valikot domainista. */
 export function populateGoalSelects() {
-  const status = maybe('gfStatus');
-  if (status) {
-    status.innerHTML = STATUS_ORDER
-      .map(key => `<option value="${escapeHtml(key)}">${escapeHtml(goalStatusLabel(key))}</option>`)
-      .join('');
-  }
+  fillStatusSelect();
 
   const category = maybe('gfCategory');
   if (category) {
@@ -347,6 +367,7 @@ function fillForm(goal) {
   el('gfDescription').value = goal && goal.description ? goal.description : '';
   el('gfCategory').value = goal ? goal.category : 'kehitys';
   el('gfPriority').value = goal ? goal.priority : 'normaali';
+  fillStatusSelect(goal ? goal.status : null);
   el('gfStatus').value = goal ? goal.status : GOAL_STATUS.ACTIVE;
   el('gfTargetDate').value = goal && goal.targetDate ? goal.targetDate : '';
   el('gfProgressMode').value = goal ? goal.progressMode : PROGRESS_MODE.TASK_BASED;

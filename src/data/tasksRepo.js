@@ -12,7 +12,7 @@
 
 import { getClient } from './client.js';
 import { requireUserId } from './session.js';
-import { taskColumns } from './schema.js';
+import { taskColumns, writeRefusal, noteSchemaError } from './schema.js';
 import { normalizeTask } from '../domain/task.js';
 import {
   toRow, fromRow, assertClientSafe, sameColumnValue, pgArrayLiteral
@@ -20,6 +20,13 @@ import {
 import { ok, fail } from '../lib/result.js';
 
 const TABLE = 'tasks';
+
+// AJONAIKAINEN SKEEMATARKISTUS (src/data/schema.js):
+//   - huoltotilassa (kannan ydin puuttuu) jokainen kirjoitus torjutaan
+//     ENNEN verkkokutsua (writeRefusal), ja syy kerrotaan käyttäjälle
+//   - skeemavirhe (PGRST204/42703) laskee sen sarakeportin, jolle puuttuva
+//     sarake kuuluu (noteSchemaError); seuraava kirjoitus lähtee ilman sitä,
+//     koska payloadFor laskee sarakejoukon joka kerta uudelleen
 
 /**
  * Rakentaa kirjoitus-payloadin nykyisen skeemakyvykkyyden mukaan.
@@ -54,7 +61,10 @@ export async function listTasks() {
       .select('*')
       .eq('user_id', requireUserId());
 
-    if (error) return fail('Tehtävien lataus ei onnistunut.', { cause: error, code: 'tasks.list' });
+    if (error) {
+      noteSchemaError(TABLE, error);
+      return fail('Tehtävien lataus ei onnistunut.', { cause: error, code: 'tasks.list' });
+    }
     return ok((data || []).map(fromRow));
   } catch (cause) {
     return fail('Tehtävien lataus ei onnistunut.', { cause, code: 'tasks.list' });
@@ -63,12 +73,17 @@ export async function listTasks() {
 
 /** Lisää tehtävä. */
 export async function insertTask(task) {
+  const refused = writeRefusal();
+  if (refused) return refused;
   try {
     const { error } = await getClient()
       .from(TABLE)
       .insert(payloadFor(task));
 
-    if (error) return fail('Tehtävän tallennus ei onnistunut.', { cause: error, code: 'tasks.insert' });
+    if (error) {
+      noteSchemaError(TABLE, error);
+      return fail('Tehtävän tallennus ei onnistunut.', { cause: error, code: 'tasks.insert' });
+    }
     return ok(task);
   } catch (cause) {
     return fail('Tehtävän tallennus ei onnistunut.', { cause, code: 'tasks.insert' });
@@ -77,6 +92,8 @@ export async function insertTask(task) {
 
 /** Päivitä tehtävä kokonaisuudessaan. */
 export async function updateTask(task) {
+  const refused = writeRefusal();
+  if (refused) return refused;
   try {
     const { error } = await getClient()
       .from(TABLE)
@@ -84,7 +101,10 @@ export async function updateTask(task) {
       .eq('user_id', requireUserId())
       .eq('id', task.id);
 
-    if (error) return fail('Muutoksen tallennus ei onnistunut.', { cause: error, code: 'tasks.update' });
+    if (error) {
+      noteSchemaError(TABLE, error);
+      return fail('Muutoksen tallennus ei onnistunut.', { cause: error, code: 'tasks.update' });
+    }
     return ok(task);
   } catch (cause) {
     return fail('Muutoksen tallennus ei onnistunut.', { cause, code: 'tasks.update' });
@@ -93,6 +113,8 @@ export async function updateTask(task) {
 
 /** Päivitä vain valmis-tila. Kevyempi kuin koko rivin kirjoitus. */
 export async function setCompleted(id, completed) {
+  const refused = writeRefusal();
+  if (refused) return refused;
   try {
     const { error } = await getClient()
       .from(TABLE)
@@ -100,7 +122,10 @@ export async function setCompleted(id, completed) {
       .eq('user_id', requireUserId())
       .eq('id', id);
 
-    if (error) return fail('Merkinnän tallennus ei onnistunut.', { cause: error, code: 'tasks.complete' });
+    if (error) {
+      noteSchemaError(TABLE, error);
+      return fail('Merkinnän tallennus ei onnistunut.', { cause: error, code: 'tasks.complete' });
+    }
     return ok({ id, completed });
   } catch (cause) {
     return fail('Merkinnän tallennus ei onnistunut.', { cause, code: 'tasks.complete' });
@@ -109,6 +134,8 @@ export async function setCompleted(id, completed) {
 
 /** Poista tehtävä. */
 export async function deleteTask(id) {
+  const refused = writeRefusal();
+  if (refused) return refused;
   try {
     const { error } = await getClient()
       .from(TABLE)
@@ -116,7 +143,10 @@ export async function deleteTask(id) {
       .eq('user_id', requireUserId())
       .eq('id', id);
 
-    if (error) return fail('Poisto ei onnistunut.', { cause: error, code: 'tasks.delete' });
+    if (error) {
+      noteSchemaError(TABLE, error);
+      return fail('Poisto ei onnistunut.', { cause: error, code: 'tasks.delete' });
+    }
     return ok({ id });
   } catch (cause) {
     return fail('Poisto ei onnistunut.', { cause, code: 'tasks.delete' });
@@ -128,6 +158,8 @@ export async function deleteTask(id) {
  * Päivällä voi olla vain yksi herätysankkuri.
  */
 export async function clearOtherWakeFlags(dateIso, exceptId) {
+  const refused = writeRefusal();
+  if (refused) return refused;
   try {
     const { error } = await getClient()
       .from(TABLE)
@@ -136,7 +168,10 @@ export async function clearOtherWakeFlags(dateIso, exceptId) {
       .eq('date', dateIso)
       .neq('id', exceptId || '');
 
-    if (error) return fail('Herätysmerkinnän päivitys ei onnistunut.', { cause: error, code: 'tasks.wake' });
+    if (error) {
+      noteSchemaError(TABLE, error);
+      return fail('Herätysmerkinnän päivitys ei onnistunut.', { cause: error, code: 'tasks.wake' });
+    }
     return ok(true);
   } catch (cause) {
     return fail('Herätysmerkinnän päivitys ei onnistunut.', { cause, code: 'tasks.wake' });
@@ -156,7 +191,10 @@ export async function getTask(id) {
       .eq('id', id)
       .maybeSingle();
 
-    if (error) return fail('Tehtävän haku ei onnistunut.', { cause: error, code: 'tasks.get' });
+    if (error) {
+      noteSchemaError(TABLE, error);
+      return fail('Tehtävän haku ei onnistunut.', { cause: error, code: 'tasks.get' });
+    }
     return ok(data ? fromRow(data) : null);
   } catch (cause) {
     return fail('Tehtävän haku ei onnistunut.', { cause, code: 'tasks.get' });
@@ -220,6 +258,8 @@ export function guardFilter(value) {
  * @returns {Promise<{ok:true,value:{applied:boolean,noop:boolean}}|{ok:false,error:object}>}
  */
 export async function patchTask(id, changes, expected) {
+  const refused = writeRefusal();
+  if (refused) return refused;
   try {
     const { diff, guards } = partialPayloadFor({ ...expected, ...changes, id }, { ...expected, id });
     if (Object.keys(diff).length === 0) return ok({ applied: true, noop: true });
@@ -235,7 +275,10 @@ export async function patchTask(id, changes, expected) {
     }
 
     const { data, error } = await query.select('id');
-    if (error) return fail('Muutoksen tallennus ei onnistunut.', { cause: error, code: 'tasks.patch' });
+    if (error) {
+      noteSchemaError(TABLE, error, Object.keys(diff));
+      return fail('Muutoksen tallennus ei onnistunut.', { cause: error, code: 'tasks.patch' });
+    }
     return ok({ applied: Array.isArray(data) && data.length > 0, noop: false });
   } catch (cause) {
     return fail('Muutoksen tallennus ei onnistunut.', { cause, code: 'tasks.patch' });

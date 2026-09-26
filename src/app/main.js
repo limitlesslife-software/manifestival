@@ -68,6 +68,8 @@ import { maybe } from '../ui/dom.js';
 import { getUser, sessionSnapshot, isSameSession } from '../data/session.js';
 import { offline, setSyncedHandler, isOnlineNow } from './offline.js';
 import { initOfflineStatus, refreshSyncStatus } from './offlineStatus.js';
+import { ensureSchemaCompatibility, SCHEMA_PROBE_TIMEOUT_MS } from '../data/schemaProbe.js';
+import { initSchemaStatus, setSchemaStatusActive } from './schemaStatus.js';
 
 /** Kuinka usein NYT-tila päivitetään ilman sivun uudelleenlatausta. */
 const NOW_REFRESH_MS = 30000;
@@ -137,6 +139,14 @@ function hasLoadFailures() {
 async function refreshAfterReconnect() {
   if (!signedIn) return;
   const session = sessionSnapshot();
+  // Offline-käynnistyksessä skeemaa ei tarkistettu: tarkista ennen toistoa,
+  // jotta jono ja lähtökori eivät lähde kannalle, joka on käännöstä jäljessä.
+  try {
+    await ensureSchemaCompatibility({ onlyIfUnverified: true, timeoutMs: SCHEMA_PROBE_TIMEOUT_MS });
+  } catch (error) {
+    console.warn('Manifestival: skeematarkistus ei onnistunut', error);
+  }
+  if (!signedIn || !isSameSession(session)) return;
   await sendPending();
   // Uloskirjautuminen lähetyksen aikana: ei ladata kenenkään nimissä.
   if (!signedIn || !isSameSession(session)) return;
@@ -260,6 +270,15 @@ async function onSignedIn() {
   // välilehteä ei käynnistä rinnakkaisia ajastimia eikä pyyhi toistensa kopiota.
   initTimerCrossTabSync();
 
+  // SKEEMATARKISTUS ENNEN ENSIMMÄISTÄ LATAUSTA: vain lukeva, aikarajattu,
+  // offline-tilassa ei yhtään pyyntöä (välimuisti tai käännösaikaiset
+  // portit). Jos kanta on sovellusta jäljessä, portit lasketaan ennen kuin
+  // mitään kirjoitetaan. Ks. src/data/schemaProbe.js.
+  setSchemaStatusActive(true);
+  const probeSession = sessionSnapshot();
+  await ensureSchemaCompatibility({ timeoutMs: SCHEMA_PROBE_TIMEOUT_MS });
+  if (!signedIn || !isSameSession(probeSession)) return;
+
   // Päivä ja viikko nollataan kirjautuessa: sovellus avautuu aina tähän
   // päivään, ei siihen mihin edellinen istunto jäi.
   setViewDate(todayMidnight());
@@ -317,6 +336,7 @@ async function onSignedIn() {
 
 function onSignedOut() {
   signedIn = false;
+  setSchemaStatusActive(false);
   cancelScheduledResync();
   // Laitteelle ajastetut ja jo toimitetut muistutukset (tehtävien otsikot)
   // eivät saa laueta uloskirjautumisen jälkeen. Ei odoteta: uloskirjautuminen
@@ -411,6 +431,11 @@ async function start() {
   // 2. Näkymät seuraavat tilaa.
   subscribe(renderAll);
   subscribe(watchNotifiableChanges);
+  // Skeematarkistuksen tila (rajoitettu / huoltokatko) ENNEN istunnon
+  // palautusta: palautettu istunto ajaa tarkistuksen jo initAuthin aikana.
+  // Palautuminen lähettää odottavat muutokset ja lataa tiedot samalla
+  // polulla kuin verkon palautuminen.
+  initSchemaStatus({ onRecovered: () => reconnect.refreshNow() });
 
   // 3. Istunnon palautus.
   const session = await initAuth({ onSignedIn, onSignedOut });

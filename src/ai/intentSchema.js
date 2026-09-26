@@ -41,7 +41,7 @@ import { CATEGORY_KEYS, normalizeCategory } from '../domain/categories.js';
 import { PRIORITY_KEYS, normalizePriority } from '../domain/priority.js';
 import { isIsoDate, isTimeOfDay, MAX_TITLE_LENGTH } from '../domain/task.js';
 import { RECURRENCE_TYPES, normalizeWeekdays, RECURRENCE } from '../domain/routine.js';
-import { GOAL_STATUSES, PROGRESS_MODES } from '../domain/goal.js';
+import { PROGRESS_MODES, isStorableGoalStatus } from '../domain/goal.js';
 import { PROJECT_STATUSES } from '../domain/project.js';
 
 /** Sallitut intentit. Tämä lista ON turvamalli. */
@@ -582,7 +582,7 @@ export const COMMANDS = Object.freeze({
     risk: RISK.MEDIUM,
     targetType: TARGET.GOAL,
     label: 'Muuta tavoitetta',
-    validate(raw) {
+    validate(raw, context = {}) {
       const { targetId, targetName } = targetFields(raw, { idField: 'goalId' });
       if (!targetId && !targetName) {
         return { ok: false, reason: 'Kohdetavoitetta ei voi tunnistaa' };
@@ -598,9 +598,14 @@ export const COMMANDS = Object.freeze({
       if (targetDate && !isIsoDate(targetDate)) { rejected.push('targetDate'); targetDate = null; }
       if (targetDate) changes.targetDate = targetDate;
 
+      // Ylläpitotila kelpaa vain, kun kanta hyväksyy sen (migraatio 0010,
+      // GOAL_MAINTENANCE_MODE). Muuten tallennus kaatuisi rajoitteeseen
+      // 23514 vasta vahvistuksen jälkeen. Sovelluskerros kertoo portin
+      // kontekstissa; oletus on kiinni.
       if (raw.status != null) {
-        if (GOAL_STATUSES.includes(raw.status)) changes.status = raw.status;
-        else rejected.push('status');
+        if (isStorableGoalStatus(raw.status, { maintenanceAllowed: context.goalMaintenance === true })) {
+          changes.status = raw.status;
+        } else rejected.push('status');
       }
 
       if (raw.progressMode != null) {
@@ -903,7 +908,7 @@ export function isDestructive(command) {
  * EI SUORITA MITÄÄN. Palauttaa kuvauksen siitä, mitä voitaisiin tehdä.
  *
  * @param {unknown} raw       AI:n tuottama objekti
- * @param {object}  context   { today: 'YYYY-MM-DD' }
+ * @param {object}  context   { today: 'YYYY-MM-DD', goalMaintenance?: boolean }
  * @returns {{ok:true, command:object}|{ok:false, reason:string, intent?:string}}
  */
 export function resolveCommand(raw, context = {}) {
@@ -944,7 +949,10 @@ export function resolveCommand(raw, context = {}) {
   }
 
   const definition = COMMANDS[intent];
-  const result = definition.validate(payloadInput, { today: context.today || null });
+  const result = definition.validate(payloadInput, {
+    today: context.today || null,
+    goalMaintenance: context.goalMaintenance === true
+  });
 
   if (!result.ok) {
     return { ok: false, reason: result.reason, intent };

@@ -35,7 +35,8 @@ import {
 } from '../../domain/inbox.js';
 import { CAPTURE_SOURCE } from '../../domain/inbox.js';
 import { captureKindLabel } from '../../domain/capture.js';
-import { TABLES } from '../../data/schema.js';
+import { hasTable, isTableAvailable } from '../../data/schema.js';
+import { serverUnavailableHintHtml } from '../schemaStatus.js';
 import {
   captureAndInterpret, reviewItem, closeReview, approveItem,
   interpretItem, dismissItemById, restoreItemById, deleteInboxItem
@@ -297,10 +298,12 @@ export function renderInbox() {
       + `${showClosed ? 'Piilota käsitellyt' : 'Näytä käsitellyt'}</button>`
     : '';
 
-  const varoitus = TABLES.inboxItems
+  const varoitus = isTableAvailable('inboxItems')
     ? ''
-    : `<p class="hint"><strong>Huom.</strong> Saapuvat säilyvät toistaiseksi `
-      + `vain tämän istunnon ajan.</p>`;
+    : hasTable('inboxItems')
+      ? serverUnavailableHintHtml()
+      : `<p class="hint"><strong>Huom.</strong> Saapuvat säilyvät toistaiseksi `
+        + `vain tämän istunnon ajan.</p>`;
 
   container.innerHTML = otsikko + varoitus
     + (naytettavat.length === 0 ? emptyHtml() : naytettavat.map(rowHtml).join(''))

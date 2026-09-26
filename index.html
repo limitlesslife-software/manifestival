@@ -56,6 +56,24 @@
   <div class="voice-spinner" role="status" aria-label="Ladataan"></div>
 </div>
 
+<!-- Huoltokatko: kannan ydin puuttuu, mitään ei tallenneta (src/app/schemaStatus.js). -->
+<div class="schema-maintenance" id="schemaMaintenance" role="alertdialog" aria-modal="true"
+     aria-labelledby="schemaMaintenanceTitle" aria-describedby="schemaMaintenanceText" hidden>
+  <div class="schema-maintenance-card">
+    <h2 class="schema-maintenance-title" id="schemaMaintenanceTitle">Huoltokatko</h2>
+    <p class="schema-maintenance-text" id="schemaMaintenanceText">Palvelussa on huoltokatko. Tietosi ovat tallessa, ja tälle laitteelle jääneet muutokset lähetetään, kun palvelu toimii taas.</p>
+    <p class="schema-maintenance-status" id="schemaMaintenanceStatus" role="status" aria-live="polite"></p>
+    <div class="schema-maintenance-actions">
+      <button class="form-btn primary" id="schemaRetry" type="button">Yritä uudelleen</button>
+      <button class="form-btn secondary" id="schemaSignOut" type="button">Kirjaudu ulos</button>
+    </div>
+    <details class="schema-details" id="schemaMaintenanceDetailsWrap" hidden>
+      <summary>Tekniset tiedot</summary>
+      <p id="schemaMaintenanceDetails"></p>
+    </details>
+  </div>
+</div>
+
 <!-- Kirjautumisportti -->
 <div class="auth-gate" id="authGate">
   <div class="auth-card">
@@ -96,6 +114,13 @@
 <div id="app" class="app-hidden">
   <div class="offline-banner" id="offlineBanner" role="status">Ei verkkoyhteyttä — tehtävien lisäys ja muokkaus tallentuu laitteelle ja lähetetään kun yhteys palaa; muut muutokset eivät tallennu</div>
   <button type="button" class="sync-status" id="syncStatus" hidden aria-live="polite"></button>
+  <div class="schema-banner" id="schemaBanner" role="status" hidden>
+    <span id="schemaBannerText"></span>
+    <details class="schema-details" id="schemaBannerDetailsWrap" hidden>
+      <summary>Tekniset tiedot</summary>
+      <p id="schemaBannerDetails"></p>
+    </details>
+  </div>
   <div class="timer-bar" id="timerBar" role="region" aria-label="Ajanseuranta" hidden></div>
 
   <div class="screens">

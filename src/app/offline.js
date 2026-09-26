@@ -8,6 +8,7 @@ import { createOfflineSync } from './offlineSync.js';
 import * as tasksRepo from '../data/tasksRepo.js';
 import { loadQueueText, saveQueueText, purgeQueue } from '../data/offlineQueueStore.js';
 import { getUser, sessionSnapshot, isSameSession } from '../data/session.js';
+import { isWritable, requestReprobe } from '../data/schemaRuntime.js';
 import { newTaskId } from '../lib/rows.js';
 
 const listeners = new Set();
@@ -43,5 +44,10 @@ export const offline = createOfflineSync({
   isOnline: isOnlineNow,
   newId: newTaskId,
   onChange: status => { for (const listener of listeners) { try { listener(status); } catch { /* näkymä */ } } },
-  onSynced: () => syncedHandler()
+  onSynced: () => syncedHandler(),
+  // Huoltotila (kannan ydin puuttuu): ei toistoa eikä jonotusta. Yksi
+  // kytkentä kattaa kaikki toiston käynnistäjät (kirjautuminen, verkon
+  // palautuminen, tarkistusvirta). Ks. src/data/schemaRuntime.js.
+  canSync: isWritable,
+  onSchemaError: () => requestReprobe('offline_replay')
 });

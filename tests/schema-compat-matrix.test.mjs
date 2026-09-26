@@ -1,0 +1,500 @@
+// Ajonaikaisen skeematarkistuksen matriisi: käännös (aallot C-J) x kanta.
+//
+// KYSYMYS, JOHON TÄMÄ VASTAA
+//
+// Mitä tapahtuu, kun asennettu käännös on kantaa EDELLÄ? Esimerkki:
+// aallon J APK (kaikki portit auki) ja kanta, johon on ajettu vain
+// 0001-0008. Ilman tarkistusta jokainen tehtävän ja tavoitteen tallennus
+// kaatui (PGRST204), vaikka lukeminen näytti toimivan.
+//
+// KAKSI TASOA
+//
+//   1. Puhdas ydin: synteettiset portit (tools/release/waves.mjs) ja
+//      kannan tilat (supabase/migrations/*.sql) -> kyvykkyys.
+//   2. Oikea koodi: koko src/-puu kunkin aallon porteilla
+//      (tests/helpers/waveGraph.mjs) skeemaa noudattavaa palvelinta
+//      vastaan (tests/helpers/schemaServer.mjs). Jokainen kirjoitus joko
+//      onnistuu tai torjutaan ENNEN verkkoa -- kanta ei hylkää yhtäkään.
+//
+// Kannan tilat: 0008, +0009, +0010, +0011, +0012, 0008+0012 (0012 ilman
+// 0009-0011:tä), +0013 ja 0013 ilman operation_id-saraketta.
+
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+
+import { WAVE_IDS, waveIndex } from '../tools/release/waves.mjs';
+import {
+  createSchemaServer, memoryStorage, DB_STATES, schemaAt, migrationsThrough, ALL_MIGRATIONS
+} from './helpers/schemaServer.mjs';
+import { waveGates, importAtWave, WAVE_GRAPH_SUPPORTED } from './helpers/waveGraph.mjs';
+import { read } from './helpers/sources.mjs';
+import {
+  SCHEMA_REQUIREMENTS, openRequirements, COMPILE_COLUMN_GATES, TABLES, taskColumns,
+  stripLoweredColumns
+} from '../src/data/schema.js';
+import {
+  computeCapabilities, effectiveGates, isRequirementOpen, SCHEMA_STATUS, PROBE_RESULT
+} from '../src/data/schemaRuntime.js';
+import { probeSchema } from '../src/data/schemaProbe.js';
+import { ALL_REPOSITORIES } from '../src/data/collectionsRepo.js';
+import { profileToRow } from '../src/data/profileRepo.js';
+import { preferencesToRow } from '../src/data/notificationPrefsRepo.js';
+import { toRow, TASK_COLUMNS_CORE } from '../src/lib/rows.js';
+import { normalizeTask } from '../src/domain/task.js';
+import { createOfflineSync } from '../src/app/offlineSync.js';
+import { createTimeEntryWriter } from '../src/app/timeEntryWriter.js';
+
+const WAVES = WAVE_IDS.slice(WAVE_IDS.indexOf('C'));
+const USER = { id: 'bbbbbbbb-3333-4333-8333-000000000001', email: 'm@example.com' };
+const graphTest = WAVE_GRAPH_SUPPORTED ? test : test.skip;
+
+/** Aallon käännösaikaiset portit sellaisina kuin schema.js ne johtaa. */
+function compileFor(wave) {
+  const { tables, columns } = waveGates(wave);
+  return {
+    tables,
+    columns: { ...columns, TASK_LINK_FIELDS: tables.goals === true && tables.projects === true }
+  };
+}
+
+/** Esimerkkirivi repositoriolle: normalisointi täyttää loput. */
+function example(repo, suffix = '') {
+  return {
+    id: `ex-${repo.table}${suffix}`, title: 'Esimerkki', name: 'Esimerkki', text: 'Esimerkki',
+    place: 'Koti', message: 'Viesti', entryDate: '2026-09-21', minutes: 30, weekStart: '2026-09-21',
+    date: '2026-09-21', timestamp: '2026-09-21T10:00:00.000Z', key: 'avain' + suffix,
+    operationId: 'op-' + repo.table + suffix, itemKind: 'task', itemId: 't1',
+    startedAt: '2026-09-21T09:00:00.000Z', amountMinor: 1000
+  };
+}
+
+// =====================================================================
+// MANIFESTI VASTAA MIGRAATIOITA JA RIVIMUUNNOKSIA
+// =====================================================================
+
+test('manifesti: jokainen vaatimus syntyy juuri siinä migraatiossa, jonka se nimeää', () => {
+  for (const requirement of SCHEMA_REQUIREMENTS) {
+    const at = schemaAt(migrationsThrough(requirement.migration));
+    assert.ok(at.has(requirement.table), `${requirement.id}: taulua ei ole migraatiossa`);
+    for (const column of requirement.columns) {
+      assert.ok(at.get(requirement.table).has(column), `${requirement.id}: ${column} puuttuu`);
+    }
+    if (requirement.core) continue;
+    const previous = ALL_MIGRATIONS.filter(id => id < requirement.migration);
+    const before = schemaAt(previous);
+    const existedBefore = before.has(requirement.table)
+      && requirement.columns.every(column => before.get(requirement.table).has(column));
+    assert.equal(existedBefore, false, `${requirement.id}: oli olemassa jo ennen ${requirement.migration}:aa`);
+  }
+});
+
+test('manifesti: jokaisella portilla on vaatimus, ja taulun portilla tasan yksi', () => {
+  for (const key of Object.keys(TABLES)) {
+    const own = SCHEMA_REQUIREMENTS.filter(r => r.kind === 'table' && !r.core && r.tableKey === key);
+    assert.equal(own.length, 1, `taulun portti ${key}`);
+  }
+  for (const gate of Object.keys(COMPILE_COLUMN_GATES)) {
+    assert.ok(SCHEMA_REQUIREMENTS.some(r => r.kind === 'column' && r.gate === gate), `sarakeportti ${gate}`);
+  }
+  const ids = SCHEMA_REQUIREMENTS.map(r => r.id);
+  assert.equal(new Set(ids).size, ids.length, 'tunnisteet ovat yksikäsitteisiä');
+});
+
+test('manifesti: taulun perusjoukko = rivimuunnoksen sarakkeet porttien ollessa kiinni', () => {
+  // Tuotehaaralla sarakeportit ovat kiinni (TASK_EXTENDED ei koske
+  // kokoelmia), joten toRow tuottaa täsmälleen perusjoukon + ne
+  // sarakeportit, jotka ovat auki.
+  for (const repo of ALL_REPOSITORIES) {
+    const requirement = SCHEMA_REQUIREMENTS.find(r => r.kind === 'table' && r.tableKey === repo.schemaKey);
+    const keys = Object.keys(repo.mapping.toRow(repo.mapping.normalize(example(repo)))).sort();
+    const expected = [...requirement.columns, ...SCHEMA_REQUIREMENTS
+      .filter(r => r.kind === 'column' && r.table === repo.table && COMPILE_COLUMN_GATES[r.gate] === true)
+      .flatMap(r => r.columns)];
+    assert.deepEqual(keys, [...new Set(expected)].sort(), repo.table);
+  }
+  assert.deepEqual(Object.keys(profileToRow({}, 'u')).sort(),
+    [...SCHEMA_REQUIREMENTS.find(r => r.id === '0001.profile').columns].sort());
+  assert.deepEqual(Object.keys(preferencesToRow({}, 'u')).sort(),
+    [...SCHEMA_REQUIREMENTS.find(r => r.id === '0005.notification_preferences').columns].sort());
+  const taskRequirementColumns = SCHEMA_REQUIREMENTS.filter(r => r.table === 'tasks').flatMap(r => r.columns);
+  assert.deepEqual([...taskColumns(() => true), 'user_id'].sort(), [...new Set(taskRequirementColumns)].sort());
+  assert.deepEqual([...taskColumns(() => false)], [...TASK_COLUMNS_CORE]);
+});
+
+test('manifesti: rivimuunnosten porttiehdot tuottavat täsmälleen manifestin sarakkeet', () => {
+  // Staattinen tarkistus, joka kattaa myös auki olevan portin tilan:
+  // `...(PORTTI ? { a: ..., b: ... } : {})` -lohkojen avaimet ovat samat
+  // kuin manifestin sarakeportin sarakkeet samalle taululle.
+  const source = read('src/data/collectionsRepo.js');
+  const blocks = source.split('createRepository({').slice(1);
+  let checked = 0;
+  for (const block of blocks) {
+    const tableMatch = /table: '(\w+)'/.exec(block);
+    if (!tableMatch) continue; // itse createRepository-funktion määrittely
+    const table = tableMatch[1];
+    const toRowPart = block.slice(block.indexOf('toRow:'), block.indexOf('fromRow:'));
+    for (const match of toRowPart.matchAll(/\.\.\.\((\w+)\s*\?\s*\{([^}]*)\}\s*:\s*\{\}\)/g)) {
+      const keys = [...match[2].matchAll(/(\w+):/g)].map(m => m[1]).sort();
+      // 0010.goals_status on GOAL_MAINTENANCE_MODE:n tunnistesarake, ei oma ehtonsa.
+      const expected = [...new Set(SCHEMA_REQUIREMENTS
+        .filter(r => r.kind === 'column' && r.table === table && r.gate === match[1]
+          && r.id !== '0010.goals_status')
+        .flatMap(r => r.columns))].sort();
+      assert.ok(expected.length > 0, `${table}: ${match[1]} puuttuu manifestista`);
+      assert.deepEqual(keys, expected, `${table}: ${match[1]}`);
+      checked += 1;
+    }
+  }
+  assert.equal(checked, 7, 'odotettiin seitsemän porttiehtoa (goals 2, projects, bills, 3 x Suunta)');
+});
+
+// =====================================================================
+// PUHDAS YDIN: AALLOT C-J x KANNAN TILAT
+// =====================================================================
+
+for (const wave of WAVES) {
+  test(`puhdas ydin, aalto ${wave}: portit vain laskevat, ja puute = auki olevat - kannassa olevat`, async () => {
+    const compile = compileFor(wave);
+    const requirements = openRequirements(compile);
+    for (const [db, state] of Object.entries(DB_STATES)) {
+      const server = createSchemaServer(state);
+      const { results, requests } = await probeSchema({ client: server, requirements });
+      const label = `aalto ${wave}, kanta ${db}`;
+
+      // Vain lukevia, rivittömiä pyyntöjä; enintään yksi per taulu + tarkennus.
+      assert.ok(server.calls.every(call => call.op === 'select' && call.limit === 0), label);
+      const tables = new Set(requirements.map(r => r.table)).size;
+      assert.ok(requests <= tables + requirements.length, `${label}: ${requests} pyyntöä`);
+      // Kiinni olevaa porttia ei koskaan tarkisteta.
+      for (const requirement of SCHEMA_REQUIREMENTS) {
+        if (!isRequirementOpen(requirement, compile)) assert.equal(results[requirement.id], undefined, label);
+      }
+
+      const caps = computeCapabilities({ requirements: SCHEMA_REQUIREMENTS, compile, results, verified: true });
+      const eff = effectiveGates(compile, caps);
+      assert.notEqual(caps.status, SCHEMA_STATUS.MAINTENANCE, `${label}: ydin on kannassa`);
+
+      // (1) Monotonisuus: tehokas portti ei ole koskaan auki, jos käännös on kiinni.
+      for (const [key, open] of Object.entries(eff.tables)) {
+        if (open) assert.equal(compile.tables[key], true, `${label}: ${key}`);
+      }
+      for (const [gate, open] of Object.entries(eff.columns)) {
+        if (open) assert.equal(compile.columns[gate], true, `${label}: ${gate}`);
+      }
+
+      // (2) Puute = auki olevat vaatimukset, joita kannassa ei ole.
+      for (const requirement of requirements) {
+        const present = server.hasColumns(requirement.table, requirement.columns);
+        assert.equal(results[requirement.id] === PROBE_RESULT.OK, present, `${label}: ${requirement.id}`);
+      }
+      for (const [gate, open] of Object.entries(compile.columns)) {
+        if (!open) continue;
+        const present = requirements.filter(r => r.gate === gate)
+          .every(r => server.hasColumns(r.table, r.columns));
+        assert.equal(eff.columns[gate], present, `${label}: ${gate}`);
+      }
+      for (const [key, open] of Object.entries(compile.tables)) {
+        if (!open) continue;
+        const own = requirements.find(r => r.kind === 'table' && r.tableKey === key);
+        let expected = server.hasColumns(own.table, own.columns);
+        // Aikakirjaukset ilman 0013:n sarakkeita: vain luku, kun käännös nojaa niihin.
+        if (key === 'timeEntries' && compile.columns.ALIGNMENT_REALITY_FIELDS
+          && !server.hasColumns('time_entries', SCHEMA_REQUIREMENTS.find(r => r.id === '0013.time_entries').columns)) {
+          expected = false;
+        }
+        assert.equal(eff.tables[key], expected, `${label}: ${key}`);
+      }
+
+      // (3) Kirjoitettava joukko mahtuu kantaan: taulun perusjoukko + tehokkaat sarakeportit.
+      for (const [key, open] of Object.entries(eff.tables)) {
+        if (!open) continue;
+        const own = requirements.find(r => r.kind === 'table' && r.tableKey === key);
+        const columns = [...own.columns, ...SCHEMA_REQUIREMENTS
+          .filter(r => r.kind === 'column' && r.table === own.table && eff.columns[r.gate])
+          .flatMap(r => r.columns)];
+        assert.ok(server.hasColumns(own.table, columns), `${label}: ${own.table} ${columns}`);
+      }
+      const taskRow = toRow(normalizeTask({ id: 't', title: 'T' }), taskColumns(gate => eff.columns[gate] === true));
+      assert.ok(server.hasColumns('tasks', [...Object.keys(taskRow), 'user_id']), `${label}: tasks`);
+
+      // (4) Arvoportit: 'timer'-lähde ja ylläpitotila vain, kun kanta sallii.
+      if (eff.columns.ALIGNMENT_REALITY_FIELDS) assert.ok(state.applied.includes('0013'), label);
+      if (eff.columns.GOAL_MAINTENANCE_MODE) assert.ok(state.applied.includes('0010'), label);
+    }
+  });
+}
+
+// =====================================================================
+// OIKEA KOODI AALLON PORTEILLA
+// =====================================================================
+
+const graphs = new Map();
+
+async function loadWave(wave) {
+  if (graphs.has(wave)) return graphs.get(wave);
+  const [schema, runtime, probe, client, session, tasksRepo, collections, profileRepo, prefs] = await Promise.all([
+    importAtWave(wave, 'data/schema.js'),
+    importAtWave(wave, 'data/schemaRuntime.js'),
+    importAtWave(wave, 'data/schemaProbe.js'),
+    importAtWave(wave, 'data/client.js'),
+    importAtWave(wave, 'data/session.js'),
+    importAtWave(wave, 'data/tasksRepo.js'),
+    importAtWave(wave, 'data/collectionsRepo.js'),
+    importAtWave(wave, 'data/profileRepo.js'),
+    importAtWave(wave, 'data/notificationPrefsRepo.js')
+  ]);
+  const graph = { schema, runtime, probe, client, session, tasksRepo, collections, profileRepo, prefs };
+  graphs.set(wave, graph);
+  return graph;
+}
+
+/** Uusi palvelin ja nollattu ajonaikainen tila aallon moduuleille. */
+async function start(wave, dbState, { probe = true, online = true } = {}) {
+  const g = await loadWave(wave);
+  g.runtime.resetSchemaRuntimeForTests();
+  g.probe.resetSchemaProbeForTests();
+  // Kiinni olevien porttien muistivarastot: jokainen tapaus alkaa tyhjästä.
+  g.collections.clearAllCollections();
+  const server = createSchemaServer({ ...dbState, currentUserId: () => USER.id });
+  g.client.setClient(server);
+  g.session.setUser(USER);
+  if (probe) {
+    await g.probe.ensureSchemaCompatibility({
+      client: server, isOnline: () => online, storage: memoryStorage(), host: 'matrix.example'
+    });
+  }
+  return { g, server };
+}
+
+graphTest('aaltojen porttiliteraalit vaihtuvat oikein (C-J)', async () => {
+  for (const wave of WAVES) {
+    const { schema } = await loadWave(wave);
+    const expected = compileFor(wave);
+    for (const [key, open] of Object.entries(expected.tables)) assert.equal(schema.TABLES[key], open, `${wave} ${key}`);
+    for (const [gate, open] of Object.entries(expected.columns)) {
+      assert.equal(schema.COMPILE_COLUMN_GATES[gate], open, `${wave} ${gate}`);
+    }
+  }
+});
+
+graphTest('manifesti: auki olevan portin rivimuunnos = manifestin sarakkeet (aalto J)', async () => {
+  const { collections } = await loadWave('J');
+  for (const repo of collections.ALL_REPOSITORIES) {
+    const keys = Object.keys(repo.mapping.toRow(repo.mapping.normalize(example(repo)))).sort();
+    const expected = SCHEMA_REQUIREMENTS.filter(r => r.table === repo.table).flatMap(r => r.columns);
+    assert.deepEqual(keys, [...new Set(expected)].sort(), repo.table);
+  }
+});
+
+for (const wave of WAVES) {
+  graphTest(`KRIITTINEN aalto ${wave}: tehtävät ja tavoitteet tallentuvat jokaisessa kannan tilassa`, async () => {
+    for (const [db, state] of Object.entries(DB_STATES)) {
+      const label = `aalto ${wave}, kanta ${db}`;
+      const { g, server } = await start(wave, state);
+      assert.ok(server.calls.every(call => call.op === 'select' && call.limit === 0), `${label}: probe vain lukee`);
+      assert.equal(g.runtime.isWritable(), true, label);
+
+      // Tehtävä: luonti, muokkaus, valmis, ehdollinen muutos, poisto.
+      const task = normalizeTask({ id: 'mx-task', title: 'Tehtävä', date: '2026-09-26', time: '09:00' });
+      for (const [name, run] of [
+        ['insert', () => g.tasksRepo.insertTask(task)],
+        ['update', () => g.tasksRepo.updateTask({ ...task, title: 'Muokattu' })],
+        ['complete', () => g.tasksRepo.setCompleted(task.id, true)],
+        ['patch', () => g.tasksRepo.patchTask(task.id, { title: 'Ehdollinen' }, { ...task, title: 'Muokattu', completed: true })],
+        ['delete', () => g.tasksRepo.deleteTask(task.id)]
+      ]) {
+        const result = await run();
+        assert.equal(result.ok, true, `${label}: tasks.${name} ${result.error && JSON.stringify(result.error.cause)}`);
+      }
+
+      // Tavoite: luonti ja muokkaus.
+      const goals = g.collections.goalsRepo;
+      const goal = { id: 'mx-goal', title: 'Tavoite', metric: 'kg', targetValue: 70, lifeAreaId: null };
+      const inserted = await goals.insert(goal);
+      assert.equal(inserted.ok, true, `${label}: goals.insert`);
+      assert.equal((await goals.update({ ...goal, title: 'Muokattu' })).ok, true, `${label}: goals.update`);
+
+      // Ylläpitotila: vain kun kanta hyväksyy -- muuten torjunta ennen verkkoa.
+      const beforeMaintenance = server.calls.length;
+      const maintenance = await goals.update({ ...goal, status: 'maintenance' });
+      if (goals.isPersistent() && !g.schema.columnGateOpen('GOAL_MAINTENANCE_MODE')) {
+        assert.equal(maintenance.ok, false, label);
+        assert.equal(maintenance.error.code, 'validation_error', label);
+        assert.equal(server.calls.length, beforeMaintenance, `${label}: ei verkkoon`);
+      } else {
+        assert.equal(maintenance.ok, true, `${label}: ylläpito`);
+      }
+
+      // Jokainen kokoelma: onnistuu tai torjutaan ENNEN verkkoa -- kanta ei hylkää yhtäkään.
+      for (const repo of g.collections.ALL_REPOSITORIES) {
+        if (repo === goals) continue;
+        const before = server.calls.length;
+        const result = await repo.insert(example(repo));
+        if (result.ok) continue;
+        assert.equal(result.error.code, 'persistence_unavailable',
+          `${label}: ${repo.table} ${JSON.stringify(result.error.cause || result.error.userMessage)}`);
+        assert.equal(server.calls.length, before, `${label}: ${repo.table} torjuttiin vasta verkossa`);
+        assert.equal(g.schema.isTableAvailable(repo.schemaKey), false, `${label}: ${repo.table}`);
+      }
+
+      // Ajastimen kirjaus: lähde 'timer' vain kun kanta sallii (muuten 'manual').
+      if (g.schema.isTableAvailable('timeEntries')) {
+        const entry = { ...example(g.collections.timeEntriesRepo, '-timer'), source: 'timer' };
+        assert.equal((await g.collections.timeEntriesRepo.insert(entry)).ok, true, `${label}: timer-lähde`);
+      }
+
+      assert.equal((await g.profileRepo.saveProfile({ age: 30 })).ok, true, `${label}: profile`);
+      assert.equal((await g.prefs.savePreferences({ enabled: true })).ok, true, `${label}: asetukset`);
+
+      // Yksikään kirjoitus ei sisältänyt saraketta, jota kannassa ei ole.
+      for (const call of server.writes()) {
+        if (!call.payloadKeys) continue;
+        assert.ok(server.hasColumns(call.table, call.payloadKeys), `${label}: ${call.table} ${call.payloadKeys}`);
+      }
+    }
+  });
+}
+
+graphTest('aalto J vs kanta 0008: rajoitettu tila, ei huoltoa, ja tekniset tiedot ovat migraatiotunnisteita', async () => {
+  const { g } = await start('J', DB_STATES['0008']);
+  const snapshot = g.runtime.schemaSnapshot();
+  assert.equal(snapshot.status, SCHEMA_STATUS.DEGRADED);
+  assert.deepEqual([...snapshot.pendingMigrations], ['0009', '0010', '0011', '0012', '0013']);
+  assert.ok(snapshot.pendingMigrations.every(id => /^\d{4}$/.test(id)));
+  // Olemassa oleva data säilyy näkyvissä: kannassa olevat taulut luetaan.
+  assert.equal((await g.collections.goalsRepo.list()).ok, true);
+  // Puuttuva taulu: tyhjä ja kelvollinen, ei latausvirhe.
+  const missing = await g.collections.timeEntriesRepo.list();
+  assert.deepEqual([missing.ok, missing.value], [true, []]);
+});
+
+graphTest('aalto J: offline-käynnistys ei tee pyyntöjä ja käyttää käännösaikaisia portteja', async () => {
+  const { g, server } = await start('J', DB_STATES['0008'], { online: false });
+  assert.equal(server.calls.length, 0);
+  assert.equal(g.runtime.schemaSnapshot().status, SCHEMA_STATUS.UNVERIFIED);
+  assert.equal(g.schema.columnGateOpen('GOAL_PLANNING_FIELDS'), true);
+});
+
+for (const failMode of ['503', 'jwt', 'offline', 'hang']) {
+  graphTest(`aalto J: "ei tiedetä" (${failMode}) ei laske mitään`, async () => {
+    const { g, server } = await start('J', { ...DB_STATES['0008'], failMode }, { probe: false });
+    const started = Date.now();
+    await g.probe.ensureSchemaCompatibility({
+      client: server, isOnline: () => true, storage: memoryStorage(), timeoutMs: 100
+    });
+    assert.ok(Date.now() - started < 100 + 150);
+    assert.equal(g.runtime.schemaSnapshot().status, SCHEMA_STATUS.UNVERIFIED);
+    for (const gate of Object.keys(g.schema.COMPILE_COLUMN_GATES)) {
+      assert.equal(g.schema.columnGateOpen(gate), g.schema.COMPILE_COLUMN_GATES[gate], gate);
+    }
+    assert.equal(g.runtime.isWritable(), true);
+  });
+}
+
+graphTest('KRIITTINEN aalto J: reaktiivinen PGRST204 laskee portin ja seuraava kirjoitus onnistuu', async () => {
+  // Tarkistus ohitettu (esim. PostgRESTin vanhentunut välimuisti hyväksyi
+  // GETin): ensimmäinen kirjoitus kaatuu, portti laskee, seuraava onnistuu.
+  const { g, server } = await start('J', DB_STATES['0008'], { probe: false });
+  const task = normalizeTask({ id: 'rx-1', title: 'Tehtävä', date: '2026-09-26' });
+  const first = await g.tasksRepo.insertTask(task);
+  assert.equal(first.ok, false);
+  assert.equal(first.error.cause.code, 'PGRST204');
+  assert.equal(g.schema.columnGateOpen('GOAL_PLANNING_FIELDS'), false, 'suunnittelukentät laskettiin');
+  const second = await g.tasksRepo.insertTask({ ...task, id: 'rx-2' });
+  assert.equal(second.ok, true);
+  const payload = server.writes().at(-1).payloadKeys;
+  assert.equal(payload.includes('milestone_id') || payload.includes('depends_on'), false);
+  assert.ok(payload.includes('goal_id'), 'liitokset (0004) lähtevät yhä');
+
+  // Tavoite: ensin elämänalue (0012) puuttuu -> laskee; sitten onnistuu.
+  let result = await g.collections.goalsRepo.insert({ id: 'rx-goal', title: 'T' });
+  for (let attempt = 0; !result.ok && attempt < 3; attempt += 1) {
+    assert.equal(result.error.cause.code, 'PGRST204');
+    result = await g.collections.goalsRepo.insert({ id: 'rx-goal', title: 'T' });
+  }
+  assert.equal(result.ok, true);
+  assert.equal(g.schema.columnGateOpen('GOAL_LIFE_AREA_FIELD'), false);
+
+  // Puuttuva taulu: PGRST205 laskee taulun, seuraava torjutaan ennen verkkoa.
+  const entries = g.collections.timeEntriesRepo;
+  const missing = await entries.insert(example(entries));
+  assert.equal(missing.error.cause.code, 'PGRST205');
+  const before = server.calls.length;
+  const refused = await entries.insert(example(entries, '-2'));
+  assert.equal(refused.error.code, 'persistence_unavailable');
+  assert.equal(server.calls.length, before);
+});
+
+graphTest('KRIITTINEN aalto J: offline-jonon skeemavirhe pysäyttää, ei hylkää; seuraava toisto onnistuu', async () => {
+  const { g, server } = await start('J', DB_STATES['0008'], { probe: false });
+  const saved = new Map();
+  let reprobes = 0;
+  const sync = createOfflineSync({
+    repo: g.tasksRepo,
+    store: { load: id => saved.get(id) || null, save: (id, text) => { saved.set(id, text); return { ok: true, persistent: true }; }, purge: id => saved.delete(id) },
+    session: { userId: () => USER.id, snapshot: () => ({}), isSame: () => true },
+    now: () => 1000, isOnline: () => true, newId: (() => { let n = 0; return () => 'op' + (++n); })(),
+    canSync: g.runtime.isWritable, onSchemaError: () => { reprobes += 1; }
+  });
+  sync.activate(USER.id);
+  assert.equal(sync.enqueueTaskCreate(normalizeTask({ id: 'q-1', title: 'Jonossa', date: '2026-09-26', milestoneId: 'm1' })).ok, true);
+
+  const first = await sync.replay();
+  assert.equal(first.reason, 'schema');
+  assert.equal(first.failed, 0, 'ei merkitty epäonnistuneeksi');
+  assert.equal(reprobes, 1);
+  assert.deepEqual([sync.status().pending, sync.status().failed], [1, 0]);
+
+  const second = await sync.replay();
+  assert.equal(second.synced, 1);
+  const insert = server.writes().filter(call => call.op === 'insert').at(-1);
+  assert.equal(insert.payloadKeys.includes('milestone_id'), false);
+});
+
+graphTest('KRIITTINEN aalto J: aikakirjaukset ilman 0013:a -> vain luku; lähtökori säilyy ja lähtee kun kanta on valmis', async () => {
+  const { g, server } = await start('J', DB_STATES['+0012']);
+  assert.equal(g.schema.isTableAvailable('timeEntries'), false, 'operation_id puuttuu -> vain luku');
+  assert.equal((await g.collections.timeEntriesRepo.list()).ok, true, 'lukeminen toimii');
+
+  let outbox = [{ id: 'e1', entryDate: '2026-09-21', minutes: 45, operationId: 'timer:e1', source: 'timer' }];
+  const writer = createTimeEntryWriter({
+    repo: g.collections.timeEntriesRepo, userId: () => USER.id,
+    loadOutbox: () => outbox.slice(), saveOutbox: (_id, list) => { outbox = list; return { ok: true }; }
+  });
+  const before = server.writes().length;
+  const kept = await writer.flush();
+  assert.deepEqual([kept.sent, kept.left, kept.rejected.length], [0, 1, 0]);
+  assert.equal(outbox.length, 1);
+  assert.equal(server.writes().length, before, 'ei kirjoitusyritystä');
+
+  // Suora kirjaus: jonoon, ei virhettä eikä katoamista.
+  const direct = await writer.insert({ id: 'e2', entryDate: '2026-09-21', minutes: 10, operationId: 'log:e2' });
+  assert.deepEqual([direct.ok, direct.queued], [true, true]);
+
+  // Kanta päivitetään (0013): uusi tarkistus nostaa portin, kori tyhjenee.
+  const fixed = createSchemaServer({ ...DB_STATES['+0013'], currentUserId: () => USER.id });
+  g.client.setClient(fixed);
+  await g.probe.ensureSchemaCompatibility({ client: fixed, isOnline: () => true, storage: memoryStorage(), force: true });
+  assert.equal(g.schema.isTableAvailable('timeEntries'), true);
+  const sent = await writer.flush();
+  assert.equal(sent.sent, 2);
+  assert.equal(outbox.length, 0);
+  assert.deepEqual(fixed.rows('time_entries').map(row => row.source).sort(), ['manual', 'timer']);
+});
+
+graphTest('KRIITTINEN aalto J: ydin puuttuu -> huoltotila, nolla kirjoitusta, jono ja kori ennallaan', async () => {
+  const { g, server } = await start('J', { ...DB_STATES['+0013'], drop: { tasks: ['is_wake'] } });
+  assert.equal(g.runtime.schemaSnapshot().status, SCHEMA_STATUS.MAINTENANCE);
+  const probeCalls = server.calls.length;
+  const task = normalizeTask({ id: 'mt-1', title: 'X', date: '2026-09-26' });
+  const results = [
+    await g.tasksRepo.insertTask(task), await g.tasksRepo.updateTask(task),
+    await g.tasksRepo.setCompleted(task.id, true), await g.tasksRepo.deleteTask(task.id),
+    await g.profileRepo.saveProfile({ age: 1 }), await g.prefs.savePreferences({ enabled: true })
+  ];
+  for (const repo of g.collections.ALL_REPOSITORIES) {
+    results.push(await repo.insert(example(repo)), await repo.update(example(repo)), await repo.remove('x'));
+  }
+  assert.ok(results.every(result => !result.ok && result.error.code === 'persistence_unavailable'));
+  assert.equal(server.calls.length, probeCalls, 'yksikään kirjoitus ei lähtenyt');
+});

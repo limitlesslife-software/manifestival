@@ -32,6 +32,7 @@ import {
 import {
   TASK_EXTENDED_FIELDS, GOAL_PLANNING_FIELDS, taskColumns, volatileFields, isPersisted, hasTable
 } from '../src/data/schema.js';
+import { isColumnGateLowered, resetSchemaRuntimeForTests } from '../src/data/schemaRuntime.js';
 import { PRIORITY_KEYS, DEFAULT_PRIORITY } from '../src/domain/priority.js';
 import { setClient } from '../src/data/client.js';
 import { setUser, clearUser } from '../src/data/session.js';
@@ -461,6 +462,24 @@ test('TILA C: puuttuva sarake tuottaa näkyvän virheen, ei hiljaista onnistumis
   assert.equal(tulos.ok, false, 'puuttuva sarake näytti onnistumiselta');
   assert.ok(tulos.error, 'virhe ei päätynyt kutsujalle');
   assert.equal(tulos.error.code, 'tasks.insert');
+
+  // UUSI SÄÄNTÖ (ajonaikainen skeematarkistus): sama virhe laskee
+  // sarakeportin istunnon ajaksi, joten SEURAAVA tallennus lähtee ilman
+  // puuttuvia sarakkeita ja onnistuu -- tehtävä ei jää tallentumatta.
+  // Tila palautetaan, koska moduulin tila on yhteinen tämän tiedoston
+  // muiden testien kanssa.
+  try {
+    assert.equal(isColumnGateLowered('TASK_EXTENDED_FIELDS'), true);
+    assert.deepEqual([...taskColumns()], [...TASK_COLUMNS_CORE, ...(LINKS_OPEN ? TASK_COLUMNS_LINKS : [])]);
+    const client = recordingClient();
+    setClient(client);
+    const uusi = await tasksRepo.insertTask(normalizeTask({ id: 'y', date: '2026-09-05', title: 'y' }));
+    assert.equal(uusi.ok, true);
+    assert.equal('priority' in client.kirjatut[0].payload, false);
+  } finally {
+    resetSchemaRuntimeForTests();
+  }
+  assert.equal(isColumnGateLowered('TASK_EXTENDED_FIELDS'), false);
 });
 
 // =====================================================================

@@ -182,13 +182,7 @@ export async function loadUserData() {
   // aikana): ennen sitä luettu lista ei saa herättää ajastinta henkiin.
   const timerSeq = timerMutationSeq();
 
-  const [tasksResult, profileResult, routinesResult, exceptionsResult,
-    goalsResult, projectsResult, wellbeingResult, preferencesResult,
-    billsResult, expensesResult, savingsResult, transactionsResult,
-    investmentsResult, milestonesResult, auditResult,
-    inboxResult, remindersResult, noticesResult, travelResult,
-    locationResult, areasResult, capacitiesResult, entriesResult,
-    reviewsResult, itemSettingsResult, timersResult] = await Promise.all([
+  const loaded = await Promise.all([
     tasksRepo.listTasks(),
     profileRepo.loadProfile(),
     routinesRepo.list(),
@@ -216,6 +210,13 @@ export async function loadUserData() {
     alignmentItemSettingsRepo.list(),
     runningTimersRepo.list()
   ]);
+  const [tasksResult, profileResult, routinesResult, exceptionsResult,
+    goalsResult, projectsResult, wellbeingResult, preferencesResult,
+    billsResult, expensesResult, savingsResult, transactionsResult,
+    investmentsResult, milestonesResult, auditResult,
+    inboxResult, remindersResult, noticesResult, travelResult,
+    locationResult, areasResult, capacitiesResult, entriesResult,
+    reviewsResult, itemSettingsResult, timersResult] = loaded;
 
   // Istunto on voinut vaihtua odotuksen aikana.
   if (!isSameSession(startedIn)) {
@@ -297,10 +298,29 @@ export async function loadUserData() {
   if (collectionsOk.includes(false)) {
     // Sama viesti pätee myös ensimmäiseen lataukseen: tieto on tallessa
     // kannassa, vaikka sitä ei nyt näy (aiempaa "pysyy näkyvissä" ei ole).
-    notify('Osa tiedoista ei latautunut. Mitään ei kadonnut — päivitä, kun yhteys toimii.', 6000);
+    // Kokoelmat ovat indekseissä 2.. (0 = tehtävät, 1 = profiili).
+    notify(loadFailureMessage(loaded.slice(2).filter(result => result && !result.ok)), 6000);
   }
 
   return { tasksOk: tasksResult.ok, profileOk: profileResult.ok, discarded: false };
+}
+
+/**
+ * Latauksen epäonnistumisen kooste.
+ *
+ * SKEEMAVIRHE EI OLE YHTEYSVIRHE. Jos jokainen epäonnistunut kokoelma
+ * kaatui siihen, ettei ominaisuutta ole vielä palvelimella (taulu tai
+ * sarake puuttuu), "päivitä, kun yhteys toimii" johtaisi harhaan:
+ * päivitys ei auttaisi. Viesti ei koskaan nimeä tauluja eikä koodeja.
+ *
+ * @param {Array<{ok:false, error:object}>} failures
+ */
+export function loadFailureMessage(failures = []) {
+  const schemaOnly = failures.length > 0
+    && failures.every(result => classifyError(result && result.error) === ERROR_CLASS.SCHEMA);
+  return schemaOnly
+    ? 'Osa tiedoista ei ole vielä käytettävissä, koska palvelua päivitetään. Mitään ei kadonnut.'
+    : 'Osa tiedoista ei latautunut. Mitään ei kadonnut — päivitä, kun yhteys toimii.';
 }
 
 /**

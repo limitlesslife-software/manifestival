@@ -278,7 +278,10 @@ test('KRIITTINEN: jokainen näkymä kertoo kun tieto ei säily', () => {
   for (const tiedosto of ['src/app/views/inbox.js', 'src/app/views/reminders.js',
     'src/app/views/travel.js', 'src/app/views/notices.js']) {
     const source = read(tiedosto);
-    assert.match(source, /TABLES\.\w+/,
+    // Näkymät lukevat portin ajonaikaisen accessorin kautta
+    // (isTableAvailable = käännösaikainen JA kannan tarkistus), jotta
+    // palvelimelta puuttuva ominaisuus ei väitä tallentuvansa.
+    assert.match(source, /TABLES\.\w+|isTableAvailable\('\w+'\)/,
       `${tiedosto} ei lue porttia lainkaan`);
     assert.match(source, /istunnon ajan/,
       `${tiedosto} ei kerro, ettei tieto säily`);

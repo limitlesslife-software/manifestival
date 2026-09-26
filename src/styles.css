@@ -282,6 +282,18 @@ textarea.voice-field { resize:vertical; min-height:72px; line-height:1.4; }
 body.is-offline .offline-banner { display:block; }
 .sync-status { display:block; width:100%; appearance:none; -webkit-appearance:none; border:none; font-family:'Manrope',sans-serif; font-size:12px; font-weight:700; text-align:center; padding:7px 12px; background:var(--sage-soft); color:var(--forest); cursor:default; }
 .sync-status[hidden] { display:none; }
+/* Skeematarkistus: rajoitettu tila (rivi) ja huoltokatko (koko näyttö). */
+.schema-banner { background:var(--gold-soft); color:var(--forest); font-size:12px; font-weight:700; line-height:1.45; text-align:center; padding:7px 12px; overflow-wrap:anywhere; }
+.schema-banner[hidden], .schema-maintenance[hidden], .schema-details[hidden] { display:none; }
+.schema-details { margin-top:4px; font-weight:600; }
+.schema-details summary { cursor:pointer; display:inline-block; min-height:44px; line-height:44px; padding:0 8px; }
+.schema-details summary:focus-visible { outline:2px solid var(--gold); outline-offset:2px; border-radius:8px; }
+.schema-maintenance { position:fixed; inset:0; z-index:120; background:var(--cream); display:flex; align-items:center; justify-content:center; padding:24px; }
+.schema-maintenance-card { width:100%; max-width:360px; text-align:center; color:var(--text-1); overflow-wrap:anywhere; }
+.schema-maintenance-title { font-size:20px; font-weight:800; margin-bottom:10px; color:var(--forest); }
+.schema-maintenance-text { font-size:14px; line-height:1.6; color:var(--text-2); }
+.schema-maintenance-status { min-height:20px; margin:12px 0; font-size:13px; font-weight:600; color:var(--clay); }
+.schema-maintenance-actions { display:flex; flex-wrap:wrap; gap:10px; }
 .sync-status.tone-warn { background:var(--gold-soft); color:var(--gold); }
 .sync-status.tone-error { background:var(--clay-soft); color:var(--clay); }
 .sync-status.needs-review { cursor:pointer; text-decoration:underline; min-height:44px; }

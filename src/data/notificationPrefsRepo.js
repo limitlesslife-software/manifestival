@@ -14,7 +14,7 @@
 
 import { getClient } from './client.js';
 import { requireUserId } from './session.js';
-import { hasTable } from './schema.js';
+import { hasTable, isTableMissing, writeRefusal, noteSchemaError } from './schema.js';
 import { ok, fail } from '../lib/result.js';
 import { normalizePreferences, DEFAULT_PREFERENCES } from '../domain/notification.js';
 
@@ -80,6 +80,9 @@ export async function loadPreferences() {
   if (!isPersistent()) {
     return ok(memoryPreferences ? { ...memoryPreferences } : normalizePreferences({}));
   }
+  // Taulua ei ole kannassa (ajon aikana todettu): hiljaiset oletukset, ei
+  // latausvirhettä. Tallennus torjutaan (ks. savePreferences).
+  if (isTableMissing(SCHEMA_KEY)) return ok(normalizePreferences({}));
 
   try {
     const { data, error } = await getClient()
@@ -89,6 +92,7 @@ export async function loadPreferences() {
       .maybeSingle();
 
     if (error) {
+      noteSchemaError(TABLE, error);
       return fail('Muistutusasetusten lataus ei onnistunut.',
         { cause: error, code: 'notificationPrefs.load' });
     }
@@ -112,6 +116,9 @@ export async function savePreferences(preferences) {
     memoryPreferences = normalized;
     return ok(normalized);
   }
+  // Huoltotila tai kannasta puuttuva taulu: kerrotaan, ei teeskennellä.
+  const refused = writeRefusal(SCHEMA_KEY);
+  if (refused) return refused;
 
   try {
     const { error } = await getClient()
@@ -119,6 +126,7 @@ export async function savePreferences(preferences) {
       .upsert(preferencesToRow(normalized, requireUserId()));
 
     if (error) {
+      noteSchemaError(TABLE, error);
       return fail('Muistutusasetusten tallennus ei onnistunut.',
         { cause: error, code: 'notificationPrefs.save' });
     }

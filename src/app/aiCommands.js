@@ -44,6 +44,7 @@ import { priorityLabel } from '../domain/priority.js';
 import { weekdayShort } from '../domain/routine.js';
 import { getState, setAiAudit } from './state.js';
 import { aiAuditRepo } from '../data/collectionsRepo.js';
+import { columnGateOpen } from '../data/schema.js';
 import { logError } from '../lib/result.js';
 import { newTaskId } from '../lib/rows.js';
 import { logWarn } from '../lib/logger.js';
@@ -314,7 +315,8 @@ export function buildProposal(raw, options = {}) {
   const todayIso = fmtISO(todayMidnight());
   const inputSummary = summarizeInput(options.inputText);
 
-  const resolved = resolveCommand(raw, { today: todayIso });
+  // Ylläpitotila vain, kun kanta hyväksyy sen (ajonaikainen portti).
+  const resolved = resolveCommand(raw, { today: todayIso, goalMaintenance: columnGateOpen('GOAL_MAINTENANCE_MODE') });
 
   if (!resolved.ok) {
     return {

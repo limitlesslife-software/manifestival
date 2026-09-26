@@ -20,12 +20,13 @@ import { getClient } from './client.js';
 import { requireUserId } from './session.js';
 import {
   hasTable, BILL_PAYMENT_FIELDS, GOAL_PLANNING_FIELDS, GOAL_LIFE_AREA_FIELD,
-  ALIGNMENT_REALITY_FIELDS
+  ALIGNMENT_REALITY_FIELDS, columnGateOpen, isTableMissing, writeRefusal,
+  stripLoweredColumns, noteSchemaError
 } from './schema.js';
 import { createMemoryRepository } from './memoryStore.js';
-import { ok, fail } from '../lib/result.js';
+import { ok, fail, failWith, ERROR_CODE } from '../lib/result.js';
 import { normalizeRoutine, normalizeException } from '../domain/routine.js';
-import { normalizeGoal } from '../domain/goal.js';
+import { normalizeGoal, isStorableGoalStatus } from '../domain/goal.js';
 import { normalizeProject } from '../domain/project.js';
 import { normalizeWellbeingEntry } from '../domain/wellbeing.js';
 import {
@@ -68,11 +69,26 @@ function assertClientSafe(row) {
  * @param {Function} config.normalize Domain-normalisointi
  * @param {Function} config.toRow     Domain -> kannan rivi
  * @param {Function} config.fromRow   Kannan rivi -> domain
+ * @param {Function} [config.guardWrite] normalisoitu -> kieltäytyminen tai null
+ *   (arvot, joita kanta ei vielä hyväksy; tarkistetaan ennen verkkoa)
+ *
+ * AJONAIKAINEN SKEEMATARKISTUS (src/data/schema.js, schemaRuntime.js):
+ * käännösaikainen portti valitsee yhä kannan ja muistin välillä. Jos kanta
+ * on sovellusta jäljessä, auki oleva portti EI putoa muistiin (se
+ * teeskentelisi tallentavansa) vaan:
+ *
+ *   taulu puuttuu        lataus = tyhjä lista, kirjoitus torjutaan
+ *   sarakkeita puuttuu   lataus toimii, kirjoitus torjutaan (vain luku)
+ *   sarakeportti laski   sarakkeet jätetään pois, kirjoitus toimii
+ *   huoltotila           kirjoitus torjutaan
+ *
+ * Torjunta tapahtuu ENNEN verkkokutsua ja kertoo syyn käyttäjälle.
  */
-export function createRepository({ table, schemaKey, normalize, toRow, fromRow }) {
+export function createRepository({ table, schemaKey, normalize, toRow, fromRow, guardWrite = null }) {
   const memory = createMemoryRepository({ normalize, name: table });
 
   const usesDatabase = () => hasTable(schemaKey);
+  const refusal = normalized => writeRefusal(schemaKey) || (guardWrite ? guardWrite(normalized) : null);
 
   return {
     table,
@@ -100,12 +116,19 @@ export function createRepository({ table, schemaKey, normalize, toRow, fromRow }
 
     async list() {
       if (!usesDatabase()) return memory.list();
+      // Taulua ei ole kannassa (ajon aikana todettu): tyhjä ja kelvollinen
+      // tulos, ei "lataus epäonnistui, tarkista yhteys" -- päivitys ei
+      // auttaisi, ja tyhjässä taulussa ei ole mitään kadonnutta.
+      if (isTableMissing(schemaKey)) return ok([]);
       try {
         const { data, error } = await getClient()
           .from(table)
           .select('*')
           .eq('user_id', requireUserId());
-        if (error) return fail('Tietojen lataus ei onnistunut.', { cause: error, code: table + '.list' });
+        if (error) {
+          noteSchemaError(table, error);
+          return fail('Tietojen lataus ei onnistunut.', { cause: error, code: table + '.list' });
+        }
         return ok((data || []).map(fromRow));
       } catch (cause) {
         return fail('Tietojen lataus ei onnistunut.', { cause, code: table + '.list' });
@@ -115,11 +138,16 @@ export function createRepository({ table, schemaKey, normalize, toRow, fromRow }
     async insert(entity) {
       const normalized = normalize(entity);
       if (!usesDatabase()) return memory.insert(normalized);
+      const refused = refusal(normalized);
+      if (refused) return refused;
       try {
         const { error } = await getClient()
           .from(table)
-          .insert(assertClientSafe(toRow(normalized)));
-        if (error) return fail('Tallennus ei onnistunut.', { cause: error, code: table + '.insert' });
+          .insert(stripLoweredColumns(table, assertClientSafe(toRow(normalized))));
+        if (error) {
+          noteSchemaError(table, error, Object.keys(toRow(normalized)));
+          return fail('Tallennus ei onnistunut.', { cause: error, code: table + '.insert' });
+        }
         return ok(normalized);
       } catch (cause) {
         return fail('Tallennus ei onnistunut.', { cause, code: table + '.insert' });
@@ -129,13 +157,18 @@ export function createRepository({ table, schemaKey, normalize, toRow, fromRow }
     async update(entity) {
       const normalized = normalize(entity);
       if (!usesDatabase()) return memory.update(normalized);
+      const refused = refusal(normalized);
+      if (refused) return refused;
       try {
         const { error } = await getClient()
           .from(table)
-          .update(assertClientSafe(toRow(normalized)))
+          .update(stripLoweredColumns(table, assertClientSafe(toRow(normalized))))
           .eq('user_id', requireUserId())
           .eq('id', normalized.id);
-        if (error) return fail('Muutoksen tallennus ei onnistunut.', { cause: error, code: table + '.update' });
+        if (error) {
+          noteSchemaError(table, error, Object.keys(toRow(normalized)));
+          return fail('Muutoksen tallennus ei onnistunut.', { cause: error, code: table + '.update' });
+        }
         return ok(normalized);
       } catch (cause) {
         return fail('Muutoksen tallennus ei onnistunut.', { cause, code: table + '.update' });
@@ -144,13 +177,18 @@ export function createRepository({ table, schemaKey, normalize, toRow, fromRow }
 
     async remove(id) {
       if (!usesDatabase()) return memory.remove(id);
+      const refused = writeRefusal(schemaKey);
+      if (refused) return refused;
       try {
         const { error } = await getClient()
           .from(table)
           .delete()
           .eq('user_id', requireUserId())
           .eq('id', id);
-        if (error) return fail('Poisto ei onnistunut.', { cause: error, code: table + '.delete' });
+        if (error) {
+          noteSchemaError(table, error);
+          return fail('Poisto ei onnistunut.', { cause: error, code: table + '.delete' });
+        }
         return ok({ id });
       } catch (cause) {
         return fail('Poisto ei onnistunut.', { cause, code: table + '.delete' });
@@ -237,6 +275,12 @@ export const goalsRepo = createRepository({
   table: 'goals',
   schemaKey: 'goals',
   normalize: normalizeGoal,
+  // YLLÄPITOTILA vaatii migraation 0010 (goals_status_check). Ennen sitä
+  // arvoa ei lähetetä lainkaan: kanta hylkäisi sen koodilla 23514.
+  guardWrite: goal => (isStorableGoalStatus(goal.status, {
+    maintenanceAllowed: columnGateOpen('GOAL_MAINTENANCE_MODE')
+  }) ? null : failWith(ERROR_CODE.VALIDATION_ERROR,
+    'Ylläpitotila ei ole vielä käytössä. Valitse tavoitteelle toinen tila.')),
   toRow: goal => ({
     id: goal.id,
     title: goal.title,
@@ -911,8 +955,10 @@ export const timeEntriesRepo = createRepository({
     task_id: entry.taskId,
     // 0012 sallii vain lähteen 'manual'. Ennen 0013:a ajastimen kirjaus
     // tallentuu 'manual'-lähteellä: minuutit ja kohde säilyvät, vain
-    // lähteen erottelu odottaa migraatiota.
-    source: ALIGNMENT_REALITY_FIELDS ? entry.source : 'manual',
+    // lähteen erottelu odottaa migraatiota. ARVOPORTTI, ei sarakeportti:
+    // sarakkeen pois jättäminen ei riittäisi, joten ajonaikainen tieto
+    // luetaan tässä (columnGateOpen) eikä vain sarakkeita riisuttaessa.
+    source: columnGateOpen('ALIGNMENT_REALITY_FIELDS') ? entry.source : 'manual',
     note: entry.note,
     ...(ALIGNMENT_REALITY_FIELDS ? {
       project_id: entry.projectId,

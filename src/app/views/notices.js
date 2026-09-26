@@ -32,7 +32,8 @@ import {
   NOTICE_KIND, NOTICE_STATUS, NOTICE_LEVEL, NOTICE_ACTION, noticeKindLabel,
   compareNotices, summarizeNotices, actionsFor
 } from '../../domain/notificationCenter.js';
-import { TABLES } from '../../data/schema.js';
+import { hasTable, isTableAvailable } from '../../data/schema.js';
+import { serverUnavailableHintHtml } from '../schemaStatus.js';
 import {
   readNotice, actOnNotice, dismissNotice, deleteNotice,
   snoozeReminderBy, completeReminder, acknowledgeReminder
@@ -107,10 +108,12 @@ export function renderNotices() {
     ? `<span class="notice-badge">${summary.badge}</span>`
     : '';
 
-  const varoitus = TABLES.notices
+  const varoitus = isTableAvailable('notices')
     ? ''
-    : `<p class="hint"><strong>Huom.</strong> Ilmoitukset säilyvät `
-      + `toistaiseksi vain tämän istunnon ajan.</p>`;
+    : hasTable('notices')
+      ? serverUnavailableHintHtml()
+      : `<p class="hint"><strong>Huom.</strong> Ilmoitukset säilyvät `
+        + `toistaiseksi vain tämän istunnon ajan.</p>`;
 
   const sisalto = naytettavat.length === 0
     ? `<div class="assist-empty">${showHandled

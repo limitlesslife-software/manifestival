@@ -35,7 +35,7 @@
 // sanoi, ei välivaihe matkalla johonkin muuhun.
 
 import { inboxRepo } from '../data/collectionsRepo.js';
-import { TABLES } from '../data/schema.js';
+import { isTableAvailable } from '../data/schema.js';
 import { newTaskId } from '../lib/rows.js';
 import { fmtISO, todayMidnight } from '../lib/datetime.js';
 import { logError } from '../lib/result.js';
@@ -159,7 +159,9 @@ export async function captureText(text, { source = CAPTURE_SOURCE.TEXT } = {}) {
     return { ok: false };
   }
 
-  if (!TABLES.inboxItems) {
+  // Ajon aikana laskettu taulu torjuu kirjoituksen jo yllä, joten tänne
+  // päästään vain käännösaikaisesti kiinni olevalla portilla (muisti).
+  if (!isTableAvailable('inboxItems')) {
     notify('Kirjattu. Huom: saapuvat säilyvät toistaiseksi vain tämän istunnon ajan.', 6000);
   }
 
