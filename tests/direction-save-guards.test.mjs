@@ -348,6 +348,56 @@ test('RACE-06: keskeneräinen katsaus kiinnittää viikon — keskiyön jälkein
   assert.deepEqual(getState().alignmentReviews.map(r => r.weekStart), ['2026-09-21']);
 });
 
+test('RACE-06 KRIITTINEN: luonnoksen kiinnittämä viikko vapautuu tallennuksen jälkeen (sovellus auki viikon vaihteen yli)', async () => {
+  mock.timers.setTime(new Date(2026, 8, 27, 23, 55).getTime()); // su 27.9. klo 23.55
+  initDirection();
+  renderDirection();
+  const reflection = doc('dirReflection');
+  reflection.value = 'Kesken';
+  reflection.dispatch('input');
+  mock.timers.setTime(new Date(2026, 8, 28, 0, 2).getTime()); // ma 28.9. klo 0.02
+  renderDirection();
+  assert.equal(doc('dirWeekLabel').textContent, '21.9.–27.9.2026', 'luonnos ei kiinnittänyt viikkoa');
+  await click('dirReviewSave');
+  assert.deepEqual(getState().alignmentReviews.map(r => r.weekStart), ['2026-09-21']);
+  renderDirection(); // seuraava piirto (esim. datan päivitys)
+  assert.equal(doc('dirWeekLabel').textContent, '28.9.–4.10.2026', 'näkymä jäi vanhalle viikolle tallennuksen jälkeen');
+});
+
+test('RACE-06: kiinnitys pysyy, kunnes KAIKKI luonnokset on tallennettu', async () => {
+  mock.timers.setTime(new Date(2026, 8, 27, 23, 55).getTime());
+  initDirection();
+  renderDirection();
+  doc('dirCapacityHours').value = '20';
+  doc('dirCapacityHours').dispatch('input');
+  doc('dirReflection').value = 'Vielä kesken';
+  doc('dirReflection').dispatch('input');
+  mock.timers.setTime(new Date(2026, 8, 28, 0, 2).getTime());
+  await click('dirCapacitySave');
+  renderDirection();
+  assert.equal(doc('dirWeekLabel').textContent, '21.9.–27.9.2026', 'keskeneräinen pohdinta menetti viikkonsa');
+  await click('dirReviewSave');
+  renderDirection();
+  assert.equal(doc('dirWeekLabel').textContent, '28.9.–4.10.2026');
+  assert.deepEqual(getState().weeklyCapacities.map(c => c.weekStart), ['2026-09-21']);
+  assert.deepEqual(getState().alignmentReviews.map(r => r.weekStart), ['2026-09-21']);
+});
+
+test('RACE-06: käyttäjän itse valitsema viikko ei vapaudu tallennuksessa', async () => {
+  initDirection();
+  renderDirection();
+  // Luonnos kiinnittää ensin tämän viikon, sitten käyttäjä selaa itse.
+  doc('dirCapacityHours').value = '30';
+  doc('dirCapacityHours').dispatch('input');
+  await click('dirPrev');
+  doc('dirCapacityHours').value = '15';
+  doc('dirCapacityHours').dispatch('input');
+  await click('dirCapacitySave');
+  renderDirection();
+  assert.equal(doc('dirWeekLabel').textContent, '14.9.–20.9.2026', 'selattu viikko vaihtui tallennuksen jälkeen');
+  assert.deepEqual(getState().weeklyCapacities.map(c => c.weekStart), ['2026-09-14']);
+});
+
 test('RACE-06: selattu viikko on tallennuksen viikko (regressio)', async () => {
   initDirection();
   renderDirection();

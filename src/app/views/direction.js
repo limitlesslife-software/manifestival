@@ -89,6 +89,13 @@ function targetWeek() {
 }
 
 /**
+ * Kiinnittikö keskeneräinen syöte näkyvän viikon (markDirty)? Käyttäjän oma
+ * selaus (edellinen, seuraava, tämä viikko, ehdotuksen viikko) EI ole
+ * luonnoksen kiinnitys, eikä sitä vapauteta tallennuksessa.
+ */
+let pinnedByDraft = false;
+
+/**
  * Keskeneräinen syöte kiinnittää näkyvän viikon: seuraava piirto (esim.
  * datan päivitys keskiyön jälkeen) ei vaihda viikkoa puoliksi kirjoitetun
  * katsauksen tai kapasiteetin alta.
@@ -96,10 +103,35 @@ function targetWeek() {
 function markDirty(field) {
   if (!field || !field.dataset) return;
   field.dataset.dirty = '1';
-  if (viewWeek === null && renderedWeek) viewWeek = renderedWeek;
+  if (viewWeek === null && renderedWeek) {
+    viewWeek = renderedWeek;
+    pinnedByDraft = true;
+  }
 }
 
 const CAPACITY_FIELDS = Object.freeze(['dirCapacityHours', 'dirEnergy', 'dirEnergyBudget']);
+
+/** Kentät, joiden keskeneräinen syöte kiinnittää viikon. */
+function draftFieldIds() {
+  return [...CAPACITY_FIELDS, 'dirReflection', ...REFLECTION_CODES.map(code => `dirAnswer-${code}`)];
+}
+
+/**
+ * Tallennus onnistui. Jos viikko oli kiinnitetty vain luonnoksen takia
+ * eikä keskeneräistä syötettä ole jäljellä, näkymä seuraa taas kelloa:
+ * viikon vaihteen yli auki ollut sovellus ei jää vanhalle viikolle.
+ * Vaikuttaa seuraavasta piirrosta alkaen (ei hyppää juuri tallennetun alta).
+ */
+function releaseDraftPin() {
+  if (!pinnedByDraft) return;
+  const dirty = draftFieldIds().some(id => {
+    const field = maybe(id);
+    return Boolean(field && field.dataset && field.dataset.dirty);
+  });
+  if (dirty) return;
+  pinnedByDraft = false;
+  viewWeek = null;
+}
 
 function clearCapacityDirty() {
   for (const id of CAPACITY_FIELDS) {
@@ -1075,6 +1107,7 @@ async function submitCapacity() {
     return;
   }
   clearCapacityDirty();
+  releaseDraftPin();
   const previousWeek = addDaysIso(week, -7);
   const state = getState();
   const previousActual = entriesInRange(state.timeEntries, previousWeek, addDaysIso(previousWeek, 6))
@@ -1148,6 +1181,7 @@ async function submitReview() {
       const field = maybe(`dirAnswer-${code}`);
       if (field) delete field.dataset.dirty;
     }
+    releaseDraftPin();
     status.textContent = 'Viikkokatsaus tallennettu.';
   }
 }
@@ -1374,7 +1408,10 @@ async function onProposalClick(event) {
   const result = await applyAdjustment(proposal, { overrides, weekStart: week });
   if (result.navigate === 'estimate') {
     // Ehdotus koskee ensi viikkoa: näytetään se viikko, jonka asiat arvioidaan.
-    if (proposal.payload && proposal.payload.weekStart) viewWeek = weekStartOf(proposal.payload.weekStart);
+    if (proposal.payload && proposal.payload.weekStart) {
+      viewWeek = weekStartOf(proposal.payload.weekStart);
+      pinnedByDraft = false;
+    }
     openWorkflow('estimate');
     return;
   }
@@ -1392,6 +1429,8 @@ async function onProposalClick(event) {
 
 function goToWeek(offsetDays) {
   viewWeek = weekStartOf(addDaysIso(shownWeek(), offsetDays));
+  // Käyttäjän oma valinta: tallennus ei palauta näkymää tähän viikkoon.
+  pinnedByDraft = false;
   explanations = new Map();
   lastPreview = null;
   // Kapasiteettikentät näyttävät valitun viikon arvot, eivät edellisen luonnosta.
@@ -1404,7 +1443,12 @@ export function initDirection() {
   if (!prev) return;
   prev.addEventListener('click', () => goToWeek(-7));
   el('dirNext').addEventListener('click', () => goToWeek(7));
-  el('dirThisWeek').addEventListener('click', () => { viewWeek = null; clearCapacityDirty(); renderDirection(); });
+  el('dirThisWeek').addEventListener('click', () => {
+    viewWeek = null;
+    pinnedByDraft = false;
+    clearCapacityDirty();
+    renderDirection();
+  });
 
   el('dirCapacitySave').addEventListener('click', saveCapacityOnce);
   for (const id of CAPACITY_FIELDS) {
@@ -1514,6 +1558,7 @@ export function initDirection() {
 export function resetDirectionView() {
   viewGeneration += 1;
   viewWeek = null;
+  pinnedByDraft = false;
   editingAreaId = null;
   shownProposals = [];
   selectedProposalIds = new Set();
