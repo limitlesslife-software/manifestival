@@ -33,6 +33,8 @@
 //      suunnitelman jakaumaa vasta, kun riittävä osa työstä on arvioitu.
 //      Päivät ennen ensimmäistä kirjausta ja ennen alueen luontia ovat
 //      tuntemattomia, eivät nollaa. Vanhat kynnykset ennallaan.
+//      Kirjattu osuus (puolet) suhteutetaan käyttäjän ilmoittamaan
+//      viitteeseen; ilman viitettä toteumaa ei verrata.
 
 export const POLICY_VERSION = 3;
 
@@ -57,14 +59,25 @@ export const POLICY_VERSIONS = Object.freeze({
  *   - kirjauksia on vähintään ACTUAL_MIN_TRACKED_DAYS päivältä
  *   - kirjauksia on vähintään ACTUAL_MIN_DAY_COVERAGE jakson kuluneista
  *     päivistä (puolet, ylöspäin pyöristäen)
- *   - VAIN jos viikon kapasiteetti on asetettu: kirjattua aikaa on
- *     vähintään ACTUAL_MIN_LOGGED_SHARE x kapasiteetti x jakson osuus
+ *   - kirjattua aikaa on vähintään ACTUAL_MIN_LOGGED_SHARE (puolet)
+ *     viitteestä, jonka KÄYTTÄJÄ ITSE on ilmoittanut. Viite on
+ *     ensimmäinen olemassa oleva:
+ *       1. viikon kapasiteetti x jakson osuus
+ *       2. aktiivisten alueiden viikkotavoitteiden summa x jakson osuus
+ *       3. jakson päiville (tähän päivään asti) päivätyn arvioidun työn summa
+ *     Jos viitettä ei ole lainkaan, taso on enintään `partial`: kirjattua
+ *     aikaa ei voi suhteuttaa mihinkään, eikä viitettä keksitä.
  *
- * Kirjattu osuus on tarkoituksella väljä (25 %, ei 50 %): kapasiteetti
- * on käyttäjän arvio siitä, paljonko hän EHTII, ei siitä paljonko hän
- * kirjaa. Reilusti arvioitu kapasiteetti ei saa tehdä toteuman
- * vertailusta saavuttamatonta; päiväkattavuus kertoo kirjaamisen
- * säännöllisyydestä paremmin kuin minuuttimäärä.
+ * Miksi puolet (ei 25 %): 70 min päivässä 30 tunnin kapasiteetilla on
+ * noin 27 % viikosta. Sillä ei voi väittää, että muut alueet jäivät
+ * huomiotta — kirjaamaton aika on tuntematon, ei nolla. Ilman viitettä
+ * kaksi 10 minuutin kirjausta riitti aiemmin "vakiintuneeksi".
+ *
+ * Hystereesi viikon sisällä: kriteerit arvioidaan jakson jokaisen
+ * kuluneen päivän lopussa. Kun `established` on saavutettu jonain
+ * aiempana päivänä, taso pysyy loppuviikon, ellei päiväkattavuus petä.
+ * Muuten perjantaiaamu (viite kasvaa, päivän kirjaukset puuttuvat)
+ * pudottaisi tason takaisin.
  */
 export const TIME_RULES = Object.freeze({
   /** Kuormitus on vahva, kun suunniteltu >= 120 % kapasiteetista. */
@@ -97,8 +110,8 @@ export const TIME_RULES = Object.freeze({
   ACTUAL_MIN_TRACKED_DAYS: 2,
   /** v3: ... ja vähintään tältä osuudelta seurantajakson kuluneista päivistä. */
   ACTUAL_MIN_DAY_COVERAGE: 0.5,
-  /** v3: ... ja (kun kapasiteetti on asetettu) kirjattu aika >= tämä osuus kapasiteetista x jakson osuus. */
-  ACTUAL_MIN_LOGGED_SHARE: 0.25,
+  /** v3: ... ja kirjattu aika >= tämä osuus käyttäjän ilmoittamasta viitteestä (kapasiteetti / tavoitteet / suunnitelma). */
+  ACTUAL_MIN_LOGGED_SHARE: 0.5,
   /** v3: vahva huomiotta jääminen vain, kun seurantajakso kattoi vähintään 6/7 viikosta. */
   STRONG_MIN_TRACKED_FRACTION: 6 / 7,
   /** v3: suunnitelman jakaumaa ei arvioida, jos arvioitu osuus asioista on alle tämän. */

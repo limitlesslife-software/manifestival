@@ -77,8 +77,12 @@ test('edellisen viikon katsaus: eteneminen on "after" ja toteumaa verrataan koko
   // vertailuun (kirjaamattomat päivät ovat tuntemattomia), eikä vahva
   // huomiotta jääminen synny jaksosta, joka alkoi vasta keskiviikkona.
   // Kirjaaja kirjaa nyt maanantaista alkaen neljänä päivänä (yht. 120 min).
+  // Muutettu: kirjattu aika suhteutetaan käyttäjän omaan viitteeseen.
+  // Ilman kapasiteettia viite olisi alueen tavoite 600 min, jolloin
+  // 120 min ei riitä vakiintuneeksi; käyttäjä on nyt ilmoittanut 200 min.
   const analysis = analyzeWeek({
     weekStart: '2026-09-14', todayIso: '2026-09-22', areas: [area],
+    capacity: normalizeWeeklyCapacity({ id: 'c', weekStart: '2026-09-14', availableMinutes: 200 }),
     timeEntries: ['2026-09-14', '2026-09-15', '2026-09-17', '2026-09-19'].map((date, i) => entry(`e${i}`, date, 30))
   });
   assert.equal(analysis.tracking.level, 'established');

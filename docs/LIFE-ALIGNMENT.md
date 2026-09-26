@@ -109,8 +109,10 @@ kapasiteettia, arvioimatonta työtä (avoimet asiat; valmiiksi merkityt ilman
 kestoa erikseen tietona `unestimated_completed`), liittämätöntä työtä, ei
 toteumaa, **osittainen kirjaus** (`partial_actual`: seuranta `early` tai
 `partial`). Kattavuusprosentit: arvioitu osuus, alueeseen liitetty
-suunniteltu ja toteuma; lisäksi seurannan taso (`trackingLevel`) ja kirjattu
-osuus kapasiteetista (`loggedSharePercent`).
+suunniteltu ja toteuma; lisäksi seurannan taso (`trackingLevel`) ja syy
+(`trackingReason`), kirjauspäivät (`trackedDays` / `trackingWindowDays`) ja
+kirjattu osuus käyttäjän viitteestä (`loggedSharePercent`,
+`loggedShareBasis`).
 
 ## Sääntöversio 3: harva aineisto ja ensimmäinen viikko
 
@@ -128,16 +130,40 @@ aikaisin alueen luontipäivä). Sovelluskerros antaa luontipäivän paikallisena
 päivänä (`startDate`); domain ei lue kelloa. `createLifeArea` asettaa
 `createdAt`:n heti (kanta korvaa omallaan latauksessa).
 
-| Taso | Ehto |
+| Taso | Ehto (`reason`) |
 |---|---|
 | `none` | viikolle ei ole kirjauksia |
-| `early` | jaksosta kulunut < 3/7 viikkoa **tai** kirjauksia < 2 päivältä |
-| `partial` | kirjauspäiviä < puolet jakson kuluneista päivistä (ylöspäin), **tai** kapasiteetin ollessa asetettu kirjattu aika < 25 % × kapasiteetti × jakson osuus |
+| `early` | jaksosta kulunut < 3/7 viikkoa (`window`) **tai** kirjauksia < 2 päivältä (`days`) |
+| `partial` | kirjauspäiviä < puolet jakson kuluneista päivistä, ylöspäin (`days`), **tai** viitettä ei ole (`no_reference`), **tai** kirjattu aika < 50 % viitteestä (`share`) |
 | `established` | muuten — vain tällä tasolla toteumaa verrataan tavoitteisiin |
+
+**Viite** (`referenceBasis`, `referenceMinutes`) on luku, jonka *käyttäjä
+itse* on ilmoittanut; ensimmäinen olemassa oleva:
+
+1. `capacity`: viikon kapasiteetti × jakson osuus
+2. `targets`: aktiivisten alueiden viikkotavoitteiden summa × jakson osuus
+3. `planned`: jakson päiville tähän päivään asti päivätyn arvioidun työn summa
+
+Nolla ei ole viite. Ilman viitettä taso on enintään `partial`: kirjattua
+aikaa ei voi suhteuttaa mihinkään, eikä viitettä keksitä.
+
+**Hystereesi viikon sisällä:** kriteerit arvioidaan jakson jokaisen
+kuluneen päivän lopussa (jakso ja kirjaukset siihen päivään asti). Kun
+`established` saavutettiin jonain aiempana päivänä (`establishedSince`),
+taso pysyy loppuviikon (`held: true`), ellei päiväkattavuus petä. Muuten
+perjantaiaamu (viite kasvaa, päivän kirjaukset puuttuvat) pudottaisi tason.
+`loggedSharePercent` näyttää silti nykyisen osuuden.
 
 Ajastimella ja käsin kirjattu päivä ovat samanarvoisia todisteita
 seurannasta; minuutteja ei painoteta lähteen mukaan. Katsauksen
 "Tiedossa"-rivi näyttää jaon (ajastimella / käsin).
+
+Aineiston laatu (`partial_actual`) sanoo syyn: "Aikaa on kirjattu vain N
+päivänä ikkunan M päivästä, …" (`days`) on eri asia kuin "Kirjattu aika
+kattaa vasta noin X % arvioimastasi ajasta, …" (`share`; tavoitteista:
+"aikatavoitteidesi mukaisesta ajasta", suunnitelmasta: "tähän mennessä
+suunnittelemastasi ajasta"). Ilman viitettä: "Kirjattua aikaa ei voi vielä
+suhteuttaa mihinkään …" ilman "Kirjaa aikaa" -toimenpidettä.
 
 ### Kynnykset (`TIME_RULES`, `REVIEW_RULES`)
 
@@ -145,20 +171,27 @@ seurannasta; minuutteja ei painoteta lähteen mukaan. Katsauksen
 |---|---|---|
 | `ACTUAL_MIN_TRACKED_DAYS` | 2 | kirjauspäiviä vähintään |
 | `ACTUAL_MIN_DAY_COVERAGE` | 0,5 | kirjauspäiviä vähintään tämä osuus jakson kuluneista päivistä |
-| `ACTUAL_MIN_LOGGED_SHARE` | 0,25 | (vain kapasiteetin kanssa) kirjattu ≥ osuus × kapasiteetti × jakson osuus |
+| `ACTUAL_MIN_LOGGED_SHARE` | 0,5 | kirjattu ≥ osuus × viite (kapasiteetti / tavoitteiden summa × jakson osuus, tai jakson arvioitu suunnitelma) |
 | `STRONG_MIN_TRACKED_FRACTION` | 6/7 | vahva huomiotta jääminen vain, kun jakso kattoi lähes koko viikon |
 | `PLAN_MIN_ESTIMATE_COVERAGE` | 0,5 | suunnitelman jakaumaa ei arvioida alle tämän arvioidun osuuden |
 | `PLAN_FULL_ESTIMATE_COVERAGE` | 0,8 | 0,5–0,8: suunnitelman jakauma enintään Tiedoksi ("suuntaa-antava") |
 | `REVIEW_RULES.CAPACITY_MIN_TRACKED_FRACTION` | 6/7 | kapasiteettikysymys kirjatusta ajasta vain vakiintuneesta, lähes koko viikon kirjauksesta |
 
-**Miksi kirjattu osuus on 25 % eikä 50 %:** kapasiteetti on käyttäjän arvio
-siitä, paljonko hän *ehtii*, ei siitä paljonko hän kirjaa. 50 %
-kapasiteetista (auditoinnin prototyyppi) tekisi toteuman vertailusta
-saavuttamattoman sille, joka arvioi kapasiteettinsa reilusti — tämä on
-tarkoituksellinen poikkeama. Päiväkattavuus kertoo kirjaamisen
-säännöllisyydestä paremmin kuin minuuttimäärä; osuus vain estää
-vertailun muutaman minuutin kirjauksista. Ilman kapasiteettia osuutta ei
-tarkisteta (ei keksittyä viitettä).
+**Miksi kirjattu osuus on puolet ja miksi viite on aina käyttäjän oma
+luku:** sääntöversio 3:n ensimmäinen muoto käytti 25 % ja tarkisti osuuden
+vain kapasiteetin kanssa. Auditoinnin skenaario S2 (kapasiteetti 30 h, 70
+min päivässä yhdelle alueelle) teki silloin torstaista alkaen muista
+tärkeistä alueista "jäämässä huomiotta": 70 min päivässä on noin 27 %
+kapasiteetista, eli suurin osa viikosta on kirjaamatonta — tuntematonta,
+ei nollaa. Ilman kapasiteettia kaksi 10 minuutin kirjausta riitti
+"vakiintuneeksi", ja neljästä 10 minuutin kirjauksesta syntyi katsaukseen
+"Vahva" ja tavoitteen muutosehdotus. Nyt osuus on puolet, ja viite on
+kapasiteetti, tavoitteiden summa tai jakson arvioitu suunnitelma — aina
+jotain, minkä käyttäjä on itse sanonut. Viitettä ei keksitä: ilman sitä
+toteumaa ei verrata. Seuraus: toteumaan perustuva kapasiteettikysymys
+("Pienennetäänkö…?") syntyy vain viikosta, jossa kirjattiin vähintään
+puolet kapasiteetista; vähemmän kirjannut viikko kertoo kirjaamisesta, ei
+kapasiteetista.
 
 ### Harvat arviot
 
@@ -201,8 +234,10 @@ tarkisteta (ei keksittyä viitettä).
   arvioimattomat ("arvioimattomia A → B"); jos jommallakummalla viikolla
   alle 50 % on arvioitu, suunniteltua ei verrata. Suunnitellun ajan kehitystä
   ei sanoiteta, jos jollakin viikolla alle 80 % oli arvioitu.
-- Historia: "(kirjauksia vain N päivänä)", kun katsauksen kirjaus ei ollut
-  vakiintunut.
+- Historia, kun katsauksen kirjaus ei ollut vakiintunut: syyn mukaan
+  "(kirjauksia vain N päivänä)", "(toteumaa ei verrattu: vähän kirjattua
+  aikaa)" (`share`) tai "(toteumaa ei verrattu: ei kapasiteettia eikä
+  tavoitteita)" (`no_reference`).
 
 ### Vajaa lataus ja virheelliset arvot
 

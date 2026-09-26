@@ -58,7 +58,8 @@ test('politiikka: ensimmäisen version kynnykset ennallaan; versio 3 lisää har
   assert.equal(POLICY_VERSION, 3);
   assert.equal(TIME_RULES.ACTUAL_MIN_TRACKED_DAYS, 2);
   assert.equal(TIME_RULES.ACTUAL_MIN_DAY_COVERAGE, 0.5);
-  assert.equal(TIME_RULES.ACTUAL_MIN_LOGGED_SHARE, 0.25);
+  // Palautettu 0,5:een (oli 0,25): viite on käyttäjän oma luku, ks. docs.
+  assert.equal(TIME_RULES.ACTUAL_MIN_LOGGED_SHARE, 0.5);
   assert.equal(TIME_RULES.STRONG_MIN_TRACKED_FRACTION, 6 / 7);
   assert.equal(TIME_RULES.PLAN_MIN_ESTIMATE_COVERAGE, 0.5);
   assert.equal(TIME_RULES.PLAN_FULL_ESTIMATE_COVERAGE, 0.8);

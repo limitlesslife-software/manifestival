@@ -145,6 +145,69 @@ test('S1 torstai: yksi kirjaus -> seuranta "early", huomiotta jääminen suunnit
   assert.doesNotMatch(text.title + text.text, /vähän aikaa/);
 });
 
+// ================================================================ S2: vähän kirjattua joka päivä
+
+/**
+ * S2 (auditointi): alueet ja kapasiteetti 30 h maanantaina; käyttäjä
+ * kirjaa joka päivä 70 min työlle eikä mitään muuta. Viikossa 8 h 10 min
+ * eli noin 27 % kapasiteetista: kirjaamaton aika on tuntematon, joten
+ * muista alueista ei väitetä mitään. Sääntöversio 3:n ensimmäinen muoto
+ * (kirjattu osuus 25 %) teki torstaista alkaen Perheestä ja
+ * Hyvinvoinnista "jäämässä huomiotta".
+ */
+function s2(todayIso, nowMinutes = 20 * 60) {
+  const all = [0, 1, 2, 3, 4, 5, 6].map(i => entry('s2-' + i, day(i), 70, { lifeAreaId: 'work' }));
+  return analyzeWeek({
+    weekStart: WEEK, todayIso, nowMinutes, areas: areasCreated(day(0)), capacity: capacity(1800),
+    timeEntries: all.filter(e => e.entryDate <= todayIso)
+  });
+}
+
+test('S2 päivätaulukko: 70 min päivässä 30 h kapasiteetilla -> ei yhtään huomiotta jäämisen väitettä millään päivällä', () => {
+  for (let i = 0; i <= 7; i++) {
+    const todayIso = i === 7 ? AFTER : day(i);
+    const label = i === 7 ? 'katsaus' : DAY_NAMES[i];
+    const analysis = s2(todayIso, i === 7 ? 0 : 20 * 60);
+    assert.notEqual(analysis.tracking.level, TRACKING.ESTABLISHED, `${label}: seuranta`);
+    const neglect = signalsOf(analysis, SIGNAL.NEGLECT);
+    assert.equal(neglect.filter(loud).length, 0, `${label}: ${neglect.map(s => s.severity).join(',')}`);
+    assert.ok(neglect.every(s => s.basis === 'planned'), `${label}: ei toteumaan perustuvaa huomiotta jäämistä`);
+    assert.equal(signalsOf(analysis, SIGNAL.MISALIGNMENT).some(s => s.basis === 'actual'), false, label);
+  }
+  const thu = s2(day(3));
+  assert.deepEqual([thu.tracking.reason, thu.tracking.referenceBasis, thu.tracking.loggedSharePercent], ['share', 'capacity', 28]);
+  assert.equal(qualityIssues(thu).find(i => i.code === 'partial_actual').text,
+    'Kirjattu aika kattaa vasta noin 28 % arvioimastasi ajasta, joten toteumaa ei vielä verrata tavoitteisiin. '
+    + 'Kirjaamaton aika on tuntematon, ei nolla.');
+  const proposals = proposeAdjustments(s2(AFTER, 0), { areas: areasCreated(day(0)) });
+  assert.equal(proposals.some(p => p.type === ADJUSTMENT.CHANGE_TARGET), false);
+  assert.equal(proposals.find(p => p.type === ADJUSTMENT.SET_CAPACITY).reason, null, 'kapasiteettia ei kyseenalaisteta');
+});
+
+test('ilman kapasiteettia: 2 x 10 min ei ole vakiintunut; 4 x 10 min katsauksessa ei "Vahva" eikä tavoitteen muutosta', () => {
+  const areas = areasCreated(day(0));
+  const two = analyzeWeek({ weekStart: WEEK, todayIso: day(3), nowMinutes: 20 * 60, areas,
+    timeEntries: [entry('a', day(0), 10, { lifeAreaId: 'work' }), entry('b', day(1), 10, { lifeAreaId: 'work' })] });
+  assert.notEqual(two.tracking.level, TRACKING.ESTABLISHED);
+  assert.equal(two.tracking.referenceBasis, 'targets', 'viite on tavoitteiden summa');
+  assert.equal(signalsOf(two, SIGNAL.NEGLECT).filter(loud).length, 0);
+
+  const review = analyzeWeek({ weekStart: WEEK, todayIso: AFTER, areas,
+    timeEntries: [0, 1, 2, 3].map(i => entry('w' + i, day(i), 10, { lifeAreaId: 'work' })) });
+  assert.notEqual(review.tracking.level, TRACKING.ESTABLISHED);
+  assert.equal(review.signals.some(s => s.severity === SEVERITY.STRONG), false, 'ei "Vahva"');
+  assert.equal(proposeAdjustments(review, { areas }).some(p => p.type === ADJUSTMENT.CHANGE_TARGET), false);
+
+  // Ei kapasiteettia, tavoitteita eikä arvioitua suunnitelmaa: kirjattua aikaa ei voi suhteuttaa mihinkään.
+  const bareAreas = [area('free', 'Vapaa', 3, null, null, day(0))];
+  const bare = analyzeWeek({ weekStart: WEEK, todayIso: day(3), nowMinutes: 20 * 60, areas: bareAreas,
+    timeEntries: [entry('a', day(0), 300, { lifeAreaId: 'free' }), entry('b', day(1), 300, { lifeAreaId: 'free' })] });
+  assert.deepEqual([bare.tracking.level, bare.tracking.reason], [TRACKING.PARTIAL, 'no_reference']);
+  const issue = qualityIssues(bare).find(i => i.code === 'partial_actual');
+  assert.match(issue.text, /^Kirjattua aikaa ei voi vielä suhteuttaa mihinkään/);
+  assert.equal(issue.action, null, 'lisäkirjaus ei auta ilman viitettä');
+});
+
 // ================================================================ S3: alue luotu torstaina
 
 test('S3: alueet torstaina + yksi kirjaus -> ei toteumavertailua millään päivällä eikä katsauksessa', () => {
@@ -161,7 +224,9 @@ test('S3: alueet torstaina + yksi kirjaus -> ei toteumavertailua millään päiv
 
 test('S3b: torstaina luotu alue ja säännöllinen kirjaus: odotettu lasketaan torstaista, ei koskaan "Vahva" samalla viikolla', () => {
   const areas = areasCreated(day(3));
-  const timeEntries = [3, 4, 5, 6].map(i => entry('w' + i, day(i), 100, { lifeAreaId: 'work' }));
+  // Muutettu: 150 min päivässä (ennen 100). Kirjattu osuus on puolet
+  // kapasiteetista x jakson osuus: 4 x 100 = 400 < 50 % x 30 h x 4/7.
+  const timeEntries = [3, 4, 5, 6].map(i => entry('w' + i, day(i), 150, { lifeAreaId: 'work' }));
   const input = { weekStart: WEEK, areas, tasks: [], timeEntries, capacity: capacity(1800) };
   // Lauantaina jakso (to–pe) on alle 3/7 viikkoa: ei vielä vertailua.
   assert.equal(analyzeWeek({ ...input, todayIso: day(5), timeEntries: timeEntries.slice(0, 3) }).tracking.level, TRACKING.EARLY);
@@ -234,11 +299,14 @@ test('S6 REGRESSIO: säännöllinen kirjaaja saa yhä "Huomio" torstaina ja "Vah
 test('alue ei voi samaan aikaan jäädä huomiotta ja viedä liikaa (ei "yli"-poikkeamaa huomiotta jäävälle)', () => {
   // Kirjataan vähän, mutta kaikki Perheelle: osuus 100 % (yli toiveen)
   // ja silti alle puolet tavoitteesta (huomiotta). Näytetään vain vaje.
+  // Muutettu: käyttäjän kapasiteetti 5 h on kirjatun ajan viite (ilman sitä
+  // viite olisi tavoitteiden summa, eikä 160 min riittäisi vakiintuneeksi).
   const areas = [area('fam', 'Perhe', 5, 600, 'perhe'), area('work', 'Työ', 3, 600, 'tyo')];
   const analysis = analyzeWeek({
-    weekStart: WEEK, todayIso: AFTER, areas,
+    weekStart: WEEK, todayIso: AFTER, areas, capacity: capacity(300),
     timeEntries: [0, 1, 2, 3].map(i => entry('f' + i, day(i), 40, { lifeAreaId: 'fam' }))
   });
+  assert.equal(analysis.tracking.level, TRACKING.ESTABLISHED);
   assert.ok(signalsOf(analysis, SIGNAL.NEGLECT).some(s => s.areaId === 'fam' && s.basis === 'actual'));
   assert.equal(signalsOf(analysis, SIGNAL.MISALIGNMENT).some(s => s.areaId === 'fam'), false);
 });
@@ -382,14 +450,17 @@ test('ensimmäisen viikon katsaus: kapasiteettia ei pienennetä osittaisesta kir
 
 test('vakiintunut kirjaus koko viikolta: kapasiteettikysymys syntyy yhä todellisesta poikkeamasta', () => {
   const areas = areasCreated(day(0));
+  // Muutettu: 150 min päivässä (ennen 100). Alle puolet kapasiteetista
+  // kirjannut viikko ei ole vakiintunut: se kertoo kirjaamisesta, ei
+  // kapasiteetista, joten kapasiteettikysymystä ei siitä synny.
   const analysis = analyzeWeek({
     weekStart: WEEK, todayIso: AFTER, areas, capacity: capacity(1800),
-    timeEntries: [0, 1, 2, 3, 4, 5, 6].map(i => entry('w' + i, day(i), 100, { lifeAreaId: 'work' }))
+    timeEntries: [0, 1, 2, 3, 4, 5, 6].map(i => entry('w' + i, day(i), 150, { lifeAreaId: 'work' }))
   });
   assert.equal(analysis.tracking.level, TRACKING.ESTABLISHED);
   const setCapacity = proposeAdjustments(analysis, { areas }).find(p => p.type === ADJUSTMENT.SET_CAPACITY);
   assert.equal(setCapacity.reason.kind, 'capacity_deviation');
-  assert.equal(setCapacity.payload.availableMinutes, 690);
+  assert.equal(setCapacity.payload.availableMinutes, 1050);
   assert.equal(proposeAdjustments(analysis, { areas }).some(p => p.type === ADJUSTMENT.START_TRACKING), false);
 });
 
@@ -434,25 +505,76 @@ test('vertailu: arvioimattomien määrä kulkee suunnitellun rivin mukana; harva
   assert.deepEqual(compareWeeks(current, null, { unavailableNote: FIRST_WEEK_NOTE }).notes, [FIRST_WEEK_NOTE]);
 });
 
-test('seurannan kypsyys: kynnykset ja rajat (kapasiteetti vain kun asetettu)', () => {
+test('seurannan kypsyys: kynnykset ja rajat (viite on käyttäjän oma luku)', () => {
   const dates = Array.from({ length: 7 }, (_, i) => day(i));
   const actualOf = (days, minutes) => {
     const minutesByDate = new Map(days.map(d => [d, minutes]));
     return { entryCount: days.length, entryDates: days, minutesByDate, firstEverEntryDate: days[0] || null };
   };
   const thursday = weekProgress(WEEK, day(3));
+  // Muutettu (lukitsi vanhan käytöksen): ennen "established", koska ilman
+  // kapasiteettia kirjattua osuutta ei tarkistettu lainkaan — kaksi
+  // kirjausta riitti. Nyt ilman mitään viitettä (ei kapasiteettia,
+  // tavoitteita eikä arvioitua suunnitelmaa) taso on enintään "partial".
   const two = trackingMaturity({ dates, progress: thursday, actual: actualOf([day(0), day(1)], 60), todayIso: day(3) });
-  assert.equal(two.level, TRACKING.ESTABLISHED, 'kaksi päivää kolmesta ilman kapasiteettia');
+  assert.equal(two.level, TRACKING.PARTIAL, 'kaksi päivää kolmesta, ei viitettä');
+  assert.equal(two.reason, 'no_reference');
+  assert.equal(two.referenceBasis, null);
+  // Tavoitteiden summa on viite, kun kapasiteettia ei ole: 120 / (600 x 3/7) = 47 % < 50 %.
+  const targetsLow = trackingMaturity({ dates, progress: thursday, actual: actualOf([day(0), day(1)], 60),
+    todayIso: day(3), targetsMinutes: 600 });
+  assert.deepEqual([targetsLow.level, targetsLow.reason, targetsLow.referenceBasis, targetsLow.loggedSharePercent],
+    [TRACKING.PARTIAL, 'share', 'targets', 47]);
+  const targetsOk = trackingMaturity({ dates, progress: thursday, actual: actualOf([day(0), day(1)], 60),
+    todayIso: day(3), targetsMinutes: 420 });
+  assert.equal(targetsOk.level, TRACKING.ESTABLISHED, '120 / (420 x 3/7) = 67 %');
+  // Ilman kapasiteettia ja tavoitteita: jakson päiville päivätty arvioitu työ tähän päivään asti.
+  const plannedRef = trackingMaturity({ dates, progress: thursday, actual: actualOf([day(0), day(1)], 60),
+    todayIso: day(3), plannedMinutesByDate: new Map([[day(0), 120], [day(2), 60], [day(5), 600]]) });
+  assert.deepEqual([plannedRef.level, plannedRef.referenceBasis, plannedRef.referenceMinutes],
+    [TRACKING.ESTABLISHED, 'planned', 180], 'lauantain 600 min ei ole vielä viitettä');
   const one = trackingMaturity({ dates, progress: thursday, actual: actualOf([day(0)], 600), todayIso: day(3) });
   assert.equal(one.level, TRACKING.EARLY, 'yksi päivä ei riitä minuuteista riippumatta');
   const low = trackingMaturity({ dates, progress: thursday, actual: actualOf([day(0), day(1)], 60),
-    capacity: capacity(3000), todayIso: day(3) });
-  assert.equal(low.level, TRACKING.PARTIAL, '120 min < 25 % x 50 h x 3/7');
+    capacity: capacity(3000), targetsMinutes: 420, todayIso: day(3) });
+  assert.equal(low.level, TRACKING.PARTIAL, '120 min < 50 % x 50 h x 3/7 (kapasiteetti ennen tavoitteita)');
+  assert.equal(low.referenceBasis, 'capacity');
   assert.equal(low.loggedSharePercent, 9);
   const after = weekProgress(WEEK, AFTER);
-  const sparseDays = trackingMaturity({ dates, progress: after, actual: actualOf([day(0), day(2), day(4)], 300), todayIso: AFTER });
+  const sparseDays = trackingMaturity({ dates, progress: after, actual: actualOf([day(0), day(2), day(4)], 300),
+    targetsMinutes: 600, todayIso: AFTER });
   assert.equal(sparseDays.level, TRACKING.PARTIAL, '3 päivää 7:stä < puolet');
+  assert.equal(sparseDays.reason, 'days');
   assert.equal(POLICY_VERSION, 3);
+});
+
+test('seurannan kypsyys: hystereesi — kerran vakiintunut pysyy viikon, ellei päiväkattavuus petä', () => {
+  const dates = Array.from({ length: 7 }, (_, i) => day(i));
+  const actualOf = entries => {
+    const minutesByDate = new Map(entries);
+    const days = entries.map(([d]) => d);
+    return { entryCount: days.length, entryDates: days, minutesByDate, firstEverEntryDate: days[0] || null };
+  };
+  // Kapasiteetti 40 h, kirjaukset ma–ke 200 min: keskiviikon lopussa
+  // 600 / (2400 x 3/7) = 58 % -> vakiintunut. Torstaina ei kirjata.
+  const logged = [[day(0), 200], [day(1), 200], [day(2), 200]];
+  const fridayMorning = weekProgress(WEEK, day(4), 8 * 60);
+  const held = trackingMaturity({ dates, progress: fridayMorning, actual: actualOf(logged), capacity: capacity(2400), todayIso: day(4) });
+  // Perjantaiaamuna ilman hystereesiä 600 / (2400 x 4,33/7) = 40 % < 50 % -> taso putoaisi.
+  assert.equal(held.level, TRACKING.ESTABLISHED);
+  assert.equal(held.held, true);
+  assert.equal(held.establishedSince, day(2));
+  assert.equal(held.loggedSharePercent, 40, 'nykyinen osuus näkyy yhä rehellisesti');
+  // Päiväkattavuus pettää viikon jälkeen: 3 kirjauspäivää 7:stä < puolet.
+  const after = trackingMaturity({ dates, progress: weekProgress(WEEK, AFTER), actual: actualOf(logged), capacity: capacity(2400), todayIso: AFTER });
+  assert.equal(after.level, TRACKING.PARTIAL);
+  assert.equal(after.reason, 'days');
+  assert.equal(after.held, false);
+  // Ei aiempaa vakiintumista (180 / 600 = 30 % keskiviikon lopussa): ei hystereesiä.
+  const never = trackingMaturity({ dates, progress: fridayMorning, actual: actualOf([[day(0), 60], [day(1), 60], [day(2), 60]]),
+    capacity: capacity(1400), todayIso: day(4) });
+  assert.equal(never.level, TRACKING.PARTIAL);
+  assert.equal(never.establishedSince, null);
 });
 
 test('F13: kirjattu aika lähteittäin näyttöä varten; ajastin ja käsin ovat seurannassa samanarvoisia', () => {
@@ -461,6 +583,27 @@ test('F13: kirjattu aika lähteittäin näyttöä varten; ajastin ja käsin ovat
   ]);
   const byTimer = s6(day(3));
   assert.equal(byTimer.tracking.trackedDays, 4, 'ajastinpäivät lasketaan kirjauspäiviksi kuten käsin kirjatut');
+});
+
+test('osittaisen kirjauksen syy sanotaan: "vain N päivänä ikkunan M päivästä" ei ole sama kuin "vasta X %"', () => {
+  const areas = areasCreated(day(0));
+  // Kolme isoa kirjauspäivää seitsemästä: minuutteja riittää, päiviä ei.
+  const fewDays = analyzeWeek({ weekStart: WEEK, todayIso: AFTER, areas, capacity: capacity(1800),
+    timeEntries: [0, 2, 4].map(i => entry('d' + i, day(i), 400, { lifeAreaId: 'work' })) });
+  assert.deepEqual([fewDays.tracking.level, fewDays.tracking.reason], [TRACKING.PARTIAL, 'days']);
+  assert.equal(qualityIssues(fewDays).find(i => i.code === 'partial_actual').text,
+    'Aikaa on kirjattu vain 3 päivänä ikkunan 7 päivästä, joten toteumaa ei vielä verrata tavoitteisiin. '
+    + 'Kirjaamattomat päivät ovat tuntemattomia, eivät nollaa.');
+  // S1: päiviä riittää (3/4), minuutteja ei suhteessa kapasiteettiin.
+  const fewHours = s1(AFTER, 0);
+  assert.equal(fewHours.tracking.reason, 'share');
+  assert.match(qualityIssues(fewHours).find(i => i.code === 'partial_actual').text,
+    /^Kirjattu aika kattaa vasta noin 22 % arvioimastasi ajasta, joten toteumaa ei vielä verrata tavoitteisiin\./);
+  // Kirjaukset ennen alueiden luontia eivät kuulu ikkunaan: ei "vain 0 päivänä".
+  const beforeAreas = analyzeWeek({ weekStart: WEEK, todayIso: day(6), nowMinutes: 20 * 60, areas: areasCreated(day(2)),
+    capacity: capacity(1800), timeEntries: [entry('m', day(0), 300), entry('t', day(1), 300)] });
+  assert.equal(qualityIssues(beforeAreas).find(i => i.code === 'partial_actual').text,
+    'Ikkunan 5 päivältä ei ole vielä kirjauksia, joten toteumaa ei vielä verrata tavoitteisiin.');
 });
 
 // ================================================================ NÄKYMÄ: DOM-tynkä
@@ -612,7 +755,10 @@ test('näkymä: ensimmäinen katsaus erottaa tiedetyn, tuntemattoman ja kirjaama
   assert.equal(saved.review.snapshot.dataQuality.trackingLevel, TRACKING.PARTIAL);
   assert.equal(saved.review.policyVersion, 3);
   renderDirection();
-  assert.match(html('dirReviewHistory'), /kirjauksia vain 3 päivänä/);
+  // Muutettu: syy sanotaan. Päiviä oli jaksoon nähden riittävästi (3/4),
+  // kirjattua aikaa ei (22 % kapasiteetista); ennen "(kirjauksia vain 3 päivänä)".
+  assert.equal(saved.review.snapshot.dataQuality.trackingReason, 'share');
+  assert.match(html('dirReviewHistory'), /\(toteumaa ei verrattu: vähän kirjattua aikaa\)/);
 
   // Toisella viikolla vertailu toimii.
   moveClock(t, addDaysIso(WEEK, 9));

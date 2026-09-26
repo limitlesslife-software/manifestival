@@ -75,6 +75,51 @@ function percentOf(part, whole) {
   return whole > 0 ? Math.round((part / whole) * 100) : null;
 }
 
+/** Mihin kirjattua aikaa verrattiin (sääntöversio 3): käyttäjän oma luku. */
+const REFERENCE_PHRASES = Object.freeze({
+  capacity: 'arvioimastasi ajasta',
+  targets: 'aikatavoitteidesi mukaisesta ajasta',
+  planned: 'tähän mennessä suunnittelemastasi ajasta'
+});
+
+const NOT_YET_COMPARED = 'joten toteumaa ei vielä verrata tavoitteisiin.';
+
+/**
+ * Osittaisen kirjauksen syy sanoin. "Vain N päivänä" ja "vasta X %" ovat
+ * eri asioita: ensimmäinen kertoo kirjaamisen säännöllisyydestä, toinen
+ * kirjatun ajan määrästä suhteessa käyttäjän omaan viitteeseen.
+ */
+function partialActualText(quality) {
+  const days = quality.trackedDays;
+  const windowDays = quality.trackingWindowDays;
+  switch (quality.trackingReason) {
+    case 'days':
+      // Kirjaukset ennen ikkunaa (esim. ennen alueiden luontia) eivät kuulu siihen.
+      if (days === 0 && Number.isInteger(windowDays) && windowDays > 0) {
+        return `Ikkunan ${windowDays} päivältä ei ole vielä kirjauksia, ${NOT_YET_COMPARED}`;
+      }
+      if (Number.isInteger(days) && Number.isInteger(windowDays) && windowDays > 0) {
+        return `Aikaa on kirjattu vain ${days} päivänä ikkunan ${windowDays} päivästä, ${NOT_YET_COMPARED} `
+          + 'Kirjaamattomat päivät ovat tuntemattomia, eivät nollaa.';
+      }
+      break;
+    case 'share':
+      if (Number.isFinite(quality.loggedSharePercent) && REFERENCE_PHRASES[quality.loggedShareBasis]) {
+        return `Kirjattu aika kattaa vasta noin ${quality.loggedSharePercent} % `
+          + `${REFERENCE_PHRASES[quality.loggedShareBasis]}, ${NOT_YET_COMPARED} `
+          + 'Kirjaamaton aika on tuntematon, ei nolla.';
+      }
+      break;
+    case 'no_reference':
+      return 'Kirjattua aikaa ei voi vielä suhteuttaa mihinkään: kapasiteettia, aikatavoitteita '
+        + `eikä arvioitua suunnitelmaa ole, ${NOT_YET_COMPARED}`;
+    default:
+      break;
+  }
+  return `Aikaa on kirjattu vasta osalta viikosta, ${NOT_YET_COMPARED} `
+    + 'Kirjaamattomat päivät ovat tuntemattomia, eivät nollaa.';
+}
+
 /**
  * Aineiston puutteet toimenpiteineen, tärkein ensin.
  *
@@ -151,9 +196,10 @@ export function qualityIssues(analysis) {
   }
   if (reasons.has('partial_actual')) {
     issues.push({
-      code: 'partial_actual', percent: quality.loggedSharePercent ?? null, action: QUALITY_ACTION.LOG_TIME,
-      text: 'Aikaa on kirjattu vasta osalta viikosta, joten toteumaa ei vielä verrata tavoitteisiin. '
-        + 'Kirjaamattomat päivät ovat tuntemattomia, eivät nollaa.'
+      code: 'partial_actual', percent: quality.loggedSharePercent ?? null,
+      // Ilman viitettä lisäkirjaus ei auta: puuttuu kapasiteetti tai tavoite (omat rivinsä).
+      action: quality.trackingReason === 'no_reference' ? null : QUALITY_ACTION.LOG_TIME,
+      text: partialActualText(quality)
     });
   }
 

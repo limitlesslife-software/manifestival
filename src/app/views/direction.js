@@ -1385,9 +1385,14 @@ function historyHtml(reviews) {
     // Versio 3: osittain kirjatun viikon toteumaprosentit eivät kuvaa koko
     // viikkoa. Vanhassa tilannekuvassa tasoa ei ole, eikä sitä arvata.
     const trackingLevel = snapshot.dataQuality && snapshot.dataQuality.trackingLevel;
+    const trackingReason = snapshot.dataQuality && snapshot.dataQuality.trackingReason;
     const loggedDays = snapshot.actual && Number.isInteger(snapshot.actual.daysWithEntries) ? snapshot.actual.daysWithEntries : 0;
+    // Syy sanotaan: joka päivä vähän kirjannut viikko ei ole "vain 7 päivänä".
     const caveat = !trackingLevel || trackingLevel === TRACKING.ESTABLISHED ? ''
-      : trackingLevel === TRACKING.NONE ? ' (ei kirjauksia)' : ` (kirjauksia vain ${loggedDays} päivänä)`;
+      : trackingLevel === TRACKING.NONE ? ' (ei kirjauksia)'
+        : trackingReason === 'share' ? ' (toteumaa ei verrattu: vähän kirjattua aikaa)'
+          : trackingReason === 'no_reference' ? ' (toteumaa ei verrattu: ei kapasiteettia eikä tavoitteita)'
+            : ` (kirjauksia vain ${loggedDays} päivänä)`;
     return `
       <details class="dir-history">
         <summary>Viikko ${escapeHtml(weekLabel(review.weekStart))} · ${signals} havaintoa${escapeHtml(caveat)}</summary>

@@ -411,11 +411,14 @@ function spread(id, minutes, extra = {}) {
 // maanantaina 300 min). Yhden päivän kirjaus ei enää riitä toteuman
 // vertailuun, joten kiinteä kirjaaja kirjaa neljänä päivänä; luvut
 // (odotettu 300 torstaina, 700 viikon jälkeen) ovat ennallaan.
+// Muutettu (kirjattu osuus puolet käyttäjän viitteestä): työtä 1200 min
+// (ennen 300). Ilman kapasiteettia viite on tavoitteiden summa 1900 min x
+// jakson osuus; 300 min olisi alle puolet, eikä seuranta vakiintuisi.
 function neglectCase({ todayIso, actualFamily = 0, importance = 5, target = 700, extraEntries = true, active = true }) {
   const areas = [area('fam', 'Perhe', importance, target, { active }), area('work', 'Työ', 3, 1200)];
   const timeEntries = [];
   if (actualFamily > 0) timeEntries.push(entry('f', MON, actualFamily, { lifeAreaId: 'fam' }));
-  if (extraEntries) timeEntries.push(...spread('w', 300, { lifeAreaId: 'work' }));
+  if (extraEntries) timeEntries.push(...spread('w', 1200, { lifeAreaId: 'work' }));
   return analyzeWeek({ weekStart: WEEK, todayIso, areas, timeEntries });
 }
 
@@ -601,11 +604,12 @@ test('aineiston laatu: ei alueita -> none; arvioimaton enemmistö -> weak; puutt
   assert.equal(analyzeWeek({ weekStart: WEEK, todayIso: MON, areas, capacity: cap(600),
     tasks: [task('a', MON, 30, { category: 'tyo' })] }).dataQuality.level, QUALITY.PARTIAL, 'ei toteumaa');
   // Versio 3: "kattava" vaatii vakiintuneen kirjaamisen — kirjauksia
-  // kahdelta päivältä ja vähintään neljännes kapasiteetista kuluneelta
+  // kahdelta päivältä ja vähintään puolet kapasiteetista kuluneelta
   // osalta viikkoa (ennen: yksi 30 min kirjaus maanantaina riitti).
+  // Muutettu: 2 x 90 min (ennen 2 x 60 = 47 % < 50 % x 10 h x 3/7).
   const good = analyzeWeek({ weekStart: WEEK, todayIso: THU, areas, capacity: cap(600),
     tasks: [task('a', MON, 30, { category: 'tyo' })],
-    timeEntries: [entry('e', MON, 60, { lifeAreaId: 'work' }), entry('e2', '2026-09-15', 60, { lifeAreaId: 'work' })] });
+    timeEntries: [entry('e', MON, 90, { lifeAreaId: 'work' }), entry('e2', '2026-09-15', 90, { lifeAreaId: 'work' })] });
   assert.equal(good.dataQuality.level, QUALITY.GOOD);
   assert.deepEqual(good.dataQuality.reasons, []);
   const oneDay = analyzeWeek({ weekStart: WEEK, todayIso: THU, areas, capacity: cap(600),

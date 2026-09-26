@@ -37,7 +37,8 @@
 //
 // Päivä ilman kirjauksia EI ole nolla minuuttia: se on kirjaamaton.
 // Siksi toteumaa verrataan tavoitteisiin vasta, kun kirjaaminen on
-// vakiintunut (trackingMaturity, sääntöversio 3), ja vertailu alkaa
+// vakiintunut (trackingMaturity, sääntöversio 3: riittävästi päiviä ja
+// vähintään puolet käyttäjän itse ilmoittamasta viitteestä), ja vertailu alkaa
 // myöhäisimmästä näistä: viikon maanantai, ensimmäinen koskaan kirjattu
 // päivä, alueen luontipäivä. Samoin suunnitelman jakaumaa ei tulkita,
 // jos vain pieni osa työstä on arvioitu.
@@ -440,6 +441,58 @@ function dayOffset(dates, iso) {
 }
 
 /**
+ * Miksi seuranta ei (vielä) ole vakiintunut. Katsaus ja aineiston laatu
+ * sanoittavat syyn: "vain N päivänä" ei ole sama asia kuin "vasta X %".
+ */
+export const TRACKING_REASON = Object.freeze({
+  /** Jaksosta on kulunut alle NEGLECT_MIN_PROGRESS. */
+  WINDOW: 'window',
+  /** Kirjauspäiviä on liian vähän (alle 2 tai alle puolet jakson päivistä). */
+  DAYS: 'days',
+  /** Kirjattua aikaa on alle ACTUAL_MIN_LOGGED_SHARE viitteestä. */
+  SHARE: 'share',
+  /** Käyttäjä ei ole ilmoittanut kapasiteettia, tavoitteita eikä arvioitua suunnitelmaa. */
+  NO_REFERENCE: 'no_reference'
+});
+
+/** Kirjatun ajan viitteen lähde (ensimmäinen olemassa oleva). */
+export const REFERENCE_BASIS = Object.freeze({ CAPACITY: 'capacity', TARGETS: 'targets', PLANNED: 'planned' });
+
+/**
+ * Viite, johon kirjattua aikaa suhteutetaan: käyttäjän ITSE ilmoittama.
+ * Kapasiteetti ja tavoitteet ovat viikkolukuja (x jakson osuus);
+ * suunnitelma on jo päivätty, joten siitä lasketaan jakson päivät
+ * tähän päivään asti. Nolla ei ole viite (jakolasku ja "ei mitään").
+ */
+function loggedReference({ capacityMinutes, targetsMinutes, plannedMinutesByDate, windowStart, lastDay, windowFraction }) {
+  if (capacityMinutes > 0) return { basis: REFERENCE_BASIS.CAPACITY, minutes: capacityMinutes * windowFraction };
+  if (targetsMinutes > 0) return { basis: REFERENCE_BASIS.TARGETS, minutes: targetsMinutes * windowFraction };
+  let planned = 0;
+  for (const [date, minutes] of plannedMinutesByDate || []) {
+    if (date >= windowStart && date <= lastDay && Number.isFinite(minutes)) planned += minutes;
+  }
+  if (planned > 0) return { basis: REFERENCE_BASIS.PLANNED, minutes: planned };
+  return { basis: null, minutes: null };
+}
+
+/** Yhden hetken arvio: kriteerit annetulla jakson pituudella ja kirjauksilla. */
+function evaluateTracking({ elapsed, trackedDays, trackedMinutes, reference }) {
+  const windowFraction = elapsed / 7;
+  const requiredDays = Math.max(RULES.ACTUAL_MIN_TRACKED_DAYS,
+    Math.ceil(Math.floor(elapsed) * RULES.ACTUAL_MIN_DAY_COVERAGE));
+  const loggedShare = reference.minutes > 0 ? trackedMinutes / reference.minutes : null;
+  const daysCovered = trackedDays >= requiredDays;
+  let level = TRACKING.ESTABLISHED;
+  let reason = null;
+  if (windowFraction < RULES.NEGLECT_MIN_PROGRESS) { level = TRACKING.EARLY; reason = TRACKING_REASON.WINDOW; }
+  else if (trackedDays < RULES.ACTUAL_MIN_TRACKED_DAYS) { level = TRACKING.EARLY; reason = TRACKING_REASON.DAYS; }
+  else if (!daysCovered) { level = TRACKING.PARTIAL; reason = TRACKING_REASON.DAYS; }
+  else if (loggedShare === null) { level = TRACKING.PARTIAL; reason = TRACKING_REASON.NO_REFERENCE; }
+  else if (loggedShare < RULES.ACTUAL_MIN_LOGGED_SHARE) { level = TRACKING.PARTIAL; reason = TRACKING_REASON.SHARE; }
+  return { level, reason, windowFraction, loggedShare, daysCovered };
+}
+
+/**
  * Seurannan kypsyys: voiko kirjattua aikaa verrata tavoitteisiin?
  *
  * Seurantajakso alkaa myöhäisimmästä: viikon maanantai, ensimmäinen
@@ -449,49 +502,89 @@ function dayOffset(dates, iso) {
  *   none         viikolle ei ole kirjauksia
  *   early        jaksosta alle 3/7 viikkoa tai kirjauksia alle 2 päivältä
  *   partial      kirjauksia alle puolelta jakson kuluneista päivistä, tai
- *                (kapasiteetin ollessa asetettu) kirjattu aika alle
- *                ACTUAL_MIN_LOGGED_SHARE x kapasiteetti x jakson osuus
- *   established  muuten
+ *                kirjattu aika alle ACTUAL_MIN_LOGGED_SHARE viitteestä, tai
+ *                viitettä ei ole (ks. alignmentPolicy.js TIME_RULES)
+ *   established  muuten, tai (hystereesi) saavutettu jonain aiempana
+ *                jakson päivänä ja päiväkattavuus täyttyy yhä
  *
- * Ajastimella ja käsin kirjatut päivät ovat samanarvoisia todisteita
- * seurannasta; minuutteja ei painoteta lähteen mukaan.
+ * Aiemmat päivät arvioidaan kunkin päivän lopussa (jakso ja kirjaukset
+ * siihen päivään asti). Ajastimella ja käsin kirjatut päivät ovat
+ * samanarvoisia todisteita seurannasta; minuutteja ei painoteta lähteen
+ * mukaan.
  *
- * @returns {{level: string, windowStart: string|null, windowFraction: number,
+ * @param {object} args
+ * @param {number|null} [args.targetsMinutes]  aktiivisten alueiden tavoitteiden summa
+ * @param {Map<string, number>|null} [args.plannedMinutesByDate]  arvioitu suunniteltu päivittäin
+ * @returns {{level: string, reason: string|null, windowStart: string|null, windowFraction: number,
  *   trackedDays: number, windowDays: number, loggedSharePercent: number|null,
- *   firstEntryDate: string|null}}
+ *   referenceBasis: string|null, referenceMinutes: number|null,
+ *   establishedSince: string|null, held: boolean, firstEntryDate: string|null}}
  */
-export function trackingMaturity({ dates, progress, actual, capacity = null, todayIso = null, startIso = null }) {
+export function trackingMaturity({
+  dates, progress, actual, capacity = null, todayIso = null, startIso = null,
+  targetsMinutes = null, plannedMinutesByDate = null
+}) {
   const firstEntryDate = actual.firstEverEntryDate || null;
   if (!dates || dates.length === 0) {
-    return { level: TRACKING.NONE, windowStart: null, windowFraction: 0, trackedDays: 0, windowDays: 0,
-      loggedSharePercent: null, firstEntryDate };
+    return { level: TRACKING.NONE, reason: null, windowStart: null, windowFraction: 0, trackedDays: 0, windowDays: 0,
+      loggedSharePercent: null, referenceBasis: null, referenceMinutes: null, establishedSince: null, held: false,
+      firstEntryDate };
   }
   const windowStart = [dates[0], firstEntryDate, isIsoDate(startIso) ? startIso : null]
     .filter(Boolean).sort().pop();
   const offset = dayOffset(dates, windowStart);
-  const elapsed = Math.max(0, (progress.elapsedDays || 0) - offset);
-  const windowFraction = elapsed / 7;
   // Jakson kalenteripäivät tähän päivään asti (tämä päivä mukaan lukien).
   const lastDay = isIsoDate(todayIso) && todayIso < dates[6] ? todayIso : dates[6];
   const windowDays = lastDay < windowStart ? 0 : dates.filter(date => date >= windowStart && date <= lastDay).length;
-  const tracked = (actual.entryDates || []).filter(date => date >= windowStart && date <= lastDay);
-  const trackedDays = tracked.length;
-  const trackedMinutes = tracked.reduce((sum, date) => sum + ((actual.minutesByDate && actual.minutesByDate.get(date)) || 0), 0);
-  const available = capacity && Number.isInteger(capacity.availableMinutes) ? capacity.availableMinutes : null;
-  const reference = available !== null && available > 0 && windowFraction > 0 ? available * windowFraction : null;
-  const loggedShare = reference ? trackedMinutes / reference : null;
-  const requiredDays = Math.max(RULES.ACTUAL_MIN_TRACKED_DAYS,
-    Math.ceil(Math.floor(elapsed) * RULES.ACTUAL_MIN_DAY_COVERAGE));
+  const entryDates = (actual.entryDates || []).filter(date => date >= windowStart);
+  const capacityMinutes = capacity && Number.isInteger(capacity.availableMinutes) ? capacity.availableMinutes : null;
 
-  let level;
-  if (actual.entryCount === 0) level = TRACKING.NONE;
-  else if (windowFraction < RULES.NEGLECT_MIN_PROGRESS || trackedDays < RULES.ACTUAL_MIN_TRACKED_DAYS) level = TRACKING.EARLY;
-  else if (trackedDays < requiredDays || (loggedShare !== null && loggedShare < RULES.ACTUAL_MIN_LOGGED_SHARE)) level = TRACKING.PARTIAL;
-  else level = TRACKING.ESTABLISHED;
+  /** Kriteerit hetkellä, jolloin jaksosta on kulunut `elapsed` päivää ja kirjaukset päivään `upTo` asti. */
+  const at = (elapsed, upTo) => {
+    const tracked = entryDates.filter(date => date <= upTo);
+    const trackedMinutes = tracked.reduce((sum, date) =>
+      sum + ((actual.minutesByDate && actual.minutesByDate.get(date)) || 0), 0);
+    const reference = loggedReference({
+      capacityMinutes, targetsMinutes, plannedMinutesByDate, windowStart, lastDay: upTo, windowFraction: elapsed / 7
+    });
+    return { ...evaluateTracking({ elapsed, trackedDays: tracked.length, trackedMinutes, reference }), reference,
+      trackedDays: tracked.length };
+  };
+
+  const now = at(Math.max(0, (progress.elapsedDays || 0) - offset), lastDay);
+
+  // Hystereesi: jakson kuluneet päivät ennen tätä päivää, kunkin lopussa.
+  let establishedSince = null;
+  if (actual.entryCount > 0 && isIsoDate(todayIso)) {
+    for (const date of dates) {
+      if (date < windowStart || date >= todayIso || date > lastDay) continue;
+      if (at(dates.indexOf(date) + 1 - offset, date).level === TRACKING.ESTABLISHED) {
+        establishedSince = date;
+        break;
+      }
+    }
+  }
+
+  let level = now.level;
+  let reason = now.reason;
+  let held = false;
+  if (actual.entryCount === 0) {
+    level = TRACKING.NONE;
+    reason = null;
+  } else if (level !== TRACKING.ESTABLISHED && establishedSince && now.daysCovered) {
+    level = TRACKING.ESTABLISHED;
+    reason = null;
+    held = true;
+  }
+  if (level === TRACKING.ESTABLISHED && !establishedSince) establishedSince = lastDay;
+  if (level !== TRACKING.ESTABLISHED) establishedSince = null;
 
   return {
-    level, windowStart, windowFraction, trackedDays, windowDays,
-    loggedSharePercent: percent(loggedShare), firstEntryDate
+    level, reason, windowStart, windowFraction: now.windowFraction, trackedDays: now.trackedDays, windowDays,
+    loggedSharePercent: percent(now.loggedShare),
+    referenceBasis: now.reference.basis,
+    referenceMinutes: now.reference.minutes === null ? null : Math.round(now.reference.minutes),
+    establishedSince, held, firstEntryDate
   };
 }
 
@@ -505,7 +598,16 @@ export function alignmentStartOf(areas = []) {
   return list.map(area => area.startDate).sort()[0];
 }
 
-function neglectSignals({ areas, planned, actual, progress, dates, capacity, todayIso }) {
+/** Arvioitu suunniteltu aika päivittäin (seurannan viite, kun kapasiteettia ja tavoitteita ei ole). */
+function plannedMinutesByDate(items) {
+  const byDate = new Map();
+  for (const item of items) {
+    if (item.minutes !== null && item.date) byDate.set(item.date, (byDate.get(item.date) || 0) + item.minutes);
+  }
+  return byDate;
+}
+
+function neglectSignals({ areas, planned, actual, progress, dates, reference, todayIso }) {
   const signals = [];
   const actualTracked = actual.entryCount > 0;
 
@@ -517,7 +619,7 @@ function neglectSignals({ areas, planned, actual, progress, dates, capacity, tod
     const plannedBucket = planned.byArea.get(area.id) || emptyBucket();
     // Alueen oma seurantajakso: alue ei voi jäädä huomiotta ajalta,
     // jolloin sitä ei vielä ollut, eikä päiviltä ennen ensimmäistä kirjausta.
-    const tracking = trackingMaturity({ dates, progress, actual, capacity, todayIso, startIso: area.startDate || null });
+    const tracking = trackingMaturity({ dates, progress, actual, todayIso, startIso: area.startDate || null, ...reference });
 
     if (tracking.level === TRACKING.ESTABLISHED) {
       const expected = target * tracking.windowFraction;
@@ -728,7 +830,12 @@ export function dataQuality({ areas, capacity, planned, actual, tracking = null 
     unassignedActualMinutes: actualNone,
     actualTracked: actual.entryCount > 0,
     trackingLevel: tracking ? tracking.level : null,
-    loggedSharePercent: tracking ? tracking.loggedSharePercent : null
+    // Miksi ei vakiintunut: laatu sanoittaa "vain N päivänä" tai "vasta X %".
+    trackingReason: tracking ? tracking.reason ?? null : null,
+    trackedDays: tracking ? tracking.trackedDays : null,
+    trackingWindowDays: tracking ? tracking.windowDays : null,
+    loggedSharePercent: tracking ? tracking.loggedSharePercent : null,
+    loggedShareBasis: tracking ? tracking.referenceBasis ?? null : null
   };
 }
 
@@ -763,12 +870,18 @@ export function analyzeWeek({
   const energy = summarizeEnergy(items);
 
   const desired = desiredShares(cleanAreas);
+  // Kirjatun ajan viite (sääntöversio 3): kapasiteetti, tavoitteiden
+  // summa tai jakson päiville päivätty arvioitu työ — käyttäjän omat luvut.
+  const reference = {
+    capacity: weekCapacity, targetsMinutes: desired.totalMinutes,
+    plannedMinutesByDate: plannedMinutesByDate(items)
+  };
   // Koko viikon seuranta alkaa aikaisintaan Suunnan käyttöönotosta
   // (aikaisin alueen luontipäivä); alueen oma jakso voi alkaa myöhemmin.
   const tracking = trackingMaturity({
-    dates, progress, actual, capacity: weekCapacity, todayIso, startIso: alignmentStartOf(cleanAreas)
+    dates, progress, actual, todayIso, startIso: alignmentStartOf(cleanAreas), ...reference
   });
-  const neglect = neglectSignals({ areas: cleanAreas, planned, actual, progress, dates, capacity: weekCapacity, todayIso });
+  const neglect = neglectSignals({ areas: cleanAreas, planned, actual, progress, dates, reference, todayIso });
   const neglected = new Set(neglect.filter(isNeglectShortfall).map(signal => signal.areaId));
   const timeOverload = overloadSignals({ capacity: weekCapacity, planned });
   const signals = [
