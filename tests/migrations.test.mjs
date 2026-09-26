@@ -29,7 +29,8 @@ import { SCALE_MIN, SCALE_MAX } from '../src/domain/wellbeing.js';
 import { DEFAULT_PREFERENCES } from '../src/domain/notification.js';
 import {
   TABLES, TASK_EXTENDED_FIELDS, BILL_PAYMENT_FIELDS,
-  GOAL_PLANNING_FIELDS, GOAL_MAINTENANCE_MODE, GOAL_LIFE_AREA_FIELD
+  GOAL_PLANNING_FIELDS, GOAL_MAINTENANCE_MODE, GOAL_LIFE_AREA_FIELD,
+  ALIGNMENT_REALITY_FIELDS
 } from '../src/data/schema.js';
 import { parseStatusDoc } from '../tools/release/state.mjs';
 import { routineExceptionsRepo } from '../src/data/collectionsRepo.js';
@@ -229,7 +230,7 @@ const KOVENNETUT = [
   '0005_notification_preferences.sql', '0006_wellbeing.sql',
   '0007_finance.sql', '0008_ai_audit.sql', '0009_finance_2.sql',
   '0010_goal_to_action.sql', '0011_personal_assistant.sql',
-  '0012_life_alignment.sql'
+  '0012_life_alignment.sql', '0013_alignment_reality.sql'
 ];
 
 /** Migraation suorittava osa: kommenttirivit pois. */
@@ -244,7 +245,7 @@ function allCode() {
   return migrationFiles().map(code).join(NEWLINE);
 }
 
-test('KRIITTINEN: taulusäännöt eivät ole tyhjiä — ne kattavat 22 taulua', () => {
+test('KRIITTINEN: taulusäännöt eivät ole tyhjiä — ne kattavat 24 taulua', () => {
   // Tämä testi on olemassa yhtä vikaa varten: yllä olevat säännöt
   // etsivät tauluja hahmolla `create table public.X`. Jos hahmo ei
   // vastaa migraatioiden muotoa, jokainen sääntö käy läpi nolla taulua
@@ -257,10 +258,11 @@ test('KRIITTINEN: taulusäännöt eivät ole tyhjiä — ne kattavat 22 taulua',
     .map(m => m[1]).sort();
 
   assert.deepEqual(taulut, [
-    'ai_action_audit', 'alignment_reviews', 'bills', 'goals', 'inbox_items', 'investments',
+    'ai_action_audit', 'alignment_item_settings', 'alignment_reviews', 'bills', 'goals',
+    'inbox_items', 'investments',
     'life_areas', 'location_rules', 'milestones', 'notices', 'notification_preferences',
     'projects', 'recurring_expenses', 'reminders',
-    'routine_exceptions', 'routines', 'savings_goals', 'time_entries', 'transactions',
+    'routine_exceptions', 'routines', 'running_timers', 'savings_goals', 'time_entries', 'transactions',
     'travel_plans', 'weekly_capacities', 'wellbeing_entries'
   ], 'migraatioiden luomat taulut eivät vastaa odotusta');
 });
@@ -1246,26 +1248,11 @@ function taulunSarakkeet(migraatio, taulu) {
     .exec(read(`${MIGRATION_DIR}/${migraatio}`));
   assert.ok(luonti, `${taulu}: create table ei löytynyt tiedostosta ${migraatio}`);
 
-  const luodut = luonti[1].split(NEWLINE)
+  return luonti[1].split(NEWLINE)
     .map(line => /^ {2}(\w+)\s+\S/.exec(line))
     .filter(Boolean)
     .map(m => m[1])
     .filter(nimi => nimi !== 'constraint' && nimi !== 'foreign');
-
-  // Myöhemmät migraatiot lisäävät sarakkeita olemassa oleviin tauluihin
-  // (0009: bills.payee/iban/reference, 0010: goals.metric ...). Ne
-  // kuuluvat tauluun VAIN jos migraatio on merkitty ajetuksi
-  // PRODUCTION-STATUS.md:ssä — sama lähde, joka sallii sarakeportin
-  // avaamisen. Ajamattoman migraation sarakkeita ei ole kannassa.
-  const statusRivit = read('docs/PRODUCTION-STATUS.md').split(NEWLINE);
-  const ajettu = tiedosto => statusRivit.some(r =>
-    r.includes('|') && r.includes('`' + tiedosto + '`') && /\*\*AJETTU\*\*/.test(r));
-  const lisatyt = migrationFiles()
-    .filter(ajettu)
-    .flatMap(tiedosto => [...read(`${MIGRATION_DIR}/${tiedosto}`)
-      .matchAll(new RegExp(`alter table public\\.${taulu} add column (\\w+)`, 'g'))]
-      .map(m => m[1]));
-  return [...luodut, ...lisatyt];
 }
 
 test('KRIITTINEN: repositorio ei kirjoita saraketta jota kanta ei luo', async () => {
@@ -1630,11 +1617,13 @@ test('KRIITTINEN: loppuvarmistuksen luvut lasketaan migraatioista', () => {
     }
   }
   assert.deepEqual([...eranUlkopuoliset].sort(),
-    ['alignment_reviews_owner_row_key',
+    ['alignment_item_settings_owner_row_key', 'alignment_reviews_owner_row_key',
      'inbox_items_owner_row_key', 'investments_owner_row_key',
      'life_areas_owner_row_key',
      'location_rules_owner_row_key', 'milestones_owner_row_key',
      'notices_owner_row_key', 'reminders_owner_row_key',
+     // 0013: omat avaimet, jotka verify_0013.sql kattaa (tarkistus 10).
+     'running_timers_owner_row_key',
      'time_entries_owner_row_key',
      'transactions_owner_row_key', 'travel_plans_owner_row_key',
      'weekly_capacities_owner_row_key'],
@@ -4532,7 +4521,10 @@ test('KRIITTINEN: yksikään portti ei ole auki ilman ajettua migraatiota', () =
     // Migraatio 0012 tuo neljä taulua JA yhden sarakkeen goals-tauluun,
     // jonka portti on auki tuotannossa. Siksi sarakeportti on erillinen.
     lifeAreas: '0012', weeklyCapacities: '0012', timeEntries: '0012',
-    alignmentReviews: '0012', GOAL_LIFE_AREA_FIELD: '0012'
+    alignmentReviews: '0012', GOAL_LIFE_AREA_FIELD: '0012',
+    // Migraatio 0013 tuo kaksi taulua JA sarakkeita 0012:n tauluihin.
+    // Sarakeportti on erillinen: 0012:n portit voivat olla auki ilman 0013:a.
+    runningTimers: '0013', alignmentItemSettings: '0013', ALIGNMENT_REALITY_FIELDS: '0013'
   };
 
   // KAKSI HYVAKSYTTYA LAHDETTA SILLE, ETTA MIGRAATIO ON AJETTU.
@@ -4569,7 +4561,8 @@ test('KRIITTINEN: yksikään portti ei ole auki ilman ajettua migraatiota', () =
 
   const portit = {
     TASK_EXTENDED_FIELDS, BILL_PAYMENT_FIELDS,
-    GOAL_PLANNING_FIELDS, GOAL_MAINTENANCE_MODE, GOAL_LIFE_AREA_FIELD, ...TABLES
+    GOAL_PLANNING_FIELDS, GOAL_MAINTENANCE_MODE, GOAL_LIFE_AREA_FIELD,
+    ALIGNMENT_REALITY_FIELDS, ...TABLES
   };
 
   // Jokaisella portilla on migraatio, ja jokaisella migraatiolla 0002-0008
@@ -4601,15 +4594,7 @@ test('KRIITTINEN: yksikään portti ei ole auki ilman ajettua migraatiota', () =
   const dokumentinPortit = parseStatusDoc(read('docs/PRODUCTION-STATUS.md'));
   assert.ok(dokumentinPortit, 'PRODUCTION-STATUS.md:n porttitaulukkoa ei voitu lukea');
 
-  // Sarakeportit (BILL_PAYMENT_FIELDS, GOAL_PLANNING_FIELDS, ...) eivät
-  // ole tauluportteja, joten parseStatusDoc ei lue niitä: ne luetaan
-  // omilta riveiltään. Lista johdetaan portit-oliosta, ei kirjoiteta käsin.
-  const statusRivit = read('docs/PRODUCTION-STATUS.md').split(NEWLINE);
-  const sarakeportit = Object.keys(portit)
-    .filter(k => k !== 'TASK_EXTENDED_FIELDS' && !(k in TABLES));
-  const sarakeportitAuki = sarakeportit.filter(portti =>
-    statusRivit.some(r => r.includes('|') && r.includes('`' + portti + '`') && /AKTIVOITU/.test(r)));
-  const dokumentinAuki = ['TASK_EXTENDED_FIELDS', ...sarakeportitAuki,
+  const dokumentinAuki = ['TASK_EXTENDED_FIELDS',
     ...Object.entries(dokumentinPortit).filter(([, v]) => v).map(([k]) => k)];
 
   assert.deepEqual(auki.sort(), dokumentinAuki.sort(),
@@ -4620,8 +4605,9 @@ test('KRIITTINEN: yksikään portti ei ole auki ilman ajettua migraatiota', () =
   // uuden portin lisääminen kaataa tämän, ja se on oikea hetki
   // tarkistaa, että portti on myös tilannedokumentissa ja
   // migraatiokartassa.
-  // Kaksikymmentäkaksi taulua + viisi sarake-/arvoporttia.
-  assert.equal(Object.keys(portit).length, 27);
+  // Kaksikymmentäneljä taulua + kuusi sarake-/arvoporttia (0013 toi
+  // kaksi taulua ja sarakeportin ALIGNMENT_REALITY_FIELDS).
+  assert.equal(Object.keys(portit).length, 30);
 
   // Ja avatun portin migraatio on todella ajettu — sama sääntö kuin yllä,
   // mutta nimenomaisesti sille portille joka on auki.

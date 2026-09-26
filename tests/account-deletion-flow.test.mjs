@@ -13,7 +13,8 @@ import {
   FLOW, FLOW_EVENT, DELETION_PHRASE, initialFlowState, nextFlowState, confirmationStatus
 } from '../src/domain/accountDeletionFlow.js';
 import {
-  ACCOUNT_DOMAIN_LABELS, domainLabel, authAccountDeletable, dryRunDeletion
+  ACCOUNT_DOMAIN_LABELS, domainLabel, authAccountDeletable, dryRunDeletion,
+  PREVIEW_ROW_STATE, serverPreviewRows, summarizePreview, previewRowValue
 } from '../src/domain/accountLifecycle.js';
 import { EXPORTED_COLLECTIONS } from '../src/domain/dataExport.js';
 import { ACCOUNT_DELETION, SUPABASE_URL } from '../src/data/config.js';
@@ -148,6 +149,68 @@ test('KRIITTINEN: palvelinpoisto on oletuksena pois päältä eikä domain väit
 test('dryRunDeletion: estosyy näkyy kun poisto ei ole käytössä, poistuu kun on', () => {
   assert.equal(dryRunDeletion({}).blockers.length, 1);
   assert.equal(dryRunDeletion({}, { endpointEnabled: true }).blockers.length, 0);
+});
+
+// ------------------------------------ palvelimen esikatselu: mitään ei pudoteta
+
+const SERVER_DOMAINS = [
+  { domain: 'tasks', rowCount: 5, action: 'delete', blockedReason: null, present: true },
+  { domain: 'goals', rowCount: 0, action: 'delete', blockedReason: null, present: true },
+  { domain: 'bills', rowCount: null, action: 'delete', blockedReason: 'count_failed', present: null },
+  { domain: 'timeEntries', rowCount: 0, action: 'delete', blockedReason: null, present: false },
+  { domain: 'lifeAreas', rowCount: 0, action: 'delete', blockedReason: null, present: false }
+];
+
+test('KRIITTINEN: palvelimen esikatselu ei pudota laskematonta eikä puuttuvaa kokoelmaa', () => {
+  const rows = serverPreviewRows(SERVER_DOMAINS);
+  assert.equal(rows.length, SERVER_DOMAINS.length, 'jokainen kokoelma on rivi');
+  assert.deepEqual(rows.find(row => row.name === 'bills'), { name: 'bills', count: null, state: PREVIEW_ROW_STATE.FAILED });
+  assert.deepEqual(rows.find(row => row.name === 'timeEntries'), { name: 'timeEntries', count: 0, state: PREVIEW_ROW_STATE.ABSENT });
+  assert.deepEqual(rows.find(row => row.name === 'tasks'), { name: 'tasks', count: 5, state: PREVIEW_ROW_STATE.COUNTED });
+
+  const summary = summarizePreview(rows);
+  assert.deepEqual(summary.rows.map(row => row.name), ['tasks', 'bills'],
+    'rivejä sisältävät ja laskemattomat näkyvät, nollat eivät');
+  assert.deepEqual(summary.absent, ['timeEntries', 'lifeAreas']);
+  assert.equal(summary.total, 5);
+  assert.equal(summary.partial, true, 'laskematon kokoelma tekee summasta alarajan');
+
+  assert.equal(previewRowValue(rows.find(row => row.name === 'bills')), 'ei voitu laskea');
+  assert.equal(previewRowValue(rows.find(row => row.name === 'timeEntries')), 'ei käytössä');
+  assert.equal(previewRowValue(rows.find(row => row.name === 'tasks')), '5');
+});
+
+test('esikatselu: vanhan muotoinen vastaus (ei present-kenttää) ja rikkinäiset rivit', () => {
+  const rows = serverPreviewRows([
+    { domain: 'tasks', rowCount: 3, blockedReason: null },
+    { domain: 'goals', rowCount: null, blockedReason: 'count_failed' },
+    { domain: 'bills', rowCount: -1, blockedReason: null },
+    null, { rowCount: 1 }
+  ]);
+  assert.deepEqual(rows.map(row => [row.name, row.state]), [
+    ['tasks', PREVIEW_ROW_STATE.COUNTED], ['goals', PREVIEW_ROW_STATE.FAILED], ['bills', PREVIEW_ROW_STATE.FAILED]
+  ]);
+  assert.deepEqual(serverPreviewRows(undefined), []);
+});
+
+test('esikatselu: paikallisen kuiva-ajon rivit ovat laskettuja, summa ei ole alaraja', () => {
+  const local = dryRunDeletion({ tasks: [{}, {}], goals: [] }).collections;
+  const summary = summarizePreview(local);
+  assert.equal(summary.total, 2);
+  assert.equal(summary.partial, false);
+  assert.deepEqual(summary.rows.map(row => row.name), ['tasks']);
+  assert.deepEqual(summary.absent, []);
+});
+
+test('KRIITTINEN: käyttöliittymä näyttää laskemattomat ja puuttuvat eikä suodata niitä pois', () => {
+  const ui = readCode('src/app/accountDeletion.js');
+  assert.match(ui, /previewRows = serverPreviewRows\(result\.value\.domains\)/);
+  assert.equal(/\.filter\(entry => Number\.isInteger\(entry\.rowCount\)\)/.test(ui), false,
+    'laskematon kokoelma ei saa kadota esikatselusta');
+  const rowsFn = ui.slice(ui.indexOf('function rowsHtml'), ui.indexOf('function previewHtml'));
+  assert.match(rowsFn, /previewRowValue\(row\)/, 'rivin arvo kertoo tilan (ei käytössä / ei voitu laskea)');
+  assert.match(rowsFn, /summary\.absent/, 'puuttuvat taulut luetellaan');
+  assert.match(ui, /summary\.partial \? 'vähintään ' : ''/, 'osittainen summa ei väitä kokonaismäärää');
 });
 
 test('jokaisella inventaarion kokoelmalla on käyttäjälle näytettävä nimi', () => {
@@ -288,6 +351,18 @@ test('käyttöliittymä puhdistaa paikallisen tilan ja kirjautuu ulos onnistunee
   assert.ok(ui.includes('clearLocalUserData()'), 'varapolku siivoaa tilan vaikka uloskirjautuminen epäonnistuu');
   assert.ok(ui.includes('queueAuthNote('), 'päätetila kerrotaan käyttäjälle uloskirjautumisen jälkeen');
   assert.ok(ui.includes('complete'), 'epätäydellinen jälkitarkistus ei saa näyttää täydeltä onnistumiselta');
+});
+
+test('KRIITTINEN: poiston jälkeen laitteen muistutukset perutaan ja odotetaan ennen uloskirjautumista', () => {
+  // Ajastetut Android-muistutukset sisältävät poistetun tilin tehtävien
+  // otsikoita; ne elävät käyttöjärjestelmässä sovelluksesta riippumatta.
+  const ui = readCode('src/app/accountDeletion.js');
+  const succeededAt = ui.indexOf('FLOW_EVENT.SUCCEEDED');
+  const cancelAt = ui.indexOf('await cancelDeviceNotifications(');
+  const signOutAt = ui.indexOf('await signOutAndClean()');
+  assert.ok(cancelAt > -1, 'poisto ei peru laitteen muistutuksia (tai ei odota peruutusta)');
+  assert.ok(succeededAt < cancelAt, 'peruutus vasta onnistuneen poiston jälkeen');
+  assert.ok(cancelAt < signOutAt, 'peruutus ennen uloskirjautumista');
 });
 
 test('KRIITTINEN: selainkoodissa ei ole korotettua avainta eikä funktion koodia', () => {

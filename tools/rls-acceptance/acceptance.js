@@ -40,6 +40,18 @@
 //   5. Nolla riviä RLS:n vuoksi ja virhe verkossa ovat ERI ASIA. Virhe
 //      ei koskaan tuota PASSia — se tuottaa ERRORin. Muuten katkennut
 //      yhteys näyttäisi täydelliseltä tietoturvalta.
+//
+// TUOTANTOA VASTEN, EI KOSKAAN AUTOMAATTISESTI
+//
+// Ajo vaatii omistajan kertakäyttöisen toisen tilin (B) ja omistajan
+// nimenomaisen luvan jokaiselle ajolle. Migraatioiden 0009–0013 taulut
+// (tableSpecs.js) ajetaan vain, kun ajaja valitsee aallon, jonka
+// migraatiot tuotannossa on ajettu. Ks. docs/RLS-ACCEPTANCE.md.
+
+import {
+  TABLE_SPECS, COMPOSITE_FK_PROBES, CLEANUP_ORDER, ACCEPTANCE_WAVES,
+  DEFAULT_ACCEPTANCE_WAVE, inWave, specFor
+} from './tableSpecs.js';
 
 /**
  * Etuliite, jonka jokainen tämän testin luoma rivi saa.
@@ -238,6 +250,52 @@ export function idsFor(runId) {
     ownLinkB: `${base}_b_own_link`
   });
 }
+
+/**
+ * Migraatioiden 0009–0013 taulun testirivien tunnisteet (tableSpecs.js).
+ * Erillään idsFor:sta, jotta 0003–0008:n tunnistejoukko pysyy ennallaan.
+ */
+export function specIdsFor(runId, code) {
+  const base = `${MARKER_PREFIX}${runId}`;
+  const tag = String(code).toLowerCase();
+  return Object.freeze({
+    a: `${base}_a_${tag}`,
+    b: `${base}_b_${tag}`,
+    forged: `${base}_b_forged_${tag}`
+  });
+}
+
+/** Ristiinkiinnityshyökkäyksen (0009–0013) rivin tunniste. */
+export function attackIdFor(runId, probe) {
+  return `${MARKER_PREFIX}${runId}_b_attack_${probe.table}_${probe.column}`;
+}
+
+/**
+ * Missä osiossa kunkin käyttäjän omistaman taulun RLS todistetaan.
+ *
+ * tests/rls-acceptance.test.mjs vaatii, että JOKAINEN
+ * src/domain/accountLifecycle.js:n ACCOUNT_DATA_MAP-taulu on joko tässä,
+ * TABLE_SPECS:ssä tai RLS_EXEMPTIONS:ssa perusteluineen. Uusi
+ * käyttäjäkohtainen taulu ilman todistusta kaataa testin.
+ */
+export const BESPOKE_COVERAGE = Object.freeze({
+  tasks: 'T1–T5, T6a',
+  profile: 'T1b, T2d, T3c, T3f, T5b, T5e, T6b',
+  routines: 'R1–R5',
+  routine_exceptions: 'E1–E6',
+  notification_preferences: 'N1–N6',
+  goals: 'G1–G5', projects: 'J1–J5', wellbeing_entries: 'W1–W5',
+  recurring_expenses: 'X1a–X5b', bills: 'L1–L5', savings_goals: 'S1–S5',
+  ai_action_audit: 'K1–K5, K9'
+});
+
+/**
+ * Taulut, joiden RLS:ää tämä työkalu EI todista, ja miksi.
+ *
+ * TYHJÄ ON TAVOITE. Jokainen merkintä on perusteltava: pelkkä "ei vielä"
+ * ei kelpaa, koska silloin taulun data on todistamatta tuotannossa.
+ */
+export const RLS_EXEMPTIONS = Object.freeze({});
 
 // ---------------------------------------------------------------------
 // Vastausten luokittelu
@@ -503,15 +561,31 @@ async function ownershipSection(ctx, spec) {
  * @param {number} options.expectedTaskCount  A:n oikeiden tehtävien määrä (36)
  * @param {string} options.runId   yksilöivä ajotunnus rivien tunnisteisiin
  * @param {string} options.today   ISO-päivä testirivien date-sarakkeeseen
+ * @param {string} [options.wave]  aalto, jonka migraatiot tuotannossa on
+ *   ajettu ('E' = 0008 … 'J' = 0013). Oletus 'E': 0009–0013:n tauluja ei
+ *   kosketa. Ks. tableSpecs.js.
  * @returns {Promise<{rows: Array, summary: object}>}
  */
 export async function runAcceptance(options) {
   const { a, b, anon, ownerAId, userBId, expectedTaskCount, runId, today } = options;
+  const wave = options.wave === undefined ? DEFAULT_ACCEPTANCE_WAVE : options.wave;
 
   if (!a || !b || !anon) throw new Error('kaikki kolme clientiä vaaditaan');
   if (!ownerAId || !userBId) throw new Error('molempien tilien tunnisteet vaaditaan');
   if (ownerAId === userBId) throw new Error('A ja B ovat sama tili — testi ei todistaisi mitään');
   if (!runId) throw new Error('ajotunnus vaaditaan');
+  if (!ACCEPTANCE_WAVES.includes(wave)) {
+    throw new Error(`tuntematon aalto ${wave} — sallitut: ${ACCEPTANCE_WAVES.join(', ')}`);
+  }
+
+  // Migraatioiden 0009–0013 taulut, jotka ovat tuotannossa tässä aallossa.
+  const specs = TABLE_SPECS.filter(entry => inWave(entry, wave));
+  const probes = COMPOSITE_FK_PROBES.filter(entry => inWave(entry, wave));
+  const scope = {
+    wave,
+    tablesInScope: specs.map(entry => entry.table),
+    tablesOutOfScope: TABLE_SPECS.filter(entry => !specs.includes(entry)).map(entry => entry.table)
+  };
 
   const id = idsFor(runId);
   const rows = [];
@@ -540,8 +614,33 @@ export async function runAcceptance(options) {
     `${expectedTaskCount} riviä`, expectRows(baseline, expectedTaskCount),
     'kaikki myöhemmät luvut verrataan tähän'));
 
+  // 0009–0013: ei edellisen ajon jäänteitä kummallakaan tilillä. Viikko-
+  // ja nimirivit ovat uniikkeja käyttäjää kohti, joten jäänne kaataisi
+  // saman ajon rivin yksikäsitteisyyteen eikä siihen, mitä testataan.
+  for (const entry of specs) {
+    for (const [client, kuka] of [[a, 'A'], [b, 'B']]) {
+      const jaanne = await call(() =>
+        client.from(entry.table).select('id').like('id', `${MARKER_PREFIX}%`));
+      push(row(`P0-${entry.code.toLowerCase()}-${kuka.toLowerCase()}`,
+        `${kuka}: ei edellisen ajon jäännösrivejä taulussa ${entry.table}`,
+        '0 riviä', expectRows(jaanne, 0), jaanne.rows.map(r => r.id).join(', ')));
+    }
+  }
+
+  // YKSI AJASTIN KÄYTTÄJÄÄ KOHTI. A:n oikea, käynnissä oleva ajastin
+  // estäisi testirivin (23505) — ja sen pysäyttäminen on omistajan asia,
+  // ei tämän työkalun. Ajo pysähtyy ennen yhtäkään kirjoitusta.
+  if (specs.some(entry => entry.table === 'running_timers')) {
+    push(row('P2', 'A:lla ei ole käynnissä olevaa ajastinta',
+      '0 riviä', expectRows(await call(() => a.from('running_timers').select('id')), 0),
+      'pysäytä ajastin sovelluksessa ennen ajoa (running_timers_one_per_user)'));
+    push(row('P3', 'B:llä ei ole ajastinta',
+      '0 riviä', expectRows(await call(() => b.from('running_timers').select('id')), 0),
+      'kertakäyttöisellä tilillä ei ole omaa dataa'));
+  }
+
   if (critical) {
-    return finish(rows, { runId, ids: id, aborted: 'lähtötila ei ollut odotettu' });
+    return finish(rows, { runId, ids: id, ...scope, aborted: 'lähtötila ei ollut odotettu' });
   }
 
   // --- T1: A näkee oman datansa -------------------------------------
@@ -1452,6 +1551,147 @@ export async function runAcceptance(options) {
     : skipped('X9', 'B saa liittää tehtävänsä omaan tavoitteeseensa', '1 rivi',
         'B:n tavoitetta ei syntynyt'));
 
+  // =================================================================
+  // MIGRAATIOT 0009–0013 (tableSpecs.js), VAIN VALITUN AALLON TAULUT
+  // =================================================================
+  //
+  // Sama omistajuusmatriisi kuin 0004–0008:lla, ja jokaiselle
+  // yhdistelmävierasavaimelle kaksi ristiinkiinnityshyökkäystä.
+  //
+  // JÄRJESTYS: B:n INSERT-hyökkäykset ajastintauluun ajetaan ennen B:n
+  // omaa ajastinta. running_timers_one_per_user torjuisi muuten jokaisen
+  // hyökkäyksen yksikäsitteisyyteen (23505) eikä vierasavain pääsisi
+  // koskaan sanomaan mitään — sama virhe kuin E4:ssä tuotantoajossa.
+  const specResults = {};
+  const specCtx = {
+    today,
+    parents: { goalA: id.goalA, goalB: id.goalB }
+  };
+  const runSpec = async entry => {
+    const sid = specIdsFor(runId, entry.code);
+    specResults[entry.table] = await ownershipSection(ctx, {
+      code: entry.code, table: entry.table, label: entry.label,
+      rowA: entry.row(sid.a, 'a', specCtx),
+      rowB: entry.row(sid.b, 'b', specCtx),
+      forged: entry.row(sid.forged, 'forged', specCtx),
+      patch: entry.patch, patchField: entry.patchField, patchValue: entry.patchValue
+    });
+  };
+
+  for (const entry of specs.filter(candidate => candidate.table !== 'running_timers')) {
+    await runSpec(entry);
+  }
+
+  // A:n rivit, joihin B yrittää viitata. null = riviä ei syntynyt.
+  const exists = table => Boolean(specResults[table] && specResults[table].aExists);
+  const parentA = {
+    goals: goals.aExists ? id.goalA : null,
+    projects: projects.aExists ? id.projectA : null,
+    tasks: baitExists ? id.baitA : null,
+    routines: routineAExists ? id.routineA : null,
+    life_areas: exists('life_areas') ? specIdsFor(runId, 'LA').a : null,
+    milestones: exists('milestones') ? specIdsFor(runId, 'MS').a : null
+  };
+  // B:n OMAT rivit, joiden viitteen B yrittää kääntää A:han.
+  const ownB = table => {
+    if (table === 'tasks') return bKeepExists ? id.keepB : null;
+    if (table === 'projects') return projects.bExists ? id.projectB : null;
+    if (table === 'goals') return goals.bExists ? id.goalB : null;
+    const entry = specFor(table);
+    return entry && specResults[table] && specResults[table].bExists
+      ? specIdsFor(runId, entry.code).b : null;
+  };
+  /** Uusi B:n rivi tauluun `table`, joka viittaa A:n riviin. */
+  const attackRow = probe => {
+    const attackId = attackIdFor(runId, probe);
+    const base = probe.table === 'tasks' ? taskRow(attackId, today, 'hyökkäys')
+      : probe.table === 'projects' ? projectRow(attackId, 'hyökkäys')
+        : probe.table === 'goals' ? goalRow(attackId, 'hyökkäys')
+          : specFor(probe.table).row(attackId, 'b', specCtx);
+    return { ...base, [probe.column]: parentA[probe.parent] };
+  };
+
+  const insertProbe = async probe => {
+    const kuvaus = `B ei voi luoda riviä tauluun ${probe.table}, jonka ${probe.column} on A:n rivi`;
+    if (!parentA[probe.parent]) {
+      push(skipped(`XV-${probe.key}`, kuvaus, `virhe ${FOREIGN_KEY_VIOLATION}`,
+        `A:n riviä taulussa ${probe.parent} ei syntynyt — hyökkäystä ei voitu kokeilla`));
+      return;
+    }
+    const tulos = await call(() => b.from(probe.table).insert(attackRow(probe)).select());
+    let selite = `(user_id, ${probe.column}) -> ${probe.parent} (user_id, id), migraatio ${probe.migration}`;
+    if (!tulos.error && tulos.rows.length > 0) {
+      // Suoja petti. Rivi poistetaan heti tunnisteella: yksi ajastin
+      // käyttäjää kohti tekisi muuten seuraavista hyökkäyksistä 23505:n
+      // eikä niistä näkisi, pitääkö OMA vierasavain.
+      await call(() => b.from(probe.table).delete().eq('id', attackIdFor(runId, probe)).select());
+      selite += '; läpi mennyt rivi poistettiin heti';
+    }
+    push(row(`XV-${probe.key}`, kuvaus, `virhe ${FOREIGN_KEY_VIOLATION}`,
+      expectRejected(tulos, FOREIGN_KEY_VIOLATION), selite));
+  };
+
+  // Ajastimen INSERT-hyökkäykset ensin (ks. JÄRJESTYS yllä), sitten muut.
+  const timerFirst = [...probes].sort((x, y) =>
+    Number(y.table === 'running_timers') - Number(x.table === 'running_timers'));
+  for (const probe of timerFirst) await insertProbe(probe);
+
+  for (const entry of specs.filter(candidate => candidate.table === 'running_timers')) {
+    await runSpec(entry);
+  }
+
+  // UPDATE: B:n oma rivi läpäisee RLS:n (omistaja ei muutu), joten vain
+  // vierasavain voi torjua viitteen kääntämisen A:n riviin.
+  for (const probe of probes) {
+    const kuvaus = `B ei voi UPDATElla kääntää oman rivinsä ${probe.table}.${probe.column} A:n riviin`;
+    const oma = ownB(probe.table);
+    push(oma && parentA[probe.parent]
+      ? row(`UV-${probe.key}`, kuvaus, `virhe ${FOREIGN_KEY_VIOLATION}`,
+          expectRejected(await call(() =>
+            b.from(probe.table).update({ [probe.column]: parentA[probe.parent] }).eq('id', oma).select()),
+            FOREIGN_KEY_VIOLATION),
+          `sama vierasavain kuin XV-${probe.key}, eri koodipolku`)
+      : skipped(`UV-${probe.key}`, kuvaus, `virhe ${FOREIGN_KEY_VIOLATION}`,
+          'oma tai kohderivi puuttuu — hyökkäystä ei voitu kokeilla'));
+  }
+
+  // Sallittu viite: B:n kirjaus B:n omaan alueeseen. Ilman tätä kiellot
+  // voisivat mennä läpi siksi, että viitteet ovat rikki kaikille.
+  if (specs.some(entry => entry.table === 'time_entries')) {
+    const omaKirjaus = ownB('time_entries');
+    const omaAlue = ownB('life_areas');
+    push(omaKirjaus && omaAlue
+      ? row('XV-ok', 'B saa liittää oman aikakirjauksensa OMAAN elämänalueeseensa', '1 rivi',
+          expectRows(await call(() =>
+            b.from('time_entries').update({ life_area_id: omaAlue }).eq('id', omaKirjaus).select()), 1),
+          'todiste ettei XV/UV-kielto johdu siitä että viitteet olisivat rikki kaikille')
+      : skipped('XV-ok', 'B saa liittää kirjauksensa omaan alueeseensa', '1 rivi',
+          'B:n kirjausta tai aluetta ei syntynyt'));
+  }
+
+  // POHDINTA ERI ARVOLLA. Omistajuusmatriisin AR3a käyttää samaa arvoa
+  // kuin A:n oma päivitys, joten pelkkä AR3e ei erottaisi onnistunutta
+  // kaappausta. Tässä B yrittää omaa tekstiään, ja A:n rivi luetaan.
+  if (exists('alignment_reviews')) {
+    const aReview = specIdsFor(runId, 'AR').a;
+    const reviewSpec = specFor('alignment_reviews');
+    push(row('AR6a', 'B:n UPDATE A:n viikkokatsauksen pohdintaan osuu nollaan riviin', '0 riviä',
+      expectDenied(await call(() =>
+        b.from('alignment_reviews').update({ reflection: 'B:n kaappaama pohdinta' })
+          .eq('id', aReview).select())),
+      'pohdinta on sovelluksen yksityisin sarake'));
+    push(row('AR6b', 'A:n pohdinta on A:n kirjoittama B:n yrityksen jälkeen', '1 rivi, oma pohdinta',
+      await (async () => {
+        const jalkeen = await call(() =>
+          a.from('alignment_reviews').select('id,reflection').eq('id', aReview));
+        if (jalkeen.error) return { status: STATUS.ERROR, actual: describeError(jalkeen.error) };
+        const ok = jalkeen.rows.length === 1 && jalkeen.rows[0].reflection === reviewSpec.patchValue;
+        return { status: ok ? STATUS.PASS : STATUS.FAIL,
+                 actual: `${jalkeen.rows.length} riviä, ${ok ? 'pohdinta ennallaan' : 'POHDINTA MUUTTUI'}` };
+      })(),
+      'arvoa ei tulosteta raporttiin'));
+  }
+
   // --- T6: kirjautumaton ei saa mitään -------------------------------
   //
   // anon-roolilta on peruttu kaikki oikeudet, joten tämä ei edes yllä
@@ -1472,7 +1712,14 @@ export async function runAcceptance(options) {
   // tarkistettaisiin.
   // Jokainen uusi taulu, jokainen operaatio. Lyhenne on raportin
   // luettavuutta varten; taulun nimi on rivin tekstissa.
-  for (const { lyhenne, taulu, kohde } of ANON_KOHTEET) {
+  // 0009–0013:n taulut (kaikki tekstiavaimellisia) samalla silmukalla.
+  const anonKohteet = [
+    ...ANON_KOHTEET,
+    ...specs.map(entry => ({
+      lyhenne: entry.code.toLowerCase(), taulu: entry.table, kohde: `${MARKER_PREFIX}anon`
+    }))
+  ];
+  for (const { lyhenne, taulu, kohde } of anonKohteet) {
     const yritykset = [
       ['select', () => anon.from(taulu).select('id')],
       ['insert', () => anon.from(taulu).insert({ id: kohde }).select()],
@@ -1601,6 +1848,22 @@ export async function runAcceptance(options) {
     siivousNo += 1;
   }
 
+  // 0009–0013: lapset ennen vanhempia (tableSpecs.js CLEANUP_ORDER).
+  // Omat tunnukset (CV-), jotta 0003–0008:n numerointi pysyy ennallaan.
+  for (const taulu of CLEANUP_ORDER.filter(name => specs.some(entry => entry.table === name))) {
+    const lyhenne = specFor(taulu).code.toLowerCase();
+    for (const [client, kuka] of [[a, 'A'], [b, 'B']]) {
+      const poisto = await call(() =>
+        client.from(taulu).delete().like('id', `${MARKER_PREFIX}%`).select());
+      push(row(`CV-${lyhenne}-${kuka.toLowerCase()}`, `${kuka} poistaa omat testirivinsä taulusta ${taulu}`,
+        'ei virhettä',
+        poisto.error
+          ? { status: STATUS.ERROR, actual: describeError(poisto.error) }
+          : { status: STATUS.PASS, actual: `${poisto.rows.length} riviä` },
+        'like-ehto on turvallinen vain koska RLS rajaa sen omiin riveihin'));
+    }
+  }
+
   // --- Loppuvarmistus ------------------------------------------------
   const finalA = await call(() => a.from('tasks').select('id'));
   push(row('C8', 'A:n tehtävämäärä on palannut lähtöarvoon',
@@ -1622,7 +1885,8 @@ export async function runAcceptance(options) {
     ['r', 'routines'], ['e', 'routine_exceptions'],
     ['g', 'goals'], ['j', 'projects'],
     ['w', 'wellbeing_entries'], ['x', 'recurring_expenses'],
-    ['l', 'bills'], ['s', 'savings_goals'], ['k', 'ai_action_audit']
+    ['l', 'bills'], ['s', 'savings_goals'], ['k', 'ai_action_audit'],
+    ...specs.map(entry => [entry.code.toLowerCase(), entry.table])
   ];
 
   for (const [tunnus, client, kuka] of [['C11', a, 'A'], ['C12', b, 'B']]) {
@@ -1676,7 +1940,17 @@ export async function runAcceptance(options) {
         : 'yksikään hyökkäysrivi ei syntynyt'));
   }
 
-  return finish(rows, { runId, ids: id, aborted: null });
+  // 0009–0013:n hyökkäysrivit, samoin B:n silmin.
+  for (const probe of probes) {
+    const loytyi = await call(() =>
+      b.from(probe.table).select('id').eq('id', attackIdFor(runId, probe)));
+    push(row(`CV13-${probe.key}`,
+      `Ristiinkiinnitysyritystä ${probe.key} ei ole kannassa`,
+      '0 riviä', expectRows(loytyi, 0),
+      loytyi.rows.length > 0 ? 'HYÖKKÄYSRIVI SYNTYI' : 'hyökkäysrivi ei syntynyt'));
+  }
+
+  return finish(rows, { runId, ids: id, ...scope, aborted: null });
 }
 
 /**
@@ -1762,18 +2036,7 @@ export function goalRow(id, title, { parentGoalId = null, projectId = null } = {
     progress_mode: 'task_based',
     manual_progress: 0,
     parent_goal_id: parentGoalId,
-    project_id: projectId,
-    // Migraatio 0010 (aalto G): sovellus kirjoittaa mittarikentät, kun
-    // GOAL_PLANNING_FIELDS on auki. Testirivin on vastattava sitä.
-    metric: null,
-    unit: null,
-    baseline_value: null,
-    current_value: null,
-    target_value: null,
-    measured_on: null,
-    savings_goal_id: null,
-    // Migraatio 0012 (aalto I): GOAL_LIFE_AREA_FIELD.
-    life_area_id: null
+    project_id: projectId
   };
 }
 
@@ -1793,9 +2056,7 @@ export function projectRow(id, name, { goalId = null } = {}) {
     status: 'active',
     goal_id: goalId,
     start_date: null,
-    deadline: null,
-    // Migraatio 0010 (aalto G).
-    milestone_id: null
+    deadline: null
   };
 }
 
@@ -1862,12 +2123,7 @@ export function billRow(id, name, dueDate, { taskId = null, recurringExpenseId =
     category: 'talous',
     task_id: taskId,
     recurring_expense_id: recurringExpenseId,
-    note: null,
-    // Migraatio 0009 (aalto F): sovellus kirjoittaa maksutiedot, kun
-    // BILL_PAYMENT_FIELDS on auki. Testirivin on vastattava sitä.
-    payee: null,
-    iban: null,
-    reference: null
+    note: null
   };
 }
 
@@ -2019,6 +2275,10 @@ export function formatReport(rows, summary) {
     lines.push(`TULOS: ${summary.verdict} — ${summary.pass}/${summary.total} PASS, `
       + `${summary.fail} FAIL, ${summary.error} ERROR, ${summary.skip} SKIP`);
     lines.push(`ajotunnus: ${summary.runId}`);
+    if (summary.wave) {
+      lines.push(`aalto: ${summary.wave} — 0009–0013:n taulut ajossa: `
+        + `${(summary.tablesInScope || []).join(', ') || 'ei yhtään'}`);
+    }
     if (summary.aborted) lines.push(`KESKEYTETTY: ${summary.aborted}`);
   }
   return lines.join('\n');

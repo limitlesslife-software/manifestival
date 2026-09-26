@@ -161,20 +161,76 @@ async function readBody(request) {
   return { body: parsed };
 }
 
+/**
+ * PostgREST-virhekoodit, jotka tarkoittavat "taulua ei ole", eivät
+ * "laskenta epäonnistui": PGRST205 (PostgREST 12+) ja 42P01 (vanhempi).
+ */
+const MISSING_RELATION_CODES = Object.freeze(['PGRST205', '42P01']);
+
+/**
+ * Puuttuuko taulu kokonaan?
+ *
+ * TUOTANTO ETENEE AALLOITTAIN: ennen aaltoa J osa inventaarion tauluista
+ * (migraatiot 0009-0013) on vielä luomatta. Puuttuva taulu ei voi sisältää
+ * rivejä, ja jos se luodaan myöhemmin, FK-kaskadi poistaa rivit kannassa
+ * riippumatta siitä, mitä tämä tarkistus näkee. Se ei siis ole
+ * "varmistamaton" -- mutta se kerrotaan erikseen (`absent`), ei piiloteta
+ * nollaksi.
+ *
+ * Kaksi muotoa, koska laskenta on HEAD-pyyntö:
+ *   - virheolio koodilla PGRST205 / 42P01
+ *   - HEAD-vastauksen 404 ilman runkoa, jonka postgrest-js muuttaa muotoon
+ *     { error: null, count: null, status: 204 } (sen oma kiertotie). Määrä
+ *     puuttuu, joten sitä EI lueta nollaksi.
+ */
+function isMissingRelation(response) {
+  const { count, error, status } = response || {};
+  if (error) return MISSING_RELATION_CODES.includes(error.code);
+  return count == null && (status === 404 || status === 204);
+}
+
+function countedDomain(domain, rowCount) {
+  return { domain, rowCount, action: 'delete', blockedReason: null, present: true };
+}
+
+function absentDomain(domain) {
+  return { domain, rowCount: 0, action: 'delete', blockedReason: null, present: false };
+}
+
+function failedDomain(domain) {
+  return { domain, rowCount: null, action: 'delete', blockedReason: 'count_failed', present: null };
+}
+
 /** Rivimäärät jokaiselle inventaarion kokoelmalle. Ei koskaan rivien sisältöä. */
 async function countDomains(admin, userId) {
-  return Promise.all(Object.entries(ACCOUNT_DATA_MAP).map(async ([domain, entry]) => {
+  const domains = await Promise.all(Object.entries(ACCOUNT_DATA_MAP).map(async ([domain, entry]) => {
     try {
-      const { count, error } = await admin
+      const response = await admin
         .from(entry.table)
         .select('*', { count: 'exact', head: true })
         .eq(entry.ownerColumn, userId);
-      if (error) return { domain, rowCount: null, action: 'delete', blockedReason: 'count_failed' };
-      return { domain, rowCount: count ?? 0, action: 'delete', blockedReason: null };
+      if (isMissingRelation(response)) return absentDomain(domain);
+      const { count, error } = response || {};
+      // Puuttuva määrä ilman virhettä ei ole nolla: sitä ei ole laskettu.
+      if (error || !Number.isInteger(count) || count < 0) return failedDomain(domain);
+      return countedDomain(domain, count);
     } catch {
-      return { domain, rowCount: null, action: 'delete', blockedReason: 'count_failed' };
+      return failedDomain(domain);
     }
   }));
+
+  // "Taulua ei ole" on uskottava vain, jos sama kierros näki ainakin yhden
+  // taulun. Jos mikään ei näy, vika on yhteydessä (väärä osoite, REST pois
+  // päältä) eikä skeemassa -- sitä ei saa lukea "ei mitään poistettavaa".
+  if (!domains.some(entry => entry.present === true)) {
+    return domains.map(entry => (entry.present === false ? failedDomain(entry.domain) : entry));
+  }
+  return domains;
+}
+
+/** Kokoelmat, joiden taulua ei tässä kannassa ole (aalto J:tä edeltävä tuotanto). */
+function absentDomains(domains) {
+  return domains.filter(entry => entry.present === false).map(entry => entry.domain);
 }
 
 function isRecentLogin(user, now) {
@@ -244,13 +300,15 @@ export async function handleRequest(request, deps) {
     if (body.mode === MODES.DRY_RUN) {
       const domains = await countDomains(admin, user.id);
       const totalRows = domains.reduce((sum, entry) => sum + (entry.rowCount || 0), 0);
-      logEvent(deps, 'delete_account.dry_run', { operationId, domains: domains.length });
+      const absent = absentDomains(domains);
+      logEvent(deps, 'delete_account.dry_run', { operationId, domains: domains.length, absent: absent.length });
       return json(200, {
         ok: true,
         operationId,
         mode: MODES.DRY_RUN,
         domains,
         totalRows,
+        absent,
         authAccount: { action: 'delete', blockedReason: null },
         storage: { categories: [] },
         confirmationPhrase: CONFIRMATION_PHRASE,
@@ -267,13 +325,18 @@ export async function handleRequest(request, deps) {
     if (deleteError && !alreadyDeleted) return reject('auth_delete_failed');
 
     // Jälkitarkistus: FK-kaskadin jälkeen yhtään riviä ei pitäisi olla.
+    // Puuttuva taulu (absent) ei ole jäännös eikä varmistamaton: siinä ei
+    // voi olla rivejä. Täydellisyys ratkeaa vain jäännöksistä ja
+    // varmistamattomista, ja puuttuvat kerrotaan silti erikseen.
     const after = await countDomains(admin, user.id);
     const residual = after.filter(entry => entry.rowCount > 0).map(entry => entry.domain);
     const unverified = after.filter(entry => entry.rowCount === null).map(entry => entry.domain);
+    const absent = absentDomains(after);
     const complete = residual.length === 0 && unverified.length === 0;
 
     logEvent(deps, 'delete_account.deleted', {
-      operationId, complete, alreadyDeleted, residual: residual.length, unverified: unverified.length
+      operationId, complete, alreadyDeleted,
+      residual: residual.length, unverified: unverified.length, absent: absent.length
     });
     return json(200, {
       ok: true,
@@ -283,7 +346,8 @@ export async function handleRequest(request, deps) {
       alreadyDeleted,
       complete,
       residual,
-      unverified
+      unverified,
+      absent
     }, cors);
   } catch {
     return reject('internal');

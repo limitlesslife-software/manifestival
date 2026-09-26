@@ -19,25 +19,48 @@ import {
   getState, findGoal, setEditingGoalId, setOpenGoalId, setGoalsSegment,
   GOALS_SEGMENTS
 } from '../state.js';
-import { volatileGoalFields } from '../../data/schema.js';
+import { volatileGoalFields, columnGateOpen } from '../../data/schema.js';
+import { compareLifeAreas } from '../../domain/lifeArea.js';
 import { formatNumber as formatMetricNumber } from '../../domain/goalTarget.js';
 import { renderGoalDetail } from './goalDetail.js';
 import { renderPlanning } from './planning.js';
 import { createGoal, editGoal, deleteGoal, setGoalStatus, toggleComplete } from '../actions.js';
 import { openEditForm } from './tasks.js';
+import { loadFailureHtml } from './loadNotice.js';
+import { showError } from '../../ui/toast.js';
 
 const STATUS_ORDER = [
   GOAL_STATUS.ACTIVE, GOAL_STATUS.PAUSED, GOAL_STATUS.COMPLETED, GOAL_STATUS.ARCHIVED
 ];
 
+/**
+ * Lomakkeen tilavaihtoehdot.
+ *
+ * Ylläpito tarjotaan vain, kun kanta hyväksyy sen (GOAL_MAINTENANCE_MODE,
+ * myös ajon aikana laskettuna). Tavoitteen NYKYINEN tila on aina mukana:
+ * muuten valikko valitsisi hiljaa ensimmäisen vaihtoehdon, ja tallennus
+ * muuttaisi esimerkiksi ylläpidossa olevan tavoitteen aktiiviseksi.
+ */
+export function goalStatusOptions(current = null) {
+  const options = [...STATUS_ORDER];
+  if (columnGateOpen('GOAL_MAINTENANCE_MODE')) options.splice(2, 0, GOAL_STATUS.MAINTENANCE);
+  if (current && Object.values(GOAL_STATUS).includes(current) && !options.includes(current)) {
+    options.push(current);
+  }
+  return options;
+}
+
+function fillStatusSelect(current = null) {
+  const status = maybe('gfStatus');
+  if (!status) return;
+  status.innerHTML = goalStatusOptions(current)
+    .map(key => `<option value="${escapeHtml(key)}">${escapeHtml(goalStatusLabel(key))}</option>`)
+    .join('');
+}
+
 /** Täytä valikot domainista. */
 export function populateGoalSelects() {
-  const status = maybe('gfStatus');
-  if (status) {
-    status.innerHTML = STATUS_ORDER
-      .map(key => `<option value="${escapeHtml(key)}">${escapeHtml(goalStatusLabel(key))}</option>`)
-      .join('');
-  }
+  fillStatusSelect();
 
   const category = maybe('gfCategory');
   if (category) {
@@ -176,6 +199,12 @@ function renderList(container, state) {
   const summary = summarizeGoals(state.goals, state.tasks, todayIso);
 
   if (summary.all.length === 0) {
+    // Epäonnistunut ensimmäinen lataus ei ole "ei vielä tavoitteita".
+    const notice = loadFailureHtml(state, ['goals']);
+    if (notice) {
+      container.innerHTML = notice;
+      return;
+    }
     container.innerHTML = `
       <div class="empty-state">
         <div class="empty-title">Ei vielä tavoitteita.</div>
@@ -269,13 +298,18 @@ function syncGoalsSegment(state) {
 
 // ----------------------------------------------------------------- lomake
 
-const FIELD_TO_INPUT = {
+/** Domainin virhekenttä -> lomakkeen kenttä (virheteksti: `<id>Error`). */
+export const FIELD_TO_INPUT = Object.freeze({
   title: 'gfTitle',
   targetDate: 'gfTargetDate',
   manualProgress: 'gfManualProgress',
   status: 'gfStatus',
-  progressMode: 'gfProgressMode'
-};
+  progressMode: 'gfProgressMode',
+  // Mitattava tavoite: tavoitearvo ilman mittarin nimeä hylätään
+  // (validateGoal), ja virhe jäi aiemmin näyttämättä.
+  metric: 'gfMetric',
+  targetValue: 'gfTargetValue'
+});
 
 function clearFieldErrors() {
   document.querySelectorAll('#goalForm .field-error').forEach(node => {
@@ -288,14 +322,25 @@ function clearFieldErrors() {
   });
 }
 
-function showFieldErrors(errors) {
+/**
+ * Näytä validointivirheet kenttien alla.
+ *
+ * YKSIKÄÄN VIRHE EI SAA KADOTA. Aiemmin kenttä, jota FIELD_TO_INPUT ei
+ * tuntenut, ohitettiin hiljaa (esim. mittarin nimi), ja Tallenna ei tehnyt mitään
+ * eikä kertonut miksi. Nyt kentätön virhe näytetään lomakkeen tasolla
+ * (ilmoituksena) -- domainin kiinteä teksti, ei koodia.
+ *
+ * @returns {string[]} virheet, joilla ei ollut kenttää (testejä varten)
+ */
+export function showFieldErrors(errors) {
   clearFieldErrors();
   let firstInvalid = null;
-  for (const [field, message] of Object.entries(errors)) {
+  const unplaced = [];
+  for (const [field, message] of Object.entries(errors || {})) {
     const inputId = FIELD_TO_INPUT[field];
-    if (!inputId) continue;
-    const input = maybe(inputId);
-    const errorNode = maybe(inputId + 'Error');
+    const input = inputId ? maybe(inputId) : null;
+    const errorNode = inputId ? maybe(inputId + 'Error') : null;
+    if (!errorNode) unplaced.push(message);
     if (input) {
       input.classList.add('invalid');
       input.setAttribute('aria-invalid', 'true');
@@ -306,7 +351,9 @@ function showFieldErrors(errors) {
       errorNode.style.display = 'block';
     }
   }
+  if (unplaced.length > 0) showError(unplaced.join(' '));
   if (firstInvalid) focus(firstInvalid);
+  return unplaced;
 }
 
 /** Manuaalinen prosentti näytetään vain kun se on käytössä. */
@@ -317,12 +364,38 @@ function syncProgressMode() {
   group.style.display = select.value === PROGRESS_MODE.MANUAL ? 'block' : 'none';
 }
 
+/**
+ * Suunnan elämänalue tavoitteelle (F8). Kategoria ja elämänalue ovat eri
+ * asioita: kategoria on tehtävien luokka, alue käyttäjän oma määritelmä
+ * siitä mikä on tärkeää. Käytössä olevat alueet ensin. Nykyinen alue, jota
+ * ei ole tilassa (lataus epäonnistui), pidetään valittuna: muuten tallennus
+ * katkaisisi liitoksen huomaamatta.
+ */
+function fillLifeAreaSelect(goal) {
+  const select = maybe('gfLifeArea');
+  if (!select) return;
+  const areas = [...getState().lifeAreas].sort(compareLifeAreas);
+  const current = goal && goal.lifeAreaId ? goal.lifeAreaId : '';
+  let options = '<option value="">Ei elämänaluetta</option>'
+    + areas.map(area => `<option value="${escapeHtml(area.id)}">${escapeHtml(area.name)}`
+      + `${area.active ? '' : ' (pois käytöstä)'}</option>`).join('');
+  if (current && !areas.some(area => area.id === current)) {
+    options += `<option value="${escapeHtml(current)}">Nykyinen alue (ei näkyvissä)</option>`;
+  }
+  select.innerHTML = options;
+  select.value = current;
+  const hint = maybe('gfLifeAreaHint');
+  if (hint) hint.hidden = areas.length > 0;
+}
+
 function readForm() {
   const manual = el('gfManualProgress').value;
+  const lifeArea = maybe('gfLifeArea');
   return {
     title: el('gfTitle').value.trim(),
     description: el('gfDescription').value.trim() || null,
     category: el('gfCategory').value,
+    ...(lifeArea ? { lifeAreaId: lifeArea.value || null } : {}),
     priority: el('gfPriority').value,
     status: el('gfStatus').value,
     targetDate: el('gfTargetDate').value || null,
@@ -346,7 +419,9 @@ function fillForm(goal) {
   el('gfTitle').value = goal ? goal.title : '';
   el('gfDescription').value = goal && goal.description ? goal.description : '';
   el('gfCategory').value = goal ? goal.category : 'kehitys';
+  fillLifeAreaSelect(goal);
   el('gfPriority').value = goal ? goal.priority : 'normaali';
+  fillStatusSelect(goal ? goal.status : null);
   el('gfStatus').value = goal ? goal.status : GOAL_STATUS.ACTIVE;
   el('gfTargetDate').value = goal && goal.targetDate ? goal.targetDate : '';
   el('gfProgressMode').value = goal ? goal.progressMode : PROGRESS_MODE.TASK_BASED;

@@ -59,6 +59,22 @@ export const GOAL_STATUS = Object.freeze({
 
 export const GOAL_STATUSES = Object.freeze(Object.values(GOAL_STATUS));
 
+/**
+ * Hyväksyykö KANTA tämän tilan?
+ *
+ * Domain tuntee kuusi tilaa, mutta `maintenance` on sallittu kannassa vasta
+ * migraation 0010 jälkeen (goals_status_check). Ennen sitä tila kaatuisi
+ * rajoitteeseen (23514). Kutsuja kertoo, onko portti auki (domain ei tunne
+ * portteja): src/data/schema.js columnGateOpen('GOAL_MAINTENANCE_MODE').
+ *
+ * @param {string} status
+ * @param {{maintenanceAllowed?: boolean}} [options]
+ */
+export function isStorableGoalStatus(status, { maintenanceAllowed = false } = {}) {
+  if (status === GOAL_STATUS.MAINTENANCE) return maintenanceAllowed === true;
+  return GOAL_STATUSES.includes(status);
+}
+
 /** Tilat, jotka vaativat käyttäjän huomiota. */
 export const OPEN_STATUSES = Object.freeze([
   GOAL_STATUS.ACTIVE, GOAL_STATUS.PAUSED, GOAL_STATUS.MAINTENANCE

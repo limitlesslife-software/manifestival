@@ -40,6 +40,7 @@ import { currentAccessToken } from './auth.js';
 import { apiUrl } from '../platform/index.js';
 import { API } from '../data/config.js';
 import { logError } from '../lib/result.js';
+import { aiEndpointMessage } from '../lib/errorMessages.js';
 
 /**
  * `prepareImage`-viestit, jotka on kirjoitettu käyttäjälle näytettäviksi.
@@ -207,14 +208,9 @@ export async function extractFromImage({ file, subject, todayIso, id }) {
       })
     });
 
-    if (!response.ok) {
-      let message = 'Kuvan lukeminen epäonnistui.';
-      try {
-        const body = await response.json();
-        if (body && typeof body.error === 'string') message = body.error;
-      } catch { /* geneerinen viesti riittää */ }
-      return { ok: false, error: message };
-    }
+    // Palvelimen body.error-tekstiä EI näytetä: kiinteä viesti HTTP-tilan
+    // mukaan (src/lib/errorMessages.js aiEndpointMessage).
+    if (!response.ok) return { ok: false, error: aiEndpointMessage(response.status, { subject: 'image' }) };
 
     const data = await response.json();
     const text = textFrom(data);

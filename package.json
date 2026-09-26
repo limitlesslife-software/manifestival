@@ -6,16 +6,22 @@
   "scripts": {
     "pretest": "node scripts/pretest-android-sync.mjs",
     "test": "node --test",
-    "check": "node --check api/parse.js && node --check api/_validate.js && node --check api/extract.js && node --check api/_validateExtract.js && node --check api/plan.js && node --check api/_validatePlan.js && node --check api/capture.js && node --check api/_validateCapture.js && node --check api/command.js && node --check api/_validateCommand.js",
+    "check": "node --check api/parse.js && node --check api/_validate.js && node --check api/extract.js && node --check api/_validateExtract.js && node --check api/plan.js && node --check api/_validatePlan.js && node --check api/capture.js && node --check api/_validateCapture.js && node --check api/command.js && node --check api/_validateCommand.js && node --check api/explain.js && node --check api/_validateExplain.js && node --check api/_cors.js",
     "serve": "node scripts/serve.mjs",
     "smoke": "node scripts/smoke.mjs",
     "build:web": "node scripts/build-web.mjs",
     "sync:android": "npm run build:web && npx cap sync android",
     "build:android": "npm run sync:android && cd android && gradlew.bat assembleDebug",
+    "android:acceptance": "node scripts/android-acceptance-build.mjs",
     "activation:preflight": "node scripts/activation-preflight.mjs",
     "activation:verify-wave": "node scripts/verify-wave.mjs",
+    "activation:dry-run": "node scripts/activation-dry-run.mjs",
+    "activation:orchestrate": "node scripts/activation-orchestrate.mjs",
+    "activation:train-map": "node tools/activation/train-map.mjs",
     "production:verify-assets": "node scripts/production-verify-assets.mjs",
-    "release:manifest": "node scripts/release-manifest.mjs"
+    "release:manifest": "node scripts/release-manifest.mjs",
+    "e2e:suunta": "node tools/e2e/run-suunta-e2e.mjs",
+    "e2e:boot-smoke": "node tools/e2e/boot-smoke.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.5.0",

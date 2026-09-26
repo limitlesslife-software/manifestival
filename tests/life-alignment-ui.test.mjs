@@ -16,7 +16,7 @@ import { freezeLocalDate } from './helpers/clock.mjs';
 import { setUser, clearUser } from '../src/data/session.js';
 import { setClient } from '../src/data/client.js';
 import { fakeClient } from './helpers/gates.mjs';
-import { resetState, getState, setGoals, setTasks } from '../src/app/state.js';
+import { resetState, getState, setGoals, setTasks, setDomainLoadStatus } from '../src/app/state.js';
 import { clearLocalUserData, createGoal } from '../src/app/actions.js';
 import { lifeAreasRepo } from '../src/data/collectionsRepo.js';
 import { normalizeGoal } from '../src/domain/goal.js';
@@ -118,6 +118,13 @@ function task(id, date, minutes, extra = {}) {
   return normalizeTask({ id, title: 'Tehtävä ' + id, date, durationMinutes: minutes, ...extra });
 }
 
+/** Siirrä jäädytettyä kelloa (freezeLocalDate ensin): paikallinen päivä keskipäivällä. */
+function moveClock(t, isoDate, time = '12:00') {
+  const [year, month, day] = isoDate.split('-').map(Number);
+  const [hours, minutes] = time.split(':').map(Number);
+  t.mock.timers.setTime(new Date(year, month - 1, day, hours, minutes).getTime());
+}
+
 // ================================================================ ENSIKÄYTTÖ
 
 test('tyhjä tila: ehdotukset näkyvät mutta mitään ei luoda; havainnot kertovat mistä aloittaa', (t) => {
@@ -163,18 +170,48 @@ test('elämänalueen luonti, tärkeyden muokkaus ja aikatavoite', async (t) => {
 });
 
 test('elämänalueen virheet: tyhjä nimi, kaksoiskappale, kategoria toisella alueella', async () => {
-  assert.equal((await createLifeArea({ name: '' })).errors.name !== undefined, true);
-  await createLifeArea({ name: 'Työ', categoryKey: 'tyo' });
-  assert.ok((await createLifeArea({ name: 'työ' })).errors.name);
-  assert.ok((await createLifeArea({ name: 'Ura', categoryKey: 'tyo' })).errors.categoryKey);
+  // Tärkeys annetaan aina: käyttäjän luoma alue ilman sitä hylätään (F7).
+  assert.equal((await createLifeArea({ name: '', importance: 3 })).errors.name !== undefined, true);
+  await createLifeArea({ name: 'Työ', importance: 3, categoryKey: 'tyo' });
+  assert.ok((await createLifeArea({ name: 'työ', importance: 3 })).errors.name);
+  assert.ok((await createLifeArea({ name: 'Ura', importance: 3, categoryKey: 'tyo' })).errors.categoryKey);
   assert.equal(getState().lifeAreas.length, 1);
+});
+
+test('F7: uuden alueen tärkeyttä ei valita puolesta — puuttuva tärkeys hylätään, luettu rivi saa oletuksen', async () => {
+  const missing = await createLifeArea({ name: 'Perhe' });
+  assert.equal(missing.ok, false);
+  assert.equal(missing.errors.importance, 'Valitse kuinka tärkeä alue on.');
+  assert.equal((await createLifeArea({ name: 'Perhe', importance: '' })).errors.importance, 'Valitse kuinka tärkeä alue on.');
+  assert.equal(getState().lifeAreas.length, 0, 'mitään ei luotu');
+  // Kannasta luettu rivi ilman arvoa: normalisointi antaa yhä oletuksen.
+  assert.equal(lifeAreasRepo.mapping.fromRow({ id: 'x', name: 'Vanha' }).importance, 3);
+});
+
+test('F7: lomake — uusi alue ilman tärkeyttä ei tallennu, virhe kerrotaan; muokkaus näyttää oman arvon', async (t) => {
+  freezeLocalDate(t, THURSDAY);
+  initDirection();
+  openAreaForm(null, { name: 'Perhe', categoryKey: 'perhe' });
+  assert.equal(document.getElementById('dirAreaImportance').value, '', 'ei valmiiksi valittua tärkeyttä');
+  document.getElementById('dirAreaSave').dispatch('click');
+  for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve));
+  const error = document.getElementById('dirAreaImportanceError');
+  assert.equal(error.textContent, 'Valitse kuinka tärkeä alue on.');
+  assert.equal(error.style.display, 'block');
+  assert.equal(getState().lifeAreas.length, 0);
+  const { area } = await createLifeArea({ name: 'Työ', importance: 4 });
+  openAreaForm(area.id);
+  assert.equal(document.getElementById('dirAreaImportance').value, '4');
+  const html = read('index.html');
+  assert.match(html, /<option value="" selected disabled>Valitse tärkeys<\/option>/);
+  assert.doesNotMatch(html, /<option value="3" selected>/);
 });
 
 test('tallennusvirhe perutaan: alue ei jää tilaan', async () => {
   const original = lifeAreasRepo.insert;
   lifeAreasRepo.insert = async () => ({ ok: false, error: 'Tallennus ei onnistunut.' });
   try {
-    const result = await createLifeArea({ name: 'Perhe' });
+    const result = await createLifeArea({ name: 'Perhe', importance: 4 });
     assert.equal(result.ok, false);
     assert.equal(getState().lifeAreas.length, 0);
   } finally {
@@ -256,33 +293,48 @@ test('kuormitus näkyy: luvut, vakavuus tekstinä, "miksi" ja palkin tekstivasti
 
 // ================================================================ HUOMIOTTA JÄÄMINEN JA POIKKEAMA
 
+// Muutettu sääntöversiossa 3: alueet luodaan maanantaina ja aikaa
+// kirjataan ma–ke (ennen: alueet luotiin torstaina ja kaikki kirjattiin
+// yhdelle päivälle). Alue ei voi jäädä huomiotta ajalta ennen luontiaan,
+// eikä yhden päivän kirjaus riitä toteuman vertailuun.
 test('huomiotta jääminen näkyy torstaina toteuman perusteella', async (t) => {
-  freezeLocalDate(t, THURSDAY);
+  freezeLocalDate(t, WEEK);
   const family = await createLifeArea({ name: 'Perhe', importance: 5, targetMinutesPerWeek: 700 });
   const work = await createLifeArea({ name: 'Työ', importance: 3, targetMinutesPerWeek: 1200 });
-  await logTime({ entryDate: WEEK, minutes: 600, lifeAreaId: work.area.id });
+  for (const date of [WEEK, '2026-09-15', '2026-09-16']) {
+    await logTime({ entryDate: date, minutes: 200, lifeAreaId: work.area.id });
+  }
   await logTime({ entryDate: WEEK, minutes: 30, lifeAreaId: family.area.id });
+  moveClock(t, THURSDAY);
   renderDirection();
   const signals = html('dirSignals');
   assert.match(signals, /Perhe jäämässä huomiotta/);
-  assert.match(signals, /Perhe on saanut 30 min/);
+  // Versio 3: "kirjattu" (ennen "on saanut"): kirjattu aika ei ole eletty aika.
+  assert.match(signals, /Perhe: kirjattu 30 min/);
+  assert.match(signals, /kirjatun ajan perusteella/, 'perusta näkyy havainnon vieressä');
 });
 
+// Muutettu sääntöversiossa 3: alueet luodaan viikon maanantaina ja aika
+// kirjataan ma–to (ennen: luotiin seuraavana maanantaina ja kirjattiin
+// yhdelle päivälle). Suuntaa edeltänyttä viikkoa ei arvioida toteumasta.
 test('poikkeama tavoitteista näkyy prosentteina', async (t) => {
-  freezeLocalDate(t, '2026-09-21');
+  freezeLocalDate(t, WEEK);
   const work = await createLifeArea({ name: 'Työ', importance: 3, targetMinutesPerWeek: 1200 });
   const fam = await createLifeArea({ name: 'Perhe', importance: 3, targetMinutesPerWeek: 750 });
   const own = await createLifeArea({ name: 'Oma aika', importance: 3, targetMinutesPerWeek: 1050 });
-  await logTime({ entryDate: WEEK, minutes: 620, lifeAreaId: work.area.id });
-  await logTime({ entryDate: WEEK, minutes: 120, lifeAreaId: fam.area.id });
-  await logTime({ entryDate: WEEK, minutes: 260, lifeAreaId: own.area.id });
+  const days = [WEEK, '2026-09-15', '2026-09-16', THURSDAY];
+  for (const [area, minutes] of [[work, 620], [fam, 120], [own, 260]]) {
+    for (const date of days) await logTime({ entryDate: date, minutes: minutes / 4, lifeAreaId: area.area.id });
+  }
+  moveClock(t, '2026-09-21');
   const analysis = analyzeCurrentWeek(WEEK);
   assert.ok(analysis.signals.some(s => s.kind === 'misalignment' && s.metrics.actualPercent === 62));
   resetDirectionView();
   initDirection();
   document.getElementById('dirPrev').dispatch('click');
   // Edellinen viikko on nyt näkyvissä: sama viikko jota yllä analysoitiin.
-  assert.match(html('dirSignals'), /Työ sai 62 % ajastasi, vaikka tavoite oli 40 %/);
+  // Versio 3: "kirjatusta ajastasi" (ennen "ajastasi").
+  assert.match(html('dirSignals'), /Työ sai 62 % kirjatusta ajastasi, vaikka tavoite oli 40 %/);
 });
 
 // ================================================================ TOTEUMA
@@ -294,6 +346,9 @@ test('toteuma: kirjaus ja poisto; valmiiksi merkintä ei tuota toteumaa', async 
 
   const bad = await logTime({ entryDate: THURSDAY, minutes: 0 });
   assert.ok(bad.errors.minutes);
+  // Viite pudotetaan, kun tehtävät on LADATTU (ennen latausta kohde voi
+  // olla vasta tulossa: laitteelta palautettu ajastin, offline F2).
+  setDomainLoadStatus('tasks', true);
   const { entry } = await logTime({ entryDate: THURSDAY, minutes: 45, taskId: 'olematon', note: 'kirjoitin' });
   assert.equal(entry.taskId, null, 'olematon tehtäväviite pudotetaan');
   renderDirection();
@@ -311,7 +366,11 @@ test('viikkokatsaus: tilannekuva, pohdinta ja historia; toinen tallennus päivit
   await saveWeeklyCapacity({ weekStart: WEEK, availableMinutes: 1200 });
   const first = await saveWeeklyReview({ weekStart: WEEK, reflection: 'Liikaa töitä.' });
   assert.equal(first.ok, true);
-  assert.equal(first.review.snapshot.version, 1);
+  // Tilannekuva v2 (Suunta 2): kantaa sääntöversion. Muutettu: sääntöversio
+  // on 3 (harvan aineiston rajat); tilannekuvan muoto on yhä versio 2.
+  assert.equal(first.review.snapshot.version, 2);
+  assert.equal(first.review.snapshot.policyVersion, 3);
+  assert.equal(first.review.policyVersion, 3);
   assert.equal(first.review.snapshot.capacity.availableMinutes, 1200);
   const second = await saveWeeklyReview({ weekStart: WEEK, reflection: 'Päivitetty.' });
   assert.equal(second.review.id, first.review.id);
@@ -401,6 +460,8 @@ test('suunnittelun palaute: käyttäjän kapasiteetti rajaa suunnittelun viikkoa
 
 test('päivänäkymän kortti: kapasiteetti jäljellä, yksi havainto, liittämätön työ', async (t) => {
   freezeLocalDate(t, THURSDAY);
+  // Alueet on haettu (0 kpl): vasta silloin kehotus aloittaa on totta.
+  setDomainLoadStatus('lifeAreas', true);
   renderTodayDirection();
   assert.match(html('todayDirection'), /Kerro mikä elämässäsi on tärkeää/);
 

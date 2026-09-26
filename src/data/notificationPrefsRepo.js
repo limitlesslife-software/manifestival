@@ -13,16 +13,40 @@
 // Omistajuuden asettaa tietokanta (DEFAULT auth.uid()), ei selain.
 
 import { getClient } from './client.js';
-import { requireUserId } from './session.js';
-import { hasTable } from './schema.js';
-import { ok, fail } from '../lib/result.js';
+import { requireUserId, sessionSnapshot, isSameSession } from './session.js';
+import { hasTable, isTableMissing, writeRefusal, noteSchemaError } from './schema.js';
+import { ok, fail, failWith, ERROR_CODE } from '../lib/result.js';
+import { failFromCause, failFromThrown } from './repoErrors.js';
 import { normalizePreferences, DEFAULT_PREFERENCES } from '../domain/notification.js';
 
 const TABLE = 'notification_preferences';
 const SCHEMA_KEY = 'notificationPreferences';
 
+/** Käyttäjälle: tallennus odottaa, että asetukset on luettu palvelimelta. */
+export const PREFERENCES_NOT_LOADED_MESSAGE = 'Muistutusasetuksia ei ole vielä haettu palvelimelta, '
+  + 'joten muutosta ei tallennettu. Yritä hetken kuluttua uudelleen.';
+
 /** Muistivarasto, kun taulua ei vielä ole. */
 let memoryPreferences = null;
+
+/**
+ * Kenen asetukset on luettu kannasta tässä istunnossa (käyttäjän tunniste),
+ * tai null.
+ *
+ * MIKSI: jos taulu todettiin latauksessa puuttuvaksi (ajonaikainen
+ * tarkistus tai välimuistin vanha tieto), näkymä sai hiljaiset oletukset.
+ * Kun taulu myöhemmin löytyy, oletusten päälle tehty muutos EI saa
+ * korvata palvelimella jo olevaa riviä (upsert kirjoittaisi koko rivin).
+ *
+ * Lähtötieto kuvaa VIIMEISINTÄ latausta: oletuksiin päättynyt lataus
+ * nollaa sen, eikä sitä vanhempi, myöhässä valmistuva luku palauta sitä.
+ * Aiemmin istunnon alussa luettu rivi jäi voimaan, vaikka näkymä oli
+ * sittemmin saanut oletukset (PGRST205 -> tarkistus löysi taulun), ja
+ * tallennus kirjoitti oletukset palvelimen rivin päälle.
+ */
+let serverLoadedFor = null;
+/** Latausten järjestysnumero: vain viimeisin lataus asettaa lähtötiedon. */
+let loadGeneration = 0;
 
 /** Säilyvätkö asetukset tallennuksen yli juuri nyt? */
 export function isPersistent() {
@@ -77,11 +101,38 @@ export function preferencesToRow(preferences, userId) {
  * Oletukset ovat tarkoituksella hiljaiset: `enabled: false`.
  */
 export async function loadPreferences() {
+  const generation = ++loadGeneration;
   if (!isPersistent()) {
     return ok(memoryPreferences ? { ...memoryPreferences } : normalizePreferences({}));
   }
+  // Taulua ei ole kannassa (ajon aikana todettu): hiljaiset oletukset, ei
+  // latausvirhettä. Tallennus torjutaan (ks. savePreferences). Näkymä saa
+  // oletukset eikä palvelimen riviä, joten aiempi lataus ei enää kelpaa
+  // tallennuksen lähtötiedoksi: kun taulu löytyy, rivi luetaan ensin.
+  if (isTableMissing(SCHEMA_KEY)) {
+    serverLoadedFor = null;
+    return ok(normalizePreferences({}));
+  }
 
+  const loaded = await readServerRow();
+  if (!loaded.ok) {
+    return failFromCause(loaded.cause, {
+      op: 'load', fallback: 'Muistutusasetusten lataus ei onnistunut.', code: 'notificationPrefs.load',
+      thrown: loaded.thrown
+    });
+  }
+  if (loaded.current && generation === loadGeneration) serverLoadedFor = loaded.userId;
+  return ok(preferencesFromRow(loaded.row));
+}
+
+/**
+ * Käyttäjän rivi kannasta: { ok, row, userId, current } tai { ok: false, cause }.
+ * `current` = istunto ei vaihtunut kyselyn aikana. Ei heitä.
+ */
+async function readServerRow() {
   try {
+    const session = sessionSnapshot();
+    const userId = String(requireUserId());
     const { data, error } = await getClient()
       .from(TABLE)
       .select('*')
@@ -89,14 +140,39 @@ export async function loadPreferences() {
       .maybeSingle();
 
     if (error) {
-      return fail('Muistutusasetusten lataus ei onnistunut.',
-        { cause: error, code: 'notificationPrefs.load' });
+      noteSchemaError(TABLE, error);
+      return { ok: false, cause: error };
     }
-    return ok(preferencesFromRow(data));
+    return { ok: true, row: data || null, userId, current: isSameSession(session) };
   } catch (cause) {
-    return fail('Muistutusasetusten lataus ei onnistunut.',
-      { cause, code: 'notificationPrefs.load' });
+    return { ok: false, cause, thrown: true };
   }
+}
+
+/**
+ * Saako tallennus korvata palvelimen rivin? Kyllä, jos asetukset on luettu
+ * kannasta tässä istunnossa. Muuten tarkistetaan ensin: jos riviä ei ole,
+ * mitään ei korvata (uusi käyttäjä); jos rivi on, tallennus torjutaan --
+ * käyttäjän muutos tehtiin oletusten, ei hänen omien asetustensa päälle.
+ * Uudelleenlataus (src/app/schemaStatus.js) tuo oikeat asetukset näkyviin.
+ */
+async function ensureServerBaseline() {
+  let userId;
+  try { userId = String(requireUserId()); } catch { userId = null; }
+  if (userId && serverLoadedFor === userId) return null;
+  const loaded = await readServerRow();
+  if (!loaded.ok) {
+    return failFromCause(loaded.cause, {
+      op: 'save', fallback: 'Muistutusasetusten tallennus ei onnistunut.', code: 'notificationPrefs.save',
+      thrown: loaded.thrown
+    });
+  }
+  if (loaded.row) return failWith(ERROR_CODE.CONFLICT, PREFERENCES_NOT_LOADED_MESSAGE);
+  if (!loaded.current) {
+    return fail('Muistutusasetusten tallennus ei onnistunut.', { code: 'notificationPrefs.save' });
+  }
+  serverLoadedFor = loaded.userId;
+  return null;
 }
 
 /**
@@ -112,6 +188,12 @@ export async function savePreferences(preferences) {
     memoryPreferences = normalized;
     return ok(normalized);
   }
+  // Huoltotila tai kannasta puuttuva taulu: kerrotaan, ei teeskennellä.
+  const refused = writeRefusal(SCHEMA_KEY);
+  if (refused) return refused;
+  // Oletusten päälle tehty muutos ei korvaa palvelimen riviä.
+  const unknownBaseline = await ensureServerBaseline();
+  if (unknownBaseline) return unknownBaseline;
 
   try {
     const { error } = await getClient()
@@ -119,19 +201,21 @@ export async function savePreferences(preferences) {
       .upsert(preferencesToRow(normalized, requireUserId()));
 
     if (error) {
-      return fail('Muistutusasetusten tallennus ei onnistunut.',
-        { cause: error, code: 'notificationPrefs.save' });
+      noteSchemaError(TABLE, error, [], { write: true });
+      return failFromCause(error,
+        { op: 'save', fallback: 'Muistutusasetusten tallennus ei onnistunut.', code: 'notificationPrefs.save' });
     }
     return ok(normalized);
   } catch (cause) {
-    return fail('Muistutusasetusten tallennus ei onnistunut.',
-      { cause, code: 'notificationPrefs.save' });
+    return failFromThrown(cause,
+      { op: 'save', fallback: 'Muistutusasetusten tallennus ei onnistunut.', code: 'notificationPrefs.save' });
   }
 }
 
 /** Tyhjennä muistivarasto. Kutsutaan uloskirjautumisessa. */
 export function clearPreferences() {
   memoryPreferences = null;
+  serverLoadedFor = null;
 }
 
 export { DEFAULT_PREFERENCES };

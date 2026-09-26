@@ -22,6 +22,15 @@
 
 import { ok, fail } from '../lib/result.js';
 
+// Käyttäjälle näkyvät viestit ovat kiinteitä: taulun nimi ('life_areas')
+// kulkee vain lokitukseen (AppError.op). Aiemmin näkymä sanoi
+// "life_areas: riviä ei löydy.", kun muistipolulla muokattiin juuri
+// poistettua aluetta. Koodit (memory.missing ...) ovat sopimus: kutsujat
+// tunnistavat niistä puuttuvan rivin (src/app/alignment.js isNotFound).
+const MISSING_MESSAGE = 'Kohdetta ei löytynyt. Päivitä näkymä.';
+const DUPLICATE_MESSAGE = 'Sama rivi on jo olemassa.';
+const INVALID_ID_MESSAGE = 'Tallennus ei onnistunut: tunniste puuttuu.';
+
 /**
  * Luo uusi eristetty kokoelma.
  *
@@ -36,12 +45,14 @@ export function createCollection({ normalize = value => value, name = 'kokoelma'
   /** @type {Map<string, object>} */
   const items = new Map();
 
-  function assertId(entity) {
-    if (!entity || entity.id == null || entity.id === '') {
-      throw new Error(name + ': tunniste puuttuu');
-    }
+  /** Tunniste tai null. Puuttuva tunniste on kutsujan bugi, mutta ei kaada kutsujaa. */
+  function idOf(entity) {
+    if (!entity || entity.id == null || entity.id === '') return null;
     return String(entity.id);
   }
+
+  const missing = () => fail(MISSING_MESSAGE, { code: 'memory.missing', op: name });
+  const invalidId = () => fail(INVALID_ID_MESSAGE, { code: 'memory.invalid_id', op: name });
 
   return {
     name,
@@ -54,15 +65,16 @@ export function createCollection({ normalize = value => value, name = 'kokoelma'
     /** Yksi rivi tunnisteella. */
     async get(id) {
       const item = items.get(String(id));
-      return item ? ok({ ...item }) : fail(name + ': riviä ei löydy.', { code: 'memory.missing' });
+      return item ? ok({ ...item }) : missing();
     },
 
     /** Lisää rivi. Olemassa oleva tunniste on virhe — se paljastaa bugin. */
     async insert(entity) {
       const normalized = normalize(entity);
-      const id = assertId(normalized);
+      const id = idOf(normalized);
+      if (id === null) return invalidId();
       if (items.has(id)) {
-        return fail(name + ': tunniste on jo käytössä.', { code: 'memory.duplicate' });
+        return fail(DUPLICATE_MESSAGE, { code: 'memory.duplicate', op: name });
       }
       items.set(id, { ...normalized });
       return ok({ ...normalized });
@@ -71,10 +83,9 @@ export function createCollection({ normalize = value => value, name = 'kokoelma'
     /** Korvaa rivi kokonaan. */
     async update(entity) {
       const normalized = normalize(entity);
-      const id = assertId(normalized);
-      if (!items.has(id)) {
-        return fail(name + ': riviä ei löydy.', { code: 'memory.missing' });
-      }
+      const id = idOf(normalized);
+      if (id === null) return invalidId();
+      if (!items.has(id)) return missing();
       items.set(id, { ...normalized });
       return ok({ ...normalized });
     },
@@ -83,7 +94,7 @@ export function createCollection({ normalize = value => value, name = 'kokoelma'
     async patch(id, changes) {
       const key = String(id);
       const current = items.get(key);
-      if (!current) return fail(name + ': riviä ei löydy.', { code: 'memory.missing' });
+      if (!current) return missing();
 
       const merged = normalize({ ...current, ...changes, id: key });
       items.set(key, { ...merged });

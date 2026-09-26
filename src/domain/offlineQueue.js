@@ -73,6 +73,19 @@ export const ERROR_CLASS = Object.freeze({
   AUTH: 'auth',
   /** Rivi on jo olemassa (aiempi yritys onnistui). */
   DUPLICATE: 'duplicate',
+  /**
+   * Kannan rakenne ei vastaa sovellusta (taulu tai sarake puuttuu, tai
+   * sovellus on itse kieltäytynyt kirjoittamasta sellaiseen). Tieto EI
+   * ole viallinen: sama kirjoitus onnistuu, kun kanta on ajan tasalla.
+   * Ei hylätä eikä kuluteta yrityksiä -- odotetaan ja tarkistetaan
+   * skeema uudelleen.
+   */
+  SCHEMA: 'schema',
+  /**
+   * Palvelin on tilapäisesti poissa käytöstä (ylikuorma, aikakatkaisu,
+   * yhteys kantaan, skeemavälimuistin lataus). Uusitaan viiveellä.
+   */
+  UNAVAILABLE: 'unavailable',
   /** Palvelin vastasi ja hylkäsi: uudelleenyritys ei auta. */
   REJECTED: 'rejected',
   UNKNOWN: 'unknown'
@@ -314,7 +327,31 @@ const NETWORK_PATTERN = /failed to fetch|network|load failed|fetch failed|timed?
 const AUTH_PATTERN = /jwt|not authenticated|invalid (token|claim)|token (is )?expired|session (missing|expired)|refresh token/i;
 
 /**
+ * Skeemavirheet: taulu tai sarake puuttuu (PostgREST ja PostgreSQL), sekä
+ * sovelluksen oma kieltäytyminen kirjoittaa ominaisuuteen, jota kanta ei
+ * vielä tue (src/data/schema.js, ERROR_CODE.PERSISTENCE_UNAVAILABLE).
+ * 23514 (CHECK) EI ole tässä: se on myös tavallinen validointivirhe.
+ */
+const SCHEMA_CODES = new Set(['PGRST204', 'PGRST205', '42703', '42P01', 'persistence_unavailable']);
+
+/**
+ * Tilapäiset palvelinvirheet. PGRST000-003: kanta ei vastaa tai
+ * skeemavälimuistia ladataan. 08: yhteysvirhe. 53: resurssit loppu.
+ * 57014/57P01-03: aikakatkaisu tai palvelimen sammutus. 40001/40P01:
+ * sarjallistus tai lukkiutuma. 55P03: lukko ei vapautunut.
+ */
+const UNAVAILABLE_CODES = new Set(['PGRST000', 'PGRST001', 'PGRST002', 'PGRST003',
+  '57014', '57P01', '57P02', '57P03', '40001', '40P01', '55P03']);
+const UNAVAILABLE_STATUSES = new Set([408, 425, 429]);
+
+/**
  * Luokittele repositorion palauttama virhe.
+ *
+ * JÄRJESTYS ON SÄÄNTÖ: kaksoiskappale ja istunto ensin, sitten skeema ja
+ * tilapäinen häiriö, ja vasta sitten yleinen "palvelin hylkäsi". Aiemmin
+ * jokainen PGRST- tai SQLSTATE-koodi oli hylkäys, jolloin hetkellinen 503
+ * (PGRST002) tai kannasta puuttuva sarake (PGRST204) pudotti aikakirjauksen
+ * pysyvästi ja merkitsi jonotetun tehtävämuutoksen epäonnistuneeksi.
  *
  * @param {unknown} error AppError (`.cause`) tai suora Supabase-virhe
  * @param {{offline?: boolean}} [context]
@@ -327,6 +364,14 @@ export function classifyError(error, { offline = false } = {}) {
 
   if (code === '23505') return ERROR_CLASS.DUPLICATE;
   if (status === 401 || code === 'PGRST301' || code === 'PGRST303' || AUTH_PATTERN.test(message)) return ERROR_CLASS.AUTH;
+
+  if (SCHEMA_CODES.has(code)) return ERROR_CLASS.SCHEMA;
+  if (UNAVAILABLE_CODES.has(code) || /^(08|53)[0-9A-Z]{3}$/.test(code)) return ERROR_CLASS.UNAVAILABLE;
+  // Tila ilman tunnettua koodia: 5xx ja ruuhkarajat ovat palvelimen häiriö,
+  // eivät hylkäys. Jos laite tietää olevansa offline, kyse on verkosta.
+  if (status >= 500 || UNAVAILABLE_STATUSES.has(status)) {
+    return offline ? ERROR_CLASS.NETWORK : ERROR_CLASS.UNAVAILABLE;
+  }
 
   // Palvelin vastasi jollain SQLSTATE- tai PostgREST-koodilla: hylkäys, ei verkkovirhe.
   if (/^PGRST\d+$/.test(code) || /^[0-9A-Z]{5}$/.test(code) || (status >= 400 && status < 500)) {

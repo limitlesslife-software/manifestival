@@ -27,7 +27,7 @@
 // tilasiirtymät ovat testattavissa ilman laitetta.
 
 import {
-  isNativeShell, setLocationPermissionState
+  isNativeShell, setLocationPermissionState, NATIVE_LOCATION_ENABLED
 } from './capabilities.js';
 
 /** Sijaintiluvan tilat. Rikkaampi kuin yleinen PERMISSION: erottaa "ei kysytty" ja "estetty". */
@@ -200,9 +200,18 @@ function webAdapter(geolocation) {
   };
 }
 
-/** Valitse alustan sovitin. Palauttaa null, jos sijaintia ei tueta. */
-export function selectAdapter() {
+/**
+ * Valitse alustan sovitin. Palauttaa null, jos sijaintia ei tueta.
+ *
+ * Natiivikuoressa null, kun NATIVE_LOCATION_ENABLED on false: manifesti ei
+ * julista sijaintilupaa, joten liitännäistä ei kutsuta lainkaan (pyyntö
+ * kaatuisi Capacitorin lupatarkistukseen). Natiivisovitin säilyy koodissa
+ * myöhempää reittipalvelua varten; `nativeLocationEnabled` on vain sen
+ * testaamiseen.
+ */
+export function selectAdapter({ nativeLocationEnabled = NATIVE_LOCATION_ENABLED } = {}) {
   if (isNativeShell()) {
+    if (!nativeLocationEnabled) return null;
     const plugin = nativePlugin();
     return plugin ? nativeAdapter(plugin) : null;
   }

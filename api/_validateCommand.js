@@ -50,17 +50,17 @@ const WEEKDAYS = Object.freeze([
  */
 function validateCommandRequest(body) {
   if (body === null || typeof body !== 'object' || Array.isArray(body)) {
-    return { ok: false, status: 400, error: 'Virheellinen pyynto' };
+    return { ok: false, status: 400, error: 'Virheellinen pyyntö' };
   }
 
   let approxBytes;
   try {
     approxBytes = Buffer.byteLength(JSON.stringify(body), 'utf8');
   } catch {
-    return { ok: false, status: 400, error: 'Virheellinen pyynto' };
+    return { ok: false, status: 400, error: 'Virheellinen pyyntö' };
   }
   if (approxBytes > MAX_BODY_BYTES) {
-    return { ok: false, status: 413, error: 'Pyynto on liian suuri' };
+    return { ok: false, status: 413, error: 'Pyyntö on liian suuri' };
   }
 
   const { text, today, weekday, source } = body;
@@ -73,14 +73,14 @@ function validateCommandRequest(body) {
     return { ok: false, status: 400, error: 'Teksti puuttuu' };
   }
   if (cleanText.length > MAX_TEXT_LENGTH) {
-    return { ok: false, status: 413, error: 'Teksti on liian pitka' };
+    return { ok: false, status: 413, error: 'Teksti on liian pitkä' };
   }
 
   if (typeof today !== 'string' || !ISO_DATE.test(today)) {
-    return { ok: false, status: 400, error: 'Virheellinen paivamaara' };
+    return { ok: false, status: 400, error: 'Virheellinen päivämäärä' };
   }
   if (Number.isNaN(Date.parse(today))) {
-    return { ok: false, status: 400, error: 'Virheellinen paivamaara' };
+    return { ok: false, status: 400, error: 'Virheellinen päivämäärä' };
   }
 
   const cleanWeekday = typeof weekday === 'string' && WEEKDAYS.includes(weekday)

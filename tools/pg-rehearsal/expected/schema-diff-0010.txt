@@ -1,0 +1,60 @@
+- con:goals:goals_status_check:CHECK ((status = ANY (ARRAY['active'::text, 'paused'::text, 'completed'::text, 'abandoned'::text, 'archived'::text]))):validated=true
++ col:goals.baseline_value:numeric(20,4):notnull=false:default=:identity=:generated=:acl=
++ col:goals.current_value:numeric(20,4):notnull=false:default=:identity=:generated=:acl=
++ col:goals.measured_on:date:notnull=false:default=:identity=:generated=:acl=
++ col:goals.metric:text:notnull=false:default=:identity=:generated=:acl=
++ col:goals.savings_goal_id:text:notnull=false:default=:identity=:generated=:acl=
++ col:goals.target_value:numeric(20,4):notnull=false:default=:identity=:generated=:acl=
++ col:goals.unit:text:notnull=false:default=:identity=:generated=:acl=
++ col:milestones.created_at:timestamp with time zone:notnull=true:default=now():identity=:generated=:acl=
++ col:milestones.description:text:notnull=false:default=:identity=:generated=:acl=
++ col:milestones.goal_id:text:notnull=true:default=:identity=:generated=:acl=
++ col:milestones.id:text:notnull=true:default=:identity=:generated=:acl=
++ col:milestones.order_index:integer:notnull=true:default=0:identity=:generated=:acl=
++ col:milestones.reached_date:date:notnull=false:default=:identity=:generated=:acl=
++ col:milestones.rule:text:notnull=true:default='manual'::text:identity=:generated=:acl=
++ col:milestones.status:text:notnull=true:default='open'::text:identity=:generated=:acl=
++ col:milestones.target_date:date:notnull=false:default=:identity=:generated=:acl=
++ col:milestones.title:text:notnull=true:default=:identity=:generated=:acl=
++ col:milestones.updated_at:timestamp with time zone:notnull=true:default=now():identity=:generated=:acl=
++ col:milestones.user_id:uuid:notnull=true:default=auth.uid():identity=:generated=:acl=
++ col:profile.automation_level:smallint:notnull=true:default=1:identity=:generated=:acl=
++ col:profile.planning_buffer_ratio:numeric(3,2):notnull=true:default=0.25:identity=:generated=:acl=
++ col:projects.milestone_id:text:notnull=false:default=:identity=:generated=:acl=
++ col:tasks.depends_on:text[]:notnull=true:default='{}'::text[]:identity=:generated=:acl=
++ col:tasks.milestone_id:text:notnull=false:default=:identity=:generated=:acl=
++ con:goals:goals_metric_length_check:CHECK (((metric IS NULL) OR (length(metric) <= 60))):validated=true
++ con:goals:goals_metric_pair_check:CHECK (((target_value IS NULL) OR (metric IS NOT NULL))):validated=true
++ con:goals:goals_savings_exclusive_check:CHECK (((savings_goal_id IS NULL) OR (target_value IS NULL))):validated=true
++ con:goals:goals_status_check:CHECK ((status = ANY (ARRAY['active'::text, 'paused'::text, 'maintenance'::text, 'completed'::text, 'abandoned'::text, 'archived'::text]))):validated=true
++ con:goals:goals_unit_length_check:CHECK (((unit IS NULL) OR (length(unit) <= 20))):validated=true
++ con:milestones:milestones_description_length_check:CHECK (((description IS NULL) OR (length(description) <= 2000))):validated=true
++ con:milestones:milestones_goal_fkey:FOREIGN KEY (user_id, goal_id) REFERENCES goals(user_id, id) ON DELETE CASCADE:validated=true
++ con:milestones:milestones_order_check:CHECK (((order_index >= 0) AND (order_index <= 999))):validated=true
++ con:milestones:milestones_owner_row_key:UNIQUE (user_id, id):validated=true
++ con:milestones:milestones_pkey:PRIMARY KEY (id):validated=true
++ con:milestones:milestones_reached_date_check:CHECK ((((status = 'reached'::text) AND (reached_date IS NOT NULL)) OR ((status <> 'reached'::text) AND (reached_date IS NULL)))):validated=true
++ con:milestones:milestones_rule_check:CHECK ((rule = ANY (ARRAY['manual'::text, 'projects_done'::text, 'tasks_done'::text]))):validated=true
++ con:milestones:milestones_status_check:CHECK ((status = ANY (ARRAY['open'::text, 'reached'::text, 'skipped'::text]))):validated=true
++ con:milestones:milestones_title_check:CHECK (((length(btrim(title)) > 0) AND (length(title) <= 200))):validated=true
++ con:milestones:milestones_user_id_fkey:FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE:validated=true
++ con:profile:profile_automation_level_check:CHECK (((automation_level >= 1) AND (automation_level <= 4))):validated=true
++ con:profile:profile_buffer_ratio_check:CHECK (((planning_buffer_ratio >= (0)::numeric) AND (planning_buffer_ratio <= 0.9))):validated=true
++ con:projects:projects_milestone_fkey:FOREIGN KEY (user_id, milestone_id) REFERENCES milestones(user_id, id) ON DELETE SET NULL (milestone_id):validated=true
++ con:tasks:tasks_depends_on_length_check:CHECK (((array_length(depends_on, 1) IS NULL) OR (array_length(depends_on, 1) <= 10))):validated=true
++ con:tasks:tasks_depends_on_no_self_check:CHECK ((NOT (id = ANY (depends_on)))):validated=true
++ con:tasks:tasks_milestone_fkey:FOREIGN KEY (user_id, milestone_id) REFERENCES milestones(user_id, id) ON DELETE SET NULL (milestone_id):validated=true
++ idx:milestones_owner_row_key:CREATE UNIQUE INDEX milestones_owner_row_key ON public.milestones USING btree (user_id, id)
++ idx:milestones_pkey:CREATE UNIQUE INDEX milestones_pkey ON public.milestones USING btree (id)
++ idx:milestones_user_goal_idx:CREATE INDEX milestones_user_goal_idx ON public.milestones USING btree (user_id, goal_id, order_index)
++ idx:milestones_user_target_idx:CREATE INDEX milestones_user_target_idx ON public.milestones USING btree (user_id, target_date)
++ pol:milestones:milestones_delete_own:PERMISSIVE:DELETE:(auth.uid() = user_id)::authenticated
++ pol:milestones:milestones_insert_own:PERMISSIVE:INSERT::(auth.uid() = user_id):authenticated
++ pol:milestones:milestones_select_own:PERMISSIVE:SELECT:(auth.uid() = user_id)::authenticated
++ pol:milestones:milestones_update_own:PERMISSIVE:UPDATE:(auth.uid() = user_id):(auth.uid() = user_id):authenticated
++ rel:milestones:r:rls=true:force=false:owner=postgres:acl=postgres=arwdDxtm/postgres,service_role=arwdDxtm/postgres,authenticated=arwd/postgres
++ rel:milestones_owner_row_key:i:rls=false:force=false:owner=postgres:acl=
++ rel:milestones_pkey:i:rls=false:force=false:owner=postgres:acl=
++ rel:milestones_user_goal_idx:i:rls=false:force=false:owner=postgres:acl=
++ rel:milestones_user_target_idx:i:rls=false:force=false:owner=postgres:acl=
++ trg:milestones:milestones_touch_updated_at:enabled=O:CREATE TRIGGER milestones_touch_updated_at BEFORE UPDATE ON public.milestones FOR EACH ROW EXECUTE FUNCTION touch_updated_at()

@@ -19,12 +19,16 @@
 import { getClient } from './client.js';
 import { requireUserId } from './session.js';
 import {
-  hasTable, BILL_PAYMENT_FIELDS, GOAL_PLANNING_FIELDS, GOAL_LIFE_AREA_FIELD
+  hasTable, BILL_PAYMENT_FIELDS, GOAL_PLANNING_FIELDS, GOAL_LIFE_AREA_FIELD,
+  ALIGNMENT_REALITY_FIELDS, columnGateOpen, isTableMissing, writeRefusal,
+  stripLoweredColumns, noteSchemaError
 } from './schema.js';
 import { createMemoryRepository } from './memoryStore.js';
-import { ok, fail } from '../lib/result.js';
+import { ok, failWith, ERROR_CODE } from '../lib/result.js';
+import { NOT_FOUND_MESSAGE } from '../lib/errorMessages.js';
+import { failFromCause, failFromThrown } from './repoErrors.js';
 import { normalizeRoutine, normalizeException } from '../domain/routine.js';
-import { normalizeGoal } from '../domain/goal.js';
+import { normalizeGoal, isStorableGoalStatus } from '../domain/goal.js';
 import { normalizeProject } from '../domain/project.js';
 import { normalizeWellbeingEntry } from '../domain/wellbeing.js';
 import {
@@ -42,6 +46,8 @@ import { normalizeLifeArea } from '../domain/lifeArea.js';
 import { normalizeWeeklyCapacity } from '../domain/weeklyCapacity.js';
 import { normalizeTimeEntry } from '../domain/timeEntry.js';
 import { normalizeAlignmentReview } from '../domain/alignmentReview.js';
+import { normalizeTimer } from '../domain/timer.js';
+import { normalizeItemSettings } from '../domain/alignmentItemSettings.js';
 
 /** Kentät, joita client ei saa koskaan lähettää. */
 const SERVER_OWNED = Object.freeze(['user_id', 'created_at', 'updated_at']);
@@ -65,11 +71,26 @@ function assertClientSafe(row) {
  * @param {Function} config.normalize Domain-normalisointi
  * @param {Function} config.toRow     Domain -> kannan rivi
  * @param {Function} config.fromRow   Kannan rivi -> domain
+ * @param {Function} [config.guardWrite] normalisoitu -> kieltäytyminen tai null
+ *   (arvot, joita kanta ei vielä hyväksy; tarkistetaan ennen verkkoa)
+ *
+ * AJONAIKAINEN SKEEMATARKISTUS (src/data/schema.js, schemaRuntime.js):
+ * käännösaikainen portti valitsee yhä kannan ja muistin välillä. Jos kanta
+ * on sovellusta jäljessä, auki oleva portti EI putoa muistiin (se
+ * teeskentelisi tallentavansa) vaan:
+ *
+ *   taulu puuttuu        lataus = tyhjä lista, kirjoitus torjutaan
+ *   sarakkeita puuttuu   lataus toimii, kirjoitus torjutaan (vain luku)
+ *   sarakeportti laski   sarakkeet jätetään pois, kirjoitus toimii
+ *   huoltotila           kirjoitus torjutaan
+ *
+ * Torjunta tapahtuu ENNEN verkkokutsua ja kertoo syyn käyttäjälle.
  */
-export function createRepository({ table, schemaKey, normalize, toRow, fromRow }) {
+export function createRepository({ table, schemaKey, normalize, toRow, fromRow, guardWrite = null }) {
   const memory = createMemoryRepository({ normalize, name: table });
 
   const usesDatabase = () => hasTable(schemaKey);
+  const refusal = normalized => writeRefusal(schemaKey) || (guardWrite ? guardWrite(normalized) : null);
 
   return {
     table,
@@ -97,60 +118,93 @@ export function createRepository({ table, schemaKey, normalize, toRow, fromRow }
 
     async list() {
       if (!usesDatabase()) return memory.list();
+      // Taulua ei ole kannassa (ajon aikana todettu): tyhjä ja kelvollinen
+      // tulos, ei "lataus epäonnistui, tarkista yhteys" -- päivitys ei
+      // auttaisi, ja tyhjässä taulussa ei ole mitään kadonnutta.
+      if (isTableMissing(schemaKey)) return ok([]);
       try {
         const { data, error } = await getClient()
           .from(table)
           .select('*')
           .eq('user_id', requireUserId());
-        if (error) return fail('Tietojen lataus ei onnistunut.', { cause: error, code: table + '.list' });
+        if (error) {
+          noteSchemaError(table, error);
+          return failFromCause(error, { op: 'load', fallback: 'Tietojen lataus ei onnistunut.', code: table + '.list' });
+        }
         return ok((data || []).map(fromRow));
       } catch (cause) {
-        return fail('Tietojen lataus ei onnistunut.', { cause, code: table + '.list' });
+        return failFromThrown(cause, { op: 'load', fallback: 'Tietojen lataus ei onnistunut.', code: table + '.list' });
       }
     },
 
     async insert(entity) {
       const normalized = normalize(entity);
       if (!usesDatabase()) return memory.insert(normalized);
+      const refused = refusal(normalized);
+      if (refused) return refused;
       try {
         const { error } = await getClient()
           .from(table)
-          .insert(assertClientSafe(toRow(normalized)));
-        if (error) return fail('Tallennus ei onnistunut.', { cause: error, code: table + '.insert' });
+          .insert(stripLoweredColumns(table, assertClientSafe(toRow(normalized))));
+        if (error) {
+          noteSchemaError(table, error, Object.keys(toRow(normalized)));
+          return failFromCause(error, { op: 'save', fallback: 'Tallennus ei onnistunut.', code: table + '.insert' });
+        }
         return ok(normalized);
       } catch (cause) {
-        return fail('Tallennus ei onnistunut.', { cause, code: table + '.insert' });
+        return failFromThrown(cause, { op: 'save', fallback: 'Tallennus ei onnistunut.', code: table + '.insert' });
       }
     },
 
+    /**
+     * Päivitys palauttaa osuneiden rivien tunnisteet (`.select('id')`).
+     * Ilman sitä PostgREST kuittasi nollan rivin päivityksen (rivi
+     * poistettu toisella laitteella tai RLS suodatti sen) onnistuneeksi:
+     * näkymä väitti tallentaneensa, ja seuraava lataus pudotti muutoksen
+     * sanomatta mitään. Nyt nolla riviä on NOT_FOUND, ja kutsuja peruu.
+     */
     async update(entity) {
       const normalized = normalize(entity);
       if (!usesDatabase()) return memory.update(normalized);
+      const refused = refusal(normalized);
+      if (refused) return refused;
       try {
-        const { error } = await getClient()
+        const { data, error } = await getClient()
           .from(table)
-          .update(assertClientSafe(toRow(normalized)))
+          .update(stripLoweredColumns(table, assertClientSafe(toRow(normalized))))
           .eq('user_id', requireUserId())
-          .eq('id', normalized.id);
-        if (error) return fail('Muutoksen tallennus ei onnistunut.', { cause: error, code: table + '.update' });
+          .eq('id', normalized.id)
+          .select('id');
+        if (error) {
+          noteSchemaError(table, error, Object.keys(toRow(normalized)));
+          return failFromCause(error, { op: 'save', fallback: 'Muutoksen tallennus ei onnistunut.', code: table + '.update' });
+        }
+        if (!Array.isArray(data) || data.length === 0) {
+          return failWith(ERROR_CODE.NOT_FOUND, NOT_FOUND_MESSAGE, { op: table + '.update' });
+        }
         return ok(normalized);
       } catch (cause) {
-        return fail('Muutoksen tallennus ei onnistunut.', { cause, code: table + '.update' });
+        return failFromThrown(cause, { op: 'save', fallback: 'Muutoksen tallennus ei onnistunut.', code: table + '.update' });
       }
     },
 
     async remove(id) {
       if (!usesDatabase()) return memory.remove(id);
+      const refused = writeRefusal(schemaKey);
+      if (refused) return refused;
       try {
         const { error } = await getClient()
           .from(table)
           .delete()
           .eq('user_id', requireUserId())
           .eq('id', id);
-        if (error) return fail('Poisto ei onnistunut.', { cause: error, code: table + '.delete' });
+        if (error) {
+          noteSchemaError(table, error, [], { write: true });
+          return failFromCause(error, { op: 'delete', fallback: 'Poisto ei onnistunut.', code: table + '.delete' });
+        }
         return ok({ id });
       } catch (cause) {
-        return fail('Poisto ei onnistunut.', { cause, code: table + '.delete' });
+        return failFromThrown(cause, { op: 'delete', fallback: 'Poisto ei onnistunut.', code: table + '.delete' });
       }
     },
 
@@ -234,6 +288,12 @@ export const goalsRepo = createRepository({
   table: 'goals',
   schemaKey: 'goals',
   normalize: normalizeGoal,
+  // YLLÄPITOTILA vaatii migraation 0010 (goals_status_check). Ennen sitä
+  // arvoa ei lähetetä lainkaan: kanta hylkäisi sen koodilla 23514.
+  guardWrite: goal => (isStorableGoalStatus(goal.status, {
+    maintenanceAllowed: columnGateOpen('GOAL_MAINTENANCE_MODE')
+  }) ? null : failWith(ERROR_CODE.VALIDATION_ERROR,
+    'Ylläpitotila ei ole vielä käytössä. Valitse tavoitteelle toinen tila.')),
   toRow: goal => ({
     id: goal.id,
     title: goal.title,
@@ -875,6 +935,8 @@ export const weeklyCapacitiesRepo = createRepository({
     week_start: capacity.weekStart,
     available_minutes: capacity.availableMinutes,
     energy_level: capacity.energyLevel,
+    // 0013: sarake puuttuu kunnes migraatio on ajettu -> jätetään pois.
+    ...(ALIGNMENT_REALITY_FIELDS ? { energy_budget_minutes: capacity.energyBudgetMinutes } : {}),
     note: capacity.note
   }),
   fromRow: row => normalizeWeeklyCapacity({
@@ -882,6 +944,7 @@ export const weeklyCapacitiesRepo = createRepository({
     weekStart: row.week_start,
     availableMinutes: row.available_minutes,
     energyLevel: row.energy_level,
+    energyBudgetMinutes: row.energy_budget_minutes,
     note: row.note,
     createdAt: row.created_at,
     updatedAt: row.updated_at
@@ -903,8 +966,21 @@ export const timeEntriesRepo = createRepository({
     life_area_id: entry.lifeAreaId,
     goal_id: entry.goalId,
     task_id: entry.taskId,
-    source: entry.source,
-    note: entry.note
+    // 0012 sallii vain lähteen 'manual'. Ennen 0013:a ajastimen kirjaus
+    // tallentuu 'manual'-lähteellä: minuutit ja kohde säilyvät, vain
+    // lähteen erottelu odottaa migraatiota. ARVOPORTTI, ei sarakeportti:
+    // sarakkeen pois jättäminen ei riittäisi, joten ajonaikainen tieto
+    // luetaan tässä (columnGateOpen) eikä vain sarakkeita riisuttaessa.
+    source: columnGateOpen('ALIGNMENT_REALITY_FIELDS') ? entry.source : 'manual',
+    note: entry.note,
+    ...(ALIGNMENT_REALITY_FIELDS ? {
+      project_id: entry.projectId,
+      routine_id: entry.routineId,
+      occurrence_date: entry.occurrenceDate,
+      operation_id: entry.operationId,
+      started_at: entry.startedAt,
+      ended_at: entry.endedAt
+    } : {})
   }),
   fromRow: row => normalizeTimeEntry({
     id: row.id,
@@ -913,6 +989,12 @@ export const timeEntriesRepo = createRepository({
     lifeAreaId: row.life_area_id,
     goalId: row.goal_id,
     taskId: row.task_id,
+    projectId: row.project_id,
+    routineId: row.routine_id,
+    occurrenceDate: row.occurrence_date,
+    operationId: row.operation_id,
+    startedAt: row.started_at,
+    endedAt: row.ended_at,
     source: row.source,
     note: row.note,
     createdAt: row.created_at,
@@ -932,7 +1014,11 @@ export const alignmentReviewsRepo = createRepository({
     snapshot: review.snapshot,
     reflection: review.reflection,
     adjustments: review.adjustments,
-    completed_at: review.completedAt
+    completed_at: review.completedAt,
+    ...(ALIGNMENT_REALITY_FIELDS ? {
+      policy_version: review.policyVersion,
+      reflection_answers: review.reflectionAnswers
+    } : {})
   }),
   fromRow: row => normalizeAlignmentReview({
     id: row.id,
@@ -941,7 +1027,78 @@ export const alignmentReviewsRepo = createRepository({
     snapshot: row.snapshot,
     reflection: row.reflection,
     adjustments: row.adjustments,
+    policyVersion: row.policy_version,
+    reflectionAnswers: row.reflection_answers,
     completedAt: row.completed_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  })
+});
+
+// ---------------------------------------------------- Suunta 2 (0013)
+
+/**
+ * Käynnissä oleva ajastin. ENINTÄÄN YKSI KÄYTTÄJÄÄ KOHTI (kannan
+ * uniikkirajoite). Portti kiinni -> muisti; ajastin säilyy silti
+ * laitteella (src/data/timerStore.js), jotta uudelleenlataus ei hukkaa
+ * kulunutta aikaa.
+ */
+export const runningTimersRepo = createRepository({
+  table: 'running_timers',
+  schemaKey: 'runningTimers',
+  normalize: normalizeTimer,
+  toRow: timer => ({
+    id: timer.id,
+    target_kind: timer.targetKind,
+    life_area_id: timer.lifeAreaId,
+    goal_id: timer.goalId,
+    task_id: timer.taskId,
+    project_id: timer.projectId,
+    routine_id: timer.routineId,
+    occurrence_date: timer.occurrenceDate,
+    started_at: timer.startedAt,
+    paused_at: timer.pausedAt,
+    paused_seconds: timer.pausedSeconds,
+    note: timer.note
+  }),
+  fromRow: row => normalizeTimer({
+    id: row.id,
+    targetKind: row.target_kind,
+    lifeAreaId: row.life_area_id,
+    goalId: row.goal_id,
+    taskId: row.task_id,
+    projectId: row.project_id,
+    routineId: row.routine_id,
+    occurrenceDate: row.occurrence_date,
+    startedAt: row.started_at,
+    pausedAt: row.paused_at,
+    pausedSeconds: row.paused_seconds,
+    note: row.note,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  })
+});
+
+/** Tehtävän/rutiinin/projektin Suunta-asetukset: kuormittavuus ym. */
+export const alignmentItemSettingsRepo = createRepository({
+  table: 'alignment_item_settings',
+  schemaKey: 'alignmentItemSettings',
+  normalize: normalizeItemSettings,
+  toRow: settings => ({
+    id: settings.id,
+    item_kind: settings.itemKind,
+    item_id: settings.itemId,
+    energy_demand: settings.energyDemand,
+    alignment_opt_out: settings.alignmentOptOut,
+    estimate_approximate: settings.estimateApproximate
+  }),
+  fromRow: row => normalizeItemSettings({
+    id: row.id,
+    itemKind: row.item_kind,
+    itemId: row.item_id,
+    energyDemand: row.energy_demand,
+    alignmentOptOut: row.alignment_opt_out,
+    estimateApproximate: row.estimate_approximate,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   })
@@ -1004,6 +1161,7 @@ export const ALL_REPOSITORIES = Object.freeze([
   transactionsRepo, investmentsRepo, milestonesRepo,
   inboxRepo, remindersRepo, noticesRepo, travelPlansRepo, locationRulesRepo,
   lifeAreasRepo, weeklyCapacitiesRepo, timeEntriesRepo, alignmentReviewsRepo,
+  runningTimersRepo, alignmentItemSettingsRepo,
   aiAuditRepo
 ]);
 

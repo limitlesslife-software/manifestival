@@ -23,7 +23,8 @@ import {
   transactionsRepo, investmentsRepo, milestonesRepo,
   inboxRepo, remindersRepo, noticesRepo, travelPlansRepo, locationRulesRepo,
   lifeAreasRepo, weeklyCapacitiesRepo, timeEntriesRepo, alignmentReviewsRepo,
-  volatileCollections, clearAllCollections
+  alignmentItemSettingsRepo, runningTimersRepo,
+  clearAllCollections
 } from '../data/collectionsRepo.js';
 import { newTaskId } from '../lib/rows.js';
 import { offline, isOnlineNow } from './offline.js';
@@ -55,7 +56,8 @@ import {
   toTransaction as extractionToTransaction, toBill as extractionToBill
 } from '../domain/receipts.js';
 import { extractFromImage } from './receiptCapture.js';
-import { volatileFields } from '../data/schema.js';
+import { volatileFields, hasTable } from '../data/schema.js';
+import { loadOutbox } from '../data/timerStore.js';
 import {
   getState, findTask, addTaskToState, removeTaskFromState,
   replaceTaskInState, patchTaskInState, setTasks, setProfile,
@@ -80,17 +82,22 @@ import {
   removeMilestoneFromState, findMilestone, replaceMilestonesInState,
   setPendingReplan, clearPendingReplan,
   setInboxItems, setReminders, setNotices, setTravelPlans, setLocationRules,
-  setAiAudit, setDomainLoadStatus,
-  setLifeAreas, setWeeklyCapacities, setTimeEntries, setAlignmentReviews
+  setAiAudit, setDomainLoadStatus, batch,
+  setLifeAreas, setWeeklyCapacities, setTimeEntries, setAlignmentReviews,
+  setAlignmentItemSettings, removeItemSettingsFromState
 } from './state.js';
+import { adoptLoadedTimers, timerMutationSeq } from './timerState.js';
 import {
   loadPreferences as loadNotificationPreferences,
   clearPreferences as clearNotificationPreferences
 } from '../data/notificationPrefsRepo.js';
-import { sessionSnapshot, isSameSession } from '../data/session.js';
+import { logFailure } from '../lib/logger.js';
+import { sessionSnapshot, isSameSession, getUser } from '../data/session.js';
 import { showError, success, notify } from '../ui/toast.js';
 import { confirmDelete, confirmAction } from '../ui/confirm.js';
 import { logError } from '../lib/result.js';
+import { loadSummaryMessage } from '../lib/errorMessages.js';
+import { EXPORTED_COLLECTIONS } from '../domain/dataExport.js';
 
 /** Kertaalleen näytettävä huomautus kentistä, jotka eivät vielä tallennu. */
 let volatileWarningShown = false;
@@ -114,14 +121,25 @@ function warnAboutVolatileFields(task) {
 
 // ------------------------------------------------------------------ lataus
 
-/** Kertaalleen näytettävä huomautus tiedoista, jotka eivät vielä säily. */
-let volatileCollectionWarningShown = false;
+/** Taulut, joiden "säilyy vain tämän istunnon" -huomautus on jo näytetty. */
+const volatileWarningsShown = new Set();
 
-function warnAboutVolatileCollections() {
-  if (volatileCollectionWarningShown) return;
-  if (volatileCollections().length === 0) return;
-  volatileCollectionWarningShown = true;
-  notify('Rutiinit, tavoitteet ja hyvinvointimerkinnät säilyvät toistaiseksi vain tämän istunnon ajan.', 7000);
+/**
+ * Kertaalleen näytettävä huomautus: JUURI TÄMÄ tieto ei vielä säily.
+ *
+ * Aiemmin yksi kiinteä teksti ("Rutiinit, tavoitteet ja
+ * hyvinvointimerkinnät ...") näytettiin, jos MIKÄ TAHANSA repositorio oli
+ * muistissa. Tuotannossa tavoitteet tallentuvat mutta laskut eivät, joten
+ * ensimmäinen tavoite väitti virheellisesti, ettei tavoitteita tallenneta.
+ * Nyt huomautus koskee vain kirjoitettavaa repositoriota ja nimeää sen.
+ *
+ * @param {{table: string, isPersistent: () => boolean}} repo
+ * @param {string} label monikko, esim. 'Tavoitteet'
+ */
+function warnIfVolatile(repo, label) {
+  if (!repo || repo.isPersistent() || volatileWarningsShown.has(repo.table)) return;
+  volatileWarningsShown.add(repo.table);
+  notify(`${label} säilyvät toistaiseksi vain tämän istunnon ajan.`, 7000);
 }
 
 /**
@@ -174,14 +192,11 @@ function applyLoadResult(domain, result, setter) {
  */
 export async function loadUserData() {
   const startedIn = sessionSnapshot();
+  // Ajastimen muutos kesken latauksen (esim. pysäytys paluun päivityksen
+  // aikana): ennen sitä luettu lista ei saa herättää ajastinta henkiin.
+  const timerSeq = timerMutationSeq();
 
-  const [tasksResult, profileResult, routinesResult, exceptionsResult,
-    goalsResult, projectsResult, wellbeingResult, preferencesResult,
-    billsResult, expensesResult, savingsResult, transactionsResult,
-    investmentsResult, milestonesResult, auditResult,
-    inboxResult, remindersResult, noticesResult, travelResult,
-    locationResult, areasResult, capacitiesResult, entriesResult,
-    reviewsResult] = await Promise.all([
+  const loaded = await Promise.all([
     tasksRepo.listTasks(),
     profileRepo.loadProfile(),
     routinesRepo.list(),
@@ -205,13 +220,30 @@ export async function loadUserData() {
     lifeAreasRepo.list(),
     weeklyCapacitiesRepo.list(),
     timeEntriesRepo.list(),
-    alignmentReviewsRepo.list()
+    alignmentReviewsRepo.list(),
+    alignmentItemSettingsRepo.list(),
+    runningTimersRepo.list()
   ]);
 
   // Istunto on voinut vaihtua odotuksen aikana.
   if (!isSameSession(startedIn)) {
     return { tasksOk: false, profileOk: false, discarded: true };
   }
+
+  // Koko tulos tilaan YHDELLÄ ilmoituksella (state.js batch): muuten
+  // jokainen kokoelma ja sen latausstatus piirsi näkymät erikseen (CRIT-01).
+  return batch(() => applyLoadedData(loaded, timerSeq));
+}
+
+/** loadUserData():n hakutulokset tilaan. Synkroninen: ajetaan batchissa. */
+function applyLoadedData(loaded, timerSeq) {
+  const [tasksResult, profileResult, routinesResult, exceptionsResult,
+    goalsResult, projectsResult, wellbeingResult, preferencesResult,
+    billsResult, expensesResult, savingsResult, transactionsResult,
+    investmentsResult, milestonesResult, auditResult,
+    inboxResult, remindersResult, noticesResult, travelResult,
+    locationResult, areasResult, capacitiesResult, entriesResult,
+    reviewsResult, itemSettingsResult, timersResult] = loaded;
 
   // Jokainen kokoelma kulkee applyLoadResult():n läpi: onnistunut haku
   // korvaa kokoelman (myös tyhjällä listalla — se on kelvollinen tulos),
@@ -220,14 +252,18 @@ export async function loadUserData() {
   // kadonneen.
   // Lähettämättömät offline-muutokset lisätään palvelimen listan päälle:
   // muuten lataus korvaisi paikallisen tilan ja odottava tehtävä katoaisi näkyvistä.
-  if (!applyLoadResult('tasks', tasksResult, list => setTasks(offline.overlay(list)))) showError(tasksResult.error);
+  if (!applyLoadResult('tasks', tasksResult, list => setTasks(offline.overlay(list)))) {
+    // Epäonnistunut haku (esim. offline-kylmäkäynnistys): jonossa odottavat
+    // näkyvät silti (F6). overlay ei monista jo tilassa olevaa.
+    if (offline.pendingIds().size > 0) setTasks(offline.overlay(getState().tasks));
+  }
 
   if (profileResult.ok) {
     setProfile(profileResult.value.profile, profileResult.value.exists);
     setDomainLoadStatus('profile', true);
   } else {
     setDomainLoadStatus('profile', false, profileResult.error);
-    showError(profileResult.error);
+    logError(profileResult.error);
   }
 
   // Muistutusasetukset: alkutila on jo hiljainen oletus (normalizePreferences({})),
@@ -258,19 +294,97 @@ export async function loadUserData() {
     // Suunta (0012).
     applyLoadResult('lifeAreas', areasResult, setLifeAreas),
     applyLoadResult('weeklyCapacities', capacitiesResult, setWeeklyCapacities),
-    applyLoadResult('timeEntries', entriesResult, setTimeEntries),
-    applyLoadResult('alignmentReviews', reviewsResult, setAlignmentReviews)
+    applyLoadResult('timeEntries', entriesResult, list => setTimeEntries(withPendingTimeEntries(list))),
+    applyLoadResult('alignmentReviews', reviewsResult, setAlignmentReviews),
+    // Suunta 2 (0013). Ajastin: kannan rivi voittaa laitteen kopion
+    // (src/app/timeTracking.js adoptTimer), joten lataus vain asettaa listan.
+    applyLoadResult('alignmentItemSettings', itemSettingsResult, setAlignmentItemSettings),
+    applyLoadResult('runningTimers', timersResult, timers => adoptLoadedTimers(timers, { sinceSeq: timerSeq }))
   ];
+
+  // Aikakirjausten haku epäonnistui (F6): lähtökorin kirjaukset näkyvät
+  // silti. Muuten offline-kylmäkäynnistyksessä odottava kirjaus puuttui
+  // näkymästä, ja uudelleen kirjattu aika olisi ollut todellinen tupla.
+  // withPendingTimeEntries ei lisää tilassa jo olevaa uudelleen.
+  if (!entriesResult.ok) {
+    const current = getState().timeEntries;
+    const merged = withPendingTimeEntries(current);
+    if (merged !== current) setTimeEntries(merged);
+  }
 
   // Yksittäiset kokoelmavirheet kirjautuvat konsoliin (applyLoadResult) ja
   // dataLoadStatus-kenttään, mutta eivät yksitellen ilmoituksena — kaksi
   // tusinaa toastia yhdellä verkkokatkolla olisi pahempi kuin hyödyllinen.
   // Yksi kooste riittää, ja se kertoo suoraan, ettei näkyvä tieto katoa.
-  if (collectionsOk.includes(false)) {
-    notify('Osa tiedoista ei päivittynyt. Aiemmin ladattu tieto pysyy näkyvissä.', 6000);
+  //
+  // YKSI ILMOITUS MYÖS TEHTÄVISTÄ JA PROFIILISTA (ERR-17): niillä oli omat
+  // ilmoituksensa, ja yksi verkkokatko tuotti kolme pinottua. Teksti
+  // valitaan yleisimmän syyn mukaan (loadFailureMessage).
+  if (!tasksResult.ok || !profileResult.ok || collectionsOk.includes(false)) {
+    // Sama viesti pätee myös ensimmäiseen lataukseen: tieto on tallessa
+    // kannassa, vaikka sitä ei nyt näy (aiempaa "pysyy näkyvissä" ei ole).
+    // Tehtävät ovat ydintietoa: niiden puuttuminen on virhe, muu tiedote.
+    const summary = loadFailureMessage(loaded.filter(result => result && !result.ok));
+    if (!tasksResult.ok) showError(summary);
+    else notify(summary, 6000);
   }
 
   return { tasksOk: tasksResult.ok, profileOk: profileResult.ok, discarded: false };
+}
+
+/**
+ * Latauksen epäonnistumisen kooste.
+ *
+ * SKEEMAVIRHE EI OLE YHTEYSVIRHE. Jos jokainen epäonnistunut kokoelma
+ * kaatui siihen, ettei ominaisuutta ole vielä palvelimella (taulu tai
+ * sarake puuttuu), "päivitä, kun yhteys toimii" johtaisi harhaan:
+ * päivitys ei auttaisi. Viesti ei koskaan nimeä tauluja eikä koodeja.
+ *
+ * @param {Array<{ok:false, error:object}>} failures
+ */
+export function loadFailureMessage(failures = []) {
+  // Yleisin syy valitsee tekstin (src/lib/errorMessages.js): istunto ->
+  // kirjaudu uudelleen, skeema -> palvelua päivitetään, palvelin ei vastaa
+  // -> yritä hetken päästä, verkko -> päivitä, kun yhteys toimii.
+  const offline = !isOnlineNow();
+  return loadSummaryMessage(failures.map(result => classifyError(result && result.error, { offline })));
+}
+
+/**
+ * Viennin kokoelmat, joiden viimeisin haku epäonnistui (ERR-03).
+ *
+ * Vienti ja poiston esikatselu lukevat tilasta. Epäonnistunut haku jättää
+ * kokoelman tyhjäksi (ensimmäinen lataus) tai vanhaksi, ja vienti olisi
+ * kirjoittanut sen tyhjänä ja sanonut "Tiedosto ladattu.". Nimet ovat
+ * EXPORTED_COLLECTIONS-muodossa (samat kuin tilan avaimet).
+ *
+ * @param {object} [state]
+ * @returns {string[]}
+ */
+export function incompleteExportCollections(state = getState()) {
+  const status = (state && state.dataLoadStatus) || {};
+  return EXPORTED_COLLECTIONS.filter(name => status[name] && status[name].ok === false);
+}
+
+/**
+ * Palvelimen aikakirjaukset + tämän laitteen lähettämättömät (lähtökori).
+ *
+ * Sama periaate kuin tehtävien offline.overlay: ilman tätä offline-tilassa
+ * kirjattu aika katosi näkymästä sovelluksen uudelleenkäynnistyksessä
+ * (lataus korvasi tilan palvelimen listalla) — ja käyttäjä, joka kirjasi
+ * sen uudelleen, sai todellisen kaksoiskappaleen uudella
+ * operaatiotunnisteella. Kori on käyttäjäkohtainen (timerStore), ja jo
+ * palvelimella oleva operaatio ei tule kahdesti.
+ */
+export function withPendingTimeEntries(list, {
+  persistent = hasTable('timeEntries'), userId = getUser()?.id
+} = {}) {
+  const serverList = Array.isArray(list) ? list : [];
+  if (!persistent || !userId) return serverList;
+  const known = new Set(serverList.flatMap(entry => [entry.id, entry.operationId]).filter(Boolean));
+  const pending = loadOutbox(userId)
+    .filter(entry => !known.has(entry.id) && !known.has(entry.operationId));
+  return pending.length ? [...serverList, ...pending] : serverList;
 }
 
 // ----------------------------------------------------------------- tehtävät
@@ -290,6 +404,31 @@ function canQueueAfter(error) {
 
 let queuedNoticeAt = 0;
 
+/**
+ * Tehtävän liitokset (tavoite, projekti) vain käyttäjän omaan tilaan.
+ *
+ * Kannan vierasavain on yhdistelmä (user_id, goal_id): tuntematon tai jo
+ * poistettu tavoite kaataisi tallennuksen koodilla 23503. Tekoälyn tai
+ * vanhentuneen näkymän antama tunniste pudotetaan siksi ENNEN kirjoitusta,
+ * ja tehtävä tallentuu ilman liitosta. Sama sääntö kuin aikakirjauksella
+ * (src/app/alignment.js logTime).
+ *
+ * Muokkauksessa ennallaan pysyvää liitosta EI pudoteta: jos tavoitteiden
+ * lataus epäonnistui, tavallinen otsikon muutos ei saa katkaista kannassa
+ * olevaa liitosta.
+ */
+function withOwnLinks(task, previous = null) {
+  const keep = (field, find) => {
+    const value = task[field];
+    if (value == null) return null;
+    if (previous && previous[field] === value) return value;
+    return find(value) ? value : null;
+  };
+  const goalId = keep('goalId', findGoal);
+  const projectId = keep('projectId', findProject);
+  return goalId === task.goalId && projectId === task.projectId ? task : { ...task, goalId, projectId };
+}
+
 /** Kerro jonotuksesta, mutta ei jokaisella muutoksella (ei toast-ryöppyä). */
 function announceQueued() {
   const at = Date.now();
@@ -306,11 +445,11 @@ function announceQueued() {
  *   offline-jonotuksen (AI-komennon suoritusta ei koskaan jonoteta)
  */
 export async function createTask(input, options = {}) {
-  const task = normalizeTask({
+  const task = withOwnLinks(normalizeTask({
     ...input,
     id: newTaskId(),
     schedulingState: input.time ? SCHEDULING.MANUAL : SCHEDULING.UNSCHEDULED
-  });
+  }));
 
   const { valid, errors } = validateTask(task);
   if (!valid) return { ok: false, errors };
@@ -351,7 +490,7 @@ export async function editTask(id, changes, options = {}) {
   const previous = findTask(id);
   if (!previous) return { ok: false };
 
-  const updated = normalizeTask({
+  const updated = withOwnLinks(normalizeTask({
     ...previous,
     ...changes,
     // Käyttäjän tekemä ajan muutos on aina manuaalinen päätös. Automaatti
@@ -373,7 +512,7 @@ export async function editTask(id, changes, options = {}) {
       : (changes.time
         ? SCHEDULING.MANUAL
         : (changes.time === null ? SCHEDULING.UNSCHEDULED : previous.schedulingState))
-  });
+  }), previous);
 
   const { valid, errors } = validateTask(updated);
   if (!valid) return { ok: false, errors };
@@ -404,8 +543,35 @@ export async function editTask(id, changes, options = {}) {
   return { ok: true };
 }
 
+/**
+ * Valmistumisen jälkeinen koukku (Suunta: "Kirjataanko käytetty aika?").
+ *
+ * Näkymä rekisteröi tämän (src/app/views/timeLog.js). Toiminto EI
+ * kirjaa aikaa itse: valmiiksi merkitty tehtävä ei ole toteutunutta
+ * aikaa, ja arviota ei kopioida toteumaksi. Koukku vain tarjoaa
+ * käyttäjälle mahdollisuuden kirjata.
+ */
+let completionHook = null;
+
+export function setCompletionHook(fn) {
+  completionHook = typeof fn === 'function' ? fn : null;
+}
+
 /** Merkitse tehtävä tehdyksi tai palauta kesken. */
 export async function toggleComplete(id) {
+  const done = await toggleCompleteInner(id);
+  const task = findTask(id);
+  if (done && task && task.completed && completionHook) {
+    try {
+      completionHook(task);
+    } catch (error) {
+      logFailure('tasks.completion_hook_failed', error);
+    }
+  }
+  return done;
+}
+
+async function toggleCompleteInner(id) {
   const task = findTask(id);
   if (!task) return false;
 
@@ -435,6 +601,22 @@ export async function toggleComplete(id) {
 }
 
 /**
+ * Poistetun kohteen Suunta-asetukset (kuormittavuus ym.) pois.
+ *
+ * alignment_item_settings.item_id ei ole vierasavain (kohde voi olla
+ * kolmessa taulussa), joten kanta ei poista riviä kohteen mukana.
+ * Sovellus poistaa, ettei orpoja rivejä kerry. Epäonnistuminen ei peru
+ * kohteen poistoa: orpo rivi ei viittaa mihinkään eikä näy missään.
+ */
+async function dropItemSettings(kind, id) {
+  const rows = getState().alignmentItemSettings.filter(s => s.itemKind === kind && s.itemId === id);
+  for (const row of rows) {
+    removeItemSettingsFromState(row.id);
+    await alignmentItemSettingsRepo.remove(row.id);
+  }
+}
+
+/**
  * Poista tehtävä. Kysyy aina vahvistuksen.
  * @returns {Promise<boolean>} poistettiinko
  */
@@ -454,6 +636,7 @@ export async function deleteTask(id) {
     return false;
   }
 
+  await dropItemSettings('task', id);
   success('Tehtävä poistettu.');
   return true;
 }
@@ -484,7 +667,7 @@ export async function createRoutine(input) {
   if (!valid) return { ok: false, errors };
 
   addRoutineToState(routine);
-  warnAboutVolatileCollections();
+  warnIfVolatile(routinesRepo, 'Rutiinit');
 
   const result = await routinesRepo.insert(routine);
   if (!result.ok) {
@@ -549,6 +732,7 @@ export async function deleteRoutine(id) {
     return false;
   }
 
+  await dropItemSettings('routine', id);
   success('Rutiini poistettu.');
   return true;
 }
@@ -601,7 +785,7 @@ export async function createGoal(input) {
   if (!valid) return { ok: false, errors };
 
   addGoalToState(goal);
-  warnAboutVolatileCollections();
+  warnIfVolatile(goalsRepo, 'Tavoitteet');
 
   const result = await goalsRepo.insert(goal);
   if (!result.ok) {
@@ -687,7 +871,7 @@ export async function createProject(input) {
   if (!valid) return { ok: false, errors };
 
   addProjectToState(project);
-  warnAboutVolatileCollections();
+  warnIfVolatile(projectsRepo, 'Projektit');
 
   const result = await projectsRepo.insert(project);
   if (!result.ok) {
@@ -750,6 +934,7 @@ export async function deleteProject(id) {
     return false;
   }
 
+  await dropItemSettings('project', id);
   success('Projekti poistettu.');
   return true;
 }
@@ -769,7 +954,7 @@ export async function createRecurringExpense(input) {
   if (!valid) return { ok: false, errors };
 
   addRecurringExpenseToState(expense);
-  warnAboutVolatileCollections();
+  warnIfVolatile(recurringExpensesRepo, 'Toistuvat menot');
 
   const result = await recurringExpensesRepo.insert(expense);
   if (!result.ok) {
@@ -845,7 +1030,7 @@ export async function createBill(input) {
   if (!valid) return { ok: false, errors };
 
   addBillToState(bill);
-  warnAboutVolatileCollections();
+  warnIfVolatile(billsRepo, 'Laskut');
 
   const result = await billsRepo.insert(bill);
   if (!result.ok) {
@@ -931,7 +1116,7 @@ export async function createSavingsGoal(input) {
   if (!valid) return { ok: false, errors };
 
   addSavingsGoalToState(goal);
-  warnAboutVolatileCollections();
+  warnIfVolatile(savingsGoalsRepo, 'Säästötavoitteet');
 
   const result = await savingsGoalsRepo.insert(goal);
   if (!result.ok) {
@@ -1005,7 +1190,7 @@ export async function createTransaction(input) {
   if (!valid) return { ok: false, errors };
 
   addTransactionToState(transaction);
-  warnAboutVolatileCollections();
+  warnIfVolatile(transactionsRepo, 'Tapahtumat');
 
   const result = await transactionsRepo.insert(transaction);
   if (!result.ok) {
@@ -1163,7 +1348,7 @@ export async function createInvestment(input) {
   if (!valid) return { ok: false, errors };
 
   addInvestmentToState(holding);
-  warnAboutVolatileCollections();
+  warnIfVolatile(investmentsRepo, 'Sijoitukset');
 
   const result = await investmentsRepo.insert(holding);
   if (!result.ok) {
@@ -1360,7 +1545,7 @@ export async function saveWellbeingEntry(input) {
   const previous = getState().wellbeing;
 
   upsertWellbeingEntry(entry);
-  warnAboutVolatileCollections();
+  warnIfVolatile(wellbeingRepo, 'Hyvinvointimerkinnät');
 
   const result = existing
     ? await wellbeingRepo.update(entry)
@@ -1378,12 +1563,15 @@ export async function saveWellbeingEntry(input) {
 
 /** Tallenna profiili. */
 export async function saveProfile(profile) {
-  const previous = getState().profile;
+  const { profile: previous, profileExists: existedBefore } = getState();
   setProfile(profile);
 
   const result = await profileRepo.saveProfile(profile);
   if (!result.ok) {
-    setProfile(previous); // peruutus
+    // Peruutus palauttaa myös tiedon rivin olemassaolosta: epäonnistunut
+    // ENSIMMÄINEN tallennus ei saa jättää profileExists-tilaa päälle, tai
+    // vienti ja poiston esikatselu laskisivat profiilin, jota kannassa ei ole.
+    setProfile(previous, existedBefore === true);
     showError(result.error);
     return false;
   }
@@ -1414,6 +1602,8 @@ export async function saveProfile(profile) {
 export function clearLocalUserData() {
   clearAllCollections();
   clearNotificationPreferences();
+  // Seuraava käyttäjä saa omat huomautuksensa.
+  volatileWarningsShown.clear();
 }
 
 // ----------------------------------------------------- välitavoitteet
@@ -1443,7 +1633,7 @@ export async function createMilestone(input) {
   if (!valid) return { ok: false, errors };
 
   addMilestoneToState(milestone);
-  warnAboutVolatileCollections();
+  warnIfVolatile(milestonesRepo, 'Välitavoitteet');
 
   const result = await milestonesRepo.insert(milestone);
   if (!result.ok) {

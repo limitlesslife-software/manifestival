@@ -216,8 +216,56 @@ test('estetty aalto ei ole deployattavissa', () => {
   }
 });
 
-test('aalto I on junan viimeisenä', () => {
-  // Sen migraatio (0012) on ajamatta, ja aalto jonka kanta puuttuu ei
-  // saa olla minkään toisen edellä.
-  assert.equal(WAVE_IDS[WAVE_IDS.length - 1], 'I');
+// =====================================================================
+// PERUUTUS PYSÄYTTÄÄ JUNAN (ACT-10)
+// =====================================================================
+
+test('KRIITTINEN: peruutuksen nosto törmää seuraavan aallon versioon — ja dokumentti kieltää pushaamasta niitä yhdessä', () => {
+  // Jokainen paketti ohjaa peruutuksessa vN -> vN+1. Kaikille aalloille
+  // J:tä lukuun ottamatta vN+1 on SEURAAVAN aallon varaama numero. Se ei
+  // ole virhe paketissa (versio ei saa laskea), mutta se tarkoittaa, että
+  // peruutuksen jälkeen muuttamatonta myöhempää ehdokasta EI SAA pushata.
+  for (const wave of WAVES.slice(0, -1)) {
+    const bump = versionNumber(wave.cacheVersion) + 1;
+    const next = WAVES[waveIndex(wave.id) + 1];
+    assert.equal(versionNumber(next.cacheVersion), bump,
+      `${wave.id}: peruutuksen v${bump} ei törmää — päivitä tämä testi ja dokumentti`);
+  }
+  const doc = read(DOC);
+  assert.match(doc, /Peruutusversiota EI SAA pushata yhdessä muuttamattoman myöhemmän\s+ehdokkaan kanssa/);
+  assert.match(doc, /TRAIN_HALTED_RECUT_REQUIRED/);
+  assert.match(doc, /--rollback-of=D/);
+});
+
+test('KRIITTINEN: "tuotannon nykytila" nimeää vain LINEAGE-CHECK-rivin aallon', () => {
+  const doc = read(DOC);
+  const match = /LINEAGE-CHECK: origin\/main sha=([0-9a-f]{40}) cache=(v\d+)/.exec(doc);
+  assert.ok(match, 'LINEAGE-CHECK-rivi puuttuu');
+  const documentedWave = WAVES.find(w => w.cacheVersion === match[2]);
+  assert.ok(documentedWave, `LINEAGE-CHECK-välimuisti ${match[2]} ei ole minkään aallon`);
+  const lines = doc.split(/\r?\n/).filter(l => /tuotannon nykytila/i.test(l));
+  assert.ok(lines.length >= 1);
+  for (const line of lines) {
+    const named = [...line.matchAll(/(?:^\|\s*([A-J])\s*\||\bAalto ([A-J])\b|\b([A-J])\s+v\d+)/g)]
+      .map(m => m[1] || m[2] || m[3]);
+    for (const wave of named) {
+      assert.equal(wave, documentedWave.id, `"${line.trim()}" nimeää tuotannoksi aallon ${wave}, LINEAGE-CHECK sanoo ${documentedWave.id}`);
+    }
+  }
+});
+
+test('dokumentti ohjaa lukkoon ja orkestroijaan eikä pidä vanhaa harjoittelua nykyisenä', () => {
+  const doc = read(DOC);
+  assert.match(doc, /## Lukko ja orkestroija/);
+  assert.match(doc, /Push-kohde on AINA lukon `deployTarget`/);
+  assert.match(doc, /## Harjoittelu \(rehearsal\) — HISTORIALLINEN/);
+  assert.equal(/Aalto B\s+v15\s+\(tuotannon nykytila/.test(doc), false);
+});
+
+test('aalto J on junan viimeisenä, heti aallon I jälkeen', () => {
+  // Sen migraatio (0013) on ajamatta ja riippuu 0012:sta (aalto I).
+  // Aalto, jonka kanta puuttuu, ei saa olla minkään toisen edellä, eikä
+  // J voi tulla ennen I:tä.
+  assert.equal(WAVE_IDS[WAVE_IDS.length - 1], 'J');
+  assert.equal(WAVE_IDS[WAVE_IDS.length - 2], 'I');
 });

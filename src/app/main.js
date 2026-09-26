@@ -12,11 +12,20 @@
 
 import { todayMidnight, startOfWeek } from '../lib/datetime.js';
 import { getDevicePreference, clearDevicePreferences } from '../data/preferences.js';
-import { subscribe, resetState, setViewDate, setWeekStart, getState } from './state.js';
+import { subscribe, resetState, setViewDate, setWeekStart, getState, batch } from './state.js';
 import { loadUserData, clearLocalUserData } from './actions.js';
-import { createReconnectController } from './reconnect.js';
+import { renderTimerBar, initTimeLog, closeTimeLogDialog } from './views/timeLog.js';
+import { restoreLocalTimer, initTimerCrossTabSync, stopTimerCrossTabSync, resetTimerSync } from './timerState.js';
+import {
+  flushTimeOutbox, retryTimeOutbox, pendingTimeEntryCount, beginDataLoad, keepWritesSince,
+  resetAlignmentSession
+} from './alignment.js';
+import { createReconnectController, REFRESH_REASON } from './reconnect.js';
 import { initAuth, showAuthGate, hideAuthGate } from './auth.js';
-import { initNavigation, restoreLastScreen } from './navigation.js';
+import {
+  initNavigation, restoreLastScreen, setScreenRenderers, markScreensDirty, renderVisible,
+  renderEveryScreen, forgetRenderedScreens
+} from './navigation.js';
 import { initVoice } from './voice.js';
 import { initSearch, closeSearch } from './search.js';
 import { initOnboarding, maybeShowOnboarding } from './onboarding.js';
@@ -24,7 +33,7 @@ import { renderToday, initTodayNavigation } from './views/today.js';
 import { renderWeek, initWeekNavigation } from './views/week.js';
 import { renderTasks, initTaskForm, closeForm } from './views/tasks.js';
 import { initRoutineForm, closeRoutineForm } from './views/routines.js';
-import { renderGoals, initGoalForm, closeGoalForm } from './views/goals.js';
+import { renderGoals, initGoalForm, closeGoalForm, refreshGoalPicker } from './views/goals.js';
 import { renderProjects, initProjectForm, closeProjectForm } from './views/projects.js';
 import {
   renderFinance, initFinanceForms,
@@ -39,7 +48,7 @@ import { initPlanning, resetPlanning } from './views/planning.js';
 import { clearIdempotencyKeys } from './planning.js';
 import { renderProfile, initProfileForm, fillProfileForm } from './views/profile.js';
 import { renderNotificationSettings } from './views/notificationSettings.js';
-import { initInbox, closeCaptureReview } from './views/inbox.js';
+import { initInbox, closeCaptureReview, renderInbox } from './views/inbox.js';
 import { initReminderForm, closeReminderForm } from './views/reminders.js';
 import { initTravelForms, closeTravelForm, closeLocationRuleForm }
   from './views/travel.js';
@@ -53,19 +62,78 @@ import {
 } from './assistantActions.js';
 import {
   refreshNotificationPermission, syncNotifications,
-  scheduleNotificationResync, cancelScheduledResync
+  scheduleNotificationResync, cancelScheduledResync, cancelDeviceNotifications
 } from './notifications.js';
-import { lifecycle, location as platformLocation } from '../platform/index.js';
+import { lifecycle, location as platformLocation, speech } from '../platform/index.js';
+import { logFailure, LOG_LEVEL } from '../lib/logger.js';
 import { clearToasts } from '../ui/toast.js';
+import { closeConfirmDialogs } from '../ui/confirm.js';
 import { maybe } from '../ui/dom.js';
-import { getUser } from '../data/session.js';
-import { offline, setSyncedHandler } from './offline.js';
+import { getUser, sessionSnapshot, isSameSession } from '../data/session.js';
+import { offline, setSyncedHandler, isOnlineNow } from './offline.js';
 import { initOfflineStatus, refreshSyncStatus } from './offlineStatus.js';
+import { ensureSchemaCompatibility, SCHEMA_PROBE_TIMEOUT_MS } from '../data/schemaProbe.js';
+import { initSchemaStatus, setSchemaStatusActive } from './schemaStatus.js';
+import { installGlobalErrorHandlers, showStartupFailure } from './globalErrors.js';
 
 /** Kuinka usein NYT-tila päivitetään ilman sivun uudelleenlatausta. */
 const NOW_REFRESH_MS = 30000;
 
+/** Ensimmäinen lataus epäonnistui verkossa ollessa: yksi uusi yritys näin pian. */
+const FIRST_LOAD_RETRY_MS = 10000;
+
 let signedIn = false;
+
+/**
+ * Odottavien muutosten lähetys käynnissä (kirjautuminen tai verkon
+ * palautuminen). Sillä aikaa synkronoinnin jälkeistä latausta
+ * (setSyncedHandler) ei tehdä erikseen: kutsuja lataa kerran lähetyksen
+ * jälkeen. Laskuri, koska kaksi lähetystä voi olla käynnissä yhtä aikaa.
+ */
+let sendingPending = 0;
+
+/**
+ * LÄHETÄ ENSIN, LATAA VASTA SITTEN: lataus korvaisi muuten paikallisen tilan
+ * ennen kuin odottavat offline-muutokset ovat lähteneet (overlay kattaa
+ * näkymän, mutta palvelimen tila on oikea vasta lähetyksen jälkeen).
+ *
+ * Odottaa myös toisen käynnistämän toiston ja lähetyksen loppuun
+ * (waitForCurrent, flushTimeOutbox on yksi kerrallaan): muuten lataus
+ * saattoi alkaa, kun edellinen lähetys oli vielä kesken (F11).
+ */
+async function sendPending() {
+  sendingPending += 1;
+  try {
+    await offline.replay({ waitForCurrent: true });
+    // Suunnan lähettämättömät aikakirjaukset (vain aikakirjaukset; uusinta
+    // on idempotentti operaatiotunnisteen ansiosta).
+    await flushTimeOutbox();
+  } catch (error) {
+    logFailure('offline.replay_failed', error);
+  } finally {
+    sendingPending -= 1;
+  }
+}
+
+/**
+ * Lataa käyttäjän data. Latauksen aikana valmistuneet tallennukset
+ * palautetaan tilaan (keepWritesSince): ennen lähetystä haettu lista ei
+ * piilota juuri lähetettyä aikakirjausta, katsausta tai kapasiteettia.
+ */
+async function loadFresh() {
+  const mark = beginDataLoad();
+  // Täysi lataus alkaa: paluu etualalle heti perään ei lataa uudelleen (CRIT-02).
+  reconnect.noteRefreshStarted();
+  const result = await loadUserData();
+  // Palautetut tallennukset yhtenä ilmoituksena (loadUserData on jo yksi).
+  if (!result.discarded) batch(() => keepWritesSince(mark));
+  return result;
+}
+
+/** Jäikö jokin kokoelma lataamatta (dataLoadStatus)? */
+function hasLoadFailures() {
+  return Object.values(getState().dataLoadStatus || {}).some(status => status && status.ok === false);
+}
 
 /**
  * Päivitä data verkon palautuessa tai sovelluksen palatessa etualalle.
@@ -76,27 +144,28 @@ let signedIn = false;
  * kirjautuessa hoitaa myös tämän, eikä näytä tai käyttäjän sijaintia
  * näkymässä tarvitse koskea erikseen.
  */
-let reconnectRefreshing = false;
-
 async function refreshAfterReconnect() {
   if (!signedIn) return;
-  // LÄHETÄ ENSIN, LATAA VASTA SITTEN: lataus korvaisi muuten paikallisen tilan
-  // ennen kuin odottavat offline-muutokset ovat lähteneet (overlay kattaa
-  // näkymän, mutta palvelimen tila on oikea vasta lähetyksen jälkeen).
-  reconnectRefreshing = true;
+  const session = sessionSnapshot();
+  // Offline-käynnistyksessä skeemaa ei tarkistettu: tarkista ennen toistoa,
+  // jotta jono ja lähtökori eivät lähde kannalle, joka on käännöstä jäljessä.
   try {
-    await offline.replay();
+    await ensureSchemaCompatibility({ onlyIfUnverified: true, timeoutMs: SCHEMA_PROBE_TIMEOUT_MS });
   } catch (error) {
-    console.warn('Manifestival: offline-jonon toisto ei onnistunut', error);
-  } finally {
-    reconnectRefreshing = false;
+    logFailure('schema.check_failed', error);
   }
-  const result = await loadUserData();
+  if (!signedIn || !isSameSession(session)) return;
+  await sendPending();
+  // Uloskirjautuminen lähetyksen aikana: ei ladata kenenkään nimissä.
+  if (!signedIn || !isSameSession(session)) return;
+  const result = await loadFresh();
   if (result.discarded) return;
   runAssistantSweeps();
 }
 
-const reconnect = createReconnectController({ onRefresh: refreshAfterReconnect });
+// Offline-tilassa käynnistynyt sovellus: ensimmäinen "online" käynnistää
+// lähetyksen ja latauksen (F7). Ennen tätä ohjain luuli olleensa verkossa.
+const reconnect = createReconnectController({ onRefresh: refreshAfterReconnect, initialOnline: isOnlineNow() });
 
 /**
  * Rekisteröi service worker.
@@ -111,25 +180,45 @@ function registerServiceWorker() {
   // omien latausten kanssa.
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js').catch(error => {
-      console.warn('Manifestival: service workerin rekisteröinti ei onnistunut', error);
+      logFailure('sw.register_failed', error);
     });
   });
 }
 
-/** Renderöi kaikki näkymät. Kutsutaan tilamuutoksesta. */
+/**
+ * Näyttöjen piirtäjät. Näyttö piirretään vain näkyvänä (renderAll) tai
+ * juuri ennen näyttämistä (navigation.js switchTab) — ei jokaisesta
+ * tilamuutoksesta piilossa (CRIT-01).
+ *
+ * Ryhmässä on kaikki, mitä näytön DOM:issa näkyy, myös toisen moduulin
+ * täyttämä osa: tehtävälomakkeen tavoitevalikko (refreshGoalPicker) ja
+ * päivänäkymän kirjauksen tarkistuskortti (renderInbox).
+ */
+const SCREEN_RENDERERS = Object.freeze({
+  'screen-today': () => { renderToday(); renderInbox(); renderNotices(); },
+  'screen-direction': () => { renderDirection(); },
+  'screen-week': () => { renderWeek(); },
+  'screen-tasks': () => { renderTasks(); refreshGoalPicker(); },
+  'screen-goals': () => { renderGoals(); renderProjects(); },
+  'screen-finance': () => { renderFinance(); },
+  'screen-profile': () => { renderProfile(); renderNotificationSettings(); }
+});
+
+/** Joka tilamuutoksessa: ajastinpalkki ja päivän Suunta-kortti (kevyt, välimuistista). */
+const ALWAYS_RENDERED = Object.freeze([renderTimerBar, renderTodayDirection]);
+
+/**
+ * Piirrä tilamuutoksen jälkeen. Kutsutaan tilamuutoksesta (subscribe).
+ *
+ * VAIN NÄKYVÄ PIIRRETÄÄN HETI: ajastinpalkki, päivän Suunta-kortti ja avoin
+ * näyttö (navigation.js renderVisible). Muut merkitään likaisiksi, ja
+ * switchTab piirtää likaisen näytön ennen kuin näyttää sen. Aiemmin jokainen
+ * tilamuutos piirsi kaikki näytöt, myös piilossa olevan Suunnan
+ * viikkoanalyyseineen (CRIT-01).
+ */
 function renderAll() {
   if (!signedIn) return;
-  renderToday();
-  renderTodayDirection();
-  renderDirection();
-  renderWeek();
-  renderTasks();
-  renderGoals();
-  renderProjects();
-  renderFinance();
-  renderProfile();
-  renderNotificationSettings();
-  renderNotices();
+  renderVisible();
 }
 
 /**
@@ -185,12 +274,13 @@ function runAssistantSweeps() {
     runReplanCheck(),
     pruneNoticeHistory()
   ]).catch(error => {
-    console.warn('Manifestival: halytyskierros ei onnistunut', error);
+    logFailure('assistant.sweep_failed', error);
   });
 }
 
 async function onSignedIn() {
   signedIn = true;
+  const session = sessionSnapshot();
   hideAuthGate();
 
   // Käyttäjän oma odottava jono ladataan ENNEN ensimmäistä latausta, jotta
@@ -199,6 +289,23 @@ async function onSignedIn() {
   const current = getUser();
   offline.activate(current && current.id ? current.id : null);
 
+  // Käyttäjän oma ajastin laitteelta ENNEN latausta: uudelleenlataus ei
+  // hukkaa kulunutta aikaa, eikä toisen käyttäjän ajastin osu tähän
+  // (avain ja sisältö ovat käyttäjäkohtaisia).
+  restoreLocalTimer();
+  // Toisen välilehden käynnistys ja pysäytys näkyvät tässäkin heti: kaksi
+  // välilehteä ei käynnistä rinnakkaisia ajastimia eikä pyyhi toistensa kopiota.
+  initTimerCrossTabSync();
+
+  // SKEEMATARKISTUS ENNEN ENSIMMÄISTÄ LATAUSTA: vain lukeva, aikarajattu,
+  // offline-tilassa ei yhtään pyyntöä (välimuisti tai käännösaikaiset
+  // portit). Jos kanta on sovellusta jäljessä, portit lasketaan ennen kuin
+  // mitään kirjoitetaan. Ks. src/data/schemaProbe.js.
+  setSchemaStatusActive(true);
+  const probeSession = sessionSnapshot();
+  await ensureSchemaCompatibility({ timeoutMs: SCHEMA_PROBE_TIMEOUT_MS });
+  if (!signedIn || !isSameSession(probeSession)) return;
+
   // Päivä ja viikko nollataan kirjautuessa: sovellus avautuu aina tähän
   // päivään, ei siihen mihin edellinen istunto jäi.
   setViewDate(todayMidnight());
@@ -206,17 +313,24 @@ async function onSignedIn() {
 
   restoreLastScreen(getDevicePreference('lastScreen'));
 
+  // Kirjautumisen aikana odottaneet muutokset lähetetään ENNEN ensimmäistä
+  // latausta (F11). Aiemmin lataus ja lähetys kulkivat rinnakkain: ennen
+  // lähetystä haettu lista korvasi tilan, ja juuri lähetetty kirjaus katosi
+  // näkyvistä seuraavaan lataukseen asti. Tyhjällä jonolla ei odoteta.
+  if (offline.status().total > 0 || pendingTimeEntryCount() > 0) await sendPending();
+  if (!isSameSession(session)) return;
+
   // Lataus voi kestää, ja käyttäjä ehtii sinä aikana kirjautua ulos tai
   // vaihtaa tiliä. Silloin loadUserData hylkää vastauksen — eikä tämän
   // kirjautumisen jatko saa enää piirtää eikä ajastaa mitään. Toinen,
   // uudempi onSignedIn on jo ottanut vastuun näkymästä.
-  const loaded = await loadUserData();
+  const loaded = await loadFresh();
   if (loaded.discarded) return;
 
-  // Lähetä kirjautumisen aikana odottaneet muutokset (jos verkko on).
-  offline.replay().catch(error => {
-    console.warn('Manifestival: offline-jonon toisto ei onnistunut', error);
-  });
+  // Ensimmäinen lataus epäonnistui, vaikka laite on verkossa (esim.
+  // hetkellinen palvelinvirhe): yksi uusi yritys hetken päästä. Ilman tätä
+  // näkymä jäi vajaaksi seuraavaan paluuseen tai verkkotapahtumaan asti.
+  if (isOnlineNow() && hasLoadFailures()) reconnect.refreshLater(FIRST_LOAD_RETRY_MS);
 
   fillProfileForm();
 
@@ -225,12 +339,12 @@ async function onSignedIn() {
   // tilan, joka natiivikuoressa on luettavissa vain asynkronisesti.
   await refreshNotificationPermission();
 
-  renderAll();
+  renderEveryScreen();
 
   // Muistutukset synkronoidaan vasta kun data on ladattu. Jos käyttäjä ei
   // ole kytkenyt niitä päälle, tämä peruu aiemmin ajastetut eikä tee muuta.
   syncNotifications().catch(error => {
-    console.warn('Manifestival: muistutusten synkronointi ei onnistunut', error);
+    logFailure('notifications.sync_failed', error);
   });
 
   // HALYTYSKIERROS AJETAAN KUN SOVELLUS ON AUKI.
@@ -249,9 +363,16 @@ async function onSignedIn() {
 
 function onSignedOut() {
   signedIn = false;
+  setSchemaStatusActive(false);
   cancelScheduledResync();
+  // Laitteelle ajastetut ja jo toimitetut muistutukset (tehtävien otsikot)
+  // eivät saa laueta uloskirjautumisen jälkeen. Ei odoteta: uloskirjautuminen
+  // ei saa jäädä natiivikutsun varaan, ja funktio ei koskaan heitä.
+  cancelDeviceNotifications().catch(() => {});
   reconnect.cancelPending();
   lastNotifiableRefs = { tasks: null, routines: null, routineExceptions: null, travelPlans: null };
+  // Seuraavan istunnon ensimmäinen piirto ei luota edellisen piirtoihin.
+  forgetRenderedScreens();
   closeForm();
   closeRoutineForm();
   closeGoalForm();
@@ -290,8 +411,19 @@ function onSignedOut() {
   // yli — jäänyt avain estäisi seuraavaa käyttäjää tallentamasta.
   resetPlanning();
   closeAreaForm();
+  closeTimeLogDialog();
+  stopTimerCrossTabSync();
+  // Edellisen käyttäjän avoin vahvistus (esim. "Pysäytetäänkö ja
+  // kirjataanko ...") ei jää kirjautumisportin päälle, eikä sen myöhempi
+  // hyväksyntä käynnistä mitään uudessa istunnossa (RACE-14).
+  closeConfirmDialogs();
+  // Ajastimen kannan kirjoitusjono alusta: edellisen käyttäjän jonotetut
+  // työt eivät lähde seuraavan tokenilla (ne ohitetaan), eikä jumiin
+  // jäänyt pyyntö pidättele seuraavan käyttäjän kirjoituksia.
+  resetTimerSync();
   resetDirectionView();
   resetAppliedAdjustments();
+  resetAlignmentSession();
   clearIdempotencyKeys();
   clearToasts();
 
@@ -304,6 +436,10 @@ function onSignedOut() {
 }
 
 async function start() {
+  // 0. Odottamaton virhe (käsittelemätön lupaus, poikkeus) näkyy käyttäjälle
+  //    yhtenä kiinteänä viestinä eikä kaadu hiljaa (src/app/globalErrors.js).
+  installGlobalErrorHandlers();
+
   // 1. Tapahtumakytkennät tehdään TASAN KERRAN. Näkymien uudelleenrenderöinti
   //    korvaa vain listojen sisällön, joten kuuntelijat eivät kasaannu.
   initNavigation();
@@ -324,13 +460,26 @@ async function start() {
   initTravelForms();
   initNotices();
   initDirection();
+  initTimeLog();
   initVoice();
   initSearch();
   initOnboarding();
 
-  // 2. Näkymät seuraavat tilaa.
+  // 2. Näkymät seuraavat tilaa: avoin näyttö heti, muut ennen näyttämistä.
+  setScreenRenderers(SCREEN_RENDERERS, { always: ALWAYS_RENDERED, enabled: () => signedIn });
   subscribe(renderAll);
   subscribe(watchNotifiableChanges);
+  // Skeematarkistuksen tila (rajoitettu / huoltokatko) ENNEN istunnon
+  // palautusta: palautettu istunto ajaa tarkistuksen jo initAuthin aikana.
+  // Palautuminen lähettää odottavat muutokset ja lataa tiedot samalla
+  // polulla kuin verkon palautuminen. Kannan tukea odottaneet osat
+  // herätetään ENSIN: muuten ne lähtisivät vasta odotusajan (60 s) jälkeen.
+  initSchemaStatus({
+    onRecovered: () => {
+      offline.wakeSchemaPending();
+      reconnect.refreshNow({ reason: REFRESH_REASON.SCHEMA });
+    }
+  });
 
   // 3. Istunnon palautus.
   const session = await initAuth({ onSignedIn, onSignedOut });
@@ -343,8 +492,20 @@ async function start() {
   // 4. NYT/MYÖHÄSSÄ/ETUAJASSA pysyy ajan tasalla ilman sivun päivitystä.
   setInterval(() => {
     if (!signedIn) return;
+    // Aika kului: piilossa olevat näytöt (esim. "tänään"-korostus, rästit)
+    // piirretään uudelleen, kun ne seuraavan kerran avataan.
+    markScreensDirty();
     renderToday();
     runAssistantSweeps();
+    // Lähettämättömät aikakirjaukset uudelleen (F16): heikko kenttä tai
+    // kirjautumissivu ei välttämättä koskaan laukaise offline/online-
+    // tapahtumaa. Tyhjällä korilla ei tehdä mitään; epäonnistuminen
+    // harventaa yrityksiä (retryTimeOutbox), eikä lähetyksiä ole rinnakkain.
+    if (isOnlineNow()) {
+      retryTimeOutbox().catch(error => {
+        logFailure('alignment.time_outbox_retry_failed', error);
+      });
+    }
   }, NOW_REFRESH_MS);
 
   // Paluu etualalle: sama kolmikko kuin ajastimessa, mutta heti eikä
@@ -356,23 +517,31 @@ async function start() {
   // Natiivikuoressa `document.visibilitychange` ei ole luotettava korvike
   // käyttöjärjestelmän omalle resume/pause-tapahtumalle (ks. lifecycle.js:n
   // kommentti); web-kuori saa silti visibilitychange-varajärjestelmän, koska
-  // bindLifecycle kytkee molemmat.
+  // bindLifecycle kytkee molemmat — ja yhdistää ne: yksi paluu on yksi
+  // onResume-kutsu (lifecycle.js RESUME_DEDUP_MS).
   lifecycle.bind({
     onResume: () => {
       if (!signedIn) return;
+      markScreensDirty();
       renderToday();
       runAssistantSweeps();
       syncNotifications().catch(error => {
-        console.warn('Manifestival: muistutusten synkronointi paluulla ei onnistunut', error);
+        logFailure('notifications.resume_sync_failed', error);
       });
       // Sovellus on voinut olla taustalla pitkään: data on voinut vanhentua
       // (esim. muokattu toisella laitteella). refreshNow() on limitelty
       // reconnect.js:ssä, joten tämä ei koskaan käynnisty rinnakkain
-      // samanaikaisen online-palautuksen kanssa.
-      reconnect.refreshNow();
+      // samanaikaisen online-palautuksen kanssa — eikä lataa uudelleen, jos
+      // edellinen päivitys alkoi alle MIN_REFRESH_INTERVAL_MS sitten.
+      reconnect.refreshNow({ reason: REFRESH_REASON.RESUME });
     },
     onPause: () => {
       reconnect.cancelPending();
+      // EI TAUSTAMIKROFONIA: sovelluksen siirtyminen taustalle katkaisee
+      // puheohjauksen ja sanelun kuuntelun. Natiivissa pause-tapahtuma tulee
+      // App-liitännäiseltä myös silloin, kun visibilitychange ei laukea.
+      // (Androidin oma lupadialogi ei katkaise: ks. src/platform/speech.js.)
+      speech.cancelActiveListening({ reason: 'pause' });
     }
   });
 
@@ -385,9 +554,9 @@ async function start() {
   // Offline-jonon tila näkyviin, ja synkronoinnin jälkeinen uudelleenlataus.
   initOfflineStatus();
   setSyncedHandler(() => {
-    if (!signedIn || reconnectRefreshing) return;
-    loadUserData().catch(error => {
-      console.warn('Manifestival: lataus synkronoinnin jälkeen ei onnistunut', error);
+    if (!signedIn || sendingPending > 0) return;
+    loadFresh().catch(error => {
+      logFailure('data.reload_after_sync_failed', error);
     });
   });
 
@@ -409,12 +578,14 @@ async function start() {
     reconnect.notifyOffline();
   });
   updateOnlineState();
+  // Kuuntelijat kytketään vasta istunnon palautuksen jälkeen: sillä välin
+  // muuttunut verkon tila välitetään ohjaimelle nyt (F7). Offline -> online
+  // käynnistyksen aikana ajastaa lähetyksen ja latauksen.
+  if (isOnlineNow()) reconnect.notifyOnline();
+  else reconnect.notifyOffline();
 }
 
 start().catch(error => {
-  console.error('Manifestival: käynnistys epäonnistui', error);
-  const splash = maybe('authSplash');
-  if (splash) {
-    splash.innerHTML = '<div class="startup-error">Sovelluksen käynnistys ei onnistunut. Päivitä sivu.</div>';
-  }
+  // Teksti riippuu verkosta ja alustasta: natiivissa ei ole sivua päivitettäväksi.
+  showStartupFailure(error, { splash: maybe('authSplash') });
 });

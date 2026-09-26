@@ -30,12 +30,16 @@
 -- Tama tiedosto EI lue sarakkeita title, description eika metric.
 -- Ne ovat kayttajan omaa tekstia, ja varmistus tarvitsee vain rakenteen.
 
+-- NULL-TULOS ON POIKKEAMA. Puuttuva objekti tuottaa tarkistukseen NULLin:
+-- se on FAIL, se lasketaan poikkeavia_yhteensa-lukuun (is distinct from)
+-- ja details kertoo "toteutui null". Harjoiteltu: tools/pg-rehearsal
+-- (verify:null).
 select c.check_no, c.section, c.check_name,
        case when c.odotus = 'INFO' then 'INFO'
             when c.toteutui = c.odotus then 'PASS' else 'FAIL' end as status,
        case when c.odotus = 'INFO' then c.toteutui
-            else 'odotus ' || c.odotus || ', toteutui ' || c.toteutui end as details,
-       count(*) filter (where c.odotus <> 'INFO' and c.toteutui <> c.odotus)
+            else 'odotus ' || c.odotus || ', toteutui ' || coalesce(c.toteutui, 'null') end as details,
+       count(*) filter (where c.odotus <> 'INFO' and c.toteutui is distinct from c.odotus)
          over () as poikkeavia_yhteensa
 from (
 

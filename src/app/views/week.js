@@ -23,6 +23,7 @@ import { getState, setWeekStart, setViewDate } from '../state.js';
 import { toggleComplete } from '../actions.js';
 import { openEditForm } from './tasks.js';
 import { switchTab } from '../navigation.js';
+import { loadFailureHtml } from './loadNotice.js';
 
 // ------------------------------------------------------------ viikkonauha
 
@@ -149,6 +150,12 @@ function renderList(container, state, routineOccurrences) {
   const weekTasks = state.tasks.filter(task => isoDays.includes(task.date));
 
   if (weekTasks.length === 0 && routineOccurrences.length === 0) {
+    // Epäonnistunut ensimmäinen lataus ei ole "tyhjä viikko".
+    const notice = loadFailureHtml(state, ['tasks', 'routines', 'routineExceptions']);
+    if (notice) {
+      container.innerHTML = notice;
+      return;
+    }
     container.innerHTML = `
       <div class="empty-state">
         <div class="empty-title">Viikko on vielä tyhjä.</div>

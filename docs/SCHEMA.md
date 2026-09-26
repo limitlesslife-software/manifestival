@@ -155,6 +155,60 @@ tallentavansa niitä.
 
 ---
 
+## Ajonaikainen skeematarkistus
+
+Käännösaikaiset portit (`src/data/schema.js`) kertovat, mihin tämä
+käännös AIKOO kirjoittaa. Kanta voi silti olla jäljessä: asennettu APK
+kantaa porttinsa mukanaan, ja jokaisella migraatiolla 0009–0013 on
+peruutus. Siksi sovellus tarkistaa kirjautumisen jälkeen, mitä kanta
+oikeasti sisältää, ja voi **laskea** (ei koskaan nostaa) porttejaan.
+
+### Vaatimukset
+
+`SCHEMA_REQUIREMENTS` (`src/data/schema.js`) luettelee jokaiselle
+portille sen sarakejoukon ja migraation:
+
+| Tyyppi | Esimerkki | Puutteen seuraus |
+|---|---|---|
+| ydin | `0001.tasks`, `0001.profile` | huoltotila: ei kirjoituksia |
+| taulu | `0012.time_entries` | puuttuu: tyhjä lataus; sarakkeita puuttuu: vain luku |
+| sarakeportti | `0010.goals` (GOAL_PLANNING_FIELDS) | sarakkeet jätetään pois |
+| sarakeportti, `lowerAs: 'readonly'` | `0013.time_entries` | taulu vain luettavaksi |
+
+Tehtävän liitokset (`deadline`, `goal_id`, `project_id`, migraatio 0004)
+ovat oma sarakeporttinsa `TASK_LINK_FIELDS`, joka on auki täsmälleen
+silloin kun goals- ja projects-portit ovat. `GOAL_MAINTENANCE_MODE`
+tarkistetaan 0010:n sarakkeesta `goals.metric`: jokainen migraatio on
+yksi transaktio, joten yksi sarake todistaa koko migraation.
+
+Testi `tests/schema-compat-matrix.test.mjs` vertaa vaatimuksia
+migraatioihin ja repositorioiden rivimuunnoksiin, ja ajaa oikean koodin
+aaltojen C–J porteilla kannan tiloja 0008, +0009, +0010, +0011, +0012,
+0008+0012, +0013 ja "0013 ilman operation_id:tä" vastaan.
+
+### Tarkistus
+
+- Yksi `GET` per taulu: `select=<sarakkeet>&limit=0`. Ei rivejä, ei
+  kirjoituksia, ei `head`-pyyntöä (siitä puuttuisi virhekoodi).
+- Puuttuva sarake tarkennetaan vaatimus kerrallaan.
+- `PGRST205`/`42P01` = taulu puuttuu, `42703`/`PGRST204` = sarake puuttuu,
+  `42501` = kielletty (ei välimuistiin). Kaikki muu = ei tiedetä.
+- Välimuistin avain: `manifestival.schemaCompat.v1.<tiiviste>` palvelimen
+  osoitteesta ja tämän käännöksen vaatimuksista.
+
+### Ylläpito
+
+Migraation jälkeen PostgRESTin skeemavälimuisti on ladattava uudelleen
+(ajo-ohjeen "Reload schema cache"). Jos se unohtuu, tarkistus voi mennä
+läpi (se kysyy PostgreSQL:ltä), mutta kirjoitus kaatuu PGRST204:ään.
+Reaktiivinen kerros laskee silloin portin istunnon ajaksi, joten tehtävät
+ja tavoitteet tallentuvat silti — ilman uusia kenttiä. Sama koskee jokaista
+kirjoituksen `PGRST204`/`42703`/`42P01`-virhettä: onnistunut tarkistus ei
+kumoa sitä (muuten toisto ja tarkistus kiertäisivät kehää). Lukemisen puute
+ja `PGRST205` kumoutuvat, kun seuraava tarkistus näkee vaatimuksen kunnossa.
+
+---
+
 ## Ajojärjestys
 
 Migraatio ja siitä riippuva koodi ovat toisistaan riippuvaisia. Väärä

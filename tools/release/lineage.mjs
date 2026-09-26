@@ -32,7 +32,7 @@
 
 import { execFileSync } from 'node:child_process';
 
-import { fileAtCommit, git, gitAvailable } from './manifest.mjs';
+import { RELEASE_WAVE_TRAILER, fileAtCommit, git, gitAvailable } from './manifest.mjs';
 import { ROOT, parseCacheVersion, parseGates } from './state.mjs';
 import { resolveWave } from './waves.mjs';
 
@@ -59,7 +59,7 @@ export function originMainAvailable() {
  *
  * @returns {boolean|null} null jos kysymykseen ei voitu vastata
  */
-function isAncestor(ancestorRef, descendantRef) {
+export function isAncestor(ancestorRef, descendantRef) {
   try {
     execFileSync('git', ['merge-base', '--is-ancestor', ancestorRef, descendantRef],
       { cwd: ROOT, stdio: 'ignore' });
@@ -96,6 +96,83 @@ export function originMainState() {
   const wave = gates ? resolveWave(gates) : null;
 
   return { available: true, sha, cacheVersion, gates, wave };
+}
+
+/**
+ * Sama kuin `originMainState()`, mutta injektoidun git-kerroksen kautta
+ * (tools/release/git-layer.mjs). Orkestroija ja dry-run käyttävät tätä,
+ * jotta testit voivat antaa tynkähistorian.
+ */
+export function originMainStateFrom(gitLayer) {
+  const sha = gitLayer.revParse(ORIGIN_MAIN);
+  if (!sha) return { available: false, sha: null, cacheVersion: null, gates: null, wave: null };
+  const cacheVersion = parseCacheVersion(gitLayer.show(sha, 'sw.js'));
+  const gates = parseGates(gitLayer.show(sha, 'src/data/schema.js'), { allowMissing: true });
+  const wave = gates ? resolveWave(gates) : null;
+  return { available: true, sha, cacheVersion, gates, wave };
+}
+
+/**
+ * LINEAGE-CHECK-rivin jäsennys docs/RELEASE-SEQUENCING.md:stä.
+ *
+ * @returns {{sha: string, cache: string}|null}
+ */
+export function parseLineageCheck(doc) {
+  const match = /LINEAGE-CHECK: origin\/main sha=([0-9a-f]{40}) cache=(v\d+)/.exec(String(doc || ''));
+  return match ? { sha: match[1], cache: match[2] } : null;
+}
+
+/**
+ * Dokumentoitu origin/main-tila vs todellinen -- SUKULINJANA, ei
+ * yhtäsuuruutena (ACT-03).
+ *
+ * MIKSI EI YHTÄSUURUUS
+ *
+ * Aiempi testi vaati, että dokumentin SHA ON origin/main. Se testi on
+ * jäädytetyissä ehdokkaissa H, I ja J, ja jokainen deploy siirtää
+ * origin/mainia: heti aallon D pushin jälkeen jokaisen jäädytetyn
+ * ehdokkaan oma testipatteristo kaatui, vaikka mikään ei ollut vialla.
+ * Dokumentti ei valehtele, jos se nimeää tuotannon AIEMMAN tilan: se on
+ * vain jäljessä. Valhe on vain se, että dokumentti nimeää SHA:n, joka ei
+ * ole koskaan ollut tuotannossa (ei ole origin/mainin esi-isä), tai
+ * väittää suurempaa välimuistiversiota kuin tuotannossa on.
+ *
+ * @param {{sha: string, cache: string}} documented
+ * @param {{sha: string, cacheVersion: string}} origin
+ * @param {(a: string, b: string) => boolean|null} isAncestorFn
+ * @returns {{ok: boolean, problems: string[], behind: boolean}}
+ */
+export function lineageCheck(documented, origin, isAncestorFn) {
+  const problems = [];
+  if (!documented || !documented.sha) {
+    return { ok: false, problems: ['LINEAGE-CHECK-riviä ei ole'], behind: false };
+  }
+  if (!origin || !origin.sha) {
+    return { ok: false, problems: ['origin/main ei ole saatavilla'], behind: false };
+  }
+  const equal = documented.sha === origin.sha;
+  if (!equal) {
+    const ancestor = isAncestorFn(documented.sha, origin.sha);
+    if (ancestor === null) {
+      problems.push(`dokumentoitua SHA:ta ${documented.sha} ei voitu verrata origin/mainiin `
+        + '(puuttuuko commit paikallisesta historiasta?)');
+    } else if (ancestor === false) {
+      problems.push(`dokumentoitu SHA ${documented.sha} ei ole origin/mainin (${origin.sha}) `
+        + 'esi-isä -- dokumentti nimeää commitin, joka ei ole ollut tuotannossa');
+    }
+  }
+  const documentedNumber = versionNumber(documented.cache);
+  const originNumber = versionNumber(origin.cacheVersion);
+  if (documentedNumber === null || originNumber === null) {
+    problems.push(`välimuistiversiota ei voitu verrata (${documented.cache} / ${origin.cacheVersion})`);
+  } else if (equal && documentedNumber !== originNumber) {
+    problems.push(`sama SHA mutta eri välimuistiversio: dokumentti ${documented.cache}, `
+      + `origin/main ${origin.cacheVersion}`);
+  } else if (documentedNumber > originNumber) {
+    problems.push(`dokumentti väittää välimuistiversiota ${documented.cache}, `
+      + `mutta origin/main on ${origin.cacheVersion}`);
+  }
+  return { ok: problems.length === 0, problems, behind: !equal };
 }
 
 /**
@@ -159,9 +236,14 @@ export function isDetachedHead(cwd = ROOT) {
  * Commit, jolla EI ole `Release-Wave:`-trailería, ei ole virhe: se on
  * tavallinen kehityscommit. Palautetaan silloin null, ei arvata.
  *
+ * TUNNISTE LUETAAN `RELEASE_WAVE_TRAILER`ISTA (ACT-07). Aiempi oma
+ * lauseke `(BASE|[A-E])` jätti aallot F–J tunnistamatta, joten
+ * esitarkistuksen trailerivertailu oli F–J:lle hiljaa ohitettu: väärin
+ * merkitty migraatioaallon commit olisi mennyt läpi.
+ *
  * @param {string} [ref] git-referenssi, oletus 'HEAD'
  * @param {string} [cwd] mistä työpuusta `ref` ratkaistaan
- * @returns {string|null} 'BASE', 'A'..'E', tai null jos commit ei
+ * @returns {string|null} 'BASE', 'A'..'J', tai null jos commit ei
  *   kanna tunnettua aaltomerkintää
  */
 export function waveOfCommit(ref = 'HEAD', cwd = ROOT) {
@@ -172,7 +254,12 @@ export function waveOfCommit(ref = 'HEAD', cwd = ROOT) {
   const body = git(['log', '-1', '--format=%B', sha], cwd);
   if (!body) return null;
 
-  const match = /^Release-Wave:\s*(BASE|[A-E])\s*$/m.exec(body);
+  return waveOfCommitBody(body);
+}
+
+/** Commitviestin `Release-Wave:`-tunniste, tai null. Puhdas funktio. */
+export function waveOfCommitBody(body) {
+  const match = RELEASE_WAVE_TRAILER.exec(String(body || ''));
   return match ? match[1] : null;
 }
 

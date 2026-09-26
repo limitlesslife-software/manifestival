@@ -6,7 +6,9 @@
 
 import { getClient } from './client.js';
 import { requireUserId } from './session.js';
-import { ok, fail } from '../lib/result.js';
+import { writeRefusal, noteSchemaError } from './schema.js';
+import { ok } from '../lib/result.js';
+import { failFromCause, failFromThrown } from './repoErrors.js';
 import { DEFAULT_PROFILE } from '../domain/scheduler.js';
 
 const TABLE = 'profile';
@@ -52,10 +54,13 @@ export async function loadProfile() {
       .eq('id', requireUserId())
       .maybeSingle();
 
-    if (error) return fail('Profiilin lataus ei onnistunut.', { cause: error, code: 'profile.load' });
+    if (error) {
+      noteSchemaError(TABLE, error);
+      return failFromCause(error, { op: 'load', fallback: 'Profiilin lataus ei onnistunut.', code: 'profile.load' });
+    }
     return ok({ profile: profileFromRow(data), exists: Boolean(data) });
   } catch (cause) {
-    return fail('Profiilin lataus ei onnistunut.', { cause, code: 'profile.load' });
+    return failFromThrown(cause, { op: 'load', fallback: 'Profiilin lataus ei onnistunut.', code: 'profile.load' });
   }
 }
 
@@ -65,14 +70,20 @@ export async function loadProfile() {
  * update-toteutus epäonnistui siinä tapauksessa hiljaisesti.
  */
 export async function saveProfile(profile) {
+  // Huoltotila (ydin puuttuu kannasta): ei kirjoiteta, syy kerrotaan.
+  const refused = writeRefusal();
+  if (refused) return refused;
   try {
     const { error } = await getClient()
       .from(TABLE)
       .upsert(profileToRow(profile, requireUserId()));
 
-    if (error) return fail('Profiilin tallennus ei onnistunut.', { cause: error, code: 'profile.save' });
+    if (error) {
+      noteSchemaError(TABLE, error, [], { write: true });
+      return failFromCause(error, { op: 'save', fallback: 'Profiilin tallennus ei onnistunut.', code: 'profile.save' });
+    }
     return ok(profile);
   } catch (cause) {
-    return fail('Profiilin tallennus ei onnistunut.', { cause, code: 'profile.save' });
+    return failFromThrown(cause, { op: 'save', fallback: 'Profiilin tallennus ei onnistunut.', code: 'profile.save' });
   }
 }

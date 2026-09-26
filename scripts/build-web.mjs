@@ -29,8 +29,11 @@ const FILES = [
   'apple-touch-icon.png'
 ];
 
-/** Kokonaiset hakemistot. */
-const DIRECTORIES = ['src'];
+/**
+ * Kokonaiset hakemistot. vendor/ sisältää supabase-js:n, jonka index.html
+ * lataa omasta originista (ei CDN:stä): ilman sitä APK ei käynnisty offline.
+ */
+const DIRECTORIES = ['src', 'vendor'];
 
 /** Tiedostot, jotka EIVÄT kuulu julkaistavaan pakettiin. */
 function isExcluded(relativePath) {
@@ -79,6 +82,13 @@ for (const dir of DIRECTORIES) copied += copyDirectory(dir);
 for (const required of ['index.html', path.join('src', 'app', 'main.js'), path.join('src', 'styles.css')]) {
   if (!fs.existsSync(path.join(DIST, required))) {
     throw new Error('Koonti epäonnistui: ' + required + ' puuttuu');
+  }
+}
+// Jokainen index.html:n lataama oma skripti (supabase-js) on koonnissa.
+const html = fs.readFileSync(path.join(DIST, 'index.html'), 'utf8');
+for (const [, script] of html.matchAll(/<script src="\.\/([^"]+)"/g)) {
+  if (!fs.existsSync(path.join(DIST, script))) {
+    throw new Error('Koonti epäonnistui: index.html lataa tiedoston ' + script + ', joka puuttuu');
   }
 }
 

@@ -36,7 +36,8 @@ import {
   departureState, DEPARTURE_STATE, isEstimateStale, hasTravelProvider, suggestPlaces,
   LOCATION_TRIGGER, LOCATION_TRIGGERS
 } from '../../domain/travel.js';
-import { TABLES } from '../../data/schema.js';
+import { hasTable, isTableAvailable } from '../../data/schema.js';
+import { serverUnavailableHintHtml } from '../schemaStatus.js';
 import {
   createTravelPlan, editTravelPlan, deleteTravelPlan, setTravelEstimate,
   createLocationRule, editLocationRule, deleteLocationRule, toggleLocationRule
@@ -178,7 +179,7 @@ function ruleRowHtml(rule) {
       <div class="assist-title">${escapeHtml(rule.place)}</div>
       <div class="assist-meta">
         <span class="assist-tag${rule.active ? '' : ' tone-warn'}">
-          ${rule.active ? 'Päällä' : 'Pois päältä'}
+          ${rule.active ? 'Päällä — ei vielä laukea' : 'Pois päältä'}
         </span>
         ${escapeHtml(TRIGGER_LABELS[rule.trigger] || rule.trigger)}
       </div>
@@ -220,10 +221,12 @@ export function renderTravel() {
       String(a.arrivalDate || '').localeCompare(String(b.arrivalDate || ''))
       || String(a.arrivalTime || '').localeCompare(String(b.arrivalTime || '')));
 
-    const varoitus = TABLES.travelPlans
+    const varoitus = isTableAvailable('travelPlans')
       ? ''
-      : `<p class="hint"><strong>Huom.</strong> Matkat säilyvät toistaiseksi `
-        + `vain tämän istunnon ajan.</p>`;
+      : hasTable('travelPlans')
+        ? serverUnavailableHintHtml()
+        : `<p class="hint"><strong>Huom.</strong> Matkat säilyvät toistaiseksi `
+          + `vain tämän istunnon ajan.</p>`;
 
     plans.innerHTML = '<h2 class="section-title">Matkat</h2>'
       + providerNoteHtml() + varoitus
@@ -238,10 +241,12 @@ export function renderTravel() {
     const sorted = [...state.locationRules].sort((a, b) =>
       String(a.place || '').localeCompare(String(b.place || ''), 'fi'));
 
-    const varoitus = TABLES.locationRules
+    const varoitus = isTableAvailable('locationRules')
       ? ''
-      : `<p class="hint"><strong>Huom.</strong> Paikkamuistutukset säilyvät `
-        + `toistaiseksi vain tämän istunnon ajan.</p>`;
+      : hasTable('locationRules')
+        ? serverUnavailableHintHtml()
+        : `<p class="hint"><strong>Huom.</strong> Paikkamuistutukset säilyvät `
+          + `toistaiseksi vain tämän istunnon ajan.</p>`;
 
     rules.innerHTML = varoitus
       + (sorted.length === 0

@@ -31,5 +31,7 @@ export const ACCOUNT_DATA_MAP = Object.freeze({
   lifeAreas: { table: 'life_areas', ownerColumn: 'user_id' },
   weeklyCapacities: { table: 'weekly_capacities', ownerColumn: 'user_id' },
   timeEntries: { table: 'time_entries', ownerColumn: 'user_id' },
-  alignmentReviews: { table: 'alignment_reviews', ownerColumn: 'user_id' }
+  alignmentReviews: { table: 'alignment_reviews', ownerColumn: 'user_id' },
+  alignmentItemSettings: { table: 'alignment_item_settings', ownerColumn: 'user_id' },
+  runningTimers: { table: 'running_timers', ownerColumn: 'user_id' }
 });

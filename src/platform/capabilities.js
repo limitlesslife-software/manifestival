@@ -115,8 +115,34 @@ export function setLocationPermissionState(state) {
   locationPermissionState = LOCATION_STATES.includes(state) ? state : 'error';
 }
 
+/**
+ * Natiivisijainti Android-sovelluksessa: POIS KÄYTÖSTÄ.
+ *
+ * Mikään toteutettu ominaisuus ei käytä sijaintia: matka ja lähtöaika
+ * toimivat paikannimillä ja käyttäjän antamalla kestolla, eikä
+ * paikkamuistutuksia arvioida. Siksi Android-manifesti ei julista
+ * sijaintilupaa lainkaan, ja tämä lippu pitää JS-puolen samassa linjassa:
+ * natiivikuoressa sijaintisovitinta ei valita, Profiili näyttää vain syyn
+ * eikä "Salli sijainti" -painiketta, jonka pyyntö kaatuisi puuttuvaan
+ * manifestilupaan.
+ *
+ * Selaimen (PWA) kertahaku ei tarvitse manifestilupaa, joten se säilyy.
+ *
+ * JOS TÄMÄ KÄÄNNETÄÄN TODEKSI, manifestiin on lisättävä likimääräinen
+ * sijaintilupa ja android.hardware.location required="false"
+ * (tests/android.test.mjs vartioi molempia).
+ */
+export const NATIVE_LOCATION_ENABLED = false;
+
 function locationSupport() {
   if (isNativeShell()) {
+    if (!NATIVE_LOCATION_ENABLED) {
+      return {
+        supported: true,
+        reason: 'Mikään toiminto ei vielä tarvitse sijaintia, joten sovellus ei pyydä sijaintilupaa.',
+        implemented: false
+      };
+    }
     const plugins = globalThis.Capacitor && globalThis.Capacitor.Plugins;
     const available = Boolean(plugins && plugins.Geolocation);
     return {
@@ -172,7 +198,55 @@ function notificationsPermission() {
   return PERMISSION.PROMPT;
 }
 
+/**
+ * Android-sovelluksen oma puheliitännäinen (android/app/src/main/java/
+ * fi/limitlesslife/manifestival/SpeechPlugin.java, @CapacitorPlugin-nimi).
+ *
+ * Nimi on tässä eikä speech.js:ssä samasta syystä kuin ilmoitusliitännäisen
+ * tarkistus yllä: speech.js tuo tämän moduulin, joten vastakkainen suunta
+ * olisi sykli. tests/android.test.mjs vertaa nimeä Java-annotaatioon.
+ */
+export const NATIVE_SPEECH_PLUGIN = 'ManifestivalSpeech';
+
+/** Puheliitännäinen natiivikuoresta, tai null. Ei kutsu liitännäistä. */
+export function nativeSpeechPlugin() {
+  if (!isNativeShell()) return null;
+  const plugins = globalThis.Capacitor.Plugins;
+  const plugin = plugins && plugins[NATIVE_SPEECH_PLUGIN];
+  return plugin && typeof plugin.listen === 'function' ? plugin : null;
+}
+
+/**
+ * Mikrofoniluvan välimuisti. Sama periaate kuin ilmoitusluvassa:
+ * capability() on synkroninen, luku laitteelta asynkroninen, joten
+ * src/platform/speech.js työntää viimeksi nähdyn tilan tänne.
+ * Alkuarvo on PROMPT, ei koskaan GRANTED.
+ */
+let speechPermissionState = PERMISSION.PROMPT;
+
+/** Päivitä mikrofoniluvan välimuisti. Kutsuu vain speech.js. */
+export function setSpeechPermissionState(state) {
+  const allowed = [PERMISSION.PROMPT, PERMISSION.GRANTED, PERMISSION.DENIED];
+  speechPermissionState = allowed.includes(state) ? state : PERMISSION.PROMPT;
+}
+
+/** Nollaa mikrofoniluvan välimuisti. Testit. */
+export function resetSpeechPermissionState() {
+  speechPermissionState = PERMISSION.PROMPT;
+}
+
 function speechSupport() {
+  if (isNativeShell()) {
+    // WebView'n SpeechRecognitionia EI lasketa tueksi: Capacitor hylkää sen
+    // mikrofonipyynnön, ja virhe näyttäisi selaimen virheeltä. Android-
+    // sovelluksessa puhe kulkee vain omalla liitännäisellä.
+    const plugin = nativeSpeechPlugin();
+    return {
+      supported: true,
+      reason: plugin ? '' : 'Puheentunnistus ei ole käytettävissä tässä Android-sovelluksen versiossa. Kirjoita komento.',
+      implemented: Boolean(plugin)
+    };
+  }
   const ctor = typeof globalThis !== 'undefined'
     ? (globalThis.SpeechRecognition || globalThis.webkitSpeechRecognition)
     : null;
@@ -184,6 +258,13 @@ function speechSupport() {
     };
   }
   return { supported: true, reason: '', implemented: true };
+}
+
+/** Lupaa ei voi olla "kysymättä", jos kuuntelu ei ole edes mahdollista. */
+function speechPermission() {
+  const support = speechSupport();
+  if (!support.supported || !support.implemented) return PERMISSION.UNSUPPORTED;
+  return speechPermissionState;
 }
 
 function networkSupport() {
@@ -227,14 +308,17 @@ const REGISTRY = Object.freeze({
   [CAPABILITY.SPEECH]: {
     label: 'Puheentunnistus',
     support: speechSupport,
-    permission: () => PERMISSION.PROMPT,
-    plannedNote: 'Taustakuuntelu vaatii natiivikerroksen (WP12)'
+    permission: speechPermission,
+    // Näkyy vain, kun alusta tukee puhetta mutta tämä versio ei sitä
+    // toteuta (Android-kuori ilman puheliitännäistä). Ei lupausta
+    // taustakuuntelusta: sitä ei ole eikä tule.
+    plannedNote: 'Vaatii sovellusversion, jossa on puheliitännäinen. Kirjoittaminen toimii aina.'
   },
   [CAPABILITY.LOCATION]: {
     label: 'Sijainti',
     support: locationSupport,
     permission: locationPermission,
-    plannedNote: 'Kertaluonteinen etualan sijainti (ei taustaseurantaa)'
+    plannedNote: 'Ei käytössä tässä sovellusversiossa (ei taustaseurantaa)'
   },
   [CAPABILITY.BACKGROUND]: {
     label: 'Taustatoiminta',

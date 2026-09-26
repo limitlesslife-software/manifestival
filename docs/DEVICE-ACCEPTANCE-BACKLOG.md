@@ -301,9 +301,12 @@ paketista — ja silloin kaksi järjestelmää lupaisi samaa asiaa.
 
 ### 2. Puheentunnistus — tuki vaihtelee alustoittain
 
-`src/app/speechInput.js` käyttää selaimen `SpeechRecognition`-rajapintaa.
-Tuki vaihtelee selaimittain ja WebView-versioittain, ja
-Capacitor-kuoressa se voi puuttua kokonaan.
+`src/app/speechInput.js` ja `src/app/voice.js` käyttävät alustasovitinta
+`src/platform/speech.js`: selaimessa `SpeechRecognition`-rajapintaa,
+Android-sovelluksessa omaa `ManifestivalSpeech`-liitännäistä
+(`SpeechPlugin.java`, järjestelmän `SpeechRecognizer`). WebView'n omaa
+tunnistinta ei käytetä Android-sovelluksessa lainkaan: Capacitor hylkäisi
+sen mikrofonipyynnön.
 
 - [ ] Mikrofonipainike **piilotetaan**, jos tunnistusta ei ole
       (`speechAvailable()` palauttaa epätoden)
@@ -320,7 +323,8 @@ Capacitor-kuoressa se voi puuttua kokonaan.
 
 Viimeinen on nimenomaan WebView-ongelma: osa alustoista ei laukaise
 `onend`-tapahtumaa, ja ilman aikakatkaisua mikrofonipainike jäisi
-ikuisesti aktiiviseksi.
+ikuisesti aktiiviseksi. Aikaraja on nyt yhteinen (`speech.js`) ja koskee
+myös puhepaneelia ja natiivia liitännäistä.
 
 **Ääntä ei tallenneta.** Sitä ei voi todentaa käyttöliittymästä, mutta
 sen voi todentaa lähdekoodista — ja `tests/assistant-ui.test.mjs` tekee
@@ -329,10 +333,14 @@ sen jokaisella ajolla.
 ### 3. Sijaintilupa — sääntö on olemassa, geoaita ei
 
 Paikkamuistutus on **sääntö, ei toteutus**. Sääntö voidaan kirjata,
-nähdä ja kytkeä päälle, mutta mikään ei seuraa sijaintia.
+nähdä ja kytkeä päälle, mutta mikään ei seuraa sijaintia. Android-sovellus
+ei julista sijaintilupaa lainkaan (`NATIVE_LOCATION_ENABLED = false`).
 
 - [ ] Uusi sääntö on listassa **Pois päältä**
-- [ ] "Kytke päälle" avaa vahvistusdialogin
+- [ ] "Kytke päälle" avaa vahvistusdialogin, jonka teksti sanoo
+      paikkamuistutusten **eivät vielä laukea** eikä sovellus seuraa sijaintia
+- [ ] Päälle kytketyn säännön merkintä on "Päällä — ei vielä laukea"
+- [ ] Kytkeminen ei avaa järjestelmän sijaintilupadialogia
 - [ ] Dialogin teksti mahtuu puhelimen leveydelle
 - [ ] Peruutus jättää säännön pois päältä
 - [ ] Hyväksyntä kytkee säännön päälle ja tila säilyy latauksen yli
@@ -484,19 +492,65 @@ tuotannossa.** Yhtäkään kohtaa ei saa merkitä hyväksytyksi ilman laiteajoa.
       ja uudelleenyritys toimii; fokus palaa avaajapainikkeeseen suljettaessa
 - [P2] Suomen kielen tunnistuslaatu (`fi-FI`) arkilauseilla riittää
 
+### Puhe Android-sovelluksessa: ManifestivalSpeech-liitännäinen (P0, EI SUORITETTU)
+
+Liitännäinen on käännetty (`gradlew compileDebugJavaWithJavac`) mutta sitä
+ei ole ajettu puhelimessa. Asenna tuore debug-APK (`npm run build:android`).
+
+- [P0] Tuore asennus: sovelluksen käynnistys **ei** avaa mikrofonilupadialogia;
+      Asetukset → Sovellukset → Manifestival → Käyttöoikeudet näyttää
+      mikrofonin tilassa "ei sallittu / kysy"
+- [P0] Kultainen mikrofoni → paneeli "Käynnistetään mikrofonia…" ja
+      järjestelmän lupadialogi. **Salli** → "Kuuntelen…" → sano "lisää tehtävä
+      pestä auto huomenna" → teksti näkyy muokattavana
+- [P0] **Estä** (ensimmäinen kerta) → viesti "Mikrofonin käyttöä ei sallittu";
+      ei "Yritä uudelleen" -painiketta; "Kirjoita sen sijaan" toimii; uusi
+      napautus kysyy luvan uudelleen
+- [P0] **Estä pysyvästi** (toinen kielto / "älä kysy uudelleen") → viesti
+      polusta Asetukset → Sovellukset → Manifestival → Käyttöoikeudet →
+      Mikrofoni ja painike **"Avaa asetukset"**, joka avaa sovelluksen
+      järjestelmäasetukset; luvan salliminen ja paluu → uusi napautus toimii
+- [P0] Kuuntelun aikana Koti-painike / sovelluksen vaihto → Androidin
+      mikrofoni-ilmaisin (vihreä piste) **sammuu** heti; palatessa paneeli on
+      suljettu eikä myöhäistä tekstiä ilmesty
+- [P0] Lupadialogin aikana Koti-painike → palatessa ja sallittaessa mikrofoni
+      **ei** aukea itsestään (odotus perutaan `onStop`issa)
+- [P0] Kirjauspalkin sanelu: napautus aloittaa, toinen napautus lopettaa ja
+      sanottu teksti tulee kenttään (tila "Lopetetaan kuuntelu…" hetken);
+      jos mitään ei kuultu: "En kuullut mitään. Yritä uudelleen.";
+      mikrofoni-ilmaisin sammuu
+- [P1] Hiljaisuus 15 s → "Kuuntelu keskeytyi" tai "En kuullut mitään";
+      mikrofoni-ilmaisin sammuu
+- [P1] Lentotila → selkeä verkkoviesti (järjestelmän tunnistin tarvitsee
+      yleensä verkon), ei jumia
+- [P1] Laite ilman Googlen tunnistinta (tai se poistettu käytöstä) →
+      "Puheentunnistus ei ole käytettävissä…", mikrofoni ei jää auki
+- [P1] Tietosuoja: mikään kohta sovelluksessa ei väitä äänen käsittelyn
+      tapahtuvan laitteella; Play-kaupan tietoturvalomake kertoo, että
+      järjestelmän tunnistin (yleensä Google) käsittelee äänen
+
 ### Sijainti (P1)
 
-- [P1] Sijaintilupa pyydetään vasta kun käyttäjä painaa "käytä sijaintia";
-      ei käynnistyksessä
-- [P1] Lupa evätty → selitys ja käyttäjän antama matka-aika toimii
-- [P1] Lupa evätty pysyvästi (`blocked`) → ohjaus järjestelmäasetuksiin, ei
-      toistuvaa kysymistä
-- [P1] Laitteen sijainti pois päältä → selkeä viesti, ei jumia
-- [P1] Kertahaku onnistuu; Androidin sijaintikuvake ei jää päälle haun jälkeen
+**Android: EI SOVELLU.** Android-sovellus ei julista sijaintilupaa
+(`NATIVE_LOCATION_ENABLED = false`, 26.9.2026), koska mikään toteutettu
+ominaisuus ei käytä sijaintia: matka-aika on aina käyttäjän antama. Profiili
+näyttää vain syyn, ei "Salli sijainti" -painiketta. Alla olevat kohdat
+koskevat **selainta (PWA)**, jossa kertahaku on Profiilin diagnostiikka.
+
+- [P0] Android: Asetukset → Sovellukset → Manifestival → Käyttöoikeudet
+      **ei listaa sijaintia lainkaan**; `aapt2 dump permissions` ei näytä
+      `ACCESS_*_LOCATION`-lupia eikä `aapt2 dump badging` pakollista
+      `android.hardware.location`-ominaisuutta
+- [P1] Selain: sijaintilupa pyydetään vasta kun käyttäjä painaa Profiilissa
+      "Salli sijainti"; ei käynnistyksessä
+- [P1] Selain: lupa evätty → selitys; matka-aika toimii yhä käyttäjän antamana
+- [P1] Selain: lupa evätty pysyvästi (`blocked`) → ohjaus selaimen
+      asetuksiin, ei toistuvaa kysymistä
+- [P1] Selain: kertahaku onnistuu ja näyttää vain tarkkuuden
 - [P0] **Koordinaatteja ei löydy** localStoragesta, IndexedDB:stä, lokeista,
       viennistä eikä tilin inventaarioista (tarkista selaimen/WebView:n
       tallennus etätarkastajalla)
-- [P0] Asetuksissa/luvissa **ei ole taustasijaintia** (vain "vain käytön aikana")
+- [P0] Asetuksissa/luvissa **ei ole taustasijaintia**
 
 ### Lähtöaika ja ilmoitukset (P1)
 
@@ -588,6 +642,72 @@ istunnon muistissa, ja näkymä kertoo sen.
 - [P2] Vaakasuunta: pitkät aluenimet rivittyvät, ei ylivuotoa
 - [P2] Päiväkortti Tänään-näkymässä: yksi havainto, ei kaavioita,
       "Avaa Suunta" vie oikeaan välilehteen
+
+---
+
+## Suunta 2: ajastin, kirjaus, energia, katsaus v2 — EI SUORITETTU
+
+Paikallisesti todennettu: yksikkö- ja integraatiotestit sekä
+headless-Chromen E2E (`npm run e2e:suunta`, 412 px ja 360 px). **Fyysisellä
+laitteella ei ole ajettu mitään.** Migraatiot 0012 ja 0013 ajamatta:
+ajastin säilyy laitteen localStoragessa (käyttäjäkohtainen avain), muu
+Suunnan tieto elää istunnon muistissa.
+
+Ajastimen kesto lasketaan aikaleimoista. Taustasuoritusta EI ole eikä
+sitä väitetä: laitteella todennetaan, että **näyttö** on oikein paluun
+jälkeen, ei että jokin laskisi taustalla.
+
+### P0
+
+- [P0] Ajastin: käynnistä → sovellus taustalle 10 min → takaisin:
+      palkki näyttää ~10 min lisää, tila "Käynnissä"
+- [P0] Ajastin näyttö lukittuna 30 min → avaus: kulunut aika oikein,
+      pysäytys kirjaa oikean määrän
+- [P0] Ajastin + sovelluksen sulku (swipe pois) → avaus: ajastin palaa
+      (localStorage), pysäytys kirjaa koko ajan
+- [P0] Ajastin keskiyön yli (esim. 23.40 → 00.20): kaksi kirjausta
+      oikeille päiville; sunnuntai → maanantai menee eri viikoille
+- [P0] Ajastin offline: lentotila → pysäytä → "tallennetaan, kun yhteys
+      palaa" (vain kun 0013 on ajettu ja portti auki); yhteys takaisin →
+      yksi kirjaus, ei kahta
+- [P0] Nopea kirjaus: +15/+30/+1 h yhdellä napautuksella; kaksoisnapautus
+      ei tuota kahta kirjausta
+- [P0] Tehtävän valmistuminen: "Kirjataanko tähän käytetty aika?" —
+      "Arvio … hyväksyn arvion toteumaksi" näkyy vain kun arvio on;
+      "Ohita" ei kirjaa mitään; "Älä kysy" pitää
+
+### P1
+
+- [P1] Energiakentät (tehtävä, rutiini, projekti) ja kuormittavan ajan
+      raja: numeronäppäimistö, desimaalipilkku, tyhjä = ei asetettu
+- [P1] Suunta vierii mobiilissa: pikatoiminnot, arviointi, kohdistus,
+      katsaus v2, esikatselu ja kehitys — ei vaakavieritystä
+- [P1] Viikkokatsaus v2: viisi pohdintakysymystä, tallennus ei hyppää
+      alkuun, näppäimistö ei peitä aktiivista kenttää
+- [P1] Ensi viikon esikatselu → "Vahvista valitut muutokset…" → dialogi
+      luettelee jokaisen muutoksen; peruutus ei muuta mitään
+- [P1] Pitkät elämänalueiden nimet (60 merkkiä) ajastinpalkissa,
+      havainnoissa ja taulukoissa rivittyvät
+- [P1] Turva-alue: ajastinpalkki ei jää loven/tilarivin alle
+      (env(safe-area-inset-top))
+- [P1] TalkBack: ajastinpalkin tila luetaan sanoina ("Käynnissä",
+      "Kulunut 1 h 5 min"); painikkeilla on nimet; dialogin fokus
+
+### P2
+
+- [P2] Ajastin kesäajan vaihdon yli (lokakuun viimeinen sunnuntai):
+      kesto seinäkellon mukaan oikein (3 h, ei 2 h)
+- [P2] Aikavyöhykkeen vaihto ajastimen ollessa käynnissä (matka): kesto
+      ei muutu; päivä tulee pysäytyshetken vyöhykkeestä
+- [P2] Tumma/vaalea tila: ajastinpalkin kontrasti, Tauolla-tilan väri
+- [P2] Ilmoituksia ei käytetä ajastimessa eikä päivän havainnoissa:
+      mitään ei ilmoiteta taustalla
+- [P2] Havainnon selitys (tekoälyselitys oletuksena pois): havainnossa EI
+      ole "Selitä tekoälyllä" -painiketta; "Miksi tämä näkyy?" näyttää
+      deterministisen selityksen, myös ilman verkkoa. Vasta jos omistaja
+      kytkee selityksen päälle (`docs/SUUNTA-ACTIVATION-GO-NOGO.md`):
+      ilman verkkoa "Selitä tekoälyllä" näyttää saman deterministisen
+      selityksen eikä jumiudu
 
 ---
 

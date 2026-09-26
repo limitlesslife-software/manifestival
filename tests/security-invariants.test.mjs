@@ -92,13 +92,30 @@ test('TURVA: kaikki tietokantakutsut ovat data-kerroksessa', () => {
     'src/data/profileRepo.js',
     'src/data/collectionsRepo.js',
     'src/data/notificationPrefsRepo.js',
-    'src/data/client.js'
+    'src/data/client.js',
+    // Käynnistyksen skeematarkistus: data-kerroksessa, VAIN LUKEVA ja
+    // rivitön (select(sarakkeet).limit(0)). Erillinen testi alla pitää sen
+    // sellaisena -- kirjoitus tai rivien luku kaataisi sen.
+    'src/data/schemaProbe.js'
   ]);
   for (const file of browserModules()) {
     // Array.from ei ole tietokantakutsu.
     const source = readCode(file).replace(/\bArray\.from\(/g, 'ARRAY_FROM(');
     if (!/\.from\(/.test(source)) continue;
     assert.ok(allowed.has(file), 'tietokantakutsu väärässä paikassa: ' + file);
+  }
+});
+
+test('TURVA: skeematarkistus ei kirjoita eikä lue rivejä', () => {
+  // Tarkistus kysyy vain, onko sarakejoukko olemassa. limit(0) = ei yhtään
+  // riviä, joten käyttäjän tietoa ei kulje verkossa eikä rajausta tarvita.
+  const source = readCode('src/data/schemaProbe.js');
+  const calls = [...source.matchAll(/\.from\(/g)];
+  assert.equal(calls.length, 1, 'odotettiin tasan yhtä kyselyä');
+  const chain = source.slice(calls[0].index, calls[0].index + 120);
+  assert.match(chain, /^\.from\(table\)\.select\(columns\.join\(','\)\)\.limit\(0\)/);
+  for (const forbidden of ['.insert(', '.update(', '.upsert(', '.delete(', '.rpc(', 'head: true', 'head:true']) {
+    assert.equal(source.includes(forbidden), false, 'skeematarkistus sisältää: ' + forbidden);
   }
 });
 

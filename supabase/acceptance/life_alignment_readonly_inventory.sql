@@ -15,6 +15,13 @@
 --
 -- Kopioi tulokset takaisin kehitykseen; docs/LIFE-ALIGNMENT-SUPABASE-INVENTORY.md
 -- kertoo mitä kustakin tuloksesta päätellään.
+--
+-- ⚠ AJA ENSISIJAISESTI supabase/acceptance/activation_readonly_inventory.sql.
+-- Tämä tiedosto on 16 erillistä lausetta, ja Supabasen SQL-editori
+-- näyttää vain VIIMEISEN tuloksen. activation_readonly_inventory.sql on
+-- yksi lause, yksi taulukko ja rivillä 00 koko tulos yhtenä soluna,
+-- jonka tools/activation/score-inventory.mjs pisteyttää. Tätä tiedostoa
+-- voi yhä käyttää lause kerrallaan (maalaa lause ja Run).
 
 -- 1. Sovelluksen taulut ja RLS-tila.
 select c.relname as taulu,
@@ -129,12 +136,17 @@ select status as tila, count(*) as projekteja,
 
 -- 14. Tehtävien viikkojakauma viimeiseltä 8 viikolta (vain lukumäärät).
 --     Kertoo kuinka paljon suunniteltua työtä tyypillisellä viikolla on.
-select date_trunc('week', date)::date as viikko_alkaa,
+--     tasks.date voi olla tuotannossa tekstiä TAI päivämäärä (docs/SCHEMA.md:
+--     "date / text"). date_trunc(text) kaatuisi, joten arvo muunnetaan
+--     päivämääräksi vain kun se on muotoa VVVV-KK-PP (todettu oikealla
+--     PostgreSQL:llä, tools/pg-rehearsal).
+select date_trunc('week', left(date::text, 10)::date)::date as viikko_alkaa,
        count(*) as tehtavia,
        coalesce(sum(duration_minutes), 0) as arvioidut_minuutit,
        count(*) filter (where duration_minutes is null) as arvioimattomia
   from public.tasks
- where date >= (current_date - 56)
+ where date::text ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+   and left(date::text, 10)::date >= (current_date - 56)
  group by 1
  order by 1;
 

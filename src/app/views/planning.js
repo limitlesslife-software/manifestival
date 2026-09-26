@@ -39,7 +39,7 @@ import { horizonCapacity, horizonEnd, remainingWork } from '../../domain/capacit
 import { summarizeHorizon, planHorizon } from '../../domain/planScheduler.js';
 import { fmtISO, todayMidnight } from '../../lib/datetime.js';
 import { showError, success } from '../../ui/toast.js';
-import { currentPlanningFeedback } from '../alignment.js';
+import { currentPlanningFeedback, validatePlanAgainstAlignment } from '../alignment.js';
 
 let generating = false;
 let committing = false;
@@ -73,6 +73,20 @@ function syncAutomation(state) {
 
 // ------------------------------------------------------ ehdotuksen tarkistus
 
+/** Suunnan tarkistus suunnitelmalle: mahtuuko, jääkö tärkeä alue ilman aikaa. */
+function alignmentCheckHtml(plan) {
+  if (getState().lifeAreas.length === 0) return '';
+  const result = validatePlanAgainstAlignment(plan, { goalId: plan.goalId });
+  if (!result || result.messages.length === 0) return '';
+  const rows = result.messages.map(message => `<li class="plan-check-${escapeHtml(message.level)}">`
+    + `${message.level === 'attention' ? '<strong>Huomio:</strong> ' : ''}${escapeHtml(message.text)}</li>`).join('');
+  return `<div class="plan-alignment-check" role="status">
+      <div class="add-form-title" style="margin-top:10px;">Suunta: mahtuuko tämä elämääsi?</div>
+      <ul class="plan-list">${rows}</ul>
+      <p class="hint">Tarkistus ei estä hyväksyntää. Se kertoo, miten suunnitelma asettuu kapasiteettiisi ja tärkeisiin alueisiisi.</p>
+    </div>`;
+}
+
 function renderPlanReview(container, state) {
   const plan = state.pendingPlan;
 
@@ -83,6 +97,9 @@ function renderPlanReview(container, state) {
 
   const yhteenveto = summarizePlan(plan);
   const committed = plan.status === PLAN_STATUS.COMMITTED;
+  // Tekoälyn suunnitelma EI ole poikkeus Suunnan säännöistä: samat
+  // deterministiset tarkistukset ennen hyväksyntää. Ei estä, kertoo.
+  const suunta = committed ? '' : alignmentCheckHtml(plan);
 
   // Osiot rakennetaan ENNEN koostetta. Kutsu kooste-literaalin sisällä
   // näyttäisi suojaamattomalta kentältä turvatarkistuksessa, vaikka
@@ -120,6 +137,8 @@ function renderPlanReview(container, state) {
         ${yhteenveto.estimatedMinutes > 0
           ? `<span class="load-chip">${hoursLabel(yhteenveto.estimatedMinutes)} työtä</span>` : ''}
       </div>
+
+      ${suunta}
 
       ${plan.goal.targetValue !== null ? `
         <div class="t-sub">Mittari: ${escapeHtml(plan.goal.metric || '')}

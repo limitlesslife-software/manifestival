@@ -9,6 +9,8 @@
 // eikä palvelimen konfiguraatiota. Kehittäjä näkee ne konsolissa -- ilman
 // käyttäjän arvoja (redactDbDetail, redactQuotedValues).
 
+import { LOG_LEVEL, logFailure as logFailureFields } from './logger.js';
+
 /**
  * Sovellusvirhe, jolla on erikseen käyttäjäviesti ja diagnostiikka.
  */
@@ -18,18 +20,23 @@ export class AppError extends Error {
    * @param {object} [options]
    * @param {unknown} [options.cause]  Alkuperäinen virhe (vain diagnostiikkaan).
    * @param {string}  [options.code]   Lyhyt tunniste lokitusta varten.
+   * @param {string}  [options.op]     Operaatio lokitusta varten (esim. 'tasks.insert').
+   *   Tyypitetyssä virheessä (failWith) koodi on ERROR_CODE-arvo, joten
+   *   operaatio kulkee erikseen.
    */
   constructor(userMessage, options = {}) {
     super(userMessage);
     this.name = 'AppError';
     this.userMessage = userMessage;
     this.code = options.code || 'unknown';
+    this.op = options.op || null;
     this.cause = options.cause;
   }
 
   /** Kehittäjälle tarkoitettu esitys. Ei näytetä käyttäjälle. */
   toDiagnostic() {
-    const parts = [`[${this.code}] ${this.userMessage}`];
+    const head = this.op ? `[${this.code} ${this.op}]` : `[${this.code}]`;
+    const parts = [`${head} ${this.userMessage}`];
     if (this.cause) {
       const c = redactedCause(this.cause);
       if (typeof c === 'string') parts.push(c);
@@ -165,6 +172,23 @@ export function logError(error) {
 }
 
 /**
+ * Kirjaa epäonnistuminen tapahtumana: vain nimi, koodi ja HTTP-tila.
+ *
+ * Sovelluskoodin console.warn/error(…, error) tulosti koko virheolion
+ * (viesti voi sisältää käyttäjän tekstiä). Tämä kirjaa vain tunnisteet.
+ * Yksi toteutus: kirjaus tehdään src/lib/logger.js:n logFailure-apurilla
+ * (failureFields: nimi, koodi ja tila myös syyoliosta). Tämä säilyttää
+ * vain oletustason ERROR tämän moduulin kutsujille.
+ *
+ * @param {string} event esim. 'auth.signout_failed'
+ * @param {unknown} error
+ * @param {string} [level] LOG_LEVEL; oletus ERROR
+ */
+export function logFailure(event, error, level = LOG_LEVEL.ERROR) {
+  logFailureFields(event, error, level);
+}
+
+/**
  * Sovelluksen virhekoodit.
  *
  * Tyypitetty koodi on eri asia kuin käyttäjäviesti. Viesti voi muuttua
@@ -192,6 +216,12 @@ export const ERROR_CODE = Object.freeze({
   PERSISTENCE_UNAVAILABLE: 'persistence_unavailable',
   /** Verkkoyhteys puuttuu tai katkesi. */
   NETWORK_ERROR: 'network_error',
+  /**
+   * Palvelin vastasi, mutta on tilapäisesti poissa käytöstä (503,
+   * aikakatkaisu, kanta ei vastaa). Eri asia kuin verkko: laitteen
+   * yhteys on kunnossa, eikä "tarkista yhteys" auttaisi.
+   */
+  SERVICE_UNAVAILABLE: 'service_unavailable',
   /** Tuntematon. Käytetään vain kun mikään muu ei sovi. */
   UNKNOWN: 'unknown'
 });

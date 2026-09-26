@@ -17,6 +17,18 @@ const DEFAULT_DURATION_MS = 4200;
 /** Jono, jotta useampi ilmoitus ei kasaannu päällekkäin. */
 const active = new Set();
 
+/**
+ * Näkyvä ilmoitus sävyn ja tekstin mukaan -> sen ajastin ja poisto.
+ *
+ * SAMA VIESTI EI PINOUDU. Yksi verkkokatko tuotti aiemmin kolme tai
+ * useamman päällekkäisen ilmoituksen (esim. jokaisesta hylätystä
+ * kirjauksesta oma). Näkyvissä jo oleva sama viesti vain pysyy
+ * näkyvissä pidempään: sen ajastin alkaa alusta.
+ */
+const visible = new Map();
+
+const keyOf = (message, tone) => tone + '\u0000' + message;
+
 function host() {
   let node = document.getElementById(CONTAINER_ID);
   if (!node) {
@@ -37,6 +49,14 @@ function render(message, tone, duration) {
   // ilmoitus saa kaataa sitä jälkikäteen.
   if (typeof document === 'undefined') return () => {};
 
+  const key = keyOf(String(message), tone);
+  const existing = visible.get(key);
+  if (existing && active.has(existing.node)) {
+    clearTimeout(existing.timer);
+    existing.timer = setTimeout(existing.remove, Math.max(duration, existing.duration));
+    return existing.remove;
+  }
+
   const node = document.createElement('div');
   node.className = 'toast toast-' + tone;
   node.setAttribute('role', tone === 'error' ? 'alert' : 'status');
@@ -45,16 +65,20 @@ function render(message, tone, duration) {
   host().appendChild(node);
   active.add(node);
 
-  const remove = () => {
+  const entry = { node, timer: null, duration, remove: null };
+  entry.remove = () => {
+    clearTimeout(entry.timer);
+    if (visible.get(key) === entry) visible.delete(key);
     if (!active.has(node)) return;
     active.delete(node);
     node.classList.add('toast-leaving');
     setTimeout(() => node.remove(), 220);
   };
+  visible.set(key, entry);
 
-  const timer = setTimeout(remove, duration);
-  node.addEventListener('click', () => { clearTimeout(timer); remove(); });
-  return remove;
+  entry.timer = setTimeout(entry.remove, duration);
+  node.addEventListener('click', entry.remove);
+  return entry.remove;
 }
 
 /** Neutraali ilmoitus. */
@@ -83,6 +107,8 @@ export function showError(error, fallbackMessage = 'Jokin meni pieleen. Yritä u
 
 /** Poista kaikki näkyvät ilmoitukset. Kutsutaan uloskirjautumisessa. */
 export function clearToasts() {
+  for (const entry of visible.values()) clearTimeout(entry.timer);
+  visible.clear();
   for (const node of active) node.remove();
   active.clear();
 }

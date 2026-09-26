@@ -16,10 +16,17 @@ ovat juuri niitä, jotka erottavat Manifestivalin kalenterista:
 |---|---|---|
 | Muistutus oikeaan aikaan, myös sovellus kiinni | 11, 23 | Web push on epäluotettava; Android tappaa taustatilan, iOS ei tue asennettuna |
 | Lähtöajan ennakointi sijainnin perusteella | 12 | Taustasijainti ei ole selaimen käytettävissä |
-| Puhekomento lukitulla puhelimella | 10 | Puheentunnistus vaatii etualalla olevan välilehden |
+| Puhekomento Android-sovelluksessa (etualalla, napautuksesta) | 10 | WebView'n Web Speech -tunnistus ei saa mikrofonia Capacitorissa; tarvitaan järjestelmän oma tunnistin (vaihe 6) |
 
 Jos nämä jäävät pois, tuotteesta jää jäljelle kalenteri. Natiivikerros ei siis
 ole tekninen mieltymys vaan tuotevaatimus.
+
+**Peruttu lupaus (26.9.2026): puhekomento lukitulla puhelimella.** Se vaatisi
+taustalla kuuntelevan mikrofonin (etualapalvelu ja jatkuvasti auki oleva
+mikrofoni), mikä on ristiriidassa tuotteen perusvaatimuksen "ei aina
+kuuntelevaa mikrofonia" kanssa. Puhe toimii vain sovelluksen ollessa auki ja
+vain käyttäjän napautuksesta; `speech.supportsBackgroundCapture()` on `false`
+kaikilla alustoilla.
 
 **Milloin:** vasta kun ydin on vakaa (ks. `docs/ROADMAP.md`, WP12). Tämä
 dokumentti tehdään etukäteen, jotta arkkitehtuuriratkaisut eivät sulje ovea.
@@ -39,7 +46,7 @@ tarjoaa JS-sillan natiivirajapintoihin.
 | Uudelleenkirjoitus | Ei mitään |
 | Ilmoitukset | `@capacitor/local-notifications` — natiivi ajastus, toimii sovellus kiinni |
 | Taustasijainti | `@capgo/background-geolocation` |
-| Puheentunnistus | `@capacitor-community/speech-recognition` — natiivi |
+| Puheentunnistus | Oma liitännäinen `SpeechPlugin.java` (`ManifestivalSpeech`), järjestelmän `SpeechRecognizer` — ks. vaihe 6 |
 | APK / AAB | `cap sync android` + Gradle |
 | Play Store | Normaali julkaisu |
 | Ylläpito | Yksi koodikanta, natiivisilta vain sitä vaativille toiminnoille |
@@ -148,6 +155,12 @@ android/                   ← Capacitorin generoima kuori. Ei sovelluslogiikkaa
 **Sääntö:** natiivikoodia kirjoitetaan vain `src/platform/`-sovittimen taakse.
 Jos Android-versioon tulee liiketoimintalogiikkaa, se on virhe.
 
+Natiivipuolen lähdetiedostot on lueteltu täsmällisesti
+(`tests/android.test.mjs`): `MainActivity.java` ja `SpeechPlugin.java`.
+Puheliitännäinen on alustarajapinta (mikrofoni → teksti), ei
+sovelluslogiikkaa; sen ainoa kuluttaja on `src/platform/speech.js`. Jokainen
+uusi natiivitiedosto on omistajan päätös.
+
 ### Sovittimen valinta ajon aikana
 
 `src/platform/index.js` tunnistaa jo nyt natiivikuoren
@@ -165,8 +178,51 @@ kutsupaikkoja tarvitse muuttaa.
 | 3 | Paikallinen debug-APK | **TEHTY** |
 | 4 | `platform/capacitor.js`: ilmoitukset natiivisti | PLANNED (WP12) |
 | 5 | Taustasijainti ja lähtöajan ennakointi | PLANNED (WP11–12) |
-| 6 | Natiivi puheentunnistus | PLANNED (WP12) |
+| 6 | Natiivi puheentunnistus | **KOODI TEHTY** (käännetty; ei laitetestattu) |
 | 7 | Allekirjoitettu release-AAB ja Play Store | PLANNED |
+
+### Vaihe 6: puheentunnistus — päätös (26.9.2026)
+
+**Miksi selaimen polku ei toimi Android-sovelluksessa.** WebView tukee Web
+Speech -tunnistusta, mutta se pyytää mikrofonin `WebChromeClient.onPermissionRequest`-
+polun kautta. Capacitorin `BridgeWebChromeClient` muuttaa pyynnön
+ajonaikaiseksi pyynnöksi kahdelle luvalle (äänitys ja äänen asetusten
+muokkaus) ja hylkää pyynnön, jos kumpaakaan ei ole julistettu. Tulos oli
+`not-allowed` ja harhaanjohtava "salli mikrofoni selaimen asetuksista".
+
+**Valinta: oma liitännäinen, ei `@capacitor-community/speech-recognition`.**
+`android/app/src/main/java/fi/limitlesslife/manifestival/SpeechPlugin.java`
+(`@CapacitorPlugin(name = "ManifestivalSpeech")`, rekisteröidään
+`MainActivity.onCreate`:ssa ennen `super.onCreate`a). Perusteet:
+
+- Täysi hallinta lupaan: vain `RECORD_AUDIO`, ja sitä kysytään **vain**
+  `listen()`-kutsussa käyttäjän napautuksesta. `requestPermissions()` vain
+  lukee tilan.
+- Äänen asetusten muokkauslupaa **ei julisteta tarkoituksella**: silloin
+  Capacitor hylkää WebView'n omat mikrofonipyynnöt, eikä web-koodi voi avata
+  mikrofonia liitännäisen ohi. Web-puolella natiivikuori ei koskaan rakenna
+  `webkitSpeechRecognition`ia (`src/platform/speech.js`).
+- Elinkaari: `handleOnPause` katkaisee kuuntelun; `handleOnStop` ja
+  `handleOnDestroy` perivät myös lupadialogin odotuksen. Ei etualapalvelua, ei
+  taustakuuntelua, ei väliaikatuloksia, ääntä ei tallenneta.
+- Kutsut ratkeavat aina (`{ok, text}` tai `{ok:false, code}`), eivät hylkää.
+- Pysyvä kielto (`blocked`) → "Avaa asetukset" (`openSettings()`,
+  `ACTION_APPLICATION_DETAILS_SETTINGS`).
+- Manifestissa `<queries>` → `android.speech.RecognitionService`, jotta
+  Android 11+ näyttää tunnistinpalvelun sovellukselle.
+- Yhteisöliitännäinen olisi tuonut riippuvuuden, jonka manifestilisäykset ja
+  elinkaarikäytös pitäisi auditoida erikseen, eikä se olisi jättänyt
+  WebView'n mikrofonipolkua suljetuksi.
+
+**Yksityisyys.** `android.speech.SpeechRecognizer` antaa äänen järjestelmän
+tunnistimelle (yleensä Googlen), usein palvelimella käsiteltäväksi.
+Laitekohtaisen tunnistimen suosiminen (API 31+ `createOnDeviceSpeechRecognizer`)
+on avoin omistajan päätös. Play-kaupan tietoturvalomakkeen ja sovelluksen
+tekstien on kerrottava tämä totuudenmukaisesti.
+
+**Todennettu:** `gradlew compileDebugJavaWithJavac` menee läpi (JDK 21,
+Capacitor 8.5). **Ei todennettu:** toiminta puhelimessa — ks.
+`docs/DEVICE-ACCEPTANCE-BACKLOG.md`.
 
 **Vaiheet 1–3 eivät muuta web-tuotantoa millään tavalla.** Android-projekti on
 oma hakemistonsa; `index.html`, `src/` ja `api/` pysyvät ennallaan ja Vercel
@@ -195,25 +251,63 @@ npm run sync:android    # dist/ -> android/app/src/main/assets/public
 npm run build:android   # koko ketju + Gradle
 ```
 
-### Java-versio — huomio ympäristöstä
+### Java-versio — JDK 21 kiinnitetty
 
-Capacitor 8 vaatii **Java 21 tai uudemman**. Koneen oletus-JDK on 17, joten
-koonti epäonnistuu virheeseen `invalid source release: 21`, jos `JAVA_HOME`
-osoittaa siihen.
+Capacitor 8 kääntää **Java 21 -tasolla**. Generoitu
+`android/app/capacitor.build.gradle` ja
+`node_modules/@capacitor/android/capacitor/build.gradle` asettavat
+`JavaVersion.VERSION_21`. JDK 17:llä koonti kaatuu siksi virheeseen
+`invalid source release: 21`. Vaatimus tulee Capacitorista: Gradle 9.1 itse
+toimisi JVM 17:llä.
 
-Android Studion mukana tulee JDK 25, joka kelpaa. Uutta koneenlaajuista
-asennusta ei siis tarvita — riittää osoittaa koonti siihen:
+Gradle-daemon on kiinnitetty JDK 21:een tiedostossa
+`android/gradle.properties`:
 
-```bash
-JAVA_HOME="/c/Program Files/Android/Android Studio/jbr" ./gradlew assembleDebug
+```
+org.gradle.java.home=C:/Program Files/Eclipse Adoptium/jdk-21.0.12.101-hotspot
 ```
 
-Android Studiosta rakennettaessa tämä tapahtuu automaattisesti.
+Komentotulkin `JAVA_HOME` (tällä koneella Temurin 17) ei siksi enää ratkaise
+daemonin JDK:ta, eikä `JAVA_HOME`a tarvitse asettaa. Gradle ajetaan
+PowerShellistä:
+
+```powershell
+Set-Location android; .\gradlew.bat assembleDebug
+```
+
+Kiinnitys on koneen oma, absoluuttinen polku versionhallinnassa. Kaksi
+vaihtoehtoa on kirjattu omistajan tai kehityksen valinnaksi:
+
+- (a) siirrä rivi käyttäjäkohtaiseen `%USERPROFILE%\.gradle\gradle.properties`-tiedostoon
+- (b) korvaa rivi tiedostolla `gradle/gradle-daemon-jvm.properties` (`toolchainVersion=21`)
+
+Temurinin päivitys asentaa uuden hakemistonimen, jolloin kiinnitys on
+päivitettävä. Tätä ei ole todennettu. Kiinnitys (a7f8cb3) puuttuu aaltojen
+C–G ehdokkailta. Ks. `docs/activation/ANDROID-ACCEPTANCE-BUILD.md`, kohta
+"JDK-kiinnitys".
+
+### Versiointi
+
+Hyväksyntä-APK rakennetaan komennolla `npm run android:acceptance`
+(`docs/activation/ANDROID-ACCEPTANCE-BUILD.md`).
+
+- **versionName** on muotoa `<package.json version>-wave<X>.<välimuisti>+<sha7>`,
+  ja debug-koonti lisää päätteen `-debug`. Ilman koontiskriptiä tulos on
+  `1.0.0-debug`.
+- **versionCode** on 1, kunnes omistaja päättää toisin. Tämä on
+  OMISTAJAN TUOTEPÄÄTÖS (OWNER PRODUCT DECISION). Suositus on commitin aika
+  sekunteina hetkestä 2026-01-01Z (`--version-code=commit-epoch`). Se on
+  laitteella yksisuuntainen ovi: vanhempaa APK:ta ei voi asentaa suuremman
+  versionCoden päälle.
+
+Arvot tulevat Gradle-ominaisuuksista `manifestival.versionCode` ja
+`manifestival.versionName` (`android/app/build.gradle`).
+Sovellustunnukseen ei lisätä debug-päätettä.
 
 ### Gradle 9.1 — miksi versio nostettiin
 
-Koneella on tasan kaksi JDK:ta: Adoptium 17 ja Android Studion mukana tuleva
-JBR 25. Kumpikaan ei toiminut Gradle 8.14.3:n kanssa:
+Noston hetkellä koneella oli kaksi JDK:ta: Adoptium 17 ja Android Studion
+mukana tuleva JBR 25. Kumpikaan ei toiminut Gradle 8.14.3:n kanssa:
 
 | JDK | Ongelma |
 |---|---|
@@ -234,8 +328,9 @@ gradle/wrapper/gradle-wrapper.properties
 ```
 
 AGP 8.13.0 toimii Gradle 9.1:n kanssa; sekä `assembleDebug` että
-`assembleRelease` menevät läpi. Jos koneelle joskus asennetaan JDK 21,
-kumpikin versio toimii — Gradle 9.1 tukee myös sitä.
+`assembleRelease` menevät läpi. Myöhemmin koneelle asennettiin JDK 21
+(Temurin 21.0.12), ja daemon kiinnitettiin siihen (ks. "Java-versio"
+yllä). Koneella on nyt kolme JDK:ta: 17, 21 ja JBR 25.
 
 ### Web-koonti (`dist/`) — miksi se on olemassa
 
@@ -244,8 +339,10 @@ juuresta ilman käännösvaihetta. `dist/` on olemassa vain siksi, että Capacit
 kopioi `webDir`-hakemiston APK:hon. Jos `webDir` olisi repon juuri, APK:hon
 menisivät `node_modules`, `tests`, `docs`, `supabase` ja `android` itse.
 
-`scripts/build-web.mjs` kopioi täsmälleen ne 41 tiedostoa, jotka selain
-oikeasti lataa. Se ei muunna eikä minifioi mitään.
+`scripts/build-web.mjs` kopioi täsmälleen ne tiedostot, jotka selain
+oikeasti lataa: juuren kuusi tiedostoa ja koko `src/`-puun, pois lukien
+`src/package.json` (aalto J: 148 tiedostoa). Se ei muunna eikä minifioi
+mitään.
 
 ---
 
@@ -270,6 +367,7 @@ jälkeen. Muoto noudattaa käänteistä verkkotunnusta ja organisaatiota.
 | Capacitorin pääversiopäivitykset | Vaativat Android-projektin päivityksen | Sama työ kuin Tuntisessa; ei uusi riski |
 | Web ja Android eri julkaisutahdissa | Käyttäjällä voi olla vanha APK | Supabase-skeeman pitää olla taaksepäin yhteensopiva |
 | Play Store -tarkistus | Taustasijainti vaatii perustelun | Kuvataan hakemuksessa; ominaisuus on vapaaehtoinen |
+| Sijaintilupa | Ei julisteta lainkaan: mikään toteutettu ominaisuus ei käytä sijaintia (`NATIVE_LOCATION_ENABLED = false`) | Lisätään vain likimääräisenä ja `android.hardware.location required="false"` -rivin kanssa, kun reittipalvelu (WP11) sitä tarvitsee |
 
 ---
 

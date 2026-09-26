@@ -65,6 +65,22 @@ export function isImportance(value) {
   return Number.isInteger(value) && value >= 1 && value <= 5;
 }
 
+export const IMPORTANCE_REQUIRED_MESSAGE = 'Valitse kuinka tärkeä alue on.';
+
+/**
+ * Käyttäjän LUOMAN alueen tärkeys on valittava itse. Puuttuva arvo ei saa
+ * hiljaa oletusta 3: se sulkisi alueen huomiotta jäämisen havainnon
+ * ulkopuolelle (NEGLECT vaatii tärkeyden 4–5), eikä käyttäjä olisi
+ * päättänyt sitä. Kannasta luettu rivi saa yhä normalisoinnin oletuksen.
+ *
+ * @returns {string|null} virheilmoitus tai null
+ */
+export function importanceChoiceError(input) {
+  const value = input ? input.importance : undefined;
+  if (value === null || value === undefined || value === '') return IMPORTANCE_REQUIRED_MESSAGE;
+  return null;
+}
+
 function wholeNumber(value) {
   if (value === null || value === undefined || value === '') return null;
   if (typeof value === 'boolean') return null;
@@ -92,7 +108,8 @@ export function normalizeLifeArea(input = {}) {
     name: String(input.name ?? '').normalize('NFC').trim().slice(0, MAX_AREA_NAME_LENGTH),
     description: normalizeText(input.description, MAX_AREA_DESCRIPTION_LENGTH),
     // Kelvoton tärkeys EI muutu oletukseksi hiljaa: validointi hylkää sen.
-    // Puuttuva tärkeys saa oletuksen (lomake ilman valintaa).
+    // Puuttuva tärkeys saa oletuksen vain kannasta luetulle riville; uuden
+    // alueen luonti vaatii valinnan (importanceChoiceError).
     importance: importance === null ? DEFAULT_IMPORTANCE : importance,
     targetMinutesPerWeek: target,
     categoryKey: isCategory(input.categoryKey) ? input.categoryKey : null,

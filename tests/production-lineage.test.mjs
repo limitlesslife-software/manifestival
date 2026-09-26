@@ -26,12 +26,11 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
 
 import { read } from './helpers/sources.mjs';
 import {
-  cacheVersionLineageProblem, isDescendantOfOriginMain, originMainAvailable,
-  originMainState, versionNumber
+  cacheVersionLineageProblem, isAncestor, isDescendantOfOriginMain, lineageCheck,
+  originMainAvailable, originMainState, parseLineageCheck, versionNumber
 } from '../tools/release/lineage.mjs';
 import { parseCacheVersion } from '../tools/release/state.mjs';
 
@@ -75,42 +74,62 @@ test('KRIITTINEN: tämä haara ei väitä origin/mainia korkeampaa välimuistive
   assert.equal(problem, null, problem || '');
 });
 
-// Jäädytetty julkaisuehdokas: dokumentoitu tila kirjattiin, kun ehdokas
-// leikattiin. Tuotanto etenee junaa pitkin (esim. aalto D deployataan),
-// joten vaatimus on sukulinja, ei yhtäsuuruus: dokumentoitu SHA on
-// origin/mainin esi-isä tai sama, eikä sen välimuistiversio ole uudempi.
-// Muuten ehdokkaan oma testipatteristo kaatuisi heti ensimmäisen deployn
-// jälkeen, vaikka ehdokkaassa ei ole mitään vikaa.
-function isAncestorOrEqual(ancestor, descendant) {
-  if (ancestor === descendant) return true;
-  try {
-    execFileSync('git', ['merge-base', '--is-ancestor', ancestor, descendant], { stdio: 'ignore' });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-test('KRIITTINEN: RELEASE-SEQUENCING.md:n merkitsemä origin/main-tila täsmää todelliseen', t => {
+test('KRIITTINEN: RELEASE-SEQUENCING.md:n merkitsemä origin/main-tila on todellisen origin/mainin sukulinjassa', t => {
   if (!available) { t.skip('origin/main ei ole paikallisesti saatavilla'); return; }
 
-  const doc = read(SEQUENCING_DOC);
-  const match = /LINEAGE-CHECK: origin\/main sha=([0-9a-f]{40}) cache=(v\d+)/.exec(doc);
-  assert.ok(match,
-    `${SEQUENCING_DOC} ei sisällä koneellisesti luettavaa LINEAGE-CHECK-riviä`);
+  // SUKULINJA, EI YHTÄSUURUUS (ACT-03). Yhtäsuuruus kaatoi jokaisen
+  // jäädytetyn ehdokkaan oman patteriston heti ensimmäisen deployn
+  // jälkeen, koska push siirtää origin/mainia. Dokumentti saa olla
+  // JÄLJESSÄ; se ei saa nimetä committia, joka ei ole ollut tuotannossa,
+  // eikä suurempaa välimuistiversiota kuin tuotannossa on.
+  const documented = parseLineageCheck(read(SEQUENCING_DOC));
+  assert.ok(documented, `${SEQUENCING_DOC} ei sisällä koneellisesti luettavaa LINEAGE-CHECK-riviä`);
 
-  const [, documentedSha, documentedCache] = match;
   const origin = originMainState();
   assert.ok(origin.available, 'origin/main ei ollut saatavilla vaikka originMainAvailable() sanoi kyllä');
 
-  assert.ok(isAncestorOrEqual(documentedSha, origin.sha),
-    `${SEQUENCING_DOC} sanoo origin/mainin SHA:n olevan ${documentedSha}, `
-    + `mutta se ei ole origin/mainin (${origin.sha}) esi-isä. Dokumentti nimeää `
-    + 'SHA:n, joka ei ole tuotannon historiassa.');
+  const result = lineageCheck(documented, origin, isAncestor);
+  assert.deepEqual(result.problems, [],
+    `${SEQUENCING_DOC}: LINEAGE-CHECK ei ole origin/mainin sukulinjassa — päivitä rivi ja sitä ympäröivä kuvaus.`);
+});
 
-  assert.ok(versionNumber(documentedCache) <= versionNumber(origin.cacheVersion),
-    `${SEQUENCING_DOC} sanoo origin/mainin välimuistiversion olevan `
-    + `${documentedCache}, mutta origin/main on vasta ${origin.cacheVersion}.`);
+// =====================================================================
+// lineageCheck() — puhdas funktio, tynkä-origin
+// =====================================================================
+
+const C = 'c'.repeat(40);
+const D = 'd'.repeat(40);
+const X = 'e'.repeat(40);
+const ancestry = (pairs) => (a, b) => (a === b ? true : pairs.some(([p, q]) => p === a && q === b));
+
+test('lineageCheck: sama SHA ja sama välimuisti -> ok', () => {
+  const r = lineageCheck({ sha: C, cache: 'v16' }, { sha: C, cacheVersion: 'v16' }, ancestry([]));
+  assert.equal(r.ok, true);
+  assert.equal(r.behind, false);
+});
+
+test('KRIITTINEN: lineageCheck: dokumentti on esi-isä ja tuotannon välimuisti on suurempi -> ok (jäljessä)', () => {
+  const r = lineageCheck({ sha: C, cache: 'v16' }, { sha: D, cacheVersion: 'v17' }, ancestry([[C, D]]));
+  assert.deepEqual(r.problems, []);
+  assert.equal(r.behind, true);
+});
+
+test('KRIITTINEN: lineageCheck: dokumentti ei ole esi-isä -> virhe', () => {
+  const r = lineageCheck({ sha: X, cache: 'v16' }, { sha: D, cacheVersion: 'v17' }, ancestry([[C, D]]));
+  assert.equal(r.ok, false);
+  assert.match(r.problems.join(' '), /ei ole origin\/mainin .* esi-isä/);
+});
+
+test('KRIITTINEN: lineageCheck: dokumentin välimuisti suurempi kuin tuotannon -> virhe', () => {
+  const r = lineageCheck({ sha: C, cache: 'v18' }, { sha: D, cacheVersion: 'v17' }, ancestry([[C, D]]));
+  assert.equal(r.ok, false);
+  assert.match(r.problems.join(' '), /väittää välimuistiversiota v18/);
+});
+
+test('lineageCheck: sama SHA mutta eri välimuisti tai vertailu mahdoton -> virhe', () => {
+  assert.equal(lineageCheck({ sha: C, cache: 'v15' }, { sha: C, cacheVersion: 'v16' }, ancestry([])).ok, false);
+  assert.equal(lineageCheck({ sha: C, cache: 'v16' }, { sha: D, cacheVersion: 'v17' }, () => null).ok, false);
+  assert.equal(lineageCheck(null, { sha: D, cacheVersion: 'v17' }, ancestry([])).ok, false);
 });
 
 test('dokumentoitu origin/main-versio on kelvollinen versionumero', t => {

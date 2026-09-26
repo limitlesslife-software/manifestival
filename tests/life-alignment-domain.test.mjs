@@ -394,11 +394,31 @@ test('OVERLOAD: toisen viikon kapasiteettia ei käytetä', () => {
 
 // ================================================================ HUOMIOTTA JÄÄMINEN
 
+// Viikon päivät ma..to: sääntöversio 3 vertaa toteumaa vasta, kun
+// kirjauksia on vähintään kahdelta päivältä ja puolelta seurantajakson
+// päivistä. Tämä kirjaaja kirjaa neljänä päivänä (ma–to).
+const LOG_DAYS = [MON, '2026-09-15', '2026-09-16', THU];
+
+/** Minuutit tasan neljälle päivälle (jakojäännös ensimmäiselle); summa pysyy samana. */
+function spread(id, minutes, extra = {}) {
+  const base = Math.floor(minutes / LOG_DAYS.length);
+  const rest = minutes - base * LOG_DAYS.length;
+  return LOG_DAYS.map((date, i) => entry(`${id}${i}`, date, base + (i === 0 ? rest : 0), extra))
+    .filter(e => e.minutes > 0);
+}
+
+// Muutettu sääntöversiossa 3: työtä kirjataan ma–to (ennen: vain
+// maanantaina 300 min). Yhden päivän kirjaus ei enää riitä toteuman
+// vertailuun, joten kiinteä kirjaaja kirjaa neljänä päivänä; luvut
+// (odotettu 300 torstaina, 700 viikon jälkeen) ovat ennallaan.
+// Muutettu (kirjattu osuus puolet käyttäjän viitteestä): työtä 1200 min
+// (ennen 300). Ilman kapasiteettia viite on tavoitteiden summa 1900 min x
+// jakson osuus; 300 min olisi alle puolet, eikä seuranta vakiintuisi.
 function neglectCase({ todayIso, actualFamily = 0, importance = 5, target = 700, extraEntries = true, active = true }) {
   const areas = [area('fam', 'Perhe', importance, target, { active }), area('work', 'Työ', 3, 1200)];
   const timeEntries = [];
   if (actualFamily > 0) timeEntries.push(entry('f', MON, actualFamily, { lifeAreaId: 'fam' }));
-  if (extraEntries) timeEntries.push(entry('w', MON, 300, { lifeAreaId: 'work' }));
+  if (extraEntries) timeEntries.push(...spread('w', 1200, { lifeAreaId: 'work' }));
   return analyzeWeek({ weekStart: WEEK, todayIso, areas, timeEntries });
 }
 
@@ -452,18 +472,21 @@ test('NEGLECT: jos toteumaa ei kirjata lainkaan, arvio tehdään suunnitelmasta 
 
 // ================================================================ POIKKEAMA TAVOITTEISTA
 
+// Muutettu sääntöversiossa 3: kirjaukset jaetaan ma–to (ennen kaikki
+// maanantaina). Toteuman jakaumaa verrataan vain vakiintuneesta
+// kirjaamisesta; alueiden summat ja siten prosentit ovat ennallaan.
 function misalignmentCase(workMinutes, familyMinutes, { unassigned = 0, targets = [1200, 750, 1050] } = {}) {
   const areas = [area('work', 'Työ', 3, targets[0]), area('fam', 'Perhe', 3, targets[1]), area('oma', 'Oma aika', 3, targets[2])];
   const timeEntries = [
-    entry('w', MON, workMinutes, { lifeAreaId: 'work' }),
-    entry('f', MON, familyMinutes, { lifeAreaId: 'fam' }),
-    entry('o', MON, 1000 - workMinutes - familyMinutes, { lifeAreaId: 'oma' })
+    ...spread('w', workMinutes, { lifeAreaId: 'work' }),
+    ...spread('f', familyMinutes, { lifeAreaId: 'fam' }),
+    ...spread('o', 1000 - workMinutes - familyMinutes, { lifeAreaId: 'oma' })
   ];
-  if (unassigned > 0) timeEntries.push(entry('u', MON, unassigned));
+  if (unassigned > 0) timeEntries.push(...spread('u', unassigned));
   return analyzeWeek({ weekStart: WEEK, todayIso: AFTER, areas, timeEntries });
 }
 
-test('MISALIGNMENT: "Työ sai 62 % ajastasi, vaikka tavoite oli 40 %"', () => {
+test('MISALIGNMENT: "Työ sai 62 % kirjatusta ajastasi, vaikka tavoite oli 40 %"', () => {
   const analysis = misalignmentCase(620, 120);
   const work = signalsOf(analysis, SIGNAL.MISALIGNMENT).find(s => s.areaId === 'work');
   assert.equal(work.metrics.actualPercent, 62);
@@ -471,7 +494,8 @@ test('MISALIGNMENT: "Työ sai 62 % ajastasi, vaikka tavoite oli 40 %"', () => {
   assert.equal(work.metrics.direction, 'over');
   assert.equal(work.severity, SEVERITY.ATTENTION, '22 prosenttiyksikköä');
   const text = explainSignal(work, [area('work', 'Työ', 3, 1200)]).text;
-  assert.match(text, /Työ sai 62 % ajastasi, vaikka tavoite oli 40 %/);
+  // Versio 3: osuus on KIRJATUSTA ajasta (ennen "ajastasi"), ei eletystä ajasta.
+  assert.match(text, /Työ sai 62 % kirjatusta ajastasi, vaikka tavoite oli 40 %/);
 
   // Perhe 12 % vs 25 % = -13 pp: alle kynnyksen, ei havaintoa -- mutta luvut näkyvät alueriviltä.
   assert.equal(signalsOf(analysis, SIGNAL.MISALIGNMENT).some(s => s.areaId === 'fam'), false);
@@ -483,7 +507,8 @@ test('MISALIGNMENT: "Perhe sai 10 %, tavoite oli 25 %" (vaje -15 pp)', () => {
   const analysis = misalignmentCase(620, 100);
   const family = signalsOf(analysis, SIGNAL.MISALIGNMENT).find(s => s.areaId === 'fam');
   assert.equal(family.metrics.direction, 'under');
-  assert.match(explainSignal(family, [area('fam', 'Perhe', 3, 750)]).text, /Perhe sai 10 % ajastasi, vaikka tavoite oli 25 %/);
+  // Versio 3: "kirjatusta ajastasi" (ennen "ajastasi").
+  assert.match(explainSignal(family, [area('fam', 'Perhe', 3, 750)]).text, /Perhe sai 10 % kirjatusta ajastasi, vaikka tavoite oli 25 %/);
 });
 
 test('MISALIGNMENT: kynnys 15 pp, vahva 25 pp', () => {
@@ -526,10 +551,11 @@ test('MISALIGNMENT: ilman toteumaa arvioidaan suunnitelma, ja se on enintään "
 
 test('MISALIGNMENT: tavoite 0 on päätös (aika siihen on poikkeama); puuttuva tavoite ei ole', () => {
   const areas = [area('work', 'Työ', 3, 600), area('games', 'Pelit', 2, 0), area('free', 'Vapaa', 3, null)];
+  // Versio 3: kirjaukset ma–to (ennen vain maanantaina), summat ennallaan.
   const analysis = analyzeWeek({
     weekStart: WEEK, todayIso: AFTER, areas,
-    timeEntries: [entry('w', MON, 300, { lifeAreaId: 'work' }), entry('g', MON, 200, { lifeAreaId: 'games' }),
-      entry('f', MON, 200, { lifeAreaId: 'free' })]
+    timeEntries: [...spread('w', 300, { lifeAreaId: 'work' }), ...spread('g', 200, { lifeAreaId: 'games' }),
+      ...spread('f', 200, { lifeAreaId: 'free' })]
   });
   const ids = signalsOf(analysis, SIGNAL.MISALIGNMENT).map(s => s.areaId);
   assert.ok(ids.includes('games'), 'tavoite 0 ja 29 % ajasta');
@@ -538,9 +564,10 @@ test('MISALIGNMENT: tavoite 0 on päätös (aika siihen on poikkeama); puuttuva 
 
 test('MISALIGNMENT: vajetta ei raportoida kahdesti, jos alue on jo huomiotta jäämässä', () => {
   const areas = [area('work', 'Työ', 3, 600), area('fam', 'Perhe', 5, 600)];
+  // Versio 3: työ kirjataan ma–to (ennen vain maanantaina), summat ennallaan.
   const analysis = analyzeWeek({
     weekStart: WEEK, todayIso: AFTER, areas,
-    timeEntries: [entry('w', MON, 900, { lifeAreaId: 'work' }), entry('f', MON, 60, { lifeAreaId: 'fam' })]
+    timeEntries: [...spread('w', 900, { lifeAreaId: 'work' }), entry('f', MON, 60, { lifeAreaId: 'fam' })]
   });
   assert.equal(signalsOf(analysis, SIGNAL.NEGLECT).filter(s => s.areaId === 'fam').length, 1);
   assert.equal(signalsOf(analysis, SIGNAL.MISALIGNMENT).filter(s => s.areaId === 'fam').length, 0);
@@ -576,10 +603,19 @@ test('aineiston laatu: ei alueita -> none; arvioimaton enemmistö -> weak; puutt
   }).dataQuality.level, QUALITY.WEAK);
   assert.equal(analyzeWeek({ weekStart: WEEK, todayIso: MON, areas, capacity: cap(600),
     tasks: [task('a', MON, 30, { category: 'tyo' })] }).dataQuality.level, QUALITY.PARTIAL, 'ei toteumaa');
+  // Versio 3: "kattava" vaatii vakiintuneen kirjaamisen — kirjauksia
+  // kahdelta päivältä ja vähintään puolet kapasiteetista kuluneelta
+  // osalta viikkoa (ennen: yksi 30 min kirjaus maanantaina riitti).
+  // Muutettu: 2 x 90 min (ennen 2 x 60 = 47 % < 50 % x 10 h x 3/7).
   const good = analyzeWeek({ weekStart: WEEK, todayIso: THU, areas, capacity: cap(600),
-    tasks: [task('a', MON, 30, { category: 'tyo' })], timeEntries: [entry('e', MON, 30, { lifeAreaId: 'work' })] });
+    tasks: [task('a', MON, 30, { category: 'tyo' })],
+    timeEntries: [entry('e', MON, 90, { lifeAreaId: 'work' }), entry('e2', '2026-09-15', 90, { lifeAreaId: 'work' })] });
   assert.equal(good.dataQuality.level, QUALITY.GOOD);
   assert.deepEqual(good.dataQuality.reasons, []);
+  const oneDay = analyzeWeek({ weekStart: WEEK, todayIso: THU, areas, capacity: cap(600),
+    tasks: [task('a', MON, 30, { category: 'tyo' })], timeEntries: [entry('e', MON, 30, { lifeAreaId: 'work' })] });
+  assert.equal(oneDay.dataQuality.level, QUALITY.PARTIAL, 'yhden päivän kirjaus on osittainen');
+  assert.deepEqual(oneDay.dataQuality.reasons, ['partial_actual']);
 });
 
 test('havainnot järjestetään vakavuuden ja lajin mukaan; ensimmäinen on päivän havainto', () => {
@@ -682,8 +718,17 @@ function proposalFixture() {
     task('n-low', '2026-09-24', 100, { category: 'tyo', priority: 'matala' }),
     task('n-done', '2026-09-24', 10, { category: 'koti', completed: true })
   ];
+  // Muutettu sääntöversiossa 3: toteuma kirjataan viitenä päivänä (ennen
+  // yksi 800 min kirjaus maanantaina). Tavoitteen muutos ja kapasiteetti-
+  // ehdotus perustuvat vain vakiintuneeseen, lähes koko viikon kattavaan
+  // kirjaamiseen. Summa on yhä 800 min; Perhe saa 60 min (ennen 0 min),
+  // koska 0 ei enää kelpaa ehdotetuksi tavoitteeksi (0 = "ei nyt").
   const analysis = analyzeWeek({ weekStart: WEEK, todayIso: AFTER, areas, goals, tasks, capacity: cap(600),
-    timeEntries: [entry('w', MON, 800, { lifeAreaId: 'work' })] });
+    timeEntries: [
+      entry('w1', MON, 200, { lifeAreaId: 'work' }), entry('w2', '2026-09-15', 200, { lifeAreaId: 'work' }),
+      entry('w3', '2026-09-16', 200, { lifeAreaId: 'work' }), entry('w4', THU, 140, { lifeAreaId: 'work' }),
+      entry('f1', '2026-09-18', 60, { lifeAreaId: 'fam' })
+    ] });
   const nextAnalysis = analyzeWeek({ weekStart: next, todayIso: AFTER, areas, goals, tasks });
   return { areas, goals, tasks, analysis, nextAnalysis };
 }
@@ -736,12 +781,21 @@ test('ehdotus: huomiotta jäävälle alueelle varaus tärkeimpään tavoitteesee
   const change = proposals.find(p => p.type === ADJUSTMENT.CHANGE_TARGET && p.payload.areaId === 'fam');
   assert.ok(change, 'käyttäjä voi myös todeta tavoitteen epärealistiseksi');
   assert.equal(change.payload.from, 600);
+  assert.equal(change.payload.to, 60, 'kirjatun viikon tahti (60 min), ei koskaan alle mielekkään tavoitteen');
 });
 
 test('ehdotus: kapasiteetti ensi viikolle vain jos sitä ei ole asetettu', () => {
   const { areas, goals, tasks, analysis } = proposalFixture();
   const without = proposeAdjustments(analysis, { areas, goals, tasks });
-  assert.ok(without.some(p => p.type === ADJUSTMENT.SET_CAPACITY && p.payload.availableMinutes === 600));
+  // Suunta 2: viikko on päättynyt ja kirjattu toteuma (800 min) poikkesi
+  // arviosta (600 min) selvästi, joten ehdotus perustuu toteumaan
+  // (lähimpään puoleen tuntiin) ja on KYSYMYS, ei korjaus. Arvo on
+  // käyttäjän muokattavissa ennen vahvistusta.
+  const capacity = without.find(p => p.type === ADJUSTMENT.SET_CAPACITY);
+  assert.equal(capacity.payload.availableMinutes, 810);
+  assert.equal(capacity.reason.kind, 'capacity_deviation');
+  assert.match(capacity.label, /\?$/);
+  assert.match(capacity.detail, /Arvioit ehtiväsi 10 h, ja kirjasit 13 h 20 min/);
   const withCapacity = proposeAdjustments(analysis, {
     areas, goals, tasks, nextCapacity: normalizeWeeklyCapacity({ weekStart: '2026-09-21', availableMinutes: 500 })
   });

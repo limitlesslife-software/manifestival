@@ -51,7 +51,9 @@ const PORTIT = ['routines', 'routineExceptions', 'goals', 'projects',
                 'transactions', 'investments', 'milestones',
                 'inboxItems', 'reminders', 'notices',
                 'travelPlans', 'locationRules',
-                'lifeAreas', 'weeklyCapacities', 'timeEntries', 'alignmentReviews'];
+                'lifeAreas', 'weeklyCapacities', 'timeEntries', 'alignmentReviews',
+                // Migraatio 0013 (aalto J).
+                'runningTimers', 'alignmentItemSettings'];
 
 // =====================================================================
 // PORTTIEN LÄHTÖTILA
@@ -83,16 +85,17 @@ test('KRIITTINEN: porttien joukko vastaa migraatioiden tauluja', () => {
   // taulua, kaataisi jokaisen tallennuksen aktivoinnin jälkeen.
   const taulut = new Set();
   for (const nimi of fs.readdirSync(path.join(ROOT, 'supabase/migrations'))
-                       .filter(n => /^00(0[3-9]|1[0-2])/.test(n))) {
+                       .filter(n => /^00(0[3-9]|1[0-3])/.test(n))) {
     for (const m of read(`supabase/migrations/${nimi}`)
       .matchAll(/create table public\.(\w+)/g)) {
       taulut.add(m[1]);
     }
   }
 
-  assert.equal(taulut.size, 22,
-    `migraatiot 0003-0012 luovat ${taulut.size} taulua, portteja on ${PORTIT.length}`);
-  assert.equal(Object.keys(TABLES).length, 22,
+  // 0013 toi kaksi taulua: running_timers ja alignment_item_settings.
+  assert.equal(taulut.size, 24,
+    `migraatiot 0003-0013 luovat ${taulut.size} taulua, portteja on ${PORTIT.length}`);
+  assert.equal(Object.keys(TABLES).length, 24,
     'porttien määrä ei vastaa migraatioiden taulujen määrää');
   assert.deepEqual(Object.keys(TABLES).sort(), [...PORTIT].sort());
 });
@@ -205,6 +208,9 @@ test('KRIITTINEN: portti kiinni ei väitä tallennuksen onnistuneen pysyvästi',
 // =====================================================================
 
 /** Repositoriomoduulin koodi ilman kommentteja. */
+/** Epäonnistunut tulos palautettuna: fail, failWith tai syystä kuvattu (repoErrors.js). */
+const RETURN_FAIL = /return (?:fail|failWith|failFromCause|failFromThrown)\(/g;
+
 function repoKoodi() {
   return read('src/data/collectionsRepo.js').split(NEWLINE)
     .filter(line => !line.trim().startsWith('//') && !line.trim().startsWith('*'))
@@ -260,7 +266,9 @@ test('KRIITTINEN: jokainen tietokantapolku epäonnistuu näkyvästi', () => {
     `try/catch-lohkoja on vain ${yritykset} — list, insert, update ja remove tarvitsevat omansa`);
 
   // Virhe palautetaan aina failina, ei heitetä kutsujalle eikä nielaista.
-  const failit = (koodi.match(/return fail\(/g) || []).length;
+  // failFromCause/failFromThrown (src/data/repoErrors.js) ovat fail-tuloksen
+  // tyypitettyjä muotoja: syy -> kiinteä käyttäjäviesti (describeError).
+  const failit = (koodi.match(RETURN_FAIL) || []).length;
   assert.ok(failit >= 8,
     `fail-paluita on vain ${failit} — jokaisessa metodissa tarvitaan kaksi`);
 
@@ -279,7 +287,7 @@ test('KRIITTINEN: muistutusasetusten tietokantapolku noudattaa samaa sopimusta',
 
   assert.ok(koodi.includes('requireUserId()'),
     'muistutusasetukset eivät rajaa omistajaan');
-  assert.ok((koodi.match(/return fail\(/g) || []).length >= 4,
+  assert.ok((koodi.match(RETURN_FAIL) || []).length >= 4,
     'muistutusasetusten virhehaarat eivät palauta failia');
   assert.ok(koodi.includes('isPersistent()'),
     'muistutusasetukset eivät tarkista porttia');
@@ -427,41 +435,32 @@ test('KRIITTINEN: tilannedokumentti luettelee jokaisen migraation', () => {
 
   const migraatiot = fs.readdirSync(path.join(ROOT, 'supabase/migrations'))
     .filter(n => n.endsWith('.sql')).sort();
-  assert.ok(migraatiot.length >= 11, `migraatioita on ${migraatiot.length}`);
+  assert.equal(migraatiot.length, 13, `migraatioita on ${migraatiot.length}`);
 
   for (const nimi of migraatiot) {
     assert.ok(doc.includes(nimi),
       `tilannedokumentti ei mainitse migraatiota ${nimi}`);
   }
 
-  // 0001–0008 on ajettu ja hyväksytty tuotannossa.
+  // KAHDEKSAN AJETTUA, YKSI AJAMATON.
   //
-  // 0009 ALKAEN aallot on valmisteltu etukäteen harjoitteluhaaroissa.
-  // Rivi saa sanoa AJETTU vain, jos se samalla nimeää EDELLYTYKSEN ja
-  // oman varmistuksensa. Pelkkä "AJETTU" ilman ehtoa väittäisi
-  // tuotannosta jotain, mitä commitin valmisteluhetkellä ei ollut
-  // tapahtunut. Muuten rivin on sanottava EI AJETTU.
-  const rivit = doc.split(NEWLINE);
-  let ajettuja = 0;
-  for (const nimi of migraatiot) {
-    const numero = nimi.slice(0, 4);
-    const rivi = rivit.find(r => r.includes('|') && r.includes('`' + nimi + '`'));
-    assert.ok(rivi, `tilannedokumentin migraatiotaulukossa ei ole riviä ${nimi}`);
-    if (numero <= '0008') {
-      assert.match(rivi, /\*\*AJETTU\*\*/, `${nimi} ei ole merkitty ajetuksi`);
-      ajettuja += 1;
-      continue;
-    }
-    if (/\*\*AJETTU\*\*/.test(rivi)) {
-      assert.match(rivi, new RegExp(`EDELLYTYS[^|]*\`verify_${numero}\\.sql\` 0 poikkeavaa`),
-        `${nimi}: AJETTU ilman edellytystä ja omaa varmistusta`);
-      ajettuja += 1;
-    } else {
-      assert.match(rivi, /\*\*EI AJETTU\*\*/, `${nimi}: tila puuttuu`);
-    }
+  // Migraatio 0009 (Talous 2.0) on suunniteltu mutta EI AJETTU. Jos
+  // tämä luku nousisi yhdeksään ilman että migraatio on todella
+  // ajettu, dokumentti väittäisi tuotannosta jotain mitä siellä ei
+  // ole -- ja porttien avaaminen sen perusteella kaataisi jokaisen
+  // kirjoituksen.
+  assert.equal((doc.match(/\*\*AJETTU\*\*/g) || []).length, 8,
+    'tilannedokumentti ei merkitse kahdeksaa ajetuksi');
+
+  for (const [numero, tiedosto] of [
+    ['0009', '0009_finance_2.sql'],
+    ['0010', '0010_goal_to_action.sql']
+  ]) {
+    const rivi = doc.split(NEWLINE).find(r => r.includes(tiedosto));
+    assert.ok(rivi, `tilannedokumentti ei mainitse migraatiota ${numero}`);
+    assert.match(rivi, /EI AJETTU/,
+      `migraatio ${numero} ei ole merkitty ajamattomaksi`);
   }
-  assert.equal((doc.match(/\*\*AJETTU\*\*/g) || []).length, ajettuja,
-    'dokumentissa on AJETTU-merkintöjä migraatiotaulukon ulkopuolella');
 });
 
 test('KRIITTINEN: tilannedokumentin porttitaulukko vastaa koodia', () => {
@@ -498,8 +497,6 @@ test('KRIITTINEN: tilannedokumentin porttitaulukko vastaa koodia', () => {
   // BILL_PAYMENT_FIELDS on sarakeportti, ei taulu, joten se ei ole
   // TABLES-oliossa. Se on silti portti, ja portti jota dokumentti ei
   // mainitse on portti jonka tilaa kukaan ei tarkista.
-  // Rivi haetaan taulukkorivinä (`| \`NIMI\` |`), ei minä tahansa
-  // mainintana: sama nimi esiintyy dokumentin selitysteksteissä.
   for (const [nimi, arvo] of [
     ['BILL_PAYMENT_FIELDS', BILL_PAYMENT_FIELDS],
     ['GOAL_PLANNING_FIELDS', GOAL_PLANNING_FIELDS],

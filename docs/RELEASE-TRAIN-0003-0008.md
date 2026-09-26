@@ -16,6 +16,7 @@ Tämä on junan yleisohje. Aaltokohtaiset tarkistuslistat ovat erikseen:
 | **G** | `milestones` | `v20` | **ESTETTY** | [WAVE-G.md](acceptance/WAVE-G.md) |
 | **H** | `inboxItems`, `reminders`, `notices`, `travelPlans`, `locationRules` | `v21` | **ESTETTY** | [WAVE-H.md](acceptance/WAVE-H.md) |
 | **I** | `lifeAreas`, `weeklyCapacities`, `timeEntries`, `alignmentReviews` (+ sarakeportti `GOAL_LIFE_AREA_FIELD`) | `v22` | **ESTETTY** | [WAVE-I.md](acceptance/WAVE-I.md) |
+| **J** | `runningTimers`, `alignmentItemSettings` (+ sarakeportti `ALIGNMENT_REALITY_FIELDS`) | `v23` | **ESTETTY** | [WAVE-J.md](acceptance/WAVE-J.md) |
 
 **Aalto F on estetty yhdestä nimetystä syystä:** migraatiota
 `0009_finance_2.sql` ei ole ajettu tuotantoon. Sen sovelluskoodi on

@@ -46,7 +46,13 @@ export const API = Object.freeze({
    * resolveCommand()-funktiossa selaimessa. Ks. api/command.js ja
    * src/app/aiCommands.js.
    */
-  command: '/api/command'
+  command: '/api/command',
+  /**
+   * Suunnan havainnon selitys. VALINNAINEN: deterministinen selitys
+   * toimii aina ilman tätä. Konteksti on minimoitu (alueet tunnuksina,
+   * ei otsikoita). Ei kirjoita mitään. Ks. api/explain.js.
+   */
+  explain: '/api/explain'
 });
 
 /**

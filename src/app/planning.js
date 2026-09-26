@@ -70,7 +70,7 @@ import {
   addRoutineToState, removeRoutineFromState
 } from './state.js';
 import { logError } from '../lib/result.js';
-import { currentPlanningFeedback } from './alignment.js';
+import { currentPlanningFeedback, currentPlanningConstraints } from './alignment.js';
 
 /**
  * Tallennetut avaimet.
@@ -145,7 +145,8 @@ export async function requestPlan({ goalText, goalId = null, fetchImpl } = {}) {
     capacity,
     todayIso,
     existingGoal: goalId ? state.goals.find(goal => goal.id === goalId) : null,
-    alignmentCapHours: feedback ? feedback.capHours : null
+    alignmentCapHours: feedback ? feedback.capHours : null,
+    alignmentConstraints: currentPlanningConstraints()
   });
 
   try {

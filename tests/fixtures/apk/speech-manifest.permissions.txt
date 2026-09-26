@@ -1,0 +1,10 @@
+package: fi.limitlesslife.manifestival
+uses-permission: name='android.permission.INTERNET'
+uses-permission: name='android.permission.RECORD_AUDIO'
+uses-permission: name='android.permission.RECEIVE_BOOT_COMPLETED'
+uses-permission: name='android.permission.WAKE_LOCK'
+uses-permission: name='android.permission.POST_NOTIFICATIONS'
+uses-permission: name='android.permission.SCHEDULE_EXACT_ALARM'
+uses-permission: name='android.permission.ACCESS_NETWORK_STATE'
+permission: fi.limitlesslife.manifestival.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION
+uses-permission: name='fi.limitlesslife.manifestival.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION'

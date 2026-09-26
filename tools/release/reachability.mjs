@@ -284,6 +284,24 @@ export const REACHABILITY = Object.freeze([
     evidence: { html: 'dirReviewHistory', view: 'src/app/views/direction.js' },
     crud: 'luonti, luku, päivitys',
     note: 'Tilannekuva on historiaa. Muutosehdotukset vaativat vahvistuksen yksitellen.'
+  }),
+  Object.freeze({
+    gate: 'runningTimers',
+    reach: REACH.REACHABLE,
+    label: 'Ajanseuranta',
+    nav: 'Kaikki näkymät -> ajastinpalkki (käynnistys: Suunta, tehtävä, projekti, rutiini)',
+    evidence: { html: 'timerBar', view: 'src/app/views/timeLog.js' },
+    crud: 'käynnistys, tauko, jatko, pysäytys (kirjaus), hylkäys',
+    note: 'Enintään yksi ajastin käyttäjää kohti. Kesto johdetaan aikaleimoista; laite säilyttää ajastimen uudelleenlatauksen yli.'
+  }),
+  Object.freeze({
+    gate: 'alignmentItemSettings',
+    reach: REACH.REACHABLE,
+    label: 'Kuormittavuus',
+    nav: 'Tehtävä -> Kuormittavuus (myös rutiini, projekti ja Suunta -> Arvioi tehtäviä)',
+    evidence: { html: 'afEnergy', view: 'src/app/views/tasks.js' },
+    crud: 'luonti, luku, muokkaus, poisto kohteen mukana',
+    note: 'Käyttäjän oma kuormittavuus 1–5, tarkoituksella ilman aluetta ja karkea arvio. Ei päätellä otsikosta.'
   })
 ]);
 

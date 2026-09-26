@@ -7,7 +7,10 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 
+import { ROOT } from './helpers/sources.mjs';
 import {
   handleRequest, resolveAdminKey, CONFIRMATION_PHRASE, RECENT_LOGIN_WINDOW_MS
 } from '../supabase/functions/delete-account/handler.js';
@@ -27,9 +30,34 @@ const BOB = {
 };
 const TOKENS = { 'alice.token.value': ALICE, 'bobby.token.value': BOB };
 
+/**
+ * Puuttuvan taulun vastaus laskentakyselyyn, kuten supabase-js sen antaa.
+ *
+ * Valekanta EI SAA lukea tuntematonta taulua tyhjäksi: silloin testi ei
+ * koskaan näkisi tuotannon tilannetta, jossa migraatiot 0009-0013 ovat
+ * ajamatta ja taulua ei ole. Taulu, jota ei ole `world.rows`:ssa, vastaa
+ * kuten oikea PostgREST:
+ *   pgrst205  PostgREST 12+ (404, koodi PGRST205)
+ *   42p01     vanhempi PostgREST (404, koodi 42P01)
+ *   head204   HEAD-pyynnön 404 ilman runkoa; postgrest-js muuttaa sen
+ *             muotoon error: null, count: null, status: 204
+ */
+const MISSING_RESPONSES = Object.freeze({
+  pgrst205: table => ({
+    count: null, status: 404,
+    error: { code: 'PGRST205', message: `Could not find the table 'public.${table}' in the schema cache` }
+  }),
+  '42p01': table => ({
+    count: null, status: 404,
+    error: { code: '42P01', message: `relation "public.${table}" does not exist` }
+  }),
+  head204: () => ({ count: null, error: null, status: 204 })
+});
+
 /** Valekanta + valeasiakas. `world` on muokattava, jotta testit näkevät lopputilan. */
 function makeWorld({ users = { ...TOKENS }, rows = null, deleteError = null, failCountFor = [],
-  cascade = true, leaveResidualFor = [], throwOn = null } = {}) {
+  cascade = true, leaveResidualFor = [], throwOn = null, missingTables = [], missingShape = 'pgrst205',
+  nullCountFor = [] } = {}) {
   const world = { users, deleted: [], deleteCalls: 0, clientCalls: 0, keysUsed: [], rows: rows || {} };
   if (!rows) {
     for (const entry of Object.values(ACCOUNT_DATA_MAP)) {
@@ -40,6 +68,7 @@ function makeWorld({ users = { ...TOKENS }, rows = null, deleteError = null, fai
       ];
     }
   }
+  for (const table of missingTables) delete world.rows[table];
 
   world.createClient = (url, key) => {
     world.clientCalls += 1;
@@ -74,8 +103,10 @@ function makeWorld({ users = { ...TOKENS }, rows = null, deleteError = null, fai
         select: () => ({
           eq: async (column, value) => {
             if (failCountFor.includes(table)) return { count: null, error: { message: 'relation exploded' } };
-            const count = (world.rows[table] || []).filter(row => row[column] === value).length;
-            return { count, error: null };
+            if (!Object.prototype.hasOwnProperty.call(world.rows, table)) return MISSING_RESPONSES[missingShape](table);
+            if (nullCountFor.includes(table)) return { count: null, error: null, status: 200 };
+            const count = world.rows[table].filter(row => row[column] === value).length;
+            return { count, error: null, status: 200 };
           }
         })
       })
@@ -296,7 +327,9 @@ test('kuiva-ajo palauttaa jokaisen inventaarion kokoelman rivimäärän, ei pois
     assert.equal(entry.rowCount, 2, entry.domain + ' (vain Alicen rivit, ei Bobin)');
     assert.equal(entry.action, 'delete');
     assert.equal(entry.blockedReason, null);
+    assert.equal(entry.present, true, entry.domain);
   }
+  assert.deepEqual(body.absent, [], 'aalto J: jokainen taulu on olemassa');
   assert.equal(body.totalRows, 2 * Object.keys(ACCOUNT_DATA_MAP).length);
   assert.equal(body.confirmationPhrase, CONFIRMATION_PHRASE);
   assert.deepEqual(body.storage.categories, []);
@@ -336,6 +369,7 @@ test('onnistunut poisto: complete, ei jäännöksiä, ei vuotoja vastauksessa ei
   assert.equal(body.complete, true);
   assert.deepEqual(body.residual, []);
   assert.deepEqual(body.unverified, []);
+  assert.deepEqual(body.absent, []);
   assert.equal(world.deleteCalls, 1);
 
   assertNoLeak(text, [ALICE.email, ALICE.id]);
@@ -400,6 +434,149 @@ test('tyhjät taulut / puuttuvat resurssit eivät kaada poistoa', async () => {
   const { response, body } = await call(world, req({ body: CONFIRM }));
   assert.equal(response.status, 200);
   assert.equal(body.complete, true);
+});
+
+// ------------------------------------- puuttuvat taulut (tuotanto ennen aaltoa J)
+
+/**
+ * Tuotannon taulut aallolla C: lähtötila (tasks, profile) + migraatiot
+ * 0001-0008. Migraatiot 0009-0013 ovat ajamatta, joten niiden 14 taulua
+ * puuttuvat. Lista on kirjoitettu auki (se on tuotannon tosiasia), ja
+ * alla oleva testi todistaa sen migraatiotiedostoista.
+ */
+const WAVE_C_TABLES = Object.freeze([
+  'tasks', 'profile', 'routines', 'routine_exceptions', 'goals', 'projects',
+  'notification_preferences', 'wellbeing_entries', 'recurring_expenses', 'bills',
+  'savings_goals', 'ai_action_audit'
+]);
+
+const domainOfTable = table => Object.entries(ACCOUNT_DATA_MAP).find(([, entry]) => entry.table === table)[0];
+const WAVE_C_ABSENT_DOMAINS = Object.values(ACCOUNT_DATA_MAP)
+  .filter(entry => !WAVE_C_TABLES.includes(entry.table))
+  .map(entry => domainOfTable(entry.table));
+
+test('aallon C taululista on täsmälleen lähtötila + migraatioiden 0001-0008 taulut', () => {
+  const dir = path.join(ROOT, 'supabase', 'migrations');
+  const created = fs.readdirSync(dir)
+    .filter(name => /^000[1-8]_.*\.sql$/.test(name))
+    .flatMap(name => [...fs.readFileSync(path.join(dir, name), 'utf8')
+      .matchAll(/^create table public\.(\w+)/gm)].map(match => match[1]));
+  assert.deepEqual([...WAVE_C_TABLES].sort(), ['tasks', 'profile', ...created].sort());
+  assert.equal(WAVE_C_ABSENT_DOMAINS.length, 14);
+});
+
+for (const shape of Object.keys(MISSING_RESPONSES)) {
+  test(`KRIITTINEN: puuttuva taulu (${shape}) on kuiva-ajossa present:false, ei count_failed`, async () => {
+    const world = makeWorld({ missingTables: ['time_entries', 'running_timers'], missingShape: shape });
+    const { response, body, text } = await call(world, req({ body: { mode: 'dry_run' } }));
+    assert.equal(response.status, 200);
+
+    for (const domain of ['timeEntries', 'runningTimers']) {
+      const entry = body.domains.find(item => item.domain === domain);
+      assert.equal(entry.present, false, domain);
+      assert.equal(entry.rowCount, 0, domain);
+      assert.equal(entry.blockedReason, null, domain + ' ei ole laskentavirhe');
+    }
+    assert.deepEqual([...body.absent].sort(), ['runningTimers', 'timeEntries']);
+    assert.equal(body.domains.filter(entry => entry.blockedReason === 'count_failed').length, 0);
+    assert.equal(body.totalRows, 2 * (Object.keys(ACCOUNT_DATA_MAP).length - 2));
+    assert.equal(/schema cache|does not exist|time_entries|running_timers/.test(text), false,
+      'PostgRESTin viestiä tai taulunimeä ei välitetä');
+  });
+
+  test(`KRIITTINEN: puuttuva taulu (${shape}) ei tee poistosta epätäydellistä`, async () => {
+    const world = makeWorld({ missingTables: ['time_entries', 'running_timers'], missingShape: shape });
+    const { response, body } = await call(world, req({ body: CONFIRM }));
+    assert.equal(response.status, 200);
+    assert.equal(body.deleted, true);
+    assert.equal(body.complete, true, 'puuttuvassa taulussa ei voi olla rivejä');
+    assert.deepEqual(body.residual, []);
+    assert.deepEqual(body.unverified, []);
+    assert.deepEqual([...body.absent].sort(), ['runningTimers', 'timeEntries']);
+  });
+}
+
+test('KRIITTINEN: aalto C -- täsmälleen tuotannon 12 taulua: kuiva-ajo ja poisto ovat rehellisiä', async () => {
+  const rows = {};
+  for (const table of WAVE_C_TABLES) {
+    const owner = Object.values(ACCOUNT_DATA_MAP).find(entry => entry.table === table).ownerColumn;
+    rows[table] = [{ [owner]: ALICE.id }, { [owner]: ALICE.id }, { [owner]: BOB.id }];
+  }
+
+  for (const shape of Object.keys(MISSING_RESPONSES)) {
+    const world = makeWorld({ rows: structuredClone(rows), missingShape: shape });
+    const dry = await call(world, req({ body: { mode: 'dry_run' } }));
+    assert.equal(dry.response.status, 200, shape);
+    assert.equal(dry.body.totalRows, 2 * WAVE_C_TABLES.length, shape);
+    assert.deepEqual([...dry.body.absent].sort(), [...WAVE_C_ABSENT_DOMAINS].sort(), shape);
+    assert.equal(dry.body.domains.filter(entry => entry.blockedReason).length, 0, shape + ': ei count_failed');
+    assert.equal(dry.body.domains.filter(entry => entry.present === true).length, WAVE_C_TABLES.length, shape);
+
+    const del = await call(world, req({ body: CONFIRM }));
+    assert.equal(del.response.status, 200, shape);
+    assert.equal(del.body.complete, true, shape + ': aallon C poisto ei saa aina raportoida kesken jäänyttä');
+    assert.deepEqual(del.body.residual, [], shape);
+    assert.deepEqual(del.body.unverified, [], shape);
+    assert.deepEqual([...del.body.absent].sort(), [...WAVE_C_ABSENT_DOMAINS].sort(), shape);
+    assert.equal(world.rows.tasks.some(row => row.user_id === ALICE.id), false, shape);
+    assert.equal(world.rows.tasks.filter(row => row.user_id === BOB.id).length, 1, shape);
+  }
+});
+
+test('aalto C: jäännös olemassa olevassa taulussa raportoidaan yhä, vaikka muita puuttuu', async () => {
+  const world = makeWorld({ missingTables: ['life_areas'], leaveResidualFor: ['bills'] });
+  const { body } = await call(world, req({ body: CONFIRM }));
+  assert.equal(body.complete, false);
+  assert.deepEqual(body.residual, ['bills']);
+  assert.deepEqual(body.absent, ['lifeAreas']);
+});
+
+test('KRIITTINEN: määrä puuttuu ilman virhettä (tavallinen tila) -> count_failed, ei hiljainen nolla', async () => {
+  const world = makeWorld({ nullCountFor: ['goals'] });
+  const dry = await call(world, req({ body: { mode: 'dry_run' } }));
+  const goals = dry.body.domains.find(entry => entry.domain === 'goals');
+  assert.equal(goals.rowCount, null);
+  assert.equal(goals.blockedReason, 'count_failed');
+  assert.equal(goals.present, null);
+  assert.deepEqual(dry.body.absent, []);
+
+  const del = await call(makeWorld({ nullCountFor: ['goals'] }), req({ body: CONFIRM }));
+  assert.equal(del.body.complete, false);
+  assert.deepEqual(del.body.unverified, ['goals']);
+});
+
+test('KRIITTINEN: jos yhtäkään taulua ei näy, "puuttuu" ei kelpaa -- kaikki ovat varmistamattomia', async () => {
+  // Esim. väärä osoite tai REST pois päältä: jokainen kysely vastaa 404.
+  // Se ei ole skeeman tila, eikä sitä saa lukea "ei mitään poistettavaa".
+  const allTables = Object.values(ACCOUNT_DATA_MAP).map(entry => entry.table);
+  for (const shape of Object.keys(MISSING_RESPONSES)) {
+    const dry = await call(makeWorld({ missingTables: allTables, missingShape: shape }), req({ body: { mode: 'dry_run' } }));
+    assert.deepEqual(dry.body.absent, [], shape);
+    assert.equal(dry.body.domains.every(entry => entry.blockedReason === 'count_failed'), true, shape);
+
+    const del = await call(makeWorld({ missingTables: allTables, missingShape: shape }), req({ body: CONFIRM }));
+    assert.equal(del.body.deleted, true, shape);
+    assert.equal(del.body.complete, false, shape);
+    assert.equal(del.body.unverified.length, allTables.length, shape);
+    assert.deepEqual(del.body.absent, [], shape);
+  }
+});
+
+test('muu 404-virhe kuin puuttuva taulu on laskentavirhe, ei "ei käytössä"', async () => {
+  const world = makeWorld();
+  const original = world.createClient;
+  world.createClient = (...args) => {
+    const client = original(...args);
+    const from = client.from;
+    client.from = table => (table === 'bills'
+      ? { select: () => ({ eq: async () => ({ count: null, status: 404, error: { code: 'PGRST116', message: 'x' } }) }) }
+      : from(table));
+    return client;
+  };
+  const { body } = await call(world, req({ body: { mode: 'dry_run' } }));
+  const bills = body.domains.find(entry => entry.domain === 'bills');
+  assert.equal(bills.blockedReason, 'count_failed');
+  assert.deepEqual(body.absent, []);
 });
 
 // ------------------------------------------- virheet ja syötteen validointi

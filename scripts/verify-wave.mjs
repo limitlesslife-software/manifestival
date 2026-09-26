@@ -4,12 +4,14 @@
 //   npm run activation:verify-wave -- BASE
 //   npm run activation:verify-wave -- A
 //   npm run activation:verify-wave              (päättele lähteestä)
+//   npm run activation:verify-wave -- --rollback-of=D   (peruutuscommit, ACT-10)
 //
 // MIKSI TÄMÄ ON ERILLÄÄN ESITARKISTUKSESTA
 //
-// `activation:preflight` ajaa koko testipatteriston ja kestää
-// kymmeniä sekunteja. Tämä kestää millisekunteja, koska se lukee vain
-// kolme tiedostoa. Deployhetkellä halutaan tietää nopeasti ja
+// `activation:preflight` lukee commitin git show'lla, tarkistaa
+// migraatio- ja SQL-tiedostot ja salaisuudet, ja halutessa ajaa
+// testipatteriston (--run-tests). Tämä kestää millisekunteja, koska se
+// lukee vain kolme tiedostoa työpuusta. Deployhetkellä halutaan tietää nopeasti ja
 // varmasti, mikä matriisi on menossa tuotantoon — ja sitä kysytään
 // useammin kuin kerran.
 //
@@ -26,7 +28,7 @@
 import process from 'node:process';
 
 import {
-  ALL_GATES, WAVE_IDS, cacheVersionOf, cumulativeGates, expectedMatrix
+  ALL_GATES, WAVE_IDS, cacheVersionOf, cumulativeGates, expectedMatrix, rollbackTargetOf
 } from '../tools/release/waves.mjs';
 import { currentState, matrixDifferences } from '../tools/release/state.mjs';
 
@@ -35,10 +37,43 @@ const out = teksti => process.stdout.write(teksti + NEWLINE);
 
 const argumentti = process.argv.slice(2).find(arg => !arg.startsWith('-'));
 const pyydetty = argumentti ? argumentti.trim().toUpperCase() : null;
+const peruutus = ((process.argv.slice(2).map(a => /^--rollback-of=(.+)$/.exec(a)).filter(Boolean).pop() || [])[1] || '')
+  .trim().toUpperCase() || null;
 
-if (pyydetty && pyydetty !== 'BASE' && !WAVE_IDS.includes(pyydetty)) {
-  out(`  Tuntematon aalto: ${pyydetty}`);
-  out(`  Sallitut: BASE, ${WAVE_IDS.join(', ')}`);
+for (const aaltoId of [pyydetty, peruutus]) {
+  if (aaltoId && aaltoId !== 'BASE' && !WAVE_IDS.includes(aaltoId)) {
+    out(`  Tuntematon aalto: ${aaltoId}`);
+    out(`  Sallitut: BASE, ${WAVE_IDS.join(', ')}`);
+    process.exit(1);
+  }
+}
+
+// PERUUTUS (ACT-10): `npm run activation:verify-wave -- --rollback-of=D`
+//
+// Peruutuscommit palauttaa edellisen aallon matriisin mutta NOSTAA
+// välimuistia (peruutus on deploy). Tavallinen tarkistus kaatuisi aina,
+// koska välimuisti ei ole matriisiaallon oma. Tämä tila vaatii: matriisi
+// = peruutuskohteen matriisi, välimuisti SUUREMPI kuin perutun aallon.
+if (peruutus) {
+  const tila = currentState();
+  const kohde = rollbackTargetOf(peruutus);
+  const erot = tila.gates ? matrixDifferences(tila.gates, kohde) : ['porttilohkoa ei voitu lukea'];
+  const numero = v => { const m = /^v(\d+)$/.exec(String(v)); return m ? Number(m[1]) : null; };
+  if (numero(tila.cacheVersion) === null || numero(tila.cacheVersion) <= numero(cacheVersionOf(peruutus))) {
+    erot.push(`CACHE_VERSION on ${tila.cacheVersion || 'lukematon'}, peruutuksen on oltava suurempi kuin ${cacheVersionOf(peruutus)}`);
+  }
+  out('');
+  out(`  PERUUTUKSEN TODENNUS: aalto ${peruutus} -> ${kohde}`);
+  out('');
+  if (erot.length === 0) {
+    out(`  ROLLBACK(${peruutus}): PASS — matriisi ${kohde}, välimuisti ${tila.cacheVersion}`);
+    out('  HUOM: juna on nyt TRAIN_HALTED_RECUT_REQUIRED (ks. docs/RELEASE-SEQUENCING.md, "Peruutus").');
+    out('');
+    process.exit(0);
+  }
+  out(`  ROLLBACK(${peruutus}): FAIL (${erot.length})`);
+  for (const ero of erot) out(`    ${ero}`);
+  out('');
   process.exit(1);
 }
 

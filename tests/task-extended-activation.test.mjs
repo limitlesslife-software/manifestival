@@ -27,15 +27,12 @@ import {
 } from '../src/domain/task.js';
 import {
   toRow, fromRow, assertClientSafe,
-  TASK_COLUMNS_CORE, TASK_COLUMNS_EXTENDED, TASK_COLUMNS_PLANNING, SERVER_OWNED_FIELDS
+  TASK_COLUMNS_CORE, TASK_COLUMNS_EXTENDED, TASK_COLUMNS_PLANNING, TASK_COLUMNS_LINKS, SERVER_OWNED_FIELDS
 } from '../src/lib/rows.js';
 import {
-  TASK_EXTENDED_FIELDS, GOAL_PLANNING_FIELDS, taskColumns, volatileFields, isPersisted
+  TASK_EXTENDED_FIELDS, GOAL_PLANNING_FIELDS, taskColumns, volatileFields, isPersisted, hasTable
 } from '../src/data/schema.js';
-
-// Aallosta G alkaen (migraatio 0010) tehtävä kirjoittaa myös
-// suunnittelukentät. Kirjoitettava joukko riippuu portista, ei testistä.
-const KIRJOITETTAVAT = GOAL_PLANNING_FIELDS ? TASK_COLUMNS_PLANNING : TASK_COLUMNS_EXTENDED;
+import { isColumnGateLowered, resetSchemaRuntimeForTests } from '../src/data/schemaRuntime.js';
 import { PRIORITY_KEYS, DEFAULT_PRIORITY } from '../src/domain/priority.js';
 import { setClient } from '../src/data/client.js';
 import { setUser, clearUser } from '../src/data/session.js';
@@ -50,6 +47,22 @@ const USER = { id: 'aaaaaaaa-0000-0000-0000-000000000001', email: 'a@example.com
 /** Sarakkeet, jotka migraatio 0002 määrittelee NOT NULLiksi. */
 const NOT_NULL_COLUMNS = ['priority', 'scheduling_state'];
 
+/**
+ * Laajennetut sarakkeet + tehtävän liitokset (määräaika, tavoite, projekti).
+ *
+ * UUSI SÄÄNTÖ: liitossarakkeet (0004) kirjoitetaan, kun goals- ja
+ * projects-portit ovat auki (tuotannossa aallosta B). Aiemmin niitä ei
+ * kirjoitettu koskaan, ja liitokset katosivat uudelleenlatauksessa.
+ * Tuotehaaralla portit ovat kiinni, joten joukko on sama kuin ennen.
+ * Suunnittelukentät (0010) tulevat mukaan oman porttinsa mukaan, joten
+ * sama odotus pätee myös julkaisujunan aalloissa G-J.
+ */
+const LINKS_OPEN = hasTable('goals') && hasTable('projects');
+const EXTENDED_WITH_LINKS = Object.freeze([
+  ...(GOAL_PLANNING_FIELDS ? TASK_COLUMNS_PLANNING : TASK_COLUMNS_EXTENDED),
+  ...(LINKS_OPEN ? TASK_COLUMNS_LINKS : [])
+]);
+
 // ---------------------------------------------------------------------
 // Kiinnikkeet
 // ---------------------------------------------------------------------
@@ -57,17 +70,23 @@ const NOT_NULL_COLUMNS = ['priority', 'scheduling_state'];
 /**
  * Kirjaava tekoclient. Ottaa talteen TÄSMÄLLEEN sen payloadin, joka
  * lähtisi verkkoon — ei sitä, mitä kutsuja luuli lähettävänsä.
+ *
+ * Onnistunut päivitys vastaa lähetetyllä rivillä: repositorio ketjuttaa
+ * päivitykseen `.select('id')` ja pitää nollaa riviä "kohdetta ei enää
+ * ole" -virheenä (ERR-06).
  */
 function recordingClient(response = { data: null, error: null }) {
   const kirjatut = [];
-  const chain = op => {
+  const chain = (op, payload = null) => {
     const q = {
       op,
       eq() { return q; },
       neq() { return q; },
       select() { return q; },
       then(resolve, reject) {
-        return Promise.resolve(response).then(resolve, reject);
+        const updated = op === 'update' && !response.error && response.data == null
+          ? { ...response, data: [{ ...payload }] } : response;
+        return Promise.resolve(updated).then(resolve, reject);
       }
     };
     return q;
@@ -77,7 +96,7 @@ function recordingClient(response = { data: null, error: null }) {
     from() {
       return {
         insert(payload) { kirjatut.push({ op: 'insert', payload }); return chain('insert'); },
-        update(payload) { kirjatut.push({ op: 'update', payload }); return chain('update'); },
+        update(payload) { kirjatut.push({ op: 'update', payload }); return chain('update', payload); },
         delete() { kirjatut.push({ op: 'delete', payload: null }); return chain('delete'); },
         select() { return chain('select'); }
       };
@@ -376,12 +395,12 @@ test('aikaleimat puuttuvat siististi, jos migraatiota ei ole ajettu', () => {
 test('TILA B: lippu on päällä ja kirjoitetaan täsmälleen laajennetut sarakkeet', () => {
   // Migraatio 0002 on ajettu ja todennettu, joten lippu on true.
   assert.equal(TASK_EXTENDED_FIELDS, true, 'lippu ei ole päällä');
-  assert.deepEqual([...taskColumns()], [...KIRJOITETTAVAT]);
+  assert.deepEqual([...taskColumns()], [...EXTENDED_WITH_LINKS]);
 
   const rivi = toRow(normalizeTask({ id: 'x', date: '2026-09-05', time: '09:00', title: 'x',
     description: 'kuvaus', durationMinutes: 30, priority: 'korkea' }), taskColumns());
 
-  assert.deepEqual(Object.keys(rivi).sort(), [...KIRJOITETTAVAT].sort());
+  assert.deepEqual(Object.keys(rivi).sort(), [...EXTENDED_WITH_LINKS].sort());
   for (const laajennettu of ['description', 'duration_minutes', 'priority', 'scheduling_state']) {
     assert.ok(laajennettu in rivi, `${laajennettu} ei lähde kantaan, vaikka lippu on päällä`);
   }
@@ -448,7 +467,29 @@ test('TILA C: puuttuva sarake tuottaa näkyvän virheen, ei hiljaista onnistumis
 
   assert.equal(tulos.ok, false, 'puuttuva sarake näytti onnistumiselta');
   assert.ok(tulos.error, 'virhe ei päätynyt kutsujalle');
-  assert.equal(tulos.error.code, 'tasks.insert');
+  // Tyypitetty koodi (ERR-05): skeemavirhe on "ei vielä tallennettavissa",
+  // ei yleinen tallennusvirhe. Operaatio säilyy lokitusta varten.
+  assert.equal(tulos.error.code, 'persistence_unavailable');
+  assert.equal(tulos.error.op, 'tasks.insert');
+  assert.match(tulos.error.userMessage, /päivitys kesken/);
+
+  // UUSI SÄÄNTÖ (ajonaikainen skeematarkistus): sama virhe laskee
+  // sarakeportin istunnon ajaksi, joten SEURAAVA tallennus lähtee ilman
+  // puuttuvia sarakkeita ja onnistuu -- tehtävä ei jää tallentumatta.
+  // Tila palautetaan, koska moduulin tila on yhteinen tämän tiedoston
+  // muiden testien kanssa.
+  try {
+    assert.equal(isColumnGateLowered('TASK_EXTENDED_FIELDS'), true);
+    assert.deepEqual([...taskColumns()], [...TASK_COLUMNS_CORE, ...(LINKS_OPEN ? TASK_COLUMNS_LINKS : [])]);
+    const client = recordingClient();
+    setClient(client);
+    const uusi = await tasksRepo.insertTask(normalizeTask({ id: 'y', date: '2026-09-05', title: 'y' }));
+    assert.equal(uusi.ok, true);
+    assert.equal('priority' in client.kirjatut[0].payload, false);
+  } finally {
+    resetSchemaRuntimeForTests();
+  }
+  assert.equal(isColumnGateLowered('TASK_EXTENDED_FIELDS'), false);
 });
 
 // =====================================================================
@@ -855,7 +896,7 @@ test('LUONTI: jokainen laajennettu kenttä lähtee kantaan', async () => {
         + ', odotettiin ' + JSON.stringify(arvo));
     }
     // Sarakejoukko on täsmälleen laajennettu — ei enempää eikä vähempää.
-    assert.deepEqual(Object.keys(payload).sort(), [...KIRJOITETTAVAT].sort(),
+    assert.deepEqual(Object.keys(payload).sort(), [...EXTENDED_WITH_LINKS].sort(),
       nimi + ': väärä sarakejoukko');
   }
 });

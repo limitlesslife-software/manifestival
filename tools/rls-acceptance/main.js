@@ -126,7 +126,10 @@ async function run() {
       userBId,
       expectedTaskCount,
       runId: `${new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14)}`,
-      today: new Date().toISOString().slice(0, 10)
+      today: new Date().toISOString().slice(0, 10),
+      // Aalto, jonka migraatiot tuotannossa on ajettu. Ajuri hylkää
+      // tuntemattoman arvon ennen yhtäkään kyselyä.
+      wave: $('wave').value
     });
 
     renderTable(rows);

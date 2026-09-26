@@ -43,6 +43,18 @@ export const TASK_COLUMNS_PLANNING = Object.freeze([
   'milestone_id', 'depends_on'
 ]);
 
+/**
+ * Tehtävän määräaika ja liitokset tavoitteeseen ja projektiin
+ * (migraatio 0004, TUOTANNOSSA AJETTU aallossa B).
+ *
+ * Nämä eivät ole oma tasonsa vaan LISÄ jokaiseen yllä olevaan joukkoon:
+ * src/data/schema.js liittää ne taskColumns()-joukkoon, kun goals- ja
+ * projects-taulut ovat käytössä. Aiemmin niitä ei kirjoitettu eikä luettu
+ * lainkaan, joten lomakkeen tavoite ja määräaika sekä Suunnan
+ * tehtävä -> tavoite -kohdistus katosivat uudelleenlatauksessa.
+ */
+export const TASK_COLUMNS_LINKS = Object.freeze(['deadline', 'goal_id', 'project_id']);
+
 /** Domain-kenttä -> kannan sarake. Yksi lähde molemmille sarakejoukoille. */
 function columnValues(task) {
   return {
@@ -50,6 +62,9 @@ function columnValues(task) {
     date: task.date,
     time: task.time,
     end_time: task.endTime,
+    deadline: task.deadline ?? null,
+    goal_id: task.goalId ?? null,
+    project_id: task.projectId ?? null,
     milestone_id: task.milestoneId,
     depends_on: task.dependsOn,
     title: task.title,
@@ -100,6 +115,11 @@ export function fromRow(row) {
     durationMinutes: row.duration_minutes ?? null,
     priority: row.priority ?? undefined,
     schedulingState: row.scheduling_state ?? undefined,
+    // Määräaika ja liitokset (0004). Ennen 0004:ää sarakkeita ei ole,
+    // jolloin arvot ovat samat kuin normalizeTaskin oletukset (null).
+    deadline: row.deadline ?? null,
+    goalId: row.goal_id ?? null,
+    projectId: row.project_id ?? null,
     // Suunnittelukentät (migraatio 0010, GOAL_PLANNING_FIELDS). toRow
     // kirjoittaa ne portin ollessa auki, joten ne on myös luettava:
     // muuten välitavoite ja riippuvuudet tallentuisivat mutta katoaisivat

@@ -24,15 +24,20 @@ import {
   previewAccountDeletion, executeAccountDeletion, deletionErrorMessage
 } from '../data/accountDeletionClient.js';
 import {
-  dryRunDeletion, authAccountDeletable, authAccountBlockedReason, domainLabel
+  dryRunDeletion, authAccountDeletable, authAccountBlockedReason, domainLabel,
+  serverPreviewRows, summarizePreview, previewRowValue
 } from '../domain/accountLifecycle.js';
 import {
   FLOW, FLOW_EVENT, DELETION_PHRASE, initialFlowState, nextFlowState, confirmationStatus
 } from '../domain/accountDeletionFlow.js';
-import { currentAccessToken, queueAuthNote } from './auth.js';
-import { clearLocalUserData } from './actions.js';
+import { currentAccessToken, queueAuthNote, persistQueuedAuthNote } from './auth.js';
+import { clearLocalUserData, incompleteExportCollections } from './actions.js';
+import { resetState, getState } from './state.js';
 import { offline } from './offline.js';
-import { getUser } from '../data/session.js';
+import { cancelDeviceNotifications } from './notifications.js';
+import { purgeDeviceDataForUser, clearAuthSession } from '../data/deviceData.js';
+import { clearDevicePreferences } from '../data/preferences.js';
+import { getUser, clearUser } from '../data/session.js';
 
 let flow = initialFlowState();
 let previewSeen = false;
@@ -53,21 +58,27 @@ function dispatch(event, extra = {}) {
   return flow;
 }
 
-function rowsHtml(rows) {
-  const filled = rows.filter(row => row.count > 0);
-  if (!filled.length) return '<div class="hint">Ei yhtään riviä missään kokoelmassa.</div>';
-  return filled.map(row =>
-    `<div class="preview-row"><span>${escapeHtml(domainLabel(row.name))}</span><strong>${row.count}</strong></div>`
+// Laskematon kokoelma näytetään ("ei voitu laskea") eikä pudoteta pois:
+// muuten se näyttäisi samalta kuin tyhjä. Puuttuvat taulut (tuotanto ennen
+// aaltoa J) luetellaan yhdellä rivillä "ei käytössä".
+function rowsHtml(summary) {
+  const rows = summary.rows.map(row =>
+    `<div class="preview-row"><span>${escapeHtml(domainLabel(row.name))}</span><strong>${escapeHtml(previewRowValue(row))}</strong></div>`
   ).join('');
+  const absent = summary.absent.length
+    ? `<div class="hint">Ei käytössä tässä tietokannassa: ${escapeHtml(summary.absent.map(domainLabel).join(', '))}.</div>`
+    : '';
+  if (!rows) return `<div class="hint">Ei yhtään riviä missään kokoelmassa.</div>${absent}`;
+  return rows + absent;
 }
 
 function previewHtml() {
   if (!previewRows) return '';
-  const total = previewRows.reduce((sum, row) => sum + row.count, 0);
+  const summary = summarizePreview(previewRows);
   return `
     <div class="preview-block" style="margin-top:8px;">
-      <div class="preview-title">Poisto vaikuttaisi ${total} riviin</div>
-      ${rowsHtml(previewRows)}
+      <div class="preview-title">Poisto vaikuttaisi ${summary.partial ? 'vähintään ' : ''}${summary.total} riviin</div>
+      ${rowsHtml(summary)}
       <div class="hint">Ei tallennettuja tiedostoja (kuittikuvia ei säilytetä).</div>
       ${previewNote ? `<div class="hint">${escapeHtml(previewNote)}</div>` : ''}
     </div>`;
@@ -197,6 +208,20 @@ function refreshSubmitState() {
   else hint.textContent = 'Vahvistus täsmää.';
 }
 
+/**
+ * Paikallisen esikatselun huomautus. Luvut tulevat tilasta: jos jonkin
+ * kokoelman haku epäonnistui, sen luku voi olla 0, vaikka kannassa on
+ * rivejä (ERR-03) -- ja käyttäjä päättää poistosta näiden lukujen varassa.
+ *
+ * @param {object} [state]
+ */
+export function localPreviewNote(state = getState()) {
+  const base = 'Laskettu tällä laitteella olevasta datasta.';
+  return incompleteExportCollections(state).length > 0
+    ? base + ' Osa tiedoista ei latautunut – luvut voivat olla vajaita.'
+    : base;
+}
+
 /** Esikatselu: palvelimelta jos käytössä (auktoritatiivinen), muuten paikallinen laskenta. */
 const openPreview = singleFlight(async () => {
   dispatch(FLOW_EVENT.OPEN_PREVIEW);
@@ -204,31 +229,70 @@ const openPreview = singleFlight(async () => {
 
   const local = dryRunDeletion(readData(), { endpointEnabled: endpointEnabled() });
   previewRows = local.collections.map(entry => ({ name: entry.name, count: entry.count }));
-  previewNote = 'Laskettu tällä laitteella olevasta datasta.';
+  previewNote = localPreviewNote();
 
   if (endpointEnabled()) {
     const result = await previewAccountDeletion({ accessToken: await currentAccessToken() });
     if (result.ok && Array.isArray(result.value.domains)) {
-      previewRows = result.value.domains
-        .filter(entry => Number.isInteger(entry.rowCount))
-        .map(entry => ({ name: entry.domain, count: entry.rowCount }));
-      previewNote = 'Laskettu palvelimelta.';
+      previewRows = serverPreviewRows(result.value.domains);
+      previewNote = summarizePreview(previewRows).partial
+        ? 'Laskettu palvelimelta. Osaa kokoelmista ei voitu laskea; poisto poistaa nekin.'
+        : 'Laskettu palvelimelta.';
     }
   }
   previewSeen = true;
   render();
 });
 
-const signOutAndClean = async () => {
+function reloadPage() {
+  if (typeof location !== 'undefined' && typeof location.reload === 'function') location.reload();
+}
+
+/**
+ * Paikallinen uloskirjautuminen ilman palvelinta.
+ *
+ * Samat vaiheet kuin src/app/main.js:n onSignedOut (käyttäjä, offline-jonon
+ * muistikopio, muistivarastot, laiteasetukset, tila) sekä istunnon avain,
+ * jottei uudelleenlataus palauta poistetun tilin istuntoa. Muu muistissa
+ * elävä tila (avoimet lomakkeet, sijainti) katoaa uudelleenlatauksessa,
+ * jonka kutsuja tekee heti perään.
+ */
+export function forceLocalSignOut() {
+  clearUser();
+  offline.deactivate();
+  clearLocalUserData();
+  clearDevicePreferences();
+  resetState();
+  clearAuthSession();
+}
+
+/**
+ * Kirjaudu ulos tilin poiston jälkeen ja varmista paikallinen siivous.
+ *
+ * Tavallisesti signOut laukaisee SIGNED_OUT-tapahtuman, ja siivous kulkee
+ * samaa polkua kuin mikä tahansa uloskirjautuminen (main.js onSignedOut).
+ * MUTTA supabase-js ei heitä verkkovirheessä: se palauttaa { error },
+ * jättää istunnon laitteelle eikä laukaise SIGNED_OUT:ia. Tili on jo
+ * poistettu palvelimelta, joten laite siivotaan silloin itse -- sekä
+ * virhepalautuksessa että poikkeuksessa.
+ *
+ * Uudelleenlataus hävittäisi muistissa jonottavan kirjautumisportin
+ * viestin (queueAuthNote), joten se tallennetaan laitteelle ennen latausta
+ * ja portti näyttää sen latauksen jälkeen (persistQueuedAuthNote).
+ */
+export async function signOutAndClean() {
+  let failed = false;
   try {
-    await getClient().auth.signOut({ scope: 'local' });
+    const result = await getClient().auth.signOut({ scope: 'local' });
+    failed = Boolean(result && result.error);
   } catch {
-    // Paikallinen siivous ei saa jäädä tekemättä, vaikka uloskirjautuminen
-    // epäonnistuisi (käyttäjä on jo poistettu palvelimelta).
-    clearLocalUserData();
-    if (typeof location !== 'undefined') location.reload();
+    failed = true;
   }
-};
+  if (!failed) return;
+  forceLocalSignOut();
+  persistQueuedAuthNote();
+  reloadPage();
+}
 
 const submitDeletion = singleFlight(async () => {
   const status = statusNow();
@@ -262,9 +326,18 @@ const submitDeletion = singleFlight(async () => {
   }
 
   dispatch(FLOW_EVENT.SUCCEEDED);
-  // Tili on poistettu: sen lähettämättömät offline-muutokset poistetaan laitteelta.
+  // Tili on poistettu: sen tallennettu data poistetaan laitteelta. Offline-
+  // jonon muistikopio ensin (muuten uloskirjautuminen tallentaisi sen
+  // takaisin), sitten jokainen src/data/deviceData.js:n rekisterin
+  // poistettava avain: jono, ajastin, lähtökori, hautakivet, laiteasetukset.
   const deleted = getUser();
-  offline.purge(deleted && deleted.id ? deleted.id : null);
+  const deletedId = deleted && deleted.id ? deleted.id : null;
+  offline.purge(deletedId);
+  purgeDeviceDataForUser(deletedId);
+  // Laitteelle ajastetut muistutukset sisältävät poistetun tilin tehtävien
+  // otsikoita. Ne perutaan ENNEN uloskirjautumista ja odotetaan (rajatusti,
+  // DEVICE_CANCEL_TIMEOUT_MS), jottei yksikään laukea poiston jälkeen.
+  await cancelDeviceNotifications();
   const complete = result.value.complete === true;
   queueAuthNote(complete
     ? 'Tilisi ja kaikki siihen liittynyt tieto on poistettu.'

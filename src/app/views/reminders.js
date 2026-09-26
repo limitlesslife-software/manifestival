@@ -32,7 +32,8 @@ import {
   MAX_ALERTS_PER_REMINDER, reminderStatusLabel, compareReminders,
   summarizeReminders, liveReminders, isOrphaned
 } from '../../domain/reminder.js';
-import { TABLES } from '../../data/schema.js';
+import { hasTable, isTableAvailable } from '../../data/schema.js';
+import { serverUnavailableHintHtml } from '../schemaStatus.js';
 import { background } from '../../platform/index.js';
 import {
   createReminder, editReminder, deleteReminder, snoozeReminderBy,
@@ -184,10 +185,12 @@ export function renderReminders() {
       ${summary.live > 0 ? `<span class="notice-badge">${summary.live}</span>` : ''}
     </h2>`;
 
-  const varoitus = TABLES.reminders
+  const varoitus = isTableAvailable('reminders')
     ? ''
-    : `<p class="hint"><strong>Huom.</strong> Muistutukset säilyvät `
-      + `toistaiseksi vain tämän istunnon ajan.</p>`;
+    : hasTable('reminders')
+      ? serverUnavailableHintHtml()
+      : `<p class="hint"><strong>Huom.</strong> Muistutukset säilyvät `
+        + `toistaiseksi vain tämän istunnon ajan.</p>`;
 
   const suodatin = kaikki.length > naytettavat.length || showClosed
     ? `<div class="assist-actions"><button class="assist-btn" id="remindersToggleClosed" type="button">`

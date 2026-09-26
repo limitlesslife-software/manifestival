@@ -31,11 +31,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
 import { ROOT, read } from './helpers/sources.mjs';
-import { isDetachedHead, waveOfCommit } from '../tools/release/lineage.mjs';
+import { isDetachedHead, waveOfCommit, waveOfCommitBody } from '../tools/release/lineage.mjs';
+import { WAVES } from '../tools/release/waves.mjs';
 
 // Tunnetut aaltocommitit tämän repon historiassa (Release-Wave-trailer
 // commitviestissä, ks. tools/release/manifest.mjs:n discoverWaveCommits).
@@ -61,9 +61,17 @@ const gitAvailable = (() => {
 /**
  * Luo tilapäinen, irrallinen worktree annettuun committiin.
  * Kutsujan vastuulla on poistaa se (`removeWorktree`).
+ *
+ * PROJEKTIN TALLENNUSSÄÄNTÖ (ACT-08): tilapäinen työpuu luodaan
+ * projektikansion sisälle, `<ROOT>/.claude/worktrees/tmp-*` (git-ignoroitu
+ * .git/info/exclude:ssa), ei järjestelmän tmp-hakemistoon.
  */
 function detachedWorktree(sha) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wave-inference-'));
+  const parent = path.join(ROOT, '.claude', 'worktrees');
+  fs.mkdirSync(parent, { recursive: true });
+  const dir = fs.mkdtempSync(path.join(parent, 'tmp-wave-inference-'));
+  assert.ok(path.resolve(dir).startsWith(path.resolve(ROOT) + path.sep), `työpuu projektikansion ulkopuolella: ${dir}`);
+  // mkdtemp luo hakemiston; git worktree add vaatii olemattoman tai tyhjän.
   execFileSync('git', ['worktree', 'add', '--detach', dir, sha], { cwd: ROOT, stdio: 'ignore' });
   return dir;
 }
@@ -96,6 +104,30 @@ test('KRIITTINEN: waveOfCommit tunnistaa aallot commitin sisällöstä riippumat
   assert.equal(waveOfCommit(WAVE_A_SHA), 'A');
   assert.equal(waveOfCommit(WAVE_B_SHA), 'B');
   assert.equal(waveOfCommit(WAVE_C_SHA), 'C');
+});
+
+// =====================================================================
+// ACT-07: F–J TUNNISTETAAN (aiempi lauseke tunsi vain BASE|A–E)
+// =====================================================================
+
+test('KRIITTINEN: trailer tunnistetaan jokaiselle aallolle synteettisestä viestistä', () => {
+  for (const id of ['BASE', ...WAVES.map(w => w.id)]) {
+    assert.equal(waveOfCommitBody(`feat(release): aalto\n\nRelease-Wave: ${id}\n`), id, id);
+  }
+  assert.equal(waveOfCommitBody('feat: ei traileria'), null);
+  assert.equal(waveOfCommitBody('Release-Wave: K'), null);
+});
+
+test('KRIITTINEN: oikeat F- ja J-aaltocommitit tunnistetaan, J:n kärki ei kanna traileria', t => {
+  if (!gitAvailable) { t.skip('git ei käytettävissä'); return; }
+  const F_WAVE = 'e05c54bd4fa7d5afffe3efd6ca7a176b0162008e';
+  const J_WAVE = 'e96942c296944b4ac1a86d96563f2a1370678d97';
+  const J_TIP = '5df40b20cee4f35279a79888959d49c9af88bcc7';
+  const present = sha => { try { execFileSync('git', ['cat-file', '-e', `${sha}^{commit}`], { cwd: ROOT, stdio: 'ignore' }); return true; } catch { return false; } };
+  if (![F_WAVE, J_WAVE, J_TIP].every(present)) { t.skip('ehdokashistoria ei ole paikallisesti saatavilla'); return; }
+  assert.equal(waveOfCommit(F_WAVE), 'F');
+  assert.equal(waveOfCommit(J_WAVE), 'J');
+  assert.equal(waveOfCommit(J_TIP), null);
 });
 
 // =====================================================================

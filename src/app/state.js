@@ -7,6 +7,7 @@
 // eikä yksikään toiminto joudu muistamaan kutsua renderAll().
 
 import { todayMidnight, startOfWeek, fmtISO } from '../lib/datetime.js';
+import { logFailure, LOG_LEVEL } from '../lib/logger.js';
 import { DEFAULT_PROFILE } from '../domain/scheduler.js';
 import { normalizeTask } from '../domain/task.js';
 import { normalizeRoutine, normalizeException } from '../domain/routine.js';
@@ -31,6 +32,8 @@ import { normalizeLifeArea } from '../domain/lifeArea.js';
 import { normalizeWeeklyCapacity } from '../domain/weeklyCapacity.js';
 import { normalizeTimeEntry } from '../domain/timeEntry.js';
 import { normalizeAlignmentReview } from '../domain/alignmentReview.js';
+import { normalizeItemSettings } from '../domain/alignmentItemSettings.js';
+import { normalizeTimer } from '../domain/timer.js';
 import { getDevicePreference, setDevicePreference } from '../data/preferences.js';
 
 function initialState() {
@@ -114,6 +117,9 @@ function initialState() {
     weeklyCapacities: [],
     timeEntries: [],
     alignmentReviews: [],
+    /** Suunta 2 (0013): kohdeasetukset ja käynnissä oleva ajastin (0–1). */
+    alignmentItemSettings: [],
+    runningTimers: [],
 
     /**
      * Kirjaus, jonka tulkintaa käyttäjä parhaillaan tarkistaa.
@@ -217,13 +223,26 @@ export function subscribe(listener) {
   return () => listeners.delete(listener);
 }
 
+/**
+ * Sisäkkäisten batch()-kutsujen syvyys. Sillä aikaa commit() ei ilmoita
+ * tilaajille, vaan ilmoitus jää velaksi ja lähtee kerran uloimman batchin
+ * lopussa.
+ */
+let batchDepth = 0;
+/** Muuttuiko tila batchin aikana (ilmoitus on velkaa)? */
+let notifyOwed = false;
+
 function notify() {
+  if (batchDepth > 0) {
+    notifyOwed = true;
+    return;
+  }
   for (const listener of listeners) {
     try {
       listener(state);
     } catch (error) {
       // Yhden näkymän virhe ei saa estää muiden päivittymistä.
-      console.error('Manifestival: tilakuuntelija epäonnistui', error);
+      logFailure('state.listener_failed', error, LOG_LEVEL.ERROR);
     }
   }
 }
@@ -231,6 +250,39 @@ function notify() {
 function commit(changes) {
   state = { ...state, ...changes };
   notify();
+}
+
+/**
+ * Kokoa useampi tilamuutos YHDEKSI ilmoitukseksi.
+ *
+ * MIKSI: jokainen commit() ilmoittaa tilaajille synkronisesti, ja tilaaja
+ * (main.js renderAll) piirtää näkymät. Yksi lataus (loadUserData) asettaa
+ * parikymmentä kokoelmaa ja niiden latausstatuksen — ilman tätä yksi
+ * lataus tuotti 52 täyttä piirtoa (CRIT-01).
+ *
+ * Muutokset tehdään heti (getState() näkee ne batchin sisälläkin); vain
+ * ilmoitus odottaa uloimman batchin loppuun. Jos mikään ei muuttunut,
+ * ilmoitusta ei lähetetä. Heittävä `fn` ei jätä ilmoitusta lähettämättä:
+ * jo tehdyt muutokset näkyvät tilaajille, ja virhe välittyy kutsujalle.
+ *
+ * VAIN SYNKRONISELLE KOODILLE. Odotus (await) batchin sisällä päättäisi
+ * batchin ennen kuin odotuksen jälkeiset muutokset tehdään.
+ *
+ * @template T
+ * @param {() => T} fn
+ * @returns {T} fn:n paluuarvo
+ */
+export function batch(fn) {
+  batchDepth += 1;
+  try {
+    return fn();
+  } finally {
+    batchDepth -= 1;
+    if (batchDepth === 0 && notifyOwed) {
+      notifyOwed = false;
+      notify();
+    }
+  }
 }
 
 // ------------------------------------------------------------------ tehtävät
@@ -1149,6 +1201,42 @@ export function upsertAlignmentReviewInState(review) {
 
 export function removeAlignmentReviewFromState(id) {
   commit({ alignmentReviews: state.alignmentReviews.filter(r => r.id !== id) });
+}
+
+// ------------------------------------------------------------ Suunta 2
+
+export function setAlignmentItemSettings(settings) {
+  commit({ alignmentItemSettings: (settings || []).map(normalizeItemSettings) });
+}
+
+/** Yksi rivi kohdetta kohti: sama kohde korvataan. */
+export function upsertItemSettingsInState(settings) {
+  const normalized = normalizeItemSettings(settings);
+  commit({
+    alignmentItemSettings: [
+      ...state.alignmentItemSettings.filter(s => s.id !== normalized.id
+        && !(s.itemKind === normalized.itemKind && s.itemId === normalized.itemId)),
+      normalized
+    ]
+  });
+}
+
+export function removeItemSettingsFromState(id) {
+  commit({ alignmentItemSettings: state.alignmentItemSettings.filter(s => s.id !== id) });
+}
+
+/** Ajastin: enintään yksi. Tyhjä lista = ei ajastinta. */
+export function setRunningTimers(timers) {
+  const list = (timers || []).map(normalizeTimer).filter(timer => timer.id && timer.startedAt);
+  commit({ runningTimers: list.slice(0, 1) });
+}
+
+export function setRunningTimerInState(timer) {
+  commit({ runningTimers: timer ? [normalizeTimer(timer)] : [] });
+}
+
+export function replaceTimeEntryInState(id, entry) {
+  commit({ timeEntries: state.timeEntries.map(e => (e.id === id ? normalizeTimeEntry(entry) : e)) });
 }
 
 export function resetState() {

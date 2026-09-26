@@ -6,7 +6,19 @@
 **Edellinen tuotanto:** aallon D commit (v17)
 **Peruutuskohde:** aalto D
 
-Aallon commit-SHA: ks. `docs/activation-0003-0008-release-manifest.json`.
+**Push-kohde (deployTarget):** junan lukon `docs/activation/release-train-c-j.json`
+aallon E `deployTarget` — täysi 40-merkkinen SHA, sama kuin kohdan
+"Deploy" push-rivillä. Manifestin (`docs/activation-0003-0008-release-manifest.json`)
+`commitSha` on aallon AALTOCOMMIT: peruutuksen ja diffin viite, EI push-kohde.
+Push tehdään orkestroijalla (`npm run activation:orchestrate -- --execute-deploy
+--approved-sha=<deployTarget>`), joka tarkistaa ensin, että `origin`in main on
+yhä odotettu edellinen SHA.
+
+**Hyväksyntä (omistajan päätös 2026-09-26):** junan portti on koneellinen
+`AUTOMATED_TECHNICAL_ACCEPTANCE` — ehdot, komennot ja kirjauspaikka:
+[`docs/activation/AUTOMATED-ACCEPTANCE-POLICY.md`](../activation/AUTOMATED-ACCEPTANCE-POLICY.md). Kohdan 4 selainhyväksyntä on
+`LIVE_USE_VALIDATION_PENDING`: se tehdään oikeassa käytössä, **ei estä junaa
+eikä ole koskaan PASS**. Omistajan viesti **"hyväksyn E"** avaa deployn.
 
 ---
 
@@ -74,8 +86,20 @@ Vain `src/data/schema.js`, `sw.js`, `docs/PRODUCTION-STATUS.md`.
 
 ## 2. Deploy
 
+Omistajan viesti **"hyväksyn E"** avaa tämän askeleen. Ensisijainen (ja ainoa suositeltu)
+deploy-askel on orkestroija: se tarkistaa lukon, tuotannon aallon teknisen
+hyväksynnän, ehdokkaan kirjatun testiajon ja julkaisun esitarkistuksen,
+tekee compare-and-swapin, pushaa ja todentaa tuotannon:
+
 ```
-git push origin <WAVE-E-SHA>:main
+npm run activation:orchestrate -- --execute-deploy --approved-sha=86c4325b00e8d58913afebdd0f1eca95d430174e
+```
+
+Viitteeksi (älä aja käsin): orkestroija ajaa compare-and-swapin jälkeen
+täsmälleen tämän — ei koskaan forcea:
+
+```
+git push origin 86c4325b00e8d58913afebdd0f1eca95d430174e:refs/heads/main
 ```
 
 ---
@@ -93,6 +117,10 @@ npm run production:verify-assets -- --wave=E
 ---
 
 ## 4. Selainhyväksyntä
+
+> **`LIVE_USE_VALIDATION_PENDING`** (omistajan päätös 2026-09-26): tämä osio
+> tehdään oikeassa käytössä. Se **ei estä junaa** eikä sitä merkitä koskaan
+> PASSiksi; junan portti on `AUTOMATED_TECHNICAL_ACCEPTANCE` ([`docs/activation/AUTOMATED-ACCEPTANCE-POLICY.md`](../activation/AUTOMATED-ACCEPTANCE-POLICY.md)).
 
 Koska kirjoituspolkua ei ole, hyväksyntä koskee sitä, että **lukupolku
 ei riko mitään**.

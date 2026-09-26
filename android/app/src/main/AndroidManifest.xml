@@ -59,13 +59,40 @@
     <uses-permission android:name="android.permission.INTERNET" />
 
     <!--
-        SIJAINTI: vain etualan kertahaku (src/platform/geolocation.js).
-        Tarkka + likimaarainen, jotta kayttaja voi valita "likimaarainen"
-        Android 12+:n luvassa. Taustasijaintia ja etualapalvelua sijaintiin
-        EI pyyheta: sovellus ei seuraa sijaintia taustalla. Testit
-        (android.test, geolocation.test) vartioivat tata.
+        MIKROFONI: vain puheentunnistukseen (SpeechPlugin.java). Lupaa
+        kysytaan vasta kun kayttaja napauttaa mikrofonia, ei koskaan
+        kaynnistyksessa. Aanta ei tallenneta, eika taustakuuntelua ole:
+        kuuntelu perutaan, kun sovellus siirtyy taustalle.
+
+        Aaniasetusten muokkauslupaa EI julisteta tarkoituksella. Ilman sita
+        Capacitor hylkaa WebView'n omat mikrofonipyynnot, joten web-koodi ei
+        voi avata mikrofonia liitannaisen ohi. Testit (android.test)
+        vartioivat tata.
+
+        MIKROFONI EI OLE PAKOLLINEN LAITTEISTO. Mikrofonilupa synnyttaa
+        Play-kaupassa implisiittisen pakollisen android.hardware.microphone-
+        ominaisuuden, joka suodattaisi pois laitteet ilman mikrofonia. Puhe
+        on oikotie, ei edellytys: kirjoittaminen toimii aina. Siksi
+        ominaisuus julistetaan nimenomaisesti required="false".
     -->
-    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
-    <uses-feature android:name="android.hardware.location.gps" android:required="false" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
+
+    <!--
+        SIJAINTI: lupaa ei julisteta, koska mikaan toteutettu ominaisuus ei
+        kayta sijaintia (src/platform/capabilities.js NATIVE_LOCATION_ENABLED
+        = false). Jos sijainti joskus palaa (reittipalvelu, WP11), vain
+        likimaarainen etualan lupa lisataan, ja sen rinnalle
+        android.hardware.location required="false", jottei jakelu rajaudu.
+    -->
+
+    <!--
+        Android 11+ nayttaa sovellukselle vain julistetut palvelut: ilman tata
+        jarjestelman puheentunnistuspalvelu ei nay SpeechRecognizerille.
+    -->
+    <queries>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+    </queries>
 </manifest>

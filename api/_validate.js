@@ -30,7 +30,7 @@ const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
  */
 function validateParseRequest(body) {
   if (body === null || typeof body !== 'object' || Array.isArray(body)) {
-    return { ok: false, status: 400, error: 'Virheellinen pyynto' };
+    return { ok: false, status: 400, error: 'Virheellinen pyyntö' };
   }
 
   // Kokoraja ennen muuta kasittelya.
@@ -38,10 +38,10 @@ function validateParseRequest(body) {
   try {
     approxBytes = Buffer.byteLength(JSON.stringify(body), 'utf8');
   } catch {
-    return { ok: false, status: 400, error: 'Virheellinen pyynto' };
+    return { ok: false, status: 400, error: 'Virheellinen pyyntö' };
   }
   if (approxBytes > MAX_BODY_BYTES) {
-    return { ok: false, status: 413, error: 'Pyynto on liian suuri' };
+    return { ok: false, status: 413, error: 'Pyyntö on liian suuri' };
   }
 
   const { transcript, today, weekday } = body;
@@ -54,18 +54,18 @@ function validateParseRequest(body) {
     return { ok: false, status: 400, error: 'Puhekomento puuttuu' };
   }
   if (cleanTranscript.length > MAX_TRANSCRIPT_LENGTH) {
-    return { ok: false, status: 413, error: 'Puhekomento on liian pitka' };
+    return { ok: false, status: 413, error: 'Puhekomento on liian pitkä' };
   }
 
   // today ja weekday menevat suoraan promptiin, joten ne validoidaan tiukasti.
   if (typeof today !== 'string' || !ISO_DATE.test(today)) {
-    return { ok: false, status: 400, error: 'Virheellinen paivamaara' };
+    return { ok: false, status: 400, error: 'Virheellinen päivämäärä' };
   }
   if (Number.isNaN(Date.parse(today))) {
-    return { ok: false, status: 400, error: 'Virheellinen paivamaara' };
+    return { ok: false, status: 400, error: 'Virheellinen päivämäärä' };
   }
   if (typeof weekday !== 'string' || !WEEKDAYS.includes(weekday)) {
-    return { ok: false, status: 400, error: 'Virheellinen viikonpaiva' };
+    return { ok: false, status: 400, error: 'Virheellinen viikonpäivä' };
   }
 
   return { ok: true, value: { transcript: cleanTranscript, today, weekday } };

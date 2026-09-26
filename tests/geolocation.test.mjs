@@ -426,6 +426,11 @@ test('web-sovitin: selaimen virhekoodit kääntyvät', async () => {
   }
 });
 
+// Natiivisovitin on POIS KÄYTÖSTÄ (NATIVE_LOCATION_ENABLED = false, manifestissa
+// ei sijaintilupaa), mutta sen koodi säilyy myöhempää reittipalvelua varten.
+// Alla olevat kaksi testiä valitsevat sen nimenomaisesti, jotta säilytetty
+// koodi pysyy oikeana; oletusvalinta testataan erikseen niiden jälkeen.
+
 test('natiivisovitin: Capacitor Geolocation-liitännäinen ja karkea sijainti', async () => {
   const saved = globalThis.Capacitor;
   const plugin = {
@@ -435,7 +440,7 @@ test('natiivisovitin: Capacitor Geolocation-liitännäinen ja karkea sijainti', 
   };
   globalThis.Capacitor = { isNativePlatform: () => true, getPlatform: () => 'android', Plugins: { Geolocation: plugin } };
   try {
-    const adapter = selectAdapter();
+    const adapter = selectAdapter({ nativeLocationEnabled: true });
     assert.equal(adapter.name, 'native');
     assert.equal(await adapter.checkPermission(), 'granted', 'karkea sijainti riittää');
     const result = await getCurrentLocation({ adapter });
@@ -459,11 +464,106 @@ test('natiivisovitin: liitännäisen virheet kääntyvät koodeiksi', async () =
       Plugins: { Geolocation: { getCurrentPosition: async () => { throw new Error(message); } } }
     };
     try {
-      await assert.rejects(selectAdapter().getPosition({ highAccuracy: false, timeoutMs: 1, maximumAgeMs: 0 }), error => error.code === expected);
+      await assert.rejects(selectAdapter({ nativeLocationEnabled: true }).getPosition({ highAccuracy: false, timeoutMs: 1, maximumAgeMs: 0 }), error => error.code === expected);
     } finally {
       if (saved === undefined) delete globalThis.Capacitor; else globalThis.Capacitor = saved;
     }
   }
+});
+
+test('LOC-1 KRIITTINEN: natiivikuoressa sijaintiliitännäistä ei kutsuta, vaikka se on rekisteröity', async () => {
+  // Manifesti ei julista sijaintilupaa. Jos sovitin valittaisiin, "Salli
+  // sijainti" -pyyntö kaatuisi Capacitorin lupatarkistukseen.
+  const { NATIVE_LOCATION_ENABLED } = await import('../src/platform/capabilities.js');
+  assert.equal(NATIVE_LOCATION_ENABLED, false);
+
+  const saved = globalThis.Capacitor;
+  const calls = [];
+  const spy = name => async () => { calls.push(name); return {}; };
+  globalThis.Capacitor = {
+    isNativePlatform: () => true,
+    getPlatform: () => 'android',
+    Plugins: { Geolocation: {
+      checkPermissions: spy('checkPermissions'),
+      requestPermissions: spy('requestPermissions'),
+      getCurrentPosition: spy('getCurrentPosition')
+    } }
+  };
+  try {
+    assert.equal(selectAdapter(), null);
+
+    const state = capability(CAPABILITY.LOCATION);
+    assert.equal(state.supported, true, 'laite tukee sijaintia; sovellus ei käytä sitä');
+    assert.equal(state.implemented, false);
+    assert.equal(state.available, false);
+    assert.match(state.reason, /ei pyydä sijaintilupaa/);
+
+    const located = await getCurrentLocation({ allowPrompt: true });
+    assert.equal(located.ok, false);
+    assert.equal(located.code, LOCATION_ERROR.UNSUPPORTED);
+    const asked = await requestLocationPermission();
+    assert.equal(asked.state, LOCATION_PERMISSION.UNSUPPORTED);
+    const checked = await checkLocationPermission();
+    assert.equal(checked.state, LOCATION_PERMISSION.UNSUPPORTED);
+
+    assert.deepEqual(calls, [], 'sijaintiliitännäistä kutsuttiin: ' + calls.join(', '));
+  } finally {
+    if (saved === undefined) delete globalThis.Capacitor; else globalThis.Capacitor = saved;
+  }
+});
+
+test('LOC-1: selaimen (PWA) kertahaku säilyy, vaikka natiivisijainti on pois päältä', () => {
+  const savedNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  Object.defineProperty(globalThis, 'navigator', {
+    value: { geolocation: { getCurrentPosition() {} } }, configurable: true
+  });
+  try {
+    assert.equal(selectAdapter().name, 'web');
+    assert.equal(capability(CAPABILITY.LOCATION).implemented, true);
+  } finally {
+    if (savedNavigator) Object.defineProperty(globalThis, 'navigator', savedNavigator);
+    else delete globalThis.navigator;
+  }
+});
+
+test('LOC-1: profiili ei tarjoa natiivikuoressa "Salli sijainti" -painiketta', () => {
+  // locationControlsHtml näyttää vain syyn, kun sijainti ei ole toteutettu;
+  // painikkeet ovat vasta implemented-haaran jälkeen.
+  const source = readCode('src/app/views/profile.js');
+  const body = source.slice(source.indexOf('function locationControlsHtml'), source.indexOf('function wireLocationControls'));
+  const guard = body.indexOf('if (!state.supported || !state.implemented)');
+  assert.ok(guard > -1, 'locationControlsHtml ei tarkista implemented-tilaa');
+  const returnHint = body.indexOf('return', guard);
+  assert.ok(returnHint < body.indexOf('pfLocationAskBtn'));
+  assert.ok(returnHint < body.indexOf('pfLocationTryBtn'));
+});
+
+test('LOC-2: paikkamuistutusten teksti ei väitä sovelluksen seuraavan sijaintia', () => {
+  // Säännöt ovat dataa: mikään ei arvioi niitä (locationRuleMatches-funktiolla
+  // ei ole tuotantokutsujaa) eikä sovellus seuraa sijaintia. Teksti, joka
+  // antaa ymmärtää muuta, lupaa ominaisuuden jota ei ole.
+  const html = read('index.html');
+  const hint = html.slice(html.indexOf('id="locationRulesTitle"'), html.indexOf('id="addLocationRuleBtn"'));
+  assert.match(hint, /eivät vielä laukea/);
+  assert.match(hint, /ei\s+seuraa sijaintiasi/);
+  assert.equal(hint.includes('paikkatieto vaatii luvan'), false);
+
+  const actions = read('src/app/assistantActions.js');
+  const toggle = actions.slice(actions.indexOf('export async function toggleLocationRule'),
+    actions.indexOf('export async function deleteLocationRule'));
+  assert.match(toggle, /eivät vielä laukea/);
+  assert.match(toggle, /ei seuraa/);
+  assert.equal(actions.includes('tarvitsee tiedon siitä, missä olet'), false);
+
+  assert.match(read('src/app/views/travel.js'), /Päällä — ei vielä laukea/);
+});
+
+test('LOC-2 KRIITTINEN: säännön päälle kytkeminen ei pyydä sijaintilupaa eikä hae sijaintia', () => {
+  const actions = readCode('src/app/assistantActions.js');
+  const toggle = actions.slice(actions.indexOf('export async function toggleLocationRule'),
+    actions.indexOf('export async function deleteLocationRule'));
+  assert.ok(toggle.length > 0);
+  assert.equal(/requestPermission|getCurrentLocation|requestLocationPermission|platformLocation|location\.current/.test(toggle), false);
 });
 
 test('natiivikuori ilman rekisteröityä liitännäistä: ei sovitinta, rehellinen "ei toteutettu"', () => {

@@ -37,6 +37,7 @@
 const { validateCaptureRequest } = require('./_validateCapture.js');
 const { authenticate } = require('./_auth.js');
 const { checkRateLimit } = require('./_ratelimit.js');
+const { applyCors } = require('./_cors.js');
 
 /**
  * Aikakatkaisu. Lyhyempi kuin suunnittelussa: luokittelu on yksi olio,
@@ -127,6 +128,9 @@ Vastaa VAIN JSON-objektilla, ei muuta tekstiä eikä koodilohkomerkintöjä:
 }
 
 module.exports = async (req, res) => {
+  // 0. CORS: natiivikuoren esikysely ennen metoditarkistusta (api/_cors.js).
+  if (applyCors(req, res)) return;
+
   // 1. Metodivalidointi
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
@@ -161,7 +165,7 @@ module.exports = async (req, res) => {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
     console.error('capture: ANTHROPIC_API_KEY puuttuu palvelimen ymparistosta');
-    res.status(500).json({ error: 'Palvelu ei ole juuri nyt kaytettavissa' });
+    res.status(500).json({ error: 'Palvelu ei ole juuri nyt käytettävissä' });
     return;
   }
 
@@ -189,7 +193,7 @@ module.exports = async (req, res) => {
       // Lokitetaan vain tilakoodi. Anthropicin virhevastaus voi sisältää
       // osan syötteestä, ja syöte on tässä käyttäjän oma muistiinpano.
       console.error('capture: Anthropic vastasi', response.status);
-      res.status(502).json({ error: 'Tulkinta epaonnistui' });
+      res.status(502).json({ error: 'Tulkinta epäonnistui' });
       return;
     }
 
@@ -203,7 +207,7 @@ module.exports = async (req, res) => {
     // pyyntörungon, ja pyyntörunko sisältää käyttäjän muistiinpanon.
     console.error('capture: kutsu epaonnistui', isTimeout ? 'timeout' : 'virhe');
     res.status(isTimeout ? 504 : 500).json({
-      error: isTimeout ? 'Tulkinta kesti liian kauan' : 'Tulkinta epaonnistui'
+      error: isTimeout ? 'Tulkinta kesti liian kauan' : 'Tulkinta epäonnistui'
     });
   } finally {
     clearTimeout(timer);

@@ -5,7 +5,8 @@ tarkoituksella: sijaintia ja ilmoituksia ei ole ajettu fyysisellä laitteella.
 
 | Osa | Tila |
 |---|---|
-| Kertaluonteinen etualan sijainti (`src/platform/geolocation.js`) | IMPLEMENTED_DEVICE_UNVERIFIED |
+| Kertaluonteinen etualan sijainti (`src/platform/geolocation.js`) | Selain (PWA): IMPLEMENTED_DEVICE_UNVERIFIED. Android-sovellus: POIS KÄYTÖSTÄ (`NATIVE_LOCATION_ENABLED = false`, ei manifestilupaa) |
+| Paikkamuistutukset (säännöt) | DATA_ONLY — sääntöjä ei arvioida; käyttöliittymä sanoo "eivät vielä laukea" |
 | Lupatilat, kyvykkyysrekisteri (`capabilities.js`) | COMPLETE_LOCAL (selain/mock), laite todentamatta |
 | Tallennetut kohteet / paikkaehdotukset (`suggestPlaces`) | COMPLETE_LOCAL |
 | Lähtöaikamoottori ja tilat (`travel.js`: `departureSchedule`, `departureState`) | COMPLETE_LOCAL |
@@ -66,12 +67,21 @@ ihmisille, jotka myöhästyvät siksi ettei kukaan muistuttanut ajoissa.
 5. Tapahtuman sijainti on käyttäjän kirjoittama teksti, ei automaattinen
    geokoodaus. Osoite ei lähde mihinkään ellei käyttäjä pyydä reititystä
    (jota ei vielä ole).
-6. **Ei taustasijaintia**: Android-manifestiin ei lisätä `ACCESS_BACKGROUND_LOCATION`;
-   staattiset testit (`tests/geolocation.test.mjs`, `tests/android.test.mjs`) vartioivat sitä. `@capacitor/geolocation`
-   ei julista lupia itse, joten oma manifesti julistaa vain
-   `ACCESS_COARSE_LOCATION` ja `ACCESS_FINE_LOCATION` (etualan kertahaku) sekä
-   `location.gps` `required="false"`. Ilman näitä natiivihaku ei voisi koskaan
-   onnistua; APK:n `aapt2 dump badging` vahvistaa (ei taustasijaintia).
+6. **Ei sijaintilupaa Android-sovelluksessa (26.9.2026).** Mikään toteutettu
+   ominaisuus ei käytä sijaintia: matka ja lähtöaika toimivat paikannimillä ja
+   käyttäjän antamalla kestolla, eikä paikkamuistutuksia arvioida. Siksi
+   Android-manifesti ei julista `ACCESS_*_LOCATION`-lupia eikä
+   `android.hardware.location`-ominaisuutta, ja
+   `src/platform/capabilities.js` `NATIVE_LOCATION_ENABLED = false` pitää
+   JS-puolen samassa linjassa: natiivikuoressa `selectAdapter()` palauttaa
+   `null`, eikä Profiili tarjoa "Salli sijainti" -painiketta (vain syyn).
+   `@capacitor/geolocation` pysyy riippuvuutena myöhempää reittipalvelua
+   varten, mutta sitä ei kutsuta. Selaimen (PWA) kertahaku Profiilin
+   diagnostiikkana säilyy, koska selain ei tarvitse manifestilupaa.
+   Taustasijaintia ei ole eikä tule; `tests/android.test.mjs` kieltää kaikki
+   sijaintiluvat ja vaatii, että jos sijaintilupa joskus palaa, sen rinnalla
+   on `android.hardware.location required="false"` (muuten Play suodattaisi
+   laitteet ilman sijaintilaitteistoa).
 
 ---
 
@@ -129,19 +139,23 @@ käyttäjän tekstiä; koordinaatteja ei tallenneta.
 
 | Lupa | Milloin | Mitä ilman sitä |
 |---|---|---|
-| Sijainti käytön aikana | Käyttäjä painaa "käytä sijaintia" | Käyttäjän antama matka-arvio |
+| Sijainti, Android-sovellus | **Ei julisteta eikä pyydetä** (`NATIVE_LOCATION_ENABLED = false`) | Käyttäjän antama matka-arvio (aina) |
+| Sijainti, selain (PWA) | Käyttäjä painaa Profiilissa "Salli sijainti" (diagnostiikka, näyttää vain tarkkuuden) | Käyttäjän antama matka-arvio |
 | Taustasijainti | **Ei pyydetä, ei toteutettu** | — |
 | Ilmoitukset | Käyttäjän eleestä (olemassa oleva sääntö) | Ei lähtöilmoitusta |
 
-Lupaa ei koskaan pyydetä käynnistyksessä.
+Lupaa ei koskaan pyydetä käynnistyksessä. Paikkamuistutusten kytkin ei pyydä
+sijaintilupaa: säännöt eivät vielä laukea, ja kytkin tallentaa vain käyttäjän
+aikeen (teksti sanoo tämän suoraan).
 
 ---
 
 ## Mikä on todentamatta (laitehyväksyntä)
 
 Ks. `docs/DEVICE-ACCEPTANCE-BACKLOG.md`, osio "MEGA BUILD III". Tiivistetysti:
-lupadialogi ja "estetty pysyvästi" -polku oikealla Androidilla, sijainti pois
-päältä laitteesta, kertahaku ilman koordinaattihistoriaa, lähtöilmoituksen
+Android-sovelluksen lupalistassa ei ole sijaintia (`aapt2`), selaimen
+lupadialogi ja "estetty pysyvästi" -polku, kertahaku ilman
+koordinaattihistoriaa, lähtöilmoituksen
 saapuminen ajallaan (Doze, sovellus tapettu, uudelleenkäynnistys, kesäaika,
 aikavyöhykkeen vaihto) sekä ilmoituksen uudelleenajastus lähtöajan muuttuessa.
 

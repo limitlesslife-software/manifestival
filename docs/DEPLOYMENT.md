@@ -89,6 +89,34 @@ sisällä salaisuuksia.
 |---|---|---|
 | `ANTHROPIC_API_KEY` | Production (+ Preview jos puheohjausta testataan) | Kyllä, muuten `/api/parse` palauttaa 500 |
 | `PARSE_REQUIRE_AUTH` | Valinnainen | Ei. Vain hätävara — ks. alla |
+| `EXPLAIN_ENABLED` | Valinnainen | Ei. **Jätetään asettamatta**, kunnes omistaja ottaa tekoälyselityksen käyttöön — ks. alla |
+
+### EXPLAIN_ENABLED — tekoälyselityksen katkaisin
+
+`/api/explain` (Suunnan havainnon tekoälyselitys) on **oletuksena pois**.
+Ehto on `api/explain.js`:ssä: vain täsmälleen `EXPLAIN_ENABLED=true` avaa
+päätepisteen. Muuten se vastaa `503 {"error":"Palvelu ei ole käytössä"}`
+heti metoditarkistuksen jälkeen — ennen todennusta, joten yhtään
+Supabase- tai Anthropic-kutsua ei tehdä eikä kiintiötä kulu.
+
+Selaimessa on vastinpari: `AI_EXPLAIN_ENABLED` (`src/ai/alignmentExplainClient.js`).
+Kun se on `false`, "Selitä tekoälyllä" -painiketta ei näytetä eikä selain
+kutsu päätepistettä. Käyttöönotto = **molemmat** samassa julkaisussa, ja se on
+omistajan päätös (`docs/SUUNTA-ACTIVATION-GO-NOGO.md`). Kumpikin yksin pitää
+selityksen poissa, ja käyttäjä näkee aina deterministisen selityksen.
+
+`PARSE_REQUIRE_AUTH=false` **ei** avaa selitystä — se sulkee sen kaikilta.
+Hätätilassa `authenticate()` (`api/_auth.js`) ei tarkista tokenia lainkaan,
+joten käyttäjää ei tunneta, ja `/api/explain` vastaa **401 jokaiselle
+pyynnölle**, myös kirjautuneelle käyttäjälle voimassa olevalla tokenilla.
+Selain näyttää silloin deterministisen selityksen ("Miksi tämä näkyy?").
+Hätävara koskee puheohjausta ja muita AI-päätepisteitä (`parse`,
+`extract`, `plan`, `capture`, `command`).
+
+Funktion enimmäiskesto on `vercel.json`issa 20 s: todennus enintään 5 s +
+Anthropic-kutsu enintään 8 s. Selain odottaa 16 s (vähintään 2 s palvelimen
+pahimman tapauksen yli) ja näyttää sitten deterministisen selityksen.
+`tests/api-explain-readiness.test.mjs` pitää nämä välit.
 
 Asetetaan: Vercel -> projekti -> **Settings** -> **Environment Variables**.
 
@@ -159,6 +187,39 @@ istunnon.
 
 Testi `sovelluskuoren välimuistilista vastaa oikeasti ladattavia moduuleja`
 kaatuu, jos uusi moduuli unohtuu listalta.
+
+---
+
+## supabase-js omasta originista (vendor/)
+
+Aiemmin `index.html` latasi supabase-js:n osoitteesta
+`https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2` (versioalue, ei
+tiivistettä). Service worker ei välimuistita vieraita origineja, joten
+offline-kylmäkäynnistys saattoi kaatua ennen kuin ajastin tai lähettämättömät
+aikakirjaukset ehtivät näkyviin (`getClient()` heitti, `start()` näytti
+käynnistysvirheen). Paketti tarjoillaan nyt omasta originista ja on
+sovelluskuoressa (`sw.js` SHELL) sekä Android-koonnissa (`scripts/build-web.mjs`
+kopioi `vendor/`-hakemiston).
+
+| | |
+|---|---|
+| Tiedosto | `vendor/supabase-js-2.117.2.min.js` |
+| Versio | `@supabase/supabase-js` **2.117.2** (paketin `dist/umd/supabase.js`, määrittää `globalThis.supabase`) |
+| SHA-256 | `59d39487c3589843b410322d8a3d562ce022aba1e5ccb16898ef3fb2a0da2ecd` |
+| npm-paketin shasum | `2e3fc984e81bead71f5513e0bc2ebc4343491f59` (`npm pack @supabase/supabase-js@2.117.2`) |
+| Lisenssi | MIT, `vendor/supabase-js-LICENSE.txt` |
+
+Tiedosto on tavu tavulta sama kuin npm-paketissa ja sama, jonka jsDelivr
+tarjoili `@2`-osoitteesta 2026-09-26 (`x-jsd-version: 2.117.2`).
+`vendor/.gitattributes` estää rivinvaihtomuunnokset, jotta tiiviste pysyy
+samana Windows-koneellakin. `tests/vendor-supabase.test.mjs` tarkistaa
+tiivisteen, polun ja kytkennät.
+
+**Päivitys:** `npm pack @supabase/supabase-js@<versio>` repon ulkopuolelle,
+kopioi `package/dist/umd/supabase.js` nimellä `vendor/supabase-js-<versio>.min.js`,
+poista vanha, päivitä polku `index.html`:ään ja `sw.js`:n SHELL-listaan sekä
+versio ja tiiviste tähän taulukkoon ja testiin. CSP:n `script-src` on pelkkä
+`'self'` (`vercel.json`).
 
 ---
 
@@ -268,18 +329,30 @@ Käy nämä läpi kerran:
 Android on erillinen julkaisukanava eikä se vaikuta web-tuotantoon.
 
 ```bash
-npm run build:android    # dist/ -> android -> APK
+npm run build:android    # dist/ -> android -> APK (kehityskoonti)
+npm run android:acceptance -- --worktree <työpuu> --wave <X>   # hyväksyntä-APK
 ```
 
-APK: `android/app/build/outputs/apk/debug/app-debug.apk`
+Kehityskoonnin APK: `android/app/build/outputs/apk/debug/app-debug.apk`.
+Hyväksyntäpaketit (APK + metatieto-JSON) syntyvät hakemistoon
+`.claude/release-packages/`. Toistettava menettely, tarkastus ja
+allekirjoitus on kuvattu tiedostossa
+`docs/activation/ANDROID-ACCEPTANCE-BUILD.md`.
 
-**Java-versio:** Capacitor 8 vaatii Java 21+. Koneen oletus-JDK on 17, joten
-koonti epäonnistuu virheeseen `invalid source release: 21`. Android Studion
-mukana tuleva JDK 25 kelpaa:
+**Java-versio:** Capacitor 8 kääntää Java 21 -tasolla
+(`JavaVersion.VERSION_21`), joten JDK 17 kaatuu virheeseen
+`invalid source release: 21`. Gradle-daemon on kiinnitetty JDK 21:een
+(`android/gradle.properties`, `org.gradle.java.home`), eikä komentotulkin
+`JAVA_HOME`lla ole väliä. Aja Gradle PowerShellistä:
 
-```bash
-JAVA_HOME="/c/Program Files/Android/Android Studio/jbr" ./gradlew assembleDebug
+```powershell
+Set-Location android; .\gradlew.bat assembleDebug
 ```
+
+**APK:n versio:** hyväksyntäkoonnin versionName on muotoa
+`<versio>-wave<X>.<välimuisti>+<sha7>-debug`, kehityskoonnin `1.0.0-debug`.
+versionCode on 1, kunnes omistaja päättää toisin (OMISTAJAN TUOTEPÄÄTÖS:
+suurempi versionCode laitteella estää vanhemman APK:n asentamisen päälle).
 
 **Huomio versioinnista:** web ja Android julkaistaan eri tahdissa. Käyttäjällä
 voi olla vanha APK, kun web on jo päivittynyt. Siksi **Supabase-skeeman pitää

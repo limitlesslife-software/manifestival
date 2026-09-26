@@ -38,13 +38,15 @@
     "lifeAreas": [],
     "weeklyCapacities": [],
     "timeEntries": [],
-    "alignmentReviews": []
+    "alignmentReviews": [],
+    "runningTimers": [],
+    "alignmentItemSettings": []
   },
   "waves": [
     {
       "id": "A",
       "title": "Muistutusasetukset ja hyvinvointi",
-      "commitSha": "703c28f365e62595db4150c6bb319f41c1743d1d",
+      "commitSha": null,
       "cacheVersion": "v14",
       "readiness": "READY",
       "gatesEnabled": [
@@ -75,7 +77,9 @@
         "lifeAreas",
         "weeklyCapacities",
         "timeEntries",
-        "alignmentReviews"
+        "alignmentReviews",
+        "runningTimers",
+        "alignmentItemSettings"
       ],
       "tables": [
         "notification_preferences",
@@ -97,7 +101,7 @@
     {
       "id": "B",
       "title": "Tavoitteet ja projektit",
-      "commitSha": "ddfc356d7d0d055b3923cdbfefbcb0bb6d92ec9c",
+      "commitSha": null,
       "cacheVersion": "v15",
       "readiness": "READY",
       "gatesEnabled": [
@@ -128,7 +132,9 @@
         "lifeAreas",
         "weeklyCapacities",
         "timeEntries",
-        "alignmentReviews"
+        "alignmentReviews",
+        "runningTimers",
+        "alignmentItemSettings"
       ],
       "tables": [
         "goals",
@@ -136,7 +142,7 @@
       ],
       "dependencies": [],
       "rollbackTarget": "A",
-      "rollbackSha": "703c28f365e62595db4150c6bb319f41c1743d1d",
+      "rollbackSha": null,
       "acceptancePack": "docs/acceptance/WAVE-B.md",
       "requiredAcceptance": [
         "npm run activation:verify-wave -- B",
@@ -150,7 +156,7 @@
     {
       "id": "C",
       "title": "Rutiinit ja poikkeukset",
-      "commitSha": "cf259d0ef755f7e875cc9cd9c15405eba632e408",
+      "commitSha": null,
       "cacheVersion": "v16",
       "readiness": "READY",
       "gatesEnabled": [
@@ -181,7 +187,9 @@
         "lifeAreas",
         "weeklyCapacities",
         "timeEntries",
-        "alignmentReviews"
+        "alignmentReviews",
+        "runningTimers",
+        "alignmentItemSettings"
       ],
       "tables": [
         "routines",
@@ -191,7 +199,7 @@
         "goals"
       ],
       "rollbackTarget": "B",
-      "rollbackSha": "ddfc356d7d0d055b3923cdbfefbcb0bb6d92ec9c",
+      "rollbackSha": null,
       "acceptancePack": "docs/acceptance/WAVE-C.md",
       "requiredAcceptance": [
         "npm run activation:verify-wave -- C",
@@ -205,7 +213,7 @@
     {
       "id": "D",
       "title": "Talous",
-      "commitSha": "091e73c0091e8f135641e3501742b998dbac8461",
+      "commitSha": null,
       "cacheVersion": "v17",
       "readiness": "READY",
       "gatesEnabled": [
@@ -237,7 +245,9 @@
         "lifeAreas",
         "weeklyCapacities",
         "timeEntries",
-        "alignmentReviews"
+        "alignmentReviews",
+        "runningTimers",
+        "alignmentItemSettings"
       ],
       "tables": [
         "recurring_expenses",
@@ -246,7 +256,7 @@
       ],
       "dependencies": [],
       "rollbackTarget": "C",
-      "rollbackSha": "cf259d0ef755f7e875cc9cd9c15405eba632e408",
+      "rollbackSha": null,
       "acceptancePack": "docs/acceptance/WAVE-D.md",
       "requiredAcceptance": [
         "npm run activation:verify-wave -- D",
@@ -260,7 +270,7 @@
     {
       "id": "E",
       "title": "AI-toimintojen kirjausketju",
-      "commitSha": "2b947cc1e6b7438b8f8388ac9818ec8468553fd2",
+      "commitSha": null,
       "cacheVersion": "v18",
       "readiness": "READY",
       "gatesEnabled": [
@@ -290,14 +300,16 @@
         "lifeAreas",
         "weeklyCapacities",
         "timeEntries",
-        "alignmentReviews"
+        "alignmentReviews",
+        "runningTimers",
+        "alignmentItemSettings"
       ],
       "tables": [
         "ai_action_audit"
       ],
       "dependencies": [],
       "rollbackTarget": "D",
-      "rollbackSha": "091e73c0091e8f135641e3501742b998dbac8461",
+      "rollbackSha": null,
       "acceptancePack": "docs/acceptance/WAVE-E.md",
       "requiredAcceptance": [
         "npm run activation:verify-wave -- E",
@@ -311,7 +323,7 @@
     {
       "id": "F",
       "title": "Talous 2.0: tapahtumat ja sijoitukset",
-      "commitSha": "e05c54bd4fa7d5afffe3efd6ca7a176b0162008e",
+      "commitSha": null,
       "cacheVersion": "v19",
       "readiness": "READY",
       "gatesEnabled": [
@@ -342,7 +354,9 @@
         "lifeAreas",
         "weeklyCapacities",
         "timeEntries",
-        "alignmentReviews"
+        "alignmentReviews",
+        "runningTimers",
+        "alignmentItemSettings"
       ],
       "tables": [
         "transactions",
@@ -350,7 +364,7 @@
       ],
       "dependencies": [],
       "rollbackTarget": "E",
-      "rollbackSha": "2b947cc1e6b7438b8f8388ac9818ec8468553fd2",
+      "rollbackSha": null,
       "acceptancePack": "docs/acceptance/WAVE-F.md",
       "requiredAcceptance": [
         "npm run activation:verify-wave -- F",
@@ -364,7 +378,7 @@
     {
       "id": "G",
       "title": "Tavoitteesta tekemiseksi: välitavoitteet",
-      "commitSha": "f362e1aed58557e6ad0fd13cf671145f3b7b1ee6",
+      "commitSha": null,
       "cacheVersion": "v20",
       "readiness": "READY",
       "gatesEnabled": [
@@ -394,14 +408,16 @@
         "lifeAreas",
         "weeklyCapacities",
         "timeEntries",
-        "alignmentReviews"
+        "alignmentReviews",
+        "runningTimers",
+        "alignmentItemSettings"
       ],
       "tables": [
         "milestones"
       ],
       "dependencies": [],
       "rollbackTarget": "F",
-      "rollbackSha": "e05c54bd4fa7d5afffe3efd6ca7a176b0162008e",
+      "rollbackSha": null,
       "acceptancePack": "docs/acceptance/WAVE-G.md",
       "requiredAcceptance": [
         "npm run activation:verify-wave -- G",
@@ -415,7 +431,7 @@
     {
       "id": "H",
       "title": "Henkilökohtainen avustaja: kirjaus, muistutukset ja matka",
-      "commitSha": "b7be37752bb38ce8186c5fc68448df0a82e7a261",
+      "commitSha": null,
       "cacheVersion": "v21",
       "readiness": "READY",
       "gatesEnabled": [
@@ -449,7 +465,9 @@
         "lifeAreas",
         "weeklyCapacities",
         "timeEntries",
-        "alignmentReviews"
+        "alignmentReviews",
+        "runningTimers",
+        "alignmentItemSettings"
       ],
       "tables": [
         "inbox_items",
@@ -460,7 +478,7 @@
       ],
       "dependencies": [],
       "rollbackTarget": "G",
-      "rollbackSha": "f362e1aed58557e6ad0fd13cf671145f3b7b1ee6",
+      "rollbackSha": null,
       "acceptancePack": "docs/acceptance/WAVE-H.md",
       "requiredAcceptance": [
         "npm run activation:verify-wave -- H",
@@ -474,7 +492,7 @@
     {
       "id": "I",
       "title": "Suunta: elämänalueet, kapasiteetti, toteuma ja viikkokatsaus",
-      "commitSha": "d418b79e6f4a3a79f3e743bcf8c375c0ef5c55e8",
+      "commitSha": null,
       "cacheVersion": "v22",
       "readiness": "READY",
       "gatesEnabled": [
@@ -507,7 +525,10 @@
         "timeEntries",
         "alignmentReviews"
       ],
-      "gatesDisabled": [],
+      "gatesDisabled": [
+        "runningTimers",
+        "alignmentItemSettings"
+      ],
       "tables": [
         "life_areas",
         "weekly_capacities",
@@ -516,7 +537,7 @@
       ],
       "dependencies": [],
       "rollbackTarget": "H",
-      "rollbackSha": "b7be37752bb38ce8186c5fc68448df0a82e7a261",
+      "rollbackSha": null,
       "acceptancePack": "docs/acceptance/WAVE-I.md",
       "requiredAcceptance": [
         "npm run activation:verify-wave -- I",
@@ -526,6 +547,60 @@
         "supabase/acceptance/verify_0003_0008_post_activation.sql"
       ],
       "rationale": "Neljä uutta taulua ja yksi nullable sarake goals-tauluun (life_area_id). goals.life_area_id ja time_entries viittaavat goals- ja tasks-tauluihin yhdistelmävierasavaimella, joten aallon B (goals) on oltava tuotannossa. Havaintoja (kuormitus, huomiotta jääminen, poikkeama) ei tallenneta: ne lasketaan, joten aalto ei tuo johdettua dataa kantaan. Riippumaton aalloista F–H: 0012 ei vaadi 0009–0011:tä."
+    },
+    {
+      "id": "J",
+      "title": "Suunta 2: ajastin, kuormittavuus ja toteuman lähteet",
+      "commitSha": null,
+      "cacheVersion": "v23",
+      "readiness": "READY",
+      "gatesEnabled": [
+        "runningTimers",
+        "alignmentItemSettings"
+      ],
+      "gatesCumulative": [
+        "notificationPreferences",
+        "wellbeing",
+        "goals",
+        "projects",
+        "routines",
+        "routineExceptions",
+        "recurringExpenses",
+        "savingsGoals",
+        "bills",
+        "aiAudit",
+        "transactions",
+        "investments",
+        "milestones",
+        "inboxItems",
+        "reminders",
+        "notices",
+        "travelPlans",
+        "locationRules",
+        "lifeAreas",
+        "weeklyCapacities",
+        "timeEntries",
+        "alignmentReviews",
+        "runningTimers",
+        "alignmentItemSettings"
+      ],
+      "gatesDisabled": [],
+      "tables": [
+        "running_timers",
+        "alignment_item_settings"
+      ],
+      "dependencies": [],
+      "rollbackTarget": "I",
+      "rollbackSha": null,
+      "acceptancePack": "docs/acceptance/WAVE-J.md",
+      "requiredAcceptance": [
+        "npm run activation:verify-wave -- J",
+        "npm run activation:preflight -- --wave=J",
+        "npm run production:verify-assets -- --wave=J",
+        "selainhyväksyntä: luonti, muokkaus, poisto, säilyvyys sivun latauksen yli",
+        "supabase/acceptance/verify_0003_0008_post_activation.sql"
+      ],
+      "rationale": "Kaksi uutta taulua (running_timers, alignment_item_settings) ja sarakkeita aallon I tauluihin (time_entries, weekly_capacities, alignment_reviews). Riippuu aallosta I: 0013 muuttaa 0012:n tauluja ja viittaa life_areas-tauluun. Yhtäkään tuotannossa auki olevaa taulua (tasks, goals, projects, routines) ei muuteta; niihin viitataan vain yhdistelmävierasavaimilla. Siksi oma aalto: I voi mennä tuotantoon ilman J:tä, mutta ei päinvastoin."
     }
   ]
 }

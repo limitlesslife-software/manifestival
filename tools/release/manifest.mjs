@@ -111,8 +111,17 @@ export function discoverWaveCommits(from = PRODUCTION.sha, to = 'HEAD') {
  * Rakenna manifesti. Tuntemattomat SHA:t jäävät nulliksi — manifesti on
  * hyödyllinen ja todennettavissa myös vajaana, ja vajaus on rehellisempi
  * kuin keksitty tunniste.
+ *
+ * DEPLOYTARGET (ACT-09)
+ *
+ * `commitSha` on AALTOCOMMIT (Release-Wave-trailer): peruutuksen ja
+ * diffin viite. Se EI ole push-kohde: aallon J aaltocommit e96942c ei
+ * sisällä Day 1 -korjauksia, jotka ovat deploykohteessa 5df40b2. Push-
+ * kohde on junan lukon (docs/activation/release-train-c-j.json)
+ * `deployTarget`, ja kun lukko annetaan (`deployTargets`), se kirjataan
+ * manifestiin commitSha:n viereen. Ilman lukkoa kenttää ei kirjoiteta.
  */
-export function buildManifest(shas = discoverWaveCommits()) {
+export function buildManifest(shas = discoverWaveCommits(), { deployTargets = null } = {}) {
   const dependencies = gateDependencyMap();
 
   const waves = WAVES.map(wave => {
@@ -131,6 +140,8 @@ export function buildManifest(shas = discoverWaveCommits()) {
       id: wave.id,
       title: wave.title,
       commitSha: shas[wave.id] || null,
+      // undefined -> JSON.stringify jättää kentän pois (ei lukkoa annettu).
+      deployTarget: deployTargets ? (deployTargets[wave.id] || null) : undefined,
       cacheVersion: wave.cacheVersion,
       readiness: wave.readiness,
       gatesEnabled: [...wave.gates],
@@ -196,7 +207,7 @@ export function writeManifest(manifest) {
  *
  * @returns {string[]} ongelmat; tyhjä lista tarkoittaa kunnossa olevaa
  */
-export function validateManifest(manifest, { checkGit = true } = {}) {
+export function validateManifest(manifest, { checkGit = true, lock = null } = {}) {
   const problems = [];
   if (!manifest || typeof manifest !== 'object') return ['manifestia ei voitu lukea'];
 
@@ -297,6 +308,26 @@ export function validateManifest(manifest, { checkGit = true } = {}) {
     if (wave.commitSha !== null && !/^[0-9a-f]{40}$/.test(String(wave.commitSha || ''))) {
       problems.push(`${wave.id}.commitSha ei ole 40 merkin SHA: ${wave.commitSha}`);
       continue;
+    }
+
+    // deployTarget (ACT-09): valinnainen. Kun se on, sen on oltava täysi
+    // SHA, lukon mukainen (jos lukko annettu), ja aaltocommitin on oltava
+    // sen esi-isä — muuten manifesti ja lukko nimeävät eri historian.
+    if (wave.deployTarget !== undefined && wave.deployTarget !== null) {
+      if (!/^[0-9a-f]{40}$/.test(String(wave.deployTarget))) {
+        problems.push(`${wave.id}.deployTarget ei ole 40 merkin SHA: ${wave.deployTarget}`);
+      } else {
+        const locked = lock && Array.isArray(lock.waves) ? lock.waves.find(w => w.wave === wave.id) : null;
+        if (locked && locked.deployTarget !== wave.deployTarget) {
+          problems.push(`${wave.id}.deployTarget on ${wave.deployTarget}, lukossa ${locked.deployTarget}`);
+        }
+        if (checkGit && wave.commitSha && gitAvailable()) {
+          const ancestor = git(['merge-base', '--is-ancestor', wave.commitSha, wave.deployTarget]);
+          if (ancestor === null) {
+            problems.push(`${wave.id}: aaltocommit ${wave.commitSha.slice(0, 7)} ei ole deployTargetin ${wave.deployTarget.slice(0, 7)} esi-isä`);
+          }
+        }
+      }
     }
 
     // Peruutuskohteen SHA:n on vastattava sitä aaltoa, johon perutaan.

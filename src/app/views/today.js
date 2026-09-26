@@ -13,6 +13,9 @@
 // Aikajanan polku on tuotteen tunnusmerkki: logon joki-muoto, jossa jokainen
 // tapahtuma on solmu ja nykyhetki hehkuu.
 
+import { loggedMinutesForOccurrence } from '../timeTracking.js';
+import { openRoutineLog } from './timeLog.js';
+import { formatMinutes } from '../../domain/lifeArea.js';
 import { fmtISO, sameDay, todayMidnight, addDays } from '../../lib/datetime.js';
 import { escapeHtml, WD_FULL, formatLongDate, formatTimeRange, formatDuration } from '../../lib/format.js';
 import { categoryLabel } from '../../domain/categories.js';
@@ -31,6 +34,7 @@ import {
   skipRoutineOccurrence, restoreRoutineOccurrence, saveWellbeingEntry
 } from '../actions.js';
 import { openEditForm } from './tasks.js';
+import { loadFailureHtml } from './loadNotice.js';
 
 const ROW_HEIGHT = 66;
 
@@ -114,7 +118,19 @@ function deadlineTag(task, todayIso) {
 
 // ------------------------------------------------------------- aikajana
 
+/** Aikajanan lähteet: tyhjä aikajana ei ole "avoin päivä", jos jokin näistä ei latautunut. */
+const TIMELINE_DOMAINS = Object.freeze(['tasks', 'routines', 'routineExceptions']);
+
 function renderTimeline(container, items, nowState, todayIso) {
+  // Epäonnistunut lataus: pelkät automaattiset rivit (herätys, aamutoimet,
+  // uni) näyttäisivät päivän tyhjältä, vaikka tehtävät ovat tallessa.
+  if (!items.some(item => !item.virtual)) {
+    const notice = loadFailureHtml(getState(), TIMELINE_DOMAINS);
+    if (notice) {
+      container.innerHTML = notice;
+      return;
+    }
+  }
   if (items.length === 0) {
     container.innerHTML = `
       <div class="empty-state">
@@ -173,6 +189,7 @@ function renderTimeline(container, items, nowState, todayIso) {
           <span class="t-title">${escapeHtml(item.title)}${priorityTag(item)}</span>
           ${item.note ? `<span class="t-sub">${escapeHtml(item.note)}</span>` : ''}
         </div>
+        ${routineLogButton(item.routineId, item.date, item.title)}
         <button class="skip-btn" data-skip-routine="${escapeHtml(item.routineId)}"
                 data-skip-date="${escapeHtml(item.date)}"
                 aria-label="Ohita tänään: ${escapeHtml(item.title)}">Ohita</button>
@@ -203,6 +220,19 @@ function renderTimeline(container, items, nowState, todayIso) {
     </svg>
     <div class="timeline-items">${rows}</div>
   </div>`;
+}
+
+/**
+ * Rutiinin esiintymän kirjauspainike. Näyttää jo kirjatun ajan, jotta
+ * käyttäjä näkee ettei kirjausta tarvita uudelleen.
+ */
+function routineLogButton(routineId, dateIso, title) {
+  if (getState().lifeAreas.length === 0) return '';
+  const logged = loggedMinutesForOccurrence(routineId, dateIso);
+  const label = logged > 0 ? `Kirjattu ${formatMinutes(logged)}` : 'Kirjaa';
+  return `<button class="skip-btn log-btn${logged > 0 ? ' is-logged' : ''}" data-log-routine="${escapeHtml(routineId)}"
+            data-log-date="${escapeHtml(dateIso)}"
+            aria-label="${escapeHtml(logged > 0 ? `Kirjattu ${formatMinutes(logged)}, lisää aikaa` : 'Kirjaa käytetty aika')}: ${escapeHtml(title)}">${escapeHtml(label)}</button>`;
 }
 
 // ---------------------------------------------------------------- fokus
@@ -305,6 +335,7 @@ function renderUnscheduled(container, plan) {
           <span class="task-cat-tag">${escapeHtml(categoryLabel(occurrence.category))}</span>
         </div>
       </div>
+      ${routineLogButton(occurrence.routineId, occurrence.date, occurrence.title)}
       <button class="skip-btn" data-skip-routine="${escapeHtml(occurrence.routineId)}"
               data-skip-date="${escapeHtml(occurrence.date)}"
               aria-label="Ohita tänään: ${escapeHtml(occurrence.title)}">Ohita</button>
@@ -499,6 +530,12 @@ function attachHandlers(root, dateIso) {
   root.querySelectorAll('[data-skip-routine]').forEach(node =>
     node.addEventListener('click', () =>
       skipRoutineOccurrence(node.dataset.skipRoutine, node.dataset.skipDate)));
+
+  // Rutiinin esiintymän kirjaus: kesto on vain ehdotus, ja esiintymän
+  // identiteetti (rutiini + päivä) estää vahingossa tehdyn kaksoiskirjauksen.
+  root.querySelectorAll('[data-log-routine]').forEach(node =>
+    node.addEventListener('click', () =>
+      openRoutineLog(node.dataset.logRoutine, node.dataset.logDate)));
 
   root.querySelectorAll('[data-restore-routine]').forEach(node =>
     node.addEventListener('click', () =>

@@ -2,9 +2,10 @@
 //
 // MIKSI TÄMÄ KERROS ON OLEMASSA
 // Manifestivalin arvokkaimmat myöhemmät ominaisuudet — muistutukset oikeaan
-// aikaan, lähtöajan ennakointi, puhekomento lukitulla puhelimella — eivät ole
+// aikaan, lähtöajan ennakointi, puhe Android-sovelluksessa — eivät ole
 // selaimen tavoitettavissa. Ne vaativat natiivikerroksen
-// (ks. docs/ANDROID-STRATEGY.md).
+// (ks. docs/ANDROID-STRATEGY.md). Puhekomentoa lukitulla puhelimella EI
+// luvata: se vaatisi taustamikrofonin, jota sovelluksessa ei ole.
 //
 // Jos sovelluslogiikka kutsuisi suoraan selaimen rajapintoja, natiiviversio
 // vaatisi ydinsovelluksen uudelleenkirjoituksen. Siksi kaikki alustariippuvuus
@@ -20,6 +21,7 @@ import {
 import * as notificationPlatform from './notifications.js';
 import { bindLifecycle, isNativeLifecycleAvailable } from './lifecycle.js';
 import * as geolocation from './geolocation.js';
+import * as speechPlatform from './speech.js';
 
 export {
   CAPABILITY, CAPABILITIES, PERMISSION, NATIVE_REQUIRED,
@@ -53,7 +55,7 @@ const NOT_IMPLEMENTED = Object.freeze({
  *
  * Webissä sovellus tarjoillaan samasta originista kuin /api/parse, joten
  * suhteellinen polku riittää. Natiivikuoressa sivu ladataan laitteen omasta
- * tiedostojärjestelmästä (capacitor://localhost), jolloin suhteellinen polku
+ * tiedostojärjestelmästä (Android: https://localhost, api/_cors.js), jolloin suhteellinen polku
  * osuisi paikalliseen kuoreen eikä koskaan palvelimeen — puheohjaus
  * lakkaisi toimimasta hiljaa.
  */
@@ -82,6 +84,8 @@ export const notifications = Object.freeze({
   showNow: notificationPlatform.showNow,
   schedule: notificationPlatform.schedule,
   cancel: notificationPlatform.cancelAll,
+  /** Poista jo toimitetut ilmoitukset ilmoitusalueelta (uloskirjautuminen, tilin poisto). */
+  removeAllDelivered: notificationPlatform.removeAllDelivered,
   describeSupport: notificationPlatform.describeSupport,
   /** Montako ilmoitusta on tällä hetkellä ajastettuna laitteelle. */
   pendingCount: notificationPlatform.pendingCount
@@ -116,12 +120,30 @@ export const location = Object.freeze({
 
 export const speech = Object.freeze({
   capability: () => capability(CAPABILITY.SPEECH),
+  /** 'native' | 'web' | 'none'. Ks. src/platform/speech.js. */
+  backend: speechPlatform.speechBackend,
+  /** Kuuntele kerran. VAIN käyttäjän napautuksesta: voi avata lupadialogin. */
+  startListening: speechPlatform.startListening,
+  /** Katkaise käynnissä oleva kuuntelu (peruutus, sovellus taustalle). */
+  cancelActiveListening: speechPlatform.cancelActiveListening,
+  isListening: speechPlatform.isListening,
+  isAwaitingPermission: speechPlatform.isAwaitingPermission,
+  /** Virhekoodin selitys tämän alustan sanoin. */
+  errorMessage: speechPlatform.speechErrorMessage,
+  isPermanentError: speechPlatform.isPermanentSpeechError,
+  canOpenSettings: speechPlatform.canOpenSpeechSettings,
+  /** Avaa sovelluksen järjestelmäasetukset. VAIN käyttäjän napautuksesta. */
+  openSettings: speechPlatform.openSpeechSettings,
+  /** Lue mikrofoniluvan tila. EI pyydä lupaa. */
+  refreshPermission: speechPlatform.refreshSpeechPermission,
   /**
-   * Toimiiko puhekomento sovelluksen ollessa suljettuna.
-   * Selaimessa ei koskaan. Tämä on yksi natiivikerroksen tärkeimmistä syistä.
+   * Toimiiko puhekomento sovelluksen ollessa suljettuna: EI missään.
+   * Kuuntelu on aina etualalla ja napautuksesta; natiiviliitännäinen
+   * perii sen, kun sovellus siirtyy taustalle. Ei taustamikrofonia,
+   * ei etualapalvelua.
    */
   supportsBackgroundCapture() {
-    return isNativeShell();
+    return false;
   }
 });
 

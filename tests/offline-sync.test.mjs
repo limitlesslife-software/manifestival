@@ -556,3 +556,68 @@ test('kelvoton tehtävä (validointi) hylätään toistossa näkyvästi eikä l�
   assert.equal(server.writes.length <= 1, true);
   assert.ok(run.ran);
 });
+
+// ------------------------------------------------------- tilin poisto
+
+test('purge + uloskirjautuminen: poistetun tilin jonoavainta ei luoda uudelleen', () => {
+  // Tilin poisto kutsuu purgea, ja sitä seuraava uloskirjautuminen
+  // deactivatea. Aiemmin deactivate tallensi tyhjän jonon takaisin
+  // poistetun käyttäjän avaimelle, jolloin laitteelle jäi tilin tunniste.
+  net.online = false;
+  sync.enqueueTaskCreate(task('t1'));
+  sync.purge(ALICE.id);
+  sync.deactivate();
+  assert.equal(stored.has(ALICE.id), false, 'avain jäi laitteelle');
+  assert.equal(store.load(ALICE.id), null);
+  assert.equal(sync.isActive(), false);
+});
+
+// ------------------------------------------ skeema- ja palvelinvirheet
+
+test('tilapäinen palvelinvirhe (PGRST002) toistossa: odottaa viiveellä, ei merkitä epäonnistuneeksi', async () => {
+  net.online = false;
+  sync.enqueueTaskCreate(task('t1'));
+  net.online = true;
+  server.failNext('insert', { code: 'PGRST002', message: 'Could not query the database for the schema cache. Retrying.' });
+  const run = await sync.replay();
+  assert.equal(run.failed, 0);
+  const [op] = sync.list();
+  assert.equal(op.status, OP_STATUS.PENDING);
+  assert.equal(op.retryCount, 1);
+  assert.equal(op.lastErrorCode, 'unavailable');
+  clock.t += BACKOFF_BASE_MS * 4;
+  assert.equal((await sync.replay()).synced, 1);
+});
+
+test('skeemavirhe (PGRST204) toistossa: operaatio pysähtyy, ei kuluta yrityksiä, ja uusi tarkistus pyydetään', async () => {
+  let reprobes = 0;
+  sync = makeSync({ onSchemaError: () => { reprobes += 1; } });
+  sync.activate(ALICE.id);
+  net.online = false;
+  sync.enqueueTaskCreate(task('t1'));
+  net.online = true;
+  server.failNext('insert', { code: 'PGRST204', message: "Could not find the 'x' column of 'tasks' in the schema cache" });
+  const run = await sync.replay();
+  assert.equal(run.reason, 'schema');
+  assert.equal(reprobes, 1);
+  const [op] = sync.list();
+  assert.deepEqual([op.status, op.retryCount, op.lastErrorCode], [OP_STATUS.PENDING, 0, 'schema']);
+  assert.equal((await sync.replay()).synced, 1, 'seuraava toisto onnistuu');
+});
+
+test('canSync=false (huoltotila): ei toistoa eikä jonotusta; jono säilyy', async () => {
+  let writable = true;
+  sync = makeSync({ canSync: () => writable });
+  sync.activate(ALICE.id);
+  net.online = false;
+  sync.enqueueTaskCreate(task('t1'));
+  net.online = true;
+  writable = false;
+  const before = server.writes.length;
+  assert.equal((await sync.replay()).reason, 'schema');
+  assert.equal(server.writes.length, before);
+  assert.deepEqual(sync.enqueueTaskCreate(task('t2')), { ok: false, reason: 'maintenance' });
+  assert.equal(sync.status().total, 1);
+  writable = true;
+  assert.equal((await sync.replay()).synced, 1);
+});

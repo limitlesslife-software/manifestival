@@ -1,0 +1,145 @@
+# Suunta — aktivoinnin GO/NO-GO (päivitetty 2026-09-26: automaattinen tekninen hyväksyntä)
+
+**Tuotanto nyt:** `origin/main` = `cf259d0` = **aalto C** (v16). Todennettu
+lukevalla GET:llä tuotannon tiedostoista 2026-09-26 (C:n kuusi porttia auki,
+D–J kiinni). Kanta: migraatiot 0001–0008 ajettu, 0009–0013 ei
+(`docs/activation/PRODUCTION-INVENTORY-2026-09-26.md`).
+
+**Hyväksyntäpolitiikka (omistajan päätös 2026-09-26, sitova):** historiallisten
+aaltojen käsin tehtävä selain- ja laitehyväksyntä **siirtyy oikeaan käyttöön
+eikä pysäytä junaa**. Jokainen aalto hyväksytään koneellisesti tilaan
+`AUTOMATED_TECHNICAL_ACCEPTANCE`; käyttöliittymän ja laitteen käytös on
+`LIVE_USE_VALIDATION_PENDING` eikä sitä koskaan kutsuta PASSiksi. Ehdot,
+komennot ja kirjauspaikka aalloittain:
+[`docs/activation/AUTOMATED-ACCEPTANCE-POLICY.md`](activation/AUTOMATED-ACCEPTANCE-POLICY.md).
+Tämä korvaa aiemman aaltokohtaisen selainhyväksyntäportin.
+
+**Nopein polku askel askeleelta (tila / komento / odotus / STOP / seuraava /
+omistajan viesti):** [`docs/SUUNTA-FAST-ACTIVATION.md`](SUUNTA-FAST-ACTIVATION.md).
+
+**Omistajan hyväksyntä vaaditaan vain:** jokainen tuotantomigraatio
+(0009–0013; **0010 erikseen + varmuuskopio**), jokainen tuotantodeploy (D–J),
+valinnainen T-2-varmuuskopion kuivaharjoitus tuotannossa, AI-selityksen
+käyttöönotto ja Androidin versionCode-politiikka. Hyväksyntä annetaan
+lyhyellä viestillä: "hyväksyn D", "hyväksyn E", "hyväksyn 0009/F",
+"hyväksyn 0010/G", "hyväksyn 0011/H", "hyväksyn 0012/I", "hyväksyn 0013/J".
+
+**Kaikki migraatiot 0009–0013 on harjoiteltu oikealla PostgreSQL 17:llä**
+tuotannon muotoisesta datasta: ketju, RLS (311 tarkistusta), virheet
+(31), peruutukset (5/5), esitarkistukset (35) — 0 hylättyä
+(`docs/activation/REHEARSAL-REPORT.md`).
+
+| Aalto | Sisältö | Deploykohde | Migraatio | Tila | Omistajan toimi | Riski | Peruutus |
+|---|---|---|---|---|---|---|---|
+| **C** v16 | rutiinit, poikkeukset | `cf259d0ef755f7e875cc9cd9c15405eba632e408` (tuotannossa) | — | **DEPLOYATTU**; tekninen hyväksyntä kirjataan live-todennuksesta | ei hyväksyntää (Claude kirjaa `AUTOMATED_TECHNICAL_ACCEPTANCE`); käyttö `LIVE_USE_VALIDATION_PENDING` | matala | revert (vie v17:n → numerointi siirtyy) |
+| **D** v17 | laskut, menot, säästöt | `091e73c0091e8f135641e3501742b998dbac8461` | — | READY (jäädytetty; ehdokkaan testiajo kirjattava vihreänä — 2026-09-25: 1595/1596) | "hyväksyn D" | matala | aalto C |
+| **E** v18 | AI-kirjausketju | `86c4325b00e8d58913afebdd0f1eca95d430174e` (`release/activation-0003-0008`) | — | READY | "hyväksyn E" (E:ssä ei ole kirjoituspolkua käyttöliittymästä: taulu pysyy tyhjänä) | matala | D |
+| **F** v19 | Talous 2.0 | `5e4e7cf50e40fe1e0ba7b4543b147767e3a0eb32` (`rehearsal/wave-f-v3`) | **0009** | READY 0009:n jälkeen | "hyväksyn 0009/F" (migraatio + deploy, kun verify_0009 = 0) | matala | E + 0009 ROLLBACK |
+| **G** v20 | Tavoitteesta tekemiseksi | `173afd5dc01d16e244ec07e72fb6e29918415e81` (`rehearsal/wave-g-v3`) | **0010** | READY 0010:n jälkeen | **erillinen** "hyväksyn 0010/G" + **varmuuskopio** ensin ([`0010-BACKUP-AND-RECOVERY.md`](activation/0010-BACKUP-AND-RECOVERY.md)) | **KORKEA** (muuttaa goals/tasks/projects/profile) | F + 0010 ROLLBACK |
+| **H** v21 | Henkilökohtainen avustaja | `48b2cad8bc62362dbe371d08f36b32677df270f6` (`rehearsal/wave-h-v3`; leikataan uudelleen) | **0011** | READY 0011:n jälkeen | "hyväksyn 0011/H" | matala | G |
+| **I** v22 | **Suunta 1** | `4cfb4bcfea649146fb0bc9202d309aea8d1ffd9e` (`rehearsal/wave-i-v1`; leikataan uudelleen) | **0012** | READY 0012:n jälkeen | "hyväksyn 0012/I" (välivaihe) | keski (goals + sarake) | H |
+| **J** v23 | **Suunta 2** (ajastin, energia, katsaus v2) + yön korjaukset | `5df40b20cee4f35279a79888959d49c9af88bcc7` (`rehearsal/wave-j-v1`; leikataan uudelleen) | **0013** | READY 0013:n jälkeen | "hyväksyn 0013/J", sitten APK (vasta kun verify_0013 = 0 ja J on tuotannossa) | matala | I (aika säilyy) |
+
+Deploykohde on **lukon** `docs/activation/release-train-c-j.json` täysi SHA
+(`deployTarget`) — ei haaran nimi eikä manifestin aaltocommit. Lukon
+tarkistus: `npm run activation:train-map`. Koneellinen kartta (jokaisen
+kohteen oma `sw.js`/`schema.js`: v16→v23 nousevat, ei törmäyksiä, ei
+ennenaikaisia portteja; jokainen aalto edellisen jälkeläinen).
+Paketit: `docs/activation/MIGRATION-BUNDLES.md`. H, I ja J leikataan
+uudelleen: niiden SHA:t päivittyvät lukosta (`train-map --write`, sitten
+`train-map --sync-docs`), eikä niitä kirjoiteta käsin.
+
+---
+
+## Seuraavaksi
+
+**1. (Claude, vain luku)** `npm run activation:dry-run` (tai `-- --offline`).
+Odotettu: `NEXT_ACTION: DEPLOY D` — **ei** migraatio 0009: se odottaa, kunnes E
+on tuotannossa ja teknisesti hyväksytty. `REQUIRED_OWNER_GATE` sisältää vain
+omistajan hyväksynnän "hyväksyn D"; `REQUIRED_TECHNICAL_GATE` kertoo Clauden
+koneelliset askeleet (C:n tekninen hyväksyntä, D:n testiajo);
+`LIVE_USE_VALIDATION_PENDING` tulostetaan tiedoksi. Tuore inventaario
+(`supabase/acceptance/activation_readonly_inventory.sql`, vain luku) tarvitaan
+vasta ennen migraatiota 0009.
+
+**2. (Claude)** C:n tekninen hyväksyntä live-todennuksesta — kirjaus menee
+paikalliseen, git-ignoroituun päiväkirjaan `.claude/activation/journal.jsonl`:
+`npm run production:verify-assets -- --wave=C --sha=cf259d0ef755f7e875cc9cd9c15405eba632e408 --record-acceptance`.
+Aallon C selainlista (`docs/acceptance/WAVE-C-OWNER-ACCEPTANCE.md`) on
+`LIVE_USE_VALIDATION_PENDING`: tehdään oikeassa käytössä, ei estä D:tä.
+
+**3. (Claude)** D:n oma testipatteristo ehdokkaan työpuussa ja kirjaus
+(`--record-candidate-tests`, komento dry-runin `REQUIRED_TECHNICAL_GATE`-rivillä).
+
+**4. (omistaja)** "hyväksyn D" → Claude ajaa orkestroijan, joka tarkistaa
+lukon, teknisen hyväksynnän, testiajon ja esitarkistuksen, varmistaa että
+`origin`in main on yhä tuotannon SHA (compare-and-swap), pushaa **lukon
+deployTargetin** (ei koskaan force), todentaa tuotannon (välimuisti, portit,
+sarakeportit, sormenjälki) ja kirjaa D:n `AUTOMATED_TECHNICAL_ACCEPTANCE`:n.
+E samalla kaavalla ("hyväksyn E").
+
+**5. Jokainen migraatioaalto F–J:** omistaja ajaa `preflight_00XX.sql`:n
+(vain luku) ja liittää tuloksen → Claude pisteyttää
+(`node tools/activation/score-sql-result.mjs`) → "hyväksyn 00XX/W" →
+omistaja ajaa migraation → omistaja ajaa `verify_00XX.sql`:n ja liittää →
+Claude pisteyttää → Claude deployaa orkestroijalla → live-todennus →
+tekninen hyväksyntä kirjataan. 0010:lle ensin tuore tilannekuva
+(`supabase/backup/snapshot_state_0009.sql` + `restore-snapshot.mjs check`;
+[`docs/activation/0010-BACKUP-AND-RECOVERY.md`](activation/0010-BACKUP-AND-RECOVERY.md)).
+H, I ja J leikataan uudelleen ennen deployta: orkestroija pysähtyy
+(`TRAIN_RECUT_REQUIRED`), ja alla oleva STOP-rivi pysyy, kunnes lukko on
+kirjoitettu uusilla SHA:illa.
+
+Deploy-komennot lukosta (ensisijainen askel; `--sync-docs` päivittää ne):
+
+```
+npm run activation:orchestrate -- --execute-deploy --approved-sha=091e73c0091e8f135641e3501742b998dbac8461   # D v17
+npm run activation:orchestrate -- --execute-deploy --approved-sha=86c4325b00e8d58913afebdd0f1eca95d430174e   # E v18
+npm run activation:orchestrate -- --execute-deploy --approved-sha=5e4e7cf50e40fe1e0ba7b4543b147767e3a0eb32 --verify-result=<verify_0009-tulos>   # F v19
+npm run activation:orchestrate -- --execute-deploy --approved-sha=173afd5dc01d16e244ec07e72fb6e29918415e81 --verify-result=<verify_0010-tulos>   # G v20
+# STOP H — TRAIN_RECUT_REQUIRED: lukon deployTarget 48b2cad ei sisällä pakollista korjausta 5aa0d53; ei push- eikä deploy-komentoa ennen uudelleenleikkausta (leikkaa, sitten node tools/activation/train-map.mjs --write ja --sync-docs) [deploy --verify-result=<verify_0011-tulos>   # H v21]
+# STOP I — TRAIN_RECUT_REQUIRED: lukon deployTarget 4cfb4bc ei sisällä pakollista korjausta 5aa0d53; ei push- eikä deploy-komentoa ennen uudelleenleikkausta (leikkaa, sitten node tools/activation/train-map.mjs --write ja --sync-docs) [deploy --verify-result=<verify_0012-tulos>   # I v22]
+# STOP J — TRAIN_RECUT_REQUIRED: lukon deployTarget 5df40b2 ei sisällä pakollista korjausta 5aa0d53; ei push- eikä deploy-komentoa ennen uudelleenleikkausta (leikkaa, sitten node tools/activation/train-map.mjs --write ja --sync-docs) [deploy --verify-result=<verify_0013-tulos>   # J v23]
+```
+
+Push-kohteet (viitteeksi — orkestroija ajaa nämä compare-and-swapin jälkeen;
+älä aja käsin):
+
+```
+git push origin 091e73c0091e8f135641e3501742b998dbac8461:refs/heads/main   # D v17
+git push origin 86c4325b00e8d58913afebdd0f1eca95d430174e:refs/heads/main   # E v18
+git push origin 5e4e7cf50e40fe1e0ba7b4543b147767e3a0eb32:refs/heads/main   # F v19
+git push origin 173afd5dc01d16e244ec07e72fb6e29918415e81:refs/heads/main   # G v20
+# STOP H — TRAIN_RECUT_REQUIRED: lukon deployTarget 48b2cad ei sisällä pakollista korjausta 5aa0d53; ei push- eikä deploy-komentoa ennen uudelleenleikkausta (leikkaa, sitten node tools/activation/train-map.mjs --write ja --sync-docs) [push   # H v21]
+# STOP I — TRAIN_RECUT_REQUIRED: lukon deployTarget 4cfb4bc ei sisällä pakollista korjausta 5aa0d53; ei push- eikä deploy-komentoa ennen uudelleenleikkausta (leikkaa, sitten node tools/activation/train-map.mjs --write ja --sync-docs) [push   # I v22]
+# STOP J — TRAIN_RECUT_REQUIRED: lukon deployTarget 5df40b2 ei sisällä pakollista korjausta 5aa0d53; ei push- eikä deploy-komentoa ennen uudelleenleikkausta (leikkaa, sitten node tools/activation/train-map.mjs --write ja --sync-docs) [push   # J v23]
+```
+
+**6.** J:n jälkeen: APK puhelimeen (`docs/activation/ANDROID-ACCEPTANCE-BUILD.md`)
+**vasta kun `verify_0013` = 0 ja J on tuotannossa**; Day 1
+(`docs/SUUNTA-DAY1-ACCEPTANCE.md`) on `LIVE_USE_VALIDATION_PENDING`.
+
+**Nopein turvallinen polku päivittäiseen käyttöön:** C (tekninen) → D → E →
+0009/F → 0010/G → 0011/H → 0012/I → 0013/J → puhelin. Jokainen deploy ja
+migraatio on oma omistajan hyväksyntänsä; D ja E eivät vaadi migraatiota.
+Kaikki migraatiot ovat taaksepäin yhteensopivia edellisen aallon koodin
+kanssa (todennettu), joten tauko minkä tahansa aallon jälkeen on turvallinen.
+
+---
+
+## Jäljellä olevat esteet (vain nämä luokat)
+
+| Luokka | Mitä |
+|---|---|
+| OWNER_DEPLOY_APPROVAL_REQUIRED | Aaltojen D–J deployt: "hyväksyn D", "hyväksyn E", F–J migraatioviestin kautta |
+| OWNER_PRODUCTION_MIGRATION_APPROVAL_REQUIRED | "hyväksyn 0009/F", **"hyväksyn 0010/G" (erikseen, tilannekuva ensin)**, "hyväksyn 0011/H", "hyväksyn 0012/I", "hyväksyn 0013/J" |
+| OWNER_READ_ONLY_SQL_REQUIRED | Omistajan syöte, ei hyväksyntä: tuore inventaario ennen 0009:ää, `preflight_00XX.sql`- ja `verify_00XX.sql`-tulokset (vain luku, liitetään Claudelle) |
+| TECHNICAL_ACCEPTANCE_REQUIRED | Claude: tuotannon aallon `AUTOMATED_TECHNICAL_ACCEPTANCE` päiväkirjaan (C live-todennuksesta, D–J orkestroijan deploysta) |
+| CANDIDATE_TESTS_REQUIRED | Claude: ehdokkaan oma täysi testipatteristo vihreänä ja kirjattuna ennen sen migraatiota tai deployta |
+| LIVE_USE_VALIDATION_PENDING | Kaikki käsin tehtävät selain- ja laitetarkistukset (WAVE-X.md kohta 4, `WAVE-C-OWNER-ACCEPTANCE.md`, Day 1): oikeassa käytössä, **ei estä junaa, ei koskaan PASS** |
+| PHONE_ACCEPTANCE_REQUIRED | Day 1 puhelimella J:n jälkeen — `LIVE_USE_VALIDATION_PENDING` (ei estä); APK asennetaan vasta kun `verify_0013` = 0 ja J on tuotannossa |
+| OPTIONAL_OWNER_APPROVAL | T-2-varmuuskopion kuivaharjoitus tuotannossa (valinnainen, oma hyväksyntänsä; `docs/activation/0010-BACKUP-AND-RECOVERY.md`) |
+| EXTERNAL_PROVIDER_REQUIRED | `ANTHROPIC_API_KEY` Vercelissä (`docs/DEPLOYMENT.md` kirjaa sen olemassa olevaksi, Production + Preview — tarkista hallintapaneelista): tekstikomennot (aalto H:n ensimmäinen oikea AI-kirjausrivi). AI-selitys ei käytä avainta ennen kuin se kytketään päälle (alla) |
+| OPTIONAL_DAY1 · OWNER_DECISION | **AI-selitys (`/api/explain`) on pois, eikä Day 1 tarvitse sitä.** Aalto J deployaa päätepisteen suljettuna: `EXPLAIN_ENABLED` ei asetettu → 503 ennen todennusta, ei Anthropic-kutsuja; selaimen `AI_EXPLAIN_ENABLED = false` → ei "Selitä tekoälyllä" -painiketta. Käyttöönotto = omistajan hyväksyntä: (1) `EXPLAIN_ENABLED=true` Verceliin (Production), (2) `AI_EXPLAIN_ENABLED = true` omassa commitissaan + `CACHE_VERSION`-nosto; sama commit päivittää kaksi KATKAISIN-vartijatestiä, jotka kaatuvat tarkoituksella lipun kääntyessä (`tests/life-alignment-explain.test.mjs` KATKAISIN, `tests/api-explain-readiness.test.mjs` KATKAISIMET), (3) deploy. Kumpikin yksin pitää selityksen pois. Päätös kirjataan tähän riviin |
+| PRODUCT_DECISION_REQUIRED | Android versionCode-strategia (omistajan hyväksyntä); tallennetun katsauksen tilannekuva uudelleentallennuksessa; `routine_exceptions`-uniikkius (`docs/FOLLOWUP-routine-exceptions-uniqueness.md`) |
+| REAL_DB_ENVIRONMENT_REQUIRED | PostgREST-kerros ja Supabasen `postgres`-rooli (harjoitus ajoi superuserina) — jokaisen aallon `verify_00XX.sql` tuotannossa kattaa |

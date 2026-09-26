@@ -198,7 +198,8 @@ export function buildPlanningContext({
   capacity = null,
   todayIso = null,
   existingGoal = null,
-  alignmentCapHours = null
+  alignmentCapHours = null,
+  alignmentConstraints = null
 } = {}) {
   const active = goals.filter(goal => goal && goal.status === 'active');
 
@@ -224,6 +225,15 @@ export function buildPlanningContext({
     weeklyFreeHours: Number.isFinite(alignmentCapHours) && alignmentCapHours >= 0
       ? (computedHours === null ? alignmentCapHours : Math.min(computedHours, alignmentCapHours))
       : computedHours,
+    /**
+     * Suunnan rajat (src/domain/planAlignment.js). Pelkkiä lukuja:
+     * palvelin päästää läpi vain nimetyt kentät (api/_validatePlan.js).
+     */
+    remainingWeeklyHours: alignmentConstraints ? alignmentConstraints.remainingHours : null,
+    unestimatedCount: alignmentConstraints ? alignmentConstraints.unestimatedCount : null,
+    heavyRemainingHours: alignmentConstraints ? alignmentConstraints.heavyRemainingHours : null,
+    protectedHours: alignmentConstraints ? alignmentConstraints.protectedHours : null,
+    neglectedImportantAreaCount: alignmentConstraints ? alignmentConstraints.neglectedImportantAreaCount : null,
     /** Kun kyse on olemassa olevan tavoitteen uudelleensuunnittelusta. */
     existingGoalTitle: existingGoal ? existingGoal.title : null,
     existingTargetDate: existingGoal ? existingGoal.targetDate : null

@@ -13,9 +13,12 @@ import {
 } from '../src/lib/result.js';
 
 import {
-  LOG_LEVEL, SENSITIVE_KEYS, REDACTED,
-  redactForLog, isDevEnvironment, log, logWarn
+  LOG_LEVEL, SENSITIVE_KEYS, REDACTED, FREE_TEXT, LONG_TEXT,
+  redactForLog, isDevEnvironment, isSensitiveKey, log, logWarn, logEvent,
+  logFailure, failureFields
 } from '../src/lib/logger.js';
+import { jsFilesIn, readCode } from './helpers/sources.mjs';
+import { callArguments, STRING_LITERAL } from './helpers/callArgs.mjs';
 
 // ---------------------------------------------------------- virhekoodit
 
@@ -171,3 +174,187 @@ function readLoggerSource() {
   // ei vain sitä mitä se tässä ajossa teki.
   return readFileSync(new URL('../src/lib/logger.js', import.meta.url), 'utf8');
 }
+
+// ------------------------------------------------ ERR-15, ERR-16, raakavirheet
+
+/** Kaappaa konsolin ulostulon (kaikki tasot) yhdeksi tekstiksi. */
+function captureConsole(fn) {
+  const lines = [];
+  const originals = {};
+  for (const method of ['log', 'info', 'warn', 'error', 'debug']) {
+    originals[method] = console[method];
+    console[method] = (...args) => lines.push(args.map(arg => (typeof arg === 'string' ? arg : JSON.stringify(arg))).join(' '));
+  }
+  try { fn(); } finally { Object.assign(console, originals); }
+  return lines.join('\n');
+}
+
+/** Aseta globaalit hetkeksi (location, Capacitor) ja palauta ne. */
+function withGlobals(values, fn) {
+  const saved = {};
+  for (const key of Object.keys(values)) {
+    saved[key] = Object.getOwnPropertyDescriptor(globalThis, key);
+    Object.defineProperty(globalThis, key, { value: values[key], configurable: true, writable: true });
+  }
+  try {
+    return fn();
+  } finally {
+    for (const [key, descriptor] of Object.entries(saved)) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else delete globalThis[key];
+    }
+  }
+}
+
+test('ERR-15: Suunnan ja PostgRESTin kenttänimet ovat arkaluontoisia', () => {
+  for (const key of ['reflection', 'reflectionanswers', 'answer', 'answers', 'label',
+    'detail', 'details', 'hint', 'message', 'metric', 'unit', 'summary', 'content',
+    'body', 'query', 'note', 'title', 'name']) {
+    assert.ok(SENSITIVE_KEYS.includes(key), `${key} puuttuu listasta`);
+  }
+  // Kirjainkoko ja ala-/väliviiva eivät tee kentästä eri kenttää.
+  for (const key of ['reflection_answers', 'reflectionAnswers', 'Reflection-Answers', 'userId', 'USER_ID']) {
+    assert.equal(isSensitiveKey(key), true, key);
+  }
+  for (const key of ['code', 'status', 'count', 'minutes', 'kind']) {
+    assert.equal(isSensitiveKey(key), false, `${key} ei ole sisältöä`);
+  }
+  const cleaned = redactForLog({ reflection_answers: { q1: 'yksityinen' }, details: 'Key (name)=(Terapia)', code: '23505' });
+  assert.equal(cleaned.reflection_answers, REDACTED);
+  assert.equal(cleaned.details, REDACTED);
+  assert.equal(cleaned.code, '23505');
+});
+
+test('ERR-15 KRIITTINEN: logEvent korvaa nimen ja pohdinnan, koodi säilyy', () => {
+  const out = captureConsole(() =>
+    logEvent('a.b', { label: 'Terapia ryhmä', reflection: 'x', code: 'tasks.update' }));
+  assert.match(out, /"code":"tasks\.update"/);
+  assert.match(out, /"label":"\[poistettu\]"/);
+  assert.match(out, /"reflection":"\[poistettu\]"/);
+  assert.equal(out.includes('Terapia'), false);
+});
+
+test('ERR-15 KRIITTINEN: logEvent pitää vain koodin näköiset merkkijonot', () => {
+  // Avain, jota ei ole listattu, ei päästä vapaata tekstiä läpi: uusi
+  // kutsu `logEvent('x', { kind: area.name })` ei vuoda nimeä.
+  const out = captureConsole(() => logEvent('alignment.test', {
+    kind: 'Terapia ryhmä', other: 'Äiti', punct: 'Soita!', state: 'needs_review',
+    op: 'tasks.update', id: 'op-123:abc', empty: '', long: 'x'.repeat(61)
+  }));
+  for (const secret of ['Terapia', 'Äiti', 'Soita!', 'xxxx']) {
+    assert.equal(out.includes(secret), false, secret);
+  }
+  assert.match(out, /"kind":"\[teksti\]"/);
+  assert.match(out, /"other":"\[teksti\]"/);
+  assert.match(out, /"state":"needs_review"/);
+  assert.match(out, /"op":"tasks\.update"/);
+  assert.match(out, /"id":"op-123:abc"/);
+  assert.match(out, /"empty":""/);
+  assert.match(out, /"long":"\[pitkä\]"/);
+  assert.equal(FREE_TEXT, '[teksti]');
+  assert.equal(LONG_TEXT, '[pitkä]');
+});
+
+test('ERR-16 KRIITTINEN: natiivikuori ei ole kehitysympäristö, vaikka origin on localhost', () => {
+  const native = { isNativePlatform: () => true, getPlatform: () => 'android' };
+  withGlobals({ location: { hostname: 'localhost' }, Capacitor: native }, () => {
+    assert.equal(isDevEnvironment(), false, 'APK:n https://localhost tulkittiin kehitykseksi');
+    const quiet = captureConsole(() => {
+      log(LOG_LEVEL.INFO, 'alignment.capacity_saved', { minutes: 1500 });
+      logEvent('alignment.time_logged', { minutes: 30 });
+    });
+    assert.equal(quiet, '', 'INFO-tapahtuma päätyi logcatiin');
+    const loud = captureConsole(() => logEvent('offline.replay', { failed: 1 }, LOG_LEVEL.WARN));
+    assert.match(loud, /offline\.replay/, 'varoitukset kirjataan yhä');
+  });
+  // Selaimen localhost ilman natiivikuorta on yhä kehitys.
+  withGlobals({ location: { hostname: 'localhost' }, Capacitor: { isNativePlatform: () => false } }, () => {
+    assert.equal(isDevEnvironment(), true);
+  });
+  withGlobals({ location: { hostname: 'manifestival-ten.vercel.app' } }, () => {
+    assert.equal(isDevEnvironment(), false);
+  });
+});
+
+test('KRIITTINEN: logFailure kirjaa vain nimen, koodin ja tilan — ei viestiä eikä rivin arvoja', () => {
+  const postgrest = {
+    name: 'PostgrestError', code: '23505', status: 409,
+    message: 'duplicate key value violates unique constraint "life_areas_name_unique"',
+    details: 'Key (user_id, name)=(2cc00622-f927-4604-a518-361a4328481b, Terapia) already exists.',
+    hint: 'salainen vihje'
+  };
+  const out = captureConsole(() => logFailure('alignment.area_save_failed', postgrest));
+  assert.match(out, /alignment\.area_save_failed/);
+  assert.match(out, /"errorName":"PostgrestError"/);
+  assert.match(out, /"code":"23505"/);
+  assert.match(out, /"status":409/);
+  for (const secret of ['Terapia', '2cc00622', 'duplicate key', 'salainen', 'life_areas_name_unique']) {
+    assert.equal(out.includes(secret), false, secret);
+  }
+  assert.deepEqual(Object.keys(failureFields(postgrest)).sort(), ['code', 'errorName', 'status']);
+});
+
+test('logFailure: kääreen syy luetaan, vapaa teksti ei kelpaa koodiksi', () => {
+  const wrapped = { name: 'AppError', cause: { code: 'PGRST116', status: '406', message: 'Terapia' } };
+  assert.deepEqual(failureFields(wrapped), { errorName: 'AppError', code: 'PGRST116', status: 406 });
+  // Koodi, joka onkin lause, ei ole koodi.
+  assert.equal(failureFields({ code: 'Soita äidille' }).code, null);
+  const thrown = new TypeError('Failed to fetch https://x.supabase.co/rest/v1/life_areas?name=eq.Terapia');
+  const out = captureConsole(() => logFailure('reconnect.refresh_failed', thrown));
+  assert.match(out, /"errorName":"TypeError"/);
+  assert.equal(out.includes('Terapia'), false);
+  assert.equal(out.includes('supabase.co'), false);
+  // Ei-olio: vain tyyppi.
+  assert.deepEqual(failureFields('Terapia'), { errorName: 'string', code: null, status: null });
+  assert.deepEqual(failureFields(undefined), { errorName: 'undefined', code: null, status: null });
+  // Tapahtuman nimi on tunniste: vapaa teksti hylätään kokonaan.
+  assert.equal(captureConsole(() => logFailure('Tallennus epäonnistui: Terapia', postgrestLike())), '');
+});
+
+function postgrestLike() {
+  return { name: 'PostgrestError', code: '23505', message: 'Terapia' };
+}
+
+test('KRIITTINEN: src/app ei tulosta raakoja virheolioita konsoliin', () => {
+  // PostgRESTin virheolio kantaa rivin arvoja (details, message), ja
+  // console.warn('…', error) tulosti ne sellaisenaan — myös tuotannossa ja
+  // APK:n logcatiin. Sovelluskerros kirjaa epäonnistumiset logFailurella;
+  // konsolikutsu saa kantaa vain kiinteää tekstiä.
+  const offenders = [];
+  let checked = 0;
+  for (const file of jsFilesIn('src/app')) {
+    const code = readCode(file);
+    for (const match of code.matchAll(/console\.(\w+)\(/g)) {
+      checked += 1;
+      const args = callArguments(code, match.index + match[0].length - 1);
+      if (!args.every(arg => STRING_LITERAL.test(arg))) {
+        offenders.push(`${file}: ${code.slice(match.index, match.index + 90).split('\n')[0]}`);
+      }
+    }
+  }
+  assert.deepEqual(offenders, [], 'raaka arvo konsolikutsussa');
+  // Tarkistin itse: tunnistaa raakavirheen eikä kaadu literaaliin.
+  const sample = "console.warn('a, b', error); console.error(\"ok\");";
+  assert.deepEqual(callArguments(sample, sample.indexOf('(')), ["'a, b'", 'error']);
+  assert.equal(STRING_LITERAL.test('error'), false);
+  assert.equal(STRING_LITERAL.test("'Manifestival: x'"), true);
+  assert.ok(checked >= 0);
+});
+
+test('KRIITTINEN: tilakuuntelijan virhe kirjataan ilman virheen sisältöä', async () => {
+  // Dynaaminen todiste yhdestä korvatusta paikasta: näkymän kaatuminen
+  // tilan päivityksessä ei vie viestiä (joka voi sisältää otsikon)
+  // konsoliin, mutta tapahtuma ja virheen nimi näkyvät.
+  const { subscribe, setLifeAreas, resetState } = await import('../src/app/state.js');
+  resetState();
+  const unsubscribe = subscribe(() => { throw new RangeError('Terapia ryhmä: näkymä kaatui'); });
+  try {
+    const out = captureConsole(() => setLifeAreas([]));
+    assert.match(out, /state\.listener_failed/);
+    assert.match(out, /"errorName":"RangeError"/);
+    assert.equal(out.includes('Terapia'), false, 'virheviesti päätyi konsoliin');
+  } finally {
+    unsubscribe();
+    resetState();
+  }
+});

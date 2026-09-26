@@ -13,9 +13,12 @@ jonka RLS rajaa käyttäjän omiin riveihin, eikä katalogikyselyjä voi ajaa
 sillä. Palvelinavainta ei käytetä eikä tuotantoon lähetetty yhtään kyselyä.
 
 Tuotannon todellinen tila todennetaan käsin ajettavalla, **vain lukevalla**
-skriptillä `supabase/acceptance/life_alignment_readonly_inventory.sql`
-(16 kyselyä; vain rakenne, lukumäärät ja NULL-osuudet — ei sisältöä).
-Testi vartioi, että jokainen lause on `select`/lukeva `with`.
+skriptillä `supabase/acceptance/activation_readonly_inventory.sql`
+(yksi lause, yksi taulukko; vain rakenne, lukumäärät ja tilat — ei
+sisältöä). Tulos pisteytetään: `node tools/activation/score-inventory.mjs`.
+Testi vartioi, että tiedosto on generaattorin mukainen ja vain lukeva.
+Vanha 16-lauseinen Life Alignment -inventaario ei ole enää ajettava
+askel (Supabasen editori näyttää vain viimeisen tuloksen).
 
 ### Tuotanto vs. tämä haara
 

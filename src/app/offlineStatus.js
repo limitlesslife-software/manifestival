@@ -13,6 +13,7 @@ import { confirmAction } from '../ui/confirm.js';
 import { showError } from '../ui/toast.js';
 import { describeQueueStatus, OP_STATUS } from '../domain/offlineQueue.js';
 import { offline, subscribeSyncStatus, isOnlineNow } from './offline.js';
+import { SCHEMA_PENDING_CODE, SCHEMA_PENDING_NOTE } from './offlineSync.js';
 
 const FIELD_LABELS = Object.freeze({
   title: 'otsikko', date: 'päivä', time: 'kellonaika', endTime: 'päättymisaika', category: 'elämänalue',
@@ -28,11 +29,71 @@ function fieldNames(fields) {
 let lastText = null;
 let reviewing = false;
 
+/** Jono odottaa kirjautumista (offlineSync: markPaused(…, 'auth')). */
+export const AUTH_PAUSED_NOTE = 'Kirjaudu uudelleen sisään, niin muutokset lähtevät.';
+
+/**
+ * Miksi muutos ei lähtenyt: lastErrorCode -> selitys (ERR-18).
+ *
+ * Tarkistus kysyi aiemmin aina "Yritetäänkö uudelleen?", myös silloin kun
+ * palvelin oli hylännyt muutoksen eikä uusi yritys voi auttaa. Koodit:
+ * src/app/offlineSync.js (invalid_task, id_collision, rejected) ja
+ * src/domain/offlineQueue.js markRetry (retries_exhausted tai viimeisin
+ * uusintakoodi, kun yritykset loppuivat).
+ *
+ * @param {string|null} code
+ * @returns {{text: string, retryHelps: boolean}}
+ */
+export function failedReason(code) {
+  switch (code) {
+    case 'invalid_task':
+    case 'rejected':
+      return {
+        text: 'Palvelin ei hyväksynyt muutosta. Uusi yritys ei todennäköisesti auta – avaa tehtävä ja tarkista kentät.',
+        retryHelps: false
+      };
+    case 'id_collision':
+      return {
+        text: 'Tehtävää ei voitu tallentaa, koska sen tunniste on jo käytössä. Uusi yritys ei auta – luo tehtävä uudelleen.',
+        retryHelps: false
+      };
+    case 'unavailable':
+      return { text: 'Palvelu ei vastannut toistuvasti. Yritetäänkö uudelleen?', retryHelps: true };
+    case 'changed_during_sync':
+      return { text: 'Tehtävä muuttui toistuvasti toisaalla lähetyksen aikana. Yritetäänkö uudelleen?', retryHelps: true };
+    default:
+      return { text: 'Yhteys katkesi toistuvasti. Yritetäänkö uudelleen?', retryHelps: true };
+  }
+}
+
+/**
+ * PUHDAS: jonon tila + operaatiot -> tilarivi. Kun osa muutoksesta odottaa,
+ * että kanta tukee sitä (offlineSync: SCHEMA_PENDING_CODE), rivi sanoo sen:
+ * muuten "odottaa synkronointia" näyttäisi jäävän jumiin ilman syytä.
+ *
+ * @param {object} status offline.status()
+ * @param {Array<{status:string,lastErrorCode:string|null}>} items offline.list()
+ * @param {{online:boolean}} context
+ */
+export function describeSyncLine(status, items = [], { online = true } = {}) {
+  const view = describeQueueStatus(status, { online, replaying: status.replaying });
+  const pending = code => (items || []).some(item =>
+    item.status === OP_STATUS.PENDING && item.lastErrorCode === code);
+  if (!view.text || view.needsReview) return view;
+  // Istunto vanheni: "odottaa synkronointia" jäisi odottamaan ikuisesti,
+  // koska lähetys jatkuu vasta kirjautumisen jälkeen.
+  if (pending('auth')) return { ...view, tone: 'warn', text: `${view.text} · ${AUTH_PAUSED_NOTE}` };
+  if (!pending(SCHEMA_PENDING_CODE)) return view;
+  return { ...view, text: `${view.text} · ${SCHEMA_PENDING_NOTE}` };
+}
+
 function render(status) {
   const node = maybe('syncStatus');
   if (!node) return;
 
-  const view = describeQueueStatus(status, { online: isOnlineNow(), replaying: status.replaying });
+  let items = [];
+  try { items = offline.list(); } catch { /* tilarivi ei kaada jonoa */ }
+  const view = describeSyncLine(status, items, { online: isOnlineNow() });
   const key = `${view.text}|${view.tone}|${view.needsReview}`;
   if (key === lastText) return;
   lastText = key;
@@ -85,10 +146,11 @@ async function reviewProblems() {
         });
         if (drop) offline.resolve(item.id, 'discard');
       } else if (item.status === OP_STATUS.FAILED) {
+        const reason = failedReason(item.lastErrorCode);
         const retry = await confirmAction({
           title: 'Synkronointi epäonnistui',
-          message: `"${item.title || 'Tehtävä'}" ei lähtenyt palvelimelle. Yritetäänkö uudelleen?`,
-          confirmLabel: 'Yritä uudelleen',
+          message: `"${item.title || 'Tehtävä'}" ei lähtenyt palvelimelle. ${reason.text}`,
+          confirmLabel: reason.retryHelps ? 'Yritä uudelleen' : 'Yritä silti uudelleen',
           cancelLabel: 'Ei nyt'
         });
         if (retry) {

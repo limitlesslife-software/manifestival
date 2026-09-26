@@ -278,7 +278,10 @@ test('KRIITTINEN: jokainen näkymä kertoo kun tieto ei säily', () => {
   for (const tiedosto of ['src/app/views/inbox.js', 'src/app/views/reminders.js',
     'src/app/views/travel.js', 'src/app/views/notices.js']) {
     const source = read(tiedosto);
-    assert.match(source, /TABLES\.\w+/,
+    // Näkymät lukevat portin ajonaikaisen accessorin kautta
+    // (isTableAvailable = käännösaikainen JA kannan tarkistus), jotta
+    // palvelimelta puuttuva ominaisuus ei väitä tallentuvansa.
+    assert.match(source, /TABLES\.\w+|isTableAvailable\('\w+'\)/,
       `${tiedosto} ei lue porttia lainkaan`);
     assert.match(source, /istunnon ajan/,
       `${tiedosto} ei kerro, ettei tieto säily`);
@@ -478,16 +481,18 @@ test('jokaisella uudella repositoriolla on portti ja normalisointi', () => {
   }
 });
 
-test('repositorioita on kaksikymmentäyksi', () => {
+test('repositorioita on kaksikymmentäkolme', () => {
   // Luku on käsin laskettu ja tarkoituksella: uusi repositorio kaataa
   // tämän, ja se on oikea hetki tarkistaa, että sillä on portti,
-  // migraatio, varmistus ja tavoitettavuusrivi.
-  assert.equal(ALL_REPOSITORIES.length, 21,
+  // migraatio, varmistus ja tavoitettavuusrivi. 0013 toi kaksi:
+  // running_timers ja alignment_item_settings.
+  assert.equal(ALL_REPOSITORIES.length, 23,
     `repositorioita on ${ALL_REPOSITORIES.length}`);
 });
 
-test('tavoitettavuusmatriisi kattaa kaikki kaksikymmentäkaksi', () => {
-  assert.equal(REACHABILITY.length, 22);
+test('tavoitettavuusmatriisi kattaa kaikki kaksikymmentäneljä', () => {
+  // 0013 toi kaksi porttia: runningTimers ja alignmentItemSettings.
+  assert.equal(REACHABILITY.length, 24);
   assert.equal(REACHABILITY.filter(r => r.reach === REACH.NO_UI).length, 0,
     'jokin domain on yhä ilman käyttöliittymää');
 });

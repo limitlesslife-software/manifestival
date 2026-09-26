@@ -92,9 +92,11 @@ test('KRIITTINEN: Anthropic ei ole selaimen sallituissa yhteyksissä', () => {
 test('CSP sallii täsmälleen ne lähteet, joita koodi käyttää', () => {
   const html = read('index.html');
 
-  // Skriptit: vain oma koodi ja Supabasen paketti.
-  assert.deepEqual(csp['script-src'], ["'self'", 'https://cdn.jsdelivr.net']);
-  assert.ok(html.includes('cdn.jsdelivr.net'), 'jsdelivr ei ole enää käytössä — poista se politiikasta');
+  // Skriptit: vain oma koodi. Supabasen paketti tarjoillaan omasta
+  // originista (vendor/, S1): CDN-riippuvuus kaatoi offline-kylmäkäynnistyksen,
+  // koska service worker ei välimuistita vieraita origineja.
+  assert.deepEqual(csp['script-src'], ["'self'"]);
+  assert.equal(html.includes('cdn.jsdelivr.net'), false, 'index.html lataa yhä skriptin CDN:stä');
 
   // Fontit.
   assert.ok(csp['font-src'].includes('https://fonts.gstatic.com'));

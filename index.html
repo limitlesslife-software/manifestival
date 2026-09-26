@@ -3,6 +3,14 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<!-- PAKOTTAVA CSP (CRIT-09). APK:ssa ainoa: Capacitorin paikallinen palvelin ei
+     lähetä otsakkeita. Webissä vercel.json:n raportoiva otsake on sama politiikka
+     + frame-ancestors (meta ei tue sitä). Capacitorin silta ajetaan ennen tätä
+     (document-start-skripti tai <head>-tagin perään lisätty skripti), joten
+     script-src 'self' ei estä sitä. connect-src: Supabase (src/data/config.js)
+     ja natiivikuoren /api-origin (src/platform/index.js PRODUCTION_ORIGIN).
+     img-src blob: = kuitin esikäsittely. tests/security-csp.test.mjs. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://twpyubcymdnbvelsjidg.supabase.co https://manifestival-ten.vercel.app; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'">
 <title>Manifestival</title>
 <meta name="description" content="Suunnittele elämä, jota haluat elää.">
 <link rel="manifest" href="/manifest.json">
@@ -17,7 +25,9 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,300;0,500;0,600;1,500&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="./src/styles.css">
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<!-- supabase-js 2.117.2 (UMD) omasta originista: käynnistys ei riipu CDN:stä
+     offline-tilassa. SHA-256 ja päivitysohje: docs/DEPLOYMENT.md. -->
+<script src="./vendor/supabase-js-2.117.2.min.js"></script>
 </head>
 <body>
 
@@ -52,6 +62,24 @@
 <!-- Näytetään kunnes istunto on tarkistettu, jottei sovellus välähdä ohi. -->
 <div class="auth-splash" id="authSplash">
   <div class="voice-spinner" role="status" aria-label="Ladataan"></div>
+</div>
+
+<!-- Huoltokatko: kannan ydin puuttuu, mitään ei tallenneta (src/app/schemaStatus.js). -->
+<div class="schema-maintenance" id="schemaMaintenance" role="alertdialog" aria-modal="true"
+     aria-labelledby="schemaMaintenanceTitle" aria-describedby="schemaMaintenanceText" hidden>
+  <div class="schema-maintenance-card">
+    <h2 class="schema-maintenance-title" id="schemaMaintenanceTitle">Huoltokatko</h2>
+    <p class="schema-maintenance-text" id="schemaMaintenanceText">Palvelussa on huoltokatko. Tietosi ovat tallessa, ja tälle laitteelle jääneet muutokset lähetetään, kun palvelu toimii taas.</p>
+    <p class="schema-maintenance-status" id="schemaMaintenanceStatus" role="status" aria-live="polite"></p>
+    <div class="schema-maintenance-actions">
+      <button class="form-btn primary" id="schemaRetry" type="button">Yritä uudelleen</button>
+      <button class="form-btn secondary" id="schemaSignOut" type="button">Kirjaudu ulos</button>
+    </div>
+    <details class="schema-details" id="schemaMaintenanceDetailsWrap" hidden>
+      <summary>Tekniset tiedot</summary>
+      <p id="schemaMaintenanceDetails"></p>
+    </details>
+  </div>
 </div>
 
 <!-- Kirjautumisportti -->
@@ -94,6 +122,14 @@
 <div id="app" class="app-hidden">
   <div class="offline-banner" id="offlineBanner" role="status">Ei verkkoyhteyttä — tehtävien lisäys ja muokkaus tallentuu laitteelle ja lähetetään kun yhteys palaa; muut muutokset eivät tallennu</div>
   <button type="button" class="sync-status" id="syncStatus" hidden aria-live="polite"></button>
+  <div class="schema-banner" id="schemaBanner" role="status" hidden>
+    <span id="schemaBannerText"></span>
+    <details class="schema-details" id="schemaBannerDetailsWrap" hidden>
+      <summary>Tekniset tiedot</summary>
+      <p id="schemaBannerDetails"></p>
+    </details>
+  </div>
+  <div class="timer-bar" id="timerBar" role="region" aria-label="Ajanseuranta" hidden></div>
 
   <div class="screens">
 
@@ -159,11 +195,28 @@
       </div>
       <button class="jump-link" id="dirThisWeek" type="button" style="display:none;">← Palaa tähän viikkoon</button>
       <div id="dirPersistNote"></div>
+      <!-- Aloitus: vaihe kerrallaan, johdettu tallennetuista tiedoista
+           (src/domain/alignmentSetup.js, src/app/views/directionSetup.js).
+           Mitään ei luoda ennen kuin käyttäjä tallentaa. -->
+      <div class="dir-section dir-setup" id="dirSetup" role="region" aria-label="Suunnan aloitus" hidden>
+        <div id="dirSetupCard"></div>
+        <!-- Pysyvä elävä alue: "Valittu: …" ja "Arvioitu n/N" päivitetään
+             tekstinä. Kortti piirretään uudelleen, joten sen sisällä
+             oleva alue syntyisi joka kerta uutena. -->
+        <p class="visually-hidden" id="dirSetupStatus" role="status" aria-live="polite"></p>
+      </div>
+      <div class="dir-quick" id="dirQuickActions" role="group" aria-label="Suunnan pikatoiminnot">
+        <button class="assist-btn primary" id="dirStartTimer" type="button">Aloita ajanseuranta</button>
+        <button class="assist-btn" id="dirQuickLog" type="button">Kirjaa aikaa</button>
+        <button class="assist-btn" id="dirOpenEstimate" type="button">Arvioi tehtäviä</button>
+        <button class="assist-btn" id="dirOpenUnassigned" type="button">Kohdista luokittelemattomat</button>
+      </div>
 
       <!-- Havainnot -->
       <div class="dir-section" aria-labelledby="dirSignalsTitle">
         <h2 class="section-title" id="dirSignalsTitle">Havainnot</h2>
         <div id="dirSignals" aria-live="polite"></div>
+        <div id="dirQuality"></div>
       </div>
 
       <!-- Tämä viikko: kapasiteetti, suunnitelma, toteuma -->
@@ -190,12 +243,31 @@
                 <option value="5">5 — paljon</option>
               </select>
             </div>
+            <div>
+              <label class="field-label" for="dirEnergyBudget">Kuormittavaa enintään (h)</label>
+              <input type="number" id="dirEnergyBudget" min="0" max="168" step="0.5" inputmode="decimal" placeholder="valinnainen">
+              <div class="field-error" id="dirEnergyBudgetError" role="alert"></div>
+            </div>
           </div>
           <div class="hint" id="dirCapacityWarning" role="status"></div>
           <div class="form-actions">
             <button class="form-btn primary" id="dirCapacitySave" type="button">Tallenna kapasiteetti</button>
           </div>
         </div>
+      </div>
+
+      <!-- Arvioi tehtäviä -->
+      <div class="dir-section" id="dirEstimateSection" aria-labelledby="dirEstimateTitle" hidden>
+        <h2 class="section-title" id="dirEstimateTitle">Arvioi tehtäviä</h2>
+        <p class="hint">Karkea arvio riittää. Tuntematon kesto ei ole nolla, mutta arvioitu kesto tekee viikosta arvioitavan.</p>
+        <div id="dirEstimate" aria-live="polite"></div>
+      </div>
+
+      <!-- Kohdista luokittelemattomat -->
+      <div class="dir-section" id="dirUnassignedSection" aria-labelledby="dirUnassignedTitle" hidden>
+        <h2 class="section-title" id="dirUnassignedTitle">Kohdista luokittelemattomat</h2>
+        <p class="hint">Liittäminen on vapaaehtoista. Voit jättää asian tarkoituksella ilman aluetta, eikä siitä muistuteta uudelleen.</p>
+        <div id="dirUnassigned" aria-live="polite"></div>
       </div>
 
       <!-- Elämänalueet -->
@@ -214,10 +286,13 @@
           </div>
           <div>
             <label class="field-label" for="dirAreaImportance">Kuinka tärkeä tämä on elämässä, jota haluat?</label>
+            <!-- Ei valmiiksi valittua tärkeyttä: oletus 3 sulki alueen
+                 huomiotta jäämisen havainnon ulkopuolelle (vaatii 4–5). -->
             <select id="dirAreaImportance">
+              <option value="" selected disabled>Valitse tärkeys</option>
               <option value="1">1 — Vähän tärkeä</option>
               <option value="2">2 — Jonkin verran tärkeä</option>
-              <option value="3" selected>3 — Tärkeä</option>
+              <option value="3">3 — Tärkeä</option>
               <option value="4">4 — Hyvin tärkeä</option>
               <option value="5">5 — Erittäin tärkeä</option>
             </select>
@@ -235,6 +310,7 @@
             <select id="dirAreaCategory"></select>
             <div class="field-error" id="dirAreaCategoryError" role="alert"></div>
             <p class="hint">Tehtävä ilman tavoitetta kuuluu alueeseen kategoriansa kautta.</p>
+            <p class="hint" id="dirAreaCategoryImpact" aria-live="polite"></p>
           </div>
           <div>
             <label class="field-label" for="dirAreaDescription">Mitä tämä tarkoittaa sinulle? (valinnainen)</label>
@@ -272,7 +348,12 @@
             </div>
             <div>
               <label class="field-label" for="dirTimeMinutes">Minuutteja</label>
-              <input type="number" id="dirTimeMinutes" min="1" max="1440" step="5" inputmode="numeric">
+              <input type="number" id="dirTimeMinutes" min="1" max="1440" step="1" inputmode="numeric">
+              <div class="dir-presets" id="dirTimePresets" role="group" aria-label="Pikavalinnat">
+                <button class="assist-btn" type="button" data-preset-minutes="15">15 min</button>
+                <button class="assist-btn" type="button" data-preset-minutes="30">30 min</button>
+                <button class="assist-btn" type="button" data-preset-minutes="60">1 h</button>
+              </div>
               <div class="field-error" id="dirTimeMinutesError" role="alert"></div>
             </div>
           </div>
@@ -295,19 +376,48 @@
       <div class="dir-section" aria-labelledby="dirReviewTitle">
         <h2 class="section-title" id="dirReviewTitle">Viikkokatsaus</h2>
         <div id="dirReview"></div>
+        <div id="dirReviewCompare"></div>
+        <h3 class="dir-subtitle" id="dirWhyTitle">Miksi? (valinnainen)</h3>
+        <p class="hint">Vastaa niihin, joihin haluat. Vastauksia ei lähetetä tekoälylle.</p>
+        <div id="dirReflectionPrompts" role="group" aria-labelledby="dirWhyTitle">
+          <label class="field-label" for="dirAnswer-took_longer">Mikä vei enemmän aikaa kuin odotit?</label>
+          <textarea id="dirAnswer-took_longer" data-answer="took_longer" rows="2" maxlength="1000"></textarea>
+          <label class="field-label" for="dirAnswer-too_little">Mikä jäi liian vähälle?</label>
+          <textarea id="dirAnswer-too_little" data-answer="too_little" rows="2" maxlength="1000"></textarea>
+          <label class="field-label" for="dirAnswer-unplanned_important">Mikä tuntui tärkeältä mutta ei näkynyt suunnitelmassa?</label>
+          <textarea id="dirAnswer-unplanned_important" data-answer="unplanned_important" rows="2" maxlength="1000"></textarea>
+          <label class="field-label" for="dirAnswer-most_draining">Mikä kuormitti eniten?</label>
+          <textarea id="dirAnswer-most_draining" data-answer="most_draining" rows="2" maxlength="1000"></textarea>
+          <label class="field-label" for="dirAnswer-drop_next_week">Kannattaako jotain jättää ensi viikolla tekemättä?</label>
+          <textarea id="dirAnswer-drop_next_week" data-answer="drop_next_week" rows="2" maxlength="1000"></textarea>
+        </div>
         <div>
           <label class="field-label" for="dirReflection">Oma pohdinta: mitä haluat muistaa tästä viikosta?</label>
           <textarea id="dirReflection" rows="3" maxlength="4000"></textarea>
         </div>
         <h3 class="dir-subtitle" id="dirProposalsTitle">Mitä muutan ensi viikolla?</h3>
         <p class="hint">Ehdotukset eivät muuta mitään ennen kuin vahvistat ne yksitellen.</p>
-        <div id="dirProposals" aria-labelledby="dirProposalsTitle"></div>
+        <div id="dirProposals" role="group" aria-labelledby="dirProposalsTitle"></div>
+        <div class="form-actions">
+          <button class="form-btn secondary" id="dirPreviewSelected" type="button">Esikatsele valitut</button>
+        </div>
+        <div id="dirProposalPreview" aria-live="polite"></div>
+        <div class="form-actions">
+          <button class="form-btn primary" id="dirApplySelected" type="button" disabled>Vahvista valitut muutokset…</button>
+        </div>
         <div class="form-actions">
           <button class="form-btn primary" id="dirReviewSave" type="button">Tallenna viikkokatsaus</button>
         </div>
         <div id="dirReviewStatus" role="status" class="hint"></div>
         <h3 class="dir-subtitle">Aiemmat viikot</h3>
         <div id="dirReviewHistory"></div>
+      </div>
+
+      <!-- Kehitys: vain havaittavat erot, ei elämänpisteitä -->
+      <div class="dir-section" aria-labelledby="dirTrendsTitle">
+        <h2 class="section-title" id="dirTrendsTitle">Kehitys</h2>
+        <p class="hint">Luvut, ei arvosanoja. Muutoksesta kerrotaan vasta, kun viikkoja on riittävästi.</p>
+        <div id="dirTrends"></div>
       </div>
     </section>
 
@@ -345,6 +455,8 @@
 
       <!-- ---- Tehtävät ---- -->
       <div id="tasksSection">
+        <!-- Näkyy vain, kun arvioitavaa on: avaa Suunnan arviojonon. -->
+        <button class="assist-btn tasks-estimate-btn" id="tasksEstimateBtn" type="button" hidden>Arvioi kestot</button>
         <button class="add-row" id="addRowBtn" type="button"><svg aria-hidden="true"><use href="#i-plus"/></svg>Lisää tehtävä</button>
 
         <div class="add-form" id="addForm" style="display:none;" role="group" aria-labelledby="addFormTitle">
@@ -392,20 +504,42 @@
             </div>
             <div>
               <label class="field-label" for="afDuration">Kesto (min)</label>
-              <input type="number" id="afDuration" min="1" max="1440" step="5" placeholder="esim. 45">
+              <input type="number" id="afDuration" min="1" max="1440" step="1" placeholder="esim. 45">
+              <div class="dir-presets" id="afDurationPresets" role="group" aria-label="Kestoarvion pikavalinnat"></div>
               <div class="field-error" id="afDurationError"></div>
             </div>
           </div>
 
           <div class="form-row">
             <div>
-              <label class="field-label" for="afCategory">Elämänalue</label>
+              <label class="field-label" for="afCategory">Kategoria</label>
               <select id="afCategory"></select>
             </div>
             <div>
               <label class="field-label" for="afGoal">Tavoite</label>
               <select id="afGoal"><option value="">Ei tavoitetta</option></select>
             </div>
+          </div>
+
+          <div class="form-row">
+            <div>
+              <label class="field-label" for="afEnergy">Kuormittavuus (valinnainen)</label>
+              <select id="afEnergy">
+                <option value="">Ei arvioitu</option>
+                <option value="1">1 — Kevyt</option>
+                <option value="2">2 — Melko kevyt</option>
+                <option value="3">3 — Keskitaso</option>
+                <option value="4">4 — Kuormittava</option>
+                <option value="5">5 — Erittäin kuormittava</option>
+              </select>
+            </div>
+            <label class="checkbox-row" for="afEstimateApprox">
+              <input type="checkbox" id="afEstimateApprox"> Kestoarvio on karkea
+            </label>
+          </div>
+          <div class="form-actions" id="afTimeActions" style="display:none;">
+            <button class="form-btn secondary" id="afLogTime" type="button">Kirjaa aikaa</button>
+            <button class="form-btn secondary" id="afStartTimer" type="button">Aloita ajastin</button>
           </div>
 
           <label class="checkbox-row" for="afIsWake">
@@ -461,7 +595,7 @@
             </div>
             <div>
               <label class="field-label" for="rfDuration">Kesto (min)</label>
-              <input type="number" id="rfDuration" min="1" max="1440" step="5" placeholder="30">
+              <input type="number" id="rfDuration" min="1" max="1440" step="1" placeholder="30">
               <div class="field-error" id="rfDurationError"></div>
             </div>
           </div>
@@ -472,13 +606,18 @@
 
           <div class="form-row">
             <div>
-              <label class="field-label" for="rfCategory">Elämänalue</label>
+              <label class="field-label" for="rfCategory">Kategoria</label>
               <select id="rfCategory"></select>
             </div>
             <div>
               <label class="field-label" for="rfPriority">Prioriteetti</label>
               <select id="rfPriority"></select>
             </div>
+          </div>
+
+          <div>
+            <label class="field-label" for="rfGoal">Liittyy tavoitteeseen</label>
+            <select id="rfGoal"><option value="">Ei tavoitetta</option></select>
           </div>
 
           <div class="form-row">
@@ -492,6 +631,18 @@
               <input type="date" id="rfEndDate">
               <div class="field-error" id="rfEndDateError"></div>
             </div>
+          </div>
+
+          <div>
+            <label class="field-label" for="rfEnergy">Kuormittavuus (valinnainen)</label>
+            <select id="rfEnergy">
+              <option value="">Ei arvioitu</option>
+                <option value="1">1 — Kevyt</option>
+                <option value="2">2 — Melko kevyt</option>
+                <option value="3">3 — Keskitaso</option>
+                <option value="4">4 — Kuormittava</option>
+                <option value="5">5 — Erittäin kuormittava</option>
+            </select>
           </div>
 
           <div class="form-actions">
@@ -651,9 +802,10 @@
 
         <h2 class="section-title" id="locationRulesTitle">Paikkamuistutukset</h2>
         <p class="hint">
-          Sijaintia ei tallenneta eikä lähetetä mihinkään. Sääntö on
-          oletuksena <strong>pois päältä</strong>: paikkatieto vaatii luvan,
-          eikä lupaa oleteta.
+          <strong>Paikkamuistutukset eivät vielä laukea:</strong> sovellus ei
+          seuraa sijaintiasi eikä pyydä sijaintilupaa. Voit kirjata säännön
+          valmiiksi. Se on oletuksena pois päältä, ja kytkin tallentaa vain
+          aikeesi.
         </p>
 
         <button class="add-row" id="addLocationRuleBtn" type="button"><svg aria-hidden="true"><use href="#i-plus"/></svg>Lisää paikkamuistutus</button>
@@ -733,13 +885,19 @@
 
         <div class="form-row">
           <div>
-            <label class="field-label" for="gfCategory">Elämänalue</label>
+            <label class="field-label" for="gfCategory">Kategoria</label>
             <select id="gfCategory"></select>
           </div>
           <div>
             <label class="field-label" for="gfPriority">Prioriteetti</label>
             <select id="gfPriority"></select>
           </div>
+        </div>
+
+        <div>
+          <label class="field-label" for="gfLifeArea">Elämänalue (Suunta)</label>
+          <select id="gfLifeArea"><option value="">Ei elämänaluetta</option></select>
+          <p class="hint" id="gfLifeAreaHint" hidden>Ei elämänalueita — luo ne Suunnassa</p>
         </div>
 
         <div>
@@ -848,8 +1006,25 @@
           </div>
 
           <div>
-            <label class="field-label" for="prfCategory">Elämänalue</label>
+            <label class="field-label" for="prfCategory">Kategoria</label>
             <select id="prfCategory"></select>
+          </div>
+
+          <div>
+            <label class="field-label" for="prfEnergy">Kuormittavuus (valinnainen)</label>
+            <select id="prfEnergy">
+              <option value="">Ei arvioitu</option>
+                <option value="1">1 — Kevyt</option>
+                <option value="2">2 — Melko kevyt</option>
+                <option value="3">3 — Keskitaso</option>
+                <option value="4">4 — Kuormittava</option>
+                <option value="5">5 — Erittäin kuormittava</option>
+            </select>
+            <p class="hint">Projektin tehtävät perivät tämän, jos niille ei ole annettu omaa.</p>
+          </div>
+          <div class="form-actions" id="prfTimeActions" style="display:none;">
+            <button class="form-btn secondary" id="prfLogTime" type="button">Kirjaa aikaa</button>
+            <button class="form-btn secondary" id="prfStartTimer" type="button">Aloita ajastin</button>
           </div>
 
           <div class="form-actions">
@@ -1453,6 +1628,14 @@
     <div class="voice-sheet">
       <button class="voice-close-x" id="voiceCloseX" type="button" aria-label="Sulje"><svg class="icon" style="width:20px;height:20px;" aria-hidden="true"><use href="#i-x"/></svg></button>
 
+      <!-- Luvan odotus: laite voi nayttaa oman lupadialoginsa. "Kuuntelen"
+           vasta kun mikrofoni on oikeasti auki. -->
+      <div class="voice-state" id="voiceState-permission" style="display:none;">
+        <div class="voice-orb" aria-hidden="true"><svg aria-hidden="true"><use href="#i-mic"/></svg></div>
+        <div class="voice-label" role="status">Käynnistetään mikrofonia…</div>
+        <div class="hint" style="text-align:center;">Jos laite kysyy lupaa mikrofoniin, valitse Salli. Ääntä ei tallenneta, ja näet tekstin ennen kuin mitään tehdään.</div>
+      </div>
+
       <div class="voice-state" id="voiceState-listening">
         <div class="voice-orb" aria-hidden="true"><svg aria-hidden="true"><use href="#i-mic"/></svg></div>
         <div class="voice-label">Kuuntelen…</div>
@@ -1478,6 +1661,7 @@
       <div class="voice-state" id="voiceState-error" style="display:none;">
         <div class="voice-label" id="voiceErrorMsg" role="alert">Jotain meni pieleen</div>
         <button class="voice-mic-btn" id="voiceErrorRetry" type="button">Yritä uudelleen</button>
+        <button class="form-btn secondary" id="voiceErrorSettings" type="button" style="display:none; width:100%; margin-bottom:8px; padding:12px;">Avaa asetukset</button>
         <button class="form-btn secondary" id="voiceErrorTypeInstead" type="button" style="width:100%; margin-bottom:8px; padding:12px;">Kirjoita sen sijaan</button>
         <button class="form-btn secondary" id="voiceErrorCloseBtn" type="button" style="width:100%; padding:12px;">Sulje</button>
       </div>
@@ -1487,7 +1671,8 @@
         <label class="visually-hidden" for="vfFallbackInput">Tehtävän kuvaus</label>
         <input class="voice-field" id="vfFallbackInput" placeholder="esim. Muistuta perjantaina tilaamaan kanavat">
         <button class="voice-mic-btn" id="vfFallbackSubmit" type="button">Tulkitse</button>
-        <div class="hint" style="text-align:center;">Puheentunnistus toimii parhaiten Chromella tai Edgellä. Kirjoittaminen toimii kaikkialla.</div>
+        <div class="hint" id="vfFallbackReason" role="status" style="text-align:center;"></div>
+        <div class="hint" style="text-align:center;">Kirjoittaminen toimii kaikkialla.</div>
       </div>
     </div>
   </div>

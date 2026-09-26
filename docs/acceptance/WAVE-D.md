@@ -6,7 +6,19 @@
 **Edellinen tuotanto:** aallon C commit (v16)
 **Peruutuskohde:** aalto C
 
-Aallon commit-SHA: ks. `docs/activation-0003-0008-release-manifest.json`.
+**Push-kohde (deployTarget):** junan lukon `docs/activation/release-train-c-j.json`
+aallon D `deployTarget` — täysi 40-merkkinen SHA, sama kuin kohdan
+"Deploy" push-rivillä. Manifestin (`docs/activation-0003-0008-release-manifest.json`)
+`commitSha` on aallon AALTOCOMMIT: peruutuksen ja diffin viite, EI push-kohde.
+Push tehdään orkestroijalla (`npm run activation:orchestrate -- --execute-deploy
+--approved-sha=<deployTarget>`), joka tarkistaa ensin, että `origin`in main on
+yhä odotettu edellinen SHA.
+
+**Hyväksyntä (omistajan päätös 2026-09-26):** junan portti on koneellinen
+`AUTOMATED_TECHNICAL_ACCEPTANCE` — ehdot, komennot ja kirjauspaikka:
+[`docs/activation/AUTOMATED-ACCEPTANCE-POLICY.md`](../activation/AUTOMATED-ACCEPTANCE-POLICY.md). Kohdan 4 selainhyväksyntä on
+`LIVE_USE_VALIDATION_PENDING`: se tehdään oikeassa käytössä, **ei estä junaa
+eikä ole koskaan PASS**. Omistajan viesti **"hyväksyn D"** avaa deployn.
 
 ---
 
@@ -69,8 +81,20 @@ Vain `src/data/schema.js`, `sw.js`, `docs/PRODUCTION-STATUS.md`.
 
 ## 2. Deploy
 
+Omistajan viesti **"hyväksyn D"** avaa tämän askeleen. Ensisijainen (ja ainoa suositeltu)
+deploy-askel on orkestroija: se tarkistaa lukon, tuotannon aallon teknisen
+hyväksynnän, ehdokkaan kirjatun testiajon ja julkaisun esitarkistuksen,
+tekee compare-and-swapin, pushaa ja todentaa tuotannon:
+
 ```
-git push origin <WAVE-D-SHA>:main
+npm run activation:orchestrate -- --execute-deploy --approved-sha=091e73c0091e8f135641e3501742b998dbac8461
+```
+
+Viitteeksi (älä aja käsin): orkestroija ajaa compare-and-swapin jälkeen
+täsmälleen tämän — ei koskaan forcea:
+
+```
+git push origin 091e73c0091e8f135641e3501742b998dbac8461:refs/heads/main
 ```
 
 ---
@@ -86,6 +110,10 @@ npm run production:verify-assets -- --wave=D
 ---
 
 ## 4. Selainhyväksyntä
+
+> **`LIVE_USE_VALIDATION_PENDING`** (omistajan päätös 2026-09-26): tämä osio
+> tehdään oikeassa käytössä. Se **ei estä junaa** eikä sitä merkitä koskaan
+> PASSiksi; junan portti on `AUTOMATED_TECHNICAL_ACCEPTANCE` ([`docs/activation/AUTOMATED-ACCEPTANCE-POLICY.md`](../activation/AUTOMATED-ACCEPTANCE-POLICY.md)).
 
 Polku: **Talous** (alapalkin välilehti) → kolme segmenttiä.
 
@@ -226,9 +254,11 @@ Palauttaa **aallon C** tilan.
 
 ## 7. Portti seuraavaan aaltoon
 
-- [ ] Koneellinen todennus PASS
-- [ ] Selainhyväksyntä läpi, myös molemmat SET NULL -tarkistukset
-- [ ] Summat tallentuvat senttiylleen
-- [ ] `failures_total = 0`
-- [ ] Vähintään yksi toistuva kulu, yksi säästötavoite ja yksi lasku olemassa
+- [ ] `AUTOMATED_TECHNICAL_ACCEPTANCE` kirjattu päiväkirjaan (orkestroijan
+      deploy-rivi; ks. [`docs/activation/AUTOMATED-ACCEPTANCE-POLICY.md`](../activation/AUTOMATED-ACCEPTANCE-POLICY.md))
 - [ ] `docs/PRODUCTION-STATUS.md` päivitetty
+
+Käyttötodennus (`LIVE_USE_VALIDATION_PENDING`, **ei estä** aaltoa E):
+selainhyväksyntä (myös molemmat SET NULL -tarkistukset), summat senttiylleen,
+`failures_total = 0` ja vähintään yksi toistuva kulu, säästötavoite ja lasku
+oikeassa käytössä.

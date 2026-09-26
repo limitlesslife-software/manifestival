@@ -39,6 +39,15 @@ export function isNativeLifecycleAvailable() {
 let bound = false;
 
 /**
+ * Yksi paluu etualalle laukaisee natiivissa sekä App-liitännäisen
+ * `resume`-tapahtuman että `visibilitychange`-tapahtuman lähekkäin. Näin
+ * lähekkäiset paluut ovat yksi paluu: onResume kutsutaan enintään kerran
+ * tämän ikkunan aikana (CRIT-02: muuten yksi paluu teki kaksi täyttä
+ * päivitystä).
+ */
+export const RESUME_DEDUP_MS = 1000;
+
+/**
  * Kytke sovelluksen etu-/taustatilan kuuntelu.
  *
  * `onResume` kutsutaan kun sovellus tulee näkyviin ja käyttäjän kannattaa
@@ -49,18 +58,31 @@ let bound = false;
  *
  * EI KORVAA `visibilitychange`-kuuntelua natiivissakaan — molemmat
  * kytketään, koska ne kattavat eri tilanteita eivätkä sulje toisiaan pois.
- * `onResume`-kutsujan on oltava idempotentti, koska se voi laueta useasta
- * lähteestä lähekkäin (esim. resume ja sen jälkeen visibilitychange).
+ * Lähteet yhdistetään: `onResume` kutsutaan enintään kerran
+ * RESUME_DEDUP_MS:n aikana, laukesi paluu yhdestä tai kummastakin.
  *
+ * @param {object} [handlers]
+ * @param {() => void} [handlers.onResume]
+ * @param {() => void} [handlers.onPause]
+ * @param {() => number} [handlers.now] kello (ms) testejä varten
  * @returns {boolean} true jos kytkentä tehtiin nyt, false jos se oli jo tehty
  */
-export function bindLifecycle({ onResume, onPause } = {}) {
+export function bindLifecycle({ onResume, onPause, now = () => Date.now() } = {}) {
   if (bound) return false;
   bound = true;
 
+  let lastResumeAt = null;
+  const resume = () => {
+    if (!onResume) return;
+    const at = now();
+    if (lastResumeAt !== null && at - lastResumeAt < RESUME_DEDUP_MS) return;
+    lastResumeAt = at;
+    onResume();
+  };
+
   const api = plugin();
   if (api && typeof api.addListener === 'function') {
-    api.addListener('resume', () => { if (onResume) onResume(); });
+    api.addListener('resume', resume);
     api.addListener('pause', () => { if (onPause) onPause(); });
   }
 
@@ -70,7 +92,7 @@ export function bindLifecycle({ onResume, onPause } = {}) {
         if (onPause) onPause();
         return;
       }
-      if (onResume) onResume();
+      resume();
     });
   }
 

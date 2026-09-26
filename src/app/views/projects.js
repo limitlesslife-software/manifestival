@@ -18,6 +18,8 @@
 // Sama kaava kuin Tekeminen-välilehdellä (Tehtävät / Rutiinit), joten
 // tämä ei ole uusi navigaatiokäsite vaan olemassa olevan toisto.
 
+import { itemSettingsFor, saveItemSettings } from '../timeTracking.js';
+import { openItemLog, startTimerFor } from './timeLog.js';
 import { el, maybe, toggle, setText, focus } from '../../ui/dom.js';
 import { escapeHtml } from '../../lib/format.js';
 import {
@@ -244,6 +246,12 @@ function fillForm(project) {
   el('prfCategory').value = project ? project.category : 'muu';
 
   refreshGoalPicker(project && project.goalId ? project.goalId : null);
+  const energy = maybe('prfEnergy');
+  if (energy) {
+    const settings = project ? itemSettingsFor('project', project.id) : null;
+    energy.value = settings && settings.energyDemand ? String(settings.energyDemand) : '';
+  }
+  toggle('prfTimeActions', Boolean(project), 'flex');
 }
 
 /** Avaa lomake uuden projektin lisäämiseen. */
@@ -295,6 +303,11 @@ async function submitForm() {
   const result = editingId
     ? await editProject(editingId, input)
     : await createProject(input);
+  const savedId = result && result.ok ? (editingId || (result.project && result.project.id)) : null;
+  const energy = maybe('prfEnergy');
+  if (savedId && energy) {
+    await saveItemSettings('project', savedId, { energyDemand: energy.value ? Number(energy.value) : null });
+  }
 
   // VAIN onnistuminen sulkee lomakkeen. Jos tallennus epäonnistui,
   // käyttäjän kirjoittama teksti jää näkyviin — muuten se katoaisi
@@ -324,6 +337,20 @@ export function initProjectForm() {
   el('prfCancel').addEventListener('click', closeProjectForm);
   el('prfSave').addEventListener('click', submitForm);
   el('prfDelete').addEventListener('click', removeCurrent);
+  const logButton = maybe('prfLogTime');
+  if (logButton) {
+    logButton.addEventListener('click', () => {
+      const id = getState().editingProjectId;
+      if (id) openItemLog('project', id);
+    });
+  }
+  const timerButton = maybe('prfStartTimer');
+  if (timerButton) {
+    timerButton.addEventListener('click', () => {
+      const id = getState().editingProjectId;
+      if (id) startTimerFor({ kind: 'project', id });
+    });
+  }
 
   el('prfName').addEventListener('keydown', event => {
     if (event.key === 'Enter') submitForm();

@@ -93,10 +93,15 @@ ollut julkaisupäätös.
 <!-- LINEAGE-CHECK: origin/main sha=cf259d0ef755f7e875cc9cd9c15405eba632e408 cache=v16 -->
 
 `tests/production-lineage.test.mjs` lukee edellisen rivin ja vertaa sitä
-siihen, mitä `origin/main` PAIKALLISESTI (ei verkosta) on juuri nyt.
-Jos rivi jää jälkeen todellisuudesta, testi kaatuu -- tämä dokumentti ei
-siis voi mennä vanhaksi huomaamatta, toisin kuin `PRODUCTION-STATUS.md`
-saattoi ennen tätä työtä.
+siihen, mitä `origin/main` PAIKALLISESTI (ei verkosta) on juuri nyt
+(`lineageCheck()`, tools/release/lineage.mjs). Vertailu on SUKULINJA, ei
+yhtäsuuruus: rivin SHA:n on oltava `origin/main`in esi-isä tai sama, ja
+sen välimuistiversio enintään `origin/main`in. Rivi, joka nimeää commitin
+jota ei ole koskaan ollut tuotannossa, tai suuremman version kuin
+tuotannossa on, kaataa testin. Jäljessä oleva rivi EI kaada sitä:
+yhtäsuuruusvaatimus rikkoi jokaisen jäädytetyn ehdokkaan (H, I, J) oman
+testipatteriston heti ensimmäisen deployn jälkeen (ACT-03). Orkestroija
+kertoo deployn jälkeen, että rivi kannattaa päivittää.
 
 | Aalto | Cache | Tila |
 |---|---|---|
@@ -110,6 +115,7 @@ saattoi ennen tätä työtä.
 | G | `v20` | estetty (migraatio 0010 ajamatta) |
 | H | `v21` | estetty (migraatio 0011 ajamatta) |
 | I | `v22` | estetty (migraatio 0012 ajamatta) |
+| J | `v23` | estetty (migraatio 0013 ajamatta; riippuu aallosta I) |
 
 **Aalto C:n deployaus EI ole sama asia kuin sen hyväksyntä.** Rivi
 yllä kertoo vain, mitä `origin/main` sisältää -- ei sitä, että Panu
@@ -174,7 +180,8 @@ ohjaa ajantasaisen tiedon luo.
 
 ### 1. Numerot on jo jaettu, mutta tuotanto on ohittanut osan niistä
 
-Tuotanto on `v15`, joka junan mukaan kuuluu aallolle B. Aallot C–E ovat
+Kun tämä kohta kirjoitettiin, tuotanto oli `v15` (aalto B; nyt tuotannossa on
+aalto C, ks. LINEAGE-CHECK yllä). Aallot C–E ovat
 `v16`–`v18` eikä niitä ole deployattu. Numerot siis **varaavat
 paikkoja**, joita kukaan ei ole vielä käyttänyt — ja tämä haara
 sanoo `v13`, joka on jo menneisyyttä.
@@ -305,14 +312,15 @@ yllä on TOSI. Linja on lineaarinen, ei haarautunut.
 **TUOTANTOJULKAISULINJA** (junan aallot, cache-versiot varattu):
 
 ```
-Aalto B  v15  (tuotannon nykytila, origin/main)
-  -> C  v16   routines + routineExceptions          (rakennettu, ei deployattu)
-    -> D  v17   recurringExpenses + savingsGoals + bills  (rakennettu, ei deployattu)
-      -> E  v18   aiAudit                            (rakennettu, ei deployattu)
+Aalto B  v15  (deployattu ddfc356)
+  -> C  v16   routines + routineExceptions          (DEPLOYATTU cf259d0 = origin/main, ks. LINEAGE-CHECK)
+    -> D  v17   recurringExpenses + savingsGoals + bills  (lukittu, ei deployattu)
+      -> E  v18   aiAudit                            (lukittu, ei deployattu)
         -> F  v19   Talous 2.0 -- migraatio 0009
           -> G  v20   Tavoitteesta tekemiseksi -- migraatio 0010
             -> H  v21   Henkilökohtainen avustaja -- migraatio 0011
               -> I  v22   Suunta (Life Alignment) -- migraatio 0012
+                -> J  v23   Suunta 2: ajastin ja kuormittavuus -- migraatio 0013
 ```
 
 **Feature-haarat EIVÄT ole tuotantojulkaisulinjan luotettava kuva.**
@@ -355,7 +363,14 @@ Migraatioita EI koskaan pakata samaan tuotantoikkunaan/transaktioon:
    riipu 0009–0011:stä. Koska se koskee `goals`-tauluun, jonka portti on
    auki, sarakkeella on oma portti `GOAL_LIFE_AREA_FIELD`.
 
-Kukaan ei saa niputtaa 0009+0010+0011+0012 yhteen tuotantoajoon. Jokainen
+5. **0013** (Suunta 2) luo kaksi uutta taulua (`running_timers`,
+   `alignment_item_settings`) ja lisää sarakkeita 0012:n tauluihin.
+   Se RIIPPUU 0012:sta (ja `verify_0012.sql` ajetaan ennen sitä, koska
+   0013 korvaa sen tarkistaman lähderajoitteen). Tuotannossa auki oleviin
+   tauluihin se ei koske; sarakkeilla on oma portti
+   `ALIGNMENT_REALITY_FIELDS`.
+
+Kukaan ei saa niputtaa 0009+0010+0011+0012+0013 yhteen tuotantoajoon. Jokainen
 saa oman `supabase/verify/verify_00XX.sql`-todennuksensa ja oman
 `docs/acceptance/WAVE-*.md`-hyväksyntäpakettinsa.
 
@@ -379,7 +394,15 @@ merkittyinä ei-tuotannoksi, pushaamatta mihinkään.
 
 ---
 
-## Harjoittelu (rehearsal) — todistettu, ei tuotantoa
+## Harjoittelu (rehearsal) — HISTORIALLINEN, korvattu lukolla
+
+> **HISTORIALLINEN.** Tämä kohta kuvaa ensimmäisen harjoittelun
+> (`rehearsal/wave-*-candidate`, rakennettu `ddfc356`:n päälle). Ne haarat
+> (ja työpuut `.claude/worktrees/mv-wave-f/g/h`, jotka osoittavat
+> `-candidate-v2`-haaroihin) EIVÄT ole nykyisiä ehdokkaita. Nykyiset
+> deploykohteet ovat junan lukossa `docs/activation/release-train-c-j.json`
+> (C `cf259d0`, D `091e73c`, E `86c4325`, F–J `rehearsal/wave-*-v3`/`-v1`), ja
+> H, I ja J leikataan vielä uudelleen (ks. "Lukko ja orkestroija" alla).
 
 Kolme paikallista haaraa, EI pushattu minnekaan, EI deployattu, EI
 lisätty `origin`iin. Jokainen on `origin/main`in (`ddfc356`, v15, Aalto
@@ -463,7 +486,8 @@ siihen mennessä kun F oikeasti valmistellaan.
 | `migrations.test.mjs` — "tilannedokumentin porttitaulukko vastaa lähdekoodia" | dokumentti, joka kertoo väärän tilan |
 | `production-lineage.test.mjs` — "haara joka ei ole origin/mainin jälkeläinen ei väitä itseään ehdoitta ajantasaiseksi" | `PRODUCTION-STATUS.md`, joka väittää olevansa ajantasainen ilman että origin/main todistaa sen |
 | `production-lineage.test.mjs` — "tämä haara ei väitä origin/mainia korkeampaa välimuistiversiota ilman jälkeläisyyttä" | keksitty, todentamaton cache-versio joka ohittaisi todellisen tuotannon |
-| `production-lineage.test.mjs` — "RELEASE-SEQUENCING.md:n merkitsemä origin/main-tila täsmää todelliseen" | tämä dokumentti itse vanhenee huomaamatta |
+| `production-lineage.test.mjs` — "RELEASE-SEQUENCING.md:n merkitsemä origin/main-tila on todellisen origin/mainin sukulinjassa" | tämä dokumentti nimeää tuotannoksi commitin, jota ei ole ollut tuotannossa |
+| `activation-train-map.test.mjs` — lukko ja push-rivit | push-kohde, joka ei ole lukittu täysi SHA |
 
 Kolme riippumatonta lähdettä — `src/data/schema.js`, `sw.js`,
 `docs/PRODUCTION-STATUS.md` — on pidettävä yhtäpitävinä. Väärennös
@@ -474,6 +498,43 @@ sen mitä kelvollinen aaltocommitti tekee.
 numeron, selain joka on jo kerran nähnyt sen numeron voisi jäädä
 vanhaan kuoreen pysyvästi. Jokainen hyväksyntäpaketti sanoo tämän
 erikseen, ja testi tarkistaa että sanoo.
+
+### Peruutus pysäyttää junan (ACT-10)
+
+Peruutuksen nosto `vN -> vN+1` vie SEURAAVAN aallon varaaman numeron:
+aallon D peruutus (matriisi C, `v18`) törmää aallon E jäädytettyyn
+`v18`:aan. Siksi:
+
+- **Peruutusversiota EI SAA pushata yhdessä muuttamattoman myöhemmän
+  ehdokkaan kanssa.** Peruutuksen jälkeen juna on tilassa
+  `TRAIN_HALTED_RECUT_REQUIRED`: myöhemmät ehdokkaat leikataan uudelleen
+  uusin välimuistiversioin, `tools/release/waves.mjs` numeroidaan ja lukko
+  kirjoitetaan uudelleen (`node tools/activation/train-map.mjs --write`).
+- Peruutus todennetaan omassa tilassaan: `npm run production:verify-assets
+  -- --rollback-of=D` (matriisi = edellinen aalto, välimuisti > perutun
+  aallon) ja kirjataan: `npm run activation:orchestrate --
+  --verify-rollback-of=D --record`. Orkestroija kieltäytyy suunnittelemasta
+  seuraavaa aaltoa, kunnes lukko on kirjoitettu uudelleen.
+
+## Lukko ja orkestroija
+
+**Push-kohde on AINA lukon `deployTarget`** (`docs/activation/release-train-c-j.json`,
+täysi 40-merkkinen SHA). Aliakset (haarat) ovat vain lukon kirjoittamista
+varten, eikä yksikään aalto ole kiinnitetty liikkuvaan `origin/main`iin.
+Manifestin `commitSha` on aaltocommit — peruutuksen ja diffin viite, ei
+push-kohde (aallon J aaltocommit ei sisällä kärjen Day 1 -korjauksia).
+
+| Komento | Mitä se tekee |
+|---|---|
+| `npm run activation:train-map` | tarkistaa, että jokainen alias osoittaa yhä lukittuun SHA:han (siirtymä = VIRHE) |
+| `npm run activation:dry-run` | tuotanto, kanta, seuraava askel, riski, omistajan portti, odotettu SHA/välimuisti/portit ja SQL-tiedostot (vain luku) |
+| `npm run activation:orchestrate` | sama suunnitelma askelina; pushaa VAIN `--execute-deploy --approved-sha=<deployTarget>` -lipuilla compare-and-swapin jälkeen, ei koskaan force |
+| `npm run production:verify-assets -- --infer` | mikä aalto ja mikä ehdokas-SHA tuotannossa on (vain GET) |
+
+H, I ja J leikataan uudelleen ennen deployta (niistä puuttuu kellokorjaus
+`5aa0d53`, ks. lukon `requiredPatches`). Leikkauksen jälkeen: päivitä
+aliakset `tools/activation/train-map.mjs`:n `TRAIN`-listaan, aja
+`--write` ja `--sync-docs`.
 
 ---
 

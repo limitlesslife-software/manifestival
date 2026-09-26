@@ -10,6 +10,7 @@
 //   npm run smoke
 
 import { spawn } from 'node:child_process';
+import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -156,11 +157,17 @@ try {
   check(html.includes('<div id="app" class="app-hidden">'),
     'sovellusnäkymä on piilotettu ennen kirjautumista');
 
-  // 7. Palvelinpuolen koodi ei vuoda staattisena
-  for (const route of ['/api/parse', '/api/extract', '/api/plan',
-                       '/api/_auth.js', '/api/_validate.js',
-                       '/api/_validateExtract.js', '/api/_validatePlan.js',
-                       '/api/_ratelimit.js']) {
+  // 7. Palvelinpuolen koodi ei vuoda staattisena. Lista johdetaan
+  //    api/-hakemistosta: uusi päätepiste (esim. explain, capture,
+  //    command) tai apumoduuli (_cors.js) tulee mukaan itsestään.
+  const apiFiles = fs.readdirSync(path.join(ROOT, 'api')).filter(name => name.endsWith('.js')).sort();
+  const apiRoutes = [
+    ...apiFiles.filter(name => !name.startsWith('_')).map(name => '/api/' + name.replace(/\.js$/, '')),
+    ...apiFiles.map(name => '/api/' + name)
+  ];
+  check(apiRoutes.includes('/api/explain') && apiRoutes.includes('/api/_validateExplain.js'),
+    'api-hakemisto luettu', apiFiles.length + ' tiedostoa');
+  for (const route of apiRoutes) {
     const response = await fetch(BASE + route);
     check(response.status === 501, 'lähdekoodia ei tarjoilla: ' + route, 'status ' + response.status);
   }

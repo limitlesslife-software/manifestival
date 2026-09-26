@@ -8,6 +8,13 @@
 
 Aallon commit-SHA: ks. `docs/activation-0003-0008-release-manifest.json`.
 
+**Tila 2026-09-26:** C on tuotannossa (`cf259d0`, v16). Junan portti on
+`AUTOMATED_TECHNICAL_ACCEPTANCE`, joka kirjataan live-todennuksesta
+(`npm run production:verify-assets -- --wave=C --sha=cf259d0ef755f7e875cc9cd9c15405eba632e408 --record-acceptance`;
+ehdot: [`docs/activation/AUTOMATED-ACCEPTANCE-POLICY.md`](../activation/AUTOMATED-ACCEPTANCE-POLICY.md)). Kohdan 4
+selainhyväksyntä on `LIVE_USE_VALIDATION_PENDING`: oikeassa käytössä, **ei estä
+junaa eikä ole koskaan PASS**.
+
 ---
 
 ## Miksi C on kolmantena
@@ -65,6 +72,10 @@ npm run production:verify-assets -- --wave=C
 ---
 
 ## 4. Selainhyväksyntä
+
+> **`LIVE_USE_VALIDATION_PENDING`** (omistajan päätös 2026-09-26): tämä osio
+> tehdään oikeassa käytössä. Se **ei estä junaa** eikä sitä merkitä koskaan
+> PASSiksi; junan portti on `AUTOMATED_TECHNICAL_ACCEPTANCE` ([`docs/activation/AUTOMATED-ACCEPTANCE-POLICY.md`](../activation/AUTOMATED-ACCEPTANCE-POLICY.md)).
 
 ### Rutiinit
 
@@ -174,9 +185,10 @@ jäävät paikoilleen.
 
 ## 8. Portti seuraavaan aaltoon
 
-- [ ] Koneellinen todennus PASS
-- [ ] Selainhyväksyntä läpi, myös cascade-tarkistus
-- [ ] `failures_total = 0`
-- [ ] Vähintään yksi rutiini ja yksi poikkeus olemassa
-- [ ] Tehtävien lukumäärä ei kasvanut itsestään
+- [ ] `AUTOMATED_TECHNICAL_ACCEPTANCE` kirjattu päiväkirjaan
+      (`production:verify-assets -- --wave=C --sha=<C> --record-acceptance`)
 - [ ] `docs/PRODUCTION-STATUS.md` päivitetty
+
+Käyttötodennus (`LIVE_USE_VALIDATION_PENDING`, **ei estä** aaltoa D):
+selainhyväksyntä (myös cascade-tarkistus), `failures_total = 0`, vähintään
+yksi rutiini ja poikkeus, eikä tehtävien lukumäärä kasva itsestään.

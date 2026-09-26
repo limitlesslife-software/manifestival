@@ -143,6 +143,13 @@ Dashboard → Database → Backups → ota varmuuskopio **tänään**.
 Kirjaa aikaleima. **Aiempi havainto `03 Sep 2026 13:36:47 UTC` ei
 kelpaa** tämän ajon varmuuskopioksi.
 
+> **Migraatiosta 0010 alkaen** pakollinen varmuuskopio on
+> suunnitelmasta riippumaton looginen tilannekuva
+> (`supabase/backup/snapshot_state_00NN.sql`), ei pelkkä Dashboardin
+> varmuuskopio: sen olemassaolo riippuu tilauksesta, eikä ajastettua
+> varmuuskopiota välttämättä voi ottaa pyynnöstä. Ks.
+> [`docs/activation/0010-BACKUP-AND-RECOVERY.md`](activation/0010-BACKUP-AND-RECOVERY.md).
+
 ### P15 — Sovellus hiljaiseksi
 
 Sulje sovellus kaikilta laitteilta ja välilehdiltä. Ei pakollista, mutta

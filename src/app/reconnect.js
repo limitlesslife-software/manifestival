@@ -9,14 +9,53 @@
 // etualalle (resume) — kumpikaan ei saa käynnistää useaa rinnakkaista
 // täyttä päivitystä.
 //
+// PÄIVITYSRYÖPPY (CRIT-02). Täysi päivitys on jonon toisto, lähtökorin
+// lähetys ja parikymmentä rinnakkaista hakua. Siksi:
+//   - paluu etualalle ('resume') ei päivitä, jos edellinen päivitys
+//     ALKOI alle MIN_REFRESH_INTERVAL_MS sitten (nopea sovellusten vaihto)
+//   - verkon palautuminen ('online') päivittää vain, jos yksikään
+//     päivitys ei ole alkanut palautumisen jälkeen; kesken olevan
+//     päivityksen perään ajetaan yksi kierros vain, jos se alkoi ennen
+//     palautumista (eli ehkä ilman verkkoa)
+//   - käyttäjän pyyntö ('manual'), skeeman palautuminen ('schema') ja
+//     epäonnistuneen latauksen uusinta ('retry') eivät odota väliä.
+//
 // VASTUUNJAKO
 // Tämä moduuli päättää MILLOIN ja KUINKA MONTA KERTAA rinnakkain
 // päivitys ajetaan. Se ei tiedä MITÄ päivitys tekee — se saadaan
 // `onRefresh`-takaisinkutsuna, jotta ajastus- ja limittäly-logiikka on
 // testattavissa ilman oikeaa verkkoa, DOM:ia tai oikeita ajastimia.
 
+import { logFailure } from '../lib/logger.js';
+
 /** Debounce-ikkuna online-tapahtumalle, millisekuntteina. */
 export const RECONNECT_DEBOUNCE_MS = 1500;
+
+/** Paluu etualalle ei päivitä, jos edellinen päivitys alkoi tätä lähempänä. */
+export const MIN_REFRESH_INTERVAL_MS = 30000;
+
+/**
+ * Päivityksen syyt.
+ *   resume  sovellus palasi etualalle (rajoitettu vähimmäisvälillä)
+ *   online  verkko palasi (vain jos palautumisen jälkeen ei ole päivitetty)
+ *   manual  käyttäjä tai kutsuja pyysi nimenomaisesti (oletus)
+ *   schema  kannan kyvykkyys nousi: ladattu tieto voi olla vajaa
+ *   retry   epäonnistuneen latauksen uusinta (refreshLater)
+ */
+export const REFRESH_REASON = Object.freeze({
+  RESUME: 'resume', ONLINE: 'online', MANUAL: 'manual', SCHEMA: 'schema', RETRY: 'retry'
+});
+
+/** Nämä eivät odota vähimmäisväliä. */
+const UNTHROTTLED = new Set([REFRESH_REASON.MANUAL, REFRESH_REASON.SCHEMA, REFRESH_REASON.RETRY]);
+
+/**
+ * Kesken olevan päivityksen perään ajetaan vielä yksi kierros vain näistä
+ * syistä: käynnissä oleva haku on voinut alkaa ilman verkkoa ('online') tai
+ * vanhoilla kyvykkyyksillä ('schema'). Muuten käynnissä oleva päivitys on
+ * jo tuore, eikä toista täyttä latausta tarvita.
+ */
+const TRAILING = new Set([REFRESH_REASON.ONLINE, REFRESH_REASON.SCHEMA]);
 
 /**
  * @param {object} options
@@ -24,51 +63,99 @@ export const RECONNECT_DEBOUNCE_MS = 1500;
  *   kerran rinnakkain; jos se heittää tai hylkää, virhe kirjautuu mutta ei
  *   kaada kutsujaa.
  * @param {number} [options.debounceMs]
+ * @param {number} [options.minIntervalMs] ks. MIN_REFRESH_INTERVAL_MS
+ * @param {boolean} [options.initialOnline] verkon tila käynnistyshetkellä
+ *   (navigator.onLine). Offline-tilassa käynnistynyt sovellus ei muuten
+ *   reagoinut ensimmäiseen "online"-tapahtumaan lainkaan (F7): ohjain luuli
+ *   olleensa koko ajan verkossa, eikä lähetystä tai latausta tehty.
+ * @param {() => number} [options.now] kello (ms) testejä varten
  * @param {typeof setTimeout} [options.setTimeoutFn] testeja varten
  * @param {typeof clearTimeout} [options.clearTimeoutFn] testeja varten
  */
 export function createReconnectController({
   onRefresh,
   debounceMs = RECONNECT_DEBOUNCE_MS,
+  minIntervalMs = MIN_REFRESH_INTERVAL_MS,
+  initialOnline = true,
+  now = () => Date.now(),
   setTimeoutFn = setTimeout,
   clearTimeoutFn = clearTimeout
 } = {}) {
-  let online = true;
+  let online = initialOnline !== false;
   let timer = null;
   let refreshing = false;
-  let refreshAgainAfter = false;
+  /** Kesken olevan päivityksen perään ajettavan kierroksen syy (tai null). */
+  let trailingReason = null;
+  /** Milloin viimeisin päivitys (tai vastaava täysi lataus) ALKOI (ms). */
+  let lastStartedAt = null;
+  // Järjestys tapahtumalaskurilla, ei kellolla: sama millisekunti ei saa
+  // tehdä epäselväksi, alkoiko päivitys ennen verkon palautumista vai sen jälkeen.
+  let eventSeq = 0;
+  let lastStartSeq = 0;
+  /** Viimeisimmän offline -> online -siirtymän järjestysnumero (0 = ei koskaan). */
+  let onlineSeq = 0;
 
-  function runRefresh() {
+  function noteStart() {
+    lastStartedAt = now();
+    eventSeq += 1;
+    lastStartSeq = eventSeq;
+  }
+
+  function startedSinceOnline() {
+    return onlineSeq > 0 && lastStartSeq > onlineSeq;
+  }
+
+  /**
+   * @param {string} reason REFRESH_REASON
+   * @returns {'started'|'queued'|'skipped'}
+   */
+  function runRefresh(reason) {
+    // Verkon palautuminen on jo katettu, jos päivitys alkoi sen jälkeen
+    // (esim. paluu etualalle debounce-ikkunan aikana).
+    if (reason === REFRESH_REASON.ONLINE && startedSinceOnline()) return 'skipped';
+
     // KOLMANNEN PÄÄLLEKKÄISEN KUTSUN ESTO. Jos päivitys on jo käynnissä,
-    // uusi pyyntö ei käynnistä toista rinnakkaista Promise.all-vyöryä —
-    // se vain merkitsee, että kun nykyinen päättyy, ajetaan vielä yksi
-    // kierros. Näin online-flapping tai resume+online samaan aikaan ei
-    // koskaan tuota kahta rinnakkaista täyttä latausta.
+    // uusi pyyntö ei käynnistä toista rinnakkaista Promise.all-vyöryä.
+    // Vain TRAILING-syy merkitsee, että kun nykyinen päättyy, ajetaan
+    // vielä yksi kierros; muut ovat jo käynnissä olevan katteena.
     if (refreshing) {
-      refreshAgainAfter = true;
-      return;
+      if (TRAILING.has(reason)) {
+        trailingReason = reason;
+        return 'queued';
+      }
+      return 'skipped';
     }
+
+    // Nopea sovellusten vaihto ei lataa kaikkea joka paluulla.
+    if (reason !== REFRESH_REASON.ONLINE && !UNTHROTTLED.has(reason)
+        && lastStartedAt !== null && now() - lastStartedAt < minIntervalMs) {
+      return 'skipped';
+    }
+
     refreshing = true;
+    noteStart();
     Promise.resolve()
       .then(() => onRefresh())
       .catch(error => {
-        console.warn('Manifestival: verkon palautumisen päivitys ei onnistunut', error);
+        logFailure('reconnect.refresh_failed', error);
       })
       .then(() => {
         refreshing = false;
-        if (refreshAgainAfter) {
-          refreshAgainAfter = false;
-          runRefresh();
+        if (trailingReason) {
+          const next = trailingReason;
+          trailingReason = null;
+          runRefresh(next);
         }
       });
+    return 'started';
   }
 
-  function scheduleDebouncedRefresh() {
+  function scheduleDebouncedRefresh(delayMs, reason) {
     if (timer) clearTimeoutFn(timer);
     timer = setTimeoutFn(() => {
       timer = null;
-      runRefresh();
-    }, debounceMs);
+      runRefresh(reason);
+    }, delayMs);
   }
 
   return {
@@ -81,7 +168,11 @@ export function createReconnectController({
     notifyOnline() {
       const wasOffline = !online;
       online = true;
-      if (wasOffline) scheduleDebouncedRefresh();
+      if (wasOffline) {
+        eventSeq += 1;
+        onlineSeq = eventSeq;
+        scheduleDebouncedRefresh(debounceMs, REFRESH_REASON.ONLINE);
+      }
     },
 
     /**
@@ -98,11 +189,34 @@ export function createReconnectController({
     },
 
     /**
-     * Pyydä välitön päivitys (esim. sovellus palaa etualalle).
-     * Sama limittäly kuin online-siirtymässä: ei rinnakkaisia kutsuja.
+     * Pyydä välitön päivitys. Sama limittäly kuin online-siirtymässä: ei
+     * rinnakkaisia kutsuja. Paluu etualalle ({ reason: 'resume' }) ohitetaan,
+     * jos edellinen päivitys alkoi alle MIN_REFRESH_INTERVAL_MS sitten.
+     *
+     * @param {{reason?: string}} [options] REFRESH_REASON (oletus 'manual')
+     * @returns {'started'|'queued'|'skipped'}
      */
-    refreshNow() {
-      runRefresh();
+    refreshNow({ reason = REFRESH_REASON.MANUAL } = {}) {
+      return runRefresh(reason);
+    },
+
+    /**
+     * Yksi viivästetty päivitys (esim. ensimmäinen lataus epäonnistui,
+     * vaikka laite on verkossa). Ei kasaudu: odottava ajastus korvataan,
+     * offline-ilmoitus ja cancelPending() peruvat sen. Offline-tilassa
+     * ei ajasteta — seuraava "online" hoitaa päivityksen.
+     */
+    refreshLater(delayMs) {
+      if (!online) return;
+      scheduleDebouncedRefresh(Math.max(0, Number(delayMs) || 0), REFRESH_REASON.RETRY);
+    },
+
+    /**
+     * Täysi lataus alkoi ohjaimen ohi (kirjautuminen, synkronoinnin
+     * jälkeinen lataus): paluu etualalle heti perään ei lataa toista kertaa.
+     */
+    noteRefreshStarted() {
+      noteStart();
     },
 
     /** Peruuta odottava ajastettu päivitys ilman tilan muutosta. Uloskirjautuminen. */
@@ -115,6 +229,7 @@ export function createReconnectController({
 
     // Testejä ja diagnostiikkaa varten.
     isOnline: () => online,
-    isRefreshing: () => refreshing
+    isRefreshing: () => refreshing,
+    lastRefreshStartedAt: () => lastStartedAt
   };
 }

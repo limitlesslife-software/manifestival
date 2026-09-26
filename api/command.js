@@ -42,6 +42,7 @@
 const { validateCommandRequest } = require('./_validateCommand.js');
 const { authenticate } = require('./_auth.js');
 const { checkRateLimit } = require('./_ratelimit.js');
+const { applyCors } = require('./_cors.js');
 
 /** Aikakatkaisu. Luokittelu on yksi olio, ei rakenne. */
 const UPSTREAM_TIMEOUT_MS = 15000;
@@ -145,6 +146,9 @@ function buildPrompt({ text, today, weekday }) {
 }
 
 module.exports = async (req, res) => {
+  // 0. CORS: natiivikuoren esikysely ennen metoditarkistusta (api/_cors.js).
+  if (applyCors(req, res)) return;
+
   // 1. Metodivalidointi
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
@@ -178,7 +182,7 @@ module.exports = async (req, res) => {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
     console.error('command: ANTHROPIC_API_KEY puuttuu palvelimen ymparistosta');
-    res.status(500).json({ error: 'Palvelu ei ole juuri nyt kaytettavissa' });
+    res.status(500).json({ error: 'Palvelu ei ole juuri nyt käytettävissä' });
     return;
   }
 
@@ -206,7 +210,7 @@ module.exports = async (req, res) => {
       // Lokitetaan vain tilakoodi. Anthropicin virhevastaus voi sisaltaa
       // osan syotteesta, ja syote on tassa kayttajan oma komento.
       console.error('command: Anthropic vastasi', response.status);
-      res.status(502).json({ error: 'Komennon tulkinta epaonnistui' });
+      res.status(502).json({ error: 'Komennon tulkinta epäonnistui' });
       return;
     }
 
@@ -219,7 +223,7 @@ module.exports = async (req, res) => {
     const isTimeout = e && e.name === 'AbortError';
     console.error('command: kutsu epaonnistui', isTimeout ? 'timeout' : String(e && e.message));
     res.status(isTimeout ? 504 : 500).json({
-      error: isTimeout ? 'Komennon tulkinta kesti liian kauan' : 'Komennon tulkinta epaonnistui'
+      error: isTimeout ? 'Komennon tulkinta kesti liian kauan' : 'Komennon tulkinta epäonnistui'
     });
   } finally {
     clearTimeout(timer);

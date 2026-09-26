@@ -11,6 +11,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { ROOT, read } from './helpers/sources.mjs';
+import { classifyAccountSchema, tableReferences } from './helpers/migrationSchema.mjs';
 import { EXPORTED_COLLECTIONS } from '../src/domain/dataExport.js';
 import {
   ACCOUNT_DATA_MAP, RETENTION_DECISIONS, ACCOUNT_OWNED_COLLECTIONS
@@ -27,22 +28,32 @@ function migrationsText() {
     .join('\n');
 }
 
+/**
+ * Taulut, joita migraatiot luovat mutta jotka EIVÄT ole käyttäjän dataa.
+ *
+ * Jokaisella on oltava kirjallinen perustelu. Uusi pysyvä taulu ei kuulu
+ * tänne ilman omistajan päätöstä: jos siinä on käyttäjän rivejä, se kuuluu
+ * poistokarttaan (ACCOUNT_DATA_MAP) ja vientiin (EXPORTED_COLLECTIONS).
+ */
+const NON_USER_TABLES = Object.freeze({
+  _migration_params: 'Migraation 0001 väliaikainen parametritaulu (on commit drop): '
+    + 'odotetut rivimäärät ja omistajan tunniste, ei pysyvää dataa.',
+  _migration_0002_params: 'Migraation 0002 väliaikainen parametritaulu (on commit drop), ei pysyvää dataa.'
+});
+
+const MAPPED_TABLES = Object.values(ACCOUNT_DATA_MAP).map(entry => entry.table);
+
+let classified = null;
+
+/** Oikeiden migraatioiden luokittelu (lasketaan kerran). */
+function schemaClassification() {
+  classified ??= classifyAccountSchema(migrationsText(), { mappedTables: MAPPED_TABLES, exemptTables: NON_USER_TABLES });
+  return classified;
+}
+
 /** { taulu -> omistajasarake } jokaiselle taululle, joka kaskadoituu auth.users:sta. */
 function cascadingTables() {
-  const sql = migrationsText();
-  const found = new Map();
-
-  const created = /create table public\.(\w+)\s*\(([\s\S]*?)\n\);/g;
-  for (const match of sql.matchAll(created)) {
-    const owner = /(\w+)\s+uuid\s+(?:not null\s+)?(?:primary key\s+)?default auth\.uid\(\)\s+references auth\.users\(id\) on delete cascade/
-      .exec(match[2]);
-    if (owner) found.set(match[1], owner[1]);
-  }
-
-  const altered = /alter table public\.(\w+)\s+add constraint \w+\s+foreign key \((\w+)\) references auth\.users\(id\) on delete cascade/g;
-  for (const match of sql.matchAll(altered)) found.set(match[1], match[2]);
-
-  return found;
+  return schemaClassification().owners;
 }
 
 test('KRIITTINEN: poistokartta kattaa TÄSMÄLLEEN viennin kokoelmat', () => {
@@ -70,6 +81,167 @@ test('KRIITTINEN: yksikään skeeman käyttäjätaulu ei puutu poistokartasta', 
   assert.deepEqual(unmapped, [],
     `Skeemassa on käyttäjän omistamia tauluja, joita poisto ei tuntisi: ${unmapped.join(', ')}. `
     + 'Lisää ne EXPORTED_COLLECTIONS-listaan ja ACCOUNT_DATA_MAP:iin.');
+});
+
+test('KRIITTINEN: jokainen migraatioiden CREATE TABLE on luokiteltu (poistokartassa tai perustellusti vapautettu)', () => {
+  // Omistajuutta ei päätellä kirjoitustavasta: taulu ilman suoraa
+  // auth.users-viitettä (esim. vain yhdistelmäviite vanhempaan tauluun)
+  // voi silti sisältää käyttäjän dataa. Siksi JOKAINEN luotu taulu on
+  // luokiteltava nimenomaisesti.
+  const { unclassified, created } = schemaClassification();
+  assert.ok(created.length >= 24, 'CREATE TABLE -haku ei löydä tunnettuja tauluja -- haku on rikki');
+  assert.deepEqual(unclassified, [],
+    `Migraatiot luovat tauluja, joita poisto ei tunne: ${unclassified.join(', ')}. `
+    + 'Lisää ne ACCOUNT_DATA_MAP:iin (ja vientiin) tai perustellusti NON_USER_TABLES-listaan.');
+});
+
+test('vapautetut taulut ovat olemassa, perusteltuja eivätkä ole poistokartassa', () => {
+  const created = new Map(schemaClassification().created.map(table => [table.display, table]));
+  for (const [name, reason] of Object.entries(NON_USER_TABLES)) {
+    assert.ok(created.has(name), `${name}: vanhentunut vapautus, taulua ei enää luoda`);
+    assert.ok(typeof reason === 'string' && reason.length >= 20, `${name}: perustelu puuttuu`);
+    assert.equal(MAPPED_TABLES.includes(name), false, name);
+    assert.equal(created.get(name).temporary, true, `${name}: vain väliaikainen taulu voi olla vapautettu ilman omistajan päätöstä`);
+  }
+});
+
+test('KRIITTINEN: jokainen viittaus auth.users-tauluun on ON DELETE CASCADE', () => {
+  // RESTRICT / NO ACTION (myös puuttuva ON DELETE = NO ACTION) estäisi
+  // auth.admin.deleteUserin kokonaan: koko tilin poisto epäonnistuisi.
+  const { nonCascade, nonCascadeReferences } = schemaClassification();
+  assert.deepEqual(nonCascade, [], 'omistajasarake ei kaskadoidu');
+  assert.deepEqual(nonCascadeReferences, [], 'auth.users-viittaus ilman on delete cascade');
+});
+
+test('KRIITTINEN: taulujen väliset viiteet ovat CASCADE tai SET NULL (kaskadi ei riipu järjestyksestä)', () => {
+  // RESTRICT tarkistetaan heti: jos kaskadi poistaa viitatun rivin ennen
+  // viittaavaa, auth.admin.deleteUser kaatuu. NO ACTION (myös puuttuva
+  // ON DELETE) sallitaan vain, jos se on tietoinen -- nyt yhtään ei ole.
+  const references = tableReferences(migrationsText());
+  assert.ok(references.length > 26, 'viittaushaku ei löydä tunnettuja viittauksia -- haku on rikki');
+  const offenders = references
+    .filter(reference => reference.target !== 'auth.users')
+    .filter(reference => !['cascade', 'set null'].includes(reference.onDelete))
+    .map(reference => `rivi ${reference.line}: ${reference.clause} (${reference.onDelete || 'no action'})`);
+  assert.deepEqual(offenders, []);
+});
+
+test('näyte: RESTRICT-viite taulujen välillä havaitaan', () => {
+  const [reference] = tableReferences('create table public.a (b_id text references public.b(id) on delete restrict);');
+  assert.equal(reference.target, 'public.b');
+  assert.equal(reference.onDelete, 'restrict');
+  const [composite] = tableReferences(
+    'create table public.a (x text, y uuid, foreign key (x, y) references public.b (id, user_id) on delete set null (x));');
+  assert.equal(composite.onDelete, 'set null');
+});
+
+test('KRIITTINEN: kaskadoituvat taulut ovat TÄSMÄLLEEN poistokartan taulut omistajasarakkeineen', () => {
+  const expected = new Map(Object.values(ACCOUNT_DATA_MAP).map(entry => [entry.table, entry.ownerColumn]));
+  const cascading = cascadingTables();
+  assert.equal(cascading.size, Object.keys(ACCOUNT_DATA_MAP).length);
+  assert.deepEqual([...cascading].sort(), [...expected].sort());
+});
+
+// ------------------------------------------ vartijan negatiiviset näytteet
+//
+// Vartija on arvokas vain, jos se tunnistaa muunkin kuin talon oman
+// kirjoitustavan. Jokainen näyte alla meni aiemmin läpi hiljaa.
+
+const HOUSE_STYLE = `create table public.routines (
+  id text primary key,
+  user_id uuid not null default auth.uid()
+          references auth.users(id) on delete cascade,
+  title text not null
+);`;
+
+function classifyFixture(sql, mappedTables = ['routines']) {
+  return classifyAccountSchema(sql, { mappedTables, exemptTables: {} });
+}
+
+test('näyte: talon oma kirjoitustapa (myös CRLF) tunnistetaan kartoitetuksi', () => {
+  for (const sql of [HOUSE_STYLE, HOUSE_STYLE.replace(/\n/g, '\r\n')]) {
+    const result = classifyFixture(sql);
+    assert.deepEqual(result.unclassified, []);
+    assert.deepEqual(result.nonCascade, []);
+    assert.deepEqual([...result.owners], [['routines', 'user_id']]);
+  }
+});
+
+for (const [label, sql, expected] of [
+  ['ilman default auth.uid()',
+    'create table public.notes (id text primary key, user_id uuid not null references auth.users(id) on delete cascade);',
+    { unclassified: ['notes'], unmappedOwners: ['notes'] }],
+  ['if not exists',
+    'create table if not exists public.notes (\n  user_id uuid default auth.uid() references auth.users(id) on delete cascade\n);',
+    { unclassified: ['notes'], unmappedOwners: ['notes'] }],
+  ['isot kirjaimet',
+    'CREATE TABLE PUBLIC.NOTES (\n  USER_ID UUID NOT NULL DEFAULT AUTH.UID() REFERENCES AUTH.USERS(ID) ON DELETE CASCADE\n);',
+    { unclassified: ['notes'], unmappedOwners: ['notes'] }],
+  ['skeematon nimi',
+    'create table notes (user_id uuid references auth.users on delete cascade);',
+    { unclassified: ['notes'], unmappedOwners: ['notes'] }],
+  ['ei-public-skeema',
+    'create table private.notes (user_id uuid references auth.users(id) on delete cascade);',
+    { unclassified: ['private.notes'], unmappedOwners: ['private.notes'] }],
+  ['vain yhdistelmäviite vanhempaan tauluun (ei suoraa auth.users-viitettä)',
+    'create table public.note_items (\n  id text, user_id uuid not null, note_id text,\n'
+      + '  foreign key (note_id, user_id) references public.routines (id, user_id) on delete cascade\n);',
+    { unclassified: ['note_items'], unmappedOwners: [] }],
+  ['lainattu tunniste',
+    'create table "public"."Notes" ("user_id" uuid references "auth"."users" ("id") on delete cascade);',
+    { unclassified: ['Notes'], unmappedOwners: ['Notes'] }]
+]) {
+  test(`näyte: kartoittamaton taulu (${label}) havaitaan`, () => {
+    const result = classifyFixture(sql);
+    assert.deepEqual(result.unclassified, expected.unclassified);
+    assert.deepEqual(result.unmappedOwners, expected.unmappedOwners);
+    assert.deepEqual(result.nonCascade, []);
+  });
+}
+
+for (const [label, sql, onDelete] of [
+  ['on delete restrict',
+    'create table public.routines (user_id uuid not null references auth.users(id) on delete restrict);', 'restrict'],
+  ['ei ON DELETE -lauseketta (NO ACTION)',
+    'create table public.routines (user_id uuid not null references auth.users(id));', 'no action (oletus)'],
+  ['on delete set null',
+    'create table public.routines (user_id uuid references auth.users(id) on delete set null);', 'set null'],
+  ['taulutason rajoite no action',
+    'create table public.routines (\n  id text,\n  user_id uuid not null,\n'
+      + '  constraint routines_user_fk foreign key (user_id) references auth.users (id) on delete no action\n);', 'no action'],
+  ['ALTER ... ADD CONSTRAINT ilman kaskadia',
+    'create table public.routines (id text, user_id uuid);\n'
+      + 'alter table public.routines add constraint r_fk foreign key (user_id) references auth.users(id);', 'no action (oletus)'],
+  ['ALTER ... ADD COLUMN restrict',
+    'create table public.routines (id text);\n'
+      + 'alter table public.routines add column user_id uuid references auth.users on delete restrict;', 'restrict']
+]) {
+  test(`näyte: kaskadoitumaton auth.users-viittaus (${label}) havaitaan`, () => {
+    const result = classifyFixture(sql);
+    assert.equal(result.nonCascade.length, 1, JSON.stringify(result.nonCascade));
+    assert.equal(result.nonCascade[0].table, 'routines');
+    assert.equal(result.nonCascade[0].column, 'user_id');
+    assert.equal(result.nonCascade[0].onDelete, onDelete);
+    assert.equal(result.nonCascadeReferences.length, 1);
+    assert.equal(result.owners.has('routines'), false, 'kaskadoitumaton ei ole omistaja');
+  });
+}
+
+test('näyte: kommentit ohitetaan, mutta merkkijonon "--" ei katkaise lausetta', () => {
+  const sql = [
+    '-- create table public.ghost (user_id uuid references auth.users(id));',
+    '/* create table public.ghost2 (user_id uuid references auth.users(id)); /* sisäkkäinen */ */',
+    "comment on table public.routines is 'ei -- kommentti; references auth.users';",
+    'create table public.notes2 (label text default \'a -- b\', user_id uuid references auth.users(id) on delete cascade);'
+  ].join('\n');
+  const result = classifyFixture(sql);
+  assert.deepEqual(result.unclassified, ['notes2']);
+  assert.deepEqual(result.unmappedOwners, ['notes2']);
+});
+
+test('näyte: funktion rungossa (dollarilainaus) luotu taulu ei jää piiloon', () => {
+  const sql = "do $$ begin\n  create table public.hidden (user_id uuid references auth.users(id) on delete cascade);\nend $$;";
+  assert.deepEqual(classifyFixture(sql).unclassified, ['hidden']);
 });
 
 test('taulunimet vastaavat repositorioiden todellisia tauluja', () => {

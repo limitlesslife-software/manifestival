@@ -138,8 +138,12 @@ test('kannan rajat vastaavat domainin validointia', () => {
   assert.match(constraint('time_entries_note_check'), new RegExp(`<= ${MAX_ENTRY_NOTE_LENGTH}`));
   assert.match(constraint('alignment_reviews_reflection_check'), new RegExp(`<= ${MAX_REFLECTION_LENGTH}`));
 
+  // 0012 sallii vain käsin kirjatun; 0013 korvaa rajoitteen ja lisää
+  // ajastimen (tests/life-alignment-reality-migration.test.mjs todistaa
+  // uuden rajoitteen vastaavan TIME_SOURCES-listaa).
   const sources = [...constraint('time_entries_source_check').matchAll(/'([^']+)'/g)].map(m => m[1]);
-  assert.deepEqual(sources, [...TIME_SOURCES], 'toteuman lähteet');
+  assert.deepEqual(sources, ['manual'], 'toteuman lähteet 0012:ssa');
+  assert.ok(TIME_SOURCES.includes('manual'));
   const categories = [...constraint('life_areas_category_check').matchAll(/'([^']+)'/g)].map(m => m[1]).sort();
   assert.deepEqual(categories, [...CATEGORY_KEYS].sort(), 'kategoria-avaimet');
 });

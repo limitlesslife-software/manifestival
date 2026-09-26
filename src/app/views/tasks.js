@@ -1,5 +1,7 @@
 // Tehtävänäkymä: koko lista sekä lisäys- ja muokkauslomake.
 
+import { itemSettingsFor, saveItemSettings } from '../timeTracking.js';
+import { openItemLog, startTimerFor } from './timeLog.js';
 import { fmtISO, todayMidnight } from '../../lib/datetime.js';
 import { escapeHtml, formatTimeRange, formatDuration } from '../../lib/format.js';
 import { CATEGORIES, categoryLabel } from '../../domain/categories.js';
@@ -16,6 +18,11 @@ import { offline } from '../offline.js';
 import { renderInbox } from './inbox.js';
 import { renderReminders } from './reminders.js';
 import { renderTravel } from './travel.js';
+import { ESTIMATE_PRESETS } from '../../domain/alignmentPolicy.js';
+import { formatMinutes } from '../../domain/lifeArea.js';
+import { estimateQueueCount, openEstimateQueue } from './direction.js';
+import { loadFailureHtml } from './loadNotice.js';
+import { showError } from '../../ui/toast.js';
 
 /**
  * Osion painike ja lohko.
@@ -47,12 +54,26 @@ export function populateSelects() {
     const node = maybe(id);
     if (node) node.innerHTML = priorityOptions;
   }
+
+  // Kestoarvion pikavalinnat (F11): samat kuin Suunnan arviojonossa.
+  // Valinta vain täyttää kentän; tallennus tapahtuu lomakkeen tallennuksella.
+  const presets = maybe('afDurationPresets');
+  if (presets) {
+    presets.innerHTML = ESTIMATE_PRESETS.map(minutes =>
+      `<button class="assist-btn" type="button" data-duration-preset="${minutes}">${escapeHtml(formatMinutes(minutes))}</button>`).join('');
+  }
 }
 
 // ------------------------------------------------------------------- lista
 
 function renderList(container, tasks) {
   if (tasks.length === 0) {
+    // Epäonnistunut ensimmäinen lataus ei ole "ei yhtään tehtävää".
+    const notice = loadFailureHtml(getState(), ['tasks']);
+    if (notice) {
+      container.innerHTML = notice;
+      return;
+    }
     container.innerHTML = `
       <div class="empty-state">
         <div class="empty-title">Ei vielä yhtään tehtävää.</div>
@@ -146,7 +167,22 @@ export function renderTasks() {
   else if (segment === 'inbox') renderInbox();
   else if (segment === 'reminders') renderReminders();
   else if (segment === 'travel') renderTravel();
-  else renderList(el('tasksListContainer'), state.tasks);
+  else {
+    renderList(el('tasksListContainer'), state.tasks);
+    renderEstimateButton();
+  }
+}
+
+/**
+ * "Arvioi kestot (N)" (F4): näkyy vain, kun Suunnan arviojonossa on
+ * jotain (tämä ja ensi viikko, ei rästejä). Avaa jonon, ei pakota mitään.
+ */
+function renderEstimateButton() {
+  const button = maybe('tasksEstimateBtn');
+  if (!button) return;
+  const count = estimateQueueCount();
+  button.hidden = count === 0;
+  button.textContent = `Arvioi kestot (${count})`;
 }
 
 // ----------------------------------------------------------------- lomake
@@ -162,7 +198,8 @@ function clearFieldErrors() {
   });
 }
 
-const FIELD_TO_INPUT = {
+/** Domainin virhekenttä -> lomakkeen kenttä (virheteksti: `<id>Error`). */
+export const FIELD_TO_INPUT = {
   title: 'afTitle',
   date: 'afDate',
   time: 'afTime',
@@ -172,14 +209,25 @@ const FIELD_TO_INPUT = {
   deadline: 'afDeadline'
 };
 
-function showFieldErrors(errors) {
+/**
+ * Näytä validointivirheet kenttien alla.
+ *
+ * YKSIKÄÄN VIRHE EI SAA KADOTA. Aiemmin kenttä, jota FIELD_TO_INPUT ei
+ * tuntenut, ohitettiin hiljaa (esim. uusi validointisääntö), ja Tallenna ei tehnyt mitään
+ * eikä kertonut miksi. Nyt kentätön virhe näytetään lomakkeen tasolla
+ * (ilmoituksena) -- domainin kiinteä teksti, ei koodia.
+ *
+ * @returns {string[]} virheet, joilla ei ollut kenttää (testejä varten)
+ */
+export function showFieldErrors(errors) {
   clearFieldErrors();
   let firstInvalid = null;
-  for (const [field, message] of Object.entries(errors)) {
+  const unplaced = [];
+  for (const [field, message] of Object.entries(errors || {})) {
     const inputId = FIELD_TO_INPUT[field];
-    if (!inputId) continue;
-    const input = maybe(inputId);
-    const errorNode = maybe(inputId + 'Error');
+    const input = inputId ? maybe(inputId) : null;
+    const errorNode = inputId ? maybe(inputId + 'Error') : null;
+    if (!errorNode) unplaced.push(message);
     if (input) {
       input.classList.add('invalid');
       input.setAttribute('aria-invalid', 'true');
@@ -190,7 +238,9 @@ function showFieldErrors(errors) {
       errorNode.style.display = 'block';
     }
   }
+  if (unplaced.length > 0) showError(unplaced.join(' '));
   if (firstInvalid) focus(firstInvalid);
+  return unplaced;
 }
 
 function readForm() {
@@ -239,6 +289,8 @@ function syncDurationField() {
   input.title = hasRange
     ? 'Kesto lasketaan alku- ja loppuajasta'
     : 'Kesto minuutteina, jos tarkkaa kellonaikaa ei ole';
+  // Pikavalinnat piiloon, kun kesto johdetaan välistä: niitä ei voisi käyttää.
+  toggle('afDurationPresets', !hasRange, 'flex');
 
   // Väli on tosiasia, kestokenttä on arvio. Kun väli on olemassa,
   // kenttä näyttää välin — ei omaa vanhaa arvoaan.
@@ -266,6 +318,24 @@ function fillForm(task) {
   syncDurationField();
 
   selectGoal(task && task.goalId ? task.goalId : null);
+
+  // Suunta: kuormittavuus ja karkea arvio (omat asetuksensa, ei tasks-sarake).
+  const settings = task ? itemSettingsFor('task', task.id) : null;
+  const energy = maybe('afEnergy');
+  if (energy) energy.value = settings && settings.energyDemand ? String(settings.energyDemand) : '';
+  const approx = maybe('afEstimateApprox');
+  if (approx) approx.checked = Boolean(settings && settings.estimateApproximate);
+  toggle('afTimeActions', Boolean(task), 'flex');
+}
+
+/** Lomakkeen Suunta-asetukset tallennettaviksi. */
+function readAlignmentSettings() {
+  const energy = maybe('afEnergy');
+  const approx = maybe('afEstimateApprox');
+  return {
+    energyDemand: energy && energy.value ? Number(energy.value) : null,
+    estimateApproximate: Boolean(approx && approx.checked)
+  };
 }
 
 /**
@@ -357,6 +427,8 @@ const submitForm = singleFlight(async () => {
       if (result.errors) showFieldErrors(result.errors);
       return;
     }
+    const savedId = editingId || (result.task && result.task.id);
+    if (savedId) await saveItemSettings('task', savedId, readAlignmentSettings());
     closeForm();
   } finally {
     setBusy(saveButton, false);
@@ -380,9 +452,33 @@ export function initTaskForm() {
   }
 
   el('addRowBtn').addEventListener('click', openAddForm);
+  const estimateButton = maybe('tasksEstimateBtn');
+  if (estimateButton) estimateButton.addEventListener('click', () => openEstimateQueue());
+  const durationPresets = maybe('afDurationPresets');
+  if (durationPresets) {
+    durationPresets.addEventListener('click', event => {
+      const preset = event.target.closest('[data-duration-preset]');
+      if (!preset || el('afDuration').disabled) return;
+      el('afDuration').value = preset.dataset.durationPreset;
+    });
+  }
   el('afCancel').addEventListener('click', closeForm);
   el('afSave').addEventListener('click', submitForm);
   el('afDelete').addEventListener('click', removeCurrent);
+  const logButton = maybe('afLogTime');
+  if (logButton) {
+    logButton.addEventListener('click', () => {
+      const id = getState().editingId;
+      if (id) openItemLog('task', id);
+    });
+  }
+  const timerButton = maybe('afStartTimer');
+  if (timerButton) {
+    timerButton.addEventListener('click', () => {
+      const id = getState().editingId;
+      if (id) startTimerFor({ kind: 'task', id });
+    });
+  }
 
   // Enter otsikkokentässä tallentaa; Esc sulkee lomakkeen.
   el('afTitle').addEventListener('keydown', event => {

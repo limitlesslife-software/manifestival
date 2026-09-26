@@ -37,6 +37,7 @@
 const { validatePlanRequest } = require('./_validatePlan.js');
 const { authenticate } = require('./_auth.js');
 const { checkRateLimit } = require('./_ratelimit.js');
+const { applyCors } = require('./_cors.js');
 
 /**
  * Aikakatkaisu. Suunnittelu on pisin kolmesta tehtävästä: se tuottaa
@@ -86,6 +87,23 @@ function buildPrompt({ goalText, today, mode, context }) {
   if (context.nearestDeadlineDays !== null) {
     tilanne.push(`Lähin määräpäivä on ${context.nearestDeadlineDays} päivän päässä.`);
   }
+  // SUUNNAN RAJAT. Käyttäjän omat, deterministisesti lasketut. Malli
+  // suunnittelee niiden sisällä eikä voi muuttaa niitä.
+  const rajat = [];
+  if (context.remainingWeeklyHours !== null && context.remainingWeeklyHours !== undefined) {
+    rajat.push(`Tämän viikon kapasiteettia on jäljellä noin ${context.remainingWeeklyHours} h.`);
+  }
+  if (context.protectedHours) {
+    rajat.push(`Käyttäjälle tärkeille elämänalueille (${context.neglectedImportantAreaCount || 0} kpl) on varattava `
+      + `noin ${context.protectedHours} h viikossa; älä suunnittele tätä aikaa muuhun.`);
+  }
+  if (context.heavyRemainingHours !== null && context.heavyRemainingHours !== undefined) {
+    rajat.push(`Kuormittavaa tekemistä mahtuu viikkoon enää noin ${context.heavyRemainingHours} h.`);
+  }
+  if (context.unestimatedCount) {
+    rajat.push(`Viikolla on jo ${context.unestimatedCount} arvioimatonta asiaa, joten jätä väljyyttä.`);
+  }
+  if (rajat.length > 0) tilanne.push('RAJAT: ' + rajat.join(' ') + ' Et voi muuttaa käyttäjän tärkeyksiä, tavoitteita etkä kapasiteettia.');
 
   return `Tämän hetken päivämäärä on ${today}.
 
@@ -113,6 +131,9 @@ Vastaa VAIN JSON-objektilla, ei muuta tekstiä eikä koodilohkomerkintöjä:
 }
 
 module.exports = async (req, res) => {
+  // 0. CORS: natiivikuoren esikysely ennen metoditarkistusta (api/_cors.js).
+  if (applyCors(req, res)) return;
+
   // 1. Metodivalidointi
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
@@ -146,7 +167,7 @@ module.exports = async (req, res) => {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
     console.error('plan: ANTHROPIC_API_KEY puuttuu palvelimen ymparistosta');
-    res.status(500).json({ error: 'Palvelu ei ole juuri nyt kaytettavissa' });
+    res.status(500).json({ error: 'Palvelu ei ole juuri nyt käytettävissä' });
     return;
   }
 
@@ -174,7 +195,7 @@ module.exports = async (req, res) => {
       // Lokitetaan vain tilakoodi. Anthropicin virhevastaus voi sisältää
       // osan syötteestä, ja syöte on tässä käyttäjän oma tavoite.
       console.error('plan: Anthropic vastasi', response.status);
-      res.status(502).json({ error: 'Suunnittelu epaonnistui' });
+      res.status(502).json({ error: 'Suunnittelu epäonnistui' });
       return;
     }
 
@@ -188,7 +209,7 @@ module.exports = async (req, res) => {
     // pyyntörungon, ja pyyntörunko sisältää käyttäjän tavoitteen.
     console.error('plan: kutsu epaonnistui', isTimeout ? 'timeout' : 'virhe');
     res.status(isTimeout ? 504 : 500).json({
-      error: isTimeout ? 'Suunnittelu kesti liian kauan' : 'Suunnittelu epaonnistui'
+      error: isTimeout ? 'Suunnittelu kesti liian kauan' : 'Suunnittelu epäonnistui'
     });
   } finally {
     clearTimeout(timer);

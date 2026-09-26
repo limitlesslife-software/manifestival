@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { read, readCode } from './helpers/sources.mjs';
-import { createReconnectController, RECONNECT_DEBOUNCE_MS } from '../src/app/reconnect.js';
+import { createReconnectController, RECONNECT_DEBOUNCE_MS, REFRESH_REASON } from '../src/app/reconnect.js';
 import { getCurrentLocation, resetGeolocationForTests } from '../src/platform/geolocation.js';
 import { singleFlight } from '../src/ui/dom.js';
 
@@ -107,29 +107,34 @@ test('KRIITTINEN: verkon "flapping" (50 online/offline-vaihtoa) tuottaa yhden l�
   assert.equal(clock.pending(), 0, 'ei jäänyt ajastimia');
 });
 
-test('resume + online samaan aikaan: toinen pyyntö odottaa ja ajetaan kerran perään, ei rinnakkain', async () => {
+test('resume + online samaan aikaan: yksi täysi päivitys, ei rinnakkain eikä perään (CRIT-02)', async () => {
   const clock = fakeClock();
   let running = 0;
   let peak = 0;
   let runs = 0;
+  const releases = [];
   const controller = createReconnectController({
     onRefresh: async () => {
       running += 1; peak = Math.max(peak, running); runs += 1;
-      await new Promise(resolve => setImmediate(resolve));
+      await new Promise(resolve => releases.push(resolve));
       running -= 1;
     },
+    now: () => 1_000_000,
     setTimeoutFn: clock.setTimeoutFn,
     clearTimeoutFn: clock.clearTimeoutFn
   });
   controller.notifyOffline();
   controller.notifyOnline();
-  controller.refreshNow(); controller.refreshNow(); controller.refreshNow();
-  await clock.advance(RECONNECT_DEBOUNCE_MS + 1);
-  // Odota kunnes ketju on valmis (ei kiinteää viivettä: kuormitettu kone hidastaa).
-  for (let i = 0; i < 200 && (running > 0 || runs < 2); i += 1) await new Promise(resolve => setTimeout(resolve, 5));
-  await new Promise(resolve => setTimeout(resolve, 30));
+  // Natiivi resume + visibilitychange + kolmas lähde samaan aikaan.
+  for (let i = 0; i < 3; i += 1) controller.refreshNow({ reason: REFRESH_REASON.RESUME });
+  await clock.advance(RECONNECT_DEBOUNCE_MS + 1); // online-debounce laukeaa kesken päivityksen
+  while (releases.length > 0) {
+    releases.shift()();
+    await clock.advance(0);
+  }
   assert.equal(peak, 1, 'ei koskaan kahta rinnakkaista päivitystä');
-  assert.ok(runs <= 3 && runs >= 2, 'ajokertoja ' + runs);
+  assert.equal(runs, 1, 'paluun päivitys alkoi verkon palattua: se kattaa myös palautumisen');
+  assert.equal(clock.pending(), 0, 'ei jäänyt ajastimia');
 });
 
 test('sijainti: 50 rinnakkaista pyyntöä = yksi laitekutsu; peräkkäinen tuore välimuisti ei kutsu laitetta', async () => {
@@ -186,7 +191,13 @@ test('offline-toisto ei pollaa: kutsujia on vain kirjautuminen, palautuminen ja 
   }
   assert.deepEqual(callers.sort(), ['src/app/main.js', 'src/app/offlineStatus.js']);
   const main = readCode('src/app/main.js');
-  assert.equal((main.match(/offline\.replay\(/g) || []).length, 2, 'kirjautuminen + reconnect');
+  // Kirjautuminen ja verkon palautuminen kutsuvat SAMAA sendPending()-
+  // funktiota (F11: lähetä ensin, lataa sitten), joten toistokutsu on yksi
+  // — ja sitä kutsutaan vain näistä kahdesta paikasta, ei ajastimesta.
+  assert.equal((main.match(/offline\.replay\(/g) || []).length, 1, 'yksi toistokutsu: sendPending');
+  assert.equal((main.match(/await sendPending\(\)/g) || []).length, 2, 'kirjautuminen + reconnect');
+  const interval = main.slice(main.indexOf('setInterval('), main.indexOf('NOW_REFRESH_MS);', main.indexOf('setInterval(')));
+  assert.equal(/offline\.replay|sendPending/.test(interval), false, 'tehtäväjonoa ei pollata ajastimella');
 });
 
 test('lähtöilmoituksen laskenta on puhdas: sama syöte, sama tulos, ei tilaa', async () => {

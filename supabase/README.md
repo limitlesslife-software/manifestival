@@ -1,97 +1,88 @@
 # Supabase
 
-Tässä hakemistossa on tietokannan inventointi ja versionhallitut migraatiot.
+Tässä hakemistossa ovat tietokannan versionhallitut migraatiot sekä niiden
+vain lukevat esitarkistukset, todennukset, inventaariot ja tilannekuvat.
 
-**Yksikään migraatio ei ole ajettu missään ympäristössä.** Kaikki ovat
-luonnoksia.
+**Tila:** migraatiot 0001–0008 on ajettu tuotantoon ja todennettu.
+0009–0013 ovat valmiita ja harjoiteltuja, mutta **ajamattomia**; ne
+ajetaan yksi kerrallaan, kukin omalla hyväksynnällään. Ajantasainen tila:
+[`docs/PRODUCTION-STATUS.md`](../docs/PRODUCTION-STATUS.md); paketit:
+[`docs/activation/MIGRATION-BUNDLES.md`](../docs/activation/MIGRATION-BUNDLES.md).
 
-`inventory.sql` **on** ajettu kerran, ja **migraatio 0001 on sovitettu sen
-tulokseen**: `profile` 1 rivi arvolla `'me'` (tyyppi `text`), `tasks` 36
-riviä ilman `user_id`-saraketta, molemmilla "salli kaikki" -tyyppinen
-politiikka. 0001 tarkistaa nämä itse ja keskeytyy, jos jokin ei täsmää.
-
-Migraatiot 0002–0008 ovat yhä yleisluonteisia, koska ne luovat uusia
-tauluja eivätkä kosketa olemassa olevaa dataa.
+`inventory.sql` ajettiin kerran ennen 0001:tä, ja **migraatio 0001 on
+sovitettu sen tulokseen**: `profile` 1 rivi arvolla `'me'` (tyyppi `text`),
+`tasks` 36 riviä ilman `user_id`-saraketta, molemmilla "salli kaikki"
+-tyyppinen politiikka.
 
 ## Tiedostot
 
-| Tiedosto | Mitä tekee | Turvallinen ajaa? |
+| Polku | Mitä tekee | Turvallinen ajaa? |
 |---|---|---|
-| `inventory.sql` | Lukee skeeman, RLS-tilan, politiikat, oikeudet ja rivimäärät | **Kyllä — vain luku, ei muuta mitään** |
-| `migrations/0001_auth_user_scoping.sql` | Käyttäjäkohtainen omistajuus ja RLS | **EI ilman valmistelua** — lue alta |
-| `migrations/0002_task_domain_fields.sql` | Tehtävän kuvaus, kesto, prioriteetti, aikataulutuksen tila, aikaleimat | Additiivinen, mutta vaatii 0001:n |
-| `migrations/0003_routines.sql` | Rutiinit ja niiden päiväkohtaiset poikkeukset | Vain uusia tauluja |
-| `migrations/0004_goals_projects.sql` | Tavoitteet, projektit, tehtävän määräaika ja liitokset | Uusia tauluja + nullable-sarakkeita |
-| `migrations/0005_notification_preferences.sql` | Muistutusasetukset (oletus: pois päältä) | Vain uusi taulu |
-| `migrations/0006_wellbeing.sql` | Päiväkohtaiset hyvinvointimerkinnät | Vain uusi taulu |
+| `inventory.sql` | Alkuperäinen inventaario ennen 0001:tä | **Kyllä — vain luku** |
+| `migrations/0001_*.sql` … `migrations/0013_*.sql` | Numeroidut migraatiot; jokaisen lopussa kommentoitu ROLLBACK-osio | **Vain hyväksynnällä**, yksi kerrallaan, koko tiedosto |
+| `preflight/preflight_00NN.sql` | Esitarkistus juuri ennen migraatiota (0009–0013 generoitu: `tools/activation/build-preflights.mjs`) | **Kyllä — vain luku** |
+| `verify/verify_00NN.sql` | Todennus migraation jälkeen: `poikkeavia_yhteensa = 0` | **Kyllä — vain luku** |
+| `acceptance/` | Hyväksyntä- ja inventaariokyselyt, mm. `acceptance/activation_readonly_inventory.sql` | **Kyllä — vain luku** |
+| `backup/snapshot_state_00NN.sql` | Looginen tilannekuva tilalle 0008–0013 (generoitu: `tools/activation/build-snapshots.mjs`) | **Kyllä — vain luku.** Tulos sisältää henkilötietoja: vain `.local-backups/`-hakemistoon |
+| `preflight/recovery_snapshot_*.sql` | Rakenteen ja lukumäärien sormenjälki — **ei varmuuskopio** | **Kyllä — vain luku** |
+| `functions/` | Edge-funktiot (`delete-account`, ei deployattu) | Ks. `functions/README.md` |
 
-## Ajojärjestys
+## Ajojärjestys (0009–0013)
 
-Migraatiot ajetaan numerojärjestyksessä. 0001 on kaikkien muiden esiehto:
-ilman `user_id`-saraketta ja RLS:ää uusilla tauluilla ei olisi omistajaa.
+Jokainen migraatio on oma pakettinsa ja oma hyväksyntänsä:
 
 ```
-1. Ota varmuuskopio (Database -> Backups)
-2. Aja inventory.sql Supabase SQL Editorissa
-3. Vertaa tulosta migraation TODENNETTU LÄHTÖTILA -osioon
-4. Jos rivimäärä on muuttunut, päivitä luku 0001:n VAIHE 0 -lohkoon
-5. Aja migraatio 0001 kokonaisuudessaan, yhtenä ajona
-6. Aja verify/verify_0001.sql
-7. Tee kahden tilin eristystesti (tools/rls-acceptance) — PAKOLLINEN
-   ja aja sen jalkeen acceptance/verify_acceptance.sql
-8. Aja preflight/preflight_0002.sql, sitten 0002, sitten
-   verify/verify_0002.sql — ja vasta sitten lippu
-9. Aja 0003-0008 samalla tavalla, yksi kerrallaan, lippu kerrallaan
+1. Vahvista Supabasen oma varmuuskopio (valinnainen: Database -> Backups,
+   PITR) ja ota looginen tilannekuva (pakollinen 0010:lle, suositeltava
+   muille): backup/snapshot_state_00NN.sql + tools/activation/restore-snapshot.mjs check
+2. Aja preflight/preflight_00NN.sql -> 0 FAIL
+3. Aja migraatio kokonaisuudessaan, yhtenä ajona, uudessa välilehdessä
+4. Aja verify/verify_00NN.sql -> poikkeavia_yhteensa = 0
+5. Vasta sitten aallon deploy ja portit (docs/acceptance/WAVE-X.md)
 ```
 
-Vaiheet, pysäytyspisteet ja odotusarvot:
+Tilannekuva, palautus ja päätöspuu:
+[`docs/activation/0010-BACKUP-AND-RECOVERY.md`](../docs/activation/0010-BACKUP-AND-RECOVERY.md).
+Supabasen omaa varmuuskopiota ei välttämättä voi ottaa pyynnöstä, ja sen
+olemassaolo riippuu tilauksesta — siksi se ei ole koskaan ainoa kopio.
+
+0001:n alkuperäiset vaiheet ja pysäytyspisteet:
 [`docs/PRODUCTION-ACTIVATION-RUNBOOK.md`](../docs/PRODUCTION-ACTIVATION-RUNBOOK.md).
 
-Migraatio 0001 keskeytyy virheeseen eikä muuta mitään, jos lähtötila ei
-vastaa inventaariota tai jos omistajaa ei löydy `auth.users`-taulusta.
-Migraatiot 0002–0008 keskeytyvät, jos 0001 ei ole ajettu.
+## Koodin portit
 
-## Koodin liput
+Sovellus ei oleta, että migraatio on ajettu. `src/data/schema.js` kertoo,
+mitkä taulut ja sarakkeet ovat olemassa (`TABLES` ja sarakeportit kuten
+`GOAL_PLANNING_FIELDS`). Ennen migraatiota tieto menee muistivarastoon
+eikä säily sivun latauksen yli — ja käyttöliittymä kertoo sen
+käyttäjälle. Teeskennelty tallennus olisi pahempi kuin puuttuva
+tallennus.
 
-Sovellus ei oleta, että migraatio on ajettu. `src/data/schema.js` kertoo
-mitkä taulut ovat olemassa. Ennen migraatiota tieto menee muistivarastoon
-eikä säily sivun latauksen yli — ja käyttöliittymä kertoo sen käyttäjälle.
-Teeskennelty tallennus olisi pahempi kuin puuttuva tallennus.
-
-Migraation jälkeen vaihdetaan tasan yksi lippu kerrallaan:
-
-| Migraatio | Lippu tiedostossa `src/data/schema.js` |
-|---|---|
-| 0002 | `TASK_EXTENDED_FIELDS = true` |
-| 0003 | `TABLES.routines = true`, `TABLES.routineExceptions = true` |
-| 0004 | `TABLES.goals = true`, `TABLES.projects = true` |
-| 0005 | `TABLES.notificationPreferences = true` |
-| 0006 | `TABLES.wellbeing = true` |
-
-Vaiheittainen käyttöönotto on kuvattu tarkemmin tiedostossa
-[`docs/PRODUCTION-ACTIVATION.md`](../docs/PRODUCTION-ACTIVATION.md).
+Portit avataan aalloittain, aina vasta migraation ja sen todennuksen
+jälkeen: aallot ja niiden portit
+[`docs/activation/release-train-c-j.json`](../docs/activation/release-train-c-j.json),
+hyväksyntäpaketit `docs/acceptance/WAVE-*.md`.
 
 ## Ajotapa
 
-Supabase Dashboard -> **SQL Editor** -> **New query** -> liitä sisältö -> **Run**.
+Supabase Dashboard -> **SQL Editor** -> **New query** -> liitä koko sisältö -> **Run**.
 
-Migraatio ajetaan yhdessä transaktiossa (`begin` ... `commit`): jos jokin vaihe
-epäonnistuu, mitään ei jää puolitiehen.
+Migraatio ajetaan yhdessä transaktiossa (`begin` ... `commit`): jos jokin
+vaihe epäonnistuu, koko ajo perutaan eikä mitään jää puolitiehen. Älä
+koskaan aja tiedostosta valintaa.
 
 ## Peruutus
 
-Migraatio 0001 **ei muuta `profile.id`:n tyyppiä.** Tuotannon arvo `'me'`
-ei ole uuid, joten muunnos kaatuisi. Vanha sarake nimetään `legacy_id`:ksi
-ja uusi `uuid`-sarake lisätään sen rinnalle — alkuperäinen arvo säilyy.
+Migraatio 0001 **ei muuttanut `profile.id`:n tyyppiä.** Tuotannon arvo
+`'me'` ei ole uuid, joten vanha sarake nimettiin `legacy_id`:ksi ja uusi
+`uuid`-sarake lisättiin sen rinnalle. Ks. runbookin *0001:n peruminen*.
 
-Peruminen jakautuu siksi kolmeen tapaukseen: keskeytynyt ajo peruuntuu
-itsestään (yksi transaktio), läpimennyt ajo puretaan käsin `legacy_id`:n
-avulla, ja kadonnut data vain varmuuskopiosta. Ks. runbookin
-*0001:n peruminen*. **Varmuuskopio on silti pakollinen.**
-
-Migraatiot 0002–0008 ovat peruttavissa: jokaisen lopussa on rollback-lohko.
-Peruutus kadottaa vain sen tiedon, joka on kirjoitettu migraation jälkeen
-uusiin sarakkeisiin tai tauluihin.
+Migraatiot 0002–0013 ovat peruttavissa: jokaisen lopussa on
+ROLLBACK-osio. Peruutus kadottaa sen tiedon, joka on kirjoitettu
+migraation jälkeen uusiin sarakkeisiin tai tauluihin — ota siksi ensin
+tilan mukainen tilannekuva (`backup/snapshot_state_00NN.sql`). Peruutus
+ei ole ensimmäinen vastaus sovellusvirheeseen: ensin porttien
+sulkeminen (edellisen aallon deploy).
 
 ## RLS-malli
 
@@ -114,3 +105,5 @@ Supabase Auth -> auth.uid() -> user_id (tai id) -> RLS -> vain oma data
 - Käsin tehtyjä, dokumentoimattomia dashboard-muutoksia ei tehdä. Jos jotain on
   pakko tehdä käsin, se kirjoitetaan jälkikäteen migraatioksi.
 - Salaisuuksia ei kirjoiteta näihin tiedostoihin.
+- Tilannekuvien tuloksia ei tallenneta tähän hakemistoon eikä
+  versionhallintaan: ne sisältävät henkilötietoja (`.local-backups/`).

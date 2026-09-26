@@ -187,8 +187,8 @@ test('KRIITTINEN: yhdenkin portin poikkeama muuttaa tai mitätöi tilan', () => 
     }
   }
 
-  // Kymmenen tilaa (BASE + A-I) kertaa kaksikymmentäkaksi porttia.
-  assert.equal(mutaatioita, 220, `mutaatioita ajettiin ${mutaatioita}, odotettiin 220`);
+  // Yksitoista tilaa (BASE + A-J) kertaa kaksikymmentäneljä porttia.
+  assert.equal(mutaatioita, 264, `mutaatioita ajettiin ${mutaatioita}, odotettiin 264`);
 
   // Ainoat sallitut siirtymät ovat niiden aaltojen välillä, jotka
   // eroavat tasan yhdellä portilla. Jos tähän ilmestyisi uusi pari,
@@ -210,8 +210,10 @@ test('KRIITTINEN: yhdenkin portin poikkeama muuttaa tai mitätöi tilan', () => 
   //
   // Aalto H avaa VIISI porttia, joten se ei tuo uutta paria: G:stä
   // H:hon on viiden käännöksen matka. Aalto I avaa NELJÄ porttia,
-  // joten sekään ei tuo uutta paria: 220 - 4 sallittua siirtymää = 216.
-  assert.equal(mitättömiä, 216);
+  // joten sekään ei tuo uutta paria. Aalto J avaa KAKSI porttia
+  // (runningTimers, alignmentItemSettings), joten sekään ei ole yhden
+  // käännöksen päässä I:stä: 264 - 4 sallittua siirtymää = 260.
+  assert.equal(mitättömiä, 260);
 });
 
 test('KRIITTINEN: puuttuva tai ylimääräinen portti hylätään', () => {
@@ -259,9 +261,11 @@ test('KRIITTINEN: vierasavaimet luetaan molemmista ilmoitusmuodoista', () => {
   const viitteet = ownershipForeignKeys();
 
   // Yhdeksän erästä 0003-0008, kolme migraatiosta 0010, kaksi
-  // migraatiosta 0011 ja neljä migraatiosta 0012.
-  assert.equal(viitteet.length, 18,
-    `omistajuusviitteitä löytyi ${viitteet.length}, odotettiin 18`);
+  // migraatiosta 0011, neljä migraatiosta 0012 ja seitsemän
+  // migraatiosta 0013 (time_entries -> projects/routines, running_timers
+  // -> life_areas/goals/tasks/projects/routines).
+  assert.equal(viitteet.length, 25,
+    `omistajuusviitteitä löytyi ${viitteet.length}, odotettiin 25`);
 
   const parit = viitteet.map(v => `${v.child}->${v.parent}`);
   assert.ok(parit.includes('routine_exceptions->routines'),
@@ -343,7 +347,8 @@ test('KRIITTINEN: aallon taulut vastaavat sen portteja', () => {
     inbox_items: 'inboxItems', reminders: 'reminders', notices: 'notices',
     travel_plans: 'travelPlans', location_rules: 'locationRules',
     life_areas: 'lifeAreas', weekly_capacities: 'weeklyCapacities',
-    time_entries: 'timeEntries', alignment_reviews: 'alignmentReviews'
+    time_entries: 'timeEntries', alignment_reviews: 'alignmentReviews',
+    running_timers: 'runningTimers', alignment_item_settings: 'alignmentItemSettings'
   };
 
   for (const wave of WAVES) {
@@ -618,8 +623,13 @@ test('KRIITTINEN: varmistuksen odotusluvut vastaavat migraatioita', () => {
     .sort();
   assert.deepEqual(ulkopuoliset,
     ['goals->life_areas', 'location_rules->tasks', 'milestones->goals',
-     'projects->milestones', 'tasks->milestones', 'time_entries->goals',
-     'time_entries->life_areas', 'time_entries->tasks', 'travel_plans->tasks'],
+     'projects->milestones',
+     // 0013: ajastin ja kirjauksen uudet kohteet (projekti, rutiini).
+     'running_timers->goals', 'running_timers->life_areas', 'running_timers->projects',
+     'running_timers->routines', 'running_timers->tasks',
+     'tasks->milestones', 'time_entries->goals',
+     'time_entries->life_areas', 'time_entries->projects', 'time_entries->routines',
+     'time_entries->tasks', 'travel_plans->tasks'],
     'erän ulkopuolisten omistajuusviitteiden joukko muuttui');
 
   // 10 porttitaulua.
@@ -675,6 +685,9 @@ test('KRIITTINEN: julkaisutyökalut ovat olemassa ja kytketty package.jsoniin', 
   const odotetut = {
     'activation:preflight': 'scripts/activation-preflight.mjs',
     'activation:verify-wave': 'scripts/verify-wave.mjs',
+    'activation:dry-run': 'scripts/activation-dry-run.mjs',
+    'activation:orchestrate': 'scripts/activation-orchestrate.mjs',
+    'activation:train-map': 'tools/activation/train-map.mjs',
     'production:verify-assets': 'scripts/production-verify-assets.mjs',
     'release:manifest': 'scripts/release-manifest.mjs'
   };
@@ -689,25 +702,35 @@ test('KRIITTINEN: julkaisutyökalut ovat olemassa ja kytketty package.jsoniin', 
 });
 
 test('KRIITTINEN: tuotannon resurssitodennus on vain lukeva eikä käytä tunnuksia', () => {
-  // Tämä skripti ottaa yhteyttä tuotantoon. Sen on oltava
-  // kiistattomasti vaaraton: vain GET, ei tunnuksia, ei /api/-kutsuja.
-  const koodi = read('scripts/production-verify-assets.mjs');
+  // Nämä ottavat yhteyttä tuotantoon. Niiden on oltava kiistattomasti
+  // vaarattomia: vain GET, ei tunnuksia, ei /api/-kutsuja. Logiikka on
+  // tools/release/live-assets.mjs:ssä (ACT-06); CLI ja dry-run käyttävät sitä.
+  for (const tiedosto of ['scripts/production-verify-assets.mjs', 'tools/release/live-assets.mjs']) {
+    const koodi = read(tiedosto);
 
-  assert.match(koodi, /method: 'GET'/, 'pyyntömetodia ei ole kiinnitetty');
-  for (const kielletty of ['POST', 'PUT', 'PATCH', 'DELETE']) {
-    assert.equal(new RegExp(`method:\\s*'${kielletty}'`).test(koodi), false,
-      `skripti käyttää metodia ${kielletty}`);
+    assert.match(koodi, /method: 'GET'/, `${tiedosto}: pyyntömetodia ei ole kiinnitetty`);
+    for (const kielletty of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+      assert.equal(new RegExp(`method:\\s*'${kielletty}'`).test(koodi), false,
+        `${tiedosto} käyttää metodia ${kielletty}`);
+    }
+
+    for (const kielletty of ['service_role', 'SUPABASE_ANON_KEY', 'Authorization',
+                             'apikey', 'password', 'sk-ant-']) {
+      assert.equal(koodi.includes(kielletty), false,
+        `${tiedosto} viittaa tunnisteeseen ${kielletty}`);
+    }
+
+    // Ei /api/-kutsuja: ne maksavat ja koskevat AI-rajapintaan.
+    assert.equal(/hae\('\/api\//.test(koodi), false, `${tiedosto} kutsuu /api/-polkua`);
   }
-
-  for (const kielletty of ['service_role', 'SUPABASE_ANON_KEY', 'Authorization',
-                           'apikey', 'password', 'sk-ant-']) {
-    assert.equal(koodi.includes(kielletty), false,
-      `resurssitodennus viittaa tunnisteeseen ${kielletty}`);
+  // Kumpikin kieltää /api/-polun myös ajon aikana.
+  assert.match(read('tools/release/live-assets.mjs'), /FORBIDDEN_PATH = \/\^\\\/api\\\/\//);
+  assert.match(read('scripts/production-verify-assets.mjs'), /\/\\\/api\\\/\/\.test/);
+  // Dry-run ja orkestroija eivät hae verkosta itse: vain GET-kääreen kautta.
+  for (const tiedosto of ['scripts/activation-dry-run.mjs', 'scripts/activation-orchestrate.mjs']) {
+    assert.equal(/\bfetch\(/.test(read(tiedosto)), false, `${tiedosto} kutsuu fetchiä suoraan`);
+    assert.match(read(tiedosto), /getOnlyFetch/);
   }
-
-  // Ei /api/-kutsuja: ne maksavat ja koskevat AI-rajapintaan.
-  assert.equal(/hae\('\/api\//.test(koodi), false,
-    'resurssitodennus kutsuu /api/-polkua');
 });
 
 test('KRIITTINEN: yksikään testi ei riipu verkkoyhteydestä', () => {

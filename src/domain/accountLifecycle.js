@@ -67,7 +67,9 @@ export const ACCOUNT_DATA_MAP = Object.freeze({
   lifeAreas: { table: 'life_areas', ownerColumn: 'user_id' },
   weeklyCapacities: { table: 'weekly_capacities', ownerColumn: 'user_id' },
   timeEntries: { table: 'time_entries', ownerColumn: 'user_id' },
-  alignmentReviews: { table: 'alignment_reviews', ownerColumn: 'user_id' }
+  alignmentReviews: { table: 'alignment_reviews', ownerColumn: 'user_id' },
+  alignmentItemSettings: { table: 'alignment_item_settings', ownerColumn: 'user_id' },
+  runningTimers: { table: 'running_timers', ownerColumn: 'user_id' }
 });
 
 /**
@@ -99,7 +101,9 @@ export const ACCOUNT_DOMAIN_LABELS = Object.freeze({
   lifeAreas: 'Elämänalueet',
   weeklyCapacities: 'Viikkokapasiteetit',
   timeEntries: 'Kirjattu aika',
-  alignmentReviews: 'Viikkokatsaukset'
+  alignmentReviews: 'Viikkokatsaukset',
+  alignmentItemSettings: 'Kuormittavuus- ja Suunta-asetukset',
+  runningTimers: 'Käynnissä oleva ajastin'
 });
 
 /** Kokoelman käyttäjälle näytettävä nimi. Tuntematon nimi näytetään sellaisenaan. */
@@ -200,8 +204,82 @@ export function dryRunDeletion(data = {}, { endpointEnabled = false } = {}) {
  *
  * TÄMÄ MODUULI EI VOI KAATUA ITSESTÄÄN, KOSKA SE LUKEE SAMAN LISTAN —
  * mutta tests/account-lifecycle.test.mjs todistaa erikseen, että
- * EXPORTED_COLLECTIONS itse kattaa src/app/state.js:n kokoelmakentät.
+ * EXPORTED_COLLECTIONS kattaa jokaisen rekisteröidyn repositorion
+ * (ALL_REPOSITORIES) ja että jokainen sen nimi on src/app/state.js:n
+ * alkutilan oma kenttä (vienti ja kuiva-ajo lukevat sen tilasta nimellä).
  */
 export function collectionCount() {
   return EXPORTED_COLLECTIONS.length;
+}
+
+// -----------------------------------------------------------------------
+// PALVELIMEN KUIVA-AJON ESIKATSELU
+// -----------------------------------------------------------------------
+
+/** Esikatselurivin tila: laskettu, taulua ei ole, laskenta epäonnistui. */
+export const PREVIEW_ROW_STATE = Object.freeze({
+  COUNTED: 'counted',
+  ABSENT: 'absent',
+  FAILED: 'failed'
+});
+
+/**
+ * Palvelimen kuiva-ajon kokoelmat (supabase/functions/delete-account)
+ * esikatseluriveiksi.
+ *
+ * MITÄÄN EI PUDOTETA. Aiemmin rivi, jonka määrä ei ollut kokonaisluku,
+ * suodatettiin pois -- jolloin laskematon kokoelma näytti samalta kuin
+ * tyhjä, ja käyttäjä luuli näkevänsä kaiken. Nyt jokainen kokoelma on
+ * rivi tilansa kanssa: `present: false` (taulua ei ole tässä kannassa,
+ * tuotanto ennen aaltoa J) on "ei käytössä", epäonnistunut laskenta on
+ * "ei voitu laskea".
+ *
+ * @param {Array<{domain:string, rowCount:number|null, blockedReason:string|null, present?:boolean|null}>} domains
+ * @returns {Array<{name:string, count:number|null, state:string}>}
+ */
+export function serverPreviewRows(domains) {
+  if (!Array.isArray(domains)) return [];
+  return domains
+    .filter(entry => entry && typeof entry.domain === 'string')
+    .map(entry => {
+      if (entry.present === false) {
+        return { name: entry.domain, count: 0, state: PREVIEW_ROW_STATE.ABSENT };
+      }
+      if (!entry.blockedReason && Number.isInteger(entry.rowCount) && entry.rowCount >= 0) {
+        return { name: entry.domain, count: entry.rowCount, state: PREVIEW_ROW_STATE.COUNTED };
+      }
+      return { name: entry.domain, count: null, state: PREVIEW_ROW_STATE.FAILED };
+    });
+}
+
+/**
+ * Esikatselun koonti näytettäväksi.
+ *
+ * Näkyviin: rivejä sisältävät kokoelmat ja laskemattomat (ei nollia).
+ * Puuttuvat taulut kootaan omaksi listakseen. Jos yksikin kokoelma jäi
+ * laskematta, summa on alaraja (`partial`), ei väite kokonaismäärästä.
+ * Paikallisen kuiva-ajon rivit ({name, count} ilman tilaa) ovat laskettuja.
+ *
+ * @param {Array<{name:string, count:number|null, state?:string}>} rows
+ */
+export function summarizePreview(rows) {
+  const list = Array.isArray(rows) ? rows : [];
+  const stateOf = row => row.state || PREVIEW_ROW_STATE.COUNTED;
+  const counted = list.filter(row => stateOf(row) === PREVIEW_ROW_STATE.COUNTED && row.count > 0);
+  const failed = list.filter(row => stateOf(row) === PREVIEW_ROW_STATE.FAILED);
+  const absent = list.filter(row => stateOf(row) === PREVIEW_ROW_STATE.ABSENT);
+  return {
+    rows: [...counted, ...failed],
+    absent: absent.map(row => row.name),
+    total: counted.reduce((sum, row) => sum + row.count, 0),
+    partial: failed.length > 0
+  };
+}
+
+/** Esikatselurivin oikean reunan arvo käyttäjälle. */
+export function previewRowValue(row) {
+  const state = row && row.state;
+  if (state === PREVIEW_ROW_STATE.ABSENT) return 'ei käytössä';
+  if (state === PREVIEW_ROW_STATE.FAILED) return 'ei voitu laskea';
+  return String(row && Number.isInteger(row.count) ? row.count : 0);
 }
