@@ -17,6 +17,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EXPECTED } from './build-inventory.mjs';
 import { MIGRATION_WAVE, TRAIN_MIGRATIONS, WAVES } from '../release/waves.mjs';
+import { ACCOUNT_DATA_MAP } from '../../src/domain/accountLifecycle.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const OWNER = '2cc00622-f927-4604-a518-361a4328481b';
@@ -109,6 +110,29 @@ function previous(number) {
   return String(Number(number) - 1).padStart(4, '0');
 }
 
+/**
+ * Migraatioiden 0001–0013 taulut = tilin poiston kartta (ACCOUNT_DATA_MAP).
+ * verify_0013:n rivit 26–28 käyttävät samaa listaa (testi vertaa).
+ */
+export const MIGRATION_TABLES = Object.freeze(Object.values(ACCOUNT_DATA_MAP).map(entry => entry.table));
+
+/**
+ * Junan alussa (vain preflight_0009, rivien loppuun): oletukset, joihin
+ * verify_0013:n tilin poiston rivit 26–28 nojaavat, tarkistetaan ENNEN
+ * ensimmäistä migraatiota eikä vasta viimeisen jälkeen.
+ */
+const TRAIN_START = Object.freeze({
+  '0009': [
+    ['junan alku', 'Muut public-taulut kuin migraatioiden 0001–0013 (lukumäärä ja nimet, verify_0013 rivi 28)', 'INFO',
+      `(select count(*)::text || coalesce(': ' || string_agg(c.relname::text, ', ' order by c.relname), '')
+           from pg_class c where c.relnamespace = 'public'::regnamespace and c.relkind in ('r', 'p')
+             and c.relname not in (${MIGRATION_TABLES.map(t => `'${t}'`).join(', ')}))`],
+    ['junan alku', 'Jokainen public-taulun vierasavain auth.usersiin on CASCADE (tilin poisto, verify_0013 rivit 26–27)', '0',
+      `(select count(*)::text from pg_constraint f where f.contype = 'f' and f.confrelid = 'auth.users'::regclass
+             and f.connamespace = 'public'::regnamespace and f.confdeltype <> 'c')`]
+  ]
+});
+
 export function buildPreflight(number) {
   const prev = previous(number);
   const rows = [];
@@ -154,6 +178,7 @@ export function buildPreflight(number) {
   add('kirjattavat', 'Tietokanta', 'INFO', 'current_database()');
   add('kirjattavat', 'Palvelimen versio', 'INFO', "current_setting('server_version')");
   add('kirjattavat', 'Tarkistuksen hetki (UTC)', 'INFO', "to_char(now() at time zone 'UTC', 'YYYY-MM-DD HH24:MI:SS')");
+  for (const [section, name, expected, sql] of TRAIN_START[number] || []) add(section, name, expected, sql);
 
   return `-- Preflight: ENNEN migraatiota ${FILES[number].replace('.sql', '')} (aalto ${WAVE[number]})
 -- VAIN LUKEVA. Yksi lause, yksi taulukko, yksi kopiointi.

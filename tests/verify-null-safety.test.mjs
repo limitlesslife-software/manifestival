@@ -13,6 +13,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { read } from './helpers/sources.mjs';
+import { MIGRATION_TABLES } from '../tools/activation/build-preflights.mjs';
+import { ACCOUNT_DATA_MAP } from '../src/domain/accountLifecycle.js';
 
 const NUMBERS = ['0009', '0010', '0011', '0012', '0013'];
 const FILES = [
@@ -61,4 +63,46 @@ test('KRIITTINEN: verify_0013 todistaa, että tilin poisto vie ajastimet ja aset
   const r27 = row('27');
   assert.match(r27, /'0',/);
   assert.match(r27, /not exists/);
+  // Muut public-taulut: tieto (INFO), ei poikkeama.
+  assert.match(row('28'), /'INFO',/);
+});
+
+test('KRIITTINEN: verify_0013 rivit 26–28 rajaavat tilin poiston tarkistukset migraatioiden tauluihin', () => {
+  // Koko kannan tarkistus kaatuisi tauluun, jota mikään migraatio ei
+  // luonut (esim. Dashboardista) — vasta 0013:n jälkeen. Lista = tilin
+  // poiston kartta, ja sama lista on preflight_0009:ssä.
+  const c = code('supabase/verify/verify_0013.sql');
+  const expected = [...MIGRATION_TABLES].sort();
+  assert.equal(expected.length, 26);
+  assert.deepEqual(expected, Object.values(ACCOUNT_DATA_MAP).map(e => e.table).sort());
+  for (const no of ['26', '27', '28']) {
+    const m = new RegExp(`select '${no}'[\\s\\S]*?(?=\\n\\s*union all|\\n\\) c)`).exec(c);
+    assert.ok(m, `tarkistus ${no} puuttuu`);
+    const list = /(?:relname (?:not )?in \(|array\[)((?:\s*'\w+',?)+)\s*[)\]]/.exec(m[0]);
+    assert.ok(list, `tarkistus ${no}: taululista puuttuu`);
+    const tables = [...list[1].matchAll(/'(\w+)'/g)].map(x => x[1]).sort();
+    assert.deepEqual(tables, expected, `tarkistus ${no}: lista ≠ migraatioiden taulut`);
+  }
+  assert.match(c, /select '28', 'omistajuus', [^\n]*'INFO',/);
+  assert.match(c, /c\.relname not in \(/);
+});
+
+test('KRIITTINEN: preflight_0009 tarkistaa tilin poiston oletukset jo ennen junaa', () => {
+  const c = code('supabase/preflight/preflight_0009.sql');
+  const row = name => {
+    const m = new RegExp(`select '(\\d{2})'::text as check_no, 'junan alku'::text as section,\\s+'${name}[^']*'::text as check_name, '(\\w+)'::text as odotus,([\\s\\S]*?)(?=\\n\\s*union all|\\n\\) c)`).exec(c);
+    assert.ok(m, `preflight_0009: rivi "${name}" puuttuu`);
+    return { no: m[1], odotus: m[2], sql: m[3] };
+  };
+  const other = row('Muut public-taulut');
+  assert.equal(other.odotus, 'INFO');
+  for (const t of MIGRATION_TABLES) assert.match(other.sql, new RegExp(`'${t}'`), t);
+  const cascade = row('Jokainen public-taulun vierasavain auth.usersiin on CASCADE');
+  assert.equal(cascade.odotus, '0');
+  assert.match(cascade.sql, /f\.confdeltype <> 'c'/);
+  assert.match(cascade.sql, /f\.connamespace = 'public'::regnamespace/);
+  // Vain junan alussa: muut esitarkistukset eivät toista rivejä.
+  for (const n of ['0010', '0011', '0012', '0013']) {
+    assert.equal(/'junan alku'/.test(read(`supabase/preflight/preflight_${n}.sql`)), false, n);
+  }
 });

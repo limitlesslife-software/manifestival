@@ -1,0 +1,65 @@
+check_no	section	check_name	status	details	poikkeavia_yhteensa
+01	taulut	Viisi uutta taulua on olemassa	PASS	odotus 5, toteutui 5	3
+02	taulut	inbox_items: yksitoista odotettua saraketta	PASS	odotus 11, toteutui 11	3
+03	taulut	inbox_items: ei nimeamattomia sarakkeita	PASS	odotus 0, toteutui 0	3
+04	taulut	reminders: seitsemantoista odotettua saraketta	PASS	odotus 17, toteutui 17	3
+05	taulut	reminders: ei nimeamattomia sarakkeita	PASS	odotus 0, toteutui 0	3
+06	taulut	notices: kolmetoista odotettua saraketta	PASS	odotus 13, toteutui 13	3
+07	taulut	notices: ei nimeamattomia sarakkeita	PASS	odotus 0, toteutui 0	3
+08	taulut	travel_plans: seitsemantoista odotettua saraketta	PASS	odotus 17, toteutui 17	3
+09	taulut	travel_plans: ei nimeamattomia sarakkeita	PASS	odotus 0, toteutui 0	3
+10	taulut	location_rules: yhdeksan odotettua saraketta	FAIL	odotus 9, toteutui 8	3
+11	taulut	location_rules: ei nimeamattomia sarakkeita	PASS	odotus 0, toteutui 0	3
+12	tietosuoja	Yhdessakaan uudessa taulussa ei ole koordinaattisaraketta	PASS	odotus 0, toteutui 0	3
+13	tietosuoja	travel_plans: origin ja destination ovat tekstia	PASS	odotus 2, toteutui 2	3
+14	tietosuoja	location_rules: place on tekstia	FAIL	odotus text, toteutui null	3
+15	tietosuoja	location_rules.active on oletuksena epatosi	PASS	odotus false, toteutui false	3
+16	tyypit	reminders: due_date on date ja due_time on time	PASS	odotus 2, toteutui 2	3
+17	tyypit	reminders: myos until_time on time	PASS	odotus time without time zone, toteutui time without time zone	3
+18	tyypit	travel_plans: arrival_date on date ja arrival_time on time	PASS	odotus 2, toteutui 2	3
+19	tyypit	travel_plans.travel_minutes on nullable kokonaisluku	PASS	odotus YES integer, toteutui YES integer	3
+20	tyypit	inbox_items.proposal on jsonb	PASS	odotus jsonb, toteutui jsonb	3
+21	rajoitteet	inbox_items: nelja CHECK-rajoitetta	PASS	odotus 4, toteutui 4	3
+22	rajoitteet	reminders: kahdeksan CHECK-rajoitetta	PASS	odotus 8, toteutui 8	3
+23	rajoitteet	notices: viisi CHECK-rajoitetta	PASS	odotus 5, toteutui 5	3
+24	rajoitteet	travel_plans: kuusi CHECK-rajoitetta	PASS	odotus 6, toteutui 6	3
+25	rajoitteet	location_rules: kaksi CHECK-rajoitetta	FAIL	odotus 2, toteutui 1	3
+26	rajoitteet	Viisi omistajan rivin avainta	PASS	odotus 5, toteutui 5	3
+27	rajoitteet	notices_key_unique kattaa kaksi saraketta	PASS	odotus 2, toteutui 2	3
+28	rajoitteet	Kaksi vierasavainta viittaa tehtavaan kahdella sarakkeella	PASS	odotus 2, toteutui 2	3
+29	rajoitteet	SET NULL rajaa nollauksen yhteen sarakkeeseen	PASS	odotus 2, toteutui 2	3
+30	rajoitteet	inbox_items, reminders ja notices: vain user_id on vierasavain	PASS	odotus 3, toteutui 3	3
+31	rajoitteet	Viisi user_id-vierasavainta on CASCADE	PASS	odotus 5, toteutui 5	3
+32	rajoitteet	Halytysten ylaraja on viisi	PASS	odotus 1, toteutui 1	3
+33	rajoitteet	Tuntematon kesto pakottaa lahteen unknown	PASS	odotus 1, toteutui 1	3
+34	rls	RLS on paalla kaikissa viidessa taulussa	PASS	odotus 5, toteutui 5	3
+35	rls	Kaksikymmenta omistajuuspolitiikkaa	PASS	odotus 20, toteutui 20	3
+36	rls	Yksikaan politiikka ei koske public-roolia	PASS	odotus 0, toteutui 0	3
+37	rls	Jokainen politiikka koskee roolia authenticated	PASS	odotus 20, toteutui 20	3
+38	oikeudet	anon-roolilla ei ole oikeuksia	PASS	odotus 0, toteutui 0	3
+39	oikeudet	authenticated saa nelja oikeutta viiteen tauluun	PASS	odotus 20, toteutui 20	3
+40	oikeudet	PUBLIC-roolilla ei ole oikeuksia (aclexplode)	PASS	odotus 0, toteutui 0	3
+41	oikeudet	anon-roolilla ei ole tehollista lukuoikeutta	PASS	odotus false, toteutui false	3
+42	oikeudet	authenticated-roolilla on tehollinen lukuoikeus kaikkiin	PASS	odotus true, toteutui true	3
+43	indeksit	Yhdeksan nimettya indeksia on olemassa	PASS	odotus 9, toteutui 9	3
+44	liipaisimet	Viisi touch_updated_at -liipaisinta	PASS	odotus 5, toteutui 5	3
+45	liipaisimet	touch_updated_at on yha SECURITY INVOKER	PASS	odotus false, toteutui false	3
+46	data	Muunnetulla saapuvalla on kohdelaji	PASS	odotus 0, toteutui 0	3
+47	data	Kasitellylla saapuvalla ei ole enaa ehdotusta	PASS	odotus 0, toteutui 0	3
+48	data	Kohdelaji ja tunniste kulkevat parina (muistutukset)	PASS	odotus 0, toteutui 0	3
+49	data	Kohdelaji ja tunniste kulkevat parina (ilmoitukset)	PASS	odotus 0, toteutui 0	3
+50	data	Yksikaan muistutus ei ylita halytysten ylarajaa	PASS	odotus 0, toteutui 0	3
+51	data	Tuntematon kesto ei vaita olevansa mitattu	PASS	odotus 0, toteutui 0	3
+52	data	Jokainen matkasuunnitelman tehtava on omistajan oma	PASS	odotus 0, toteutui 0	3
+53	data	Jokainen sijaintisaannon tehtava on omistajan oma	PASS	odotus 0, toteutui 0	3
+54	vanha data	tasks, goals ja projects: yha kaksitoista politiikkaa	PASS	odotus 12, toteutui 12	3
+55	vanha data	tasks_owner_row_key on yha olemassa	PASS	odotus 1, toteutui 1	3
+56	vanha data	Tehtavien lukumaara (vertaa esitarkistukseen)	INFO	36	3
+57	kirjattavat	Saapuvien lukumaara	INFO	0	3
+58	kirjattavat	Muistutusten lukumaara	INFO	0	3
+59	kirjattavat	Ilmoitusten lukumaara	INFO	0	3
+60	kirjattavat	Matkasuunnitelmien lukumaara	INFO	0	3
+61	kirjattavat	Sijaintisaantojen lukumaara	INFO	0	3
+62	kirjattavat	Aktiivisia sijaintisaantoja	INFO	0	3
+63	kirjattavat	Tietokanta	INFO	mv_rehearsal_sqlres_0011	3
+64	kirjattavat	Varmistuksen hetki (UTC)	INFO	2026-09-26 16:22:51	3

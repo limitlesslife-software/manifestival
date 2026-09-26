@@ -34,9 +34,9 @@ ja jokaisen jälkeen sen oman `supabase/verify/verify_XXXX.sql`:n.
 | `values:0010` | 0010 tuotannon muotoiseen kantaan (10 muunnelmaa): yksikään vanha arvo ei muutu, yhtään riviä ei kirjoiteta uudelleen (`xmin`), yhtään taulua ei kirjoiteta uudelleen (`relfilenode`); uudet sarakkeet vanhoilla riveillä: `depends_on = '{}'`, muut null, `automation_level = 1`, `planning_buffer_ratio = 0.25`. |
 | `prodshape:chain` | 0009–0013 tuotannon datalla: tiivisteet jokaisen migraation ympärillä + skeemaero = kultainen tiedosto `expected/schema-diff-00NN.txt`; poistoja vain sallitut (`ALLOWED_REMOVALS`: 0010 goals_status_check, 0013 time_entries_source_check). |
 | `prodshape:pause` | Junan taukopisteet (`waves.mjs`): elävän ja seuraavan aallon kirjoitukset sovelluksen **omilla rivimuunnoksilla** (`repo.mapping.toRow`, `rows.js toRow`, `profileToRow`, `preferencesToRow`) aallon sarakeporteilla PostgREST-muodossa (insert/update/upsert/delete roolina authenticated), verify uudelleen, seuraava preflight, peruutuksen kuiva-ajo (estääkö data peruutuksen). |
-| `failure:0010-locks` | Estäjämatriisi goals/tasks/projects/profile/auth.users × ACCESS SHARE / ROW EXCLUSIVE (+ 0009 bills, 0011 tasks): odotus 4,5–7 s, katalogi, rivit ja tilarajoite ennallaan, ei jääneitä lukkoja, uudelleenajo läpi. Myöhäinen virhe tilarajoitteen vaihdon jälkeen (event trigger skeemassa `rehearsal_inject`), sovelluksen jumin mittaus, lukkiutuminen (40P01), keskeytynyt istunto. Vertailu 0010:aan ennen lukitusjärjestystä (git). |
+| `failure:0010-locks` | Estäjämatriisi goals/tasks/projects/profile/auth.users × ACCESS SHARE / ROW EXCLUSIVE (+ 0009 bills, 0011 tasks): odotus 4,5–7 s, katalogi, rivit ja tilarajoite ennallaan, ei jääneitä lukkoja, uudelleenajo läpi. Myöhäinen virhe tilarajoitteen vaihdon jälkeen (event trigger skeemassa `rehearsal_inject`), sovelluksen jumin mittaus, lukkiutuminen (40P01), keskeytynyt istunto, uudelleenajo `goals`-lukon aikana ("JO AJETTU" heti, ei lukon odotusta). Vertailu 0010:aan ennen lukitusjärjestystä ja ennen katalogitarkistusten siirtoa lukituksen eteen (git). |
 | `verify:null` | Rikottu objekti → NULL-tulos on FAIL ja lasketaan `poikkeavia_yhteensa`-lukuun. |
-| `preflight:blockers` | Uusi esteet-rivi (lukitut taulut, `pg_locks`) ja politiikkamäärärivit havaitsevat esteen ennen migraatiota. |
+| `preflight:blockers` | Uusi esteet-rivi (lukitut taulut, `pg_locks`) ja politiikkamäärärivit havaitsevat esteen ennen migraatiota. Tilin poiston oletukset (F13): vieras public-taulu ei-CASCADE-avaimella pysäyttää `preflight_0009`:n ennen junaa, mutta ei kaada `verify_0013`:a (rivit 26–27 rajattu migraatioiden 26 tauluun, rivi 28 INFO); migraation taulun ei-CASCADE- tai puuttuva avain kaatuu riveille 26 ja 27. |
 | `rollback:data` | 0010 (ylläpitotila → selkeä kieltäytyminen, korjauksen jälkeen läpi), 0012 (liitetty tavoite + kirjattu aika), 0013 (minuutit säilyvät, kohdistuksen menetys ennakkokyselystä) — vanhat rivit ja katalogi täsmälleen ennallaan. |
 | `rollback:reverse-chain` | 0008 → 0013 datan kanssa → peruutukset 0013…0009 → katalogi = tuotannon 0008; 0012 ennen 0013:a kaatuu vartijaan. |
 | `role:nonsuper` | Migraatiot NOSUPERUSER-omistajaroolina; preflightin esteet-rivit `pg_read_all_stats`-oikeuden kanssa ja ilman. |
@@ -94,7 +94,15 @@ node tools/pg-rehearsal/rehearse.mjs --only=inventory --fixtures=tests/fixtures/
 node tools/pg-rehearsal/rehearse.mjs --json=raportti.json
 node tools/pg-rehearsal/chain.mjs text                  # pelkkä ketju + verify
 node tools/pg-rehearsal/bundle-hashes.mjs               # MIGRATION-BUNDLES.md:n blob-taulukko
+node tools/pg-rehearsal/sql-result-fixtures.mjs         # oikean kannan preflight/verify-tulokset -> tests/fixtures/sql-results
 ```
+
+`sql-result-fixtures.mjs` ajaa jokaisen `preflight_0009…0013`:n PASS-tilassa
+(juuri ennen migraatiota) ja FAIL-tilassa (migraatio jo ajettu) sekä jokaisen
+`verify_0009…0013`:n puhtaana ja rikottuna (`NULL_SABOTAGE`) tuotannon
+muotoisessa synteettisessä kannassa, kirjoittaa tulokset sarkainerotettuina
+ja pisteyttää ne (`score-sql-result.mjs`, SQL-tiedoston omat
+tarkistusnumerot); `manifest.json` sisältää alkuperän.
 
 ### Varmuuskopioharjoittelu (`backup`)
 
@@ -140,6 +148,7 @@ data-hakemisto sekä jokaisen luetun SQL-tiedoston git-blob-tiivisteen.
 | `waves.mjs`, `app-gate-hooks.mjs` | junan taukopisteet ja sovelluksen rivimuunnokset aallon sarakeporteilla |
 | `*-scenarios.mjs` | uudet skenaariot (tuotannon muoto, virheet ja lukot, peruutukset) |
 | `backup-scenario.mjs`, `rehearse-backup.mjs` | looginen tilannekuva ja palautus B1–B15 (`--only=backup` tai erillinen ajo) |
+| `sql-result-fixtures.mjs` | oikean kannan preflight- ja verify-tulokset pisteytyksen yksikkötesteille (`tests/fixtures/sql-results`) |
 | `expected/` | omistajan inventaario 0008 ja kultaiset skeemaerot 0009–0013 |
 
 ## Löydökset, jotka tämä on jo tehnyt
@@ -165,3 +174,16 @@ data-hakemisto sekä jokaisen luetun SQL-tiedoston git-blob-tiivisteen.
 7. Ilman `pg_read_all_stats`-oikeutta preflightin idle in transaction
    -rivi ei näe muiden roolien istuntoja (väärä PASS). Uusi esteet-rivi
    lukee `pg_locks`-näkymää ja näkee estäjän aina (`role:nonsuper`).
+8. 0010:n uudelleenajo sovelluksen pitäessä `goals`-lukkoa odotti 5 s ja
+   kaatui lukon aikakatkaisuun ("canceling statement due to lock
+   timeout") eikä sanonut "JO AJETTU". Katalogitarkistukset ajetaan nyt
+   ennen lukitusta: "JO AJETTU" 55 ms:ssa (`failure:0010-locks`).
+9. Oikean kannan `verify_0013`-tulos pisteytyi STOP:ksi, vaikka se oli
+   puhdas: numeroinnissa on tarkoituksellisia aukkoja (01–08, 10–15, …)
+   ja `score-sql-result.mjs` oletti 01..N. Nyt vertailu on SQL-tiedoston
+   omiin numeroihin (`sql-result-fixtures.mjs`,
+   `tests/activation-sql-result.test.mjs`).
+10. `--only=backup` antoi 10 hylkäystä harjoituksen omista odotuksista:
+    B9 odotti 0010:n peruutukselta 23514:ää, vaikka vartija kieltäytyy
+    ensin (P0001), ja B15 otti tilan P kuvan kannasta, jossa N oli jo
+    ajettu. Korjattu: 271/271 (`docs/activation/REHEARSAL-REPORT.md`).

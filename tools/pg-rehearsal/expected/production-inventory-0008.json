@@ -64,6 +64,7 @@
     "85": { "value": "puuttuu", "source": "derived", "compare": "exact", "note": "time_entries (0012)" },
     "86": { "value": "puuttuu", "source": "derived", "compare": "exact", "note": "alignment_reviews (0012)" },
     "87": { "value": "puuttuu", "source": "derived", "compare": "exact", "note": "running_timers (0013)" },
-    "88": { "value": "puuttuu", "source": "derived", "compare": "exact", "note": "alignment_item_settings (0013)" }
+    "88": { "value": "puuttuu", "source": "derived", "compare": "exact", "note": "alignment_item_settings (0013)" },
+    "89": { "value": "0", "source": "owner", "compare": "exact", "note": "tehtäviä, joilla kesto > 0: 0 (omistaja: 'tasks with duration = 0'; rivi 62 = 0 kattaa myös tämän, rivi lisättiin inventaarioon yhteenvedon jälkeen)" }
   }
 }

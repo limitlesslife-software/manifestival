@@ -178,5 +178,18 @@ from (
   select '17'::text as check_no, 'kirjattavat'::text as section,
          'Tarkistuksen hetki (UTC)'::text as check_name, 'INFO'::text as odotus,
          to_char(now() at time zone 'UTC', 'YYYY-MM-DD HH24:MI:SS') as toteutui
+
+  union all
+  select '18'::text as check_no, 'junan alku'::text as section,
+         'Muut public-taulut kuin migraatioiden 0001–0013 (lukumäärä ja nimet, verify_0013 rivi 28)'::text as check_name, 'INFO'::text as odotus,
+         (select count(*)::text || coalesce(': ' || string_agg(c.relname::text, ', ' order by c.relname), '')
+           from pg_class c where c.relnamespace = 'public'::regnamespace and c.relkind in ('r', 'p')
+             and c.relname not in ('tasks', 'routines', 'routine_exceptions', 'goals', 'projects', 'bills', 'recurring_expenses', 'savings_goals', 'wellbeing_entries', 'notification_preferences', 'profile', 'ai_action_audit', 'transactions', 'investments', 'milestones', 'inbox_items', 'reminders', 'notices', 'travel_plans', 'location_rules', 'life_areas', 'weekly_capacities', 'time_entries', 'alignment_reviews', 'alignment_item_settings', 'running_timers')) as toteutui
+
+  union all
+  select '19'::text as check_no, 'junan alku'::text as section,
+         'Jokainen public-taulun vierasavain auth.usersiin on CASCADE (tilin poisto, verify_0013 rivit 26–27)'::text as check_name, '0'::text as odotus,
+         (select count(*)::text from pg_constraint f where f.contype = 'f' and f.confrelid = 'auth.users'::regclass
+             and f.connamespace = 'public'::regnamespace and f.confdeltype <> 'c') as toteutui
 ) c
 order by c.check_no;

@@ -758,7 +758,7 @@ function summarize(name, value) {
     case 'rollback:reverse-chain': return `rollback:reverse-chain: ${value.pass ? 'PASS' : 'FAIL'} (0013..0009 -> katalogi = tuotannon 0008)`;
     case 'failure:0010-locks': {
       const m = value.matrix || [];
-      const parts = [value.late, ...(value.stall || []), ...(value.deadlock || []), value.aborted].filter(Boolean);
+      const parts = [value.late, ...(value.stall || []), ...(value.deadlock || []), value.aborted, value.rerunBlocked].filter(Boolean);
       return `failure:0010-locks: estäjämatriisi ${passCount(m)}, muut ${passCount(parts)}`;
     }
     case 'role:nonsuper': return `role:nonsuper: ${passCount(value.migrations || [])} migraatiota NOSUPERUSER-roolina`;

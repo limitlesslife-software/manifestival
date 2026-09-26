@@ -332,6 +332,26 @@ test('migraation jälkeen: DEPLOY F vaatii verify_0009-tuloksen (0 poikkeavaa)',
   assert.match(good.plan.evidence.migrationVerify, /verify_0009\.sql: 30\/30 tarkistusta, 0 poikkeavaa/);
 });
 
+test('KRIITTINEN: oikean kannan verify-tulos, jonka numeroinnissa on aukkoja (kuten verify_0013), kelpaa', async () => {
+  // verify_0013:n numerot ovat 01–08, 10–15, 20–28, … Aiemmin pisteytys
+  // oletti 01..N ja pysäytti puhtaan tuloksen ("numerointi katkeaa
+  // kohdassa 09"). Nyt vertailu on SQL-tiedoston omiin numeroihin.
+  const sqlOverrides = { 'supabase/verify/verify_0009.sql': read('supabase/verify/verify_0013.sql') };
+  const lock = lockFrom(stubGit({ production: 'E', sqlOverrides }));
+  const { deps, options } = setup({ production: 'E', dbState: '0009', gitOptions: { sqlOverrides }, lockOverride: lock });
+  const real = name => fs.readFileSync(path.join(ROOT, 'tests/fixtures/sql-results', name), 'utf8');
+  const good = await runOrchestrator(deps, { ...options, verifyResult: real('verify_0013-pass.tsv') });
+  assert.equal(good.plan.steps.find(s => s.name === 'VERIFY').status, 'OK', JSON.stringify(good.plan.steps.find(s => s.name === 'VERIFY')));
+  assert.match(good.plan.evidence.migrationVerify, /33\/33 tarkistusta, 0 poikkeavaa/);
+  const bad = await runOrchestrator(deps, { ...options, verifyResult: real('verify_0013-fail.tsv') });
+  assert.equal(bad.plan.stopClass, 'VERIFY_FAILED');
+  // Rivi puuttuu keskeltä (tarkistus 26) -> STOP ja nimetään.
+  const cut = real('verify_0013-pass.tsv').split('\n').filter(l => !l.startsWith('26\t')).join('\n');
+  const partial = await runOrchestrator(deps, { ...options, verifyResult: cut });
+  assert.equal(partial.plan.stopClass, 'VERIFY_FAILED');
+  assert.match(JSON.stringify(partial.plan.steps.find(s => s.name === 'VERIFY')), /tarkistukset 26 puuttuvat liitoksesta/);
+});
+
 test('koodi edellä kantaa -> STOP ROLLBACK_CODE', async () => {
   const { git, deps, options } = setup({ production: 'F', dbState: '0008' });
   const result = await runOrchestrator(deps, options);

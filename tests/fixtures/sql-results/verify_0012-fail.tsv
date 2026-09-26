@@ -1,0 +1,54 @@
+check_no	section	check_name	status	details	poikkeavia_yhteensa
+01	taulut	Nelja uutta taulua on olemassa	PASS	odotus 4, toteutui 4	3
+02	taulut	life_areas: yksitoista odotettua saraketta	FAIL	odotus 11, toteutui 10	3
+03	taulut	life_areas: ei nimeamattomia sarakkeita	PASS	odotus 0, toteutui 0	3
+04	taulut	weekly_capacities: kahdeksan odotettua saraketta	PASS	odotus 8, toteutui 8	3
+05	taulut	weekly_capacities: ei nimeamattomia sarakkeita	PASS	odotus 0, toteutui 0	3
+06	taulut	time_entries: yksitoista odotettua saraketta	PASS	odotus 11, toteutui 11	3
+07	taulut	time_entries: ei nimeamattomia sarakkeita	PASS	odotus 0, toteutui 0	3
+08	taulut	alignment_reviews: kymmenen odotettua saraketta	PASS	odotus 10, toteutui 10	3
+09	taulut	alignment_reviews: ei nimeamattomia sarakkeita	PASS	odotus 0, toteutui 0	3
+10	taulut	goals.life_area_id on nullable teksti ilman oletusta	PASS	odotus YES text -, toteutui YES text -	3
+11	tyypit	Viikko ja paiva ovat date-tyyppia (kolme saraketta)	PASS	odotus 3, toteutui 3	3
+12	tyypit	life_areas.target_minutes_per_week on nullable kokonaisluku	FAIL	odotus YES integer, toteutui null	3
+13	tyypit	Havaintotaulua ei ole (havainnot lasketaan)	PASS	odotus 0, toteutui 0	3
+14	tyypit	Tilannekuva ja muutokset ovat jsonb	PASS	odotus 2, toteutui 2	3
+15	rajoitteet	life_areas: kuusi CHECK-rajoitetta	FAIL	odotus 6, toteutui 5	3
+16	rajoitteet	weekly_capacities: nelja CHECK-rajoitetta	PASS	odotus 4, toteutui 4	3
+17	rajoitteet	time_entries: kolme CHECK-rajoitetta	PASS	odotus 3, toteutui 3	3
+18	rajoitteet	alignment_reviews: viisi CHECK-rajoitetta	PASS	odotus 5, toteutui 5	3
+19	rajoitteet	Nelja omistajan rivin avainta	PASS	odotus 4, toteutui 4	3
+20	rajoitteet	Nelja kaksisarakkeista uniikkirajoitetta (nimi, kategoria, 2 x viikko)	PASS	odotus 4, toteutui 4	3
+21	rajoitteet	time_entries.source sallii vain manual	PASS	odotus 1, toteutui 1	3
+22	rajoitteet	Viikko alkaa maanantaina (kaksi rajoitetta)	PASS	odotus 2, toteutui 2	3
+23	rajoitteet	Tarkeys on asteikolla 1-5	PASS	odotus 1, toteutui 1	3
+24	rajoitteet	Nelja viitetta kahdella sarakkeella	PASS	odotus 4, toteutui 4	3
+25	rajoitteet	SET NULL rajaa nollauksen yhteen sarakkeeseen	PASS	odotus 4, toteutui 4	3
+26	rajoitteet	Yksikaan uusi viite ei ole CASCADE sovellustauluun	PASS	odotus 0, toteutui 0	3
+27	rajoitteet	Nelja user_id-vierasavainta on CASCADE	PASS	odotus 4, toteutui 4	3
+28	rls	RLS on paalla kaikissa neljassa taulussa	PASS	odotus 4, toteutui 4	3
+29	rls	Kuusitoista omistajuuspolitiikkaa	PASS	odotus 16, toteutui 16	3
+30	rls	Yksikaan politiikka ei koske public-roolia	PASS	odotus 0, toteutui 0	3
+31	rls	Jokainen politiikka koskee roolia authenticated	PASS	odotus 16, toteutui 16	3
+32	rls	Jokainen politiikka rajaa auth.uid() = user_id	PASS	odotus 16, toteutui 16	3
+33	rls	Paivityspolitiikoilla on molemmat puolet	PASS	odotus 4, toteutui 4	3
+34	oikeudet	anon-roolilla ei ole oikeuksia	PASS	odotus 0, toteutui 0	3
+35	oikeudet	authenticated saa nelja oikeutta neljaan tauluun	PASS	odotus 16, toteutui 16	3
+36	oikeudet	PUBLIC-roolilla ei ole oikeuksia (aclexplode)	PASS	odotus 0, toteutui 0	3
+37	oikeudet	anon-roolilla ei ole tehollista lukuoikeutta	PASS	odotus false, toteutui false	3
+38	oikeudet	authenticated-roolilla on tehollinen lukuoikeus kaikkiin	PASS	odotus true, toteutui true	3
+39	indeksit	Kolme nimettya indeksia on olemassa	PASS	odotus 3, toteutui 3	3
+40	liipaisimet	Nelja touch_updated_at -liipaisinta	PASS	odotus 4, toteutui 4	3
+41	liipaisimet	touch_updated_at on yha SECURITY INVOKER	PASS	odotus false, toteutui false	3
+42	data	Jokainen tavoitteen alue on omistajan oma	PASS	odotus 0, toteutui 0	3
+43	data	Jokainen kirjatun ajan alue on omistajan oma	PASS	odotus 0, toteutui 0	3
+44	vanha data	tasks, goals ja projects: yha kaksitoista politiikkaa	PASS	odotus 12, toteutui 12	3
+45	vanha data	goals_owner_row_key ja tasks_owner_row_key yha olemassa	PASS	odotus 2, toteutui 2	3
+46	vanha data	Alueeseen liitettyja tavoitteita	INFO	0	3
+47	vanha data	Tavoitteiden lukumaara (vertaa inventaarioon)	INFO	1	3
+48	kirjattavat	Elamanalueiden lukumaara	INFO	0	3
+49	kirjattavat	Kapasiteettiviikkojen lukumaara	INFO	0	3
+50	kirjattavat	Kirjattujen aikojen lukumaara	INFO	0	3
+51	kirjattavat	Viikkokatsausten lukumaara	INFO	0	3
+52	kirjattavat	Tietokanta	INFO	mv_rehearsal_sqlres_0012	3
+53	kirjattavat	Varmistuksen hetki (UTC)	INFO	2026-09-26 16:22:57	3

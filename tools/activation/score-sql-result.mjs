@@ -12,8 +12,10 @@
 //   check_no, section, check_name, status, details, poikkeavia_yhteensa
 //
 // PÄÄTÖS: GO vain, kun
-//   - jokainen rivi on luettu (numerointi 01..N ilman aukkoja; jos --sql
-//     annetaan, N = tiedoston tarkistusten määrä)
+//   - jokainen rivi on luettu: jos --sql annetaan, liitetyt numerot ovat
+//     TÄSMÄLLEEN tiedoston omat tarkistusnumerot (verify_0013:ssa on
+//     tarkoituksellisia aukkoja: 01–08, 10–15, 20–28, …); ilman sitä
+//     numerointi 01..N ilman aukkoja
 //   - yksikään status ei ole FAIL
 //   - poikkeavia_yhteensa = 0 jokaisella rivillä
 // Muuten STOP. Tätä ennen "0 FAIL" luettiin silmällä.
@@ -45,8 +47,10 @@ function cellsOf(line) {
  * @returns {{rows: {no: string, section: string|null, name: string|null,
  *   status: string, details: string|null, poikkeavia: number|null}[],
  *   pass: number, fail: number, info: number, poikkeavia: number|null,
- *   problems: string[]}|null} null jos syötteessä ei ole yhtään
- *   tarkistusriviä
+ *   problems: string[], gap: string|null}|null} null jos syötteessä ei
+ *   ole yhtään tarkistusriviä. `gap` = ensimmäinen aukko oletuksella
+ *   01..N; decide() käyttää sitä vain, kun SQL-tiedoston numeroita ei
+ *   anneta (tiedostossa voi olla tarkoituksellisia aukkoja).
  */
 export function parseCheckTable(text) {
   const lines = String(text || '').split(/\r?\n/).filter(l => l.trim());
@@ -100,9 +104,10 @@ export function parseCheckTable(text) {
     seen.add(r.no);
   }
   const numbers = rows.map(r => Number(r.no)).sort((a, b) => a - b);
+  let gap = null;
   for (let i = 0; i < numbers.length; i++) {
     if (numbers[i] !== i + 1) {
-      problems.push(`numerointi katkeaa kohdassa ${String(i + 1).padStart(2, '0')}: liitos on vajaa`);
+      gap = `numerointi katkeaa kohdassa ${String(i + 1).padStart(2, '0')}: liitos on vajaa`;
       break;
     }
   }
@@ -111,32 +116,52 @@ export function parseCheckTable(text) {
   if (totals.size === 1 && !totals.has(null)) poikkeavia = [...totals][0];
   else problems.push('poikkeavia_yhteensa puuttuu tai vaihtelee riveittäin');
 
-  return { rows, pass: count('PASS'), fail: count('FAIL'), info: count('INFO'), poikkeavia, problems };
+  return { rows, pass: count('PASS'), fail: count('FAIL'), info: count('INFO'), poikkeavia, problems, gap };
 }
 
 /**
- * Tarkistusten määrä generoidussa SQL-tiedostossa (esitarkistus tai
- * varmistus): eri `select 'NN'` -numerot, jotka aloittavat rivin.
+ * Tarkistusnumerot SQL-tiedostossa (esitarkistus tai varmistus):
+ * eri `select 'NN'` -numerot, jotka aloittavat rivin, nousevassa
+ * järjestyksessä. Numeroinnissa voi olla tarkoituksellisia aukkoja.
  */
-export function countChecksInSql(sql) {
+export function checkNumbersInSql(sql) {
   const numbers = new Set();
   for (const m of String(sql || '').matchAll(/\bselect\s+'(\d{2,3})'(?:::text)?(?:\s+as\s+check_no)?\s*,/g)) {
     numbers.add(m[1]);
   }
-  return numbers.size;
+  return [...numbers].sort((a, b) => Number(a) - Number(b));
+}
+
+/** Tarkistusten määrä SQL-tiedostossa (checkNumbersInSql). */
+export function countChecksInSql(sql) {
+  return checkNumbersInSql(sql).length;
 }
 
 /**
  * GO vain kun kaikki on luettu, 0 FAIL ja 0 poikkeavaa.
  *
+ * `expectedNumbers` (checkNumbersInSql) korvaa oletuksen 01..N: liitoksen
+ * numerot on oltava täsmälleen tiedoston omat. Ilman sitä aukko
+ * numeroinnissa on STOP.
+ *
  * @param {ReturnType<typeof parseCheckTable>} result
- * @param {{expectedChecks?: number}} [options]
+ * @param {{expectedChecks?: number, expectedNumbers?: string[]}} [options]
  * @returns {{decision: 'GO'|'STOP', reasons: string[]}}
  */
-export function decide(result, { expectedChecks = null } = {}) {
+export function decide(result, { expectedChecks = null, expectedNumbers = null } = {}) {
   if (!result) return { decision: 'STOP', reasons: ['tulosta ei voitu lukea'] };
   const reasons = [...result.problems];
   if (!result.rows.length) reasons.push('yhtään tarkistusriviä ei löytynyt');
+  if (expectedNumbers) {
+    const want = new Set(expectedNumbers.map(String));
+    const got = new Set(result.rows.map(r => r.no));
+    const missing = [...want].filter(no => !got.has(no));
+    const extra = [...got].filter(no => !want.has(no));
+    if (missing.length) reasons.push(`tarkistukset ${missing.join(', ')} puuttuvat liitoksesta: liitos on vajaa tai väärästä tiedostosta`);
+    if (extra.length) reasons.push(`tarkistuksia ${extra.join(', ')} ei ole SQL-tiedostossa: väärä tiedosto`);
+  } else if (result.gap) {
+    reasons.push(result.gap);
+  }
   if (expectedChecks !== null && result.rows.length !== expectedChecks) {
     reasons.push(`tarkistuksia ${result.rows.length}, SQL-tiedostossa ${expectedChecks}: liitos on vajaa tai väärästä tiedostosta`);
   }
@@ -161,10 +186,11 @@ if (process.argv[1] && process.argv[1].endsWith('score-sql-result.mjs')) {
     console.error('Syötettä ei voitu lukea: odotettiin tarkistustaulukkoa (check_no, status, …).');
     process.exit(2);
   }
-  const expectedChecks = sqlArg ? countChecksInSql(fs.readFileSync(sqlArg, 'utf8')) : null;
-  const verdict = decide(result, { expectedChecks });
+  const expectedNumbers = sqlArg ? checkNumbersInSql(fs.readFileSync(sqlArg, 'utf8')) : null;
+  const expectedChecks = expectedNumbers ? expectedNumbers.length : null;
+  const verdict = decide(result, { expectedChecks, expectedNumbers });
   if (json) {
-    console.log(JSON.stringify({ ...verdict, ...result, expectedChecks }, null, 2));
+    console.log(JSON.stringify({ ...verdict, ...result, expectedChecks, expectedNumbers }, null, 2));
   } else {
     console.log(`${verdict.decision}: ${result.rows.length} tarkistusta — PASS ${result.pass}, FAIL ${result.fail}, INFO ${result.info}, poikkeavia_yhteensa ${result.poikkeavia ?? '?'}`);
     for (const r of verdict.reasons) console.log(`STOP  ${r}`);

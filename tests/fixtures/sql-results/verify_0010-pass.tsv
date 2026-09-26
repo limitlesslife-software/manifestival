@@ -1,0 +1,47 @@
+check_no	section	check_name	status	details	poikkeavia_yhteensa
+01	taulut	Taulu milestones on olemassa	PASS	odotus 1, toteutui 1	0
+02	taulut	milestones: odotetut sarakkeet ovat olemassa	PASS	odotus 11, toteutui 11	0
+03	taulut	milestones: ei nimeamattomia sarakkeita	PASS	odotus 0, toteutui 0	0
+04	taulut	milestones.goal_id on NOT NULL	PASS	odotus NO, toteutui NO	0
+05	sarakkeet	goals: seitseman uutta saraketta	PASS	odotus 7, toteutui 7	0
+06	sarakkeet	tasks: kaksi uutta saraketta	PASS	odotus 2, toteutui 2	0
+07	sarakkeet	projects: milestone_id on olemassa	PASS	odotus 1, toteutui 1	0
+08	sarakkeet	profile: kaksi uutta saraketta	PASS	odotus 2, toteutui 2	0
+09	sarakkeet	goals: mittarisarakkeet ovat numeric	PASS	odotus 3, toteutui 3	0
+10	sarakkeet	tasks.depends_on on taulukko	PASS	odotus ARRAY, toteutui ARRAY	0
+11	sarakkeet	goals: uudet sarakkeet ovat nullable	PASS	odotus 7, toteutui 7	0
+12	rajoitteet	milestones: kuusi CHECK-rajoitetta	PASS	odotus 6, toteutui 6	0
+13	rajoitteet	goals: nelja uutta CHECK-rajoitetta	PASS	odotus 4, toteutui 4	0
+14	rajoitteet	tasks: kaksi uutta CHECK-rajoitetta	PASS	odotus 2, toteutui 2	0
+15	rajoitteet	Kolme vierasavainta viittaa kahdella sarakkeella	PASS	odotus 3, toteutui 3	0
+16	rajoitteet	SET NULL rajaa nollauksen yhteen sarakkeeseen	PASS	odotus 2, toteutui 2	0
+17	rajoitteet	milestones_goal_fkey on CASCADE	PASS	odotus c, toteutui c	0
+18	rajoitteet	Omistajan rivin avain on olemassa	PASS	odotus 1, toteutui 1	0
+19	rajoitteet	profile: automaatiotason rajoite on olemassa	PASS	odotus 2, toteutui 2	0
+20	tilarajoite	goals_status_check on olemassa	PASS	odotus 1, toteutui 1	0
+21	tilarajoite	goals_status_check sallii arvon maintenance	PASS	odotus 1, toteutui 1	0
+22	tilarajoite	goals_status_check luettelee tasan kuusi arvoa	PASS	odotus 6, toteutui 6	0
+23	rls	RLS on paalla milestones-taulussa	PASS	odotus 1, toteutui 1	0
+24	rls	Nelja omistajuuspolitiikkaa	PASS	odotus 4, toteutui 4	0
+25	rls	Yksikaan politiikka ei koske public-roolia	PASS	odotus 0, toteutui 0	0
+26	rls	anon-roolilla ei ole oikeuksia	PASS	odotus 0, toteutui 0	0
+27	rls	authenticated saa nelja oikeutta	PASS	odotus 4, toteutui 4	0
+28	indeksit	Kaksi nimettya indeksia on olemassa	PASS	odotus 2, toteutui 2	0
+29	liipaisin	milestones_touch_updated_at on olemassa	PASS	odotus 1, toteutui 1	0
+30	liipaisin	touch_updated_at on yha SECURITY INVOKER	PASS	odotus false, toteutui false	0
+31	data	Jokainen valitavoite kuuluu olemassa olevalle tavoitteelle	PASS	odotus 0, toteutui 0	0
+32	data	Saavutetulla valitavoitteella on saavutuspaiva	PASS	odotus 0, toteutui 0	0
+33	data	Yksikaan tehtava ei riipu itsestaan	PASS	odotus 0, toteutui 0	0
+34	data	Mittarilla on nimi jos sille on tavoitearvo	PASS	odotus 0, toteutui 0	0
+35	data	Saastokytkenta ja oma mittari eivat ole yhdessa	PASS	odotus 0, toteutui 0	0
+36	vanha data	Jokainen tavoite on kelvollisessa tilassa	PASS	odotus 0, toteutui 0	0
+37	vanha data	goals-taulussa on yha nelja politiikkaa	PASS	odotus 4, toteutui 4	0
+38	vanha data	tasks-taulussa on yha nelja politiikkaa	PASS	odotus 4, toteutui 4	0
+39	vanha data	projects-taulussa on yha nelja politiikkaa	PASS	odotus 4, toteutui 4	0
+40	vanha data	Yhdenkaan tehtavan depends_on ei ole NULL	PASS	odotus 0, toteutui 0	0
+41	kirjattavat	Valitavoitteiden lukumaara	INFO	0	0
+42	kirjattavat	Tavoitteiden lukumaara	INFO	1	0
+43	kirjattavat	Tehtavien lukumaara	INFO	36	0
+44	kirjattavat	Tavoitteita tilassa maintenance	INFO	0	0
+45	kirjattavat	Tietokanta	INFO	mv_rehearsal_sqlres_0010	0
+46	kirjattavat	Varmistuksen hetki (UTC)	INFO	2026-09-26 16:22:47	0

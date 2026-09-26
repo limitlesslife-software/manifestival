@@ -35,11 +35,11 @@ deployataan ehdokashaarasta; SQL ajetaan aina tästä taulukosta.
 <!-- blob-taulukko:alku (node tools/pg-rehearsal/bundle-hashes.mjs --write) -->
 | Migraatio | Tiedosto | git-blob (`git hash-object <polku>`) |
 |---|---|---|
-| 0009 | `supabase/preflight/preflight_0009.sql` | `2d4a1d9fb613f7e9364de5e68b482059ad6b24c1` |
+| 0009 | `supabase/preflight/preflight_0009.sql` | `5818030a69b0d2b61a4f5bd1a922da86050092f2` |
 | 0009 | `supabase/migrations/0009_finance_2.sql` | `278a806757e7ed10ee97a0a8f4837f07633f5a97` |
 | 0009 | `supabase/verify/verify_0009.sql` | `470176835858356ecbafd0cef5653fd60ce29961` |
 | 0010 | `supabase/preflight/preflight_0010.sql` | `b9279498e587bdb6609941d28c338415ee5205af` |
-| 0010 | `supabase/migrations/0010_goal_to_action.sql` | `270023e401439a6c3d40eb27223d0c58f3602310` |
+| 0010 | `supabase/migrations/0010_goal_to_action.sql` | `431e9270c8e0c4ce9403b70fdcb47c5e2be174ec` |
 | 0010 | `supabase/verify/verify_0010.sql` | `75cc526992c22b35b03071d1acd00d7b9946d3e3` |
 | 0011 | `supabase/preflight/preflight_0011.sql` | `3dac36aebaf33c5a57534750531bd6571eaa06d0` |
 | 0011 | `supabase/migrations/0011_personal_assistant.sql` | `2ed6389aabe89af693b1ed278483a6c44f48f147` |
@@ -49,7 +49,7 @@ deployataan ehdokashaarasta; SQL ajetaan aina tästä taulukosta.
 | 0012 | `supabase/verify/verify_0012.sql` | `3d511f251ed96ebb87118a9b5f17e889d7a07b14` |
 | 0013 | `supabase/preflight/preflight_0013.sql` | `04aaf286a0e87da2129f330c4ddcfca31891a5d1` |
 | 0013 | `supabase/migrations/0013_alignment_reality.sql` | `3825a11a172150f408761f613cf1c9a50d9616ac` |
-| 0013 | `supabase/verify/verify_0013.sql` | `6545487363e646ceb44ae683c4fa851d4051ebf9` |
+| 0013 | `supabase/verify/verify_0013.sql` | `7b5b7fdb0c07d250bb523d1794080e3e11974783` |
 <!-- blob-taulukko:loppu -->
 
 ## Yhteiset säännöt
@@ -59,10 +59,10 @@ deployataan ehdokashaarasta; SQL ajetaan aina tästä taulukosta.
 | Missä ajetaan | Supabase → SQL Editor → **uusi välilehti**, postgres-rooli, ei muita avoimia välilehtiä |
 | Miten | Liitä **koko** tiedosto, ei valintaa, Run |
 | Transaktio | Jokainen migraatio on yksi `begin … commit`. Kesken kaatunut ajo **perutaan kokonaan** — todennettu: katalogi, vanhat rivit ja tilarajoite täsmälleen ennallaan jokaisessa virhetilanteessa, myös kun virhe injektoitiin 0010:n tilarajoitteen vaihdon **jälkeen** |
-| Lukot | `set local lock_timeout = '5s'`: jos sovelluksen pyyntö tai avoin välilehti pitää lukkoa, migraatio luovuttaa 5 s:ssa ja peruuntuu kokonaan; lukon vapauduttua uusi ajo menee läpi. **0010 lukitsee `goals`, `projects`, `tasks` ja `profile` kerralla ennen yhtäkään muutosta**: estäjä missä tahansa niistä = 0 DDL-komentoa ennen perumista, sovelluksen luku odottaa enintään ~5 s |
+| Lukot | `set local lock_timeout = '5s'` — 5 s per lukon odotus (lock_timeout koskee jokaista lukkoa erikseen): jos sovelluksen pyyntö tai avoin välilehti pitää lukkoa, migraatio luovuttaa 5 s:ssa ja peruuntuu kokonaan; lukon vapauduttua uusi ajo menee läpi. **0010 lukitsee `goals`, `projects`, `tasks` ja `profile` kerralla ennen yhtäkään muutosta**: estäjä missä tahansa niistä = 0 DDL-komentoa ennen perumista, sovelluksen luku odottaa enintään ~5 s |
 | Virheen jälkeen | Avaa **uusi** editorin välilehti. Kaatunut istunto ei pidä lukkoja (todennettu), mutta se näkyy preflightissa rivinä *idle in transaction (aborted)* |
 | Esteet preflightissa | *Avoimia idle in transaction -istuntoja*, *Odottavia lukkoja* (tämä kanta) ja *Muut istunnot eivät lukitse tauluja, joita NNNN muuttaa* (`pg_locks`). Idle-rivi ei näe muiden roolien istuntoja ilman `pg_read_all_stats`-oikeutta; lukitut taulut -rivi näkee estäjän aina (todennettu NOSUPERUSER-roolilla) |
-| Uudelleenajo | Kaatuu kiinni viestillä **"JO AJETTU"** |
+| Uudelleenajo | Kaatuu kiinni viestillä **"JO AJETTU"**. 0010 tunnistaa sen katalogista ennen lukitusta: viesti tulee heti (harjoitus 55 ms), vaikka sovellus pitäisi `goals`-lukkoa — aiemmin lukon aikakatkaisu 5 s:n jälkeen väärällä syyllä |
 | Vanha data | Jokaisen vanhan rivin arvot vanhoissa sarakkeissa, rivin `xmin` (ei UPDATEa) ja taulun `relfilenode` (ei uudelleenkirjoitusta) ennallaan jokaisen migraation yli. 0010: kaikki 5 tavoitteen tilaa × projekti kytketty/irti |
 | Taaksepäin yhteensopivuus | Jokainen migraatio ajetaan edellisen aallon koodin ollessa tuotannossa. Jokaisessa tauossa elävän ja seuraavan aallon **oikeat** rivimuodot (sovelluksen omat rivimuunnokset, insert/update/upsert) menivät läpi, ja verify + seuraava preflight antoivat 0 FAIL |
 | Verify-luku | `poikkeavia_yhteensa` laskee myös NULL-tuloksen (puuttuva objekti), ja details kertoo `toteutui null` |
@@ -75,8 +75,10 @@ mutta älä yritä uudelleen ennen kuin syy on selvä) · verify antaa
 
 **Koneellinen luku (ACT-12):** liitetty preflight- tai verify-tulos
 pisteytetään, ei lueta silmällä: `node tools/activation/score-sql-result.mjs
---sql=<tiedosto.sql> tulos.txt` (GO vain kun jokainen rivi on liitetty, 0 FAIL
-ja `poikkeavia_yhteensa` = 0). Orkestroija tekee saman lipuilla
+--sql=<tiedosto.sql> tulos.txt` (GO vain kun täsmälleen tiedoston omat
+tarkistusnumerot on liitetty — numeroinnissa voi olla aukkoja, esim.
+`verify_0013` — 0 FAIL ja `poikkeavia_yhteensa` = 0; todennettu oikean
+kannan tuloksilla `tests/fixtures/sql-results`). Orkestroija tekee saman lipuilla
 `--preflight-result=` ja `--verify-result=`. SQL-tiedostot ajetaan aina
 **lukon SQL-lähteestä** (`docs/activation/release-train-c-j.json` →
 `sqlSource`, sha256 jokaiselle tiedostolle); `npm run activation:dry-run`
@@ -92,7 +94,7 @@ tulostaa ajettavat tiedostot tiivisteineen.
 | Elävät taulut | `bills` (ALTER, lyhyt ACCESS EXCLUSIVE -lukko), viittaus `auth.users` |
 | Riski | Matala. Ei täyttöä, ei olemassa olevien rivien muutosta |
 | Varmuuskopio | Suositeltava (Dashboard → Database → Backups, tämän päivän) |
-| 1 Preflight | `supabase/preflight/preflight_0009.sql` → 0 FAIL |
+| 1 Preflight | `supabase/preflight/preflight_0009.sql` → 0 FAIL (sisältää junan alun rivit 18–19: muut public-taulut kuin migraatioiden 26 (INFO) ja jokainen public-taulun vierasavain `auth.users`-tauluun CASCADE — `verify_0013`:n tilin poiston oletus tarkistetaan ennen junaa eikä vasta sen lopussa) |
 | 2 Ajo | `supabase/migrations/0009_finance_2.sql` |
 | 3 Verify | `supabase/verify/verify_0009.sql` → `poikkeavia_yhteensa = 0` (harjoitus: 29 PASS / 0 FAIL) |
 | 4 Deploy | aalto F (`rehearsal/wave-f-v3`, ks. GO/NO-GO) |
@@ -105,7 +107,8 @@ tulostaa ajettavat tiedostot tiivisteineen.
 |---|---|
 | Tekee | Uusi taulu `milestones`; **muuttaa eläviä tauluja**: `goals` +7 saraketta ja 4 rajoitetta, `goals_status_check` korvataan (sallii lisäksi `maintenance`), `tasks` +2 (`milestone_id`, `depends_on text[] not null default '{}'`), `projects` +1, `profile` +2 (`automation_level`, `planning_buffer_ratio`, oletusarvoin) |
 | Elävät taulut | `goals`, `tasks`, `projects`, `profile` — kaikki auki tuotannossa ja niissä on oikeaa dataa; viittaus `auth.users` |
-| Lukot | Neljä elävää taulua lukitaan **kerralla, kiinteässä järjestyksessä, ennen yhtäkään muutosta** (`lock table … in access exclusive mode`). Estäjä → 5 s ja peruutus ilman ainuttakaan DDL:ää (harjoitus: 8/8 estäjää goals/tasks/projects/profile × luku/kirjoitus; ennen tätä profile-estäjä ehti 42 DDL-komentoa). `depends_on` lisätään oletusarvolla ilman taulun uudelleenkirjoitusta |
+| Järjestys | 0a–0b vain katalogia lukevat esiehdot, uudelleenajon tunnistus (**"JO AJETTU"** / kesken, 38 objektia) ja `touch_updated_at` — **ennen lukitusta**, joten ne vastaavat heti eivätkä odota sovelluksen lukkoa → 0c `set local lock_timeout = '5s'` (5 s per lukon odotus; lock_timeout koskee jokaista lukkoa erikseen) ja lukitus → 0d omistajan rivi `auth.users`-taulussa ja 0e tavoitteiden tilat (rivien luku vasta lukituksen jälkeen) → vaihe 1: ensimmäinen DDL |
+| Lukot | Neljä elävää taulua lukitaan **kerralla, kiinteässä järjestyksessä, ennen ensimmäistä rivien lukua ja ennen yhtäkään muutosta** (`lock table … in access exclusive mode`). Estäjä → 5 s ja peruutus ilman ainuttakaan DDL:ää (harjoitus: 8/8 estäjää goals/tasks/projects/profile × luku/kirjoitus; ennen tätä profile-estäjä ehti 42 DDL-komentoa). `depends_on` lisätään oletusarvolla ilman taulun uudelleenkirjoitusta |
 | Epäonnistuminen kesken | Kokonaan peruuntuva transaktio; todennettu lukon aikakatkaisulla, lukkiutumisella (40P01) ja virheellä tilarajoitteen vaihdon jälkeen: tilarajoite palaa 0004:n viiden arvon versioksi |
 | Olemassa oleva data | Jokainen nykyinen tavoitteen tila on uuden rajoitteen sallima (preflightin rivi 08). Harjoitus 10 muunnelmalla: yksikään vanha arvo ei muutu, yhtään riviä tai taulua ei kirjoiteta uudelleen; vanhoilla riveillä `depends_on = '{}'`, `automation_level = 1`, `planning_buffer_ratio = 0.25`, muut uudet sarakkeet null |
 | Varmuuskopio | **PAKOLLINEN**, tänään otettu, aikaleima ylös ennen ajoa. Ohje ja palautus: `docs/activation/0010-BACKUP-AND-RECOVERY.md` |
@@ -152,7 +155,7 @@ tulostaa ajettavat tiedostot tiivisteineen.
 |---|---|
 | Tekee | 2 uutta taulua (`running_timers`: **yksi per käyttäjä**, `alignment_item_settings`); sarakkeita 0012:n tauluihin: `time_entries` +6 (`operation_id` uniikki per käyttäjä = idempotentti kirjaus, `started_at`/`ended_at`, projekti, rutiini, esiintymä), `weekly_capacities.energy_budget_minutes`, `alignment_reviews.policy_version`/`reflection_answers`; korvaa lähderajoitteen (`manual` → `manual`/`timer`) |
 | Elävät taulut | Ei tuotannossa ennestään auki olevia (vain 0012:n omia); viittaukset `tasks`, `goals`, `projects`, `routines`, `life_areas`, `auth.users` |
-| Todennettu | 1 ajastin/käyttäjä (23505 toiselle), sama `operation_id` hylätään, 0 ja 1441 min hylätään, loppu ennen alkua hylätään, tilin poisto poistaa kaiken; verify todistaa, että jokainen vierasavain `auth.users`-tauluun on CASCADE (rivit 25–27) |
+| Todennettu | 1 ajastin/käyttäjä (23505 toiselle), sama `operation_id` hylätään, 0 ja 1441 min hylätään, loppu ennen alkua hylätään, tilin poisto poistaa kaiken; verify todistaa, että migraatioiden 26 taulun (tilin poiston kartta) jokainen vierasavain `auth.users`-tauluun on CASCADE ja jokaisella on sellainen (rivit 25–27). Muut public-taulut eivät kaada varmistusta: ne näkyvät rivillä 28 (INFO), ja `preflight_0009` on tarkistanut niiden vierasavaimet jo ennen junaa |
 | 1 Preflight | `supabase/preflight/preflight_0013.sql` → 0 FAIL (sisältää: 8 taulun 32 politiikkaa) |
 | 2 Ajo | `supabase/migrations/0013_alignment_reality.sql` |
 | 3 Verify | `supabase/verify/verify_0013.sql` → 0 (harjoitus: 30 PASS / 0 FAIL) |

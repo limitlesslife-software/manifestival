@@ -1,0 +1,35 @@
+check_no	section	check_name	status	details	poikkeavia_yhteensa
+01	taulut	Taulut transactions ja investments ovat olemassa	PASS	odotus 2, toteutui 2	0
+02	taulut	transactions: odotetut sarakkeet ovat olemassa	PASS	odotus 14, toteutui 14	0
+03	taulut	transactions: ei nimeamattomia sarakkeita	PASS	odotus 0, toteutui 0	0
+04	taulut	investments: odotetut sarakkeet ovat olemassa	PASS	odotus 15, toteutui 15	0
+05	taulut	investments: ei nimeamattomia sarakkeita	PASS	odotus 0, toteutui 0	0
+06	taulut	Uudet rahasarakkeet ovat bigint	PASS	odotus 4, toteutui 4	0
+07	taulut	transactions.date on date, ei timestamptz	PASS	odotus date, toteutui date	0
+08	taulut	investments.quantity on numeric	PASS	odotus numeric, toteutui numeric	0
+09	rajoitteet	transactions: yhdeksan CHECK-rajoitetta	PASS	odotus 9, toteutui 9	0
+10	rajoitteet	investments: seitseman CHECK-rajoitetta	PASS	odotus 7, toteutui 7	0
+11	rajoitteet	bills: kolme uutta CHECK-rajoitetta	PASS	odotus 3, toteutui 3	0
+12	rajoitteet	Omistajan rivin avaimet ovat olemassa	PASS	odotus 2, toteutui 2	0
+13	rajoitteet	Vierasavaimet osoittavat vain auth.usersiin	PASS	odotus 2, toteutui 2	0
+14	rajoitteet	transactions: ei vierasavaimia public-tauluihin	PASS	odotus 0, toteutui 0	0
+15	indeksit	Kolme nimettya indeksia on olemassa	PASS	odotus 3, toteutui 3	0
+16	rls	RLS on paalla molemmissa uusissa tauluissa	PASS	odotus 2, toteutui 2	0
+17	rls	Kahdeksan omistajuuspolitiikkaa	PASS	odotus 8, toteutui 8	0
+18	rls	Yksikaan politiikka ei koske public-roolia	PASS	odotus 0, toteutui 0	0
+19	rls	anon-roolilla ei ole oikeuksia uusiin tauluihin	PASS	odotus 0, toteutui 0	0
+20	rls	authenticated saa nelja oikeutta kumpaankin	PASS	odotus 8, toteutui 8	0
+21	data	Tuntematon sijoitusarvo on aina lahteesta unknown	PASS	odotus 0, toteutui 0	0
+22	data	Yksikaan tapahtuma ei ole ilman lahdeparia	PASS	odotus 0, toteutui 0	0
+23	data	Siirroilla ei ole kululuokkaa	PASS	odotus 0, toteutui 0	0
+24	data	Yksikaan summa ei ole nolla tai negatiivinen	PASS	odotus 0, toteutui 0	0
+25	data	Jokainen laji on sallittu	PASS	odotus 0, toteutui 0	0
+26	vanha data	bills-taulussa on yha nelja politiikkaa	PASS	odotus 4, toteutui 4	0
+27	vanha data	tasks-taulussa on yha nelja politiikkaa	PASS	odotus 4, toteutui 4	0
+28	vanha data	bills: uudet sarakkeet ovat nullable	PASS	odotus 3, toteutui 3	0
+29	vanha data	touch_updated_at on yha SECURITY INVOKER	PASS	odotus false, toteutui false	0
+30	kirjattavat	Tapahtumien lukumaara	INFO	0	0
+31	kirjattavat	Sijoitusten lukumaara	INFO	0	0
+32	kirjattavat	Laskujen lukumaara	INFO	0	0
+33	kirjattavat	Tietokanta	INFO	mv_rehearsal_sqlres_0009	0
+34	kirjattavat	Varmistuksen hetki (UTC)	INFO	2026-09-26 16:22:42	0

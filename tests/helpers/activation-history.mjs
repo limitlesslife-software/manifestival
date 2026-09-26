@@ -103,17 +103,18 @@ function sqlFiles() {
  * @param {string[]} [options.missingPatchWaves] aallot, joilta 5aa0d53 puuttuu
  * @param {string|null} [options.remoteMain] ls-remote-vastaus (oletus: tuotanto)
  * @param {object} [options.extraCommits] sha -> tiedostot (esim. peruutus)
+ * @param {object} [options.sqlOverrides] polku -> SQL lukon SQL-lähteessä (J) ja HEADissa
  * @param {boolean} [options.pushOk]
  */
 export function stubGit({
   production = 'C', productionSha = null, refOverrides = {}, missingRefs = [], missingPatchWaves = [],
-  remoteMain, extraCommits = {}, pushOk = true, throwOn = null
+  remoteMain, extraCommits = {}, sqlOverrides = {}, pushOk = true, throwOn = null
 } = {}) {
   const calls = [];
   const commits = {};
   for (const w of TRAIN_WAVES) commits[shaOf(w)] = filesFor(w);
-  Object.assign(commits[shaOf('J')], sqlFiles());
-  commits[HEAD_SHA] = { ...sqlFiles(), 'sw.js': swFor('BASE', 'v13') };
+  Object.assign(commits[shaOf('J')], sqlFiles(), sqlOverrides);
+  commits[HEAD_SHA] = { ...sqlFiles(), ...sqlOverrides, 'sw.js': swFor('BASE', 'v13') };
   for (const [sha, files] of Object.entries(extraCommits)) commits[sha] = files;
 
   const aliases = {};

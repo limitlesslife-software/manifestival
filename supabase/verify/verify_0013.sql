@@ -20,9 +20,11 @@
 -- 3. POISTOSAANTO RAJAA NOLLAUKSEN SARAKKEESEEN: kohteen poisto ei vie
 --    kirjattua aikaa eika kaynnissa olevaa ajastinta (tarkistus 24).
 -- 4. TUOTANNOSSA AUKI OLEVIIN TAULUIHIN EI KOSKETTU (tarkistukset 40-41).
--- 5. TILIN POISTO VIE KAIKEN: jokainen public-taulun vierasavain
---    auth.usersiin on CASCADE, myos kahdessa uudessa taulussa
---    (tarkistukset 25-27).
+-- 5. TILIN POISTO VIE KAIKEN: migraatioiden 0001-0013 jokaisen taulun
+--    vierasavain auth.usersiin on CASCADE, myos kahdessa uudessa
+--    taulussa (tarkistukset 25-27). Muut public-taulut eivat ole
+--    migraatioiden tulosta: ne raportoidaan rivilla 28 (INFO), ja
+--    preflight_0009 tarkistaa ne jo ennen junaa.
 --
 -- Tama tiedosto EI lue sarakkeita note, reflection, reflection_answers,
 -- snapshot eika adjustments. Ne ovat kayttajan omaa sisaltoa.
@@ -192,23 +194,58 @@ from (
                               to_regclass('public.alignment_item_settings')))
 
   union all
-  -- KOKO KANTA: yksikaan public-taulun vierasavain auth.usersiin ei saa
-  -- olla muu kuin CASCADE (migraatiot 0001-0013).
-  select '26', 'omistajuus', 'Jokainen public-taulun vierasavain auth.usersiin on CASCADE', '0',
-         (select count(*)::text from pg_constraint
-           where contype = 'f' and confrelid = 'auth.users'::regclass
-             and connamespace = 'public'::regnamespace
-             and confdeltype <> 'c')
+  -- MIGRAATIOIDEN 26 TAULUA (0001-0013, sama lista kuin tilin poiston
+  -- ACCOUNT_DATA_MAP): yksikaan niiden vierasavain auth.usersiin ei saa
+  -- olla muu kuin CASCADE. Muut public-taulut eivat ole migraatioiden
+  -- tulosta eivatka kaada tata varmistusta: ne nakyvat rivilla 28.
+  select '26', 'omistajuus', 'Migraatioiden 26 taulun jokainen vierasavain auth.usersiin on CASCADE', '0',
+         (select count(*)::text from pg_constraint f
+            join pg_class c on c.oid = f.conrelid
+           where f.contype = 'f' and f.confrelid = 'auth.users'::regclass
+             and f.connamespace = 'public'::regnamespace
+             and f.confdeltype <> 'c'
+             and c.relname in ('tasks', 'routines', 'routine_exceptions', 'goals', 'projects',
+                               'bills', 'recurring_expenses', 'savings_goals', 'wellbeing_entries',
+                               'notification_preferences', 'profile', 'ai_action_audit',
+                               'transactions', 'investments', 'milestones', 'inbox_items',
+                               'reminders', 'notices', 'travel_plans', 'location_rules',
+                               'life_areas', 'weekly_capacities', 'time_entries',
+                               'alignment_reviews', 'alignment_item_settings', 'running_timers'))
 
   union all
-  -- Ja jokaisella public-taululla on sellainen: taulu ilman omistajan
-  -- vierasavainta jaisi tilin poistossa jaljelle.
-  select '27', 'omistajuus', 'Jokaisella public-taululla on vierasavain auth.usersiin', '0',
-         (select count(*)::text from pg_class c
-           where c.relnamespace = 'public'::regnamespace and c.relkind = 'r'
-             and not exists (select 1 from pg_constraint f
-                              where f.conrelid = c.oid and f.contype = 'f'
-                                and f.confrelid = 'auth.users'::regclass))
+  -- Ja jokaisella niista on sellainen: taulu ilman omistajan
+  -- vierasavainta jaisi tilin poistossa jaljelle. Puuttuva taulu
+  -- lasketaan myos (sillakaan ei ole avainta).
+  select '27', 'omistajuus', 'Jokaisella migraatioiden 26 taululla on vierasavain auth.usersiin', '0',
+         (select count(*)::text
+            from unnest(array['tasks', 'routines', 'routine_exceptions', 'goals', 'projects',
+                              'bills', 'recurring_expenses', 'savings_goals', 'wellbeing_entries',
+                              'notification_preferences', 'profile', 'ai_action_audit',
+                              'transactions', 'investments', 'milestones', 'inbox_items',
+                              'reminders', 'notices', 'travel_plans', 'location_rules',
+                              'life_areas', 'weekly_capacities', 'time_entries',
+                              'alignment_reviews', 'alignment_item_settings', 'running_timers']) as t(nimi)
+           where not exists (select 1 from pg_constraint f
+                              join pg_class c on c.oid = f.conrelid
+                             where c.relnamespace = 'public'::regnamespace and c.relname = t.nimi
+                               and f.contype = 'f' and f.confrelid = 'auth.users'::regclass))
+
+  union all
+  -- MUUT PUBLIC-TAULUT (esim. Dashboardista luotu): tieto, ei poikkeama.
+  -- Lukumaara ja nimet (rakenne, ei sisaltoa). preflight_0009 on jo
+  -- pysaynyt junan, jos jonkin niista vierasavain auth.usersiin ei ole
+  -- CASCADE.
+  select '28', 'omistajuus', 'Muut public-taulut kuin migraatioiden 26 (INFO, eivat kuulu riveihin 26-27)', 'INFO',
+         (select count(*)::text || coalesce(': ' || string_agg(c.relname::text, ', ' order by c.relname), '')
+            from pg_class c
+           where c.relnamespace = 'public'::regnamespace and c.relkind in ('r', 'p')
+             and c.relname not in ('tasks', 'routines', 'routine_exceptions', 'goals', 'projects',
+                                   'bills', 'recurring_expenses', 'savings_goals', 'wellbeing_entries',
+                                   'notification_preferences', 'profile', 'ai_action_audit',
+                                   'transactions', 'investments', 'milestones', 'inbox_items',
+                                   'reminders', 'notices', 'travel_plans', 'location_rules',
+                                   'life_areas', 'weekly_capacities', 'time_entries',
+                                   'alignment_reviews', 'alignment_item_settings', 'running_timers'))
 
   -- ================================================================
   -- RLS JA OIKEUDET

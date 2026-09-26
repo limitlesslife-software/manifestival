@@ -30,7 +30,7 @@
 --   2. ALTER TABLE ottaa ACCESS EXCLUSIVE -lukon. Jokainen tavoitteen
 --      ja tehtävän luku ja kirjoitus odottaa sen ajan. `lock_timeout`
 --      on siksi olemassa, ja kaikki neljä taulua lukitaan KERRALLA
---      vaiheessa 0a ennen yhtäkään muutosta.
+--      vaiheessa 0c ennen rivien lukua ja ennen yhtäkään muutosta.
 --
 --   3. Uusi CHECK-rajoite validoidaan OLEMASSA OLEVIA RIVEJÄ vastaan.
 --      Jos yksikin rivi rikkoo sen, koko migraatio peruuntuu.
@@ -139,35 +139,20 @@
 begin;
 
 -- ---------------------------------------------------------------------
--- VAIHE 0a: lukitusraja
+-- VAIHE 0a: esiehdot ja uudelleenajon tunnistus — VAIN KATALOGI
 --
--- TÄMÄ ON TÄRKEÄMPI TÄSSÄ MIGRAATIOSSA KUIN AIEMMISSA.
---
--- ALTER TABLE ottaa goals-, tasks- ja projects-tauluihin ACCESS
--- EXCLUSIVE -lukon. Ne ovat tauluja, joita jokainen sovelluksen
--- käynnistys lukee. Ilman rajaa pitkä lukko jäädyttäisi sovelluksen
--- jokaiselta käyttäjältä siksi aikaa.
---
--- KAIKKI LUKOT KERRALLA, KIINTEÄSSÄ JÄRJESTYKSESSÄ (goals, projects,
--- tasks, profile) ja ENNEN YHTÄKÄÄN MUUTOSTA. Jos sovelluksen pyyntö tai
--- avoin editorin välilehti pitää jotakin näistä tauluista, migraatio
--- odottaa tässä lauseessa enintään lock_timeoutin ja peruuntuu ilman,
--- että mitään on ehditty muuttaa. Ilman tätä goals olisi jo muutettu ja
--- lukittuna, kun migraatio jäisi odottamaan tasks-, projects- tai
--- profile-lukkoa, ja vaihteleva lukitusjärjestys voisi lukkiutua
--- sovelluksen kirjoituksen kanssa. Objektien määrä ei muutu.
--- Harjoiteltu: tools/pg-rehearsal (failure:0010-locks).
--- ---------------------------------------------------------------------
-set local lock_timeout = '5s';
-
-lock table public.goals, public.projects, public.tasks, public.profile in access exclusive mode;
-
--- ---------------------------------------------------------------------
--- VAIHE 0b: esiehdot
+-- Nämä tarkistukset lukevat vain järjestelmäkatalogia (sarakkeet,
+-- taulut, rajoitteet, indeksit, liipaisimet, politiikat, palvelimen
+-- versio). Ne eivät lue yhdenkään taulun rivejä eivätkä odota goals-,
+-- projects-, tasks- tai profile-taulun lukkoa. Siksi ne ajetaan ENNEN
+-- lukitusta (vaihe 0c): jo ajettu migraatio ("JO AJETTU"), kesken
+-- jäänyt ajo ja puuttuva edeltäjä kerrotaan heti ja oikealla syyllä,
+-- vaikka sovellus pitäisi jotakin tauluista — eikä vasta lukon
+-- odotuksen jälkeen väärällä syyllä. Mitään ei ole vielä lukittu eikä
+-- muutettu. Objektien määrä (38) ei muutu.
 -- ---------------------------------------------------------------------
 do $$
 declare
-  omistaja  uuid := '2cc00622-f927-4604-a518-361a4328481b'::uuid;
   olemassa  int;
   nimet     text;
 begin
@@ -235,12 +220,7 @@ begin
       current_setting('server_version');
   end if;
 
-  -- 6. Olen oikeassa tietokannassa.
-  if not exists (select 1 from auth.users where id = omistaja) then
-    raise exception 'Hyvaksyttya omistajaa % ei loydy auth.users-taulusta. Vaara projekti?', omistaja;
-  end if;
-
-  -- 7. OSITTAISEN TAI AIEMMAN AJON TUNNISTUS — 38 objektia.
+  -- 6. OSITTAISEN TAI AIEMMAN AJON TUNNISTUS — 38 objektia.
   select count(*) into olemassa from (
     select 1 from pg_tables
       where schemaname = 'public' and tablename = 'milestones'
@@ -346,12 +326,10 @@ begin
     raise exception 'Migraatio 0010 on kesken: % objektia 38:sta on jo olemassa (%).',
       olemassa, nimet;
   end if;
-
-  raise notice 'Esiehdot kunnossa. Omistaja %, 0010:n objekteja 0/38.', omistaja;
 end $$;
 
 -- ---------------------------------------------------------------------
--- VAIHE 0c: touch_updated_at on yhä kovennettu
+-- VAIHE 0b: touch_updated_at on yhä kovennettu — VAIN KATALOGI (pg_proc)
 -- ---------------------------------------------------------------------
 do $$
 declare
@@ -378,7 +356,51 @@ begin
 end $$;
 
 -- ---------------------------------------------------------------------
--- VAIHE 0d: OLEMASSA OLEVA DATA KESTÄÄ UUDET RAJOITTEET
+-- VAIHE 0c: lukitusraja
+--
+-- TÄMÄ ON TÄRKEÄMPI TÄSSÄ MIGRAATIOSSA KUIN AIEMMISSA.
+--
+-- ALTER TABLE ottaa goals-, tasks- ja projects-tauluihin ACCESS
+-- EXCLUSIVE -lukon. Ne ovat tauluja, joita jokainen sovelluksen
+-- käynnistys lukee. Ilman rajaa pitkä lukko jäädyttäisi sovelluksen
+-- jokaiselta käyttäjältä siksi aikaa.
+--
+-- KAIKKI LUKOT KERRALLA, KIINTEÄSSÄ JÄRJESTYKSESSÄ (goals, projects,
+-- tasks, profile), ENNEN ENSIMMÄISTÄ RIVIEN LUKUA (vaiheet 0d–0e) JA
+-- ENNEN YHTÄKÄÄN MUUTOSTA. Vain katalogia lukevat tarkistukset (vaiheet
+-- 0a–0b) ovat jo takana. Jos sovelluksen pyyntö tai avoin editorin
+-- välilehti pitää jotakin näistä tauluista, migraatio odottaa tässä
+-- lauseessa ja peruuntuu ilman, että mitään on ehditty muuttaa. Ilman
+-- tätä goals olisi jo muutettu ja lukittuna, kun migraatio jäisi
+-- odottamaan tasks-, projects- tai profile-lukkoa, ja vaihteleva
+-- lukitusjärjestys voisi lukkiutua sovelluksen kirjoituksen kanssa.
+-- Objektien määrä ei muutu.
+-- Harjoiteltu: tools/pg-rehearsal (failure:0010-locks).
+-- ---------------------------------------------------------------------
+-- 5 s per lukon odotus (lock_timeout koskee jokaista lukkoa erikseen).
+set local lock_timeout = '5s';
+
+lock table public.goals, public.projects, public.tasks, public.profile in access exclusive mode;
+
+-- ---------------------------------------------------------------------
+-- VAIHE 0d: oikea tietokanta
+--
+-- Lukee auth.users-taulun rivin (ei pelkkää katalogia), joten se
+-- ajetaan lukituksen jälkeen.
+-- ---------------------------------------------------------------------
+do $$
+declare
+  omistaja  uuid := '2cc00622-f927-4604-a518-361a4328481b'::uuid;
+begin
+  if not exists (select 1 from auth.users where id = omistaja) then
+    raise exception 'Hyvaksyttya omistajaa % ei loydy auth.users-taulusta. Vaara projekti?', omistaja;
+  end if;
+
+  raise notice 'Esiehdot kunnossa. Omistaja %, 0010:n objekteja 0/38.', omistaja;
+end $$;
+
+-- ---------------------------------------------------------------------
+-- VAIHE 0e: OLEMASSA OLEVA DATA KESTÄÄ UUDET RAJOITTEET
 --
 -- Tämä on se tarkistus, jota aiemmissa migraatioissa ei tarvittu.
 -- Uusi CHECK-rajoite validoidaan olemassa olevia rivejä vastaan, ja
@@ -880,10 +902,10 @@ commit;
 --   MATALA   uudet nullable-sarakkeet, ei täyttöä
 --   MATALA   NOT NULL + DEFAULT ei kirjoita taulua uudelleen (PG11+)
 --   KESKI    lukitus: goals, projects, tasks ja profile lukitaan
---            kerralla vaiheessa 0a (kiinteä järjestys) ajon ajaksi.
+--            kerralla vaiheessa 0c (kiinteä järjestys) ajon ajaksi.
 --            Taulut ovat pieniä, mutta ne ovat myös ne, joita jokainen
 --            sovelluksen käynnistys lukee. Harjoitus: sovelluksen luku
---            odottaa enintään lock_timeoutin verran.
+--            odotti lock_timeoutin verran (5 s per lukon odotus).
 --   KORKEA   `goals_status_check` PUDOTETAAN JA LUODAAN UUDELLEEN.
 --            Transaktion sisällä muut istunnot eivät näe välitilaa, ja
 --            keskeytynyt ajo perutaan kokonaan (rajoite palaa). Vain

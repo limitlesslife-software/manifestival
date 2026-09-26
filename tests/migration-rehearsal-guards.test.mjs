@@ -54,6 +54,29 @@ test('KRIITTINEN F11: 0010 lukitsee goals, projects, tasks, profile kerralla enn
   }
 });
 
+test('KRIITTINEN F11: 0010 tunnistaa uudelleenajon ja puuttuvat esiehdot katalogista ENNEN lukitusta', () => {
+  // "JO AJETTU" ja "kesken" kerrotaan heti ja oikealla syyllä, vaikka
+  // sovellus pitäisi lukkoa — ei vasta lukon odotuksen jälkeen.
+  // Rivien luku (auth.users, goals) tapahtuu lukituksen jälkeen.
+  const c = body('0010');
+  const at = c.indexOf('lock table public.goals, public.projects, public.tasks, public.profile in access exclusive mode;');
+  assert.ok(at !== -1);
+  const before = c.slice(0, at);
+  const after = c.slice(at);
+  for (const needle of ['JO AJETTU', 'on kesken', 'select count(*) into olemassa from (', 'tasks.user_id puuttuu',
+    'Migraatio 0004 puuttuu', 'goals_owner_row_key puuttuu', "current_setting('server_version_num')",
+    'public.touch_updated_at() on SECURITY DEFINER']) {
+    assert.ok(before.includes(needle), `"${needle}" vasta lukituksen jälkeen`);
+    assert.equal(after.includes(needle), false, `"${needle}" myös lukituksen jälkeen`);
+  }
+  // Ennen lukitusta vain katalogia: ei yhdenkään taulun rivejä.
+  assert.equal(/\bfrom (?:public\.\w+|auth\.users)\b/.test(before), false, 'rivien luku ennen lukitusta');
+  assert.ok(after.includes('from auth.users where id = omistaja'), 'omistajan tarkistus lukituksen jälkeen');
+  assert.ok(/from public\.goals\s+where status not in/.test(after), 'datan tarkistus lukituksen jälkeen');
+  // Sama tunnistusluku kuin ennen (38).
+  assert.match(before, /if olemassa = 38 then/);
+});
+
 test('BK-06: 0010 ei väitä keskeytyneen ajon jättävän taulua ilman tilarajoitetta', () => {
   const src = migration('0010');
   assert.equal(/jos migraatio keskeytyy tähän, rajoite on poissa/.test(src), false);

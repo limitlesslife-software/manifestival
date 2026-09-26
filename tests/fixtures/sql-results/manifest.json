@@ -1,0 +1,263 @@
+{
+  "generatedBy": "node tools/pg-rehearsal/sql-result-fixtures.mjs",
+  "generatedAt": "2026-09-26T16:23:05.099Z",
+  "server": {
+    "version": "PostgreSQL 17.10 on x86_64-windows, compiled by msvc-19.44.35226, 64-bit",
+    "versionNum": 170010
+  },
+  "data": "synteettinen tuotannon muotoinen harjoituskanta (prodshape.mjs), ei käyttäjän sisältöä",
+  "git": {
+    "head": "b6423bc173e84e774fea468b72f59a6d200a7256",
+    "branch": "worktree-agent-a1148589afe387fe5",
+    "uncommittedReadFiles": [],
+    "sqlBlobs": {
+      "supabase/preflight/preflight_0009.sql": "5818030a69b0d2b61a4f5bd1a922da86050092f2",
+      "supabase/preflight/preflight_0010.sql": "b9279498e587bdb6609941d28c338415ee5205af",
+      "supabase/preflight/preflight_0011.sql": "3dac36aebaf33c5a57534750531bd6571eaa06d0",
+      "supabase/preflight/preflight_0012.sql": "b4ea1b810b2ab43b3716e4406383849399a9e9c8",
+      "supabase/preflight/preflight_0013.sql": "04aaf286a0e87da2129f330c4ddcfca31891a5d1",
+      "supabase/verify/verify_0009.sql": "470176835858356ecbafd0cef5653fd60ce29961",
+      "supabase/verify/verify_0010.sql": "75cc526992c22b35b03071d1acd00d7b9946d3e3",
+      "supabase/verify/verify_0011.sql": "2f1b8c43f91aa0d44d7bc15a2437b51e9808452f",
+      "supabase/verify/verify_0012.sql": "3d511f251ed96ebb87118a9b5f17e889d7a07b14",
+      "supabase/verify/verify_0013.sql": "7b5b7fdb0c07d250bb523d1794080e3e11974783"
+    }
+  },
+  "files": {
+    "preflight_0009-pass.tsv": {
+      "sql": "supabase/preflight/preflight_0009.sql",
+      "state": "0008",
+      "outcome": "pass",
+      "rows": 19,
+      "fail": 0,
+      "poikkeavia": 0,
+      "decision": "GO",
+      "reasons": []
+    },
+    "preflight_0009-fail.tsv": {
+      "sql": "supabase/preflight/preflight_0009.sql",
+      "state": "0009",
+      "outcome": "fail",
+      "rows": 19,
+      "fail": 2,
+      "poikkeavia": 2,
+      "decision": "STOP",
+      "reasons": [
+        "2 FAIL: 08 bills: maksutietosarakkeita ei vielä ole; 09 Migraation 0009 objekteja ei vielä ole (0/39)",
+        "poikkeavia_yhteensa = 2, odotus 0"
+      ]
+    },
+    "verify_0009-pass.tsv": {
+      "sql": "supabase/verify/verify_0009.sql",
+      "state": "0009",
+      "outcome": "pass",
+      "rows": 34,
+      "fail": 0,
+      "poikkeavia": 0,
+      "decision": "GO",
+      "reasons": []
+    },
+    "verify_0009-fail.tsv": {
+      "sql": "supabase/verify/verify_0009.sql",
+      "state": "0009",
+      "outcome": "fail",
+      "sabotage": "alter table public.transactions drop column date cascade",
+      "rows": 34,
+      "fail": 3,
+      "poikkeavia": 3,
+      "decision": "STOP",
+      "reasons": [
+        "3 FAIL: 02 transactions: odotetut sarakkeet ovat olemassa; 07 transactions.date on date, ei timestamptz; 15 Kolme nimettya indeksia on olemassa",
+        "poikkeavia_yhteensa = 3, odotus 0"
+      ]
+    },
+    "preflight_0010-pass.tsv": {
+      "sql": "supabase/preflight/preflight_0010.sql",
+      "state": "0009",
+      "outcome": "pass",
+      "rows": 22,
+      "fail": 0,
+      "poikkeavia": 0,
+      "decision": "GO",
+      "reasons": []
+    },
+    "preflight_0010-fail.tsv": {
+      "sql": "supabase/preflight/preflight_0010.sql",
+      "state": "0010",
+      "outcome": "fail",
+      "rows": 22,
+      "fail": 1,
+      "poikkeavia": 1,
+      "decision": "STOP",
+      "reasons": [
+        "1 FAIL: 14 Migraation 0010 objekteja ei vielä ole (0/38)",
+        "poikkeavia_yhteensa = 1, odotus 0"
+      ]
+    },
+    "verify_0010-pass.tsv": {
+      "sql": "supabase/verify/verify_0010.sql",
+      "state": "0010",
+      "outcome": "pass",
+      "rows": 46,
+      "fail": 0,
+      "poikkeavia": 0,
+      "decision": "GO",
+      "reasons": []
+    },
+    "verify_0010-fail.tsv": {
+      "sql": "supabase/verify/verify_0010.sql",
+      "state": "0010",
+      "outcome": "fail",
+      "sabotage": "alter table public.milestones drop constraint milestones_goal_fkey",
+      "rows": 46,
+      "fail": 2,
+      "poikkeavia": 2,
+      "decision": "STOP",
+      "reasons": [
+        "2 FAIL: 15 Kolme vierasavainta viittaa kahdella sarakkeella; 17 milestones_goal_fkey on CASCADE",
+        "poikkeavia_yhteensa = 2, odotus 0"
+      ]
+    },
+    "preflight_0011-pass.tsv": {
+      "sql": "supabase/preflight/preflight_0011.sql",
+      "state": "0010",
+      "outcome": "pass",
+      "rows": 17,
+      "fail": 0,
+      "poikkeavia": 0,
+      "decision": "GO",
+      "reasons": []
+    },
+    "preflight_0011-fail.tsv": {
+      "sql": "supabase/preflight/preflight_0011.sql",
+      "state": "0011",
+      "outcome": "fail",
+      "rows": 17,
+      "fail": 1,
+      "poikkeavia": 1,
+      "decision": "STOP",
+      "reasons": [
+        "1 FAIL: 09 Migraation 0011 objekteja ei vielä ole (0/72)",
+        "poikkeavia_yhteensa = 1, odotus 0"
+      ]
+    },
+    "verify_0011-pass.tsv": {
+      "sql": "supabase/verify/verify_0011.sql",
+      "state": "0011",
+      "outcome": "pass",
+      "rows": 64,
+      "fail": 0,
+      "poikkeavia": 0,
+      "decision": "GO",
+      "reasons": []
+    },
+    "verify_0011-fail.tsv": {
+      "sql": "supabase/verify/verify_0011.sql",
+      "state": "0011",
+      "outcome": "fail",
+      "sabotage": "alter table public.location_rules drop column place cascade",
+      "rows": 64,
+      "fail": 3,
+      "poikkeavia": 3,
+      "decision": "STOP",
+      "reasons": [
+        "3 FAIL: 10 location_rules: yhdeksan odotettua saraketta; 14 location_rules: place on tekstia; 25 location_rules: kaksi CHECK-rajoitetta",
+        "poikkeavia_yhteensa = 3, odotus 0"
+      ]
+    },
+    "preflight_0012-pass.tsv": {
+      "sql": "supabase/preflight/preflight_0012.sql",
+      "state": "0011",
+      "outcome": "pass",
+      "rows": 19,
+      "fail": 0,
+      "poikkeavia": 0,
+      "decision": "GO",
+      "reasons": []
+    },
+    "preflight_0012-fail.tsv": {
+      "sql": "supabase/preflight/preflight_0012.sql",
+      "state": "0012",
+      "outcome": "fail",
+      "rows": 19,
+      "fail": 2,
+      "poikkeavia": 2,
+      "decision": "STOP",
+      "reasons": [
+        "2 FAIL: 08 goals.life_area_id -saraketta ei vielä ole; 11 Migraation 0012 objekteja ei vielä ole (0/58)",
+        "poikkeavia_yhteensa = 2, odotus 0"
+      ]
+    },
+    "verify_0012-pass.tsv": {
+      "sql": "supabase/verify/verify_0012.sql",
+      "state": "0012",
+      "outcome": "pass",
+      "rows": 53,
+      "fail": 0,
+      "poikkeavia": 0,
+      "decision": "GO",
+      "reasons": []
+    },
+    "verify_0012-fail.tsv": {
+      "sql": "supabase/verify/verify_0012.sql",
+      "state": "0012",
+      "outcome": "fail",
+      "sabotage": "alter table public.life_areas drop column target_minutes_per_week cascade",
+      "rows": 53,
+      "fail": 3,
+      "poikkeavia": 3,
+      "decision": "STOP",
+      "reasons": [
+        "3 FAIL: 02 life_areas: yksitoista odotettua saraketta; 12 life_areas.target_minutes_per_week on nullable kokonaisluku; 15 life_areas: kuusi CHECK-rajoitetta",
+        "poikkeavia_yhteensa = 3, odotus 0"
+      ]
+    },
+    "preflight_0013-pass.tsv": {
+      "sql": "supabase/preflight/preflight_0013.sql",
+      "state": "0012",
+      "outcome": "pass",
+      "rows": 19,
+      "fail": 0,
+      "poikkeavia": 0,
+      "decision": "GO",
+      "reasons": []
+    },
+    "preflight_0013-fail.tsv": {
+      "sql": "supabase/preflight/preflight_0013.sql",
+      "state": "0013",
+      "outcome": "fail",
+      "rows": 19,
+      "fail": 3,
+      "poikkeavia": 3,
+      "decision": "STOP",
+      "reasons": [
+        "3 FAIL: 06 Edellinen migraatio 0012 on ajettu kokonaan (58 objektia); 07 0012:n alkuperäinen lähderajoite on olemassa (korvataan); 11 Migraation 0013 objekteja ei vielä ole (0/46)",
+        "poikkeavia_yhteensa = 3, odotus 0"
+      ]
+    },
+    "verify_0013-pass.tsv": {
+      "sql": "supabase/verify/verify_0013.sql",
+      "state": "0013",
+      "outcome": "pass",
+      "rows": 33,
+      "fail": 0,
+      "poikkeavia": 0,
+      "decision": "GO",
+      "reasons": []
+    },
+    "verify_0013-fail.tsv": {
+      "sql": "supabase/verify/verify_0013.sql",
+      "state": "0013",
+      "outcome": "fail",
+      "sabotage": "alter table public.running_timers drop column note cascade",
+      "rows": 33,
+      "fail": 2,
+      "poikkeavia": 2,
+      "decision": "STOP",
+      "reasons": [
+        "2 FAIL: 02 running_timers: viisitoista odotettua saraketta; 10 Kaikki 24 uutta rajoitetta ovat olemassa",
+        "poikkeavia_yhteensa = 2, odotus 0"
+      ]
+    }
+  }
+}
