@@ -29,14 +29,15 @@ import { getState, findTask, findRoutine, findProject } from '../state.js';
 import { getDevicePreference, setDevicePreference } from '../../data/preferences.js';
 import { durationOf } from '../../domain/task.js';
 import { formatMinutes, compareLifeAreas } from '../../domain/lifeArea.js';
-import { timerStatus, formatElapsed } from '../../domain/timer.js';
+import { timerStatus, formatElapsed, hasStopPlan } from '../../domain/timer.js';
 import { TIMER_RULES } from '../../domain/alignmentPolicy.js';
 import { OPERATION } from '../../domain/timeEntry.js';
 
 import {
   currentTimer, startTracking, pauseTracking, resumeTracking, stopTracking, cancelTracking,
   logQuickTime, describeTarget, targetOfTimer, announceLogged, loggedMinutesForOccurrence,
-  occurrenceOperationId, nowMs, newOperationId
+  occurrenceOperationId, nowMs, newOperationId,
+  pendingTimer, stopPendingTracking, discardPendingTracking
 } from '../timeTracking.js';
 import { setCompletionHook } from '../actions.js';
 
@@ -44,10 +45,25 @@ const DIALOG_ID = 'timeLogDialog';
 const TICK_MS = 30 * 1000;
 let tickHandle = null;
 
+/** Ajastin vaihtui kesken (toinen laite tai välilehti): mitään ei kirjattu. */
+const TIMER_CHANGED_MESSAGE = 'Ajastin muuttui toisella laitteella; tarkista uudelleen.';
+
 // ------------------------------------------------------ ajastinpalkki
 
 function stateLabel(state) {
+  if (state === 'stopping') return 'Kirjaus kesken';
   return state === 'paused' ? 'Tauolla' : 'Käynnissä';
+}
+
+/**
+ * Näytettävä tila. Kesken jäänyt pysäytys (osa ei tallentunut) näkyy
+ * pysäytyshetken mukaan: kirjattava aika ei enää kasva.
+ */
+function displayStatus(timer, now) {
+  if (!hasStopPlan(timer)) return timerStatus(timer, now);
+  const status = timerStatus(timer, timer.stopAtMs);
+  const seconds = Number.isInteger(timer.overrideMinutes) ? timer.overrideMinutes * 60 : status.elapsedSeconds;
+  return { state: 'stopping', elapsedSeconds: seconds, clockSkew: false };
 }
 
 /** Kulunut aika sanoina ruudunlukijalle: "1 h 5 min". */
@@ -55,19 +71,48 @@ function spokenElapsed(seconds) {
   return formatMinutes(Math.floor(seconds / 60));
 }
 
+/**
+ * Tämän laitteen kirjaamaton ajastus, joka jäi odottamaan, kun toisella
+ * laitteella oli jo ajastin. Ei katoa hiljaa: käyttäjä kirjaa tai hylkää.
+ */
+function pendingHtml(pending, now) {
+  const label = describeTarget(targetOfTimer(pending));
+  const status = displayStatus(pending, now);
+  return `
+    <div class="timer-pending" role="group" aria-label="Kirjaamaton ajastus">
+      <p class="hint">Tälle laitteelle jäi kirjaamaton ajastus: ${escapeHtml(label)}, ${escapeHtml(spokenElapsed(status.elapsedSeconds))}.
+        Toisella laitteella oli samaan aikaan oma ajastin.</p>
+      <div class="timer-actions">
+        <button type="button" class="assist-btn primary" data-timer="pending-log">Tarkista ja kirjaa</button>
+        <button type="button" class="assist-btn danger" data-timer="pending-discard" aria-label="Hylkää kirjaamaton ajastus">Hylkää</button>
+      </div>
+    </div>`;
+}
+
 export function renderTimerBar(now = nowMs()) {
   const bar = maybe('timerBar');
   if (!bar) return;
   const timer = currentTimer();
-  if (!timer) {
+  const pending = pendingTimer();
+  if (!timer && !pending) {
     bar.hidden = true;
     bar.innerHTML = '';
     return;
   }
-  const status = timerStatus(timer, now);
-  const label = describeTarget(targetOfTimer(timer));
   bar.hidden = false;
+  if (!timer) {
+    bar.classList.toggle('is-paused', false);
+    bar.innerHTML = pendingHtml(pending, now);
+    return;
+  }
+  const status = displayStatus(timer, now);
+  const label = describeTarget(targetOfTimer(timer));
   bar.classList.toggle('is-paused', status.state === 'paused');
+  const toggle = status.state === 'stopping' ? ''
+    : status.state === 'paused'
+      ? '<button type="button" class="assist-btn" data-timer="resume">Jatka</button>'
+      : '<button type="button" class="assist-btn" data-timer="pause">Tauko</button>';
+  const stopLabel = status.state === 'stopping' ? 'Yritä kirjausta uudelleen' : 'Pysäytä ja kirjaa';
   bar.innerHTML = `
     <div class="timer-info">
       <span class="timer-state">${escapeHtml(stateLabel(status.state))}</span>
@@ -76,13 +121,12 @@ export function renderTimerBar(now = nowMs()) {
       <span class="visually-hidden" id="timerElapsedText">Kulunut ${escapeHtml(spokenElapsed(status.elapsedSeconds))}</span>
     </div>
     <div class="timer-actions">
-      ${status.state === 'paused'
-        ? '<button type="button" class="assist-btn" data-timer="resume">Jatka</button>'
-        : '<button type="button" class="assist-btn" data-timer="pause">Tauko</button>'}
-      <button type="button" class="assist-btn primary" data-timer="stop">Pysäytä ja kirjaa</button>
+      ${toggle}
+      <button type="button" class="assist-btn primary" data-timer="stop">${stopLabel}</button>
       <button type="button" class="assist-btn danger" data-timer="cancel" aria-label="Hylkää ajastus kirjaamatta">Hylkää</button>
     </div>
-    ${status.clockSkew ? '<p class="hint timer-skew">Laitteen kello on siirtynyt taaksepäin. Kulunutta aikaa ei näytetä negatiivisena.</p>' : ''}`;
+    ${status.clockSkew ? '<p class="hint timer-skew">Laitteen kello on siirtynyt taaksepäin. Kulunutta aikaa ei näytetä negatiivisena.</p>' : ''}
+    ${pending ? pendingHtml(pending, now) : ''}`;
 }
 
 /** Vain kuluneen ajan teksti; ei koske painikkeisiin (fokus säilyy). */
@@ -90,7 +134,7 @@ function tick() {
   const timer = currentTimer();
   const elapsed = maybe('timerElapsed');
   if (!timer || !elapsed) return;
-  const status = timerStatus(timer, nowMs());
+  const status = displayStatus(timer, nowMs());
   elapsed.textContent = formatElapsed(status.elapsedSeconds);
   const spoken = maybe('timerElapsedText');
   if (spoken) spoken.textContent = `Kulunut ${spokenElapsed(status.elapsedSeconds)}`;
@@ -230,17 +274,22 @@ export async function startTimerFor(target, { confirmFn = confirmAction } = {}) 
   return result;
 }
 
-/** Tarkistus pitkälle ajastukselle: vahvista tai korjaa kesto. */
-function openStopReview(totalMinutes) {
+/**
+ * Tarkistus pitkälle (tai kirjaamatta jääneelle) ajastukselle: vahvista
+ * tai korjaa kesto.
+ */
+function openStopReview(totalMinutes, {
+  title = 'Tarkista ajastettu aika',
+  intro = `Ajastin on ollut käynnissä ${formatMinutes(totalMinutes)}. Jos se unohtui päälle, korjaa kesto ennen kirjausta.`
+} = {}) {
   const dialog = dialogElement();
   // Sama sääntö kuin kirjausdialogissa: auki olevaa ei korvata. Ajastin
   // jää käyntiin, eikä mitään kirjata.
   if (dialog.open) return Promise.resolve(null);
   dialog.innerHTML = `
     <form method="dialog" class="confirm-body">
-      <h2 class="confirm-title" id="timeLogTitle">Tarkista ajastettu aika</h2>
-      <p class="confirm-message">Ajastin on ollut käynnissä ${escapeHtml(formatMinutes(totalMinutes))}.
-        Jos se unohtui päälle, korjaa kesto ennen kirjausta.</p>
+      <h2 class="confirm-title" id="timeLogTitle">${escapeHtml(title)}</h2>
+      <p class="confirm-message">${escapeHtml(intro)}</p>
       <label class="field-label" for="timeLogReviewMinutes">Kirjattava aika (minuuttia)</label>
       <!-- Ei ylärajaa eikä 5 min askelta: esitäytetty kesto on mikä tahansa
            kokonaisluku, ja yli viikon unohtunut ajastin ylitti max-arvon —
@@ -266,21 +315,51 @@ function openStopReview(totalMinutes) {
   });
 }
 
-/** Pysäytä ja kirjaa. Pitkä ajastus tarkistetaan ensin. */
-export async function stopAndLog({ reviewFn = openStopReview } = {}) {
-  let result = await stopTracking();
-  if (result.needsReview) {
-    const minutes = await reviewFn(result.totalMinutes);
-    if (minutes === null) return { ok: false, cancelled: true };
-    result = await stopTracking({ overrideMinutes: minutes });
-  }
-  if (result.ok && result.tooShort) {
+function announceStop(result) {
+  if (result.code === 'timer.changed') {
+    showError(TIMER_CHANGED_MESSAGE);
+  } else if (result.ok && result.tooShort) {
     notify('Alle minuutin ajastusta ei kirjattu.', 3000);
   } else if (result.ok && !result.duplicate) {
     // Ilman yhteyttä kirjaus on lähtökorissa: ei väitetä kirjatuksi ennen
     // kuin se on kannassa.
     announceLogged(result.totalMinutes, { queued: Boolean(result.queued) });
   }
+}
+
+/** Pysäytä ja kirjaa. Pitkä ajastus tarkistetaan ensin. */
+export async function stopAndLog({ reviewFn = openStopReview } = {}) {
+  let result = await stopTracking();
+  if (result.needsReview) {
+    const minutes = await reviewFn(result.totalMinutes);
+    if (minutes === null) return { ok: false, cancelled: true };
+    // Korjaus koskee TARKISTETTUA ajastinta: jos dialogin aikana tilalle
+    // tuli toinen (toinen laite tai välilehti), mitään ei kirjata.
+    result = await stopTracking({ overrideMinutes: minutes, expectTimerId: result.timerId });
+  }
+  announceStop(result);
+  return result;
+}
+
+/** Kirjaa tämän laitteen kirjaamaton ajastus: kesto vahvistetaan aina ensin. */
+export async function logPendingTimer({ reviewFn = openStopReview } = {}) {
+  let result = await stopPendingTracking();
+  if (result.needsReview) {
+    const minutes = await reviewFn(result.totalMinutes, {
+      title: 'Kirjaamaton ajastus',
+      intro: `Tämän laitteen ajastus ei ehtinyt tallentua, ja toisella laitteella oli samaan aikaan oma ajastin. Ehdotus on ${formatMinutes(result.totalMinutes)}; korjaa kesto ennen kirjausta.`
+    });
+    if (minutes === null) return { ok: false, cancelled: true };
+    result = await stopPendingTracking({ overrideMinutes: minutes, expectTimerId: result.timerId });
+  }
+  announceStop(result);
+  return result;
+}
+
+/** Hylkää kirjaamaton ajastus (vahvistus kysytään). */
+export async function discardPendingTimer({ confirmFn = confirmAction } = {}) {
+  const result = await discardPendingTracking({ confirmFn });
+  if (result.code === 'timer.changed') showError(TIMER_CHANGED_MESSAGE);
   return result;
 }
 
@@ -372,7 +451,13 @@ async function onTimerAction(event) {
       case 'pause': await pauseTracking(); break;
       case 'resume': await resumeTracking(); break;
       case 'stop': await stopAndLog(); break;
-      case 'cancel': await cancelTracking(); break;
+      case 'cancel': {
+        const result = await cancelTracking();
+        if (result.code === 'timer.changed') showError(TIMER_CHANGED_MESSAGE);
+        break;
+      }
+      case 'pending-log': await logPendingTimer(); break;
+      case 'pending-discard': await discardPendingTimer(); break;
       default: break;
     }
   } finally {

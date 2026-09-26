@@ -12,7 +12,7 @@ import { setUser, clearUser, sessionSnapshot } from '../src/data/session.js';
 import { setClient } from '../src/data/client.js';
 import { fakeClient } from './helpers/gates.mjs';
 import {
-  resetState, getState, setTasks, setRoutines, setProjects
+  resetState, getState, setTasks, setRoutines, setProjects, setDomainLoadStatus
 } from '../src/app/state.js';
 import { clearLocalUserData, toggleComplete, setCompletionHook } from '../src/app/actions.js';
 import {
@@ -272,6 +272,11 @@ test('nopea kirjaus: sama operaatio kahdesti = yksi rivi', async () => {
 
 test('kohde vain omasta tilasta: tuntematon tehtävä ei päädy kirjaukseen', () => {
   assert.equal(entryFieldsFor({ kind: 'task', id: 'toisen-kayttajan' }).taskId, null);
+  // UUSI SÄÄNTÖ (offline F2): "Poistettu kohde" vasta, kun tehtävät on
+  // ladattu. Ennen latausta laitteelta palautetun ajastimen kohde on vasta
+  // tulossa, ei poistettu (ks. suunta-timer-races.test.mjs).
+  assert.equal(describeTarget({ kind: 'task', id: 'poistettu' }), 'Ladataan kohdetta…');
+  setDomainLoadStatus('tasks', true);
   assert.equal(describeTarget({ kind: 'task', id: 'poistettu' }), 'Poistettu kohde');
 });
 
@@ -459,7 +464,12 @@ test('REGRESSIO: offline-pysäytetty ajastin ei herää henkiin kannasta latauks
   await new Promise(resolve => setImmediate(resolve));
   assert.ok(repo.removed.filter(id => id === timer.id).length >= 2, 'poisto yritetään uudelleen');
   assert.equal(repo.rows.has(timer.id), false, 'uusinta poisti rivin kannasta');
-  assert.deepEqual(loadTombstones(USER_A.id), [], 'hautakivi siivotaan onnistuneen poiston jälkeen');
+  // UUSI SÄÄNTÖ (offline F1): onnistunut poisto ei yksin pura hautakiveä,
+  // koska ennen poistoa alkanut lataus voi yhä palauttaa rivin. Hautakivi
+  // puretaan, kun seuraava (tuore) lista vahvistaa rivin puuttuvan.
+  assert.deepEqual(loadTombstones(USER_A.id), [timer.id], 'hautakivi odottaa kannan vahvistusta');
+  adoptLoadedTimers([...repo.rows.values()]);
+  assert.deepEqual(loadTombstones(USER_A.id), [], 'hautakivi siivotaan, kun kannan lista vahvistaa poiston');
 });
 
 test('REGRESSIO: offline-tauko ei muutu työajaksi latauksessa (laitteen kopio voittaa samalle ajastimelle)', async () => {

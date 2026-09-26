@@ -405,12 +405,18 @@ export async function logTime(input, { silent = false } = {}) {
   const entry = normalizeTimeEntry({ ...input, id, operationId: input?.operationId || `log:${id}` });
   const { valid, errors } = validateTimeEntry(entry);
   if (!valid) return { ok: false, errors };
-  // Omistajuus: vain käyttäjän omassa tilassa oleva kohde kelpaa.
-  if (entry.lifeAreaId && !findLifeArea(entry.lifeAreaId)) entry.lifeAreaId = null;
-  if (entry.taskId && !findTask(entry.taskId)) entry.taskId = null;
-  if (entry.goalId && !findGoal(entry.goalId)) entry.goalId = null;
-  if (entry.projectId && !findProject(entry.projectId)) entry.projectId = null;
-  if (entry.routineId && !findRoutine(entry.routineId)) {
+  // Omistajuus: vain käyttäjän omassa tilassa oleva kohde kelpaa. Viite
+  // pudotetaan kuitenkin vasta, kun kokoelma on ladattu tässä istunnossa:
+  // laitteelta palautettu ajastin voidaan pysäyttää ennen latausta (tai
+  // offline-käynnistyksessä ilman sitä), eikä kohde ole silloin poistettu
+  // vaan vasta tulossa. Kannan viiteavaimet (user_id, kohde) ja kirjoittajan
+  // irrotus (timeEntryWriter, 23503) suojaavat silloin omistajuuden.
+  const loaded = domain => getState().dataLoadStatus?.[domain]?.lastSuccessAt != null;
+  if (entry.lifeAreaId && loaded('lifeAreas') && !findLifeArea(entry.lifeAreaId)) entry.lifeAreaId = null;
+  if (entry.taskId && loaded('tasks') && !findTask(entry.taskId)) entry.taskId = null;
+  if (entry.goalId && loaded('goals') && !findGoal(entry.goalId)) entry.goalId = null;
+  if (entry.projectId && loaded('projects') && !findProject(entry.projectId)) entry.projectId = null;
+  if (entry.routineId && loaded('routines') && !findRoutine(entry.routineId)) {
     entry.routineId = null;
     entry.occurrenceDate = null;
   }

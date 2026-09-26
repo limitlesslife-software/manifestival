@@ -86,7 +86,7 @@ import {
   setLifeAreas, setWeeklyCapacities, setTimeEntries, setAlignmentReviews,
   setAlignmentItemSettings, removeItemSettingsFromState
 } from './state.js';
-import { adoptLoadedTimers } from './timerState.js';
+import { adoptLoadedTimers, timerMutationSeq } from './timerState.js';
 import {
   loadPreferences as loadNotificationPreferences,
   clearPreferences as clearNotificationPreferences
@@ -178,6 +178,9 @@ function applyLoadResult(domain, result, setter) {
  */
 export async function loadUserData() {
   const startedIn = sessionSnapshot();
+  // Ajastimen muutos kesken latauksen (esim. pysäytys paluun päivityksen
+  // aikana): ennen sitä luettu lista ei saa herättää ajastinta henkiin.
+  const timerSeq = timerMutationSeq();
 
   const [tasksResult, profileResult, routinesResult, exceptionsResult,
     goalsResult, projectsResult, wellbeingResult, preferencesResult,
@@ -269,7 +272,7 @@ export async function loadUserData() {
     // Suunta 2 (0013). Ajastin: kannan rivi voittaa laitteen kopion
     // (src/app/timeTracking.js adoptTimer), joten lataus vain asettaa listan.
     applyLoadResult('alignmentItemSettings', itemSettingsResult, setAlignmentItemSettings),
-    applyLoadResult('runningTimers', timersResult, timers => adoptLoadedTimers(timers))
+    applyLoadResult('runningTimers', timersResult, timers => adoptLoadedTimers(timers, { sinceSeq: timerSeq }))
   ];
 
   // Yksittäiset kokoelmavirheet kirjautuvat konsoliin (applyLoadResult) ja

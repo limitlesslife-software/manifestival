@@ -15,7 +15,7 @@ import { getDevicePreference, clearDevicePreferences } from '../data/preferences
 import { subscribe, resetState, setViewDate, setWeekStart, getState } from './state.js';
 import { loadUserData, clearLocalUserData } from './actions.js';
 import { renderTimerBar, initTimeLog, closeTimeLogDialog } from './views/timeLog.js';
-import { restoreLocalTimer } from './timerState.js';
+import { restoreLocalTimer, initTimerCrossTabSync, stopTimerCrossTabSync } from './timerState.js';
 import { flushTimeOutbox } from './alignment.js';
 import { createReconnectController } from './reconnect.js';
 import { initAuth, showAuthGate, hideAuthGate } from './auth.js';
@@ -210,6 +210,9 @@ async function onSignedIn() {
   // hukkaa kulunutta aikaa, eikä toisen käyttäjän ajastin osu tähän
   // (avain ja sisältö ovat käyttäjäkohtaisia).
   restoreLocalTimer();
+  // Toisen välilehden käynnistys ja pysäytys näkyvät tässäkin heti: kaksi
+  // välilehteä ei käynnistä rinnakkaisia ajastimia eikä pyyhi toistensa kopiota.
+  initTimerCrossTabSync();
 
   // Päivä ja viikko nollataan kirjautuessa: sovellus avautuu aina tähän
   // päivään, ei siihen mihin edellinen istunto jäi.
@@ -306,6 +309,7 @@ function onSignedOut() {
   resetPlanning();
   closeAreaForm();
   closeTimeLogDialog();
+  stopTimerCrossTabSync();
   resetDirectionView();
   resetAppliedAdjustments();
   clearIdempotencyKeys();

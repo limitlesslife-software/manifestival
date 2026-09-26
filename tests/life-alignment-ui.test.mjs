@@ -16,7 +16,7 @@ import { freezeLocalDate } from './helpers/clock.mjs';
 import { setUser, clearUser } from '../src/data/session.js';
 import { setClient } from '../src/data/client.js';
 import { fakeClient } from './helpers/gates.mjs';
-import { resetState, getState, setGoals, setTasks } from '../src/app/state.js';
+import { resetState, getState, setGoals, setTasks, setDomainLoadStatus } from '../src/app/state.js';
 import { clearLocalUserData, createGoal } from '../src/app/actions.js';
 import { lifeAreasRepo } from '../src/data/collectionsRepo.js';
 import { normalizeGoal } from '../src/domain/goal.js';
@@ -294,6 +294,9 @@ test('toteuma: kirjaus ja poisto; valmiiksi merkintä ei tuota toteumaa', async 
 
   const bad = await logTime({ entryDate: THURSDAY, minutes: 0 });
   assert.ok(bad.errors.minutes);
+  // Viite pudotetaan, kun tehtävät on LADATTU (ennen latausta kohde voi
+  // olla vasta tulossa: laitteelta palautettu ajastin, offline F2).
+  setDomainLoadStatus('tasks', true);
   const { entry } = await logTime({ entryDate: THURSDAY, minutes: 45, taskId: 'olematon', note: 'kirjoitin' });
   assert.equal(entry.taskId, null, 'olematon tehtäväviite pudotetaan');
   renderDirection();

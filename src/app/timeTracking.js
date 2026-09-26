@@ -16,17 +16,25 @@
 //   3. Sama operaatio kerran. Pysäytyksen kirjauksilla on ajastimen
 //      tunnisteesta johdettu operaatiotunniste, joten kaksoisklikkaus,
 //      uusinta tai toisen laitteen pysäytys ei tuota kahta kirjausta.
+//      Pysäytyshetki tallentuu laitteelle ennen ensimmäistä kirjausta,
+//      joten osittain epäonnistunut pysäytys uusitaan täsmälleen samoina
+//      osina, ja vain puuttuvat osat kirjataan.
+//
+// Käyttäjä ja istunto otetaan talteen ENNEN jokaista awaitia: kesken
+// vaihtunut käyttäjä ei saa toisen ajastinta, kirjauksia eikä hautakiviä.
+// Laitteen kopio on välilehtien yhteinen: toisen välilehden pysäyttämää
+// ajastinta ei pysäytetä, keskeytetä eikä käynnistetä uudelleen.
 
 import { getState, findTask, findRoutine, findProject, findGoal, findLifeArea,
   upsertItemSettingsInState, removeItemSettingsFromState } from './state.js';
-import { runningTimersRepo, alignmentItemSettingsRepo } from '../data/collectionsRepo.js';
+import { alignmentItemSettingsRepo } from '../data/collectionsRepo.js';
 import { newTaskId } from '../lib/rows.js';
 import { fmtISO } from '../lib/datetime.js';
 import { logEvent } from '../lib/logger.js';
 import { showError, notify } from '../ui/toast.js';
 import { confirmAction } from '../ui/confirm.js';
 import {
-  startTimer, pauseTimer, resumeTimer, stopTimer, timerStatus, TIMER_TARGET
+  startTimer, pauseTimer, resumeTimer, stopTimer, timerStatus, hasStopPlan, TIMER_TARGET
 } from '../domain/timer.js';
 import { formatMinutes } from '../domain/lifeArea.js';
 import {
@@ -36,9 +44,13 @@ import { classifyError, ERROR_CLASS } from '../domain/offlineQueue.js';
 import {
   normalizeItemSettings, validateItemSettings, isEmptySettings, settingsKey, indexItemSettings
 } from '../domain/alignmentItemSettings.js';
-import { currentTimer, persistTimerLocally, setTimerStateRepo } from './timerState.js';
+import {
+  currentTimer, persistTimerLocally, clearTimerLocally, recordStopPlan, setTimerStateRepo,
+  syncTimerToRepo, deviceHoldsTimer, deviceTimer, syncStateFromDevice, reloadRunningTimers,
+  pendingTimers, updatePendingTimer, removePendingTimer
+} from './timerState.js';
 import { getUser, sessionSnapshot, isSameSession } from '../data/session.js';
-import { addTombstone, clearTombstone } from '../data/timerStore.js';
+import { loadTombstones } from '../data/timerStore.js';
 import { logTime } from './alignment.js';
 
 export { currentTimer } from './timerState.js';
@@ -102,9 +114,24 @@ export function targetOfTimer(timer) {
   }
 }
 
+/** Kohteen laji -> kokoelma, jonka latausstatus kertoo, tunnetaanko kohde. */
+const TARGET_COLLECTION = Object.freeze({
+  task: 'tasks', routine: 'routines', project: 'projects', goal: 'goals', life_area: 'lifeAreas'
+});
+
+/** Onko kohteen kokoelma ladattu onnistuneesti tässä istunnossa? */
+function collectionLoaded(kind) {
+  const domain = TARGET_COLLECTION[kind];
+  const status = domain ? getState().dataLoadStatus?.[domain] : null;
+  return Boolean(status) && status.lastSuccessAt != null;
+}
+
 /**
  * Kohteen nimi käyttöliittymään. EI KOSKAAN lokiin: otsikot ja
  * aluenimet ovat käyttäjän sisältöä.
+ *
+ * Laitteelta palautettu ajastin näkyy ennen latausta: silloin kohde ei ole
+ * "poistettu" vaan vasta tulossa, ja nimi kertoo sen.
  */
 export function describeTarget(target) {
   if (!target) return 'Yleinen ajanseuranta';
@@ -123,7 +150,8 @@ export function describeTarget(target) {
   if (target.kind === 'none' && target.lifeAreaId) {
     return findLifeArea(target.lifeAreaId)?.name || 'Yleinen ajanseuranta';
   }
-  return target.kind && target.kind !== 'none' ? 'Poistettu kohde' : 'Yleinen ajanseuranta';
+  if (!target.kind || target.kind === 'none') return 'Yleinen ajanseuranta';
+  return collectionLoaded(target.kind) ? 'Poistettu kohde' : 'Ladataan kohdetta…';
 }
 
 // ------------------------------------------------------------ ajastin
@@ -132,11 +160,8 @@ function isUniqueViolation(error) {
   return classifyError(error) === ERROR_CLASS.DUPLICATE;
 }
 
-/** Ajastimen repositorio; testit voivat korvata sen tekokannalla. */
-let timerRepo = runningTimersRepo;
-
+/** Ajastimen repositorio (src/app/timerState.js); testit voivat korvata sen tekokannalla. */
 export function setTimerRepoForTests(repo) {
-  timerRepo = repo || runningTimersRepo;
   setTimerStateRepo(repo);
 }
 
@@ -145,32 +170,24 @@ function sessionUserId() {
   return user && user.id ? String(user.id) : null;
 }
 
-async function syncTimerToRepo(action, timer) {
-  if (!timerRepo.isPersistent()) return { ok: true };
-  const result = action === 'insert' ? await timerRepo.insert(timer)
-    : action === 'update' ? await timerRepo.update(timer)
-      : await timerRepo.remove(timer.id);
-  if (action === 'remove') {
-    // Poisto ei ehtinyt kantaan (verkko): muistetaan laitteella, ettei
-    // latauksessa palaava rivi herätä pysäytettyä ajastinta henkiin.
-    const id = sessionUserId();
-    if (id) {
-      if (result && result.ok) clearTombstone(id, timer.id);
-      else addTombstone(id, timer.id);
-    }
-  }
-  return result;
-}
-
 /**
  * Käynnistä ajastin kohteelle.
  *
  * @returns {Promise<{ok: boolean, timer?: object, code?: string, message?: string}>}
  */
 export async function startTracking(target = { kind: 'none' }, { now = nowMs() } = {}) {
-  const existing = currentTimer();
+  const owner = sessionUserId();
+  const session = sessionSnapshot();
+  // Toisen välilehden ajastin on laitteella, vaikka tämän välilehden tila
+  // ei sitä vielä tuntisi: kaksi rinnakkaista ajastinta laskisi saman ajan
+  // kahdesti, ja jälkimmäinen pyyhkisi ensimmäisen laitteen kopion.
+  const device = owner ? deviceTimer(owner) : null;
+  const existing = currentTimer() || device;
   const started = startTimer({ id: newTaskId(), target, nowMs: now, existing });
-  if (!started.ok) return started;
+  if (!started.ok) {
+    if (!currentTimer() && device) syncStateFromDevice(owner);
+    return started;
+  }
 
   // Kohde omasta tilasta; tuntematon -> yleinen.
   const fields = entryFieldsFor(target);
@@ -178,122 +195,280 @@ export async function startTracking(target = { kind: 'none' }, { now = nowMs() }
   if (target.kind && target.kind !== 'none' && !Object.values(fields).some(Boolean)) {
     timer.targetKind = TIMER_TARGET.NONE;
   }
-  persistTimerLocally(timer);
+  persistTimerLocally(timer, { owner, synced: false, dirty: true });
 
-  const result = await syncTimerToRepo('insert', timer);
+  let result = await syncTimerToRepo('insert', timer, { owner });
+  if (!result.ok && isUniqueViolation(result.error) && owner && isSameSession(session)) {
+    // Kannassa voi olla tämän laitteen OMA pysäytetty ajastin, jonka
+    // poisto ei ehtinyt perille (hautakivi). Se ei ole "toisen laitteen"
+    // ajastin: haudatut rivit poistetaan ja lisäys yritetään kerran.
+    const buried = loadTombstones(owner).filter(id => id !== timer.id);
+    if (buried.length > 0) {
+      for (const id of buried) await syncTimerToRepo('remove', { id }, { owner });
+      result = await syncTimerToRepo('insert', timer, { owner });
+    }
+  }
   if (!result.ok && isUniqueViolation(result.error)) {
     // YKSI AJASTIN KÄYTTÄJÄÄ KOHTI: toisella laitteella on jo ajastin.
-    persistTimerLocally(null);
+    // Vain tämä ajastin siivotaan, ja vain sen omistajan avaimelta.
+    clearTimerLocally(timer.id, { owner });
+    if (isSameSession(session)) reloadRunningTimers().catch(() => { /* näkyy seuraavassa latauksessa */ });
     return { ok: false, code: 'timer.already_running_elsewhere',
       message: 'Ajastin on jo käynnissä toisella laitteella. Pysäytä se ensin.' };
   }
-  // Muu virhe (verkko): ajastin pysyy laitteella, aika ei katoa.
+  // Muu virhe (verkko): ajastin pysyy laitteella, aika ei katoa, ja kanta
+  // saa sen seuraavassa latauksessa (src/app/timerState.js).
   logEvent('alignment.timer_started', { target: timer.targetKind });
   return { ok: true, timer };
 }
 
-export async function pauseTracking({ now = nowMs() } = {}) {
+/**
+ * Ajastin, jota tauko, jatko tai hylkäys koskee: laitteen kopio on
+ * välilehtien yhteinen totuus. Jos toinen välilehti on jo pysäyttänyt tai
+ * vaihtanut ajastimen, tila korjataan eikä mitään kirjoiteta.
+ */
+function heldTimer(owner) {
   const timer = currentTimer();
-  if (!timer) return { ok: false, code: 'timer.none' };
+  if (!timer) return { error: { ok: false, code: 'timer.none' } };
+  if (!deviceHoldsTimer(timer, owner)) {
+    syncStateFromDevice(owner);
+    return { error: { ok: false, code: 'timer.changed' } };
+  }
+  return { timer: deviceTimer(owner) || timer };
+}
+
+export async function pauseTracking({ now = nowMs() } = {}) {
+  const owner = sessionUserId();
+  const { timer, error } = heldTimer(owner);
+  if (error) return error;
+  if (hasStopPlan(timer)) return { ok: false, code: 'timer.stopping' };
   if (timer.pausedAt) return { ok: true, timer, unchanged: true };
   const paused = pauseTimer(timer, now);
-  persistTimerLocally(paused);
-  await syncTimerToRepo('update', paused);
+  persistTimerLocally(paused, { owner, dirty: true });
+  await syncTimerToRepo('update', paused, { owner });
   return { ok: true, timer: paused };
 }
 
 export async function resumeTracking({ now = nowMs() } = {}) {
-  const timer = currentTimer();
-  if (!timer) return { ok: false, code: 'timer.none' };
+  const owner = sessionUserId();
+  const { timer, error } = heldTimer(owner);
+  if (error) return error;
+  if (hasStopPlan(timer)) return { ok: false, code: 'timer.stopping' };
   if (!timer.pausedAt) return { ok: true, timer, unchanged: true };
   const resumed = resumeTimer(timer, now);
-  persistTimerLocally(resumed);
-  await syncTimerToRepo('update', resumed);
+  persistTimerLocally(resumed, { owner, dirty: true });
+  await syncTimerToRepo('update', resumed, { owner });
   return { ok: true, timer: resumed };
 }
 
-/** Pysäytys käynnissä: toinen painallus ei tee mitään. */
-let stopping = null;
+/**
+ * Pysäytys käynnissä: toinen painallus ei tee mitään. Avain on käyttäjä
+ * (ja paikka), joten edellisen käyttäjän kesken jäänyt pysäytys ei tee
+ * seuraavan käyttäjän pysäytyksestä "kaksoiskappaletta".
+ */
+const stopping = new Map();
+
+async function exclusive(key, work) {
+  if (stopping.has(key)) return { ok: true, duplicate: true };
+  const run = work();
+  stopping.set(key, run);
+  try {
+    return await run;
+  } finally {
+    if (stopping.get(key) === run) stopping.delete(key);
+  }
+}
+
+/** Käynnissä oleva ajastin: suunnitelma laitteelle, siivous tilasta, laitteelta ja kannasta. */
+const RUNNING_SLOT = Object.freeze({
+  savePlan: (timer, owner) => recordStopPlan(timer, { owner }),
+  async release(timer, owner) {
+    clearTimerLocally(timer.id, { owner });
+    await syncTimerToRepo('remove', timer, { owner });
+  }
+});
+
+/** Päätöstä odottava ajastin: se ei ole kannassa (kannassa on toisen laitteen ajastin). */
+const PENDING_SLOT = Object.freeze({
+  savePlan: (timer, owner) => updatePendingTimer(timer, { owner }),
+  async release(timer, owner) {
+    removePendingTimer(timer.id, { owner });
+  }
+});
+
+/**
+ * Pysäytyksen ydin: laske osat, tallenna suunnitelma, kirjaa puuttuvat
+ * osat ja siivoa ajastin vasta, kun JOKAINEN osa on tallennettu tai
+ * jonotettu.
+ */
+async function finishStop(timer, { now, overrideMinutes, owner, session, slot }) {
+  const planned = hasStopPlan(timer);
+  // Sama ajastin on jo pysäytetty muualla (esim. kannasta palannut rivi):
+  // aika on kirjattu, ajastin vain siivotaan. Ei toista kirjausta. Oma
+  // keskeneräinen pysäytys tunnistetaan suunnitelmasta, eikä sitä ohiteta.
+  if (!planned && entriesForOperation(getState().timeEntries, OPERATION.timer(timer.id)).length > 0) {
+    await slot.release(timer, owner);
+    return { ok: true, duplicate: true, entries: [], totalMinutes: 0 };
+  }
+  const at = planned ? timer.stopAtMs : now;
+  const override = planned ? timer.overrideMinutes ?? null : overrideMinutes;
+  const result = stopTimer(timer, at, { overrideMinutes: override });
+  if (!result.ok) return { ok: false, code: 'timer.invalid' };
+  if (result.needsReview) {
+    return { ok: false, needsReview: true, totalMinutes: result.totalMinutes, timerId: timer.id };
+  }
+  if (result.tooShort) {
+    await slot.release(timer, owner);
+    return { ok: true, tooShort: true, entries: [], totalMinutes: 0 };
+  }
+
+  // Pysäytyshetki ja kesto talteen ENNEN ensimmäistä kirjausta: uusinta
+  // (myös uudelleenlatauksen jälkeen) laskee samat osat ja tunnisteet.
+  let plan = planned ? timer : { ...timer, stopAtMs: at, overrideMinutes: override, loggedOperationIds: [] };
+  if (!planned) slot.savePlan(plan, owner);
+
+  const saved = [];
+  let queued = false;
+  for (const entry of result.entries) {
+    if ((plan.loggedOperationIds || []).includes(entry.operationId)) continue;
+    if (!isSameSession(session)) return { ok: false, code: 'timer.session_changed', entries: saved };
+    const one = await logTime(entry, { silent: true });
+    if (!one.ok) {
+      // Osa ei tallentunut eikä jonottunut: ajastin ja suunnitelma jäävät,
+      // jotta käyttäjä voi yrittää uudelleen. Uusinta kirjaa vain puuttuvat
+      // osat (sama suunnitelma, samat operaatiotunnisteet).
+      showError('Ajan kirjaus ei onnistunut. Ajastin on yhä tallessa; yritä uudelleen.');
+      return { ok: false, code: 'timer.log_failed', entries: saved, totalMinutes: result.totalMinutes };
+    }
+    // Kirjattu osa muistiin omistajan laitteelle (ei tilaan, jos käyttäjä vaihtui).
+    plan = { ...plan, loggedOperationIds: [...(plan.loggedOperationIds || []), entry.operationId] };
+    slot.savePlan(plan, owner);
+    if (one.entry) saved.push(one.entry);
+    if (one.queued) queued = true;
+  }
+  if (!isSameSession(session)) return { ok: false, code: 'timer.session_changed', entries: saved };
+  await slot.release(timer, owner);
+  logEvent('alignment.timer_stopped', { minutes: result.totalMinutes, parts: result.entries.length });
+  return { ok: true, entries: saved, totalMinutes: result.totalMinutes, queued };
+}
 
 /**
  * Pysäytä ja kirjaa.
  *
- * Yli 12 tunnin ajastus palauttaa `needsReview`: käyttäjä vahvistaa tai
- * korjaa keston (overrideMinutes) ennen kuin mitään kirjataan.
+ * Yli 12 tunnin ajastus palauttaa `needsReview` (ja `timerId`): käyttäjä
+ * vahvistaa tai korjaa keston (overrideMinutes) ennen kuin mitään
+ * kirjataan. `expectTimerId` varmistaa, että korjaus koskee samaa
+ * ajastinta, joka tarkistettiin — ei dialogin aikana vaihtunutta.
  *
  * @returns {Promise<{ok: boolean, entries?: Array, totalMinutes?: number,
- *   tooShort?: boolean, needsReview?: boolean, duplicate?: boolean}>}
+ *   tooShort?: boolean, needsReview?: boolean, duplicate?: boolean, code?: string}>}
  */
-export async function stopTracking({ now = nowMs(), overrideMinutes = null } = {}) {
-  if (stopping) return { ok: true, duplicate: true };
-  const timer = currentTimer();
-  if (!timer) return { ok: false, code: 'timer.none' };
+export async function stopTracking({ now = nowMs(), overrideMinutes = null, expectTimerId = null } = {}) {
+  const owner = sessionUserId();
+  const key = `run:${owner || ''}`;
+  if (stopping.has(key)) return { ok: true, duplicate: true };
+  const current = currentTimer();
+  if (!current) return { ok: false, code: 'timer.none' };
+  if (expectTimerId !== null && current.id !== String(expectTimerId)) return { ok: false, code: 'timer.changed' };
 
   // Istunto talteen: jos käyttäjä vaihtuu kesken pysäytyksen, loppuja
   // osia ei kirjata toisen käyttäjän nimiin eikä hänen ajastintaan poisteta.
   const session = sessionSnapshot();
-  stopping = (async () => {
-    // Sama ajastin on jo pysäytetty (esim. kannasta palannut rivi):
-    // aika on kirjattu, ajastin vain siivotaan. Ei toista kirjausta.
-    if (entriesForOperation(getState().timeEntries, OPERATION.timer(timer.id)).length > 0) {
-      persistTimerLocally(null);
-      await syncTimerToRepo('remove', timer);
+  return exclusive(key, async () => {
+    // Toinen välilehti on jo pysäyttänyt tämän ajastimen (laitteen kopio
+    // puuttuu tai on eri): aika on kirjattu siellä. Ei toista kirjausta.
+    if (!deviceHoldsTimer(current, owner)) {
+      syncStateFromDevice(owner);
       return { ok: true, duplicate: true, entries: [], totalMinutes: 0 };
     }
-    const result = stopTimer(timer, now, { overrideMinutes });
-    if (!result.ok) return { ok: false, code: 'timer.invalid' };
-    if (result.needsReview) {
-      return { ok: false, needsReview: true, totalMinutes: result.totalMinutes };
-    }
-    if (result.tooShort) {
-      persistTimerLocally(null);
-      await syncTimerToRepo('remove', timer);
-      return { ok: true, tooShort: true, entries: [], totalMinutes: 0 };
-    }
-
-    const saved = [];
-    let queued = false;
-    for (const entry of result.entries) {
-      if (!isSameSession(session)) return { ok: false, code: 'timer.session_changed', entries: saved };
-      const one = await logTime(entry, { silent: true });
-      if (!one.ok) {
-        // Kirjaus ei tallentunut eikä jonottunut: ajastin jää, jotta
-        // käyttäjä voi yrittää uudelleen. Jo tallennetut osat eivät
-        // monistu uusinnassa (sama operaatiotunniste).
-        showError('Ajan kirjaus ei onnistunut. Ajastin on yhä tallessa; yritä uudelleen.');
-        return { ok: false, entries: saved, totalMinutes: result.totalMinutes };
-      }
-      saved.push(one.entry);
-      if (one.queued) queued = true;
-    }
-    if (!isSameSession(session)) return { ok: false, code: 'timer.session_changed', entries: saved };
-    persistTimerLocally(null);
-    await syncTimerToRepo('remove', timer);
-    logEvent('alignment.timer_stopped', { minutes: result.totalMinutes, parts: saved.length });
-    return { ok: true, entries: saved, totalMinutes: result.totalMinutes, queued };
-  })();
-
-  try {
-    return await stopping;
-  } finally {
-    stopping = null;
-  }
+    // Laitteen kopio sisältää toisen välilehden mahdollisesti aloittaman
+    // suunnitelman ja jo kirjatut osat.
+    const timer = deviceTimer(owner) || current;
+    return finishStop(timer, { now, overrideMinutes, owner, session, slot: RUNNING_SLOT });
+  });
 }
 
 /** Hylkää ajastus: mitään ei kirjata. Kysyy vahvistuksen. */
 export async function cancelTracking({ now = nowMs(), confirmFn = confirmAction } = {}) {
+  const owner = sessionUserId();
+  const session = sessionSnapshot();
   const timer = currentTimer();
   if (!timer) return { ok: false, code: 'timer.none' };
-  const status = timerStatus(timer, now);
+  const status = timerStatus(timer, hasStopPlan(timer) ? timer.stopAtMs : now);
+  // Kesken jäänyt pysäytys: jo tallennetut osat säilyvät, vain loppu hylätään.
+  const partial = hasStopPlan(timer) && (timer.loggedOperationIds || []).length > 0;
   const accepted = await confirmFn({
     title: 'Hylätäänkö ajastus?',
-    message: `Kulunutta aikaa (${formatMinutes(Math.round(status.elapsedSeconds / 60))}) ei kirjata.`,
+    message: partial
+      ? 'Osa ajasta on jo kirjattu, ja se säilyy. Loppua ei kirjata.'
+      : `Kulunutta aikaa (${formatMinutes(Math.round(status.elapsedSeconds / 60))}) ei kirjata.`,
     confirmLabel: 'Hylkää ajastus',
     destructive: true
   });
   if (!accepted) return { ok: true, cancelled: false };
-  persistTimerLocally(null);
-  await syncTimerToRepo('remove', timer);
+  // Vahvistus odotti käyttäjää: istunto tai ajastin on voinut vaihtua sillä
+  // välin. Hylkäys koskee vain sitä ajastinta, josta kysyttiin.
+  if (!isSameSession(session)) return { ok: false, code: 'timer.session_changed' };
+  const latest = currentTimer();
+  if (!latest || latest.id !== timer.id || !deviceHoldsTimer(timer, owner)) {
+    syncStateFromDevice(owner);
+    return { ok: false, code: 'timer.changed' };
+  }
+  clearTimerLocally(timer.id, { owner });
+  await syncTimerToRepo('remove', timer, { owner });
+  logEvent('alignment.timer_cancelled', {});
+  return { ok: true, cancelled: true };
+}
+
+// ------------------------------------------- päätöstä odottava ajastin
+
+/**
+ * Tämän laitteen ajastin, joka ei ehtinyt kantaan ennen kuin toisella
+ * laitteella käynnistettiin oma (yksi ajastin käyttäjää kohti). Se ei
+ * katoa hiljaa: käyttäjä kirjaa tai hylkää sen. null, jos ei ole.
+ */
+export function pendingTimer() {
+  return pendingTimers()[0] || null;
+}
+
+/**
+ * Kirjaa odottava ajastin. Ilman valmista suunnitelmaa kesto vahvistetaan
+ * AINA (`needsReview`): ajastin kävi samaan aikaan toisen laitteen
+ * ajastimen kanssa, joten kulunut aika on vain ehdotus.
+ */
+export async function stopPendingTracking({ now = nowMs(), overrideMinutes = null, expectTimerId = null } = {}) {
+  const owner = sessionUserId();
+  const timer = pendingTimer();
+  if (!timer) return { ok: false, code: 'timer.none' };
+  if (expectTimerId !== null && timer.id !== String(expectTimerId)) return { ok: false, code: 'timer.changed' };
+  if (!hasStopPlan(timer) && !Number.isInteger(overrideMinutes)) {
+    const suggestion = stopTimer(timer, now);
+    if (suggestion.ok && !suggestion.tooShort) {
+      return { ok: false, needsReview: true, totalMinutes: suggestion.totalMinutes, timerId: timer.id };
+    }
+  }
+  const session = sessionSnapshot();
+  return exclusive(`pending:${owner || ''}`, () =>
+    finishStop(timer, { now, overrideMinutes, owner, session, slot: PENDING_SLOT }));
+}
+
+/** Hylkää odottava ajastin kirjaamatta. Kysyy vahvistuksen. */
+export async function discardPendingTracking({ confirmFn = confirmAction, expectTimerId = null } = {}) {
+  const owner = sessionUserId();
+  const session = sessionSnapshot();
+  const timer = pendingTimer();
+  if (!timer) return { ok: false, code: 'timer.none' };
+  if (expectTimerId !== null && timer.id !== String(expectTimerId)) return { ok: false, code: 'timer.changed' };
+  const accepted = await confirmFn({
+    title: 'Hylätäänkö kirjaamaton ajastus?',
+    message: 'Tämän laitteen aiempaa ajastusta ei kirjata.',
+    confirmLabel: 'Hylkää ajastus',
+    destructive: true
+  });
+  if (!accepted) return { ok: true, cancelled: false };
+  if (!isSameSession(session)) return { ok: false, code: 'timer.session_changed' };
+  if (!pendingTimers(owner).some(other => other.id === timer.id)) return { ok: false, code: 'timer.changed' };
+  removePendingTimer(timer.id, { owner });
   logEvent('alignment.timer_cancelled', {});
   return { ok: true, cancelled: true };
 }
