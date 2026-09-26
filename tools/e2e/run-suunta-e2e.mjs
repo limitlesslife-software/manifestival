@@ -196,7 +196,11 @@ const SCENARIOS = [
     const tyo = H.s().lifeAreas.find(a => a.name === 'Työ');
     await window.__e2e.alignment.logTime({ entryDate: window.__e2e.todayIso(), minutes: 300, lifeAreaId: tyo.id });
     await H.waitFor(() => /Perhe/.test(H.text('#dirSignals')), 'Perhe-havainto');
-    await H.waitFor(() => H.text('#dirSignals').includes('Työ vie enemmän kuin halusit'), 'poikkeama');
+    // Sääntöversio 3: kirjaukset ovat yhdeltä päivältä, joten toteumaa ei
+    // vielä verrata; poikkeama tulee suunnitelmasta (kaikki arvioitu), ja
+    // sen otsikko sanoo sen ("vie suunnitelmassa enemmän"), perusta näkyvissä.
+    await H.waitFor(() => H.text('#dirSignals').includes('Työ vie suunnitelmassa enemmän kuin halusit'), 'poikkeama');
+    if (!H.text('#dirSignals').includes('suunnitelman perusteella')) throw new Error('perusta ei näy');
     return 'havainnot: ' + [...document.querySelectorAll('#dirSignals .dir-signal-title')].map(n => n.textContent).join(' | ');
   })()`],
 
@@ -233,7 +237,8 @@ const SCENARIOS = [
     await H.waitFor(() => H.text('#dirReviewStatus').includes('Viikkokatsaus tallennettu.'), 'tallennus');
     await H.waitFor(() => H.text('#dirReviewHistory').includes('Vastattuja pohdintakysymyksiä: 1'), 'historia');
     const review = H.s().alignmentReviews[0];
-    if (review.policyVersion !== 2 || review.reflectionAnswers.most_draining !== 'Julkaisu kuormitti') throw new Error(JSON.stringify(review));
+    // Sääntöversio 3 (harvan aineiston rajat); ennen 2.
+    if (review.policyVersion !== 3 || review.reflectionAnswers.most_draining !== 'Julkaisu kuormitti') throw new Error(JSON.stringify(review));
     const sections = [...document.querySelectorAll('#dirReview h3')].map(n => n.textContent.split(' ')[0]);
     return 'osiot: ' + sections.join(', ');
   })()`],
