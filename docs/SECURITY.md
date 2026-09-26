@@ -442,7 +442,14 @@ kulkee APK:hon bittiverrannollisena kopiona (`scripts/build-web.mjs`).
   `name`, `title`, `note`). Vertailu ilman kirjainkokoa ja ala-/väliviivoja.
 - `logEvent` pitää merkkijonon vain, jos se on koodin näköinen
   (`/^[a-z0-9_.:-]{1,60}$/i`); muu teksti on `[teksti]`, pitkä `[pitkä]`.
-  Avain, jota ei ole listattu, ei siis päästä nimeä läpi.
+  Tämä on **varasuoja, ei pääsuoja**: yksisanainen ASCII-arvo on koodin
+  näköinen ja menee läpi listaamattoman avaimen alla (esim. alueen nimi
+  `Terapia`), vain välilyönnit, ääkköset ja välimerkit pysäyttävät sen.
+  Varsinainen suoja on staattinen kutsupaikkatesti
+  `tests/life-alignment-privacy.test.mjs` ("yksikään loki- tai
+  konsolikutsu src/-puussa ei lue sisältökenttää"): lokikutsu ei saa
+  lukea nimeä, otsikkoa, muistiinpanoa eikä pohdintaa lainkaan.
+  Rajoitus on kirjattu testiin (`tests/lib-logger-errors.test.mjs`).
 - `isDevEnvironment()` on epätosi natiivikuoressa, vaikka APK:n origin on
   `https://localhost`: INFO- ja DEBUG-tapahtumat eivät päädy logcatiin.
 - `logFailure(event, error)` kirjaa vain virheen nimen, koodin ja

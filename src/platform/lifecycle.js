@@ -75,7 +75,10 @@ export function bindLifecycle({ onResume, onPause, now = () => Date.now() } = {}
   const resume = () => {
     if (!onResume) return;
     const at = now();
-    if (lastResumeAt !== null && at - lastResumeAt < RESUME_DEDUP_MS) return;
+    // Taaksepäin hypännyt kello (negatiivinen kulunut aika) ei ole "sama
+    // paluu": muuten paluut vaimenisivat koko hypyn ajan.
+    const elapsed = lastResumeAt === null ? null : at - lastResumeAt;
+    if (elapsed !== null && elapsed >= 0 && elapsed < RESUME_DEDUP_MS) return;
     lastResumeAt = at;
     onResume();
   };

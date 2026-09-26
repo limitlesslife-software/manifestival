@@ -361,6 +361,25 @@ function expectRejected(result, code = INSUFFICIENT_PRIVILEGE) {
 }
 
 /** Odotus: täsmälleen n riviä, ei virhettä. */
+/** Puuttuva taulu: PostgreSQL (42P01) tai PostgRESTin skeemavälimuisti (PGRST205). */
+const MISSING_TABLE = /\b(?:42P01|PGRST205)\b/;
+
+/**
+ * Miksi ajo pysähtyi lähtötilan virheeseen (ei kirjoituksia).
+ * @param {Array} unverified ERROR-tilaiset lähtötilarivit
+ * @param {string} wave valittu aalto
+ */
+function preCheckErrorReason(unverified, wave) {
+  const numbers = unverified.map(entry => entry.test_no).join(', ');
+  if (unverified.some(entry => MISSING_TABLE.test(String(entry.actual || '')))) {
+    return `lähtötilaa ei voitu tarkistaa (${numbers}): taulu puuttuu kannasta (42P01/PGRST205). `
+      + `Aallon ${wave} migraatiot eivät ole tässä kannassa — valitse aalto, jonka migraatiot on ajettu. `
+      + 'Mitään ei kirjoitettu.';
+  }
+  return `lähtötilaa ei voitu tarkistaa (${numbers}): kysely epäonnistui. `
+    + 'Tarkista yhteys ja istunnot ennen uutta ajoa. Mitään ei kirjoitettu.';
+}
+
 function expectRows(result, n) {
   if (result.error) return { status: STATUS.ERROR, actual: describeError(result.error) };
   return {
@@ -641,6 +660,14 @@ export async function runAcceptance(options) {
 
   if (critical) {
     return finish(rows, { runId, ids: id, ...scope, aborted: 'lähtötila ei ollut odotettu' });
+  }
+  // LÄHTÖTILAA EI VOITU TARKISTAA: virhe ei ole "0 riviä". Ajo pysähtyy
+  // ennen yhtäkään kirjoitusta. Tavallisin syy on aalto, joka on tuotannon
+  // skeemaa uudempi: taulua ei ole (42P01 / PGRST205), jolloin testirivit
+  // kaatuisivat kesken ja siivous jäisi epävarmaksi.
+  const unverified = rows.filter(entry => entry.status === STATUS.ERROR);
+  if (unverified.length > 0) {
+    return finish(rows, { runId, ids: id, ...scope, aborted: preCheckErrorReason(unverified, wave) });
   }
 
   // --- T1: A näkee oman datansa -------------------------------------

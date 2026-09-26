@@ -33,8 +33,8 @@ Säännöt joka askeleella:
   ajettu, 0009–0013 ei.
 - **KOMENTO (Claude):** `npm run activation:dry-run` (tai `-- --offline`)
 - **ODOTUS:** `NEXT_ACTION: DEPLOY D`; `REQUIRED_OWNER_GATE` = vain
-  "hyväksyn D"; `REQUIRED_TECHNICAL_GATE` = C:n tekninen hyväksyntä ja D:n
-  testiajo; `LIVE_USE_VALIDATION_PENDING: C` tiedoksi.
+  "hyväksyn D"; `REQUIRED_TECHNICAL_GATE` = C:n tekninen hyväksyntä, D:n
+  testiajo ja D:n käynnistyssavu; `LIVE_USE_VALIDATION_PENDING: C` tiedoksi.
 - **STOP JOS:** `LIVE_MISMATCH`, `LOCK_DRIFT`, `PRODUCTION_INCONSISTENT`,
   `TRAIN_HALTED_RECUT_REQUIRED` tai muu `STOP:`.
 - **SEURAAVA:** askel C.
@@ -49,7 +49,8 @@ npm run production:verify-assets -- --wave=C --sha=cf259d0ef755f7e875cc9cd9c1540
 ```
 
 - **ODOTUS:** jokainen ehto `OK` (sukulinja, migraatioedellytys, tietoturva,
-  esitarkistus, live-sormenjälki, välimuisti ja portit) →
+  esitarkistus, live-sormenjälki, välimuisti ja portit; testiajo ja
+  käynnistyssavu poikkeuksella: C deployattiin ennen aktivointityökaluja) →
   `AUTOMATED_TECHNICAL_ACCEPTANCE kirjattu`.
 - **STOP JOS:** yksikin `STOP`-rivi (esim. tuotanto ei tarjoile `cf259d0`:aa).
 - **SEURAAVA:** askel D. (C:n selainlista `WAVE-C-OWNER-ACCEPTANCE.md` on
@@ -59,12 +60,14 @@ npm run production:verify-assets -- --wave=C --sha=cf259d0ef755f7e875cc9cd9c1540
 
 - **OMISTAJAN VIESTI:** **"hyväksyn D"**
 - **TILA:** C teknisesti hyväksytty; kanta 0008.
-- **KOMENTO (Claude, ennen viestiä):** D:n oma testipatteristo ehdokkaan
-  työpuussa (komento dry-runin `REQUIRED_TECHNICAL_GATE`-riviltä), sitten
-  kirjaus:
+- **KOMENTO (Claude, ennen viestiä):** D:n oma testipatteristo ja
+  käynnistyssavu ehdokkaan omissa irrotetuissa työpuissa (työpuut ja tarkat
+  komennot dry-runin `REQUIRED_TECHNICAL_GATE`-riviltä), sitten kirjaukset:
 
 ```
 npm run activation:orchestrate -- --record-candidate-tests=D --sha=091e73c0091e8f135641e3501742b998dbac8461 --tests-result=.claude/activation/tests-D.txt
+npm run e2e:boot-smoke -- --root .claude/worktrees/rc-D-smoke --label D --expect-sha 091e73c0091e8f135641e3501742b998dbac8461 > .claude/activation/smoke-D.txt
+npm run activation:orchestrate -- --record-boot-smoke=D --sha=091e73c0091e8f135641e3501742b998dbac8461 --smoke-result=.claude/activation/smoke-D.txt
 ```
 
 - **KOMENTO (Claude, viestin jälkeen):**
@@ -76,8 +79,9 @@ npm run activation:orchestrate -- --execute-deploy --approved-sha=091e73c0091e8f
 - **ODOTUS:** `DEPLOY OK` → `VERIFY_LIVE OK` (v17, yhdeksän porttia,
   sormenjälki) → `TECH_ACCEPTANCE` → tila `DEPLOYED_TECHNICALLY_ACCEPTED`;
   päiväkirjaan D:n deploy-rivi.
-- **STOP JOS:** testiajo ei vihreä (`fail` > 0 → ei kirjata; selvitä ennen
-  viestiä), `REMOTE_MAIN_MOVED`, `VERIFY_LIVE_FAILED` (orkestroija tulostaa
+- **STOP JOS:** testiajo ei vihreä (`fail` > 0 → ei kirjata) tai
+  käynnistyssavu ei PASS (`EI KIRJATTU`) — selvitä ennen viestiä;
+  `REMOTE_MAIN_MOVED`, `VERIFY_LIVE_FAILED` (orkestroija tulostaa
   peruutuspaketin — peruutus on omistajan päätös).
 - **SEURAAVA:** askel E.
 
@@ -85,10 +89,13 @@ npm run activation:orchestrate -- --execute-deploy --approved-sha=091e73c0091e8f
 
 - **OMISTAJAN VIESTI:** **"hyväksyn E"**
 - **TILA:** D teknisesti hyväksytty (deploy-rivi); kanta 0008.
-- **KOMENTO (Claude):** E:n testiajo ja kirjaus, sitten viestin jälkeen:
+- **KOMENTO (Claude):** E:n testiajo ja käynnistyssavu kirjauksineen
+  (työpuut ja komennot dry-runista kuten D), sitten viestin jälkeen:
 
 ```
 npm run activation:orchestrate -- --record-candidate-tests=E --sha=86c4325b00e8d58913afebdd0f1eca95d430174e --tests-result=.claude/activation/tests-E.txt
+npm run e2e:boot-smoke -- --root .claude/worktrees/rc-E-smoke --label E --expect-sha 86c4325b00e8d58913afebdd0f1eca95d430174e > .claude/activation/smoke-E.txt
+npm run activation:orchestrate -- --record-boot-smoke=E --sha=86c4325b00e8d58913afebdd0f1eca95d430174e --smoke-result=.claude/activation/smoke-E.txt
 npm run activation:orchestrate -- --execute-deploy --approved-sha=86c4325b00e8d58913afebdd0f1eca95d430174e   # E v18
 ```
 
@@ -102,10 +109,13 @@ npm run activation:orchestrate -- --execute-deploy --approved-sha=86c4325b00e8d5
 - **OMISTAJAN VIESTI:** **"hyväksyn 0009/F"** (kattaa migraation 0009 ja F:n
   deployn, kun `verify_0009` = 0)
 - **TILA:** E teknisesti hyväksytty; kanta 0008.
-- **KOMENTO (Claude):** F:n testiajo ja kirjaus, SQL-tiedostot lukon lähteestä:
+- **KOMENTO (Claude):** F:n testiajo ja käynnistyssavu kirjauksineen
+  (työpuut ja komennot dry-runista kuten D), SQL-tiedostot lukon lähteestä:
 
 ```
 npm run activation:orchestrate -- --record-candidate-tests=F --sha=5e4e7cf50e40fe1e0ba7b4543b147767e3a0eb32 --tests-result=.claude/activation/tests-F.txt
+npm run e2e:boot-smoke -- --root .claude/worktrees/rc-F-smoke --label F --expect-sha 5e4e7cf50e40fe1e0ba7b4543b147767e3a0eb32 > .claude/activation/smoke-F.txt
+npm run activation:orchestrate -- --record-boot-smoke=F --sha=5e4e7cf50e40fe1e0ba7b4543b147767e3a0eb32 --smoke-result=.claude/activation/smoke-F.txt
 git show 5df40b20cee4f35279a79888959d49c9af88bcc7:supabase/preflight/preflight_0009.sql > .claude/activation/sql/preflight_0009.sql
 git show 5df40b20cee4f35279a79888959d49c9af88bcc7:supabase/migrations/0009_finance_2.sql > .claude/activation/sql/0009_finance_2.sql
 git show 5df40b20cee4f35279a79888959d49c9af88bcc7:supabase/verify/verify_0009.sql > .claude/activation/sql/verify_0009.sql
@@ -127,7 +137,8 @@ npm run activation:orchestrate -- --execute-deploy --approved-sha=5e4e7cf50e40fe
 
 - **ODOTUS:** preflight 0 FAIL; migraatio `COMMIT`; verify 0 poikkeavaa;
   `DEPLOYED_TECHNICALLY_ACCEPTED` (v19).
-- **STOP JOS:** preflight FAIL tai poikkeavia > 0; migraatio päättyy
+- **STOP JOS:** testiajo tai käynnistyssavu ei kirjaudu (ei PASS);
+  preflight FAIL tai poikkeavia > 0; migraatio päättyy
   virheeseen (yksi transaktio perutaan kokonaan — älä aja tiedoston osia);
   verify ≠ 0 → **älä deployaa** (`WAVE-F.md` §6).
 - **SEURAAVA:** askel G.
@@ -138,10 +149,13 @@ npm run activation:orchestrate -- --execute-deploy --approved-sha=5e4e7cf50e40fe
   kun tilannekuva on tarkistettu. (Valinnainen T-2-kuivaharjoitus tuotannossa
   on oma hyväksyntänsä: `docs/activation/0010-BACKUP-AND-RECOVERY.md` §4.)
 - **TILA:** F teknisesti hyväksytty; kanta 0009.
-- **KOMENTO (Claude):** G:n testiajo ja kirjaus, SQL-tiedostot:
+- **KOMENTO (Claude):** G:n testiajo ja käynnistyssavu kirjauksineen
+  (työpuut ja komennot dry-runista kuten D), SQL-tiedostot:
 
 ```
 npm run activation:orchestrate -- --record-candidate-tests=G --sha=173afd5dc01d16e244ec07e72fb6e29918415e81 --tests-result=.claude/activation/tests-G.txt
+npm run e2e:boot-smoke -- --root .claude/worktrees/rc-G-smoke --label G --expect-sha 173afd5dc01d16e244ec07e72fb6e29918415e81 > .claude/activation/smoke-G.txt
+npm run activation:orchestrate -- --record-boot-smoke=G --sha=173afd5dc01d16e244ec07e72fb6e29918415e81 --smoke-result=.claude/activation/smoke-G.txt
 git show 5df40b20cee4f35279a79888959d49c9af88bcc7:supabase/preflight/preflight_0010.sql > .claude/activation/sql/preflight_0010.sql
 git show 5df40b20cee4f35279a79888959d49c9af88bcc7:supabase/migrations/0010_goal_to_action.sql > .claude/activation/sql/0010_goal_to_action.sql
 git show 5df40b20cee4f35279a79888959d49c9af88bcc7:supabase/verify/verify_0010.sql > .claude/activation/sql/verify_0010.sql
@@ -170,7 +184,8 @@ npm run activation:orchestrate -- --execute-deploy --approved-sha=173afd5dc01d16
 
 - **ODOTUS:** tilannekuva kunnossa; verify 0 poikkeavaa; `compare.sql` →
   SAMA; `DEPLOYED_TECHNICALLY_ACCEPTED` (v20).
-- **STOP JOS:** `check` hylkää kuvan; preflight FAIL; migraatio virheeseen
+- **STOP JOS:** testiajo tai käynnistyssavu ei kirjaudu; `check` hylkää
+  kuvan; preflight FAIL; migraatio virheeseen
   (koko transaktio perutaan; vain tiedoston OSAN ajaminen voisi jättää
   `goals`-taulun ilman tilarajoitetta — `preflight_0010` rivi 09 ja
   `verify_0010` rivi 20 paljastavat sen); verify ≠ 0 → päätöspuu
@@ -184,10 +199,13 @@ npm run activation:orchestrate -- --execute-deploy --approved-sha=173afd5dc01d16
   niin kauan kuin alla on STOP-rivi, orkestroija pysähtyy
   `TRAIN_RECUT_REQUIRED` (pääkehittäjä: leikkaa, `train-map --write`,
   `train-map --sync-docs`).
-- **KOMENTO (Claude):** H:n testiajo ja kirjaus, SQL-tiedostot:
+- **KOMENTO (Claude):** H:n testiajo ja käynnistyssavu kirjauksineen
+  (työpuut ja komennot dry-runista kuten D), SQL-tiedostot:
 
 ```
 npm run activation:orchestrate -- --record-candidate-tests=H --sha=48b2cad8bc62362dbe371d08f36b32677df270f6 --tests-result=.claude/activation/tests-H.txt
+npm run e2e:boot-smoke -- --root .claude/worktrees/rc-H-smoke --label H --expect-sha 48b2cad8bc62362dbe371d08f36b32677df270f6 > .claude/activation/smoke-H.txt
+npm run activation:orchestrate -- --record-boot-smoke=H --sha=48b2cad8bc62362dbe371d08f36b32677df270f6 --smoke-result=.claude/activation/smoke-H.txt
 git show 5df40b20cee4f35279a79888959d49c9af88bcc7:supabase/preflight/preflight_0011.sql > .claude/activation/sql/preflight_0011.sql
 git show 5df40b20cee4f35279a79888959d49c9af88bcc7:supabase/migrations/0011_personal_assistant.sql > .claude/activation/sql/0011_personal_assistant.sql
 git show 5df40b20cee4f35279a79888959d49c9af88bcc7:supabase/verify/verify_0011.sql > .claude/activation/sql/verify_0011.sql
@@ -205,18 +223,21 @@ git show 5df40b20cee4f35279a79888959d49c9af88bcc7:supabase/verify/verify_0011.sq
 ```
 
 - **ODOTUS:** `DEPLOYED_TECHNICALLY_ACCEPTED` (v21).
-- **STOP JOS:** STOP-rivi yllä (uudelleenleikkaus kesken); preflight FAIL;
-  verify ≠ 0.
+- **STOP JOS:** STOP-rivi yllä (uudelleenleikkaus kesken); testiajo tai
+  käynnistyssavu ei kirjaudu; preflight FAIL; verify ≠ 0.
 - **SEURAAVA:** askel I.
 
 ## Askel I — migraatio 0012 + deploy I (v22)
 
 - **OMISTAJAN VIESTI:** **"hyväksyn 0012/I"**
 - **TILA:** H teknisesti hyväksytty; kanta 0011. Uudelleenleikkaus kuten H.
-- **KOMENTO (Claude):**
+- **KOMENTO (Claude):** I:n testiajo ja käynnistyssavu kirjauksineen
+  (työpuut ja komennot dry-runista kuten D), SQL-tiedostot:
 
 ```
 npm run activation:orchestrate -- --record-candidate-tests=I --sha=4cfb4bcfea649146fb0bc9202d309aea8d1ffd9e --tests-result=.claude/activation/tests-I.txt
+npm run e2e:boot-smoke -- --root .claude/worktrees/rc-I-smoke --label I --expect-sha 4cfb4bcfea649146fb0bc9202d309aea8d1ffd9e > .claude/activation/smoke-I.txt
+npm run activation:orchestrate -- --record-boot-smoke=I --sha=4cfb4bcfea649146fb0bc9202d309aea8d1ffd9e --smoke-result=.claude/activation/smoke-I.txt
 git show 5df40b20cee4f35279a79888959d49c9af88bcc7:supabase/preflight/preflight_0012.sql > .claude/activation/sql/preflight_0012.sql
 git show 5df40b20cee4f35279a79888959d49c9af88bcc7:supabase/migrations/0012_life_alignment.sql > .claude/activation/sql/0012_life_alignment.sql
 git show 5df40b20cee4f35279a79888959d49c9af88bcc7:supabase/verify/verify_0012.sql > .claude/activation/sql/verify_0012.sql
@@ -243,10 +264,13 @@ git show 5df40b20cee4f35279a79888959d49c9af88bcc7:supabase/verify/verify_0012.sq
 - **OMISTAJAN VIESTI:** **"hyväksyn 0013/J"**
 - **TILA:** I teknisesti hyväksytty; kanta 0012; `verify_0012` = 0 poikkeavaa.
   Uudelleenleikkaus kuten H.
-- **KOMENTO (Claude):**
+- **KOMENTO (Claude):** J:n testiajo ja käynnistyssavu kirjauksineen
+  (työpuut ja komennot dry-runista kuten D), SQL-tiedostot:
 
 ```
 npm run activation:orchestrate -- --record-candidate-tests=J --sha=5df40b20cee4f35279a79888959d49c9af88bcc7 --tests-result=.claude/activation/tests-J.txt
+npm run e2e:boot-smoke -- --root .claude/worktrees/rc-J-smoke --label J --expect-sha 5df40b20cee4f35279a79888959d49c9af88bcc7 > .claude/activation/smoke-J.txt
+npm run activation:orchestrate -- --record-boot-smoke=J --sha=5df40b20cee4f35279a79888959d49c9af88bcc7 --smoke-result=.claude/activation/smoke-J.txt
 git show 5df40b20cee4f35279a79888959d49c9af88bcc7:supabase/preflight/preflight_0013.sql > .claude/activation/sql/preflight_0013.sql
 git show 5df40b20cee4f35279a79888959d49c9af88bcc7:supabase/migrations/0013_alignment_reality.sql > .claude/activation/sql/0013_alignment_reality.sql
 git show 5df40b20cee4f35279a79888959d49c9af88bcc7:supabase/verify/verify_0013.sql > .claude/activation/sql/verify_0013.sql

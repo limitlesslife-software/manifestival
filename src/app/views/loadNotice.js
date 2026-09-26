@@ -12,7 +12,7 @@
 //
 // Suunnan näkymällä on oma, laajempi ilmoitus (direction.js).
 
-import { classifyError } from '../../domain/offlineQueue.js';
+import { errorClassOf } from '../../data/repoErrors.js';
 import { loadAdvice } from '../../lib/errorMessages.js';
 
 /** Laite ilmoittaa olevansa offline (sama tarkistus kuin src/app/offline.js). */
@@ -46,7 +46,8 @@ export function loadFailureHtml(state, domains) {
   const failed = failedDomains(state, domains);
   if (failed.length === 0) return '';
   const offline = deviceOffline();
-  const classes = failed.map(domain => classifyError(state.dataLoadStatus[domain].error, { offline }));
+  // Tyypitetyn virheen oma luokka (heitetty poikkeus ei ole verkkovirhe).
+  const classes = failed.map(domain => errorClassOf(state.dataLoadStatus[domain].error, { offline }));
   return `
       <div class="empty-state load-failure" role="status">
         <div class="empty-title">Tietoja ei saatu ladattua.</div>

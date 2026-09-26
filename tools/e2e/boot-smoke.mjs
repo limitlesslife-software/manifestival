@@ -9,6 +9,14 @@
 //   --gates J     tuotehaaralle: portit aallon J arvoilla (tools/e2e/gates.mjs);
 //                 oletus on ehdokkaan oma schema.js sellaisenaan
 //
+// TULOS: kaksi viimeistä riviä ovat koneellisesti luettavat (summaryLines):
+//   EHDOKAS [X]: <tarjoillun juuren täysi HEAD> (portit: omat|J; --expect-sha: <sha|->)
+//   KÄYNNISTYSSAVU [X]: PASS|FAIL (n/m; poikkeuksia …, hylkäyksiä …, konsolivirheitä …, tuotantopyyntöjä …)
+// Junan ehdokkaan savu on teknisen hyväksynnän ehto `bootSmoke`: tuloste
+// kirjataan päiväkirjaan komennolla
+//   npm run activation:orchestrate -- --record-boot-smoke=X --sha=<40> --smoke-result=<tuloste>
+// (vain PASS n/n, laskurit 0, omat portit ja --expect-sha = lukon deployTarget).
+//
 // MIKSI: yksikkötestit eivät käynnistä src/app/main.js:ää. Aallosta F alkaen
 // finance.js:n renderOverviewDetail viittasi muuttujaan `key` (oikea nimi
 // `avain`), ja jokainen renderAll kaatui ReferenceErroriin; vika löytyi
@@ -778,23 +786,47 @@ export function evaluateRun(run) {
   };
 }
 
-function report(run, verdict) {
+/**
+ * Koneellisesti luettavat loppurivit. Aktivoinnin orkestroija
+ * (`--record-boot-smoke=X --smoke-result=<tuloste>`,
+ * tools/activation/acceptance-policy.mjs parseBootSmoke) kirjaa savun vain
+ * näistä: EHDOKAS-rivillä tarjoillun juuren TÄYSI HEAD, porttitila ja
+ * --expect-sha; viimeisenä tulosrivi. Muoto on sopimus: älä muuta sitä
+ * muuttamatta jäsennintä (tests/boot-smoke.test.mjs todentaa parin).
+ */
+export function summaryLines(run, verdict) {
+  const c = verdict.counts;
+  const head = run.head && run.head.sha ? run.head.sha : '?';
+  const gates = run.gateMode && run.gateMode.mode === 'J' ? 'J' : 'omat';
+  return [
+    `EHDOKAS [${run.label}]: ${head} (portit: ${gates}; --expect-sha: ${run.expectSha || '-'})`,
+    `KÄYNNISTYSSAVU [${run.label}]: ${verdict.passed ? 'PASS' : 'FAIL'} (${verdict.lines.length - verdict.failed}/${verdict.lines.length}; poikkeuksia ${c.exceptions}, hylkäyksiä ${c.rejections}, konsolivirheitä ${c.consoles}, tuotantopyyntöjä ${c.production})`
+  ];
+}
+
+/** Raportin rivit (puhdas funktio; report tulostaa ne). */
+export function reportLines(run, verdict) {
+  const out = [];
   const writes = run.stats ? run.stats.writes : [];
   const writtenTables = [...new Set(writes.map(w => `${w.table}.${w.op}`))];
-  console.log(`KÄYNNISTYSSAVU [${run.label}] — ${run.root}`);
-  console.log(`  HEAD ${run.head.sha ? run.head.sha.slice(0, 7) : '?'}${run.head.ref ? ` (${run.head.ref})` : ' (irrotettu)'}; puu = HEAD: ${run.provenance.ok ? `kyllä (${run.provenance.checked} tiedostoa)` : `EI — ${run.provenance.error || run.provenance.differences.slice(0, 5).join(', ')}`}`);
+  out.push(`KÄYNNISTYSSAVU [${run.label}] — ${run.root}`);
+  out.push(`  HEAD ${run.head.sha ? run.head.sha.slice(0, 7) : '?'}${run.head.ref ? ` (${run.head.ref})` : ' (irrotettu)'}; puu = HEAD: ${run.provenance.ok ? `kyllä (${run.provenance.checked} tiedostoa)` : `EI — ${run.provenance.error || run.provenance.differences.slice(0, 5).join(', ')}`}`);
   if (run.boot) {
     const gates = run.boot.gates || {};
     const open = gates.tables ? Object.entries(gates.tables).filter(([, on]) => on).map(([name]) => name) : [];
     const columns = gates.columns ? Object.entries(gates.columns).filter(([, on]) => on).map(([name]) => name) : [];
-    console.log(`  portit (${run.gateMode ? run.gateMode.provenance : 'ehdokkaan omat'}): ${gates.tables ? `${open.length}/${Object.keys(gates.tables).length} taulua auki` : `ei TABLES-lohkoa${gates.error ? ` (${gates.error})` : ''}`}${gates.columns ? `; sarakeportit auki: ${columns.join(', ') || 'ei yhtään'}` : ''}`);
-    console.log(`  sovitus: ${run.boot.adaptations.join('; ')}`);
-    console.log(`  siemen: omistaja ${run.boot.userId}, päivä ${run.boot.todayIso}: ${Object.entries(run.boot.seed).map(([t, n]) => `${t} ${n}`).join(', ')}`);
+    out.push(`  portit (${run.gateMode ? run.gateMode.provenance : 'ehdokkaan omat'}): ${gates.tables ? `${open.length}/${Object.keys(gates.tables).length} taulua auki` : `ei TABLES-lohkoa${gates.error ? ` (${gates.error})` : ''}`}${gates.columns ? `; sarakeportit auki: ${columns.join(', ') || 'ei yhtään'}` : ''}`);
+    out.push(`  sovitus: ${run.boot.adaptations.join('; ')}`);
+    out.push(`  siemen: omistaja ${run.boot.userId}, päivä ${run.boot.todayIso}: ${Object.entries(run.boot.seed).map(([t, n]) => `${t} ${n}`).join(', ')}`);
   }
-  console.log(`  käynnistyksen ja napautusten kirjoitukset kantaan: ${writtenTables.join(', ') || 'ei yhtään'}`);
-  for (const line of verdict.lines) console.log(`${line.ok ? 'PASS' : 'FAIL'}  ${line.name}\n      ${line.detail}`);
-  const c = verdict.counts;
-  console.log(`\nKÄYNNISTYSSAVU [${run.label}]: ${verdict.passed ? 'PASS' : 'FAIL'} (${verdict.lines.length - verdict.failed}/${verdict.lines.length}; poikkeuksia ${c.exceptions}, hylkäyksiä ${c.rejections}, konsolivirheitä ${c.consoles}, tuotantopyyntöjä ${c.production})`);
+  out.push(`  käynnistyksen ja napautusten kirjoitukset kantaan: ${writtenTables.join(', ') || 'ei yhtään'}`);
+  for (const line of verdict.lines) out.push(`${line.ok ? 'PASS' : 'FAIL'}  ${line.name}\n      ${line.detail}`);
+  out.push('', ...summaryLines(run, verdict));
+  return out;
+}
+
+function report(run, verdict) {
+  for (const line of reportLines(run, verdict)) console.log(line);
 }
 
 export async function main(argv = process.argv.slice(2)) {

@@ -119,11 +119,14 @@ async function sendPending() {
  * Lataa käyttäjän data. Latauksen aikana valmistuneet tallennukset
  * palautetaan tilaan (keepWritesSince): ennen lähetystä haettu lista ei
  * piilota juuri lähetettyä aikakirjausta, katsausta tai kapasiteettia.
+ *
+ * EI KIRJAA päivityksen alkua ohjaimelle: alku kirjataan ennen
+ * lähetysvaihetta (ohjaimen oma runRefresh, onSignedIn, synkronoinnin
+ * jälkeinen lataus). Latauksen alussa kirjattu alku sai lähetyksen aikana
+ * palanneen verkon näyttämään katetulta, eikä jonoa lähetetty uudelleen.
  */
 async function loadFresh() {
   const mark = beginDataLoad();
-  // Täysi lataus alkaa: paluu etualalle heti perään ei lataa uudelleen (CRIT-02).
-  reconnect.noteRefreshStarted();
   const result = await loadUserData();
   // Palautetut tallennukset yhtenä ilmoituksena (loadUserData on jo yksi).
   if (!result.discarded) batch(() => keepWritesSince(mark));
@@ -317,6 +320,11 @@ async function onSignedIn() {
   // latausta (F11). Aiemmin lataus ja lähetys kulkivat rinnakkain: ennen
   // lähetystä haettu lista korvasi tilan, ja juuri lähetetty kirjaus katosi
   // näkyvistä seuraavaan lataukseen asti. Tyhjällä jonolla ei odoteta.
+  //
+  // Täysi päivitys alkaa TÄSTÄ, lähetysvaiheesta (CRIT-02): paluu etualalle
+  // heti perään ei lataa uudelleen, mutta lähetyksen aikana palannut verkko
+  // ajaa vielä oman kierroksensa.
+  reconnect.noteRefreshStarted();
   if (offline.status().total > 0 || pendingTimeEntryCount() > 0) await sendPending();
   if (!isSameSession(session)) return;
 
@@ -555,6 +563,9 @@ async function start() {
   initOfflineStatus();
   setSyncedHandler(() => {
     if (!signedIn || sendingPending > 0) return;
+    // Lähetys on jo tehty: täysi lataus alkaa nyt (CRIT-02). Ohjaimen oman
+    // päivityksen aikana tämä ei tee mitään (reconnect.noteRefreshStarted).
+    reconnect.noteRefreshStarted();
     loadFresh().catch(error => {
       logFailure('data.reload_after_sync_failed', error);
     });

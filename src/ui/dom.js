@@ -187,12 +187,22 @@ function querySafe(container, selector) {
   }
 }
 
+/** Ohjain, joka on jo luonnostaan sarkainjärjestyksessä (ei tarvitse tabindexiä). */
+function nativelyFocusable(node) {
+  const tag = String(node.tagName || '').toUpperCase();
+  if (['BUTTON', 'INPUT', 'SELECT', 'TEXTAREA', 'SUMMARY'].includes(tag)) return true;
+  return tag === 'A' && typeof node.hasAttribute === 'function' && node.hasAttribute('href');
+}
+
 function fallbackTarget(fallback) {
   for (const entry of fallback) {
     const node = typeof entry === 'string' ? maybe(entry) : entry;
     if (!node || typeof node.focus !== 'function' || !canFocus(node)) continue;
     // Otsikko ei ole sarkainjärjestyksessä, mutta siihen voi siirtää fokuksen.
-    if (typeof node.hasAttribute === 'function' && !node.hasAttribute('tabindex')) node.setAttribute('tabindex', '-1');
+    // Painiketta ei poisteta sarkainjärjestyksestä tabindex="-1":llä.
+    if (typeof node.hasAttribute === 'function' && !node.hasAttribute('tabindex') && !nativelyFocusable(node)) {
+      node.setAttribute('tabindex', '-1');
+    }
     return node;
   }
   return null;
@@ -244,6 +254,39 @@ export function renderHtml(container, html, options = {}) {
   if (!setHtml(container, html)) return false;
   if (state) restoreFocus(container, state, options);
   return true;
+}
+
+/**
+ * Kuuluta sama ilmoitus uudelleen: solmu korvataan kopiollaan. Uusi
+ * role="alert"-solmu kuulutetaan, vaikka teksti on sama. Säiliön merkintä
+ * pysyy samana, joten setHtml ei kirjoita sitä seuraavalla piirrolla.
+ * @returns {Element|null} uusi solmu
+ */
+export function reannounce(node) {
+  if (!node || !node.parentNode || typeof node.cloneNode !== 'function' || typeof node.replaceWith !== 'function') {
+    return node || null;
+  }
+  const fresh = node.cloneNode(true);
+  node.replaceWith(fresh);
+  return fresh;
+}
+
+/**
+ * Käyttäjän toiminnon (esim. "Lisää" tyhjällä nimellä) jälkeinen piirto,
+ * joka asetti virheen. Jos sama virhe oli jo näkyvissä, merkintä ei
+ * muutu, setHtml ohittaa kirjoituksen, eikä ruudunlukija kuulisi mitään,
+ * kun käyttäjä toistaa toiminnon. Silloin ilmoitus kuulutetaan uudelleen.
+ * Muuttunut merkintä loi jo uuden solmun: sitä ei korvata toiseen kertaan.
+ *
+ * @param {string} alertId virheilmoituksen (role="alert") tunniste
+ * @param {() => void} render piirto
+ * @returns {Element|null} ilmoitus piirron jälkeen
+ */
+export function renderAnnouncingError(alertId, render) {
+  const before = maybe(alertId);
+  render();
+  const after = maybe(alertId);
+  return after && after === before ? reannounce(after) : after;
 }
 
 

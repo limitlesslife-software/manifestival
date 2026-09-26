@@ -88,7 +88,7 @@ Vain `src/data/schema.js`, `sw.js`, `docs/PRODUCTION-STATUS.md`.
 
 Omistajan viesti **"hyväksyn E"** avaa tämän askeleen. Ensisijainen (ja ainoa suositeltu)
 deploy-askel on orkestroija: se tarkistaa lukon, tuotannon aallon teknisen
-hyväksynnän, ehdokkaan kirjatun testiajon ja julkaisun esitarkistuksen,
+hyväksynnän, ehdokkaan kirjatun testiajon ja käynnistyssavun sekä julkaisun esitarkistuksen,
 tekee compare-and-swapin, pushaa ja todentaa tuotannon:
 
 ```

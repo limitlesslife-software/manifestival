@@ -278,6 +278,59 @@ export function failureFields(error) {
   };
 }
 
+/** Pinon kehyksen sijainti rivin lopussa: osoite tai polku, rivi, sarake. */
+const FRAME_LOCATION = /((?:https?|file|blob):\/\/[^\s()]+|node:[^\s()]+|\/[^\s()]+):(\d+):(\d+)\)?\s*$/;
+/** Kehyksiä enintään: kaatumiskohta ja sen kutsuja. */
+const MAX_FRAMES = 2;
+
+/** Osoitteesta vain polku: ei originia, kyselyä eikä ankkuria. */
+function framePath(raw) {
+  if (!/^(?:https?|file):\/\//.test(raw)) return raw.replace(/[?#].*$/, '');
+  try {
+    return new URL(raw).pathname;
+  } catch {
+    return raw.replace(/[?#].*$/, '');
+  }
+}
+
+/**
+ * Virheen sijainti pinosta: enintään kaksi ylintä kehystä muodossa
+ * `polku:rivi:sarake`.
+ *
+ * EI VIESTIÄ EIKÄ FUNKTIOIDEN NIMIÄ. V8 aloittaa pinon rivillä
+ * "Nimi: viesti", ja viesti voi sisältää käyttäjän tekstiä (myös
+ * monirivisenä). Se leikataan pois, ja V8-muodossa kehykseksi kelpaa vain
+ * "    at …"-rivi; Firefoxin ja Safarin pinossa viestiä ei ole, ja kehys on
+ * "nimi@osoite:rivi:sarake". Rivistä otetaan vain lopun sijainti.
+ *
+ * @param {unknown} error
+ * @returns {string[]}
+ */
+export function stackLocations(error) {
+  const stack = error && typeof error === 'object' && typeof error.stack === 'string' ? error.stack : '';
+  if (!stack) return [];
+  let body = stack;
+  const name = typeof error.name === 'string' ? error.name : '';
+  const message = typeof error.message === 'string' ? error.message : '';
+  for (const head of [message ? `${name}: ${message}` : name, message ? `Error: ${message}` : 'Error']) {
+    if (head && body.startsWith(head)) {
+      body = body.slice(head.length);
+      break;
+    }
+  }
+  const lines = body.split('\n');
+  const v8 = lines.some(line => /^\s+at\s/.test(line));
+  const frames = [];
+  for (const line of lines) {
+    if (v8 ? !/^\s+at\s/.test(line) : !line.includes('@')) continue;
+    const match = FRAME_LOCATION.exec(line);
+    if (!match) continue;
+    frames.push(`${framePath(match[1])}:${match[2]}:${match[3]}`);
+    if (frames.length === MAX_FRAMES) break;
+  }
+  return frames;
+}
+
 /**
  * Kirjaa epäonnistuminen: tapahtuman tunniste + failureFields(error).
  *
@@ -285,11 +338,21 @@ export function failureFields(error) {
  * raa'an virheolion viesteineen ja rivin arvoineen. Oletustaso on WARN,
  * joten tapahtuma näkyy myös tuotannossa — ilman sisältöä.
  *
+ * KEHITYKSESSÄ (isDevEnvironment: ei koskaan natiivikuoressa eikä
+ * tuotannossa) mukana on myös kaatumiskohta, `at`: enintään kaksi pinon
+ * kehystä ilman viestiä (stackLocations). Tuotannon tuloste on ennallaan.
+ *
  * @param {string} event  kiinteä tunniste, esim. 'offline.replay_failed'
  * @param {unknown} error
  * @param {string} [level] LOG_LEVEL; oletus WARN
  */
 export function logFailure(event, error, level = LOG_LEVEL.WARN) {
   if (typeof event !== 'string' || !EVENT_NAME.test(event)) return;
-  log(level, event, failureFields(error));
+  const fields = failureFields(error);
+  if (isDevEnvironment()) {
+    let at = stackLocations(error);
+    if (at.length === 0 && error && typeof error === 'object') at = stackLocations(error.cause);
+    if (at.length > 0) fields.at = at;
+  }
+  log(level, event, fields);
 }

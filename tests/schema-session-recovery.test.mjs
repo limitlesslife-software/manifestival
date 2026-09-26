@@ -131,8 +131,9 @@ test('KRIITTINEN: huoltotila -> lista PGRST205 -> kanta korjattu -> "Yritä uude
   assert.equal(retried.recovered, true);
   assert.equal(schemaSnapshot().status, SCHEMA_STATUS.OK, 'tila jäi rajoitetuksi huoltokatkon jälkeen');
   assert.equal(isColumnGateLowered('TASK_EXTENDED_FIELDS'), false);
-  // Täysi joukko = käännösaikaiset sarakeportit (aallossa J myös
-  // suunnittelukentät ja liitokset). Laskettuja ei saa jäädä yhtäkään.
+  // Täysi = käännösaikaiset sarakeportit (kanta on 0013 asti), ei vain
+  // TASK_EXTENDED_FIELDS: aallosta G alkaen suunnittelu- ja liitossarakkeet
+  // kuuluvat tehtävään.
   const full = [...taskColumns(name => COMPILE_COLUMN_GATES[name] === true)];
   assert.deepEqual([...taskColumns()], full, 'tehtävien sarakkeet jäivät laskettuina');
 

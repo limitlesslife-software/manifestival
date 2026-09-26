@@ -55,7 +55,7 @@ export function openRepositories() {
  *   from(t).update(row).eq(...).eq(...)  -> { data, error }
  *   from(t).update(row).eq(...).select('id') -> { data: [rivi], error }
  *   from(t).delete().eq(...).eq(...)     -> { data, error }
- *   from(t).select('*').eq(...).maybeSingle()   -> { data: null } ilman riviä
+ *   from(t).select('*').eq(...).maybeSingle()
  *   from(t).upsert(row)
  *
  * PÄIVITYS PALAUTTAA LÄHETETYN RIVIN. Repositoriot ketjuttavat
@@ -63,6 +63,10 @@ export function openRepositories() {
  * enää ole" -virheenä. Oletusvastaus (`data: []`) tarkoittaa hauille
  * tyhjää listaa, ei "päivitys ei osunut", joten päivitys vastaa
  * lähetetyllä rivillä. Nollan rivin päivitys: `{ updateData: [] }`.
+ *
+ * YKSI RIVI (`maybeSingle`) ON RIVI TAI null, EI LISTA. Oletusvastauksen
+ * tyhjä lista olisi "rivi löytyi": muistutusasetusten tallennus torjui
+ * silloin muutoksen (palvelimella on jo rivi), kun portti oli auki.
  *
  * @param {object} response { data, error, updateData? } tai { throws: Error }
  */
@@ -75,11 +79,7 @@ export function fakeClient(response = { data: [], error: null }) {
       return [{ ...(entry.payload || {}) }];
     }
     const data = response.data === undefined ? [] : response.data;
-    // maybeSingle() palauttaa oikealla asiakkaalla rivin tai null, ei
-    // taulukkoa. Tyhjä taulukko näytti olemassa olevalta riviltä, mikä
-    // paljastui vasta notificationPreferences-portin ollessa auki
-    // (tallennus lukee ensin palvelimen lähtötiedon).
-    if (entry.maybeSingle && Array.isArray(data) && data.length === 0) return null;
+    if (entry.maybeSingle && Array.isArray(data)) return data[0] ?? null;
     return data;
   };
 

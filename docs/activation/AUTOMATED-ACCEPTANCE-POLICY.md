@@ -47,16 +47,33 @@ aaltokohtaisen selainhyväksyntäportin** (`docs/acceptance/WAVE-X.md` kohta 4 j
 | 6 | Migraation varmistus (`migrationVerify`) | F–J: omistaja ajaa `supabase/verify/verify_00XX.sql` (vain luku) ja liittää → `node tools/activation/score-sql-result.mjs --sql=supabase/verify/verify_00XX.sql <tulos>` = GO (0 poikkeavaa, kaikki rivit) → orkestroijalle `--verify-result=<tulos>` | päiväkirjan rivi |
 | 7 | Live-tiedostot = ehdokkaan sormenjälki (`liveAssets`) | orkestroijan `VERIFY_LIVE` (vain GET); käsin `npm run production:verify-assets -- --wave=X --sha=<deployTarget>` | päiväkirjan rivi |
 | 8 | Välimuisti ja porttimatriisi sarakeportteineen (`cacheAndGates`) | ehdokkaan `sw.js`/`schema.js` (git show) JA tuotanto: `vNN`, taulumatriisi ja `COLUMN_GATES` täsmälleen aallon mukaiset | päiväkirjan rivi |
+| 9 | Ehdokkaan käynnistyssavu omalla koodilla ja porteilla (`bootSmoke`) | `npm run e2e:boot-smoke` ehdokkaan koskemattomassa työpuussa (`.claude/worktrees/rc-X-smoke`, `--expect-sha <deployTarget>`), sitten `npm run activation:orchestrate -- --record-boot-smoke=X --sha=<deployTarget> --smoke-result=<tuloste>` — vain `KÄYNNISTYSSAVU [X]: PASS (n/n; …)` nollalaskureilla samalle SHA:lle kirjataan (alla) | päiväkirjan `boot-smoke`-rivi |
 
-**Käynnistyssavu (jokainen aalto C–J):** `AUTOMATED_TECHNICAL_ACCEPTANCE`
-edellyttää lisäksi, että ehdokkaan oma koodi omilla porteillaan käynnistyy
-oikeassa selaimessa: `npm run e2e:boot-smoke -- --root .claude/worktrees/rc-X
---label X --expect-sha <deployTarget>` (`tools/e2e/boot-smoke.mjs`: omistajan
-kaltainen kanta, tekaistu istunto, jokainen alapalkin ja osion välilehti,
-tuotanto estetty DNS- ja CDP-tasolla, ehdokkaan puu vain luku). Vain
-`KÄYNNISTYSSAVU [X]: PASS` kelpaa; FAIL = ei hyväksyntää (fail closed).
-Ajetaan ennen ehdon 3 kirjausta; päiväkirjassa savulla ei vielä ole omaa
-`checks`-avainta.
+**Käynnistyssavu (ehto 9, `bootSmoke`; orkestroija valvoo):** ehdokkaan oma
+koodi omilla porteillaan käynnistyy oikeassa selaimessa (`tools/e2e/boot-smoke.mjs`:
+omistajan kaltainen kanta, tekaistu istunto, jokainen alapalkin ja osion välilehti,
+tuotanto estetty DNS- ja CDP-tasolla, ehdokkaan puu vain luku). Niin kauan
+kuin päiväkirjassa ei ole `boot-smoke`-riviä täsmälleen aallon lukitulle
+`deployTarget`ille, orkestroija näyttää portin `BOOT_SMOKE_REQUIRED`
+(dry-runin `REQUIRED_TECHNICAL_GATE`, myös ennen ehdokkaan migraatiota),
+estää `--execute-deploy`:n eikä kirjaa `AUTOMATED_TECHNICAL_ACCEPTANCE`:a
+(deploy eikä `--record-acceptance`). Dry-runin portti antaa tarkan komennon
+koskemattomalle irrotetulle työpuulle `.claude/worktrees/rc-X-smoke`:
+
+```
+git worktree add --detach .claude/worktrees/rc-X-smoke <deployTarget>
+npm run e2e:boot-smoke -- --root .claude/worktrees/rc-X-smoke --label X --expect-sha <deployTarget> > .claude/activation/smoke-X.txt
+npm run activation:orchestrate -- --record-boot-smoke=X --sha=<deployTarget> --smoke-result=.claude/activation/smoke-X.txt
+```
+
+Kirjaus hyväksyy vain yhden ajon tulosteen, jonka viimeinen rivi on
+`KÄYNNISTYSSAVU [X]: PASS (n/n; poikkeuksia 0, hylkäyksiä 0, konsolivirheitä 0, tuotantopyyntöjä 0)`
+ja jonka rivi `EHDOKAS [X]: <deployTarget> (portit: omat; --expect-sha: <deployTarget>)`
+kertoo tarjoillun puun täyden SHA:n (HEAD- ja puutarkistus PASS). FAIL,
+puuttuva tai katkaistu tulosrivi, ristiriitaiset luvut (n/m, nollasta
+poikkeava laskuri), toinen SHA, `--gates J` tai väärä aalto = ei kirjausta
+(fail closed). Tuloste kirjoitetaan Git Bashissa tai sh:ssa: Windows PowerShellin
+`>` tuottaa UTF-16:ta, jota ei kirjata.
 
 **Kirjauspaikka:** `.claude/activation/journal.jsonl` — paikallinen,
 git-ignoroitu, projektikansion sisällä. Kirjaukset ovat vain paikallisia:
@@ -72,10 +89,16 @@ mitään ei lähetetä minnekään. Rivityypit:
   aikakatkaistiin mutta tuotanto täsmää myöhemmin. Migraatioaallolle
   lisäksi `--verify-result=<verify_00XX-tulos>`.
 - `candidate-tests` — ehdokkaan vihreä testiajo (ehto 3).
+- `boot-smoke` — ehdokkaan käynnistyssavu PASS omalla koodilla ja porteilla
+  (ehto 9): `--record-boot-smoke=X --sha=<deployTarget> --smoke-result=<tuloste>`.
 
-Aallolle **C** ehto 3 ei ole pakollinen: C deployattiin ennen
+Aallolle **C** ehdot 3 ja 9 eivät ole pakollisia: C deployattiin ennen
 aktivointityökaluja, ja omistaja päätti, että sen tekninen hyväksyntä
 perustuu live-todennukseen. Kaikki muut ehdot todennetaan myös C:lle.
+Jos C:lle on kirjattu testiajo tai savu (`--record-candidate-tests=C`,
+`--record-boot-smoke=C`), kirjaus näytetään todisteena. (C:n savu ajettiin
+2026-09-26 `cf259d0`:lle: PASS 27/27, ennen EHDOKAS-riviä; kirjaus vaatii
+uuden ajon.)
 
 ---
 
@@ -92,7 +115,7 @@ Paketti: [`docs/acceptance/WAVE-C.md`](../acceptance/WAVE-C.md),
 
 | Laji | Tarkistus | Komento | Kirjataan |
 |---|---|---|---|
-| AUTOMATED PASS | ehdot 1, 2, 4, 5, 7, 8 (ehto 3 ei pakollinen, ehto 6: ei migraatiota) | `npm run production:verify-assets -- --wave=C --sha=cf259d0ef755f7e875cc9cd9c15405eba632e408 --record-acceptance` | `technical-acceptance`-rivi |
+| AUTOMATED PASS | ehdot 1, 2, 4, 5, 7, 8 (ehdot 3 ja 9 eivät pakollisia, ehto 6: ei migraatiota) | `npm run production:verify-assets -- --wave=C --sha=cf259d0ef755f7e875cc9cd9c15405eba632e408 --record-acceptance` | `technical-acceptance`-rivi |
 | LIVE USE VALIDATION PENDING | rutiinin luonti, muokkaus ja kytkin säilyvät F5:n yli; "Ohita" säilyy; aallot A–B ennallaan; konsoli puhdas | `WAVE-C-OWNER-ACCEPTANCE.md` kohdat 1–3 | ei kirjausta — ei estä, ei PASS |
 | LIVE USE VALIDATION PENDING | valinnainen vain luku -tarkistus: `precheck_0003_0008_auth_final.sql` 6/6, `verify_0003_0008_post_activation.sql` `failures_total = 0` | SQL-editori | ei kirjausta — ei estä, ei PASS |
 
@@ -103,6 +126,7 @@ Paketti: [`docs/acceptance/WAVE-D.md`](../acceptance/WAVE-D.md). Omistajan viest
 | Laji | Tarkistus | Komento | Kirjataan |
 |---|---|---|---|
 | AUTOMATED PASS | ehto 3: D:n oma testipatteristo | `node --test` ehdokkaassa + `--record-candidate-tests=D` | `candidate-tests`-rivi |
+| AUTOMATED PASS | ehto 9: D:n käynnistyssavu omalla koodilla ja porteilla | `npm run e2e:boot-smoke` ehdokkaassa + `--record-boot-smoke=D` | `boot-smoke`-rivi |
 | AUTOMATED PASS | ehdot 1, 2, 4, 5, 7, 8 (ehto 6: ei migraatiota) | `npm run activation:orchestrate -- --execute-deploy --approved-sha=<D:n deployTarget>` | `deploy`-rivi |
 | LIVE USE VALIDATION PENDING | toistuva meno, lasku ja säästötavoite säilyvät; summa senttiylleen (12,34 → 1234); SET NULL: menon poisto jättää laskun; laskuja ei synny itsestään | `WAVE-D.md` kohta 4 | ei kirjausta — ei estä, ei PASS |
 | LIVE USE VALIDATION PENDING | valinnainen vain luku: `verify_0003_0008_post_activation.sql`, rahasarakkeet `bigint` | `WAVE-D.md` kohta 5 | ei kirjausta — ei estä, ei PASS |
@@ -114,6 +138,7 @@ Paketti: [`docs/acceptance/WAVE-E.md`](../acceptance/WAVE-E.md). Omistajan viest
 | Laji | Tarkistus | Komento | Kirjataan |
 |---|---|---|---|
 | AUTOMATED PASS | ehto 3: E:n oma testipatteristo | `node --test` ehdokkaassa + `--record-candidate-tests=E` | `candidate-tests`-rivi |
+| AUTOMATED PASS | ehto 9: E:n käynnistyssavu omalla koodilla ja porteilla | `npm run e2e:boot-smoke` ehdokkaassa + `--record-boot-smoke=E` | `boot-smoke`-rivi |
 | AUTOMATED PASS | ehdot 1, 2, 4, 5, 7, 8 (ehto 6: ei migraatiota) | `npm run activation:orchestrate -- --execute-deploy --approved-sha=<E:n deployTarget>` | `deploy`-rivi |
 | LIVE USE VALIDATION PENDING | sovellus latautuu, konsolissa ei `ai_action_audit`-virheitä; A–D toimivat; taulu pysyy tyhjänä | `WAVE-E.md` kohta 4 | ei kirjausta — ei estä, ei PASS |
 
@@ -125,6 +150,7 @@ Paketti: [`docs/acceptance/WAVE-F.md`](../acceptance/WAVE-F.md). Omistajan viest
 |---|---|---|---|
 | AUTOMATED PASS | ennen migraatiota: tuore inventaario ja `preflight_0009.sql` 0 FAIL | omistaja ajaa (vain luku) → `score-inventory.mjs`, `score-sql-result.mjs` → orkestroijalle `--inventory`, `--preflight-result` | orkestroijan `PREFLIGHT_DB` |
 | AUTOMATED PASS | ehto 3: F:n oma testipatteristo (ennen migraatiota) | `node --test` ehdokkaassa + `--record-candidate-tests=F` | `candidate-tests`-rivi |
+| AUTOMATED PASS | ehto 9: F:n käynnistyssavu omalla koodilla ja porteilla | `npm run e2e:boot-smoke` ehdokkaassa + `--record-boot-smoke=F` | `boot-smoke`-rivi |
 | AUTOMATED PASS | ehto 6: `verify_0009.sql` = 0 poikkeavaa | `score-sql-result.mjs --sql=supabase/verify/verify_0009.sql` → `--verify-result` | `deploy`-rivi |
 | AUTOMATED PASS | ehdot 1, 2, 4, 5, 7, 8 | `npm run activation:orchestrate -- --execute-deploy --approved-sha=<F:n deployTarget> --verify-result=<tulos>` | `deploy`-rivi |
 | LIVE USE VALIDATION PENDING | tapahtumat säilyvät; maksettu lasku = yksi tapahtuma; kuitti ehdotuksena, kuva ei Supabaseen; skannattu lasku avoin; sijoitus ilman arvoa tuntematon | `WAVE-F.md` kohta 4 | ei kirjausta — ei estä, ei PASS |
@@ -138,6 +164,7 @@ Paketti: [`docs/acceptance/WAVE-G.md`](../acceptance/WAVE-G.md). Omistajan viest
 | AUTOMATED PASS | ennen migraatiota: **tilannekuva** `supabase/backup/snapshot_state_0009.sql` → vienti → `check` kunnossa (ei RLS-suodatusta, tiivisteet ja viite-eheys) | omistaja ajaa SQL:n ja vie tuloksen; Claude: `node tools/activation/restore-snapshot.mjs check <vienti> --save` | `.local-backups/db/<UTC>_state_0009/` (git-ignoroitu) |
 | AUTOMATED PASS | tuore inventaario ja `preflight_0010.sql` 0 FAIL (rivi 09: `goals_status_check` olemassa) | kuten F | orkestroijan `PREFLIGHT_DB` |
 | AUTOMATED PASS | ehto 3: G:n oma testipatteristo | `node --test` ehdokkaassa + `--record-candidate-tests=G` | `candidate-tests`-rivi |
+| AUTOMATED PASS | ehto 9: G:n käynnistyssavu omalla koodilla ja porteilla | `npm run e2e:boot-smoke` ehdokkaassa + `--record-boot-smoke=G` | `boot-smoke`-rivi |
 | AUTOMATED PASS | ehto 6: `verify_0010.sql` = 0 poikkeavaa (rivit 20–22: tilarajoite) | `score-sql-result.mjs --sql=supabase/verify/verify_0010.sql` | `deploy`-rivi |
 | AUTOMATED PASS | ehdot 1, 2, 4, 5, 7, 8 | `npm run activation:orchestrate -- --execute-deploy --approved-sha=<G:n deployTarget> --verify-result=<tulos>` | `deploy`-rivi |
 | LIVE USE VALIDATION PENDING | tavoitteen, projektin ja tehtävän tallennus; välitavoitteet; mittaritavoite; Ylläpidossa-tila; suunnitelmaehdotus ei tallennu ennen hyväksyntää | `WAVE-G.md` kohta 4 | ei kirjausta — ei estä, ei PASS |
@@ -153,6 +180,7 @@ Paketti: [`docs/acceptance/WAVE-H.md`](../acceptance/WAVE-H.md). Omistajan viest
 |---|---|---|---|
 | AUTOMATED PASS | tuore inventaario ja `preflight_0011.sql` 0 FAIL | kuten F | orkestroijan `PREFLIGHT_DB` |
 | AUTOMATED PASS | ehto 3: uudelleenleikatun H:n oma testipatteristo | `node --test` ehdokkaassa + `--record-candidate-tests=H` | `candidate-tests`-rivi |
+| AUTOMATED PASS | ehto 9: uudelleenleikatun H:n käynnistyssavu omalla koodilla ja porteilla | `npm run e2e:boot-smoke` ehdokkaassa + `--record-boot-smoke=H` | `boot-smoke`-rivi |
 | AUTOMATED PASS | ehto 6: `verify_0011.sql` = 0 poikkeavaa | `score-sql-result.mjs --sql=supabase/verify/verify_0011.sql` | `deploy`-rivi |
 | AUTOMATED PASS | ehdot 1, 2, 4, 5, 7, 8 | `npm run activation:orchestrate -- --execute-deploy --approved-sha=<H:n deployTarget> --verify-result=<tulos>` | `deploy`-rivi |
 | LIVE USE VALIDATION PENDING | kirjaus Saapuviin ehdotuksena; muistutukset (torkku ei muuta määräaikaa); ilmoituskeskus; matka ilman kestoa; paikkasääntö oletuksena pois; ensimmäinen oikea AI-kirjausrivi | `WAVE-H.md` kohta 4 | ei kirjausta — ei estä, ei PASS |
@@ -165,6 +193,7 @@ Paketti: [`docs/acceptance/WAVE-I.md`](../acceptance/WAVE-I.md). Omistajan viest
 |---|---|---|---|
 | AUTOMATED PASS | tuore inventaario ja `preflight_0012.sql` 0 FAIL | kuten F | orkestroijan `PREFLIGHT_DB` |
 | AUTOMATED PASS | ehto 3: uudelleenleikatun I:n oma testipatteristo | `node --test` ehdokkaassa + `--record-candidate-tests=I` | `candidate-tests`-rivi |
+| AUTOMATED PASS | ehto 9: uudelleenleikatun I:n käynnistyssavu omalla koodilla ja porteilla | `npm run e2e:boot-smoke` ehdokkaassa + `--record-boot-smoke=I` | `boot-smoke`-rivi |
 | AUTOMATED PASS | ehto 6: `verify_0012.sql` = 0 poikkeavaa | `score-sql-result.mjs --sql=supabase/verify/verify_0012.sql` | `deploy`-rivi |
 | AUTOMATED PASS | ehdot 1, 2, 4, 5, 7, 8 | `npm run activation:orchestrate -- --execute-deploy --approved-sha=<I:n deployTarget> --verify-result=<tulos>` | `deploy`-rivi |
 | LIVE USE VALIDATION PENDING | vanha tavoite tallentuu (sarakeportti); elämänalue, kapasiteetti, Kuormitus-havainto; aikakirjaus säilyy alueen poistossa; viikkokatsaus | `WAVE-I.md` kohta 4 | ei kirjausta — ei estä, ei PASS |
@@ -177,6 +206,7 @@ Paketti: [`docs/acceptance/WAVE-J.md`](../acceptance/WAVE-J.md). Omistajan viest
 |---|---|---|---|
 | AUTOMATED PASS | edellytys: `verify_0012.sql` = 0 poikkeavaa (ajettu I:n jälkeen); tuore inventaario ja `preflight_0013.sql` 0 FAIL | kuten F | orkestroijan `PREFLIGHT_DB` |
 | AUTOMATED PASS | ehto 3: uudelleenleikatun J:n oma testipatteristo | `node --test` ehdokkaassa + `--record-candidate-tests=J` | `candidate-tests`-rivi |
+| AUTOMATED PASS | ehto 9: uudelleenleikatun J:n käynnistyssavu omalla koodilla ja porteilla | `npm run e2e:boot-smoke` ehdokkaassa + `--record-boot-smoke=J` | `boot-smoke`-rivi |
 | AUTOMATED PASS | ehto 6: `verify_0013.sql` = 0 poikkeavaa | `score-sql-result.mjs --sql=supabase/verify/verify_0013.sql` | `deploy`-rivi |
 | AUTOMATED PASS | ehdot 1, 2, 4, 5, 7, 8 | `npm run activation:orchestrate -- --execute-deploy --approved-sha=<J:n deployTarget> --verify-result=<tulos>` | `deploy`-rivi |
 | AUTOMATED PASS | tietoturva: AI-selitys suljettu (`GET /api/explain` 405, `POST` ilman tokenia 503, `OPTIONS` 204) | `WAVE-J.md` kohta 3 (curl, ei tunnuksia, ei maksullista kutsua; orkestroija ei kutsu `/api/`-polkuja) | J:n hyväksyntäraportti omistajalle |

@@ -18,6 +18,7 @@ import {
   capabilities, notifications as platformNotifications, location as platformLocation
 } from '../../platform/index.js';
 import { buildUserDataExport, serializeExport, EXPORTED_COLLECTIONS } from '../../domain/dataExport.js';
+import { countOf } from '../../domain/lifeArea.js';
 import { renderAccountDeletionSection } from '../accountDeletion.js';
 import { logEvent, LOG_LEVEL } from '../../lib/logger.js';
 
@@ -307,7 +308,7 @@ export async function exportUserData({
   if (incomplete.length > 0) exported.incomplete = incomplete;
   download(`manifestival-vienti-${fmtISO(now())}.json`, serializeExport(exported));
   const message = incomplete.length > 0
-    ? `Vajaa vienti ladattu: ${incomplete.length} tietotyyppiä puuttuu. `
+    ? `Vajaa vienti ladattu: ${countOf(incomplete.length, 'tietotyyppi', 'tietotyyppiä')} puuttuu. `
       + 'Lataa vienti uudelleen, kun kaikki tiedot ovat näkyvissä.'
     : 'Tiedosto ladattu.';
   return { downloaded: true, incomplete, message };

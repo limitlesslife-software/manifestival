@@ -9,13 +9,13 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 import {
-  ERROR_CODE, ERROR_CODES, AppError, ok, fail, failWith, isKnownErrorCode
+  ERROR_CODE, ERROR_CODES, AppError, ok, fail, failWith, isKnownErrorCode, logError
 } from '../src/lib/result.js';
 
 import {
   LOG_LEVEL, SENSITIVE_KEYS, REDACTED, FREE_TEXT, LONG_TEXT,
   redactForLog, isDevEnvironment, isSensitiveKey, log, logWarn, logEvent,
-  logFailure, failureFields
+  logFailure, failureFields, stackLocations
 } from '../src/lib/logger.js';
 import { jsFilesIn, readCode } from './helpers/sources.mjs';
 import { callArguments, STRING_LITERAL } from './helpers/callArgs.mjs';
@@ -235,8 +235,10 @@ test('ERR-15 KRIITTINEN: logEvent korvaa nimen ja pohdinnan, koodi säilyy', () 
 });
 
 test('ERR-15 KRIITTINEN: logEvent pitää vain koodin näköiset merkkijonot', () => {
-  // Avain, jota ei ole listattu, ei päästä vapaata tekstiä läpi: uusi
-  // kutsu `logEvent('x', { kind: area.name })` ei vuoda nimeä.
+  // VARASUOJA: listaamattoman avaimen alla vapaa teksti (välilyönnit,
+  // ääkköset, välimerkit) ei mene läpi. Yksisanainen ASCII-nimi menee
+  // (ks. seuraava testi); varsinainen suoja on staattinen kutsupaikkatesti
+  // tests/life-alignment-privacy.test.mjs.
   const out = captureConsole(() => logEvent('alignment.test', {
     kind: 'Terapia ryhmä', other: 'Äiti', punct: 'Soita!', state: 'needs_review',
     op: 'tasks.update', id: 'op-123:abc', empty: '', long: 'x'.repeat(61)
@@ -253,6 +255,20 @@ test('ERR-15 KRIITTINEN: logEvent pitää vain koodin näköiset merkkijonot', (
   assert.match(out, /"long":"\[pitkä\]"/);
   assert.equal(FREE_TEXT, '[teksti]');
   assert.equal(LONG_TEXT, '[pitkä]');
+});
+
+test('ERR-15 RAJOITUS: yksisanainen ASCII-arvo on koodin näköinen ja menee läpi listaamattoman avaimen alla', () => {
+  // Kirjattu rajoitus, ei tavoite: CODE_LIKE ei erota nimeä "Terapia"
+  // koodista "needs_review". Siksi lokikutsu ei saa lukea sisältökenttää
+  // lainkaan (tests/life-alignment-privacy.test.mjs, docs/SECURITY.md).
+  const out = captureConsole(() => logEvent('alignment.test', { kind: 'Terapia' }));
+  assert.match(out, /"kind":"Terapia"/);
+  // Listattu avain suojaa silti samankin arvon.
+  const listed = captureConsole(() => logEvent('alignment.test', { name: 'Terapia' }));
+  assert.equal(listed.includes('Terapia'), false);
+  // Staattinen kutsupaikkatesti, joka on varsinainen suoja, on olemassa.
+  const privacy = readFileSync(new URL('./life-alignment-privacy.test.mjs', import.meta.url), 'utf8');
+  assert.match(privacy, /yksikään loki- tai konsolikutsu src\/-puussa ei lue sisältökenttää/);
 });
 
 test('ERR-16 KRIITTINEN: natiivikuori ei ole kehitysympäristö, vaikka origin on localhost', () => {
@@ -311,34 +327,121 @@ test('logFailure: kääreen syy luetaan, vapaa teksti ei kelpaa koodiksi', () =>
   assert.equal(captureConsole(() => logFailure('Tallennus epäonnistui: Terapia', postgrestLike())), '');
 });
 
+test('logFailure kehityksessä: kaatumiskohta (enintään kaksi kehystä) ilman viestiä; tuotannossa ja natiivissa ei', () => {
+  // Viesti, joka yrittää näyttää kehykseltä: se ei saa päätyä lokiin.
+  const error = new TypeError('Terapia ryhmä\n    at vuoto (https://evil.example/Terapia.js:1:2)');
+  const lines = [];
+  const original = console.warn;
+  console.warn = (...args) => lines.push(args);
+  try {
+    withGlobals({ location: { hostname: 'localhost' }, Capacitor: { isNativePlatform: () => false } }, () => {
+      logFailure('alignment.area_save_failed', error);
+    });
+    withGlobals({ location: { hostname: 'manifestival-ten.vercel.app' } }, () => {
+      logFailure('alignment.area_save_failed', error);
+    });
+    withGlobals({ location: { hostname: 'localhost' }, Capacitor: { isNativePlatform: () => true } }, () => {
+      logFailure('alignment.area_save_failed', error);
+    });
+  } finally {
+    console.warn = original;
+  }
+  assert.equal(lines.length, 3);
+  const [dev, prod, native] = lines.map(args => args[2]);
+  assert.ok(Array.isArray(dev.at) && dev.at.length >= 1 && dev.at.length <= 2, JSON.stringify(dev));
+  for (const frame of dev.at) {
+    assert.match(frame, /^\S+:\d+:\d+$/, 'muoto polku:rivi:sarake');
+    assert.equal(frame.includes('Terapia'), false, frame);
+    assert.equal(frame.includes('evil.example'), false, frame);
+  }
+  assert.match(dev.at[0], /lib-logger-errors\.test\.mjs:\d+:\d+$/, 'kaatumiskohta on testitiedostossa');
+  assert.equal(JSON.stringify(dev).includes('Terapia'), false);
+  // Tuotanto ja natiivikuori: tuloste ennallaan (vain nimi, koodi, tila).
+  assert.deepEqual(Object.keys(prod).sort(), ['code', 'errorName', 'status']);
+  assert.deepEqual(Object.keys(native).sort(), ['code', 'errorName', 'status']);
+});
+
+test('stackLocations: Firefox- ja Safari-muoto, polku ilman originia ja kyselyä, ei ilman pinoa', () => {
+  const firefox = {
+    name: 'TypeError', message: 'x',
+    stack: 'save@https://app.example/src/app/x.js?v=1:10:5\nrun@https://app.example/src/app/y.js:20:7\n@https://app.example/src/app/z.js:1:1'
+  };
+  assert.deepEqual(stackLocations(firefox), ['/src/app/x.js:10:5', '/src/app/y.js:20:7']);
+  assert.deepEqual(stackLocations({ name: 'Error', message: 'x' }), []);
+  assert.deepEqual(stackLocations('Terapia'), []);
+  assert.deepEqual(stackLocations(null), []);
+  // Monirivinen viesti leikataan pois tarkasti (V8).
+  const v8 = { name: 'Error', message: 'rivi 1\n    at Terapia (https://x.example/a.js:1:1)',
+    stack: 'Error: rivi 1\n    at Terapia (https://x.example/a.js:1:1)\n    at save (http://localhost:5173/src/data/b.js:3:4)' };
+  assert.deepEqual(stackLocations(v8), ['/src/data/b.js:3:4']);
+});
+
 function postgrestLike() {
   return { name: 'PostgrestError', code: '23505', message: 'Terapia' };
 }
 
-test('KRIITTINEN: src/app ei tulosta raakoja virheolioita konsoliin', () => {
+/**
+ * Selaimen moduulit, joiden konsolikutsu saa kantaa muutakin kuin
+ * kiinteää tekstiä: tiedosto -> sallitut argumentit. Jokaisella on syy;
+ * uusi poikkeus lisätään tähän nimeltä ja perustellen.
+ *
+ * src/lib/logger.js ei ole listassa eikä tarkistuksessa: se on lokituksen
+ * ainoa toteutus ja suodattaa kentät itse (redactForLog, failureFields).
+ */
+const CONSOLE_ARGUMENT_ALLOWLIST = Object.freeze({
+  // logError: vain suodatettu diagnostiikka -- kiinteä käyttäjäviesti ja
+  // redactedCause (koodi, tila, nimi; viestistä, vihjeestä ja detailsista
+  // arvot riisuttuina). Ei raakaa virheoliota (ERR-02, F8).
+  'src/lib/result.js': ['error.toDiagnostic()', 'redactedCause(error.cause)', 'redactedCause(error)']
+});
+
+test('KRIITTINEN: yksikään selaimen moduuli ei tulosta raakoja virheolioita konsoliin', () => {
   // PostgRESTin virheolio kantaa rivin arvoja (details, message), ja
   // console.warn('…', error) tulosti ne sellaisenaan — myös tuotannossa ja
-  // APK:n logcatiin. Sovelluskerros kirjaa epäonnistumiset logFailurella;
-  // konsolikutsu saa kantaa vain kiinteää tekstiä.
+  // APK:n logcatiin. Epäonnistumiset kirjataan logFailurella; konsolikutsu
+  // saa kantaa vain kiinteää tekstiä (tai listatun, suodatetun arvon).
+  const files = [...jsFilesIn('src'), 'sw.js'].filter(file => file !== 'src/lib/logger.js');
   const offenders = [];
-  let checked = 0;
-  for (const file of jsFilesIn('src/app')) {
+  let calls = 0;
+  for (const file of files) {
     const code = readCode(file);
+    const allowed = new Set(CONSOLE_ARGUMENT_ALLOWLIST[file] || []);
     for (const match of code.matchAll(/console\.(\w+)\(/g)) {
-      checked += 1;
+      calls += 1;
       const args = callArguments(code, match.index + match[0].length - 1);
-      if (!args.every(arg => STRING_LITERAL.test(arg))) {
+      if (!args.every(arg => STRING_LITERAL.test(arg) || allowed.has(arg.trim()))) {
         offenders.push(`${file}: ${code.slice(match.index, match.index + 90).split('\n')[0]}`);
       }
     }
   }
   assert.deepEqual(offenders, [], 'raaka arvo konsolikutsussa');
+  // Tarkistus kattoi oikeasti koko selainpuun, ei tyhjää listaa.
+  for (const dir of ['src/app', 'src/data', 'src/domain', 'src/lib', 'src/ui', 'src/ai', 'src/platform']) {
+    assert.ok(files.some(file => file.startsWith(dir + '/')), `${dir} jäi tarkistamatta`);
+  }
+  assert.ok(files.length >= 100, `tarkistettiin vain ${files.length} tiedostoa`);
+  assert.ok(files.includes('src/lib/result.js') && files.includes('sw.js'));
+  assert.equal(files.includes('src/lib/logger.js'), false);
+  assert.ok(calls >= 2, 'result.js:n logError-kutsut löytyivät');
   // Tarkistin itse: tunnistaa raakavirheen eikä kaadu literaaliin.
   const sample = "console.warn('a, b', error); console.error(\"ok\");";
   assert.deepEqual(callArguments(sample, sample.indexOf('(')), ["'a, b'", 'error']);
   assert.equal(STRING_LITERAL.test('error'), false);
   assert.equal(STRING_LITERAL.test("'Manifestival: x'"), true);
-  assert.ok(checked >= 0);
+});
+
+test('KRIITTINEN: result.js logError ei tulosta raakaa virhettä, vain suodatetun diagnostiikan', () => {
+  // Virhepaketti kirjoitti logErrorin uudelleen: jokainen syöte kulkee
+  // redactedCausen läpi. Dynaaminen todiste: raaka olio ja heitetty virhe.
+  const secret = 'Terapia ryhmä';
+  const out = captureConsole(() => {
+    logError({ code: '23505', details: `Key (user_id, name)=(u, ${secret}) already exists.`, extra: secret });
+    logError(new AppError('Tallennus ei onnistunut.', { cause: { code: '22P02', message: `bad: "${secret}"`, row: secret } }));
+  });
+  assert.equal(out.includes(secret), false, out);
+  assert.match(out, /23505/);
+  assert.match(out, /22P02/);
+  assert.equal(/"(extra|row)"/.test(out), false, 'listaamaton kenttä ei päädy konsoliin');
 });
 
 test('KRIITTINEN: tilakuuntelijan virhe kirjataan ilman virheen sisältöä', async () => {

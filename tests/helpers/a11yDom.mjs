@@ -151,6 +151,20 @@ class Node {
     this.append(...nodes);
   }
 
+  /** Korvaa tämä solmu samalle paikalle (kuten selaimen Element.replaceWith). */
+  replaceWith(...nodes) {
+    const parent = this.parentNode;
+    if (!parent) return;
+    const index = parent.childNodes.indexOf(this);
+    parent.removeChild(this);
+    const fresh = nodes.map(node => (typeof node === 'string' ? this.ownerDocument.createTextNode(node) : node));
+    for (const node of fresh) {
+      if (node.parentNode) node.parentNode.removeChild(node);
+      node.parentNode = parent;
+    }
+    parent.childNodes.splice(index, 0, ...fresh);
+  }
+
   contains(node) {
     for (let current = node; current; current = current.parentNode) if (current === this) return true;
     return false;
@@ -228,6 +242,7 @@ class Text extends Node {
   get nodeType() { return 3; }
   get textContent() { return this.data; }
   set textContent(value) { this.data = String(value ?? ''); }
+  cloneNode() { return new Text(this.ownerDocument, this.data); }
 }
 
 class Fragment extends Node {
@@ -249,6 +264,14 @@ class Element extends Node {
   get tagName() { return this.localName.toUpperCase(); }
   get nodeName() { return this.tagName; }
   get children() { return this.childNodes.filter(node => node.nodeType === 1); }
+
+  /** Attribuutit (ja syvänä lapset), ei ohjaimen ajonaikaista tilaa: kuten selaimessa. */
+  cloneNode(deep = false) {
+    const copy = new Element(this.ownerDocument, this.localName);
+    for (const [key, value] of this.attrs) copy.attrs.set(key, value);
+    if (deep) for (const child of this.childNodes) copy.appendChild(child.cloneNode(true));
+    return copy;
+  }
 
   getAttribute(name) {
     const key = name.toLowerCase();

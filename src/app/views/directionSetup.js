@@ -27,7 +27,7 @@
 // uudelleenpiirto tulevat kutsujalta (renderDirectionSetup, initDirectionSetup).
 
 import {
-  maybe, setHtml, captureFocus as captureFocusState, restoreFocus as restoreFocusState
+  maybe, setHtml, captureFocus as captureFocusState, restoreFocus as restoreFocusState, renderAnnouncingError
 } from '../../ui/dom.js';
 import { escapeHtml } from '../../lib/format.js';
 import { getState, findLifeArea } from '../state.js';
@@ -169,6 +169,9 @@ function areasStep(state) {
   const existing = activeAreas(state);
   const selection = draftAreas.length === 0 ? 'Et ole vielä valinnut alueita.'
     : `Valittu: ${draftAreas.map(draft => draft.name).join(', ')}.`;
+  // Tämän vaiheen virhe koskee aina oman alueen nimeä (addCustomName):
+  // kenttä kertoo sen itse ja viittaa virheeseen (#dirSetupError, cardHtml).
+  const nameError = stepError ? ' aria-invalid="true" aria-describedby="dirSetupError"' : '';
   return {
     title: 'Mitkä elämäsi alueet ovat sinulle tärkeitä?',
     hint: 'Valitse valmiista tai kirjoita oma. Mitään ei luoda ennen kuin tallennat.',
@@ -178,7 +181,7 @@ function areasStep(state) {
       <label class="field-label" for="dirSetupCustomName">Oma alue</label>
       <div class="dir-setup-inline">
         <input type="text" id="dirSetupCustomName" maxlength="${MAX_AREA_NAME_LENGTH}" autocomplete="off"
-          placeholder="esim. Vapaaehtoistyö" value="${escapeHtml(customNameDraft)}" data-focus="custom-name">
+          placeholder="esim. Vapaaehtoistyö" value="${escapeHtml(customNameDraft)}" data-focus="custom-name"${nameError}>
         <button type="button" class="assist-btn" data-setup="add-custom" data-focus="add-custom">Lisää</button>
       </div>
       <p class="dir-line">${escapeHtml(selection)}</p>`,
@@ -527,6 +530,15 @@ function rerender() {
   hooks.rerender();
 }
 
+/**
+ * Käyttäjän toiminto asetti vaiheen virheen: sama virhe kuulutetaan
+ * uudelleen, kun toiminto toistuu (esim. "Lisää" tyhjällä nimellä
+ * kahdesti). Identtistä korttia setHtml ei kirjoita (CRIT-03).
+ */
+function rerenderWithError() {
+  renderAnnouncingError('dirSetupError', rerender);
+}
+
 function go(index) {
   setupIndex = index;
   stepError = '';
@@ -553,16 +565,20 @@ function addCustomName() {
   const name = String(customNameDraft || '').normalize('NFC').trim().slice(0, MAX_AREA_NAME_LENGTH);
   if (!name) {
     stepError = 'Kirjoita alueelle nimi.';
-    rerender();
+    rerenderWithError();
     return;
   }
   const key = areaNameKey(name);
   if (getState().lifeAreas.some(area => areaNameKey(area.name) === key)) {
     stepError = 'Sinulla on jo tämänniminen alue.';
-    rerender();
+    rerenderWithError();
     return;
   }
   customNameDraft = '';
+  // Kenttä tyhjennetään suoraan: jos kortin merkintä ei muutu (nimi oli jo
+  // valittuna), setHtml ei kirjoita korttia, ja kirjoitettu nimi jäisi näkyviin.
+  const input = maybe('dirSetupCustomName');
+  if (input) input.value = '';
   if (!draftAreas.some(draft => areaNameKey(draft.name) === key)) toggleDraft(name);
   else { stepError = ''; rerender(); }
 }
@@ -601,7 +617,7 @@ async function saveTargets() {
     const minutes = targetMinutesFor(choice);
     if (Number.isNaN(minutes) || (minutes !== null && minutes > 168 * 60)) {
       stepError = `Anna alueen ${area.name} viikkotavoite tunteina, esim. 5 tai 2,5.`;
-      rerender();
+      rerenderWithError();
       return;
     }
     if ((area.targetMinutesPerWeek ?? null) !== minutes) writes.push([areaId, minutes]);
@@ -635,7 +651,7 @@ async function saveCapacity() {
   const hours = Number(text);
   if (text === '' || !Number.isFinite(hours) || hours < 0) {
     stepError = 'Anna tunnit, esim. 25.';
-    rerender();
+    rerenderWithError();
     return;
   }
   busy = true;
