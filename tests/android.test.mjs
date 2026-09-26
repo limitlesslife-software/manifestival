@@ -316,6 +316,20 @@ test('LOC-3: jos sijaintilupa joskus palaa, se ei saa rajata jakelua', { skip: !
     'sijaintilupa ilman android.hardware.location required="false" -riviä');
 });
 
+test('MIC-1: mikrofonilupa ei saa rajata jakelua (android.hardware.microphone required="false")', { skip: !hasAndroid }, () => {
+  // Kuten LOC-3: RECORD_AUDIO synnyttää Play-kaupassa implisiittisen
+  // PAKOLLISEN android.hardware.microphone-ominaisuuden, joka suodattaisi
+  // laitteet ilman mikrofonia. Puhe on oikotie; kirjoittaminen toimii aina.
+  const manifest = appManifest();
+  if (!/uses-permission android:name="android\.permission\.RECORD_AUDIO"/.test(manifest)) return;
+  assert.match(manifest,
+    /<uses-feature android:name="android\.hardware\.microphone" android:required="false" \/>/,
+    'mikrofonilupa ilman android.hardware.microphone required="false" -riviä');
+  assert.equal(/android\.hardware\.microphone" android:required="true"/.test(manifest), false);
+  // <uses-feature> on <manifest>-tason elementti, ei <application>in sisällä.
+  assert.ok(manifest.indexOf('<uses-feature android:name="android.hardware.microphone"') > manifest.indexOf('</application>'));
+});
+
 test('LOC-1: natiivisijainnin lippu ja manifesti ovat samaa mieltä', { skip: !hasAndroid }, async () => {
   const { NATIVE_LOCATION_ENABLED } = await import('../src/platform/capabilities.js');
   const declares = /uses-permission android:name="android\.permission\.ACCESS_\w*LOCATION"/.test(appManifest());

@@ -68,8 +68,15 @@
         Capacitor hylkaa WebView'n omat mikrofonipyynnot, joten web-koodi ei
         voi avata mikrofonia liitannaisen ohi. Testit (android.test)
         vartioivat tata.
+
+        MIKROFONI EI OLE PAKOLLINEN LAITTEISTO. Mikrofonilupa synnyttaa
+        Play-kaupassa implisiittisen pakollisen android.hardware.microphone-
+        ominaisuuden, joka suodattaisi pois laitteet ilman mikrofonia. Puhe
+        on oikotie, ei edellytys: kirjoittaminen toimii aina. Siksi
+        ominaisuus julistetaan nimenomaisesti required="false".
     -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
 
     <!--
         SIJAINTI: lupaa ei julisteta, koska mikaan toteutettu ominaisuus ei

@@ -344,6 +344,15 @@ käytettävissä. Seuraavat luvat kaatavat tarkastuksen: `ACCESS_BACKGROUND_LOCA
 `<queries><intent><action android:name="android.speech.RecognitionService"/></intent></queries>`.
 Ilman sitä Android 11+ piilottaa puheentunnistuspalvelun sovellukselta.
 
+**Laitteisto:** `RECORD_AUDIO` synnyttäisi Play-kaupassa implisiittisen
+pakollisen `android.hardware.microphone`-ominaisuuden, joka suodattaisi pois
+laitteet ilman mikrofonia. Lähdemanifesti julistaa siksi
+`<uses-feature android:name="android.hardware.microphone" android:required="false" />`:
+puhe on oikotie, kirjoittaminen toimii aina. `aapt2 dump badging` näyttää
+sen rivinä `uses-feature-not-required: name='android.hardware.microphone'`.
+verify-apk ei tarkista uses-feature-rivejä; lähdemanifestin rivin vartioi
+`tests/android.test.mjs` (MIC-1).
+
 **Liitännäiset** (`assets/capacitor.plugins.json`) ovat täsmälleen
 `@capacitor/app`, `@capacitor/geolocation` ja `@capacitor/local-notifications`.
 Repon oma SpeechPlugin rekisteröidään käsin MainActivityssä, eikä se siksi
