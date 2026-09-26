@@ -50,15 +50,24 @@ export const ALL_GATES = Object.freeze([
 ]);
 
 /**
- * Tuotannossa JUURI NYT oleva julkaisu.
+ * HISTORIALLINEN tuotantotila: se julkaisu, joka oli tuotannossa kun
+ * perustilan korjaus ja aallot A–E suunniteltiin.
  *
  * Kaikki kymmenen porttia kiinni. Tämä on se, mihin perustilan korjaus
  * deployataan — ja se on korjauksen peruutuskohde, ei aaltojen.
+ *
+ * TÄMÄ EI OLE TUOTANNON NYKYTILA (ACT-09). Tuotannon nykytila luetaan
+ * ajon aikana gitistä: `originMainState()` (tools/release/lineage.mjs).
+ * Nimi `PRODUCTION` säilyy, koska manifesti ja sen testit viittaavat
+ * siihen; uusi koodi käyttää nimeä `HISTORICAL_BASE_PRODUCTION`.
  */
 export const PRODUCTION = Object.freeze({
   sha: '63a96c5ab90b10a73369cd66e348f4a3774367e2',
   cacheVersion: 'v12'
 });
+
+/** Sama kuin `PRODUCTION`, nimellä joka ei väitä olevansa nykytila. */
+export const HISTORICAL_BASE_PRODUCTION = PRODUCTION;
 
 /**
  * Perustila: KORJATTU pohja, jolta juna lähtee.
@@ -102,6 +111,13 @@ export const WAVES = Object.freeze([
   Object.freeze({
     id: 'A',
     cacheVersion: 'v14',
+    // Aktivoinnin metatiedot (ACT-12): ks. "AKTIVOINNIN METATIEDOT" alla.
+    migration: null,
+    migrationFile: null,
+    risk: 'low',
+    ownerGates: Object.freeze(['OWNER_DEPLOY_APPROVAL_REQUIRED']),
+    backupRequired: false,
+    verifyPrerequisite: null,
     readiness: 'READY',
     gates: Object.freeze(['notificationPreferences', 'wellbeing']),
     title: 'Muistutusasetukset ja hyvinvointi',
@@ -114,6 +130,13 @@ export const WAVES = Object.freeze([
   Object.freeze({
     id: 'B',
     cacheVersion: 'v15',
+    // Aktivoinnin metatiedot (ACT-12): ks. "AKTIVOINNIN METATIEDOT" alla.
+    migration: null,
+    migrationFile: null,
+    risk: 'low',
+    ownerGates: Object.freeze(['OWNER_DEPLOY_APPROVAL_REQUIRED']),
+    backupRequired: false,
+    verifyPrerequisite: null,
     readiness: 'READY',
     gates: Object.freeze(['goals', 'projects']),
     title: 'Tavoitteet ja projektit',
@@ -125,6 +148,13 @@ export const WAVES = Object.freeze([
   Object.freeze({
     id: 'C',
     cacheVersion: 'v16',
+    // Aktivoinnin metatiedot (ACT-12): ks. "AKTIVOINNIN METATIEDOT" alla.
+    migration: null,
+    migrationFile: null,
+    risk: 'low',
+    ownerGates: Object.freeze(['OWNER_DEPLOY_APPROVAL_REQUIRED']),
+    backupRequired: false,
+    verifyPrerequisite: null,
     readiness: 'READY',
     gates: Object.freeze(['routines', 'routineExceptions']),
     title: 'Rutiinit ja poikkeukset',
@@ -136,6 +166,13 @@ export const WAVES = Object.freeze([
   Object.freeze({
     id: 'D',
     cacheVersion: 'v17',
+    // Aktivoinnin metatiedot (ACT-12): ks. "AKTIVOINNIN METATIEDOT" alla.
+    migration: null,
+    migrationFile: null,
+    risk: 'low',
+    ownerGates: Object.freeze(['OWNER_DEPLOY_APPROVAL_REQUIRED']),
+    backupRequired: false,
+    verifyPrerequisite: null,
     readiness: 'READY',
     gates: Object.freeze(['recurringExpenses', 'savingsGoals', 'bills']),
     title: 'Talous',
@@ -148,6 +185,13 @@ export const WAVES = Object.freeze([
   Object.freeze({
     id: 'E',
     cacheVersion: 'v18',
+    // Aktivoinnin metatiedot (ACT-12): ks. "AKTIVOINNIN METATIEDOT" alla.
+    migration: null,
+    migrationFile: null,
+    risk: 'low',
+    ownerGates: Object.freeze(['OWNER_DEPLOY_APPROVAL_REQUIRED']),
+    backupRequired: false,
+    verifyPrerequisite: null,
     readiness: 'READY',
     gates: Object.freeze(['aiAudit']),
     title: 'AI-toimintojen kirjausketju',
@@ -159,6 +203,13 @@ export const WAVES = Object.freeze([
   Object.freeze({
     id: 'F',
     cacheVersion: 'v19',
+    // Aktivoinnin metatiedot (ACT-12): ks. "AKTIVOINNIN METATIEDOT" alla.
+    migration: '0009',
+    migrationFile: 'supabase/migrations/0009_finance_2.sql',
+    risk: 'low',
+    ownerGates: Object.freeze(['OWNER_PRODUCTION_MIGRATION_APPROVAL_REQUIRED', 'OWNER_DEPLOY_APPROVAL_REQUIRED']),
+    backupRequired: false,
+    verifyPrerequisite: null,
 
     // READY KOSKEE KÄYTTÖLIITTYMÄÄ, `blockedBy` KANTAA.
     //
@@ -188,6 +239,13 @@ export const WAVES = Object.freeze([
   Object.freeze({
     id: 'G',
     cacheVersion: 'v20',
+    // Aktivoinnin metatiedot (ACT-12): ks. "AKTIVOINNIN METATIEDOT" alla.
+    migration: '0010',
+    migrationFile: 'supabase/migrations/0010_goal_to_action.sql',
+    risk: 'high',
+    ownerGates: Object.freeze(['OWNER_PRODUCTION_MIGRATION_APPROVAL_REQUIRED', 'OWNER_DEPLOY_APPROVAL_REQUIRED']),
+    backupRequired: true,
+    verifyPrerequisite: null,
 
     // READY koskee käyttöliittymää, `blockedBy` kantaa. Ks. aalto F.
     readiness: 'READY',
@@ -205,6 +263,13 @@ export const WAVES = Object.freeze([
   Object.freeze({
     id: 'H',
     cacheVersion: 'v21',
+    // Aktivoinnin metatiedot (ACT-12): ks. "AKTIVOINNIN METATIEDOT" alla.
+    migration: '0011',
+    migrationFile: 'supabase/migrations/0011_personal_assistant.sql',
+    risk: 'low',
+    ownerGates: Object.freeze(['OWNER_PRODUCTION_MIGRATION_APPROVAL_REQUIRED', 'OWNER_DEPLOY_APPROVAL_REQUIRED']),
+    backupRequired: false,
+    verifyPrerequisite: null,
 
     // READY koskee käyttöliittymää, `blockedBy` kantaa. Ks. aalto F.
     //
@@ -236,6 +301,13 @@ export const WAVES = Object.freeze([
   Object.freeze({
     id: 'I',
     cacheVersion: 'v22',
+    // Aktivoinnin metatiedot (ACT-12): ks. "AKTIVOINNIN METATIEDOT" alla.
+    migration: '0012',
+    migrationFile: 'supabase/migrations/0012_life_alignment.sql',
+    risk: 'medium',
+    ownerGates: Object.freeze(['OWNER_PRODUCTION_MIGRATION_APPROVAL_REQUIRED', 'OWNER_DEPLOY_APPROVAL_REQUIRED']),
+    backupRequired: false,
+    verifyPrerequisite: null,
 
     // READY koskee käyttöliittymää, `blockedBy` kantaa. Ks. aalto F.
     readiness: 'READY',
@@ -254,6 +326,13 @@ export const WAVES = Object.freeze([
   Object.freeze({
     id: 'J',
     cacheVersion: 'v23',
+    // Aktivoinnin metatiedot (ACT-12): ks. "AKTIVOINNIN METATIEDOT" alla.
+    migration: '0013',
+    migrationFile: 'supabase/migrations/0013_alignment_reality.sql',
+    risk: 'low',
+    ownerGates: Object.freeze(['OWNER_PRODUCTION_MIGRATION_APPROVAL_REQUIRED', 'OWNER_DEPLOY_APPROVAL_REQUIRED', 'PHONE_ACCEPTANCE_REQUIRED']),
+    backupRequired: false,
+    verifyPrerequisite: '0012',
 
     // READY koskee käyttöliittymää, `blockedBy` kantaa. Ks. aalto F.
     readiness: 'READY',
@@ -436,4 +515,129 @@ export function releasePlan() {
     rollbackTarget: rollbackTargetOf(wave.id),
     rationale: wave.rationale
   }));
+}
+
+// =====================================================================
+// AKTIVOINNIN METATIEDOT (ACT-12)
+// =====================================================================
+//
+// Jokaisella aallolla on yllä kentät
+//
+//   migration           junan migraatio, jonka aalto tarvitsee ('0009'…),
+//                       tai null (A–E: 0003–0008 ajettiin ennen junaa)
+//   migrationFile       sen tiedosto repon juuresta
+//   risk                'low' | 'medium' | 'high'
+//   ownerGates          omistajan portit (docs/SUUNTA-ACTIVATION-GO-NOGO.md,
+//                       "Jäljellä olevat esteet")
+//   backupRequired      tuore varmuuskopio PAKOLLINEN ennen migraatiota
+//   verifyPrerequisite  migraatio, jonka verify_00XX.sql on oltava
+//                       0 poikkeavaa ennen tämän aallon migraatiota
+//
+// Nämä olivat aiemmin vain proosaa kolmessa dokumentissa ja kolmessa
+// työkalussa (score-inventory, build-preflights, train-map), jotka
+// kukin kopioivat migraatio -> aalto -kartan käsin. Nyt kaikki lukevat
+// sen täältä, ja tests/activation-metadata.test.mjs vertaa
+// GO/NO-GO-taulukkoa näihin kenttiin.
+
+/**
+ * Junan C–J ensimmäinen aalto: tuotannossa jo oleva lattia. Kanta 0008
+ * tukee aaltoja A–E, mutta tuotanto ei voi palata C:tä vanhempaan
+ * (välimuistiversio ei saa laskea), joten sallitut koodiaallot alkavat
+ * tästä.
+ */
+export const TRAIN_FLOOR_WAVE = 'C';
+
+/**
+ * Kannan lähtötila ennen junan migraatioita: 0008 on ajettu, ja se tukee
+ * kaikkia aaltoja E:hen asti.
+ */
+export const DB_FLOOR = Object.freeze({ migration: '0008', wave: 'E' });
+
+/** Junan migraatiot järjestyksessä ('0009' … '0013'). */
+export const TRAIN_MIGRATIONS = Object.freeze(
+  WAVES.filter(w => w.migration).map(w => w.migration));
+
+/** Migraatio -> aalto, jonka portit se mahdollistaa. */
+export const MIGRATION_WAVE = Object.freeze(Object.fromEntries(
+  WAVES.filter(w => w.migration).map(w => [w.migration, w.id])));
+
+/** Riskiluokan suomenkielinen nimi (GO/NO-GO-taulukon sanasto). */
+export const RISK_LABEL_FI = Object.freeze({ low: 'matala', medium: 'keski', high: 'KORKEA' });
+
+/** Seuraava aalto, tai null (J on viimeinen). BASE -> A. */
+export function nextWaveId(id) {
+  const index = waveIndex(id);
+  if (index === null) return null;
+  return index + 1 < WAVES.length ? WAVES[index + 1].id : null;
+}
+
+/** Edellinen aalto, tai null. A -> BASE. */
+export function previousWaveId(id) {
+  const index = waveIndex(id);
+  if (index === null || index === -1) return null;
+  return index === 0 ? 'BASE' : WAVES[index - 1].id;
+}
+
+/**
+ * Minkä aallon koodia kanta tukee, kun `lastMigration` on viimeisin
+ * täysin ajettu migraatio? 0008 -> E, 0009 -> F … 0013 -> J.
+ */
+export function schemaWaveOfMigration(lastMigration) {
+  if (lastMigration === DB_FLOOR.migration) return DB_FLOOR.wave;
+  return MIGRATION_WAVE[lastMigration] || null;
+}
+
+/** Esitarkistuksen polku migraatiolle ('0009' -> supabase/preflight/preflight_0009.sql). */
+export function preflightPathOf(migration) {
+  return migration ? `supabase/preflight/preflight_${migration}.sql` : null;
+}
+
+/** Varmistuksen polku migraatiolle ('0009' -> supabase/verify/verify_0009.sql). */
+export function verifyPathOf(migration) {
+  return migration ? `supabase/verify/verify_${migration}.sql` : null;
+}
+
+/**
+ * Deployatun commitin tila porttimatriisista ja välimuistiversiosta.
+ *
+ * Tavallinen aalto: matriisi ratkeaa aaltoon W ja välimuisti on
+ * täsmälleen cacheVersionOf(W).
+ *
+ * PERUUTUS (ACT-10): aallon W+1 peruutus palauttaa aallon W matriisin,
+ * mutta nostaa välimuistia (peruutus on deploy, ja deploy nostaa aina).
+ * Se näkyy matriisina W ja välimuistina, joka on SUUREMPI kuin
+ * cacheVersionOf(W). Tila on 'ROLLBACK' ja `rollbackOf` = W+1. Sellainen
+ * tila pysäyttää junan: myöhempien ehdokkaiden välimuistiversiot
+ * törmäävät peruutuksen versioon, joten ne on leikattava uudelleen
+ * (TRAIN_HALTED_RECUT_REQUIRED).
+ *
+ * @param {{gates: object|null, cacheVersion: string|null}} deployed
+ * @returns {{state: 'WAVE'|'ROLLBACK'|'INCONSISTENT', wave: string|null,
+ *   matrixWave: string|null, rollbackOf: string|null, label: string}}
+ */
+export function classifyDeployedState({ gates, cacheVersion }) {
+  const matrixWave = gates ? resolveWave(gates) : null;
+  const number = value => {
+    const match = /^v(\d+)$/.exec(String(value));
+    return match ? Number(match[1]) : null;
+  };
+  const inconsistent = label => ({
+    state: 'INCONSISTENT', wave: null, matrixWave, rollbackOf: null, label
+  });
+  if (!matrixWave) return inconsistent('matriisi ei vastaa yhtäkään aaltoa');
+  const expected = number(cacheVersionOf(matrixWave));
+  const actual = number(cacheVersion);
+  if (actual === null) return inconsistent('välimuistiversiota ei voitu lukea');
+  if (actual === expected) {
+    return { state: 'WAVE', wave: matrixWave, matrixWave, rollbackOf: null, label: matrixWave };
+  }
+  const rollbackOf = nextWaveId(matrixWave);
+  if (actual > expected && rollbackOf) {
+    return {
+      state: 'ROLLBACK', wave: null, matrixWave, rollbackOf,
+      label: `ROLLBACK(${rollbackOf})`
+    };
+  }
+  return inconsistent(
+    `välimuisti ${cacheVersion} ei sovi matriisiin ${matrixWave} (${cacheVersionOf(matrixWave)})`);
 }
