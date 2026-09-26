@@ -23,7 +23,7 @@
 //      valita sen, ja painike sanoo sen ääneen ("hyväksyn arvion
 //      toteumaksi").
 
-import { maybe } from '../../ui/dom.js';
+import { maybe, renderHtml } from '../../ui/dom.js';
 import { escapeHtml } from '../../lib/format.js';
 import { fmtISO } from '../../lib/datetime.js';
 import { confirmAction } from '../../ui/confirm.js';
@@ -92,31 +92,40 @@ function pendingHtml(pending, now) {
     </div>`;
 }
 
-export function renderTimerBar(now = nowMs()) {
-  const bar = maybe('timerBar');
-  if (!bar) return;
-  const timer = currentTimer();
-  const pending = pendingTimer();
-  if (!timer && !pending) {
-    bar.hidden = true;
-    bar.innerHTML = '';
-    return;
-  }
-  bar.hidden = false;
-  if (!timer) {
-    bar.classList.toggle('is-paused', false);
-    bar.innerHTML = pendingHtml(pending, now);
-    return;
-  }
-  const status = displayStatus(timer, now);
+// Palkki piirretään KERRAN ajastinta kohti (CRIT-03). Ennen jokainen
+// tilamuutos (myös Tauko/Jatka itse ja resume-päivityksen kymmenet
+// muutokset) korvasi palkin innerHTML:n: painettu painike irtosi, ja
+// näppäimistön ja TalkBackin fokus putosi <body>:yyn. Nyt tila, kohde,
+// kulunut aika ja Tauko/Jatka-painikkeen nimi ja data-timer päivitetään
+// paikallaan; rakenne vaihtuu vain, kun ajastin (tunniste) vaihtuu tai
+// katoaa, tai kun kesken jäänyt pysäytys poistaa Tauko-painikkeen.
+
+/** Palkki -> piirretyn rakenteen avain. */
+const barStructure = new WeakMap();
+
+function structureKey(timer, status) {
+  if (!timer) return 'pending';
+  return `timer:${timer.id}${status.state === 'stopping' ? ':stopping' : ''}`;
+}
+
+function toggleLabel(state) {
+  return state === 'paused' ? { action: 'resume', label: 'Jatka' } : { action: 'pause', label: 'Tauko' };
+}
+
+const CLOCK_SKEW_TEXT = 'Laitteen kello on siirtynyt taaksepäin. Kulunutta aikaa ei näytetä negatiivisena.';
+
+function pendingSlotHtml(pending, now) {
+  return `<div class="timer-pending-slot"${pending ? '' : ' hidden'}>${pending ? pendingHtml(pending, now) : ''}</div>`;
+}
+
+function timerBarHtml(timer, pending, status, now) {
+  if (!timer) return pendingSlotHtml(pending, now);
   const label = describeTarget(targetOfTimer(timer));
-  bar.classList.toggle('is-paused', status.state === 'paused');
+  const { action, label: toggleText } = toggleLabel(status.state);
   const toggle = status.state === 'stopping' ? ''
-    : status.state === 'paused'
-      ? '<button type="button" class="assist-btn" data-timer="resume">Jatka</button>'
-      : '<button type="button" class="assist-btn" data-timer="pause">Tauko</button>';
+    : `<button type="button" class="assist-btn" data-timer="${action}">${toggleText}</button>`;
   const stopLabel = status.state === 'stopping' ? 'Yritä kirjausta uudelleen' : 'Pysäytä ja kirjaa';
-  bar.innerHTML = `
+  return `
     <div class="timer-info">
       <span class="timer-state">${escapeHtml(stateLabel(status.state))}</span>
       <span class="timer-target">${escapeHtml(label)}</span>
@@ -128,8 +137,66 @@ export function renderTimerBar(now = nowMs()) {
       <button type="button" class="assist-btn primary" data-timer="stop">${stopLabel}</button>
       <button type="button" class="assist-btn danger" data-timer="cancel" aria-label="Hylkää ajastus kirjaamatta">Hylkää</button>
     </div>
-    ${status.clockSkew ? '<p class="hint timer-skew">Laitteen kello on siirtynyt taaksepäin. Kulunutta aikaa ei näytetä negatiivisena.</p>' : ''}
-    ${pending ? pendingHtml(pending, now) : ''}`;
+    <p class="hint timer-skew"${status.clockSkew ? '' : ' hidden'}>${CLOCK_SKEW_TEXT}</p>
+    ${pendingSlotHtml(pending, now)}`;
+}
+
+function writeText(node, text) {
+  if (node.textContent !== text) node.textContent = text;
+}
+
+/**
+ * Päivitä piirretty palkki paikallaan. false = rakennetta ei löytynyt
+ * (esim. testin tynkä-DOM), jolloin kutsuja piirtää palkin kokonaan.
+ */
+function updateTimerBar(bar, timer, pending, status, now) {
+  if (typeof bar.querySelector !== 'function') return false;
+  const slot = bar.querySelector('.timer-pending-slot');
+  if (!slot) return false;
+  if (timer) {
+    const find = selector => bar.querySelector(selector);
+    const parts = {
+      state: find('.timer-state'), target: find('.timer-target'), elapsed: find('#timerElapsed'),
+      spoken: find('#timerElapsedText'), skew: find('.timer-skew')
+    };
+    const toggle = find('[data-timer="pause"], [data-timer="resume"]');
+    if (Object.values(parts).some(part => !part) || (status.state !== 'stopping' && !toggle)) return false;
+    writeText(parts.state, stateLabel(status.state));
+    writeText(parts.target, describeTarget(targetOfTimer(timer)));
+    writeText(parts.elapsed, formatElapsed(status.elapsedSeconds));
+    writeText(parts.spoken, `Kulunut ${spokenElapsed(status.elapsedSeconds)}`);
+    if (toggle) {
+      // Sama painike-elementti: fokus pysyy siinä, vain nimi ja toiminto vaihtuvat.
+      const { action, label } = toggleLabel(status.state);
+      if (toggle.dataset.timer !== action) toggle.dataset.timer = action;
+      writeText(toggle, label);
+    }
+    if (parts.skew.hidden !== !status.clockSkew) parts.skew.hidden = !status.clockSkew;
+  }
+  // Kirjaamaton ajastus omassa lokerossaan: sen painikkeiden fokus palautuu.
+  if (slot.hidden !== !pending) slot.hidden = !pending;
+  renderHtml(slot, pending ? pendingHtml(pending, now) : '');
+  return true;
+}
+
+export function renderTimerBar(now = nowMs()) {
+  const bar = maybe('timerBar');
+  if (!bar) return;
+  const timer = currentTimer();
+  const pending = pendingTimer();
+  if (!timer && !pending) {
+    bar.hidden = true;
+    bar.innerHTML = '';
+    barStructure.delete(bar);
+    return;
+  }
+  bar.hidden = false;
+  const status = timer ? displayStatus(timer, now) : null;
+  bar.classList.toggle('is-paused', Boolean(status) && status.state === 'paused');
+  const key = structureKey(timer, status);
+  if (barStructure.get(bar) === key && updateTimerBar(bar, timer, pending, status, now)) return;
+  renderHtml(bar, timerBarHtml(timer, pending, status, now));
+  barStructure.set(bar, key);
 }
 
 /** Vain kuluneen ajan teksti; ei koske painikkeisiin (fokus säilyy). */
@@ -484,10 +551,17 @@ export function openTimerChooser() {
 
 // --------------------------------------------------------- kytkennät
 
+/** Ajastintoiminto kesken: toinen napautus ohitetaan. */
+let timerActionBusy = false;
+
 async function onTimerAction(event) {
   const button = event.target.closest('[data-timer]');
-  if (!button) return;
-  button.disabled = true;
+  if (!button || timerActionBusy) return;
+  // aria-disabled eikä disabled: estetyksi muuttuva painike menettää
+  // fokuksen (osa selaimista siirtää sen <body>:yyn), ja Tauko/Jatka on
+  // sama elementti ennen ja jälkeen (CRIT-03).
+  timerActionBusy = true;
+  button.setAttribute('aria-disabled', 'true');
   try {
     switch (button.dataset.timer) {
       case 'pause': await pauseTracking(); break;
@@ -503,7 +577,8 @@ async function onTimerAction(event) {
       default: break;
     }
   } finally {
-    button.disabled = false;
+    timerActionBusy = false;
+    button.removeAttribute('aria-disabled');
   }
 }
 

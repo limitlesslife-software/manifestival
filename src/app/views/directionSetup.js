@@ -26,7 +26,9 @@
 // Tämä moduuli EI importoi direction.js:ää (sykli): arviojono ja
 // uudelleenpiirto tulevat kutsujalta (renderDirectionSetup, initDirectionSetup).
 
-import { maybe } from '../../ui/dom.js';
+import {
+  maybe, setHtml, captureFocus as captureFocusState, restoreFocus as restoreFocusState
+} from '../../ui/dom.js';
 import { escapeHtml } from '../../lib/format.js';
 import { getState, findLifeArea } from '../state.js';
 import { getUser } from '../../data/session.js';
@@ -473,7 +475,12 @@ export function renderDirectionSetup(context = {}) {
   }
 
   const previous = captureFocus(container);
-  card.innerHTML = html;
+  const focusState = captureFocusState(container);
+  // Sama merkintä ei kirjoitu uudelleen: arviojonon role="status" ja
+  // virheen role="alert" eivät toistu ruudunlukijalle joka piirrolla (CRIT-03).
+  // Kortti on nimetyn alueen (#dirSetup) sisällä; alueen pysyvä elävä
+  // alue (#dirSetupStatus) ei saa kadota piirrossa.
+  const changed = setHtml(card, html);
   container.hidden = html === '';
   // Yksi pysyvä elävä alue: teksti vaihdetaan vain muuttuessaan, jottei
   // uudelleenpiirto (esim. datan päivitys) kuuluta samaa uudelleen.
@@ -484,9 +491,10 @@ export function renderDirectionSetup(context = {}) {
     focusTitleNext = false;
     const title = maybe('dirSetupTitle');
     if (title && typeof title.focus === 'function') title.focus();
-  } else {
+  } else if (!restoreFocus(container, previous === 'dismiss' ? 'resume' : previous) && changed) {
     // "Näytä koko Suunta": fokus jää kortille ("Jatka aloitusta"), ei katoa.
-    restoreFocus(container, previous === 'dismiss' ? 'resume' : previous);
+    // Arviojonon ohjaimilla ei ole data-focus-avainta: yleinen palautus.
+    restoreFocusState(container, focusState, { fallback: ['dirQueueTitle-setup', 'dirSetupTitle'] });
   }
   lastActive = active;
   return active;
@@ -502,9 +510,11 @@ function captureFocus(container) {
 }
 
 function restoreFocus(container, key) {
-  if (!key || typeof container.querySelector !== 'function') return;
+  if (!key || typeof container.querySelector !== 'function') return false;
   const target = container.querySelector(`[data-focus="${key.replace(/"/g, '\\"')}"]`);
-  if (target && typeof target.focus === 'function' && !target.disabled) target.focus();
+  if (!target || typeof target.focus !== 'function' || target.disabled) return false;
+  target.focus();
+  return true;
 }
 
 export function isDirectionSetupActive() {

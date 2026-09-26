@@ -14,7 +14,7 @@
 // Sävy on toteava. Tämä ei ole suorituspisteytys: valmistumisprosenttia
 // ei näytetä pääviestinä missään.
 
-import { el, maybe, toggle, setText, focus, setBusy, singleFlight } from '../../ui/dom.js';
+import { el, maybe, toggle, setText, focus, setBusy, singleFlight, renderHtml, setHtml } from '../../ui/dom.js';
 import { escapeHtml } from '../../lib/format.js';
 import { fmtISO, todayMidnight } from '../../lib/datetime.js';
 import { getState, findLifeArea, findTask, findRoutine, findGoal, findProject } from '../state.js';
@@ -220,6 +220,28 @@ function setError(id, message) {
 function severityClass(severity) {
   return severity === SEVERITY.STRONG ? 'dir-strong'
     : severity === SEVERITY.ATTENTION ? 'dir-attention' : 'dir-info';
+}
+
+/**
+ * Otsikot, joihin fokus palaa, jos fokusoitu ohjain poistui uudelleen-
+ * piirrossa eikä sen tilalle tullut seuraavaa riviä (CRIT-03).
+ */
+const FOCUS_FALLBACK = Object.freeze({
+  dirSignals: ['dirSignalsTitle'], dirQuality: ['dirSignalsTitle'], dirWeekSummary: ['dirWeekTitle'],
+  dirEstimate: ['dirQueueTitle-main', 'dirEstimateTitle'], dirUnassigned: ['dirUnassignedTitle'],
+  dirAreaSuggestions: ['dirAreasTitle'], dirAreasList: ['dirAreasTitle'], dirGoalsList: ['dirGoalsTitle'],
+  dirTimeList: ['dirActualTitle'], dirReview: ['dirReviewTitle'], dirReviewCompare: ['dirReviewTitle'],
+  dirProposals: ['dirProposalsTitle'], dirReviewHistory: ['dirReviewTitle'], dirTrends: ['dirTrendsTitle']
+});
+
+/**
+ * Piirrä säiliö. Jokainen tilamuutos piirtää Suunnan uudelleen: sama
+ * merkintä ei kirjoitu uudelleen (role="alert"/"status" ei toistu
+ * ruudunlukijalle), ja muuttuneen merkinnän jälkeen fokus palaa samaan
+ * ohjaimeen, seuraavan rivin ohjaimeen tai osion otsikkoon (src/ui/dom.js).
+ */
+function paint(node, html) {
+  return renderHtml(node, html, { fallback: FOCUS_FALLBACK[node.id] || [] });
 }
 
 // ---------------------------------------------------------- osiot
@@ -1421,11 +1443,14 @@ function proposalsHtml(proposals, weekStart) {
       <div class="assist-meta"><span class="assist-tag">Tehty</span></div>
     </div>`;
     }
+    // Valintaruudun nimi kertoo MINKÄ ehdotuksen se valitsee ("Valitse:
+    // Kevennä ensi viikkoa"): pelkkä "Valitse" oli ruudunlukijalle sama
+    // jokaisella rivillä (CRIT-05). Näkyvä teksti pysyy lyhyenä.
     return `
     <div class="assist-row">
       ${navigating ? '' : `<label class="checkbox-row" for="dirSel-${escapeHtml(proposal.id)}">
         <input type="checkbox" id="dirSel-${escapeHtml(proposal.id)}" data-adjust-select="${escapeHtml(proposal.id)}"
-          ${selectedProposalIds.has(proposal.id) ? 'checked' : ''}> Valitse</label>`}
+          ${selectedProposalIds.has(proposal.id) ? 'checked' : ''}> Valitse<span class="visually-hidden">: ${escapeHtml(proposal.label)}</span></label>`}
       <div class="assist-title">${escapeHtml(proposal.label)}</div>
       ${proposal.detail ? `<div class="assist-reason">${escapeHtml(proposal.detail)}</div>` : ''}
       ${proposalInput(proposal)}
@@ -1496,7 +1521,8 @@ export function renderDirection() {
   // Jokin analyysin syöte (myös tehtävät, tavoitteet, rutiinit) jäi
   // lataamatta: havainnot, laatu ja ehdotukset korvataan ilmoituksella.
   const incomplete = analysisLoadProblems(state).length > 0;
-  el('dirPersistNote').innerHTML = loadProblemHtml(problems) + persistNoteHtml();
+  // role="alert": sama ilmoitus ei kirjoitu (eikä kuulu) uudelleen joka piirrolla.
+  setHtml(el('dirPersistNote'), loadProblemHtml(problems) + persistNoteHtml());
   // Aloitus (F2) ensin. Tuntematon ei ole nolla: jos Suunnan tietoja ei
   // saatu ladattua (tai lataus on kesken eikä alueita vielä tunneta),
   // aloitusta ei näytetä — alueet voivat olla kannassa. Myös tyhjä
@@ -1511,10 +1537,10 @@ export function renderDirection() {
   });
   // Ei tyhjän tilan kehotusta ("aloita elämänalueista"), kun alueita ei
   // saatu ladattua: niitä voi olla kannassa.
-  el('dirSignals').innerHTML = incomplete ? analysisLoadNoticeHtml() : areasUnknown ? '' : signalsHtml(analysis, areas);
+  paint(el('dirSignals'), incomplete ? analysisLoadNoticeHtml() : areasUnknown ? '' : signalsHtml(analysis, areas));
   const quality = maybe('dirQuality');
-  if (quality) quality.innerHTML = areas.length > 0 && !incomplete ? qualityActionsHtml(analysis) : '';
-  el('dirWeekSummary').innerHTML = weekSummaryHtml(analysis);
+  if (quality) paint(quality, areas.length > 0 && !incomplete ? qualityActionsHtml(analysis) : '');
+  paint(el('dirWeekSummary'), weekSummaryHtml(analysis));
   const startTimer = maybe('dirStartTimer');
   if (startTimer) {
     startTimer.textContent = currentTimer() ? 'Ajastin käynnissä' : 'Aloita ajanseuranta';
@@ -1526,23 +1552,23 @@ export function renderDirection() {
     estimateSection.hidden = !estimateOpen;
     // Aloituksen ollessa auki osio on piilossa, ja jono kuuluu aloitukselle.
     if (estimateOpen && !setupActive) {
-      el('dirEstimate').innerHTML = estimateMode === 'energy' ? energyRateHtml(analysis) : estimateQueueHtml('main');
+      paint(el('dirEstimate'), estimateMode === 'energy' ? energyRateHtml(analysis) : estimateQueueHtml('main'));
     }
   }
   const unassignedSection = maybe('dirUnassignedSection');
   if (unassignedSection) {
     unassignedSection.hidden = !unassignedOpen;
-    if (unassignedOpen) el('dirUnassigned').innerHTML = unassignedHtml(analysis);
+    if (unassignedOpen) paint(el('dirUnassigned'), unassignedHtml(analysis));
   }
-  el('dirAreaSuggestions').innerHTML = areasUnknown ? '' : suggestionsHtml(areas);
-  el('dirAreasList').innerHTML = areasHtml(areas, analysis);
-  el('dirGoalsList').innerHTML = goalsHtml(areas, state.goals);
+  paint(el('dirAreaSuggestions'), areasUnknown ? '' : suggestionsHtml(areas));
+  paint(el('dirAreasList'), areasHtml(areas, analysis));
+  paint(el('dirGoalsList'), goalsHtml(areas, state.goals));
 
   const dates = weekDates(analysis.weekStart);
-  el('dirTimeList').innerHTML = timeListHtml(entriesInRange(state.timeEntries, dates[0], dates[6]), areas);
+  paint(el('dirTimeList'), timeListHtml(entriesInRange(state.timeEntries, dates[0], dates[6]), areas));
   const timeArea = el('dirTimeArea');
   const chosenArea = timeArea.value;
-  timeArea.innerHTML = areaOptions(areas.filter(area => area.active), chosenArea, 'Ei aluetta');
+  setHtml(timeArea, areaOptions(areas.filter(area => area.active), chosenArea, 'Ei aluetta'));
 
   // Lomakkeen arvoja ei ylikirjoiteta kesken kirjoittamisen — eikä
   // tallentamatonta arvoa senkään jälkeen, kun fokus on siirtynyt muualle
@@ -1563,11 +1589,11 @@ export function renderDirection() {
     timeDate.value = dates.includes(today) ? today : dates[0];
   }
 
-  el('dirReview').innerHTML = incomplete ? analysisLoadNoticeHtml() : reviewHtml(analysis, areas);
+  paint(el('dirReview'), incomplete ? analysisLoadNoticeHtml() : reviewHtml(analysis, areas));
   const compare = maybe('dirReviewCompare');
   if (compare) {
-    compare.innerHTML = areas.length > 0 && !incomplete
-      ? compareHtml(compareWithPreviousWeek(analysis.weekStart, { analysis })) : '';
+    paint(compare, areas.length > 0 && !incomplete
+      ? compareHtml(compareWithPreviousWeek(analysis.weekStart, { analysis })) : '');
   }
   const existingReview = state.alignmentReviews.find(review => review.weekStart === analysis.weekStart);
   const reflection = el('dirReflection');
@@ -1592,17 +1618,17 @@ export function renderDirection() {
   for (const map of [proposalErrors, proposalDrafts]) {
     for (const id of [...map.keys()]) if (!ids.has(id)) map.delete(id);
   }
-  el('dirProposals').innerHTML = incomplete ? analysisLoadNoticeHtml() : proposalsHtml(shownProposals, analysis.weekStart);
+  paint(el('dirProposals'), incomplete ? analysisLoadNoticeHtml() : proposalsHtml(shownProposals, analysis.weekStart));
   // Esikatselu kuvaa sen tilan, jossa se laskettiin. Mikä tahansa muutos
   // (toisessa näkymässä tai tallennuksen jälkeen) mitätöi sen.
   if (lastPreview && lastPreview.stateRef !== state) lastPreview = null;
   const preview = maybe('dirProposalPreview');
-  if (preview) preview.innerHTML = previewHtml(lastPreview);
+  if (preview) setHtml(preview, previewHtml(lastPreview));
   const apply = maybe('dirApplySelected');
   if (apply) apply.disabled = !lastPreview || selectedProposalIds.size === 0;
-  el('dirReviewHistory').innerHTML = historyHtml(state.alignmentReviews);
+  paint(el('dirReviewHistory'), historyHtml(state.alignmentReviews));
   const trends = maybe('dirTrends');
-  if (trends) trends.innerHTML = trendsHtml(trendsRequested ? recentTrends(analysis.weekStart) : null);
+  if (trends) paint(trends, trendsHtml(trendsRequested ? recentTrends(analysis.weekStart) : null));
 }
 
 /**
@@ -1612,10 +1638,11 @@ export function renderTodayDirection() {
   const container = maybe('todayDirection');
   if (!container) return;
   const state = getState();
+  // role="status" ei kirjoitu uudelleen joka piirrolla, ja fokus säilyy (CRIT-03).
   if (state.lifeAreas.length === 0 && alignmentLoadProblems(state).includes('lifeAreas')) {
-    container.innerHTML = `<div class="dir-today">
+    renderHtml(container, `<div class="dir-today">
       <div class="dir-today-title">Suunta</div>
-      <p class="dir-line" role="status">Suunnan tietoja ei voitu ladata. Ne ovat tallessa — päivitä, kun yhteys toimii.</p></div>`;
+      <p class="dir-line" role="status">Suunnan tietoja ei voitu ladata. Ne ovat tallessa — päivitä, kun yhteys toimii.</p></div>`);
     return;
   }
   if (state.lifeAreas.length === 0 && !lifeAreasKnown(state)) {
@@ -1627,22 +1654,22 @@ export function renderTodayDirection() {
   }
   if (state.lifeAreas.length === 0) {
     // "Aloita Suunta" avaa aloituksen vaiheesta 1 (F2).
-    container.innerHTML = `<div class="dir-today">
+    renderHtml(container, `<div class="dir-today">
       <div class="dir-today-title">Suunta</div>
       <p class="dir-line">Kerro mikä elämässäsi on tärkeää, niin näet elääkö viikko sen mukaan.</p>
-      <button class="assist-btn primary" type="button" data-open-setup="1">Aloita Suunta</button></div>`;
+      <button class="assist-btn primary" type="button" data-open-setup="1">Aloita Suunta</button></div>`);
     return;
   }
   // Jokin analyysin syöte jäi lataamatta: vajaista luvuista ei tehdä
   // havaintoja ("alue ei saanut aikaa", kun kirjaukset puuttuvat).
   if (analysisLoadProblems(state).length > 0) {
-    container.innerHTML = `<div class="dir-today">
+    renderHtml(container, `<div class="dir-today">
       <div class="dir-today-title">Suunta</div>
       <p class="dir-line" role="status">Kaikkia tietoja ei saatu ladattua, joten havaintoja ei näytetä vajailla luvuilla. `
         + `Päivitä, kun yhteys toimii.</p>
       <div class="assist-actions">
         <button class="assist-btn" type="button" data-open-direction="1">Avaa Suunta</button>
-      </div></div>`;
+      </div></div>`);
     return;
   }
   // Päivän havainnot: enintään muutama, deterministisessä järjestyksessä,
@@ -1685,7 +1712,7 @@ export function renderTodayDirection() {
     </div>`;
   }).join('');
   if (lines.length === 0 && !observations && !notice) lines.push('Ei havaintoja tällä viikolla.');
-  container.innerHTML = `<div class="dir-today">
+  renderHtml(container, `<div class="dir-today">
     <div class="dir-today-title">Suunta</div>
     ${notice}
     ${lines.map(line => `<p class="dir-line">${escapeHtml(line)}</p>`).join('')}
@@ -1694,7 +1721,7 @@ export function renderTodayDirection() {
     <div class="assist-actions">
       <button class="assist-btn" type="button" data-today-action="log_time">Kirjaa aikaa</button>
       <button class="assist-btn" type="button" data-open-direction="1">Avaa Suunta</button>
-    </div></div>`;
+    </div></div>`);
 }
 
 // ------------------------------------------------------ lomakkeet
@@ -1759,10 +1786,16 @@ export function openAreaForm(id = null, prefill = {}) {
 }
 
 export function closeAreaForm() {
+  // Fokus lomakkeessa (Peruuta, Esc, poisto): se palaa "Lisää elämänalue"
+  // -painikkeeseen eikä jää piilotettuun kenttään (CRIT-03).
+  const form = maybe('dirAreaForm');
+  const hadFocus = Boolean(form && typeof document !== 'undefined' && typeof form.contains === 'function'
+    && form.contains(document.activeElement));
   editingAreaId = null;
   clearAreaErrors();
   toggle('dirAreaForm', false);
   toggle('dirAddArea', true);
+  if (hadFocus) focus('dirAddArea');
 }
 
 async function submitAreaForm() {
@@ -1979,7 +2012,7 @@ function showProposalErrors(entries) {
     if (raw !== undefined) proposalDrafts.set(id, raw);
   }
   const container = maybe('dirProposals');
-  if (container) container.innerHTML = proposalsHtml(shownProposals, targetWeek());
+  if (container) paint(container, proposalsHtml(shownProposals, targetWeek()));
   if (entries.length > 0) focus(`dirAdj-${entries[0].id}`);
 }
 
@@ -2012,7 +2045,7 @@ function onPreviewSelected() {
   if (proposals.length === 0) {
     lastPreview = null;
     const node = maybe('dirProposalPreview');
-    if (node) node.innerHTML = '<p class="hint">Valitse ensin yksi tai useampi ehdotus.</p>';
+    if (node) setHtml(node, '<p class="hint">Valitse ensin yksi tai useampi ehdotus.</p>');
     return;
   }
   const overrides = collectOverrides(proposals);
@@ -2036,8 +2069,8 @@ async function onApplySelected() {
     showProposalErrors(result.invalid.map(entry => ({ id: entry.id, message: firstError(entry.errors) })));
     const node = maybe('dirProposalPreview');
     if (node) {
-      node.innerHTML = `<p class="field-error" role="alert" style="display:block">Tarkista arvot ennen vahvistusta: `
-        + `${escapeHtml(result.invalid.map(entry => entry.label).join('; '))}. Mitään ei muutettu.</p>`;
+      setHtml(node, `<p class="field-error" role="alert" style="display:block">Tarkista arvot ennen vahvistusta: `
+        + `${escapeHtml(result.invalid.map(entry => entry.label).join('; '))}. Mitään ei muutettu.</p>`);
     }
     lastPreview = null;
     return;
@@ -2361,7 +2394,7 @@ export function initDirection() {
     // Valinnan muutos mitätöi esikatselun: vahvistettava on se mikä esikatseltiin.
     lastPreview = null;
     const preview = maybe('dirProposalPreview');
-    if (preview) preview.innerHTML = '';
+    if (preview) setHtml(preview, '');
     const apply = maybe('dirApplySelected');
     if (apply) apply.disabled = true;
   });
