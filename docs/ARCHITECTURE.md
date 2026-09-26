@@ -286,6 +286,60 @@ Migraation 0002 jälkeen tämä vaihdetaan arvoon `true`. Se on tarkoituksella
 Käyttöliittymä kertoo käyttäjälle rehellisesti, että nämä kentät näkyvät vain
 istunnon ajan — se ei teeskentele tallentavansa niitä.
 
+### Ajonaikainen skeematarkistus
+
+Portit ovat käännösaikaisia, ja asennettu APK kantaa omansa mukanaan.
+Jokaisella migraatiolla 0009–0013 on peruutus, joten sovellus voi olla
+kantaa **edellä**: portti auki, taulua tai saraketta ei ole. Ilman
+tarkistusta jokainen tehtävän ja tavoitteen tallennus kaatui (PGRST204),
+vaikka lukeminen näytti toimivan.
+
+| Moduuli | Vastuu |
+|---|---|
+| `src/data/schema.js` | vaatimukset (`SCHEMA_REQUIREMENTS`), `isTableAvailable`, `columnGateOpen`, torjunta, reaktiivinen kerros |
+| `src/data/schemaRuntime.js` | tila (`unverified`/`ok`/`degraded`/`maintenance`) ja puhdas ydin |
+| `src/data/schemaProbe.js` | vain lukeva tarkistus, aikaraja, välimuisti |
+| `src/app/schemaStatus.js` | rajoitetun tilan rivi ja huoltokatko |
+
+**Yksi sääntö: ajon aikana portti voi vain laskea, ei koskaan nousta.**
+`hasTable()` ja `pendingTables()` pysyvät käännösaikaisina (työkalut ja
+testit lukevat niitä); repositoriot kysyvät ajonaikaisia accessoreita.
+
+Tarkistus ajetaan kirjautumisen jälkeen ENNEN ensimmäistä latausta
+(`main.js onSignedIn`, aikaraja 4 s): yksi `select(sarakkeet).limit(0)`
+per taulu, ei rivejä, ei kirjoituksia. Offline-tilassa ei pyyntöjä
+(välimuisti tai käännösaikaiset portit). Verkko-, 5xx-, aikakatkaisu- ja
+istuntovirhe tarkoittaa "ei tiedetä" — mitään ei lasketa. Tuore välimuisti
+(sama vaatimusjoukko ja palvelin, alle vuorokausi) otetaan heti käyttöön ja
+tarkistetaan taustalla.
+
+Laskettu portti:
+
+- **sarakeportti** (esim. suunnittelukentät, elämänalue, maksutiedot):
+  sarakkeet jätetään pois kirjoituksista, tallennus toimii
+- **taulu vailla vaadittuja sarakkeita**: vain luku — olemassa oleva tieto
+  näkyy, kirjoitus torjutaan ennen verkkoa suomenkielisellä syyllä
+- **taulu puuttuu**: lataus on tyhjä (ei "tarkista yhteys" -virhettä),
+  kirjoitus torjutaan
+- **aikakirjaukset ilman 0013:a** käännöksessä, joka nojaa `operation_id`:n
+  idempotenssiin: vain luku; lähtökori säilyy ja lähtee, kun kanta on valmis
+- **ydin puuttuu** (tehtävien perussarakkeet tai profiili): huoltotila —
+  ei kirjoituksia, offline-jonoa ei toisteta eikä uutta jonoteta, koko
+  näytön ilmoitus ("Yritä uudelleen", "Kirjaudu ulos")
+
+Reaktiivinen kerros kattaa PostgRESTin vanhentuneen skeemavälimuistin:
+PGRST204/42703 laskee sarakkeen omistavan portin, PGRST205/42P01 taulun,
+ja uusi tarkistus ajastetaan (enintään kerran 30 sekunnissa). 23514 ei
+laske mitään. Käyttäjä ei näe taulujen tai sarakkeiden nimiä eikä koodeja;
+"Tekniset tiedot" näyttää vain migraatiotunnisteet. Ks. `docs/SCHEMA.md`.
+
+Virheluokat (`classifyError`): `schema` (PGRST204/205, 42703, 42P01,
+oma torjunta) ja `unavailable` (PGRST000–003, 08xxx, 53xxx, 57014,
+57P01–03, 40001, 40P01, 55P03, tila 408/425/429/5xx) tarkistetaan ennen
+yleistä hylkäystä. Offline-jono: `unavailable` uusitaan viiveellä,
+`schema` pysäyttää operaation ja pyytää uuden tarkistuksen. Aikakirjausten
+lähtökori hylkää vain tiedon oman virheen (22xxx, 23xxx paitsi 23505).
+
 ---
 
 ## Android
