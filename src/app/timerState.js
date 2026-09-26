@@ -19,7 +19,9 @@
 //                     pidetään ja lisätään kantaan uudelleen
 //   eri ajastin       laite oli kannassa -> kanta; laite ei koskaan
 //                     ehtinyt kantaan -> kanta käyntiin ja laitteen ajastin
-//                     jää odottamaan käyttäjän päätöstä (kirjaa/hylkää)
+//                     jää odottamaan käyttäjän päätöstä (kirjaa/hylkää);
+//                     jos odottavia on jo enimmäismäärä, laitteen ajastin
+//                     jatkuu (ei pudoteta) ja käyttäjälle kerrotaan
 //
 // VANHENTUNUT LISTA: lataus, joka alkoi ennen tämän laitteen viimeisintä
 // ajastinmuutosta (timerMutationSeq), ei saa herättää pysäytettyä
@@ -44,7 +46,7 @@ import { getState, setRunningTimerInState } from './state.js';
 import { runningTimersRepo } from '../data/collectionsRepo.js';
 import {
   loadTimer, loadTimerRecord, saveTimer, loadTombstones, addTombstone, clearTombstone,
-  loadPendingTimers, savePendingTimers, timerKey, pendingTimersKey
+  loadPendingTimers, savePendingTimers, timerKey, pendingTimersKey, MAX_PENDING_TIMERS
 } from '../data/timerStore.js';
 import { getUser, sessionSnapshot, isSameSession } from '../data/session.js';
 import { normalizeTimer, validateTimer, hasStopPlan } from '../domain/timer.js';
@@ -308,8 +310,11 @@ export function adoptLoadedTimers(list = [], { sinceSeq = null } = {}) {
   }
   // Laitteen ajastin ei koskaan ehtinyt kantaan, ja toisella laitteella
   // on nyt oma: kanta käyntiin, eikä tämän laitteen aikaa pudoteta hiljaa.
-  holdAsPending(id, local);
-  return keep(remote, { synced: true, dirty: false });
+  if (holdAsPending(id, local)) return keep(remote, { synced: true, dirty: false });
+  // Odottavia on jo enimmäismäärä: tämän laitteen ajastin jatkuu täällä
+  // (käyttäjälle kerrottiin), eikä mitään pudoteta. Kannan ajastin tulee
+  // näkyviin, kun odottavat on kirjattu tai hylätty.
+  return keep(local, { synced: record.synced, dirty: record.dirty });
 }
 
 /** Laitteella käynnistetty ajastin kantaan uudelleen (offline-käynnistys). */
@@ -440,13 +445,23 @@ function refreshTimerView(owner) {
   if (userId() === owner) setRunningTimerInState(currentTimer());
 }
 
+/**
+ * Jätä laitteen ajastin odottamaan käyttäjän päätöstä. Palauttaa false, jos
+ * sitä ei voitu jättää (odottavia on jo enimmäismäärä): silloin mitään ei
+ * pudoteta, vaan kutsuja pitää ajastimen käynnissä laitteella.
+ */
 function holdAsPending(owner, timer) {
-  if (!owner) return;
+  if (!owner) return false;
   const others = loadPendingTimers(owner).filter(other => other.id !== timer.id);
-  savePendingTimers(owner, [...others, timer]);
+  if (others.length >= MAX_PENDING_TIMERS) {
+    notify(`Tällä laitteella on jo ${MAX_PENDING_TIMERS} kirjaamatonta ajastusta. Tämän laitteen ajastin jatkuu täällä; kirjaa tai hylkää odottavat ajastinpalkista, niin toisen laitteen ajastin tulee näkyviin.`, 10000);
+    return false;
+  }
+  if (!savePendingTimers(owner, [...others, timer]).ok) return false;
   bump();
   refreshTimerView(owner);
   notify('Tälle laitteelle jäi kirjaamaton ajastus, kun toisella laitteella oli jo ajastin. Tarkista se ajastinpalkista.', 8000);
+  return true;
 }
 
 /** Päivitä odottavan ajastimen pysäytyssuunnitelma (vain jos se on yhä odottamassa). */

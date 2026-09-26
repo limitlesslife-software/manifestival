@@ -36,7 +36,8 @@ import { createTimeEntryWriter } from '../src/app/timeEntryWriter.js';
 import { stopAndLog, renderTimerBar } from '../src/app/views/timeLog.js';
 import {
   loadTimer, loadTimerRecord, saveTimer, loadOutbox, saveOutbox, purgeTimerData, timerKey, outboxKey,
-  tombstoneKey, resetTimerStoreForTests, loadTombstones, addTombstone, loadPendingTimers
+  tombstoneKey, resetTimerStoreForTests, loadTombstones, addTombstone, loadPendingTimers, savePendingTimers,
+  MAX_PENDING_TIMERS
 } from '../src/data/timerStore.js';
 import { runningTimersRepo, timeEntriesRepo } from '../src/data/collectionsRepo.js';
 import { normalizeTask } from '../src/domain/task.js';
@@ -751,6 +752,19 @@ test('offline F2: kun tehtävät on ladattu eikä kohdetta ole, viite pudotetaan
   assert.equal(loadOutbox(USER_A.id)[0].taskId, null);
 });
 
+test('offline F2: tehtävien lataus epäonnistui -> neutraali "Kohde ei latautunut", ei pysyvää "Ladataan"', () => {
+  saveTimer(USER_A.id, { id: 'restored', targetKind: 'task', taskId: 't1', startedAt: iso(T0) });
+  restoreLocalTimer();
+  const target = targetOfTimer(currentTimer());
+  assert.equal(describeTarget(target), 'Ladataan kohdetta…', 'ennen latauksen tulosta');
+  setDomainLoadStatus('tasks', false, new Error('Failed to fetch'));
+  assert.equal(describeTarget(target), 'Kohde ei latautunut', 'epäonnistunut lataus ei ole "ladataan"');
+  setDomainLoadStatus('tasks', true);
+  assert.equal(describeTarget(target), 'Poistettu kohde', 'onnistunut lataus ilman kohdetta');
+  setDomainLoadStatus('tasks', false, new Error('Failed to fetch'));
+  assert.equal(describeTarget(target), 'Poistettu kohde', 'aiempi onnistunut lataus ratkaisee');
+});
+
 // ======================================================= offline F8
 
 test('offline F8: toisella laitteella pysäytetty (kannasta kadonnut) ajastin ei herää laitteen kopiosta', () => {
@@ -1021,3 +1035,83 @@ test('istunto: uloskirjautumisen nollaus (resetTimerSync) -> A:n jumiin jäänyt
   assert.equal(currentTimer().id, idB, 'B:n tila koskematon');
 });
 
+// ============================================ katselmointi: odottavat ajastimet
+
+test('odottavia on jo enimmäismäärä -> uutta ajastinta ei pudoteta hiljaa: se jatkuu laitteella ja käyttäjälle kerrotaan', async (t) => {
+  const { toasts } = installBarDom(t);
+  setTimerRepoForTests(timerDb());
+  const held = Array.from({ length: MAX_PENDING_TIMERS }, (_, i) => ({
+    id: `pending-${i}`, startedAt: iso(T0 - (i + 1) * 60 * MIN), targetKind: 'none'
+  }));
+  assert.equal(savePendingTimers(USER_A.id, held).ok, true);
+  saveTimer(USER_A.id, { id: 'local-L', startedAt: iso(T0), targetKind: 'none' }, { synced: false, dirty: true });
+  const remote = { id: 'remote-R', startedAt: iso(T0 + 30 * MIN), targetKind: 'none' };
+
+  const adopted = adoptLoadedTimers([remote]);
+  assert.equal(adopted.id, 'local-L', 'laitteen ajastin jatkuu');
+  assert.equal(loadTimer(USER_A.id).id, 'local-L');
+  assert.deepEqual(loadPendingTimers(USER_A.id).map(timer => timer.id), held.map(timer => timer.id), 'odottavat ennallaan');
+  assert.equal(toasts.length, 1);
+  assert.match(toasts[0], new RegExp(`jo ${MAX_PENDING_TIMERS} kirjaamatonta ajastusta`));
+  assert.match(toasts[0], /jatkuu täällä/);
+
+  // Tallennus ei katkaise listaa hiljaa: liian pitkä lista hylätään kokonaan.
+  const overflow = savePendingTimers(USER_A.id, [...held, { id: 'extra', startedAt: iso(T0), targetKind: 'none' }]);
+  assert.equal(overflow.ok, false);
+  assert.equal(overflow.full, true);
+  assert.equal(loadPendingTimers(USER_A.id).length, MAX_PENDING_TIMERS);
+
+  // Kun yksi odottava on käsitelty, laitteen ajastin jää odottamaan ja kanta voittaa.
+  assert.equal((await discardPendingTracking({ confirmFn: async () => true })).cancelled, true);
+  adoptLoadedTimers([remote]);
+  assert.equal(currentTimer().id, 'remote-R');
+  assert.ok(loadPendingTimers(USER_A.id).some(timer => timer.id === 'local-L'), 'laitteen aika ei kadonnut');
+  assert.equal(loadPendingTimers(USER_A.id).length, MAX_PENDING_TIMERS);
+});
+
+// ============================================ katselmointi: toinen välilehti viimeisteli
+
+test('toinen välilehti viimeisteli saman pysäytyksen kesken kirjauksen -> loppuja osia ei kirjata tästä välilehdestä', async () => {
+  const db = entryDb();
+  const hold = gate();
+  db.gates.push(hold.promise);
+  useEntryDb(db);
+  const start = new Date(2026, 8, 20, 23, 30).getTime(); // su 23.30: kaksi osaa
+  await startTracking({ kind: 'none' }, { now: start });
+  const op = OPERATION.timer(currentTimer().id);
+  const stopping = stopTracking({ now: start + 75 * MIN });
+  await settle();
+  assert.deepEqual(db.calls, [op], 'ensimmäinen osa matkalla');
+  // Toinen välilehti kirjasi osat ja siivosi ajastimen laitteelta.
+  saveTimer(USER_A.id, null);
+  hold.release();
+  const result = await stopping;
+  assert.equal(result.ok, true);
+  assert.equal(result.duplicate, true);
+  assert.deepEqual(db.calls, [op], 'toista osaa ei kirjattu tästä välilehdestä');
+  assert.equal(currentTimer(), null, 'tila laitteen mukaiseksi');
+  assert.equal(loadTimer(USER_A.id), null, 'laitteelle ei kirjoitettu takaisin');
+});
+
+test('toinen välilehti hylkäsi odottavan ajastimen kesken kirjauksen -> loppuja osia ei kirjata', async () => {
+  const db = entryDb();
+  const hold = gate();
+  db.gates.push(hold.promise);
+  useEntryDb(db);
+  setTimerRepoForTests(timerDb());
+  const start = new Date(2026, 8, 20, 23, 30).getTime(); // su 23.30: kaksi osaa
+  saveTimer(USER_A.id, { id: 'local-L', startedAt: iso(start), targetKind: 'none' });
+  adoptLoadedTimers([{ id: 'remote-R', startedAt: iso(start + 10 * MIN), targetKind: 'none' }]);
+  assert.equal(pendingTimer().id, 'local-L');
+  const stopping = stopPendingTracking({ now: start + 75 * MIN, overrideMinutes: 75, expectTimerId: 'local-L' });
+  await settle();
+  assert.equal(db.calls.length, 1, 'ensimmäinen osa matkalla');
+  savePendingTimers(USER_A.id, []); // toinen välilehti hylkäsi
+  hold.release();
+  const result = await stopping;
+  assert.equal(result.ok, true);
+  assert.equal(result.duplicate, true);
+  assert.equal(db.calls.length, 1, 'toista osaa ei kirjattu');
+  assert.deepEqual(loadPendingTimers(USER_A.id), [], 'hylättyä ei kirjoitettu takaisin');
+  assert.equal(currentTimer().id, 'remote-R');
+});

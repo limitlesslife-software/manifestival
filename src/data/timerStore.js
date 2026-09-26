@@ -37,7 +37,7 @@ const PENDING_PREFIX = 'manifestival.timerPending.v1.';
 /** Poistettuja ajastimia muistetaan enintään näin monta. */
 const MAX_TOMBSTONES = 20;
 /** Käyttäjän päätöstä odottavia (kirjaamattomia) ajastimia enintään. */
-const MAX_PENDING_TIMERS = 5;
+export const MAX_PENDING_TIMERS = 5;
 const USER_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 /** Lähettämättömiä kirjauksia enintään. Ylimääräinen hylätään näkyvästi. */
 export const MAX_OUTBOX_ENTRIES = 200;
@@ -173,9 +173,15 @@ export function loadPendingTimers(userId) {
   return value.timers.map(normalizeTimer).filter(timer => validateTimer(timer).valid);
 }
 
+/**
+ * Tallenna odottavat ajastimet. Yli MAX_PENDING_TIMERS:n listaa EI katkaista
+ * (katkaisu pudottaisi hiljaa juuri lisätyn ajastimen): se hylätään
+ * kokonaan (`full`), eikä laitteen tallennus muutu. Kutsuja pitää ajastimen
+ * tallessa muualla (src/app/timerState.js holdAsPending).
+ */
 export function savePendingTimers(userId, timers) {
-  const list = (timers || []).map(normalizeTimer).filter(timer => validateTimer(timer).valid)
-    .slice(0, MAX_PENDING_TIMERS);
+  const list = (timers || []).map(normalizeTimer).filter(timer => validateTimer(timer).valid);
+  if (list.length > MAX_PENDING_TIMERS) return { ok: false, persistent: false, full: true };
   if (list.length === 0) return writeFor(PENDING_PREFIX, userId, null);
   return writeFor(PENDING_PREFIX, userId, JSON.stringify({ v: 1, userId: String(userId), timers: list }));
 }

@@ -119,11 +119,17 @@ const TARGET_COLLECTION = Object.freeze({
   task: 'tasks', routine: 'routines', project: 'projects', goal: 'goals', life_area: 'lifeAreas'
 });
 
-/** Onko kohteen kokoelma ladattu onnistuneesti tässä istunnossa? */
-function collectionLoaded(kind) {
+/**
+ * Kohteen kokoelman lataustila tässä istunnossa: 'loaded' (onnistui
+ * ainakin kerran), 'failed' (lataus epäonnistui eikä ole koskaan
+ * onnistunut) tai 'pending' (ei vielä tulosta).
+ */
+function collectionLoadState(kind) {
   const domain = TARGET_COLLECTION[kind];
   const status = domain ? getState().dataLoadStatus?.[domain] : null;
-  return Boolean(status) && status.lastSuccessAt != null;
+  if (status && status.lastSuccessAt != null) return 'loaded';
+  if (status && status.ok === false) return 'failed';
+  return 'pending';
 }
 
 /**
@@ -131,7 +137,9 @@ function collectionLoaded(kind) {
  * aluenimet ovat käyttäjän sisältöä.
  *
  * Laitteelta palautettu ajastin näkyy ennen latausta: silloin kohde ei ole
- * "poistettu" vaan vasta tulossa, ja nimi kertoo sen.
+ * "poistettu" vaan vasta tulossa, ja nimi kertoo sen. Jos lataus
+ * epäonnistui, kohde voi yhä olla olemassa, mutta nimeä ei tiedetä:
+ * "Ladataan" jäisi näkyviin pysyvästi, joten nimi on neutraali.
  */
 export function describeTarget(target) {
   if (!target) return 'Yleinen ajanseuranta';
@@ -151,7 +159,9 @@ export function describeTarget(target) {
     return findLifeArea(target.lifeAreaId)?.name || 'Yleinen ajanseuranta';
   }
   if (!target.kind || target.kind === 'none') return 'Yleinen ajanseuranta';
-  return collectionLoaded(target.kind) ? 'Poistettu kohde' : 'Ladataan kohdetta…';
+  const load = collectionLoadState(target.kind);
+  if (load === 'loaded') return 'Poistettu kohde';
+  return load === 'failed' ? 'Kohde ei latautunut' : 'Ladataan kohdetta…';
 }
 
 // ------------------------------------------------------------ ajastin
@@ -328,10 +338,18 @@ async function finishStop(timer, { now, overrideMinutes, owner, session, slot })
     return { ok: true, tooShort: true, entries: [], totalMinutes: 0 };
   }
 
+  // Toinen välilehti viimeisteli (tai hylkäsi) saman ajastimen sillä
+  // välin: laitteella ei ole enää tätä ajastinta. Sen osat ovat toisen
+  // välilehden vastuulla, joten täältä ei kirjata enempää eikä siivota.
+  const settledElsewhere = saved => {
+    syncStateFromDevice(owner);
+    return { ok: true, duplicate: true, entries: saved, totalMinutes: 0 };
+  };
+
   // Pysäytyshetki ja kesto talteen ENNEN ensimmäistä kirjausta: uusinta
   // (myös uudelleenlatauksen jälkeen) laskee samat osat ja tunnisteet.
   let plan = planned ? timer : { ...timer, stopAtMs: at, overrideMinutes: override, loggedOperationIds: [] };
-  if (!planned) slot.savePlan(plan, owner);
+  if (!planned && slot.savePlan(plan, owner).gone) return settledElsewhere([]);
 
   const saved = [];
   let queued = false;
@@ -346,11 +364,11 @@ async function finishStop(timer, { now, overrideMinutes, owner, session, slot })
       showError('Ajan kirjaus ei onnistunut. Ajastin on yhä tallessa; yritä uudelleen.');
       return { ok: false, code: 'timer.log_failed', entries: saved, totalMinutes: result.totalMinutes };
     }
-    // Kirjattu osa muistiin omistajan laitteelle (ei tilaan, jos käyttäjä vaihtui).
-    plan = { ...plan, loggedOperationIds: [...(plan.loggedOperationIds || []), entry.operationId] };
-    slot.savePlan(plan, owner);
     if (one.entry) saved.push(one.entry);
     if (one.queued) queued = true;
+    // Kirjattu osa muistiin omistajan laitteelle (ei tilaan, jos käyttäjä vaihtui).
+    plan = { ...plan, loggedOperationIds: [...(plan.loggedOperationIds || []), entry.operationId] };
+    if (slot.savePlan(plan, owner).gone) return settledElsewhere(saved);
   }
   if (!isSameSession(session)) return { ok: false, code: 'timer.session_changed', entries: saved };
   await slot.release(timer, owner);
