@@ -52,7 +52,7 @@ import { buildPlanningConstraints, validatePlanAlignment } from '../domain/planA
 import { dailyObservations } from '../domain/dailyAlignment.js';
 import { weekSummary, compareWeeks, alignmentTrends } from '../domain/reviewComparison.js';
 import { TREND_RULES, POLICY_VERSION } from '../domain/alignmentPolicy.js';
-import { explainWithFallback } from '../ai/alignmentExplainClient.js';
+import { explainWithFallback, aiExplainEnabled } from '../ai/alignmentExplainClient.js';
 
 /** Suunnan muutokset eivät mene offline-jonoon: ne vaativat vahvistuksen ja verkon. */
 const NO_QUEUE = Object.freeze({ queueOffline: false });
@@ -215,9 +215,16 @@ export function recentTrends(weekStart, clock = clockNow()) {
   return alignmentTrends(newestFirst.reverse());
 }
 
+/** Näytetäänkö tekoälyselityksen painike? Lippu: AI_EXPLAIN_ENABLED. */
+export function aiExplanationAvailable() {
+  return aiExplainEnabled();
+}
+
 /** Tekoälyselitys varapolulla. Palauttaa aina selityksen. */
 export async function explainSignalOptionally(signal, analysis, { fetchImpl = null, accessToken = undefined } = {}) {
-  const token = accessToken !== undefined ? accessToken : await currentAccessToken().catch(() => null);
+  // Katkaisin pois: istuntoa ei edes lueta, eikä verkkoon mennä.
+  const token = !aiExplainEnabled() ? null
+    : accessToken !== undefined ? accessToken : await currentAccessToken().catch(() => null);
   const result = await explainWithFallback({
     analysis, signal, areas: getState().lifeAreas, accessToken: token, fetchImpl
   });

@@ -5,53 +5,118 @@
 // alueet tunnuksina, ajat tunteina, ei otsikoita eikä pohdintoja.
 //
 // YDIN EI RIIPU TEKOÄLYSTÄ. Jos kutsu epäonnistuu millään tavalla
-// (ei verkkoa, aikakatkaisu, palvelin, tyhjä tai epäilyttävä vastaus),
-// palautetaan deterministinen suomenkielinen selitys (explainSignal).
+// (katkaisin pois, ei verkkoa, aikakatkaisu, palvelin, tyhjä tai
+// epäilyttävä vastaus), palautetaan deterministinen suomenkielinen
+// selitys (explainSignal).
 //
 // VASTAUKSEN SUODATUS: mallin teksti on dataa, ei käsky. Se näytetään
-// tekstinä (textContent/escape), sen pituus rajataan, ja vastaus
-// hylätään jos se väittää tehneensä muutoksen tai tarjoaa linkkejä.
-// Aluenimet palautetaan tunnuksista vasta täällä, paikallisesti.
+// tekstinä (textContent/escape), liian pitkä vastaus hylätään (ei
+// katkaista kesken lauseen), ja vastaus hylätään myös, jos se väittää
+// tehneensä muutoksen tai tarjoaa linkkejä. Aluenimet palautetaan
+// tunnuksista vasta täällä, paikallisesti.
 
 import { API } from '../data/config.js';
 import { apiUrl } from '../platform/index.js';
 import { buildAlignmentAssistantContext, restoreAreaNames } from './alignmentContext.js';
 import { explainSignal } from '../domain/alignmentReview.js';
+import { SIGNAL } from '../domain/alignment.js';
 
-export const EXPLAIN_TIMEOUT_MS = 20000;
+/**
+ * PRODUCTION GATE: tekoälyselitys.
+ *
+ * false = "Selitä tekoälyllä" -painiketta ei näytetä eikä selain kutsu
+ *         /api/explain-päätepistettä koskaan. Jokaisella havainnolla on
+ *         silti deterministinen selitys ("Miksi tämä näkyy?").
+ * true  = painike näkyy ja selitys haetaan palvelimelta varapolulla.
+ *
+ * Käyttöönotto on OMISTAJAN PÄÄTÖS, ja se vaatii kaksi kytkintä yhdessä:
+ * tämä lippu JA palvelimen ympäristömuuttuja EXPLAIN_ENABLED=true
+ * (api/explain.js). Kumpikin yksin pitää selityksen poissa: palvelin
+ * vastaa 503 ja selain näyttää deterministisen selityksen.
+ * Ks. docs/SUUNTA-ACTIVATION-GO-NOGO.md.
+ */
+export const AI_EXPLAIN_ENABLED = false;
+
+/** Asiakkaan odotus. Palvelin: todennus 5 s + ylävirta 10 s, joten tämä on pidempi. */
+export const EXPLAIN_TIMEOUT_MS = 16000;
+/** Pisin kelpaava selitys. Sama raja kuin palvelimella (api/explain.js MAX_TEXT_LENGTH). */
 export const MAX_EXPLANATION_LENGTH = 1200;
+
+/** null = käännösaikainen lippu. Vain testit asettavat tämän. */
+let enabledOverride = null;
+
+/** Onko tekoälyselitys käytössä? */
+export function aiExplainEnabled() {
+  return enabledOverride === null ? AI_EXPLAIN_ENABLED : enabledOverride;
+}
+
+/** Vain testeille: pakota lipun arvo. null palauttaa käännösaikaisen arvon. */
+export function setAiExplainEnabledForTests(value) {
+  enabledOverride = value === null || value === undefined ? null : value === true;
+}
 
 /** Vastaus, joka väittää toimineen käyttäjän puolesta tai ohjaa ulos, hylätään. */
 const REJECT_PATTERNS = Object.freeze([
+  // Linkit: osoite, www-alku tai markdown-linkki.
   /https?:\/\//i,
-  /\b(muutin|päivitin|asetin|poistin|siirsin|tallensin|keskeytin)\b/i,
-  /<\s*script/i
+  /\bwww\./i,
+  /\]\(/,
+  /<\s*script/i,
+  // "Muutin tavoitettasi" — väite tehdystä muutoksesta, imperfekti.
+  /\b(muutin|päivitin|asetin|poistin|siirsin|tallensin|keskeytin|lisäsin|loin|kevensin|pienensin|vaihdoin|merkitsin|peruin|varasin)\b/i,
+  // "Olen muuttanut", "olemme lisänneet" — perfekti.
+  /\b(olen|olemme)\s+(muutt|päivitt|poist|lisänn|siirt|kevent|pienent|vaihtan|merkinn|asettan|tallentan)\w*/i,
+  // "Tavoite on muutettu" — passiivi.
+  /\b(muutettu|päivitetty|poistettu|siirretty)\b/i
 ]);
+
+/**
+ * Pidempi suomenkielinen teksti sisältää käytännössä aina ä:n tai ö:n.
+ * Ilman niitä vastaus on todennäköisesti muuta kieltä tai kirjoitettu
+ * ilman ääkkösiä ("Ala" = "Älä"?), eikä sitä näytetä tekoälyn nimissä.
+ */
+const PLAIN_ASCII_LIMIT = 80;
 
 function deterministic(signal, areas) {
   const text = explainSignal(signal, areas);
   return { source: 'deterministic', title: text.title, text: `${text.text} ${text.why}`.trim() };
 }
 
-/** Vain valittu havainto ja sen alue: pienin mahdollinen konteksti. */
+/** Selitykseen tarvittavat alueet: vähemmän on parempi. */
+function areasFor(analysis, signal) {
+  const areas = analysis.areas || [];
+  // Aluekohtainen havainto: vain sen oma alue.
+  if (signal.areaId) return areas.filter(area => area.id === signal.areaId);
+  // Tavoitejännite: käytössä olevat alueet, joilla on tavoite.
+  if (signal.kind === SIGNAL.TARGET_TENSION) return areas.filter(area => area.active && area.targetMinutes > 0);
+  // Muut viikkotason havainnot (kuormitus, energiakuormitus) eivät koske
+  // yksittäistä aluetta: alueita ei lähetetä lainkaan.
+  return [];
+}
+
+/** Vain valittu havainto ja sen tarvitsemat alueet: pienin mahdollinen konteksti. */
 export function explanationContext(analysis, signal) {
-  const narrowed = {
-    ...analysis,
-    signals: [signal],
-    areas: (analysis.areas || []).filter(area => !signal.areaId || area.id === signal.areaId)
-  };
-  return buildAlignmentAssistantContext(narrowed);
+  const { context, aliases } = buildAlignmentAssistantContext({
+    ...analysis, signals: [signal], areas: areasFor(analysis, signal)
+  });
+  if (signal.kind === SIGNAL.TARGET_TENSION) {
+    // Jännite koskee tavoitteiden summaa: suunniteltu ja toteutunut aika
+    // alueittain eivät kuulu selitykseen.
+    context.areas = context.areas.map(({ area, importance, targetHours }) => ({ area, importance, targetHours }));
+  }
+  return { context, aliases };
 }
 
 export function acceptableExplanation(text) {
   const clean = String(text ?? '').trim();
-  if (clean.length < 20 || clean.length > MAX_EXPLANATION_LENGTH * 2) return false;
+  if (clean.length < 20 || clean.length > MAX_EXPLANATION_LENGTH) return false;
+  if (clean.length > PLAIN_ASCII_LIMIT && !/[äöÄÖ]/.test(clean)) return false;
   return !REJECT_PATTERNS.some(pattern => pattern.test(clean));
 }
 
 /**
  * Selitä yksi havainto. Palauttaa AINA selityksen: tekoälyn, jos se
- * onnistui ja kelpasi, muuten deterministisen.
+ * oli käytössä, onnistui ja kelpasi, muuten deterministisen.
  *
  * @param {object} args
  * @param {object} args.analysis  analyzeWeek()-tulos
@@ -63,6 +128,8 @@ export function acceptableExplanation(text) {
  */
 export async function explainWithFallback({ analysis, signal, areas = [], accessToken = null, fetchImpl = null }) {
   const fallback = deterministic(signal, areas);
+  // Katkaisin pois: ei verkkokutsua lainkaan.
+  if (!aiExplainEnabled()) return { ...fallback, failure: 'disabled' };
   const doFetch = fetchImpl || (typeof fetch === 'function' ? fetch : null);
   if (!doFetch || !accessToken) return { ...fallback, failure: 'unavailable' };
 
@@ -80,7 +147,7 @@ export async function explainWithFallback({ analysis, signal, areas = [], access
     const data = await response.json();
     const raw = data && typeof data.text === 'string' ? data.text : '';
     if (!acceptableExplanation(raw)) return { ...fallback, failure: 'rejected' };
-    const text = restoreAreaNames(raw.trim().slice(0, MAX_EXPLANATION_LENGTH), aliases);
+    const text = restoreAreaNames(raw.trim(), aliases);
     return { source: 'ai', title: fallback.title, text };
   } catch {
     return { ...fallback, failure: 'network' };

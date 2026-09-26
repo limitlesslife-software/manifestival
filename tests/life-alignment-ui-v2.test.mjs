@@ -28,6 +28,7 @@ import { normalizeTask } from '../src/domain/task.js';
 import { normalizeGoal } from '../src/domain/goal.js';
 import { ADJUSTMENT } from '../src/domain/alignmentReview.js';
 import { normalizePlan } from '../src/domain/plan.js';
+import { setAiExplainEnabledForTests } from '../src/ai/alignmentExplainClient.js';
 
 const USER = { id: 'cccccccc-3333-4333-8333-00000000000c', email: 'ui2@example.com' };
 const THURSDAY = '2026-09-17';
@@ -279,6 +280,10 @@ test('ohjaava ehdotus ("arvioi") ei ole kirjoitus eikä kuulu ryhmävahvistuksee
 
 test('selitys: ilman palvelua deterministinen selitys näkyy, eikä tekoälyä väitetä käytetyn', async (t) => {
   freezeLocalDate(t, THURSDAY);
+  // Painike näkyy vain, kun AI_EXPLAIN_ENABLED on päällä (oletus pois;
+  // pois-tila: tests/life-alignment-explain-ui.test.mjs).
+  setAiExplainEnabledForTests(true);
+  t.after(() => setAiExplainEnabledForTests(null));
   await setupWeek();
   initDirection();
   renderDirection();
@@ -401,6 +406,8 @@ test('tavoitteen liitos kohdistuksessa: vain oman tilan avoimet tavoitteet, joil
 
 test('REGRESSIO: uloskirjautumisen jälkeen valmistuva selitys ei näy seuraavalle käyttäjälle', async (t) => {
   freezeLocalDate(t, THURSDAY);
+  setAiExplainEnabledForTests(true);
+  t.after(() => setAiExplainEnabledForTests(null));
   await setupWeek();
   initDirection();
   renderDirection();

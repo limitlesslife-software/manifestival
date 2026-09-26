@@ -203,13 +203,22 @@ const SCENARIOS = [
     return count + ' havaintoa päivän kortissa';
   })()`],
 
-  ['selitys: ilman palvelua deterministinen varapolku', `(async () => {
-    const details = H.el('#dirSignals details.dir-why');
-    details.open = true;
-    H.click('#dirSignals [data-explain]');
-    await H.waitFor(() => H.html('#dirSignals').includes('<strong>Selitys:</strong>'), 'selitys');
-    if (H.html('#dirSignals').includes('Tekoälyn selitys')) throw new Error('väittää tekoälyä');
-    return 'deterministinen selitys näkyy';
+  ['selitys: tekoäly oletuksena pois, päällä deterministinen varapolku', `(async () => {
+    if (document.querySelector('#dirSignals [data-explain]')) throw new Error('tekoälypainike näkyy, vaikka AI_EXPLAIN_ENABLED = false');
+    const explainClient = await import('/src/ai/alignmentExplainClient.js');
+    explainClient.setAiExplainEnabledForTests(true);
+    try {
+      window.__e2e.render();
+      const details = H.el('#dirSignals details.dir-why');
+      details.open = true;
+      H.click('#dirSignals [data-explain]');
+      await H.waitFor(() => H.html('#dirSignals').includes('<strong>Selitys:</strong>'), 'selitys');
+      if (H.html('#dirSignals').includes('Tekoälyn selitys')) throw new Error('väittää tekoälyä');
+    } finally {
+      explainClient.setAiExplainEnabledForTests(null);
+      window.__e2e.render();
+    }
+    return 'pois: ei painiketta; päällä ilman tokenia: deterministinen selitys';
   })()`],
 
   ['viikkokatsaus: pohdinta tallentuu historiaan', `(async () => {

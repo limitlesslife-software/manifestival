@@ -9,30 +9,27 @@
 // voi enintään muotoilla selityksen tai kysymyksen käyttäjälle.
 //
 // Tekoäly ei keksi tärkeyttä, kapasiteettia, arvoja eikä tavoitteita:
-// ne tulevat käyttäjän datasta, ja ne annetaan lukuina.
+// ne tulevat käyttäjän datasta, ja ne annetaan lukuina. Mallin säännöt
+// elävät VAIN palvelimella (api/explain.js, `system`-kenttä): selaimen
+// lähettämä teksti ei voi olla ohje.
 //
 // =====================================================================
 // KONTEKSTI ON MINIMOITU
 // =====================================================================
 //
 //   - EI tunnisteita, EI tehtävien tai tavoitteiden otsikoita, EI
-//     muistiinpanoja, EI pohdintoja, EI kuvauksia
+//     muistiinpanoja, EI pohdintoja, EI kuvauksia, EI sääntötekstiä
 //   - elämänalueiden NIMET korvataan tunnuksilla (A1, A2, ...). Nimet
 //     palautetaan vasta paikallisesti (restoreAreaNames), joten edes
 //     käyttäjän omat aluenimet ("Avioero", "Terapia") eivät lähde ulos
-//   - luvut pyöristetään tunneiksi (0,5 h tarkkuus)
+//   - luvut pyöristetään tunneiksi (0,5 h tarkkuus), ja minuuttikentät
+//     nimetään tunneiksi (targetMinutes -> targetHours): malli ei saa
+//     lukea tuntilukua minuutteina
 //
-// Tämä moduuli ei tee verkkokutsua. Kutsupolku (palvelinpääte) on
-// tarkoituksella rakentamatta: deterministinen selitys
-// (alignmentReview.explainSignal) riittää ensimmäiseen versioon.
-
-/** Ohje mallille. Kiinteä: malli ei saa muuttaa havaintoja. */
-export const ASSISTANT_RULES = Object.freeze([
-  'Selitä annetut havainnot suomeksi, lyhyesti ja toteavasti.',
-  'Älä lisää, poista tai muuta havaintoja; ne on laskettu jo.',
-  'Älä keksi tärkeyttä, kapasiteettia, arvoja tai tavoitteita.',
-  'Älä moralisoi. Tarjoa valinta: keventää, muuttaa tavoitetta tai jatkaa ennallaan.'
-]);
+// Tämä moduuli ei tee verkkokutsua. Kutsupolku on
+// src/ai/alignmentExplainClient.js -> api/explain.js, ja se on oletuksena
+// pois käytöstä (AI_EXPLAIN_ENABLED). Deterministinen selitys
+// (alignmentReview.explainSignal) on aina varapolku.
 
 function hoursOf(minutes) {
   return Number.isFinite(minutes) ? Math.round((minutes / 60) * 2) / 2 : null;
@@ -47,6 +44,13 @@ const SIGNAL_METRIC_KEYS = Object.freeze([
   'heavyMinutes', 'veryHeavyMinutes', 'energyBudgetMinutes', 'percentOfBudget',
   'unratedCount', 'unratedMinutes', 'timeOverloaded', 'heavySharePercent', 'energyLevel', 'knownMinutes'
 ]);
+
+/** Domainin minuuttikenttä -> lähtevän kontekstin tuntikenttä. Muut sellaisinaan. */
+function wireMetric(key, value) {
+  return /Minutes$/.test(key)
+    ? [key.replace(/Minutes$/, 'Hours'), hoursOf(value)]
+    : [key, value];
+}
 
 /**
  * Rakenna minimoitu konteksti.
@@ -67,8 +71,8 @@ export function buildAlignmentAssistantContext(analysis) {
     const metrics = {};
     for (const key of SIGNAL_METRIC_KEYS) {
       if (signal.metrics && Object.prototype.hasOwnProperty.call(signal.metrics, key)) {
-        const value = signal.metrics[key];
-        metrics[key] = /Minutes$/.test(key) ? hoursOf(value) : value;
+        const [wireKey, value] = wireMetric(key, signal.metrics[key]);
+        metrics[wireKey] = value;
       }
     }
     return {
@@ -81,7 +85,6 @@ export function buildAlignmentAssistantContext(analysis) {
   });
 
   const context = {
-    rules: [...ASSISTANT_RULES],
     capacityHours: hoursOf(analysis.capacity ? analysis.capacity.availableMinutes : null),
     plannedHours: hoursOf(analysis.planned ? analysis.planned.knownMinutes : null),
     unestimatedCount: analysis.planned ? analysis.planned.unknownCount : 0,
@@ -102,13 +105,17 @@ export function buildAlignmentAssistantContext(analysis) {
 
 /**
  * Palauta aluenimet mallin tekstiin paikallisesti. Tunnus korvataan vain
- * kokonaisena sanana (A1 ei osu A10:een).
+ * kokonaisena sanana (A1 ei osu A10:een eikä AA1:een).
+ *
+ * Yksi läpikäynti korvausfunktiolla: nimen $-merkkejä ("Raha $&") ei
+ * tulkita korvauskaavana, eikä jo palautettu nimi ("Projekti A2") voi
+ * osua seuraavaan tunnukseen. Tunnus, jolle ei ole nimeä, jää näkyviin
+ * sellaisenaan — ei koskaan "undefined".
  */
 export function restoreAreaNames(text, aliases) {
-  let result = String(text ?? '');
-  const ordered = [...aliases.entries()].sort((a, b) => b[0].length - a[0].length);
-  for (const [alias, name] of ordered) {
-    result = result.replace(new RegExp(`\\b${alias}\\b`, 'g'), name);
-  }
-  return result;
+  return String(text ?? '').replace(/\bA\d+\b/g, alias => {
+    if (!aliases.has(alias)) return alias;
+    const name = aliases.get(alias);
+    return name === null || name === undefined || name === '' ? alias : String(name);
+  });
 }

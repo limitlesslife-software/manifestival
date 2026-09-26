@@ -33,7 +33,7 @@ import {
   createLifeArea, editLifeArea, deleteLifeArea, assignGoalToLifeArea,
   saveWeeklyCapacity, logTime, deleteTimeEntry, saveWeeklyReview, applyAdjustment,
   applySelectedAdjustments, previewSelectedAdjustments, compareWithPreviousWeek, recentTrends,
-  currentDailyAlignment, explainSignalOptionally, pendingTimeEntryCount
+  currentDailyAlignment, explainSignalOptionally, aiExplanationAvailable, pendingTimeEntryCount
 } from '../alignment.js';
 import { saveItemSettings, itemSettingsFor, currentTimer, newOperationId } from '../timeTracking.js';
 import { editTask, editRoutine } from '../actions.js';
@@ -58,6 +58,8 @@ let unassignedOpen = false;
 let skippedUnassigned = new Set();
 /** Havaintojen selitykset: `kind:areaId` -> { source, text }. */
 let explanations = new Map();
+/** Kesken olevat selityshaut: painike pysyy estettynä uudelleenrenderöinnin yli. */
+let explainsInFlight = new Set();
 /** Viimeisin analyysi (selitys käyttää samaa aineistoa, ei laske uudelleen). */
 let lastAnalysis = null;
 /** Kasvaa uloskirjautuessa: sen jälkeen valmistuva selitys hylätään. */
@@ -179,9 +181,22 @@ function signalHtml(signal, areas) {
         ${explained
           ? `<div class="dir-explanation" role="status"><strong>${explained.source === 'ai'
               ? 'Tekoälyn selitys (ei päätä mitään puolestasi):' : 'Selitys:'}</strong> ${escapeHtml(explained.text)}</div>`
-          : `<button class="assist-btn" type="button" data-explain="${escapeHtml(key)}">Selitä tarkemmin</button>`}
+          : explainButtonHtml(key)}
       </details>
     </div>`;
+}
+
+/**
+ * Tekoälyselityksen painike. Ei mitään, kun selitys on pois käytöstä
+ * (AI_EXPLAIN_ENABLED): deterministinen selitys on jo yllä. Nimi kertoo,
+ * että kyse on tekoälystä, ja vihje sen, mitä laitteelta lähtee.
+ */
+function explainButtonHtml(key) {
+  if (!aiExplanationAvailable()) return '';
+  const pending = explainsInFlight.has(key);
+  return `<button class="assist-btn" type="button" data-explain="${escapeHtml(key)}"${pending ? ' disabled' : ''}>`
+    + `${pending ? 'Haetaan selitystä…' : 'Selitä tekoälyllä'}</button>`
+    + '<p class="hint">Lähettää vain luvut, ei nimiä eikä otsikoita.</p>';
 }
 
 /** Aineiston laatu v2: mitä puuttuu ja mitä sille voi tehdä. Ei moralisointia. */
@@ -1203,11 +1218,19 @@ function onQualityAction(action) {
 }
 
 async function onExplain(key) {
-  if (!lastAnalysis) return;
+  // Sama haku on jo kesken: toinen napautus ei lähetä toista pyyntöä.
+  if (!lastAnalysis || explainsInFlight.has(key)) return;
   const signal = lastAnalysis.signals.find(entry => signalKey(entry) === key);
   if (!signal) return;
   const generation = viewGeneration;
-  const result = await explainSignalOptionally(signal, lastAnalysis);
+  explainsInFlight.add(key);
+  let result;
+  try {
+    result = await explainSignalOptionally(signal, lastAnalysis);
+  } finally {
+    // Uloskirjautuminen on jo tyhjentänyt joukon (resetDirectionView).
+    if (generation === viewGeneration) explainsInFlight.delete(key);
+  }
   // Käyttäjä kirjautui ulos (tai vaihtui) odotuksen aikana: selitys ei
   // kuulu seuraavalle käyttäjälle.
   if (generation !== viewGeneration) return;
@@ -1377,6 +1400,7 @@ export function resetDirectionView() {
   unassignedOpen = false;
   skippedUnassigned = new Set();
   explanations = new Map();
+  explainsInFlight = new Set();
   lastAnalysis = null;
   trendsRequested = false;
   // Pohdintakentät tyhjiksi: seuraava käyttäjä ei näe edellisen tekstiä.

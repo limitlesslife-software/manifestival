@@ -11,7 +11,7 @@ import { normalizeGoal } from '../src/domain/goal.js';
 import { normalizeTimeEntry } from '../src/domain/timeEntry.js';
 import { normalizeWeeklyCapacity } from '../src/domain/weeklyCapacity.js';
 import {
-  buildAlignmentAssistantContext, restoreAreaNames, ASSISTANT_RULES
+  buildAlignmentAssistantContext, restoreAreaNames
 } from '../src/ai/alignmentContext.js';
 
 const WEEK = '2026-09-14';
@@ -58,9 +58,13 @@ test('konteksti välittää luvut ja havainnot sellaisinaan (tunteina), ei pää
   assert.equal(context.signals.length, analysis.signals.length, 'yhtään havaintoa ei lisätä eikä poisteta');
   assert.deepEqual(context.signals.map(s => s.kind), analysis.signals.map(s => s.kind));
   const overload = context.signals.find(s => s.kind === 'overload');
-  assert.equal(overload.metrics.plannedMinutes, 15, 'minuutit tunneiksi');
-  assert.deepEqual(context.rules, [...ASSISTANT_RULES]);
-  assert.ok(ASSISTANT_RULES.some(rule => /Älä keksi tärkeyttä, kapasiteettia/.test(rule)));
+  // Tuntiluku kulkee tuntinimellä: "plannedMinutes: 15" luettiin
+  // minuutteina (api/_validateExplain.js, tests/api-explain-validation.test.cjs).
+  assert.equal(overload.metrics.plannedHours, 15, 'minuutit tunneiksi');
+  assert.equal('plannedMinutes' in overload.metrics, false);
+  // Säännöt elävät vain palvelimella (api/explain.js, system-kenttä);
+  // selaimen lähettämä sääntöteksti oli toinen, ajautunut kopio.
+  assert.equal('rules' in context, false);
 });
 
 test('aluenimet palautetaan paikallisesti kokonaisina sanoina', () => {
