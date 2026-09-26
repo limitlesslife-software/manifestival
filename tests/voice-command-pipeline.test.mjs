@@ -123,7 +123,9 @@ test('KRIITTINEN: puheella tehty KORKEAN riskin poisto vaatii saman vahvistuksen
 // (ks. tests/ai-command-handlers.test.mjs, kommentti tiedoston alussa;
 // wiring todistetaan lähdetekstistä tests/security-invariants.test.mjs:ssä).
 
-test('puheella epäselvä kohde näyttää saman valitsimen kuin tekstillä', async () => {
+test('puheella epäselvä kohde näyttää saman valitsimen kuin tekstillä', async (t) => {
+  // "perjantaille" ratkaistaan oikeasta kellosta: maanantaina 21.9. se on 25.9.
+  freezeLocalDate(t, '2026-09-21');
   setTasks([
     normalizeTask({ id: 'a', title: 'Lääkäriaika', date: '2026-09-20' }),
     normalizeTask({ id: 'b', title: 'Lääkäriaika', date: '2026-09-27' })

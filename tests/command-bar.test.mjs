@@ -13,6 +13,7 @@ import { clearLocalUserData } from '../src/app/actions.js';
 import { resetState, getState, setTasks } from '../src/app/state.js';
 import { setClient } from '../src/data/client.js';
 import { fakeClient } from './helpers/gates.mjs';
+import { freezeLocalDate } from './helpers/clock.mjs';
 import { normalizeTask } from '../src/domain/task.js';
 
 import { runTypedCommand } from '../src/app/commandBar.js';
@@ -112,7 +113,9 @@ test('KRIITTINEN: epäselvä kohde näyttää valitsimen eikä arvaa', async () 
   assert.equal(getState().tasks[1].date, '2026-09-27');
 });
 
-test('epäselvän kohteen valinta suorittaa VALITUN rivin muutoksen', async () => {
+test('epäselvän kohteen valinta suorittaa VALITUN rivin muutoksen', async (t) => {
+  // "perjantaille" ratkaistaan oikeasta kellosta: maanantaina 21.9. se on 25.9.
+  freezeLocalDate(t, '2026-09-21');
   setTasks([
     normalizeTask({ id: 'a', title: 'Lääkäriaika', date: '2026-09-20' }),
     normalizeTask({ id: 'b', title: 'Lääkäriaika', date: '2026-09-27' })
