@@ -29,7 +29,7 @@
 //
 // Tarkistus ei estä hyväksyntää: se kertoo, ja käyttäjä päättää.
 
-import { analyzeWeek, SIGNAL } from './alignment.js';
+import { analyzeWeek, SIGNAL, isNeglectShortfall } from './alignment.js';
 import { weekStartOf, weekDates, capacityForWeek } from './weeklyCapacity.js';
 import { normalizeRoutine } from './routine.js';
 import { formatMinutes } from './lifeArea.js';
@@ -54,22 +54,27 @@ export function buildPlanningConstraints(analysis) {
   const energy = analysis.energy || {};
   const important = (analysis.areas || []).filter(area => area.active
     && area.importance >= TIME_RULES.NEGLECT_MIN_IMPORTANCE && area.targetMinutes > 0);
-  const neglected = new Set((analysis.signals || [])
-    .filter(signal => signal.kind === SIGNAL.NEGLECT).map(signal => signal.areaId));
+  // Vain todetut vajeet: alue, jonka suunnitelmasta osa on ilman kestoa
+  // (`neglect.plan_unknown`), ei ole vajaa — sen aikaa ei tiedetä.
+  const neglected = new Set((analysis.signals || []).filter(isNeglectShortfall).map(signal => signal.areaId));
   const shortfall = important
     .filter(area => neglected.has(area.id))
     .reduce((sum, area) => sum + Math.max(0, area.targetMinutes - (area.plannedMinutes || 0)), 0);
+  const remainingHours = capacity.declared ? Math.max(0, hours(capacity.remainingMinutes)) : null;
+  // Suojattu aika ei voi olla enempää kuin viikossa on jäljellä: muuten
+  // rajat olisivat keskenään ristiriitaiset.
+  const protectedHours = remainingHours === null ? hours(shortfall) : Math.min(hours(shortfall), remainingHours);
 
   return {
     capacityHours: capacity.declared ? hours(capacity.availableMinutes) : null,
     committedHours: hours(analysis.planned ? analysis.planned.knownMinutes : null),
-    remainingHours: capacity.declared ? Math.max(0, hours(capacity.remainingMinutes)) : null,
+    remainingHours,
     unestimatedCount: analysis.planned ? analysis.planned.unknownCount : null,
     heavyBudgetHours: Number.isInteger(energy.budgetMinutes) ? hours(energy.budgetMinutes) : null,
     heavyRemainingHours: Number.isInteger(energy.budgetMinutes) ? Math.max(0, hours(energy.remainingMinutes)) : null,
     neglectedImportantAreaCount: important.filter(area => neglected.has(area.id)).length,
-    /** Tärkeiden alueiden vaje: aika jota suunnitelma EI saisi viedä. */
-    protectedHours: hours(shortfall)
+    /** Tärkeiden alueiden vaje: aika jota suunnitelma EI saisi viedä (enintään jäljellä oleva). */
+    protectedHours
   };
 }
 
@@ -150,7 +155,7 @@ export function validatePlanAlignment({ planTasks = [], planRoutines = [], areaI
     const crowded = [];
     if (capacity !== null) {
       const room = Math.max(0, capacity - withPlan.planned.knownMinutes);
-      for (const signal of withPlan.signals.filter(s => s.kind === SIGNAL.NEGLECT)) {
+      for (const signal of withPlan.signals.filter(isNeglectShortfall)) {
         const area = areasById.get(signal.areaId);
         if (!area || area.id === areaId) continue;
         const row = withPlan.areas.find(r => r.id === area.id);

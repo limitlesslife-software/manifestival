@@ -73,10 +73,16 @@ test('kesäajan viikot: seitsemän päivää, eteneminen päivinä (ei milliseku
 });
 
 test('edellisen viikon katsaus: eteneminen on "after" ja toteumaa verrataan koko viikkoon', () => {
+  // Muutettu sääntöversiossa 3: yksi kirjaus keskiviikkona ei enää riitä
+  // vertailuun (kirjaamattomat päivät ovat tuntemattomia), eikä vahva
+  // huomiotta jääminen synny jaksosta, joka alkoi vasta keskiviikkona.
+  // Kirjaaja kirjaa nyt maanantaista alkaen neljänä päivänä (yht. 120 min).
   const analysis = analyzeWeek({
     weekStart: '2026-09-14', todayIso: '2026-09-22', areas: [area],
-    timeEntries: [entry('e', '2026-09-16', 60)]
+    timeEntries: ['2026-09-14', '2026-09-15', '2026-09-17', '2026-09-19'].map((date, i) => entry(`e${i}`, date, 30))
   });
+  assert.equal(analysis.tracking.level, 'established');
+  assert.equal(analysis.tracking.windowStart, '2026-09-14');
   assert.equal(analysis.progress.state, 'after');
   const neglect = analysis.signals.find(s => s.kind === 'neglect');
   assert.equal(neglect.metrics.expectedByNowMinutes, 600);

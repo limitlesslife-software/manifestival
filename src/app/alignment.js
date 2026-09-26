@@ -39,19 +39,19 @@ import {
 } from '../domain/weeklyCapacity.js';
 import { normalizeTimeEntry, validateTimeEntry, entriesForOperation } from '../domain/timeEntry.js';
 import { classifyError, ERROR_CLASS } from '../domain/offlineQueue.js';
-import { analyzeWeek } from '../domain/alignment.js';
+import { analyzeWeek, alignmentStartOf } from '../domain/alignment.js';
 import { addDaysIso } from '../domain/fiTemporal.js';
 import {
   buildReviewSnapshot, normalizeAlignmentReview, validateAlignmentReview,
   proposeAdjustments, planningFeedback, explainSignal, ADJUSTMENT, SNAPSHOT_VERSION,
-  NON_WRITING_ADJUSTMENTS
+  NON_WRITING_ADJUSTMENTS, ADJUSTMENT_NAVIGATION
 } from '../domain/alignmentReview.js';
 import { editGoal, setGoalStatus, createTask, editTask } from './actions.js';
 import { currentAccessToken } from './auth.js';
 import { previewAdjustments } from '../domain/rebalance.js';
 import { buildPlanningConstraints, validatePlanAlignment } from '../domain/planAlignment.js';
 import { dailyObservations } from '../domain/dailyAlignment.js';
-import { weekSummary, compareWeeks, alignmentTrends } from '../domain/reviewComparison.js';
+import { weekSummary, compareWeeks, alignmentTrends, FIRST_WEEK_NOTE } from '../domain/reviewComparison.js';
 import { TREND_RULES, POLICY_VERSION } from '../domain/alignmentPolicy.js';
 import { explainWithFallback, aiExplainEnabled } from '../ai/alignmentExplainClient.js';
 
@@ -71,6 +71,47 @@ export function currentWeekStart(now = new Date()) {
 
 // ---------------------------------------------------------- analyysi
 
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Aikaleiman paikallinen päivä (created_at on UTC-aikaleima). */
+function localDateOf(timestamp) {
+  if (typeof timestamp !== 'string' || !timestamp) return null;
+  if (ISO_DAY.test(timestamp)) return timestamp;
+  const moment = new Date(timestamp);
+  return Number.isNaN(moment.getTime()) ? null : fmtISO(moment);
+}
+
+/**
+ * Alueet luontipäivineen (`startDate`, paikallinen päivä). Domain ei lue
+ * kelloa eikä tunne aikavyöhykettä, joten päivä johdetaan täällä: alue ei
+ * voi jäädä huomiotta ajalta, jolloin sitä ei vielä ollut.
+ */
+export function areasWithStartDates(areas = getState().lifeAreas) {
+  return (areas || []).map(area => (area ? { ...area, startDate: localDateOf(area.createdAt) } : area));
+}
+
+/** Suunnan käyttöönottopäivä: aikaisin alueen luontipäivä (null = ei tiedossa). */
+export function alignmentStartDate(state = getState()) {
+  return alignmentStartOf(areasWithStartDates(state.lifeAreas));
+}
+
+/**
+ * Analyysin syötteet, joiden lataus epäonnistui. Epäonnistunut haku ei
+ * tyhjennä tilaa, mutta ensimmäisellä latauksella tila on tyhjä: silloin
+ * havainnot ("alue ei saanut aikaa") ja katsauksen tilannekuva tehtäisiin
+ * vajaista luvuista. Katsausta ei tallenneta ja havainnot korvataan
+ * ilmoituksella, kun yksikin näistä puuttuu.
+ */
+export const ANALYSIS_DOMAINS = Object.freeze([
+  'lifeAreas', 'weeklyCapacities', 'timeEntries', 'alignmentReviews', 'runningTimers',
+  'alignmentItemSettings', 'tasks', 'routines', 'routineExceptions', 'goals', 'projects'
+]);
+
+export function analysisLoadProblems(state = getState()) {
+  const status = (state && state.dataLoadStatus) || {};
+  return ANALYSIS_DOMAINS.filter(domain => status[domain] && status[domain].ok === false);
+}
+
 /**
  * Viikon analyysi tilan lähdefaktoista. Ei tallenna mitään.
  *
@@ -84,7 +125,7 @@ export function analyzeCurrentWeek(weekStart = null, clock = clockNow()) {
     weekStart: monday,
     todayIso: clock.todayIso,
     nowMinutes: clock.nowMinutes,
-    areas: state.lifeAreas,
+    areas: areasWithStartDates(state.lifeAreas),
     goals: state.goals,
     projects: state.projects,
     tasks: state.tasks,
@@ -119,7 +160,7 @@ export function weekInputs(weekStart, clock = clockNow()) {
   const monday = weekStartOf(weekStart);
   return {
     weekStart: monday, todayIso: clock.todayIso, nowMinutes: clock.nowMinutes,
-    areas: state.lifeAreas, goals: state.goals, projects: state.projects, tasks: state.tasks,
+    areas: areasWithStartDates(state.lifeAreas), goals: state.goals, projects: state.projects, tasks: state.tasks,
     routines: state.routines, exceptions: state.routineExceptions, timeEntries: state.timeEntries,
     capacity: capacityForWeek(state.weeklyCapacities, monday), itemSettings: state.alignmentItemSettings
   };
@@ -156,7 +197,7 @@ export function validatePlanAgainstAlignment(plan, { goalId = null } = {}, clock
     planRoutines: keep(plan.routines),
     areaId,
     base: {
-      todayIso: clock.todayIso, areas: state.lifeAreas, goals: state.goals, projects: state.projects,
+      todayIso: clock.todayIso, areas: areasWithStartDates(state.lifeAreas), goals: state.goals, projects: state.projects,
       tasks: state.tasks, routines: state.routines, exceptions: state.routineExceptions,
       timeEntries: state.timeEntries, capacities: state.weeklyCapacities, itemSettings: state.alignmentItemSettings
     }
@@ -191,10 +232,25 @@ export function weekSummaryFor(weekStart, clock = clockNow(), { analysis = null 
   return weekSummary(live, { origin: 'live' });
 }
 
-/** Tämä viikko vs. edellinen. */
+/**
+ * Päättyikö viikko ennen Suunnan käyttöönottoa? Silloin viikolla ei ollut
+ * alueita, tavoitteita eikä kapasiteettia, eikä sitä verrata (versio 3).
+ * Tallennettu katsaus kuuluu aina Suuntaan.
+ */
+function weekBeforeAlignment(monday, state = getState()) {
+  const start = alignmentStartDate(state);
+  if (!start || addDaysIso(monday, 6) >= start) return false;
+  return !state.alignmentReviews.some(review => review.weekStart === monday
+    && review.snapshot && review.snapshot.version !== undefined);
+}
+
+/** Tämä viikko vs. edellinen. Ensimmäistä Suunta-viikkoa ei verrata Suuntaa edeltäneeseen. */
 export function compareWithPreviousWeek(weekStart, { analysis = null } = {}, clock = clockNow()) {
   const monday = weekStartOf(weekStart);
-  return compareWeeks(weekSummaryFor(monday, clock, { analysis }), weekSummaryFor(addDaysIso(monday, -7), clock));
+  const previous = addDaysIso(monday, -7);
+  const current = weekSummaryFor(monday, clock, { analysis });
+  if (weekBeforeAlignment(previous)) return compareWeeks(current, null, { unavailableNote: FIRST_WEEK_NOTE });
+  return compareWeeks(current, weekSummaryFor(previous, clock));
 }
 
 /** Kehitys viimeisiltä viikoilta (vanhin ensin). Tyhjät viikot pois. */
@@ -202,10 +258,13 @@ export function recentTrends(weekStart, clock = clockNow()) {
   const monday = weekStartOf(weekStart);
   // Viimeisin YHTENÄINEN jakso aineistollisia viikkoja: kehitys ei saa
   // hypätä tyhjän viikon yli ("kasvoi kolmen viikon aikana" koskisi
-  // silloin neljää tai useampaa viikkoa).
+  // silloin neljää tai useampaa viikkoa). Suuntaa edeltäneet viikot eivät
+  // kuulu kehitykseen (versio 3).
   const newestFirst = [];
   for (let back = 0; back < TREND_RULES.WEEKS; back++) {
-    const summary = weekSummaryFor(addDaysIso(monday, -7 * back), clock);
+    const weekMonday = addDaysIso(monday, -7 * back);
+    if (weekBeforeAlignment(weekMonday)) break;
+    const summary = weekSummaryFor(weekMonday, clock);
     const empty = !summary.capacityMinutes && !summary.plannedMinutes && !summary.actualMinutes;
     if (empty) {
       if (newestFirst.length > 0) break;
@@ -261,7 +320,10 @@ export function alignmentPersistence() {
 export async function createLifeArea(input) {
   const state = getState();
   const nextOrder = state.lifeAreas.reduce((max, area) => Math.max(max, area.sortOrder + 1), 0);
-  const area = normalizeLifeArea({ sortOrder: nextOrder, ...input, id: newTaskId() });
+  // Luontihetki tilaan heti (kanta asettaa oman created_at-arvonsa, joka
+  // korvaa tämän seuraavassa latauksessa): alueen seurantajakso alkaa
+  // luontipäivästä, ei viikon maanantaista.
+  const area = normalizeLifeArea({ sortOrder: nextOrder, ...input, id: newTaskId(), createdAt: new Date().toISOString() });
   const { valid, errors } = validateLifeArea(area, state.lifeAreas);
   if (!valid) return { ok: false, errors };
 
@@ -797,6 +859,14 @@ export function saveWeeklyReview(input = {}, clock = clockNow()) {
 async function saveWeeklyReviewNow({
   weekStart, reflection = null, adjustments = [], reflectionAnswers = undefined
 }, clock) {
+  // Tilannekuva on historiaa, jota ei lasketa uudelleen: vajaista luvuista
+  // (epäonnistunut lataus) sitä ei tehdä. Mitään ei kirjoiteta; käyttäjän
+  // pohdinta jää kenttään.
+  const problems = analysisLoadProblems();
+  if (problems.length > 0) {
+    logEvent('alignment.review_refused', { reason: 'incomplete_data', domains: problems.length });
+    return { ok: false, code: 'incomplete_data', problems };
+  }
   const analysis = analyzeCurrentWeek(weekStart, clock);
   const state = getState();
   const existing = state.alignmentReviews.find(review => review.weekStart === analysis.weekStart) || null;
@@ -926,6 +996,32 @@ function describe(proposal) {
 }
 
 /**
+ * Käyttäjän muokkaaman arvon tarkistus ENNEN vahvistusta: virheellisestä
+ * arvosta ei kysytä "Tehdäänkö muutos?", vaan virhe näytetään kentän
+ * vieressä. Samat säännöt kuin tallennuksessa (validateLifeArea,
+ * validateWeeklyCapacity).
+ *
+ * @returns {Object<string,string>|null} virheet kentittäin tai null
+ */
+export function adjustmentErrors(proposal, payload = proposal && proposal.payload) {
+  if (!proposal || !payload) return null;
+  if (proposal.type === ADJUSTMENT.CHANGE_TARGET) {
+    const area = findLifeArea(payload.areaId);
+    if (!area) return null;
+    const { valid, errors } = validateLifeArea(
+      normalizeLifeArea({ ...area, targetMinutesPerWeek: payload.to, id: area.id }), getState().lifeAreas);
+    return valid ? null : errors;
+  }
+  if (proposal.type === ADJUSTMENT.SET_CAPACITY) {
+    const { valid, errors } = validateWeeklyCapacity(normalizeWeeklyCapacity({
+      weekStart: payload.weekStart, availableMinutes: payload.availableMinutes
+    }));
+    return valid ? null : errors;
+  }
+  return null;
+}
+
+/**
  * Toteuta yksi muutosehdotus VAHVISTUKSEN JÄLKEEN.
  *
  * @param {object} proposal proposeAdjustments()-tuloksen alkio
@@ -934,7 +1030,8 @@ function describe(proposal) {
  * @param {object} [options.overrides] käyttäjän muokkaama arvo (esim. tavoiteminuutit)
  * @param {string} [options.weekStart] viikko, jonka analyysista ehdotus syntyi:
  *   sen tallennettu katsaus kertoo jo toteutetut, ja toteutus kirjataan siihen
- * @returns {Promise<{ok: boolean, applied?: boolean, cancelled?: boolean, duplicate?: boolean}>}
+ * @returns {Promise<{ok: boolean, applied?: boolean, cancelled?: boolean, duplicate?: boolean,
+ *   errors?: Object<string,string>, navigate?: string}>} `errors`: kelvoton arvo (näytetään kentän vieressä)
  */
 export async function applyAdjustment(proposal, {
   confirmFn = confirmAction, overrides = {}, confirmed = false, weekStart = null
@@ -942,7 +1039,7 @@ export async function applyAdjustment(proposal, {
   if (!proposal || !Object.values(ADJUSTMENT).includes(proposal.type)) return { ok: false };
   // Ohjaava ehdotus ei kirjoita mitään: näkymä avaa työnkulun.
   if (NON_WRITING_ADJUSTMENTS.includes(proposal.type)) {
-    return { ok: true, applied: false, navigate: 'estimate' };
+    return { ok: true, applied: false, navigate: ADJUSTMENT_NAVIGATION[proposal.type] || 'estimate' };
   }
   if (applied.has(proposal.id)) return { ok: true, applied: false, duplicate: true };
 
@@ -950,6 +1047,8 @@ export async function applyAdjustment(proposal, {
   // Jo toteutettu aiemmin (tallennettu katsaus) tai tehtävä on jo olemassa:
   // ei kysytä eikä luoda toista kertaa.
   if (isAdjustmentDone({ ...proposal, payload }, weekStart)) return { ok: true, applied: false, duplicate: true };
+  const invalid = adjustmentErrors(proposal, payload);
+  if (invalid) return { ok: false, applied: false, errors: invalid };
   // `confirmed`: ryhmä on jo vahvistettu yhdellä dialogilla, jossa
   // jokainen muutos oli lueteltu (applySelectedAdjustments).
   const accepted = confirmed || await confirmFn({
@@ -1009,7 +1108,11 @@ export async function applyAdjustment(proposal, {
   }
   logEvent('alignment.adjustment', { type: proposal.type, accepted: true, ok: Boolean(result.ok) });
   if (result.ok && !confirmed) notify('Muutos tehty.', 3000);
-  return { ok: Boolean(result.ok), applied: Boolean(result.ok) };
+  // Validointivirheet välitetään näkymälle (ennen tätä ne katosivat, ja
+  // napautus näytti tekevän ei mitään).
+  return result.ok || !result.errors
+    ? { ok: Boolean(result.ok), applied: Boolean(result.ok) }
+    : { ok: false, applied: false, errors: result.errors };
 }
 
 /**
@@ -1019,7 +1122,8 @@ export async function applyAdjustment(proposal, {
  * lopputuloksen; mitään ei tehdä piilossa. Ohjaavat ehdotukset
  * (arvioi tehtäviä) eivät kuulu ryhmään.
  *
- * @returns {Promise<{ok: boolean, cancelled?: boolean, results?: Array}>}
+ * @returns {Promise<{ok: boolean, cancelled?: boolean, results?: Array, invalid?: Array, failed?: Array}>}
+ *   `invalid`: kelvottomat arvot (ei kysytty mitään); `failed`: ehdotukset, joita ei saatu tehtyä
  */
 export async function applySelectedAdjustments(proposals = [], {
   confirmFn = confirmAction, overrides = {}, preview = null, weekStart = null
@@ -1027,6 +1131,13 @@ export async function applySelectedAdjustments(proposals = [], {
   const writing = (proposals || []).filter(proposal => proposal && !NON_WRITING_ADJUSTMENTS.includes(proposal.type)
     && !isAdjustmentDone({ ...proposal, payload: { ...proposal.payload, ...(overrides[proposal.id] || {}) } }, weekStart));
   if (writing.length === 0) return { ok: true, results: [] };
+  // Kelvoton arvo pysäyttää koko ryhmän ENNEN vahvistusta: ryhmää ei
+  // tehdä puolittain, eikä käyttäjä vahvista muutosta, joka ei voi onnistua.
+  const invalid = writing
+    .map(proposal => ({ id: proposal.id, label: proposal.label,
+      errors: adjustmentErrors(proposal, { ...proposal.payload, ...(overrides[proposal.id] || {}) }) }))
+    .filter(entry => entry.errors);
+  if (invalid.length > 0) return { ok: false, invalid, results: [] };
   const lines = writing.map((proposal, index) => `${index + 1}. ${proposal.label}`);
   const outcome = preview
     ? `\n\nEnsi viikko muutosten jälkeen: suunniteltu ${formatMinutes(preview.after.plannedMinutes)}`
@@ -1049,6 +1160,14 @@ export async function applySelectedAdjustments(proposals = [], {
   }
   const done = results.filter(result => result.applied).length;
   logEvent('alignment.adjustment_group', { count: writing.length, accepted: true, applied: done });
-  notify(done === writing.length ? 'Muutokset tehty.' : `${done}/${writing.length} muutosta tehty.`, 4000);
-  return { ok: done === writing.length, results };
+  // Epäonnistuneet nimetään: "0/1 muutosta tehty" ei kertonut mikä jäi tekemättä.
+  const failed = writing.map((proposal, index) => ({ proposal, result: results[index] }))
+    .filter(({ result }) => !result.applied && !result.duplicate)
+    .map(({ proposal, result }) => ({ id: proposal.id, label: proposal.label, errors: result.errors || null }));
+  if (done === writing.length) notify('Muutokset tehty.', 4000);
+  else {
+    notify(`${done}/${writing.length} muutosta tehty.`
+      + (failed.length > 0 ? ` Ei tehty: ${failed.map(entry => entry.label).join('; ')}.` : ''), 6000);
+  }
+  return { ok: done === writing.length, results, failed };
 }

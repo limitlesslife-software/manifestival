@@ -35,6 +35,13 @@
 // Toteuma on vain käyttäjän kirjaamaa aikaa (time_entries). Valmiiksi
 // merkitty tehtävä ei ole toteutunutta aikaa.
 //
+// Päivä ilman kirjauksia EI ole nolla minuuttia: se on kirjaamaton.
+// Siksi toteumaa verrataan tavoitteisiin vasta, kun kirjaaminen on
+// vakiintunut (trackingMaturity, sääntöversio 3), ja vertailu alkaa
+// myöhäisimmästä näistä: viikon maanantai, ensimmäinen koskaan kirjattu
+// päivä, alueen luontipäivä. Samoin suunnitelman jakaumaa ei tulkita,
+// jos vain pieni osa työstä on arvioitu.
+//
 // =====================================================================
 // ALUEEN PÄÄTTELY: YKSI ALUE, YKSI SÄÄNTÖ
 // =====================================================================
@@ -278,9 +285,14 @@ export function plannedItems({
 }
 
 function emptyBucket() {
-  return { knownMinutes: 0, unknownCount: 0, itemCount: 0 };
+  return { knownMinutes: 0, unknownCount: 0, openUnknownCount: 0, itemCount: 0 };
 }
 
+/**
+ * Suunnitellun työn yhteenveto. `unknownCount` = kaikki kohteet ilman
+ * kestoa; `openUnknownCount` = niistä ne, joita ei ole merkitty valmiiksi
+ * (vain niitä voi vielä arvioida — arviointityönkulku ei kysy valmiita).
+ */
 export function summarizePlanned(items = []) {
   const total = emptyBucket();
   const byArea = new Map();
@@ -291,8 +303,12 @@ export function summarizePlanned(items = []) {
     if (!item.areaId && item.optedOut) optedOutCount += 1;
     for (const bucket of [total, byArea.get(key)]) {
       bucket.itemCount += 1;
-      if (item.minutes === null) bucket.unknownCount += 1;
-      else bucket.knownMinutes += item.minutes;
+      if (item.minutes === null) {
+        bucket.unknownCount += 1;
+        if (!item.completed) bucket.openUnknownCount += 1;
+      } else {
+        bucket.knownMinutes += item.minutes;
+      }
     }
   }
   return { ...total, estimatedCount: total.itemCount - total.unknownCount, byArea, optedOutCount };
@@ -300,16 +316,35 @@ export function summarizePlanned(items = []) {
 
 // ----------------------------------------------------------- toteuma
 
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+function countable(entry) {
+  return Boolean(entry) && Number.isInteger(entry.minutes) && entry.minutes > 0
+    && typeof entry.entryDate === 'string' && ISO_DATE.test(entry.entryDate);
+}
+
+/**
+ * Viikon toteuma. Lisäksi `entryDates` (viikon kirjauspäivät),
+ * `minutesByDate` ja `firstEverEntryDate`: ensimmäinen päivä, jolle
+ * käyttäjä on KOSKAAN kirjannut aikaa (kaikista annetuista kirjauksista).
+ * Sitä edeltävät päivät ovat kirjaamattomia, eivät nollaa.
+ */
 export function summarizeActual({ weekStart, timeEntries = [], tasks = [], index }) {
   const dates = weekDates(weekStart);
   const entries = dates.length ? entriesInRange(timeEntries, dates[0], dates[6]) : [];
   const tasksById = new Map((tasks || []).filter(t => t && t.id).map(t => [t.id, t]));
   const byArea = new Map();
   const bySource = {};
-  const days = new Set();
+  const minutesByDate = new Map();
   const goalIds = new Set();
   let minutes = 0;
   let entryCount = 0;
+  let firstEverEntryDate = null;
+  for (const entry of timeEntries || []) {
+    if (countable(entry) && (!firstEverEntryDate || entry.entryDate < firstEverEntryDate)) {
+      firstEverEntryDate = entry.entryDate;
+    }
+  }
   for (const entry of entries) {
     if (!Number.isInteger(entry.minutes) || entry.minutes <= 0) continue;
     const task = entry.taskId ? tasksById.get(entry.taskId) : null;
@@ -325,9 +360,13 @@ export function summarizeActual({ weekStart, timeEntries = [], tasks = [], index
     bySource[source] = (bySource[source] || 0) + entry.minutes;
     minutes += entry.minutes;
     entryCount += 1;
-    days.add(entry.entryDate);
+    minutesByDate.set(entry.entryDate, (minutesByDate.get(entry.entryDate) || 0) + entry.minutes);
   }
-  return { minutes, entryCount, daysWithEntries: days.size, byArea, bySource, goalIds };
+  const entryDates = [...minutesByDate.keys()].sort();
+  return {
+    minutes, entryCount, daysWithEntries: entryDates.length, byArea, bySource, goalIds,
+    entryDates, minutesByDate, firstEverEntryDate
+  };
 }
 
 /** Tavoitteet, joilla oli viikolla suunniteltua tai kirjattua tekemistä. */
@@ -382,10 +421,93 @@ function overloadSignals({ capacity, planned }) {
   return [];
 }
 
-function neglectSignals({ areas, planned, actual, progress }) {
+// ------------------------------------------------------ seurannan kypsyys
+
+/** Seurannan tasot (sääntöversio 3). Vain `established` sallii toteuman vertailun. */
+export const TRACKING = Object.freeze({
+  NONE: 'none', EARLY: 'early', PARTIAL: 'partial', ESTABLISHED: 'established'
+});
+
+function isIsoDate(value) {
+  return typeof value === 'string' && ISO_DATE.test(value);
+}
+
+/** Montako viikon päivää on ennen päivää `iso` (0–7). */
+function dayOffset(dates, iso) {
+  if (!iso || iso <= dates[0]) return 0;
+  if (iso > dates[6]) return 7;
+  return dates.indexOf(iso);
+}
+
+/**
+ * Seurannan kypsyys: voiko kirjattua aikaa verrata tavoitteisiin?
+ *
+ * Seurantajakso alkaa myöhäisimmästä: viikon maanantai, ensimmäinen
+ * koskaan kirjattu päivä, `startIso` (alueen luontipäivä; sovelluskerros
+ * antaa sen paikallisena päivänä). Päivät ennen jaksoa ovat tuntemattomia.
+ *
+ *   none         viikolle ei ole kirjauksia
+ *   early        jaksosta alle 3/7 viikkoa tai kirjauksia alle 2 päivältä
+ *   partial      kirjauksia alle puolelta jakson kuluneista päivistä, tai
+ *                (kapasiteetin ollessa asetettu) kirjattu aika alle
+ *                ACTUAL_MIN_LOGGED_SHARE x kapasiteetti x jakson osuus
+ *   established  muuten
+ *
+ * Ajastimella ja käsin kirjatut päivät ovat samanarvoisia todisteita
+ * seurannasta; minuutteja ei painoteta lähteen mukaan.
+ *
+ * @returns {{level: string, windowStart: string|null, windowFraction: number,
+ *   trackedDays: number, windowDays: number, loggedSharePercent: number|null,
+ *   firstEntryDate: string|null}}
+ */
+export function trackingMaturity({ dates, progress, actual, capacity = null, todayIso = null, startIso = null }) {
+  const firstEntryDate = actual.firstEverEntryDate || null;
+  if (!dates || dates.length === 0) {
+    return { level: TRACKING.NONE, windowStart: null, windowFraction: 0, trackedDays: 0, windowDays: 0,
+      loggedSharePercent: null, firstEntryDate };
+  }
+  const windowStart = [dates[0], firstEntryDate, isIsoDate(startIso) ? startIso : null]
+    .filter(Boolean).sort().pop();
+  const offset = dayOffset(dates, windowStart);
+  const elapsed = Math.max(0, (progress.elapsedDays || 0) - offset);
+  const windowFraction = elapsed / 7;
+  // Jakson kalenteripäivät tähän päivään asti (tämä päivä mukaan lukien).
+  const lastDay = isIsoDate(todayIso) && todayIso < dates[6] ? todayIso : dates[6];
+  const windowDays = lastDay < windowStart ? 0 : dates.filter(date => date >= windowStart && date <= lastDay).length;
+  const tracked = (actual.entryDates || []).filter(date => date >= windowStart && date <= lastDay);
+  const trackedDays = tracked.length;
+  const trackedMinutes = tracked.reduce((sum, date) => sum + ((actual.minutesByDate && actual.minutesByDate.get(date)) || 0), 0);
+  const available = capacity && Number.isInteger(capacity.availableMinutes) ? capacity.availableMinutes : null;
+  const reference = available !== null && available > 0 && windowFraction > 0 ? available * windowFraction : null;
+  const loggedShare = reference ? trackedMinutes / reference : null;
+  const requiredDays = Math.max(RULES.ACTUAL_MIN_TRACKED_DAYS,
+    Math.ceil(Math.floor(elapsed) * RULES.ACTUAL_MIN_DAY_COVERAGE));
+
+  let level;
+  if (actual.entryCount === 0) level = TRACKING.NONE;
+  else if (windowFraction < RULES.NEGLECT_MIN_PROGRESS || trackedDays < RULES.ACTUAL_MIN_TRACKED_DAYS) level = TRACKING.EARLY;
+  else if (trackedDays < requiredDays || (loggedShare !== null && loggedShare < RULES.ACTUAL_MIN_LOGGED_SHARE)) level = TRACKING.PARTIAL;
+  else level = TRACKING.ESTABLISHED;
+
+  return {
+    level, windowStart, windowFraction, trackedDays, windowDays,
+    loggedSharePercent: percent(loggedShare), firstEntryDate
+  };
+}
+
+/**
+ * Suunnan alkamispäivä: aikaisin alueen luontipäivä. Jos yhdenkin alueen
+ * alkua ei tiedetä, alkua ei tiedetä (null = ei rajausta).
+ */
+export function alignmentStartOf(areas = []) {
+  const list = (areas || []).filter(area => area && area.id);
+  if (list.length === 0 || list.some(area => !isIsoDate(area.startDate))) return null;
+  return list.map(area => area.startDate).sort()[0];
+}
+
+function neglectSignals({ areas, planned, actual, progress, dates, capacity, todayIso }) {
   const signals = [];
   const actualTracked = actual.entryCount > 0;
-  const actualEligible = actualTracked && progress.fraction >= RULES.NEGLECT_MIN_PROGRESS;
 
   for (const area of areas) {
     if (!area.active || area.importance < RULES.NEGLECT_MIN_IMPORTANCE) continue;
@@ -393,13 +515,17 @@ function neglectSignals({ areas, planned, actual, progress }) {
     if (!Number.isInteger(target) || target < RULES.NEGLECT_MIN_TARGET_MINUTES) continue;
 
     const plannedBucket = planned.byArea.get(area.id) || emptyBucket();
+    // Alueen oma seurantajakso: alue ei voi jäädä huomiotta ajalta,
+    // jolloin sitä ei vielä ollut, eikä päiviltä ennen ensimmäistä kirjausta.
+    const tracking = trackingMaturity({ dates, progress, actual, capacity, todayIso, startIso: area.startDate || null });
 
-    if (actualEligible) {
-      const expected = target * progress.fraction;
+    if (tracking.level === TRACKING.ESTABLISHED) {
+      const expected = target * tracking.windowFraction;
       const got = actual.byArea.get(area.id) || 0;
       const share = ratio(got, expected);
       if (share !== null && share < RULES.NEGLECT_RATIO) {
-        const strong = progress.fraction >= 1 && share < RULES.NEGLECT_STRONG_RATIO;
+        const strong = progress.fraction >= 1 && tracking.windowFraction >= RULES.STRONG_MIN_TRACKED_FRACTION
+          && share < RULES.NEGLECT_STRONG_RATIO;
         signals.push({
           kind: SIGNAL.NEGLECT, severity: strong ? SEVERITY.STRONG : SEVERITY.ATTENTION,
           areaId: area.id, basis: 'actual', rule: 'neglect.actual_below_expected',
@@ -407,6 +533,8 @@ function neglectSignals({ areas, planned, actual, progress }) {
             targetMinutes: target, expectedByNowMinutes: Math.round(expected),
             actualMinutes: got, percentOfExpected: percent(share),
             weekProgressPercent: percent(progress.fraction),
+            trackedPercent: percent(tracking.windowFraction), trackedFrom: tracking.windowStart,
+            trackedDays: tracking.trackedDays,
             plannedMinutes: plannedBucket.knownMinutes, unknownCount: plannedBucket.unknownCount
           }
         });
@@ -414,16 +542,19 @@ function neglectSignals({ areas, planned, actual, progress }) {
       continue;
     }
 
-    // Suunnitelmaan perustuva: ennakoiva, siksi vain tiedoksi.
+    // Suunnitelmaan perustuva: ennakoiva, siksi vain tiedoksi. Jos osalta
+    // alueen työstä puuttuu kesto, vajetta ei väitetä: tuntematon ei ole
+    // nolla (`neglect.plan_unknown`, ei kuormaa eikä suojattua aikaa).
     const plannedShare = ratio(plannedBucket.knownMinutes, target);
     if (plannedShare !== null && plannedShare < RULES.NEGLECT_RATIO) {
       signals.push({
         kind: SIGNAL.NEGLECT, severity: SEVERITY.INFO,
-        areaId: area.id, basis: 'planned', rule: 'neglect.plan_below_target',
+        areaId: area.id, basis: 'planned',
+        rule: plannedBucket.unknownCount > 0 ? NEGLECT_PLAN_UNKNOWN : 'neglect.plan_below_target',
         metrics: {
           targetMinutes: target, plannedMinutes: plannedBucket.knownMinutes,
           percentOfTarget: percent(plannedShare), unknownCount: plannedBucket.unknownCount,
-          actualTracked
+          actualTracked, trackingLevel: tracking.level
         }
       });
     }
@@ -431,33 +562,51 @@ function neglectSignals({ areas, planned, actual, progress }) {
   return signals;
 }
 
-function distributionBasis({ planned, actual }) {
+/**
+ * Suunnitelman huomiotta jääminen, jossa osa kestoista puuttuu. Ei ole
+ * vaje: sitä ei käytetä suojattuun aikaan, painotukseen eikä ehdotuksiin.
+ */
+export const NEGLECT_PLAN_UNKNOWN = 'neglect.plan_unknown';
+
+/** Onko havainto todettu vaje (ei `plan_unknown`)? Muut moduulit käyttävät tätä. */
+export function isNeglectShortfall(signal) {
+  return Boolean(signal) && signal.kind === SIGNAL.NEGLECT && signal.rule !== NEGLECT_PLAN_UNKNOWN;
+}
+
+function distributionBasis({ planned, actual, tracking }) {
   const assignedActual = actual.minutes - (actual.byArea.get(NONE_KEY) || 0);
-  if (assignedActual >= RULES.MISALIGNMENT_MIN_MINUTES) {
+  if (tracking.level === TRACKING.ESTABLISHED && assignedActual >= RULES.MISALIGNMENT_MIN_MINUTES) {
     return {
       basis: 'actual', assigned: assignedActual, total: actual.minutes,
       minutesFor: id => actual.byArea.get(id) || 0
     };
   }
+  // Suunnitelman jakauma vain, kun riittävä osa asioista on arvioitu:
+  // kahden arvioidun tehtävän jakauma ei kerro viikosta.
+  const estimateCoverage = ratio(planned.estimatedCount, planned.itemCount);
+  if (estimateCoverage !== null && estimateCoverage < RULES.PLAN_MIN_ESTIMATE_COVERAGE) return null;
   const noneBucket = planned.byArea.get(NONE_KEY);
   const assignedPlanned = planned.knownMinutes - (noneBucket ? noneBucket.knownMinutes : 0);
   if (assignedPlanned >= RULES.MISALIGNMENT_MIN_MINUTES) {
     return {
       basis: 'planned', assigned: assignedPlanned, total: planned.knownMinutes,
-      minutesFor: id => (planned.byArea.get(id) || emptyBucket()).knownMinutes
+      minutesFor: id => (planned.byArea.get(id) || emptyBucket()).knownMinutes,
+      estimateLimited: estimateCoverage !== null && estimateCoverage < RULES.PLAN_FULL_ESTIMATE_COVERAGE,
+      estimateCoveragePercent: percent(estimateCoverage)
     };
   }
   return null;
 }
 
-function misalignmentSignals({ areas, planned, actual, neglected }) {
+function misalignmentSignals({ areas, planned, actual, neglected, tracking, progress }) {
   const desired = desiredShares(areas);
   if (desired.totalMinutes <= 0) return [];
-  const source = distributionBasis({ planned, actual });
+  const source = distributionBasis({ planned, actual, tracking });
   if (!source) return [];
 
   const coverage = ratio(source.assigned, source.total);
   const weak = coverage === null || coverage < RULES.MIN_ASSIGNED_COVERAGE;
+  const incomplete = weak || Boolean(source.estimateLimited);
   const signals = [];
 
   for (const area of areas) {
@@ -475,20 +624,25 @@ function misalignmentSignals({ areas, planned, actual, neglected }) {
     if (Math.abs(points) < RULES.MISALIGNMENT_POINTS) continue;
     const direction = points > 0 ? 'over' : 'under';
     // Sama asia kahdesti on melua: huomiotta jääminen kertoo jo vajeesta.
-    if (direction === 'under' && neglected.has(area.id)) continue;
+    // Versio 3: myös "vie enemmän" ohitetaan samalle alueelle — alue ei
+    // voi samaan aikaan jäädä huomiotta ja viedä liikaa (ristiriita).
+    if (neglected.has(area.id)) continue;
 
     let severity = Math.abs(points) >= RULES.MISALIGNMENT_STRONG_POINTS ? SEVERITY.STRONG : SEVERITY.ATTENTION;
     if (source.basis === 'planned' && severity === SEVERITY.STRONG) severity = SEVERITY.ATTENTION;
-    if (weak) severity = SEVERITY.INFO;
+    // Kesken viikon toteuma on vasta osa viikkoa: vahva vasta viikon jälkeen.
+    if (source.basis === 'actual' && progress.fraction < 1 && severity === SEVERITY.STRONG) severity = SEVERITY.ATTENTION;
+    if (incomplete) severity = SEVERITY.INFO;
 
+    const metrics = {
+      direction, desiredPercent: Math.round(want * 100), actualPercent: Math.round(got * 100),
+      deviationPoints: points, basisMinutes: source.minutesFor(area.id),
+      assignedMinutes: source.assigned, coveragePercent: percent(coverage), incomplete
+    };
+    if (source.basis === 'planned') metrics.estimateCoveragePercent = source.estimateCoveragePercent;
     signals.push({
       kind: SIGNAL.MISALIGNMENT, severity, areaId: area.id, basis: source.basis,
-      rule: 'misalignment.share_deviation',
-      metrics: {
-        direction, desiredPercent: Math.round(want * 100), actualPercent: Math.round(got * 100),
-        deviationPoints: points, basisMinutes: source.minutesFor(area.id),
-        assignedMinutes: source.assigned, coveragePercent: percent(coverage), incomplete: weak
-      }
+      rule: 'misalignment.share_deviation', metrics
     });
   }
   return signals;
@@ -520,7 +674,7 @@ export function compareSignals(a, b) {
 
 export const QUALITY = Object.freeze({ GOOD: 'good', PARTIAL: 'partial', WEAK: 'weak', NONE: 'none' });
 
-export function dataQuality({ areas, capacity, planned, actual }) {
+export function dataQuality({ areas, capacity, planned, actual, tracking = null }) {
   const reasons = [];
   const activeAreas = areas.filter(area => area.active);
   if (activeAreas.length === 0) reasons.push('no_areas');
@@ -528,7 +682,13 @@ export function dataQuality({ areas, capacity, planned, actual }) {
   if (!capacity || !Number.isInteger(capacity.availableMinutes)) reasons.push('no_capacity');
 
   const estimateCoverage = ratio(planned.estimatedCount, planned.itemCount);
-  if (planned.unknownCount > 0) reasons.push('unestimated_work');
+  // Arvioitavissa oleva puute: avoimet asiat ilman kestoa. Valmiiksi
+  // merkityt ilman kestoa kerrotaan erikseen tietona (arviointityönkulku
+  // ei kysy niitä, joten "arvioi" olisi umpikuja).
+  const openUnknown = planned.openUnknownCount ?? planned.unknownCount;
+  const completedUnknown = Math.max(0, planned.unknownCount - openUnknown);
+  if (openUnknown > 0) reasons.push('unestimated_work');
+  if (completedUnknown > 0) reasons.push('unestimated_completed');
 
   const plannedNone = planned.byArea.get(NONE_KEY) || emptyBucket();
   const plannedAssignedCoverage = ratio(planned.knownMinutes - plannedNone.knownMinutes, planned.knownMinutes);
@@ -542,6 +702,11 @@ export function dataQuality({ areas, capacity, planned, actual }) {
   const actualAssignedCoverage = ratio(actual.minutes - actualNone, actual.minutes);
   if (actual.entryCount === 0) reasons.push('no_actual');
   else if (actualNone > 0) reasons.push('unassigned_actual');
+  // Versio 3: kirjauksia on, mutta vasta osalta viikosta. Kirjaamattomat
+  // päivät ovat tuntemattomia, joten toteumaa ei vielä verrata.
+  if (tracking && (tracking.level === TRACKING.EARLY || tracking.level === TRACKING.PARTIAL)) {
+    reasons.push('partial_actual');
+  }
 
   let level;
   if (activeAreas.length === 0) level = QUALITY.NONE;
@@ -556,10 +721,14 @@ export function dataQuality({ areas, capacity, planned, actual }) {
     plannedAssignedPercent: percent(plannedAssignedCoverage),
     actualAssignedPercent: percent(actualAssignedCoverage),
     unestimatedCount: planned.unknownCount,
+    openUnestimatedCount: openUnknown,
+    completedUnestimatedCount: completedUnknown,
     unassignedPlannedCount: openUnassigned,
     intentionallyUnassignedCount: optedOut,
     unassignedActualMinutes: actualNone,
-    actualTracked: actual.entryCount > 0
+    actualTracked: actual.entryCount > 0,
+    trackingLevel: tracking ? tracking.level : null,
+    loggedSharePercent: tracking ? tracking.loggedSharePercent : null
   };
 }
 
@@ -573,6 +742,8 @@ export function dataQuality({ areas, capacity, planned, actual }) {
  * @param {string} input.weekStart   mikä tahansa viikon päivä (maanantai johdetaan)
  * @param {string} input.todayIso    tämä päivä (annettu, ei luettu kellosta)
  * @param {number} [input.nowMinutes]
+ * @param {Array}  [input.areas]     alueet; valinnainen `startDate` (paikallinen
+ *                                   luontipäivä) rajaa alueen seurantajakson
  */
 export function analyzeWeek({
   weekStart, todayIso, nowMinutes = 0,
@@ -592,13 +763,18 @@ export function analyzeWeek({
   const energy = summarizeEnergy(items);
 
   const desired = desiredShares(cleanAreas);
-  const neglect = neglectSignals({ areas: cleanAreas, planned, actual, progress });
-  const neglected = new Set(neglect.map(signal => signal.areaId));
+  // Koko viikon seuranta alkaa aikaisintaan Suunnan käyttöönotosta
+  // (aikaisin alueen luontipäivä); alueen oma jakso voi alkaa myöhemmin.
+  const tracking = trackingMaturity({
+    dates, progress, actual, capacity: weekCapacity, todayIso, startIso: alignmentStartOf(cleanAreas)
+  });
+  const neglect = neglectSignals({ areas: cleanAreas, planned, actual, progress, dates, capacity: weekCapacity, todayIso });
+  const neglected = new Set(neglect.filter(isNeglectShortfall).map(signal => signal.areaId));
   const timeOverload = overloadSignals({ capacity: weekCapacity, planned });
   const signals = [
     ...timeOverload,
     ...neglect,
-    ...misalignmentSignals({ areas: cleanAreas, planned, actual, neglected }),
+    ...misalignmentSignals({ areas: cleanAreas, planned, actual, neglected, tracking, progress }),
     ...energySignals({
       energy, capacity: weekCapacity,
       timeOverloaded: timeOverload.some(signal => signal.severity !== SEVERITY.INFO)
@@ -646,12 +822,14 @@ export function analyzeWeek({
     },
     planned: {
       knownMinutes: planned.knownMinutes, unknownCount: planned.unknownCount,
+      openUnknownCount: planned.openUnknownCount,
       itemCount: planned.itemCount, estimatedCount: planned.estimatedCount
     },
     actual: {
       minutes: actual.minutes, entryCount: actual.entryCount, daysWithEntries: actual.daysWithEntries,
-      bySource: { ...actual.bySource }
+      bySource: { ...actual.bySource }, entryDates: [...actual.entryDates]
     },
+    tracking,
     areas: areaRows,
     unassigned: {
       plannedMinutes: none.knownMinutes, plannedUnknown: none.unknownCount, plannedItems: none.itemCount,
@@ -660,7 +838,7 @@ export function analyzeWeek({
     },
     items,
     activeGoalIds: activeGoals(items, actual, index),
-    dataQuality: dataQuality({ areas: cleanAreas, capacity: weekCapacity, planned, actual }),
+    dataQuality: dataQuality({ areas: cleanAreas, capacity: weekCapacity, planned, actual, tracking }),
     signals
   };
 }

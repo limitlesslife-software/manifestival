@@ -28,17 +28,29 @@
 //    9 aineiston laatu (arvioimaton työ, kapasiteetti puuttuu)
 //   10 tiedoksi-tason havainnot
 //
+// Versio 3: kun alle puolet viikon asioista on arvioitu (harva aineisto),
+// arvioimaton työ nousee sijalle 4 — ennen huomio-tason suunnitelman
+// havaintoja, jotka perustuvat vain arvioituun vähemmistöön. Lisäksi
+// tulos kantaa ilmoituksen (SPARSE_ESTIMATES_NOTICE), jonka päivän kortti
+// näyttää ensimmäisenä, ja kapasiteetin jäljellä oleva osa sanotaan
+// "arvioidun työn jälkeen", kun osalta työstä puuttuu kesto.
+//
 // Ei ilmoituksia: tämä on näkymän sisältöä, ei push-viesti.
 
 import { SIGNAL, SEVERITY } from './alignment.js';
 import { DAILY_RULES, TIME_RULES } from './alignmentPolicy.js';
 import { formatMinutes, countOf } from './lifeArea.js';
+import {
+  estimateConfidence, openUnknownCountOf, ESTIMATE_CONFIDENCE, SPARSE_ESTIMATES_NOTICE
+} from './alignmentQuality.js';
 
 export const DAILY_RANK = Object.freeze({
   STRONG_OVERLOAD: 1,
   STRONG_NEGLECT: 2,
   STRONG_MISALIGNMENT: 3,
   ENERGY_OVERLOAD: 4,
+  /** Versio 3: arvioimaton työ harvalla aineistolla (energiakuormituksen jälkeen, samalla sijalla). */
+  SPARSE_ESTIMATES: 4,
   OVERLOAD: 5,
   NEGLECT: 6,
   MISALIGNMENT: 7,
@@ -46,6 +58,9 @@ export const DAILY_RANK = Object.freeze({
   DATA_QUALITY: 9,
   INFO: 10
 });
+
+const SPARSE_REASON = 'Näytetään ennen suunnitelman havaintoja, koska suurimmalta osalta viikon asioista puuttuu kesto: '
+  + 'suunnitelmasta tehdyt havainnot perustuvat vain arvioituun osaan.';
 
 const RANK_REASONS = Object.freeze({
   1: 'Näytetään ensimmäisenä, koska suunniteltu työ ylittää kapasiteettisi selvästi.',
@@ -109,11 +124,16 @@ export function todayConnection(analysis, todayIso, areas = []) {
  * @param {string} context.todayIso
  * @param {Array}  context.areas
  * @param {Function} context.explain  (signal) => {title, text, why}
- * @returns {{status: string[], observations: Array, hiddenCount: number, connection: object|null}}
+ * @returns {{status: string[], observations: Array, hiddenCount: number, connection: object|null,
+ *   notice: string|null, noticeAction: string|null}}
  */
 export function dailyObservations(analysis, { todayIso = null, areas = [], explain = null } = {}) {
-  if (!analysis) return { status: [], observations: [], hiddenCount: 0, connection: null };
+  if (!analysis) {
+    return { status: [], observations: [], hiddenCount: 0, connection: null, notice: null, noticeAction: null };
+  }
   const candidates = [];
+  const confidence = estimateConfidence(analysis);
+  const openUnknown = openUnknownCountOf(analysis);
 
   for (const signal of analysis.signals || []) {
     if (signal.kind === SIGNAL.TARGET_TENSION) continue; // tavoitteiden jännite kuuluu katsaukseen
@@ -136,12 +156,16 @@ export function dailyObservations(analysis, { todayIso = null, areas = [], expla
       action: 'open_unassigned'
     });
   }
-  if ((analysis.planned?.unknownCount || 0) >= DAILY_RULES.UNESTIMATED_MIN_ITEMS) {
+  // Vain avoimet asiat ilman kestoa: valmiiksi merkittyjä arviointi ei kysy.
+  const sparse = confidence === ESTIMATE_CONFIDENCE.SPARSE;
+  if (openUnknown >= DAILY_RULES.UNESTIMATED_MIN_ITEMS || (sparse && openUnknown > 0)) {
     candidates.push({
-      code: 'unestimated', rank: DAILY_RANK.DATA_QUALITY, severity: SEVERITY.INFO, kind: 'data_quality',
-      title: `${countOf(analysis.planned.unknownCount, 'asia', 'asiaa')} ilman kestoarviota`,
+      code: 'unestimated', rank: sparse ? DAILY_RANK.SPARSE_ESTIMATES : DAILY_RANK.DATA_QUALITY,
+      severity: SEVERITY.INFO, kind: 'data_quality',
+      title: `${countOf(openUnknown, 'asia', 'asiaa')} ilman kestoarviota`,
       text: 'Arvioimatonta työtä ei lasketa kuormaan, joten viikko voi olla täydempi kuin luvut näyttävät.',
-      action: 'open_estimate'
+      action: 'open_estimate',
+      ...(sparse ? { why: SPARSE_REASON } : {})
     });
   } else if (!analysis.capacity?.declared) {
     candidates.push({
@@ -162,14 +186,20 @@ export function dailyObservations(analysis, { todayIso = null, areas = [], expla
     ...candidate,
     // Ensimmäinen on "yksi asia, joka kannattaa huomata tänään".
     primary: index === 0,
-    why: RANK_REASONS[candidate.rank]
+    why: candidate.why || RANK_REASONS[candidate.rank]
   }));
 
   const status = [];
   if (analysis.capacity?.declared) {
     const remaining = analysis.capacity.remainingMinutes;
+    const unknown = analysis.planned?.unknownCount || 0;
+    // Jäljellä oleva osa lasketaan vain arvioidusta työstä: kun osalta
+    // puuttuu kesto, luku sanotaan ehdollisena eikä kovana tietona.
     status.push(remaining >= 0
-      ? `Viikon kapasiteettia jäljellä ${formatMinutes(remaining)}.`
+      ? (unknown > 0
+        ? `Viikon kapasiteettia jäljellä ${formatMinutes(remaining)} arvioidun työn jälkeen; `
+          + `${countOf(unknown, 'asia', 'asiaa')} ilman kestoarviota ei ole mukana.`
+        : `Viikon kapasiteettia jäljellä ${formatMinutes(remaining)}.`)
       : `Suunnitelma ylittää viikon kapasiteetin ${formatMinutes(-remaining)}.`);
   }
   if (Number.isInteger(analysis.energy?.budgetMinutes)) {
@@ -187,5 +217,11 @@ export function dailyObservations(analysis, { todayIso = null, areas = [], expla
       : 'Tämän päivän suunnitelma ei liity yhteenkään alueeseen, jonka merkitsit hyvin tärkeäksi.');
   }
 
-  return { status, observations: shown, hiddenCount: Math.max(0, candidates.length - shown.length), connection };
+  return {
+    status, observations: shown, hiddenCount: Math.max(0, candidates.length - shown.length), connection,
+    // Harva arvioaineisto: päivän kortin ensimmäinen rivi. Toimenpide vain,
+    // jos arvioitavaa on (valmiiksi merkittyjä arviointi ei kysy).
+    notice: confidence === ESTIMATE_CONFIDENCE.OK ? null : SPARSE_ESTIMATES_NOTICE,
+    noticeAction: confidence !== ESTIMATE_CONFIDENCE.OK && openUnknown > 0 ? 'open_estimate' : null
+  };
 }

@@ -21,7 +21,7 @@
 // aineiston laatu. Tehtäviä ei kopioida: vain lukuja ja tunnisteita.
 // Versio kasvaa jos muoto muuttuu, ja vanha versio luetaan sellaisenaan.
 
-import { SIGNAL, SEVERITY, RULES } from './alignment.js';
+import { SIGNAL, SEVERITY, RULES, TRACKING, NEGLECT_PLAN_UNKNOWN, isNeglectShortfall } from './alignment.js';
 import { formatMinutes, importanceLabel, countOf } from './lifeArea.js';
 import { priorityWeight } from './priority.js';
 import { REVIEW_RULES, ENERGY_RULES, POLICY_VERSION, policyVersionOf } from './alignmentPolicy.js';
@@ -38,12 +38,52 @@ export const ADJUSTMENT = Object.freeze({
   CHANGE_TARGET: 'change_target',
   PAUSE_GOAL: 'pause_goal',
   /** Ei kirjoita mitään: avaa arvioinnin työnkulun. */
-  REQUEST_ESTIMATES: 'request_estimates'
+  REQUEST_ESTIMATES: 'request_estimates',
+  /** Ei kirjoita mitään: avaa ajan kirjauksen (sääntöversio 3). */
+  START_TRACKING: 'start_tracking'
 });
 
 /** Ehdotukset, jotka eivät muuta mitään (vain ohjaavat näkymään). */
-export const NON_WRITING_ADJUSTMENTS = Object.freeze([ADJUSTMENT.REQUEST_ESTIMATES]);
+export const NON_WRITING_ADJUSTMENTS = Object.freeze([ADJUSTMENT.REQUEST_ESTIMATES, ADJUSTMENT.START_TRACKING]);
 export const ADJUSTMENT_TYPES = Object.freeze(Object.values(ADJUSTMENT));
+
+/** Mihin ohjaava ehdotus vie (näkymä avaa työnkulun). */
+export const ADJUSTMENT_NAVIGATION = Object.freeze({
+  [ADJUSTMENT.REQUEST_ESTIMATES]: 'estimate',
+  [ADJUSTMENT.START_TRACKING]: 'log_time'
+});
+
+/** Havainnon perusta sanoin: näkyy havainnon vieressä, ei vain "Miksi?"-osiossa. */
+export const BASIS_LABELS = Object.freeze({
+  planned: 'suunnitelman perusteella',
+  actual: 'kirjatun ajan perusteella',
+  targets: 'tavoitteiden perusteella'
+});
+
+function shortDate(iso) {
+  if (typeof iso !== 'string') return '';
+  const [, month, day] = iso.split('-').map(Number);
+  return `${day}.${month}.`;
+}
+
+/** Lyhyet nimet kirjatun ajan lähteille (katsauksen "Tiedossa"-rivi). */
+export const TIME_SOURCE_SHORT_LABELS = Object.freeze({ timer: 'ajastimella', manual: 'käsin' });
+
+/**
+ * Kirjattu aika lähteittäin näyttöä varten: [{source, label, minutes}].
+ *
+ * Vain näyttöä: minuutteja EI painoteta lähteen varmuuden mukaan
+ * (realitySources.js: timer = exact, manual = reported). Seurannan
+ * kypsyydessä (alignment.js trackingMaturity) ajastimella ja käsin
+ * kirjattu päivä ovat samanarvoisia todisteita siitä, että päivä
+ * kirjattiin. Tuntematon lähde ohitetaan.
+ */
+export function timeSourceSplit(bySource = {}) {
+  return Object.keys(bySource || {})
+    .filter(source => TIME_SOURCE_SHORT_LABELS[source] && Number.isFinite(bySource[source]) && bySource[source] > 0)
+    .sort((a, b) => a.localeCompare(b))
+    .map(source => ({ source, label: TIME_SOURCE_SHORT_LABELS[source], minutes: bySource[source] }));
+}
 
 /** Katsauksen seitsemän kysymystä. Järjestys on katsauksen järjestys. */
 export const REVIEW_QUESTIONS = Object.freeze([
@@ -97,14 +137,30 @@ export function explainSignal(signal, areas = []) {
 
     case SIGNAL.NEGLECT:
       if (signal.basis === 'actual') {
+        // Vertailu alkoi kesken viikon (ensimmäinen kirjaus tai alueen
+        // luonti): sanotaan mistä, koska sitä edeltävät päivät ovat tuntemattomia.
+        const partialWindow = Number.isFinite(m.trackedPercent) && Number.isFinite(m.weekProgressPercent)
+          && m.trackedPercent < m.weekProgressPercent && m.trackedFrom;
+        const windowPercent = Number.isFinite(m.trackedPercent) ? m.trackedPercent : m.weekProgressPercent;
         return {
           title: `${name} jäämässä huomiotta`,
-          text: `${name} on saanut ${formatMinutes(m.actualMinutes)}, vaikka tähän mennessä `
-            + `tavoitteesi mukaan olisi kertynyt noin ${formatMinutes(m.expectedByNowMinutes)} `
-            + `(viikon tavoite ${formatMinutes(m.targetMinutes)}).`,
+          text: `${name}: kirjattu ${formatMinutes(m.actualMinutes)}, vaikka tavoitteesi mukaan tähän mennessä `
+            + `olisi kertynyt noin ${formatMinutes(m.expectedByNowMinutes)} `
+            + `(viikon tavoite ${formatMinutes(m.targetMinutes)}`
+            + (partialWindow ? `, verrattuna ${shortDate(m.trackedFrom)} alkaen` : '') + ').',
           why: `Alue on sinulle ${importanceLabel(byId.get(signal.areaId)?.importance).toLowerCase() || 'tärkeä'}, `
             + `ja kirjattu aika on alle ${Math.round(RULES.NEGLECT_RATIO * 100)} % siitä, mitä `
-            + `${m.weekProgressPercent} % kuluneesta viikosta vastaa.`
+            + `${windowPercent} % viikosta vastaa.`
+            + (partialWindow ? ` Vertailu alkaa ${shortDate(m.trackedFrom)}: sitä edeltävät päivät ovat tuntemattomia, eivät nollaa.` : '')
+        };
+      }
+      if (signal.rule === NEGLECT_PLAN_UNKNOWN) {
+        return {
+          title: `${name}: suunnitelman kesto ei vielä tiedossa`,
+          text: `${name}: ${countOf(m.unknownCount, 'asia', 'asiaa')} ilman kestoarviota, joten suunnitelman aika `
+            + `ei ole vielä tiedossa; arvioitua ${formatMinutes(m.plannedMinutes)}, tavoite ${formatMinutes(m.targetMinutes)}. `
+            + 'Riittääkö aika, selviää kun asiat on arvioitu.',
+          why: 'Tärkeä alue, jonka suunnitelmasta osa on ilman kestoa. Tuntematon ei ole nolla, joten vajetta ei väitetä.'
         };
       }
       return {
@@ -116,15 +172,25 @@ export function explainSignal(signal, areas = []) {
           + 'viikkotavoitteesta. Suunnitelma on vielä muutettavissa.'
       };
 
-    case SIGNAL.MISALIGNMENT:
+    case SIGNAL.MISALIGNMENT: {
+      const planned = signal.basis !== 'actual';
+      const estimateLimited = planned && Number.isFinite(m.estimateCoveragePercent)
+        && m.estimateCoveragePercent < Math.round(RULES.PLAN_FULL_ESTIMATE_COVERAGE * 100);
+      const title = m.direction === 'over'
+        ? `${name} vie ${planned ? 'suunnitelmassa ' : ''}enemmän kuin halusit`
+        : `${name} saa ${planned ? 'suunnitelmassa ' : ''}vähemmän kuin halusit`;
       return {
-        title: m.direction === 'over' ? `${name} vie enemmän kuin halusit` : `${name} saa vähemmän kuin halusit`,
-        text: `${name} sai ${m.actualPercent} % ${signal.basis === 'actual' ? 'ajastasi' : 'suunnitellusta ajastasi'}, `
+        title,
+        // Toteumassa osuus on KIRJATUSTA ajasta, ei eletystä ajasta.
+        text: `${name} sai ${m.actualPercent} % ${planned ? 'suunnitellusta ajastasi' : 'kirjatusta ajastasi'}, `
           + `vaikka tavoite oli ${m.desiredPercent} %.`
-          + (m.incomplete ? ' Aineisto on vajaa, joten tämä on suuntaa-antava.' : ''),
+          + (estimateLimited
+            ? ` Vain ${m.estimateCoveragePercent} % suunnitelluista asioista on arvioitu, joten tämä on suuntaa-antava.`
+            : m.incomplete ? ' Aineisto on vajaa, joten tämä on suuntaa-antava.' : ''),
         why: `Osuus poikkeaa toivomastasi jakaumasta vähintään ${RULES.MISALIGNMENT_POINTS} prosenttiyksikköä. `
           + 'Toivottu jakauma lasketaan alueiden viikkotavoitteista.'
       };
+    }
 
     case SIGNAL.ENERGY_OVERLOAD: {
       const timeNote = m.timeOverloaded
@@ -203,7 +269,9 @@ export function buildReviewSnapshot(analysis) {
       actualMinutes: area.actualMinutes, actualPercent: area.actualPercent
     })),
     planned: { ...analysis.planned },
-    actual: { ...analysis.actual },
+    actual: { ...analysis.actual, entryDates: [...(analysis.actual.entryDates || [])] },
+    // Versio 3: seurannan kypsyys (mistä vertailu alkoi, montako päivää kirjattiin).
+    tracking: analysis.tracking ? { ...analysis.tracking } : null,
     unassigned: { ...analysis.unassigned },
     signals: analysis.signals.map(signal => ({
       kind: signal.kind, severity: signal.severity, areaId: signal.areaId,
@@ -317,12 +385,17 @@ export function proposeAdjustments(analysis, {
   // 1. Kapasiteetti ensi viikolle, jos sitä ei ole asetettu. Jos viikko on
   //    päättynyt ja kirjattu toteuma poikkesi arviosta selvästi, ehdotus
   //    perustuu toteumaan — mutta arvo on käyttäjän muokattavissa, ja
-  //    sanamuoto on kysymys, ei korjaus.
+  //    sanamuoto on kysymys, ei korjaus. Versio 3: vain kun kirjaaminen
+  //    oli vakiintunut ja kattoi lähes koko viikon; muuten kirjattu aika
+  //    kertoo kirjaamisesta, ei kapasiteetista.
+  const tracking = analysis.tracking || null;
+  const trackedWeek = Boolean(tracking) && tracking.level === TRACKING.ESTABLISHED
+    && tracking.windowFraction >= REVIEW_RULES.CAPACITY_MIN_TRACKED_FRACTION;
   if (!nextCapacity) {
     const declared = analysis.capacity.availableMinutes;
     const actual = analysis.actual.minutes;
     const deviates = analysis.capacity.declared && analysis.progress.state === 'after'
-      && analysis.actual.entryCount > 0 && declared > 0
+      && analysis.actual.entryCount > 0 && declared > 0 && trackedWeek
       && Math.abs(actual - declared) >= REVIEW_RULES.CAPACITY_DEVIATION_MIN_MINUTES
       && Math.abs(actual - declared) / declared >= REVIEW_RULES.CAPACITY_DEVIATION_RATIO;
     const suggestion = deviates ? Math.round(actual / 30) * 30 : declared;
@@ -353,6 +426,25 @@ export function proposeAdjustments(analysis, {
       label: `Arvioi ensi viikon ${countOf(unestimatedNext, 'asia', 'asiaa')}`,
       detail: 'Ilman kestoa näitä ei lasketa kuormaan. Karkea arvio riittää.',
       payload: { weekStart: next, count: unestimatedNext }
+    });
+  }
+
+  // 1c. Kirjaaminen alkoi mutta ei vakiintunut (early/partial): ei
+  //     kirjoita mitään, avaa ajan kirjauksen. Vasta kun viikosta on
+  //     kulunut riittävästi, muuten ehdotus näkyisi jokaisen viikon
+  //     alussa. Kokonaan kirjaamattomasta viikosta kertoo jo aineiston
+  //     laatu ("Et ole vielä kirjannut…"); joka viikko toistuva kehotus
+  //     olisi nalkutusta, eikä ajan kirjaaminen ole pakollista.
+  if (tracking && (tracking.level === TRACKING.EARLY || tracking.level === TRACKING.PARTIAL)
+      && targetsTotal > 0 && analysis.progress.fraction >= RULES.NEGLECT_MIN_PROGRESS) {
+    add({
+      id: `${ADJUSTMENT.START_TRACKING}:${next}`,
+      type: ADJUSTMENT.START_TRACKING,
+      reason: { kind: 'data_quality' },
+      label: 'Kirjaa aikaa koko ensi viikon, niin katsaus voi verrata toteumaa tavoitteisiin',
+      detail: `Tällä viikolla aikaa kirjattiin ${analysis.actual.daysWithEntries} päivänä. `
+        + 'Kirjaamattomat päivät ovat tuntemattomia, eivät nollaa.',
+      payload: { weekStart: next }
     });
   }
 
@@ -422,9 +514,10 @@ export function proposeAdjustments(analysis, {
   // 4. Huomiotta jäävä alue: varaa aikaa TAI muuta tavoitetta.
   // Suunnitelmaan perustuva huomiotta jääminen on tiedoksi-tasoa, mutta
   // juuri silloin ajan varaaminen on vielä helppoa: siksi mukaan.
+  // `plan_unknown` ei ole vaje (kestot puuttuvat), joten siitä ei ehdoteta.
   for (const signal of signalsOf(analysis, SIGNAL.NEGLECT, { includeInfo: true })) {
     const area = areasById.get(signal.areaId);
-    if (!area) continue;
+    if (!area || !isNeglectShortfall(signal)) continue;
     const goal = goals
       .filter(entry => entry && entry.lifeAreaId === area.id && entry.status === 'active')
       .sort((a, b) => priorityWeight(a.priority) - priorityWeight(b.priority) || a.id.localeCompare(b.id))[0];
@@ -443,10 +536,16 @@ export function proposeAdjustments(analysis, {
       }
     });
 
-    const observed = signal.basis === 'actual'
-      ? roundToQuarter((signal.metrics.actualMinutes || 0) / Math.max(analysis.progress.fraction, 1 / 7))
-      : roundToQuarter(signal.metrics.plannedMinutes || 0);
-    if (observed < area.targetMinutesPerWeek) {
+    // Tavoitteen muutos vain vakiintuneesta toteumasta (versio 3): osittain
+    // kirjatun viikon "tahti" tai suunnitelman minuutit eivät kerro, mitä
+    // alue saa. Ehdotettu arvo on vähintään mielekkään tavoitteen alaraja;
+    // 0 tarkoittaisi "ei nyt" ja hiljentäisi alueen pysyvästi.
+    if (signal.basis !== 'actual' || !tracking || tracking.level !== TRACKING.ESTABLISHED) continue;
+    const m = signal.metrics;
+    const fraction = m.targetMinutes > 0 && Number.isFinite(m.expectedByNowMinutes)
+      ? m.expectedByNowMinutes / m.targetMinutes : analysis.progress.fraction;
+    const observed = roundToQuarter((m.actualMinutes || 0) / Math.max(fraction, 1 / 7));
+    if (observed < area.targetMinutesPerWeek && observed >= RULES.NEGLECT_MIN_TARGET_MINUTES) {
       add({
         id: `${ADJUSTMENT.CHANGE_TARGET}:${area.id}`,
         type: ADJUSTMENT.CHANGE_TARGET,
@@ -538,14 +637,18 @@ export function planningFeedback(analysis, { nextCapacity = null } = {}) {
   const declared = nextCapacity && Number.isInteger(nextCapacity.availableMinutes)
     ? nextCapacity.availableMinutes
     : analysis.capacity.availableMinutes;
+  // Painotettavat: todetut vajeet (ei `plan_unknown`: kestot puuttuvat).
+  // Sama alue ei voi olla kummassakin listassa.
+  const prioritizeAreaIds = analysis.signals.filter(isNeglectShortfall).map(signal => signal.areaId);
+  const prioritized = new Set(prioritizeAreaIds);
   return {
     overloaded: Boolean(overload),
     capHours: Number.isInteger(declared) ? Math.floor(declared / 60) : null,
     reduceByMinutes: overload ? overload.metrics.overageMinutes : 0,
-    prioritizeAreaIds: analysis.signals
-      .filter(signal => signal.kind === SIGNAL.NEGLECT).map(signal => signal.areaId),
+    prioritizeAreaIds,
     deprioritizeAreaIds: analysis.signals
       .filter(signal => signal.kind === SIGNAL.MISALIGNMENT && signal.metrics.direction === 'over')
       .map(signal => signal.areaId)
+      .filter(areaId => !prioritized.has(areaId))
   };
 }

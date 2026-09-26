@@ -46,14 +46,22 @@ const explain = areas => signal => explainSignal(signal, areas);
 
 // ================================================================ POLITIIKKA
 
-test('politiikka: oletukset ovat ensimmäisen version arvot (käytös ei muuttunut)', () => {
+test('politiikka: ensimmäisen version kynnykset ennallaan; versio 3 lisää harvan aineiston rajat', () => {
   assert.equal(RULES, TIME_RULES, 'alignment.js lukee samat kynnykset');
   assert.equal(TIME_RULES.MISALIGNMENT_POINTS, 15);
   assert.equal(TIME_RULES.MISALIGNMENT_STRONG_POINTS, 25);
   assert.equal(TIME_RULES.NEGLECT_RATIO, 0.5);
   assert.equal(TIME_RULES.NEGLECT_MIN_PROGRESS, 3 / 7);
   assert.equal(TIME_RULES.MISALIGNMENT_MIN_MINUTES, 120);
-  assert.equal(POLICY_VERSION, 2);
+  // Muutettu: sääntöversio 3 (ennen 2). Uudet kynnykset ovat tuotteen
+  // päätöksiä (docs/LIFE-ALIGNMENT.md "Sääntöversio 3").
+  assert.equal(POLICY_VERSION, 3);
+  assert.equal(TIME_RULES.ACTUAL_MIN_TRACKED_DAYS, 2);
+  assert.equal(TIME_RULES.ACTUAL_MIN_DAY_COVERAGE, 0.5);
+  assert.equal(TIME_RULES.ACTUAL_MIN_LOGGED_SHARE, 0.25);
+  assert.equal(TIME_RULES.STRONG_MIN_TRACKED_FRACTION, 6 / 7);
+  assert.equal(TIME_RULES.PLAN_MIN_ESTIMATE_COVERAGE, 0.5);
+  assert.equal(TIME_RULES.PLAN_FULL_ESTIMATE_COVERAGE, 0.8);
   assert.ok(Object.isFrozen(ALIGNMENT_POLICY) && Object.isFrozen(TIME_RULES));
 });
 

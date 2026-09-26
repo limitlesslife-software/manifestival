@@ -226,9 +226,14 @@ test('katsaus v2: kuusi osiota, pohdintavastaukset historiaan, sääntöversio n
     assert.match(HTML, new RegExp(`<label class="field-label" for="dirAnswer-${code}">`), `vastauskentällä ${code} on label`);
   }
   assert.match(html('dirReviewHistory'), /Vastattuja pohdintakysymyksiä: 1/);
-  assert.match(html('dirReviewHistory'), /Säännöt: Suunta 2/);
+  // Muutettu: sääntöversio 3 (harvan aineiston rajat), ennen "Suunta 2".
+  assert.match(html('dirReviewHistory'), /Säännöt: Suunta 3/);
+  // Yhden päivän kirjaus: historia kertoo, että toteuma on osittainen.
+  assert.match(html('dirReviewHistory'), /kirjauksia vain 1 päivänä/);
   assert.equal(html('dirReviewHistory').includes('Julkaisu'), false, 'vastaukset eivät näy yhteenvedossa');
-  assert.match(html('dirReviewCompare'), /Verrattuna edelliseen viikkoon|Edellisestä viikosta ei ole vertailtavaa/);
+  // Muutettu sääntöversiossa 3: alueet luotiin tällä viikolla, joten
+  // edellinen viikko on Suuntaa edeltävää aikaa eikä sitä verrata.
+  assert.match(html('dirReviewCompare'), /Ensimmäinen Suunta-viikko — vertailu alkaa ensi viikolla\./);
 });
 
 test('kehitys lasketaan vasta pyydettäessä (ei kahdeksaa analyysia joka renderöinnillä)', async (t) => {

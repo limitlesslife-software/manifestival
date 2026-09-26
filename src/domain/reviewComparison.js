@@ -19,11 +19,20 @@
 // Viikon yhteenveto tulee joko elävästä analyysista tai tallennetusta
 // tilannekuvasta (historia). Tilannekuvaa ei lasketa uudelleen: se on
 // historiaa, ja sen sääntöversio näytetään.
+//
+// ARVIOIDEN KATTAVUUS (sääntöversio 3): suunniteltu aika on vain
+// arvioitujen asioiden summa. Jos kattavuus vaihtelee viikosta toiseen,
+// "suunniteltu kasvoi" voi tarkoittaa vain, että arvioita lisättiin.
+// Siksi vertailu kertoo arvioimattomien määrän, ja kehitystä ei
+// sanoiteta, jos jollakin viikolla kattavuus jäi alle rajan.
 
 import { SIGNAL, SEVERITY } from './alignment.js';
-import { TREND_RULES } from './alignmentPolicy.js';
+import { TREND_RULES, TIME_RULES, QUALITY_RULES } from './alignmentPolicy.js';
 import { policyVersionOf } from './alignmentPolicy.js';
 import { formatMinutes } from './lifeArea.js';
+
+/** Ensimmäinen Suunta-viikko: edellinen viikko on ajalta ennen Suuntaa. */
+export const FIRST_WEEK_NOTE = 'Ensimmäinen Suunta-viikko — vertailu alkaa ensi viikolla.';
 
 function numberOrNull(value) {
   return Number.isFinite(value) ? value : null;
@@ -46,8 +55,12 @@ export function weekSummary(source, { origin = null } = {}) {
     energyBudgetMinutes: numberOrNull(source.capacity?.energyBudgetMinutes),
     plannedMinutes: numberOrNull(source.planned?.knownMinutes),
     unknownCount: numberOrNull(source.planned?.unknownCount),
+    // Tilannekuvat ovat tallentaneet kattavuuden aineiston laadussa alusta asti.
+    estimateCoveragePercent: numberOrNull(source.dataQuality?.estimateCoveragePercent),
     actualMinutes: numberOrNull(source.actual?.minutes),
     actualEntries: numberOrNull(source.actual?.entryCount),
+    actualDays: numberOrNull(source.actual?.daysWithEntries),
+    trackingLevel: source.dataQuality?.trackingLevel || null,
     heavyMinutes: numberOrNull(source.energy?.heavyMinutes),
     quality: source.dataQuality?.level || null,
     timeOverloaded: signals.some(s => s.kind === SIGNAL.OVERLOAD && s.severity !== SEVERITY.INFO),
@@ -84,24 +97,48 @@ const KIND_LABELS = Object.freeze({
   energy_overload: 'energiakuormitus', target_tension: 'tavoitteiden jännite'
 });
 
+/** Kattavuus alle rajan? Tuntematon kattavuus (ei asioita) ei ole vajaa. */
+function coverageBelow(summary, limit) {
+  return Number.isFinite(summary.estimateCoveragePercent) && summary.estimateCoveragePercent < Math.round(limit * 100);
+}
+
 /**
  * Tämä viikko vs. edellinen. Vain erot, ei johtopäätöksiä.
  *
+ * @param {object|null} current
+ * @param {object|null} previous
+ * @param {{unavailableNote?: string}} [options] syy, kun vertailua ei tehdä
+ *   (esim. FIRST_WEEK_NOTE: edellinen viikko oli ennen Suuntaa)
  * @returns {{available: boolean, lines: Array<{label, text}>, areas: Array, notes: string[]}}
  */
-export function compareWeeks(current, previous) {
+export function compareWeeks(current, previous, { unavailableNote = null } = {}) {
   if (!current || !previous) {
-    return { available: false, lines: [], areas: [], notes: ['Edellisestä viikosta ei ole vertailtavaa aineistoa.'] };
+    return { available: false, lines: [], areas: [],
+      notes: [unavailableNote || 'Edellisestä viikosta ei ole vertailtavaa aineistoa.'] };
+  }
+  // Suunniteltu aika vain arvioiduista asioista: jos kummallakin viikolla
+  // alle puolet on arvioitu, erotus kertoisi arvioinnista eikä viikosta.
+  const plannedComparable = !coverageBelow(previous, TIME_RULES.PLAN_MIN_ESTIMATE_COVERAGE)
+    && !coverageBelow(current, TIME_RULES.PLAN_MIN_ESTIMATE_COVERAGE);
+  let planned = plannedComparable ? diffLine('Suunniteltu', previous.plannedMinutes, current.plannedMinutes) : null;
+  const unknownBefore = previous.unknownCount || 0;
+  const unknownAfter = current.unknownCount || 0;
+  if (planned && (unknownBefore > 0 || unknownAfter > 0)) {
+    planned = { ...planned, text: `${planned.text} (arvioimattomia ${unknownBefore} → ${unknownAfter})` };
   }
   const lines = [
     diffLine('Kapasiteetti', previous.capacityMinutes, current.capacityMinutes),
-    diffLine('Suunniteltu', previous.plannedMinutes, current.plannedMinutes),
+    planned,
     hasActual(previous) && hasActual(current)
       ? diffLine('Kirjattu toteuma', previous.actualMinutes, current.actualMinutes) : null,
     diffLine('Kuormittavaa', previous.heavyMinutes, current.heavyMinutes)
   ].filter(Boolean);
 
   const notes = [];
+  if (!plannedComparable) {
+    notes.push('Suunniteltua aikaa ei verrata, koska toisella viikolla alle puolet asioista on arvioitu '
+      + `(arvioitu ${previous.estimateCoveragePercent ?? '–'} % → ${current.estimateCoveragePercent ?? '–'} %).`);
+  }
   if (!hasActual(previous) || !hasActual(current)) {
     notes.push('Toteumaa ei verrata, koska toisella viikolla ei ole kirjattua aikaa.');
   }
@@ -122,10 +159,12 @@ export function compareWeeks(current, previous) {
     notes.push(`Viikot on arvioitu eri sääntöversioilla (${previous.policyVersion} ja ${current.policyVersion}).`);
   }
 
-  // Alueet: kirjattu aika, jos molemmilla viikoilla on toteumaa; muuten suunniteltu.
+  // Alueet: kirjattu aika, jos molemmilla viikoilla on toteumaa; muuten
+  // suunniteltu — mutta ei, jos suunniteltua ei voi verrata (kattavuus).
   const basis = hasActual(previous) && hasActual(current) ? 'actual' : 'planned';
   const previousById = new Map(previous.areas.map(area => [area.id, area]));
-  const areas = current.areas.filter(area => area.active !== false).map(area => {
+  const comparableAreas = basis === 'actual' || plannedComparable ? current.areas : [];
+  const areas = comparableAreas.filter(area => area.active !== false).map(area => {
     const old = previousById.get(area.id);
     const key = basis === 'actual' ? 'actualMinutes' : 'plannedMinutes';
     return {
@@ -197,7 +236,17 @@ export function alignmentTrends(summaries = []) {
       + `(${formatMinutes(tail[0])} → ${formatMinutes(tail[tail.length - 1])}).`);
   };
 
-  describe('Suunniteltu aika', series.map(week => week.plannedMinutes));
+  // Suunniteltu aika kasvaa myös pelkästä arvioinnista: kehitys vain, kun
+  // jokaisella tarkasteltavalla viikolla riittävä osa asioista on arvioitu.
+  const plannedSeries = series.map(week => week.plannedMinutes);
+  const plannedTail = series.slice(-TREND_RULES.MIN_WEEKS);
+  if (plannedTail.every(week => !coverageBelow(week, QUALITY_RULES.ESTIMATE_COVERAGE_WARN))) {
+    describe('Suunniteltu aika', plannedSeries);
+  } else if (trendOf(plannedSeries, TREND_RULES.MIN_CHANGE_MINUTES) !== 0) {
+    statements.push('Suunnitellun ajan kehitystä ei sanoiteta: osalla viikoista alle '
+      + `${Math.round(QUALITY_RULES.ESTIMATE_COVERAGE_WARN * 100)} % asioista oli arvioitu, `
+      + 'joten muutos voi johtua arvioinnista.');
+  }
   const actualSeries = series.map(week => (hasActual(week) ? week.actualMinutes : null));
   describe('Kirjattu aika', actualSeries);
 

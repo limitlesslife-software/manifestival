@@ -37,10 +37,18 @@ const areas = [
   normalizeLifeArea({ id: 'fam', name: 'Avioero ja lapset', importance: 5, targetMinutesPerWeek: 600, categoryKey: 'perhe' }),
   normalizeLifeArea({ id: 'work', name: 'Työ', importance: 3, targetMinutesPerWeek: 600, categoryKey: 'tyo' })
 ];
+// Muutettu sääntöversiossa 3: työn 600 min kirjataan ma–ke kolmena
+// päivänä (ennen yksi kirjaus tiistaina). Yhden päivän kirjaus ei enää
+// riitä toteuman vertailuun; huomiotta jäämisen luvut ovat ennallaan
+// (perjantaina odotettu 600 x 4/7 ≈ 5,5 h).
 const analysis = analyzeWeek({
   weekStart: WEEK, todayIso: '2026-09-18', areas,
   tasks: [normalizeTask({ id: 't', title: 'Terapia-aika salaa', date: '2026-09-15', durationMinutes: 900, category: 'tyo' })],
-  timeEntries: [normalizeTimeEntry({ id: 'e', entryDate: '2026-09-15', minutes: 600, lifeAreaId: 'work', note: 'yksityinen muistiinpano' })],
+  timeEntries: [
+    normalizeTimeEntry({ id: 'e1', entryDate: '2026-09-14', minutes: 200, lifeAreaId: 'work' }),
+    normalizeTimeEntry({ id: 'e', entryDate: '2026-09-15', minutes: 200, lifeAreaId: 'work', note: 'yksityinen muistiinpano' }),
+    normalizeTimeEntry({ id: 'e3', entryDate: '2026-09-16', minutes: 200, lifeAreaId: 'work' })
+  ],
   capacity: normalizeWeeklyCapacity({ id: 'c', weekStart: WEEK, availableMinutes: 600 })
 });
 const neglect = analysis.signals.find(signal => signal.kind === SIGNAL.NEGLECT);

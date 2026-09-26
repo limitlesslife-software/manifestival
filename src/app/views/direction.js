@@ -20,11 +20,15 @@ import {
 } from '../../domain/lifeArea.js';
 import { weekDates, weekStartOf, capacityWarnings, capacityForWeek } from '../../domain/weeklyCapacity.js';
 import { entriesInRange } from '../../domain/timeEntry.js';
-import { SIGNAL, SEVERITY, SEVERITY_LABELS, QUALITY } from '../../domain/alignment.js';
+import { SIGNAL, SEVERITY, SEVERITY_LABELS, QUALITY, TRACKING } from '../../domain/alignment.js';
 import {
-  explainSignal, REVIEW_QUESTIONS, ADJUSTMENT, REFLECTION_CODES, NON_WRITING_ADJUSTMENTS
+  explainSignal, REVIEW_QUESTIONS, ADJUSTMENT, REFLECTION_CODES, NON_WRITING_ADJUSTMENTS,
+  ADJUSTMENT_NAVIGATION, BASIS_LABELS, timeSourceSplit
 } from '../../domain/alignmentReview.js';
-import { qualityIssues, QUALITY_ACTION, QUALITY_ACTION_LABELS } from '../../domain/alignmentQuality.js';
+import {
+  qualityIssues, QUALITY_ACTION, QUALITY_ACTION_LABELS, estimateConfidence, ESTIMATE_CONFIDENCE,
+  SPARSE_ESTIMATES_NOTICE, openUnknownCountOf
+} from '../../domain/alignmentQuality.js';
 import { POLICY_VERSIONS, ESTIMATE_PRESETS } from '../../domain/alignmentPolicy.js';
 import { energyDemandLabel } from '../../domain/alignmentItemSettings.js';
 import { addDaysIso } from '../../domain/fiTemporal.js';
@@ -35,7 +39,7 @@ import {
   applySelectedAdjustments, previewSelectedAdjustments, compareWithPreviousWeek, recentTrends,
   currentDailyAlignment, explainSignalOptionally, aiExplanationAvailable, pendingTimeEntryCount,
   pendingTimeEntryOperations, isAdjustmentDone, failedTimeEntries, failedTimeEntryOperations,
-  retryFailedTimeEntries, discardFailedTimeEntries
+  retryFailedTimeEntries, discardFailedTimeEntries, analysisLoadProblems
 } from '../alignment.js';
 import { saveItemSettings, itemSettingsFor, currentTimer, newOperationId } from '../timeTracking.js';
 import { editTask, editRoutine } from '../actions.js';
@@ -195,9 +199,11 @@ const QUALITY_REASONS = Object.freeze({
   no_targets: 'alueilla ei ole aikatavoitteita',
   no_capacity: 'viikon kapasiteettia ei ole asetettu',
   unestimated_work: 'osalta työstä puuttuu kestoarvio',
+  unestimated_completed: 'osalta valmiiksi merkityistä puuttuu kestoarvio',
   unassigned_work: 'osa työstä ei kuulu mihinkään alueeseen',
   no_actual: 'toteutunutta aikaa ei ole kirjattu',
-  unassigned_actual: 'osa kirjatusta ajasta ei kuulu mihinkään alueeseen'
+  unassigned_actual: 'osa kirjatusta ajasta ei kuulu mihinkään alueeseen',
+  partial_actual: 'aikaa on kirjattu vasta osalta viikosta'
 });
 
 const QUALITY_LABELS = Object.freeze({
@@ -226,23 +232,88 @@ function signalKey(signal) {
   return `${signal.kind}:${signal.areaId || 'week'}:${hash.toString(36)}`;
 }
 
+/** Havainnon luvut suomeksi ("Tekniset luvut"). Tuntematon avain näytetään sellaisenaan. */
+const METRIC_LABELS = Object.freeze({
+  plannedMinutes: 'Suunniteltu (min)',
+  availableMinutes: 'Kapasiteetti (min)',
+  overageMinutes: 'Ylitys (min)',
+  percentOfCapacity: 'Osuus kapasiteetista (%)',
+  unknownCount: 'Ilman kestoarviota (kpl)',
+  targetMinutes: 'Viikon tavoite (min)',
+  expectedByNowMinutes: 'Tavoitteen mukaan tähän mennessä (min)',
+  actualMinutes: 'Kirjattu (min)',
+  percentOfExpected: 'Kirjattu tavoitteen mukaisesta (%)',
+  weekProgressPercent: 'Viikosta kulunut (%)',
+  trackedPercent: 'Vertailujakso viikosta (%)',
+  trackedFrom: 'Vertailu alkaen',
+  trackedDays: 'Kirjauspäiviä',
+  percentOfTarget: 'Suunniteltu tavoitteesta (%)',
+  actualTracked: 'Aikaa kirjattu viikolle',
+  trackingLevel: 'Kirjaamisen tila',
+  direction: 'Suunta',
+  desiredPercent: 'Toivottu osuus (%)',
+  actualPercent: 'Toteutunut osuus (%)',
+  deviationPoints: 'Poikkeama (%-yksikköä)',
+  basisMinutes: 'Alueen aika (min)',
+  assignedMinutes: 'Alueisiin liitetty aika (min)',
+  coveragePercent: 'Alueisiin liitetty osuus (%)',
+  incomplete: 'Suuntaa-antava',
+  estimateCoveragePercent: 'Arvioitu osuus asioista (%)',
+  targetsMinutes: 'Tavoitteet yhteensä (min)',
+  differenceMinutes: 'Erotus (min)',
+  heavyMinutes: 'Kuormittavaa (min)',
+  veryHeavyMinutes: 'Erittäin kuormittavaa (min)',
+  energyBudgetMinutes: 'Oma raja (min)',
+  percentOfBudget: 'Osuus rajasta (%)',
+  unratedCount: 'Ilman kuormittavuusarviota (kpl)',
+  unratedMinutes: 'Ilman kuormittavuusarviota (min)',
+  timeOverloaded: 'Aikakapasiteetti ylittyy',
+  heavySharePercent: 'Kuormittavan osuus (%)',
+  energyLevel: 'Oma energia-arvio (1–5)',
+  knownMinutes: 'Arvioitu aika (min)'
+});
+
+const TRACKING_LABELS = Object.freeze({
+  [TRACKING.NONE]: 'ei kirjauksia', [TRACKING.EARLY]: 'alkuvaiheessa',
+  [TRACKING.PARTIAL]: 'osittainen', [TRACKING.ESTABLISHED]: 'vakiintunut'
+});
+
+function metricValue(key, value) {
+  if (value === null || value === undefined) return '–';
+  if (typeof value === 'boolean') return value ? 'kyllä' : 'ei';
+  if (key === 'direction') return value === 'over' ? 'yli toiveen' : value === 'under' ? 'alle toiveen' : String(value);
+  if (key === 'trackingLevel') return TRACKING_LABELS[value] || String(value);
+  if (key === 'trackedFrom' && typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) return shortDate(value);
+  return String(value);
+}
+
+/**
+ * Havainto: vakavuus sanana, otsikko ja PERUSTA näkyvänä (suunnitelma vai
+ * kirjattu aika) — ei vain "Miksi?"-osion sisällä. Säännön tunniste ja
+ * luvut ovat omassa "Tekniset luvut" -osiossaan suomenkielisin nimin.
+ */
 function signalHtml(signal, areas) {
   const text = explainSignal(signal, areas);
   const metrics = Object.entries(signal.metrics || {})
-    .map(([key, value]) => `${escapeHtml(key)}: ${escapeHtml(String(value))}`).join(' · ');
+    .map(([key, value]) => `${escapeHtml(METRIC_LABELS[key] || key)}: ${escapeHtml(metricValue(key, value))}`).join(' · ');
   const key = signalKey(signal);
   const explained = explanations.get(key);
+  const basis = BASIS_LABELS[signal.basis] || '';
   return `
     <div class="dir-signal ${severityClass(signal.severity)}">
       <div class="dir-signal-head">
         <span class="dir-severity">${escapeHtml(SEVERITY_LABELS[signal.severity])}</span>
         <span class="dir-signal-title">${escapeHtml(text.title)}</span>
+        ${basis ? `<span class="assist-tag dir-basis">${escapeHtml(basis)}</span>` : ''}
       </div>
       <div class="dir-signal-text">${escapeHtml(text.text)}</div>
       <details class="dir-why">
         <summary>Miksi tämä näkyy?</summary>
         <p>${escapeHtml(text.why)}</p>
-        <p class="dir-rule">Sääntö: ${escapeHtml(signal.rule)} · perusta: ${escapeHtml(signal.basis)}<br>${metrics}</p>
+        <details class="dir-why dir-tech">
+          <summary>Tekniset luvut</summary>
+          <p class="dir-rule">Sääntö: ${escapeHtml(signal.rule)} · perusta: ${escapeHtml(basis || signal.basis)}<br>${metrics}</p>
+        </details>
         ${explained
           ? `<div class="dir-explanation" role="status"><strong>${explained.source === 'ai'
               ? 'Tekoälyn selitys (ei päätä mitään puolestasi):' : 'Selitys:'}</strong> ${escapeHtml(explained.text)}</div>`
@@ -266,7 +337,8 @@ function explainButtonHtml(key) {
 
 /** Aineiston laatu v2: mitä puuttuu ja mitä sille voi tehdä. Ei moralisointia. */
 function qualityActionsHtml(analysis) {
-  const issues = qualityIssues(analysis);
+  // Harvan arvioaineiston ilmoitus näkyy jo havaintojen yläpuolella.
+  const issues = qualityIssues(analysis).filter(issue => issue.code !== 'sparse_estimates');
   if (issues.length === 0) return '';
   return `<div class="dir-quality-list" role="group" aria-label="Aineiston täydennys">
     ${issues.map(issue => `
@@ -302,6 +374,36 @@ function loadProblemHtml(problems) {
     + 'tai kirjaa aikaa uudelleen — päivitä, kun yhteys toimii.</p>';
 }
 
+/**
+ * Havaintojen ja ehdotusten tilalle, kun jonkin analyysin syötteen lataus
+ * epäonnistui (ERR-04): vajaista luvuista ei näytetä "alue ei saanut
+ * aikaa" -havaintoja eikä ehdoteta muutoksia.
+ */
+function analysisLoadNoticeHtml() {
+  return '<p class="hint dir-load-notice" role="status"><strong>Kaikkia tietoja ei saatu ladattua.</strong> '
+    + 'Havaintoja ja ehdotuksia ei näytetä vajailla luvuilla. Tallennettu tieto on tallessa — '
+    + 'päivitä, kun yhteys toimii.</p>';
+}
+
+/**
+ * Harvan arvioaineiston ilmoitus ENSIMMÄISENÄ havaintojen yläpuolella
+ * (role=status). Havainnot näkyvät yhä sen alla: sovellus on käytettävä
+ * vähälläkin aineistolla.
+ */
+function sparseNoticeHtml(analysis) {
+  if (estimateConfidence(analysis) === ESTIMATE_CONFIDENCE.OK) return '';
+  const { estimatedCount = 0, itemCount = 0 } = analysis.planned || {};
+  const action = openUnknownCountOf(analysis) > 0
+    ? `<button class="assist-btn" type="button" data-quality-action="${escapeHtml(QUALITY_ACTION.ESTIMATE)}">`
+      + `${escapeHtml(QUALITY_ACTION_LABELS[QUALITY_ACTION.ESTIMATE])}</button>`
+    : '';
+  return `<div class="dir-quality-row dir-sparse" role="status">
+      <p class="dir-line"><strong>${escapeHtml(SPARSE_ESTIMATES_NOTICE)}</strong>
+        Kestoarvio on ${estimatedCount}/${itemCount} tämän viikon asiasta.</p>
+      ${action}
+    </div>`;
+}
+
 function signalsHtml(analysis, areas) {
   if (areas.length === 0) {
     return '<div class="assist-empty">Havainnot alkavat, kun kerrot mikä sinulle on tärkeää. '
@@ -310,7 +412,7 @@ function signalsHtml(analysis, areas) {
   const list = analysis.signals.length === 0
     ? '<div class="assist-empty">Ei havaintoja tällä viikolla sen perusteella, mitä on tiedossa.</div>'
     : analysis.signals.map(signal => signalHtml(signal, areas)).join('');
-  return list + qualityHtml(analysis);
+  return sparseNoticeHtml(analysis) + list + qualityHtml(analysis);
 }
 
 /** Palkki: suunniteltu vs. kapasiteetti. Tekstivastine on aina näkyvissä. */
@@ -339,9 +441,17 @@ function weekSummaryHtml(analysis) {
     parts.push(`<p class="dir-line">Suunniteltu ${escapeHtml(hours(planned.knownMinutes))}. `
       + 'Aseta kapasiteetti alla, niin näet mahtuuko se viikkoon.</p>');
   }
-  if (planned.unknownCount > 0) {
-    parts.push(`<p class="dir-line dir-unknown">${countOf(planned.unknownCount, 'asia', 'asiaa')} ilman kestoarviota — `
+  // Avoimet ilman kestoa (arvioitavissa) ja valmiiksi merkityt ilman kestoa
+  // (tieto) erikseen: arviointityönkulku kysyy vain avoimia.
+  const openUnknown = openUnknownCountOf(analysis);
+  const doneUnknown = Math.max(0, planned.unknownCount - openUnknown);
+  if (openUnknown > 0) {
+    parts.push(`<p class="dir-line dir-unknown">${countOf(openUnknown, 'asia', 'asiaa')} ilman kestoarviota — `
       + 'niitä ei ole laskettu mukaan (tuntematon ei ole nolla).</p>');
+  }
+  if (doneUnknown > 0) {
+    parts.push(`<p class="dir-line dir-unknown">${countOf(doneUnknown, 'valmiiksi merkitty', 'valmiiksi merkittyä')} `
+      + 'ilman arviota (ei lasketa kuormaan).</p>');
   }
   parts.push(actual.entryCount > 0
     ? `<p class="dir-line">Kirjattu toteuma ${escapeHtml(hours(actual.minutes))}, ${actual.daysWithEntries} päivänä.</p>`
@@ -666,27 +776,91 @@ function signalsOfKind(analysis, kind, areas) {
     .map(signal => explainSignal(signal, areas).text);
 }
 
+/** Montako viikon päivää on tähän mennessä alkanut (0–7). */
+function daysSoFar(analysis) {
+  const progress = analysis.progress || {};
+  if (progress.state === 'after') return 7;
+  if (progress.state !== 'during') return 0;
+  return Math.min(7, Math.floor(progress.elapsedDays || 0) + 1);
+}
+
+/**
+ * Katsauksen ensimmäinen rivi: mikä viikosta tiedetään, mikä ei, ja mitä
+ * ei kirjattu. Kirjaamaton päivä ja arvioimaton asia ovat tuntemattomia,
+ * eivät nollaa — tämä sanotaan ennen yhtäkään johtopäätöstä.
+ */
+function knownUnknownHtml(analysis) {
+  const { planned, actual } = analysis;
+  const split = timeSourceSplit(actual.bySource || {})
+    .map(part => `${part.label} ${hours(part.minutes)}`).join(', ');
+  const known = [
+    planned.itemCount > 0
+      ? `arvioitua työtä ${hours(planned.knownMinutes)} (kestoarvio ${planned.estimatedCount}/${planned.itemCount} asialla)`
+      : 'ei suunniteltuja asioita',
+    actual.entryCount > 0
+      ? `kirjattu ${hours(actual.minutes)} ${actual.daysWithEntries} päivänä${split ? ` (${split})` : ''}`
+      : null
+  ].filter(Boolean).join('; ');
+  const unknown = planned.unknownCount > 0
+    ? `${countOf(planned.unknownCount, 'asia', 'asiaa')} ilman kestoarviota, joten kokonaiskuormaa ei tiedetä.`
+    : planned.itemCount > 0 ? 'Kaikilla suunnitelluilla asioilla on kestoarvio.' : '–';
+  const so = daysSoFar(analysis);
+  const loggedDays = (actual.entryDates || []).length || actual.daysWithEntries || 0;
+  const notLogged = Math.max(0, so - loggedDays);
+  const unlogged = actual.entryCount === 0
+    ? (so > 0 ? 'Tälle viikolle ei ole kirjattu aikaa — toteuma on tuntematon, ei nolla.' : '–')
+    : notLogged > 0
+      ? `${countOf(notLogged, 'päivä', 'päivää')} ilman kirjauksia — tuntemattomia, eivät nollaa.`
+      : 'Jokaiselle päivälle on kirjauksia.';
+  return `
+    <div class="dir-review-section dir-known">
+      <dl class="dir-review">
+        <dt>Tiedossa</dt><dd>${escapeHtml(known.charAt(0).toUpperCase() + known.slice(1))}.</dd>
+        <dt>Ei tiedossa</dt><dd>${escapeHtml(unknown)}</dd>
+        <dt>Ei kirjattu</dt><dd>${escapeHtml(unlogged)}</dd>
+      </dl>
+    </div>`;
+}
+
 /**
  * Katsaus v2: SUUNTA · SUUNNITELMA · TOTEUMA · POIKKEAMAT. "Miksi?" on
  * lomakkeen pohdintakysymyksissä ja "Ensi viikko" ehdotuksissa.
  * Ensimmäisen version seitsemän kysymystä säilyvät kunkin osion alla.
+ * Versio 3: alussa "Tiedossa / Ei tiedossa / Ei kirjattu", ja osittain
+ * kirjatun viikon toteuma sanotaan kirjattuna, ei elettynä aikana.
  */
 function reviewHtml(analysis, areas) {
   const active = [...areas].filter(area => area.active)
     .sort((a, b) => b.importance - a.importance || compareLifeAreas(a, b));
+  const tracking = analysis.tracking || null;
+  const trackingEstablished = !tracking || tracking.level === TRACKING.ESTABLISHED;
+  const loggingStarted = tracking && tracking.firstEntryDate && tracking.firstEntryDate >= analysis.weekStart
+    ? ` (kirjaukset alkoivat ${shortDate(tracking.firstEntryDate)})` : '';
+  const unknownCount = analysis.planned.unknownCount;
   const answers = [
     active.length === 0 ? 'Elämänalueita ei ole määritelty.'
       : active.map(area => `${area.name}: ${importanceLabel(area.importance).toLowerCase()}`
         + (Number.isInteger(area.targetMinutesPerWeek) ? `, tavoite ${hours(area.targetMinutesPerWeek)}` : '')).join(' · '),
     `Arvioitua työtä ${hours(analysis.planned.knownMinutes)}`
-      + (analysis.planned.unknownCount > 0 ? `, lisäksi ${analysis.planned.unknownCount} ilman arviota` : '')
+      + (unknownCount > 0 ? `, lisäksi ${unknownCount} ilman arviota` : '')
       + (analysis.capacity.declared ? `; kapasiteetti ${hours(analysis.capacity.availableMinutes)}.` : '; kapasiteettia ei asetettu.'),
-    analysis.actual.entryCount > 0
-      ? `Kirjattu ${hours(analysis.actual.minutes)} (${analysis.actual.daysWithEntries} päivää).`
-      : 'Aikaa ei kirjattu, joten toteumaa ei voi arvioida.',
+    analysis.actual.entryCount === 0
+      ? 'Aikaa ei kirjattu, joten toteumaa ei voi arvioida.'
+      : trackingEstablished
+        ? `Kirjattu ${hours(analysis.actual.minutes)} (${analysis.actual.daysWithEntries} päivää).`
+        // Osittain kirjattu viikko: kirjattu aika ei ole eletty aika.
+        : `Kirjattu ${hours(analysis.actual.minutes)} ${analysis.actual.daysWithEntries} päivänä${loggingStarted}. `
+          + 'Päivät ilman kirjauksia ovat tuntemattomia, eivät nollaa.',
     signalsOfKind(analysis, SIGNAL.OVERLOAD, areas).join(' ')
-      || (analysis.capacity.declared ? 'Suunnitelma mahtui kapasiteettiin.' : 'Ei arvioitavissa ilman kapasiteettia.'),
-    signalsOfKind(analysis, SIGNAL.NEGLECT, areas).join(' ') || 'Yksikään tärkeä alue ei jäänyt selvästi vajaaksi.',
+      || (!analysis.capacity.declared ? 'Ei arvioitavissa ilman kapasiteettia.'
+        : unknownCount > 0
+          ? `Arvioitu työ (${hours(analysis.planned.knownMinutes)}) mahtui kapasiteettiin `
+            + `(${hours(analysis.capacity.availableMinutes)}); ${countOf(unknownCount, 'asia', 'asiaa')} ilman arviota, `
+            + 'joten kokonaiskuormaa ei tiedetä.'
+          : 'Suunnitelma mahtui kapasiteettiin.'),
+    signalsOfKind(analysis, SIGNAL.NEGLECT, areas).join(' ')
+      || (trackingEstablished ? 'Yksikään tärkeä alue ei jäänyt selvästi vajaaksi.'
+        : 'Yksikään tärkeä alue ei jäänyt selvästi vajaaksi sen perusteella, mitä on tiedossa.'),
     [...signalsOfKind(analysis, SIGNAL.MISALIGNMENT, areas), ...signalsOfKind(analysis, SIGNAL.TARGET_TENSION, areas)].join(' ')
       || 'Ei merkittäviä poikkeamia toivomastasi jakaumasta sen perusteella, mitä on tiedossa.'
   ];
@@ -709,7 +883,7 @@ function reviewHtml(analysis, areas) {
       ]
     }
   ];
-  return sections.map(section => `
+  return knownUnknownHtml(analysis) + sections.map(section => `
     <div class="dir-review-section">
       <h3 class="dir-subtitle">${escapeHtml(section.title)} <span class="dir-review-lead">— ${escapeHtml(section.lead)}</span></h3>
       <dl class="dir-review">${section.rows.map(([question, answer]) =>
@@ -783,16 +957,39 @@ function trendsHtml(trends) {
       <tbody>${rows}</tbody></table>` : ''}`;
 }
 
+/**
+ * Ehdotuksen kentän virhe ja käyttäjän kirjoittama arvo (ERR-12): virhe
+ * näkyy kentän vieressä, eikä uudelleenpiirto korvaa kirjoitettua arvoa
+ * ehdotuksen omalla arvolla. Tunniste -> teksti.
+ */
+const proposalErrors = new Map();
+const proposalDrafts = new Map();
+const HOURS_HINT = 'Anna tunnit, esim. 5 tai 2,5.';
+const NAVIGATION_LABELS = Object.freeze({ estimate: 'Avaa arviointi', log_time: 'Kirjaa aikaa' });
+
+function proposalErrorHtml(proposal) {
+  const error = proposalErrors.get(proposal.id);
+  if (!error) return '';
+  return `<p class="field-error" id="dirAdjErr-${escapeHtml(proposal.id)}" role="alert" style="display:block">`
+    + `${escapeHtml(error)}</p>`;
+}
+
+function proposalField(proposal, label, minutes) {
+  const id = `dirAdj-${proposal.id}`;
+  const error = proposalErrors.get(proposal.id);
+  const value = proposalDrafts.has(proposal.id) ? proposalDrafts.get(proposal.id) : toHoursInput(minutes);
+  return `<label class="field-label" for="${escapeHtml(id)}">${escapeHtml(label)}</label>`
+    + `<input type="number" min="0" max="168" step="0.5" id="${escapeHtml(id)}"`
+    + ` data-adjust-value="${escapeHtml(proposal.id)}" value="${escapeHtml(value)}"`
+    + (error ? ` aria-invalid="true" aria-describedby="dirAdjErr-${escapeHtml(proposal.id)}"` : '') + '>';
+}
+
 function proposalInput(proposal) {
   if (proposal.type === ADJUSTMENT.CHANGE_TARGET) {
-    return `<label class="field-label" for="dirAdj-${escapeHtml(proposal.id)}">Uusi tavoite tunteina</label>`
-      + `<input type="number" min="0" max="168" step="0.5" id="dirAdj-${escapeHtml(proposal.id)}"`
-      + ` data-adjust-value="${escapeHtml(proposal.id)}" value="${escapeHtml(toHoursInput(proposal.payload.to))}">`;
+    return proposalField(proposal, 'Uusi tavoite tunteina', proposal.payload.to);
   }
   if (proposal.type === ADJUSTMENT.SET_CAPACITY) {
-    return `<label class="field-label" for="dirAdj-${escapeHtml(proposal.id)}">Ensi viikon kapasiteetti tunteina</label>`
-      + `<input type="number" min="0" max="168" step="0.5" id="dirAdj-${escapeHtml(proposal.id)}"`
-      + ` data-adjust-value="${escapeHtml(proposal.id)}" value="${escapeHtml(toHoursInput(proposal.payload.availableMinutes))}">`;
+    return proposalField(proposal, 'Ensi viikon kapasiteetti tunteina', proposal.payload.availableMinutes);
   }
   return '';
 }
@@ -820,9 +1017,10 @@ function proposalsHtml(proposals, weekStart) {
       <div class="assist-title">${escapeHtml(proposal.label)}</div>
       ${proposal.detail ? `<div class="assist-reason">${escapeHtml(proposal.detail)}</div>` : ''}
       ${proposalInput(proposal)}
+      ${proposalErrorHtml(proposal)}
       <div class="assist-actions">
         <button class="assist-btn${navigating ? '' : ' primary'}" type="button" data-adjust="${escapeHtml(proposal.id)}">`
-          + `${navigating ? 'Avaa arviointi' : 'Tee muutos…'}</button>
+          + `${navigating ? escapeHtml(NAVIGATION_LABELS[ADJUSTMENT_NAVIGATION[proposal.type]] || 'Avaa') : 'Tee muutos…'}</button>
       </div>
     </div>`;
   }).join('');
@@ -841,9 +1039,15 @@ function historyHtml(reviews) {
     const version = review.policyVersion || 1;
     const answers = review.reflectionAnswers || {};
     const answered = REFLECTION_CODES.filter(code => answers[code]).length;
+    // Versio 3: osittain kirjatun viikon toteumaprosentit eivät kuvaa koko
+    // viikkoa. Vanhassa tilannekuvassa tasoa ei ole, eikä sitä arvata.
+    const trackingLevel = snapshot.dataQuality && snapshot.dataQuality.trackingLevel;
+    const loggedDays = snapshot.actual && Number.isInteger(snapshot.actual.daysWithEntries) ? snapshot.actual.daysWithEntries : 0;
+    const caveat = !trackingLevel || trackingLevel === TRACKING.ESTABLISHED ? ''
+      : trackingLevel === TRACKING.NONE ? ' (ei kirjauksia)' : ` (kirjauksia vain ${loggedDays} päivänä)`;
     return `
       <details class="dir-history">
-        <summary>Viikko ${escapeHtml(weekLabel(review.weekStart))} · ${signals} havaintoa</summary>
+        <summary>Viikko ${escapeHtml(weekLabel(review.weekStart))} · ${signals} havaintoa${escapeHtml(caveat)}</summary>
         <p class="hint">Säännöt: ${escapeHtml(POLICY_VERSIONS[version] || `versio ${version}`)}.
           Tallennettua katsausta ei lasketa uudelleen.</p>
         ${answered > 0 ? `<p class="dir-line">Vastattuja pohdintakysymyksiä: ${answered}</p>` : ''}
@@ -872,12 +1076,15 @@ export function renderDirection() {
   toggle('dirThisWeek', analysis.weekStart !== currentWeekStart());
   const problems = alignmentLoadProblems(state);
   const areasUnknown = problems.includes('lifeAreas') && areas.length === 0;
+  // Jokin analyysin syöte (myös tehtävät, tavoitteet, rutiinit) jäi
+  // lataamatta: havainnot, laatu ja ehdotukset korvataan ilmoituksella.
+  const incomplete = analysisLoadProblems(state).length > 0;
   el('dirPersistNote').innerHTML = loadProblemHtml(problems) + persistNoteHtml();
   // Ei tyhjän tilan kehotusta ("aloita elämänalueista"), kun alueita ei
   // saatu ladattua: niitä voi olla kannassa.
-  el('dirSignals').innerHTML = areasUnknown ? '' : signalsHtml(analysis, areas);
+  el('dirSignals').innerHTML = incomplete ? analysisLoadNoticeHtml() : areasUnknown ? '' : signalsHtml(analysis, areas);
   const quality = maybe('dirQuality');
-  if (quality) quality.innerHTML = areas.length > 0 ? qualityActionsHtml(analysis) : '';
+  if (quality) quality.innerHTML = areas.length > 0 && !incomplete ? qualityActionsHtml(analysis) : '';
   el('dirWeekSummary').innerHTML = weekSummaryHtml(analysis);
   const startTimer = maybe('dirStartTimer');
   if (startTimer) {
@@ -924,9 +1131,12 @@ export function renderDirection() {
     timeDate.value = dates.includes(today) ? today : dates[0];
   }
 
-  el('dirReview').innerHTML = reviewHtml(analysis, areas);
+  el('dirReview').innerHTML = incomplete ? analysisLoadNoticeHtml() : reviewHtml(analysis, areas);
   const compare = maybe('dirReviewCompare');
-  if (compare) compare.innerHTML = areas.length > 0 ? compareHtml(compareWithPreviousWeek(analysis.weekStart, { analysis })) : '';
+  if (compare) {
+    compare.innerHTML = areas.length > 0 && !incomplete
+      ? compareHtml(compareWithPreviousWeek(analysis.weekStart, { analysis })) : '';
+  }
   const existingReview = state.alignmentReviews.find(review => review.weekStart === analysis.weekStart);
   const reflection = el('dirReflection');
   if (document.activeElement !== reflection && existingReview && !reflection.dataset.dirty) {
@@ -938,10 +1148,13 @@ export function renderDirection() {
     if (!field || document.activeElement === field || field.dataset.dirty) continue;
     field.value = existingReview && existingReview.reflectionAnswers ? existingReview.reflectionAnswers[code] || '' : '';
   }
-  shownProposals = currentProposals(analysis);
+  shownProposals = incomplete ? [] : currentProposals(analysis);
   const ids = new Set(shownProposals.map(proposal => proposal.id));
   selectedProposalIds = new Set([...selectedProposalIds].filter(id => ids.has(id)));
-  el('dirProposals').innerHTML = proposalsHtml(shownProposals, analysis.weekStart);
+  for (const map of [proposalErrors, proposalDrafts]) {
+    for (const id of [...map.keys()]) if (!ids.has(id)) map.delete(id);
+  }
+  el('dirProposals').innerHTML = incomplete ? analysisLoadNoticeHtml() : proposalsHtml(shownProposals, analysis.weekStart);
   // Esikatselu kuvaa sen tilan, jossa se laskettiin. Mikä tahansa muutos
   // (toisessa näkymässä tai tallennuksen jälkeen) mitätöi sen.
   if (lastPreview && lastPreview.stateRef !== state) lastPreview = null;
@@ -974,6 +1187,18 @@ export function renderTodayDirection() {
       <button class="assist-btn" type="button" data-open-direction="1">Avaa Suunta</button></div>`;
     return;
   }
+  // Jokin analyysin syöte jäi lataamatta: vajaista luvuista ei tehdä
+  // havaintoja ("alue ei saanut aikaa", kun kirjaukset puuttuvat).
+  if (analysisLoadProblems(state).length > 0) {
+    container.innerHTML = `<div class="dir-today">
+      <div class="dir-today-title">Suunta</div>
+      <p class="dir-line" role="status">Kaikkia tietoja ei saatu ladattua, joten havaintoja ei näytetä vajailla luvuilla. `
+        + `Päivitä, kun yhteys toimii.</p>
+      <div class="assist-actions">
+        <button class="assist-btn" type="button" data-open-direction="1">Avaa Suunta</button>
+      </div></div>`;
+    return;
+  }
   // Päivän havainnot: enintään muutama, deterministisessä järjestyksessä,
   // ja jokainen kertoo miksi juuri se näytetään. Ei kaavioita.
   const { analysis, daily } = currentDailyAlignment();
@@ -985,22 +1210,38 @@ export function renderTodayDirection() {
       ? '1 viikon asia ei kuulu mihinkään alueeseen.'
       : `${open} viikon asiaa ei kuulu mihinkään alueeseen.`);
   }
+  // Harva arvioaineisto: ensimmäinen rivi, toimenpide mukana. Sama
+  // toimenpide ei toistu havainnon alla.
+  const notice = daily.notice
+    ? `<div class="dir-today-notice" role="status">
+        <p class="dir-line"><strong>${escapeHtml(daily.notice)}</strong></p>
+        ${daily.noticeAction ? `<button class="assist-btn" type="button" data-today-action="${escapeHtml(daily.noticeAction)}">`
+          + `${escapeHtml(QUALITY_ACTION_LABELS[QUALITY_ACTION.ESTIMATE])}</button>` : ''}
+      </div>`
+    : '';
   const ACTION_LABELS = { open_unassigned: 'Kohdista', open_estimate: 'Arvioi', open_direction: 'Avaa Suunta' };
-  const observations = daily.observations.map(observation => `
+  const observations = daily.observations.map(observation => {
+    const basis = observation.signal ? BASIS_LABELS[observation.signal.basis] : '';
+    const action = observation.action && observation.action !== 'open_direction'
+      && !(daily.noticeAction && observation.action === daily.noticeAction) ? observation.action : null;
+    return `
     <div class="dir-today-observation ${severityClass(observation.severity)}">
       <p class="dir-line">${observation.primary ? '<strong>Tänään kannattaa huomata:</strong> ' : ''}`
-        + `${escapeHtml(SEVERITY_LABELS[observation.severity])}: ${escapeHtml(observation.title)}.</p>
+        + `${escapeHtml(SEVERITY_LABELS[observation.severity])}: ${escapeHtml(observation.title)}.`
+        + `${basis ? ` <span class="assist-tag dir-basis">${escapeHtml(basis)}</span>` : ''}</p>
       <details class="dir-why">
         <summary>Miksi tämä?</summary>
         <p>${escapeHtml(observation.text)}</p>
         <p class="hint">${escapeHtml(observation.why)}</p>
       </details>
-      ${observation.action && observation.action !== 'open_direction'
-        ? `<button class="assist-btn" type="button" data-today-action="${escapeHtml(observation.action)}">${escapeHtml(ACTION_LABELS[observation.action])}</button>` : ''}
-    </div>`).join('');
-  if (lines.length === 0 && !observations) lines.push('Ei havaintoja tällä viikolla.');
+      ${action
+        ? `<button class="assist-btn" type="button" data-today-action="${escapeHtml(action)}">${escapeHtml(ACTION_LABELS[action])}</button>` : ''}
+    </div>`;
+  }).join('');
+  if (lines.length === 0 && !observations && !notice) lines.push('Ei havaintoja tällä viikolla.');
   container.innerHTML = `<div class="dir-today">
     <div class="dir-today-title">Suunta</div>
+    ${notice}
     ${lines.map(line => `<p class="dir-line">${escapeHtml(line)}</p>`).join('')}
     ${observations}
     ${daily.hiddenCount > 0 ? `<p class="hint">${countOf(daily.hiddenCount, 'muu havainto', 'muuta havaintoa')} Suunnassa.</p>` : ''}
@@ -1175,6 +1416,12 @@ async function submitReview() {
   const result = await saveWeeklyReview({
     weekStart: targetWeek(), reflection: reflection.value || null, reflectionAnswers
   });
+  if (result.code === 'incomplete_data') {
+    // Mitään ei tallennettu; kentät (ja niiden "kesken"-merkintä) säilyvät.
+    status.textContent = 'Kaikkia tietoja ei saatu ladattua, joten katsausta ei tallennettu vajailla luvuilla. '
+      + 'Pohdintasi on yhä kentässä – päivitä, kun yhteys toimii.';
+    return;
+  }
   if (result.ok) {
     delete reflection.dataset.dirty;
     for (const code of REFLECTION_CODES) {
@@ -1217,14 +1464,51 @@ const deleteAreaOnce = singleFlight(async () => {
 
 // ------------------------------------------------ uudet toiminnot (v2)
 
-function overridesFor(proposal) {
+/**
+ * Ehdotuksen kentän arvo: { overrides } tai { error } (tyhjä tai ei luku).
+ * Arvoalueen (0–168 h) tarkistaa sovelluskerros samoilla säännöillä kuin
+ * tallennus (adjustmentErrors), ja sen virhe näytetään samaan paikkaan.
+ */
+function readProposalInput(proposal) {
   const input = el('dirProposals').querySelector(`[data-adjust-value="${CSS.escape(proposal.id)}"]`);
-  if (!input) return {};
-  const minutes = toMinutesFromHours(input.value);
-  if (minutes === null || Number.isNaN(minutes)) return null;
-  if (proposal.type === ADJUSTMENT.CHANGE_TARGET) return { to: minutes };
-  if (proposal.type === ADJUSTMENT.SET_CAPACITY) return { availableMinutes: minutes };
-  return {};
+  if (!input) return { overrides: {} };
+  const raw = input.value;
+  const minutes = toMinutesFromHours(raw);
+  if (minutes === null || Number.isNaN(minutes)) return { error: HOURS_HINT, raw };
+  if (proposal.type === ADJUSTMENT.CHANGE_TARGET) return { overrides: { to: minutes }, raw };
+  if (proposal.type === ADJUSTMENT.SET_CAPACITY) return { overrides: { availableMinutes: minutes }, raw };
+  return { overrides: {}, raw };
+}
+
+function firstError(errors) {
+  const values = Object.values(errors || {}).filter(Boolean);
+  return values.length > 0 ? String(values[0]) : 'Muutosta ei saatu tehtyä. Yritä uudelleen.';
+}
+
+/** Kirjoitetut arvot talteen ennen uudelleenpiirtoa: virhe ei pyyhi käyttäjän syötettä. */
+function keepProposalDrafts() {
+  const container = maybe('dirProposals');
+  if (!container) return;
+  for (const proposal of shownProposals) {
+    const input = container.querySelector(`[data-adjust-value="${CSS.escape(proposal.id)}"]`);
+    if (input) proposalDrafts.set(proposal.id, input.value);
+  }
+}
+
+function showProposalErrors(entries) {
+  keepProposalDrafts();
+  for (const { id, message, raw } of entries) {
+    proposalErrors.set(id, message);
+    if (raw !== undefined) proposalDrafts.set(id, raw);
+  }
+  const container = maybe('dirProposals');
+  if (container) container.innerHTML = proposalsHtml(shownProposals, targetWeek());
+  if (entries.length > 0) focus(`dirAdj-${entries[0].id}`);
+}
+
+function clearProposalError(id) {
+  proposalErrors.delete(id);
+  proposalDrafts.delete(id);
 }
 
 function selectedProposals() {
@@ -1233,10 +1517,15 @@ function selectedProposals() {
 
 function collectOverrides(proposals) {
   const overrides = {};
+  const invalid = [];
   for (const proposal of proposals) {
-    const value = overridesFor(proposal);
-    if (value === null) return null;
-    overrides[proposal.id] = value;
+    const read = readProposalInput(proposal);
+    if (read.error) invalid.push({ id: proposal.id, message: read.error, raw: read.raw });
+    else overrides[proposal.id] = read.overrides;
+  }
+  if (invalid.length > 0) {
+    showProposalErrors(invalid);
+    return null;
   }
   return overrides;
 }
@@ -1264,8 +1553,22 @@ async function onApplySelected() {
     overrides: lastPreview.overrides, preview: lastPreview, weekStart: week
   });
   if (result.cancelled) return;
+  if (result.invalid && result.invalid.length > 0) {
+    // Kelvoton arvo: mitään ei tehty eikä kysytty. Virhe kentän viereen ja
+    // nimetty yhteenveto esikatselun kohdalle.
+    showProposalErrors(result.invalid.map(entry => ({ id: entry.id, message: firstError(entry.errors) })));
+    const node = maybe('dirProposalPreview');
+    if (node) {
+      node.innerHTML = `<p class="field-error" role="alert" style="display:block">Tarkista arvot ennen vahvistusta: `
+        + `${escapeHtml(result.invalid.map(entry => entry.label).join('; '))}. Mitään ei muutettu.</p>`;
+    }
+    lastPreview = null;
+    return;
+  }
+  for (const entry of result.failed || []) proposalErrors.set(entry.id, firstError(entry.errors));
   const existing = getState().alignmentReviews.find(review => review.weekStart === week);
   const appliedIds = (result.results || []).filter(entry => entry.applied).map(entry => entry.id);
+  for (const id of appliedIds) clearProposalError(id);
   if (existing && appliedIds.length > 0) {
     await saveWeeklyReview({ weekStart: week, reflection: existing.reflection, adjustments: appliedIds });
   }
@@ -1396,16 +1699,14 @@ async function onProposalClick(event) {
   if (!button) return;
   const proposal = shownProposals.find(entry => entry.id === button.dataset.adjust);
   if (!proposal) return;
-  const overrides = {};
-  const input = el('dirProposals').querySelector(`[data-adjust-value="${CSS.escape(proposal.id)}"]`);
-  if (input) {
-    const minutes = toMinutesFromHours(input.value);
-    if (minutes === null || Number.isNaN(minutes)) return;
-    if (proposal.type === ADJUSTMENT.CHANGE_TARGET) overrides.to = minutes;
-    if (proposal.type === ADJUSTMENT.SET_CAPACITY) overrides.availableMinutes = minutes;
+  // Tyhjä tai kelvoton arvo ei enää ohitu hiljaa (ERR-12): virhe kentän viereen.
+  const read = readProposalInput(proposal);
+  if (read.error) {
+    showProposalErrors([{ id: proposal.id, message: read.error, raw: read.raw }]);
+    return;
   }
   const week = targetWeek();
-  const result = await applyAdjustment(proposal, { overrides, weekStart: week });
+  const result = await applyAdjustment(proposal, { overrides: read.overrides, weekStart: week });
   if (result.navigate === 'estimate') {
     // Ehdotus koskee ensi viikkoa: näytetään se viikko, jonka asiat arvioidaan.
     if (proposal.payload && proposal.payload.weekStart) {
@@ -1415,6 +1716,15 @@ async function onProposalClick(event) {
     openWorkflow('estimate');
     return;
   }
+  if (result.navigate === 'log_time') {
+    openGeneralLog();
+    return;
+  }
+  if (result.errors) {
+    showProposalErrors([{ id: proposal.id, message: firstError(result.errors), raw: read.raw }]);
+    return;
+  }
+  if (result.applied || result.duplicate) clearProposalError(proposal.id);
   if (result.applied) {
     const state = getState();
     const existing = state.alignmentReviews.find(review => review.weekStart === week);
@@ -1507,6 +1817,12 @@ export function initDirection() {
     if (button) onQualityAction(button.dataset.qualityAction);
   });
   on('dirSignals', 'click', event => {
+    // Harvan arvioaineiston ilmoituksen toimenpide ("Arvioi tehtäviä").
+    const quality = event.target.closest('[data-quality-action]');
+    if (quality) {
+      onQualityAction(quality.dataset.qualityAction);
+      return;
+    }
     const button = event.target.closest('[data-explain]');
     if (!button) return;
     button.disabled = true;

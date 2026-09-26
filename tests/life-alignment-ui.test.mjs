@@ -118,6 +118,13 @@ function task(id, date, minutes, extra = {}) {
   return normalizeTask({ id, title: 'Tehtävä ' + id, date, durationMinutes: minutes, ...extra });
 }
 
+/** Siirrä jäädytettyä kelloa (freezeLocalDate ensin): paikallinen päivä keskipäivällä. */
+function moveClock(t, isoDate, time = '12:00') {
+  const [year, month, day] = isoDate.split('-').map(Number);
+  const [hours, minutes] = time.split(':').map(Number);
+  t.mock.timers.setTime(new Date(year, month - 1, day, hours, minutes).getTime());
+}
+
 // ================================================================ ENSIKÄYTTÖ
 
 test('tyhjä tila: ehdotukset näkyvät mutta mitään ei luoda; havainnot kertovat mistä aloittaa', (t) => {
@@ -256,33 +263,48 @@ test('kuormitus näkyy: luvut, vakavuus tekstinä, "miksi" ja palkin tekstivasti
 
 // ================================================================ HUOMIOTTA JÄÄMINEN JA POIKKEAMA
 
+// Muutettu sääntöversiossa 3: alueet luodaan maanantaina ja aikaa
+// kirjataan ma–ke (ennen: alueet luotiin torstaina ja kaikki kirjattiin
+// yhdelle päivälle). Alue ei voi jäädä huomiotta ajalta ennen luontiaan,
+// eikä yhden päivän kirjaus riitä toteuman vertailuun.
 test('huomiotta jääminen näkyy torstaina toteuman perusteella', async (t) => {
-  freezeLocalDate(t, THURSDAY);
+  freezeLocalDate(t, WEEK);
   const family = await createLifeArea({ name: 'Perhe', importance: 5, targetMinutesPerWeek: 700 });
   const work = await createLifeArea({ name: 'Työ', importance: 3, targetMinutesPerWeek: 1200 });
-  await logTime({ entryDate: WEEK, minutes: 600, lifeAreaId: work.area.id });
+  for (const date of [WEEK, '2026-09-15', '2026-09-16']) {
+    await logTime({ entryDate: date, minutes: 200, lifeAreaId: work.area.id });
+  }
   await logTime({ entryDate: WEEK, minutes: 30, lifeAreaId: family.area.id });
+  moveClock(t, THURSDAY);
   renderDirection();
   const signals = html('dirSignals');
   assert.match(signals, /Perhe jäämässä huomiotta/);
-  assert.match(signals, /Perhe on saanut 30 min/);
+  // Versio 3: "kirjattu" (ennen "on saanut"): kirjattu aika ei ole eletty aika.
+  assert.match(signals, /Perhe: kirjattu 30 min/);
+  assert.match(signals, /kirjatun ajan perusteella/, 'perusta näkyy havainnon vieressä');
 });
 
+// Muutettu sääntöversiossa 3: alueet luodaan viikon maanantaina ja aika
+// kirjataan ma–to (ennen: luotiin seuraavana maanantaina ja kirjattiin
+// yhdelle päivälle). Suuntaa edeltänyttä viikkoa ei arvioida toteumasta.
 test('poikkeama tavoitteista näkyy prosentteina', async (t) => {
-  freezeLocalDate(t, '2026-09-21');
+  freezeLocalDate(t, WEEK);
   const work = await createLifeArea({ name: 'Työ', importance: 3, targetMinutesPerWeek: 1200 });
   const fam = await createLifeArea({ name: 'Perhe', importance: 3, targetMinutesPerWeek: 750 });
   const own = await createLifeArea({ name: 'Oma aika', importance: 3, targetMinutesPerWeek: 1050 });
-  await logTime({ entryDate: WEEK, minutes: 620, lifeAreaId: work.area.id });
-  await logTime({ entryDate: WEEK, minutes: 120, lifeAreaId: fam.area.id });
-  await logTime({ entryDate: WEEK, minutes: 260, lifeAreaId: own.area.id });
+  const days = [WEEK, '2026-09-15', '2026-09-16', THURSDAY];
+  for (const [area, minutes] of [[work, 620], [fam, 120], [own, 260]]) {
+    for (const date of days) await logTime({ entryDate: date, minutes: minutes / 4, lifeAreaId: area.area.id });
+  }
+  moveClock(t, '2026-09-21');
   const analysis = analyzeCurrentWeek(WEEK);
   assert.ok(analysis.signals.some(s => s.kind === 'misalignment' && s.metrics.actualPercent === 62));
   resetDirectionView();
   initDirection();
   document.getElementById('dirPrev').dispatch('click');
   // Edellinen viikko on nyt näkyvissä: sama viikko jota yllä analysoitiin.
-  assert.match(html('dirSignals'), /Työ sai 62 % ajastasi, vaikka tavoite oli 40 %/);
+  // Versio 3: "kirjatusta ajastasi" (ennen "ajastasi").
+  assert.match(html('dirSignals'), /Työ sai 62 % kirjatusta ajastasi, vaikka tavoite oli 40 %/);
 });
 
 // ================================================================ TOTEUMA
@@ -314,10 +336,11 @@ test('viikkokatsaus: tilannekuva, pohdinta ja historia; toinen tallennus päivit
   await saveWeeklyCapacity({ weekStart: WEEK, availableMinutes: 1200 });
   const first = await saveWeeklyReview({ weekStart: WEEK, reflection: 'Liikaa töitä.' });
   assert.equal(first.ok, true);
-  // Tilannekuva v2 (Suunta 2): kantaa sääntöversion.
+  // Tilannekuva v2 (Suunta 2): kantaa sääntöversion. Muutettu: sääntöversio
+  // on 3 (harvan aineiston rajat); tilannekuvan muoto on yhä versio 2.
   assert.equal(first.review.snapshot.version, 2);
-  assert.equal(first.review.snapshot.policyVersion, 2);
-  assert.equal(first.review.policyVersion, 2);
+  assert.equal(first.review.snapshot.policyVersion, 3);
+  assert.equal(first.review.policyVersion, 3);
   assert.equal(first.review.snapshot.capacity.availableMinutes, 1200);
   const second = await saveWeeklyReview({ weekStart: WEEK, reflection: 'Päivitetty.' });
   assert.equal(second.review.id, first.review.id);

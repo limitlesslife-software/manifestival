@@ -28,16 +28,44 @@
 //      poikkeama, jännite). Katsaus ilman versiota = 1.
 //   2  + energiakuormitus, päivän havaintojen järjestys, trendien
 //      vähimmäisaineisto. Ajan kynnykset ennallaan.
+//   3  harvan aineiston rajat: toteumaa verrataan tavoitteisiin vasta,
+//      kun kirjaaminen on vakiintunut (seurannan kypsyys), ja
+//      suunnitelman jakaumaa vasta, kun riittävä osa työstä on arvioitu.
+//      Päivät ennen ensimmäistä kirjausta ja ennen alueen luontia ovat
+//      tuntemattomia, eivät nollaa. Vanhat kynnykset ennallaan.
 
-export const POLICY_VERSION = 2;
+export const POLICY_VERSION = 3;
 
 /** Versioiden kuvaukset historianäkymää varten. */
 export const POLICY_VERSIONS = Object.freeze({
   1: 'Suunta 1: kuormitus, huomiotta jääminen, poikkeama ja jännite',
-  2: 'Suunta 2: lisäksi energiakuormitus ja päivän havainnot'
+  2: 'Suunta 2: lisäksi energiakuormitus ja päivän havainnot',
+  3: 'Suunta 3: harvan aineiston rajat (arvioiden ja kirjausten kattavuus)'
 });
 
-/** Ajan säännöt. Arvot ovat ensimmäisen version arvot (muuttumattomat). */
+/**
+ * Ajan säännöt. Versioiden 1–2 arvot ovat ennallaan; versio 3 lisää
+ * harvan aineiston rajat (alempana).
+ *
+ * VERSIO 3: SEURANNAN KYPSYYS (trackingMaturity, alignment.js)
+ *
+ * Seurantajakso alkaa myöhäisimmästä näistä: viikon maanantai,
+ * ensimmäinen koskaan kirjattu päivä, alueen luontipäivä. Toteumaa
+ * verrataan tavoitteisiin vain, kun kirjaaminen on vakiintunut:
+ *
+ *   - jaksosta on kulunut vähintään NEGLECT_MIN_PROGRESS (3/7 viikkoa)
+ *   - kirjauksia on vähintään ACTUAL_MIN_TRACKED_DAYS päivältä
+ *   - kirjauksia on vähintään ACTUAL_MIN_DAY_COVERAGE jakson kuluneista
+ *     päivistä (puolet, ylöspäin pyöristäen)
+ *   - VAIN jos viikon kapasiteetti on asetettu: kirjattua aikaa on
+ *     vähintään ACTUAL_MIN_LOGGED_SHARE x kapasiteetti x jakson osuus
+ *
+ * Kirjattu osuus on tarkoituksella väljä (25 %, ei 50 %): kapasiteetti
+ * on käyttäjän arvio siitä, paljonko hän EHTII, ei siitä paljonko hän
+ * kirjaa. Reilusti arvioitu kapasiteetti ei saa tehdä toteuman
+ * vertailusta saavuttamatonta; päiväkattavuus kertoo kirjaamisen
+ * säännöllisyydestä paremmin kuin minuuttimäärä.
+ */
 export const TIME_RULES = Object.freeze({
   /** Kuormitus on vahva, kun suunniteltu >= 120 % kapasiteetista. */
   OVERLOAD_STRONG_RATIO: 1.2,
@@ -63,7 +91,20 @@ export const TIME_RULES = Object.freeze({
   /** Jos alle 60 % ajasta on liitetty alueeseen, johtopäätös on vain tiedoksi. */
   MIN_ASSIGNED_COVERAGE: 0.6,
   /** Arvioitua kestoa alle puolella työstä = heikko aineisto. */
-  MIN_ESTIMATE_COVERAGE: 0.5
+  MIN_ESTIMATE_COVERAGE: 0.5,
+
+  /** v3: toteumaa verrataan vasta, kun kirjauksia on vähintään näin monelta päivältä. */
+  ACTUAL_MIN_TRACKED_DAYS: 2,
+  /** v3: ... ja vähintään tältä osuudelta seurantajakson kuluneista päivistä. */
+  ACTUAL_MIN_DAY_COVERAGE: 0.5,
+  /** v3: ... ja (kun kapasiteetti on asetettu) kirjattu aika >= tämä osuus kapasiteetista x jakson osuus. */
+  ACTUAL_MIN_LOGGED_SHARE: 0.25,
+  /** v3: vahva huomiotta jääminen vain, kun seurantajakso kattoi vähintään 6/7 viikosta. */
+  STRONG_MIN_TRACKED_FRACTION: 6 / 7,
+  /** v3: suunnitelman jakaumaa ei arvioida, jos arvioitu osuus asioista on alle tämän. */
+  PLAN_MIN_ESTIMATE_COVERAGE: 0.5,
+  /** v3: suunnitelman jakauma on enintään tiedoksi, jos arvioitu osuus on alle tämän. */
+  PLAN_FULL_ESTIMATE_COVERAGE: 0.8
 });
 
 /**
@@ -115,6 +156,11 @@ export const REVIEW_RULES = Object.freeze({
   CAPACITY_DEVIATION_RATIO: 0.25,
   /** ... ja vähintään näin monta minuuttia. */
   CAPACITY_DEVIATION_MIN_MINUTES: 120,
+  /**
+   * v3: ... ja kirjaaminen on vakiintunut ja kattoi vähintään tämän
+   * osuuden viikosta. Osittain kirjattu viikko ei kerro kapasiteetista.
+   */
+  CAPACITY_MIN_TRACKED_FRACTION: 6 / 7,
   /** Tavoite, jonka alueella ei ole ollut toteumaa eikä suunnitelmaa näin moneen viikkoon, on "hiljainen". */
   INACTIVE_GOAL_WEEKS: 3
 });

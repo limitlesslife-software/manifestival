@@ -11,8 +11,42 @@
 //
 // SÄVY: puute on aineiston ominaisuus, ei käyttäjän vika. Ei "sinun
 // pitäisi", ei "muista". Lause kertoo mitä tiedetään ja mitä ei.
+//
+// HARVAT ARVIOT (sääntöversio 3): kun alle QUALITY_RULES.ESTIMATE_COVERAGE_WARN
+// suunnitelluista asioista on arvioitu, Suunta sanoo sen ENSIMMÄISENÄ
+// (SPARSE_ESTIMATES_NOTICE). Havainnot näkyvät yhä sen alla: sovellus on
+// käytettävä vähälläkin aineistolla, ja arvio tarkentuu arvioiden myötä.
 
-import { QUALITY_RULES } from './alignmentPolicy.js';
+import { QUALITY_RULES, TIME_RULES } from './alignmentPolicy.js';
+import { countOf } from './lifeArea.js';
+
+/** Harvan arvioaineiston ilmoitus: sama lause Suunnassa ja päivän kortissa. */
+export const SPARSE_ESTIMATES_NOTICE = 'Suunnan arvio tarkentuu, kun lisäät aika-arvioita.';
+
+/** Arvioiden kattavuuden taso (ei pisteytys: kertoo vain, paljonko kestoista tiedetään). */
+export const ESTIMATE_CONFIDENCE = Object.freeze({ SPARSE: 'sparse', PARTIAL: 'partial', OK: 'ok' });
+
+/**
+ * Kuinka luotettava suunnitelman kuva on arvioiden osalta.
+ *
+ *   sparse   alle TIME_RULES.MIN_ESTIMATE_COVERAGE asioista on arvioitu
+ *   partial  alle QUALITY_RULES.ESTIMATE_COVERAGE_WARN
+ *   ok       muuten, tai viikolla ei ole suunniteltuja asioita
+ */
+export function estimateConfidence(analysis) {
+  const planned = analysis && analysis.planned;
+  if (!planned || !(planned.itemCount > 0)) return ESTIMATE_CONFIDENCE.OK;
+  const coverage = planned.estimatedCount / planned.itemCount;
+  if (coverage < TIME_RULES.MIN_ESTIMATE_COVERAGE) return ESTIMATE_CONFIDENCE.SPARSE;
+  if (coverage < QUALITY_RULES.ESTIMATE_COVERAGE_WARN) return ESTIMATE_CONFIDENCE.PARTIAL;
+  return ESTIMATE_CONFIDENCE.OK;
+}
+
+/** Avoimet (ei valmiiksi merkityt) asiat ilman kestoa: vain niitä voi vielä arvioida. */
+export function openUnknownCountOf(analysis) {
+  const planned = (analysis && analysis.planned) || {};
+  return Number.isInteger(planned.openUnknownCount) ? planned.openUnknownCount : (planned.unknownCount || 0);
+}
 
 export const QUALITY_ACTION = Object.freeze({
   ADD_AREAS: 'add_areas',
@@ -56,6 +90,15 @@ export function qualityIssues(analysis) {
       text: 'Elämänalueita ei ole vielä määritelty, joten tekemistä ei voi verrata siihen mikä on sinulle tärkeää.' });
     return issues;
   }
+  const openUnknown = openUnknownCountOf(analysis);
+  if (estimateConfidence(analysis) !== ESTIMATE_CONFIDENCE.OK) {
+    // Ensimmäisenä: ilman tätä harvasta aineistosta tehdyt havainnot
+    // näyttäisivät yhtä varmoilta kuin kattavasta.
+    issues.push({
+      code: 'sparse_estimates', percent: percentOf(planned.estimatedCount || 0, planned.itemCount),
+      action: openUnknown > 0 ? QUALITY_ACTION.ESTIMATE : null, text: SPARSE_ESTIMATES_NOTICE
+    });
+  }
   if (reasons.has('no_targets')) {
     issues.push({ code: 'no_targets', percent: null, action: QUALITY_ACTION.SET_TARGETS,
       text: 'Alueilla ei ole aikatavoitteita, joten ajan jakaumaa ei voi verrata toiveisiisi.' });
@@ -65,12 +108,21 @@ export function qualityIssues(analysis) {
       text: 'Tälle viikolle ei ole kapasiteettia, joten kuormitusta ei voi arvioida.' });
   }
 
-  const unestimatedPercent = percentOf(planned.unknownCount, planned.itemCount);
-  if (planned.unknownCount > 0) {
+  // Arvioitavissa olevat: avoimet asiat ilman kestoa. Valmiiksi merkityt
+  // ilman kestoa ovat tieto, eivät toimenpide.
+  const unestimatedPercent = percentOf(openUnknown, planned.itemCount);
+  if (openUnknown > 0) {
     issues.push({
       code: 'unestimated_work', percent: unestimatedPercent, action: QUALITY_ACTION.ESTIMATE,
       text: `${unestimatedPercent} % tämän viikon suunnitelluista asioista ei sisällä aika-arviota`
-        + ` (${planned.unknownCount} kpl). Niitä ei lasketa kuormaan.`
+        + ` (${openUnknown} kpl). Niitä ei lasketa kuormaan.`
+    });
+  }
+  const completedUnknown = Math.max(0, (planned.unknownCount || 0) - openUnknown);
+  if (completedUnknown > 0) {
+    issues.push({
+      code: 'unestimated_completed', percent: null, action: null,
+      text: `${countOf(completedUnknown, 'valmiiksi merkitty', 'valmiiksi merkittyä')} ilman arviota (ei lasketa kuormaan).`
     });
   }
 
@@ -92,6 +144,13 @@ export function qualityIssues(analysis) {
     issues.push({
       code: 'unassigned_actual', percent: quality.actualAssignedPercent, action: QUALITY_ACTION.ASSIGN,
       text: `Vain ${quality.actualAssignedPercent} % kirjatusta ajasta on yhdistetty elämänalueisiin.`
+    });
+  }
+  if (reasons.has('partial_actual')) {
+    issues.push({
+      code: 'partial_actual', percent: quality.loggedSharePercent ?? null, action: QUALITY_ACTION.LOG_TIME,
+      text: 'Aikaa on kirjattu vasta osalta viikosta, joten toteumaa ei vielä verrata tavoitteisiin. '
+        + 'Kirjaamattomat päivät ovat tuntemattomia, eivät nollaa.'
     });
   }
 
