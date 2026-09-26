@@ -78,6 +78,10 @@ Vain aktiiviset alueet, joiden **tärkeys ≥ 4** ja **tavoite ≥ 30 min**.
 - Maanantaina toteumaa ei verrata. Vähemmän tärkeä alue, tavoite 0/puuttuu tai
   pois käytöstä oleva alue ei ole koskaan "huomiotta".
 - Teksti sanoo "kirjattu X", ei "on saanut X": kirjattu aika ei ole eletty aika.
+  Kesken viikon alkanut vertailu sanotaan: "(viikon tavoite 10 h, vertailu
+  1.10. alkaen)".
+- "Tekniset luvut": `plannedMinutes` = "Arvioitu suunniteltu (min)",
+  `percentOfTarget` = "Arvioitu tavoitteesta (%)" — arvioimaton ei ole nolla.
 
 ### Poikkeama tavoitteista (`misalignment`)
 
@@ -222,8 +226,13 @@ kapasiteetista.
 
 - Katsauksen alussa **Tiedossa / Ei tiedossa / Ei kirjattu**: arvioitu työ
   (kestoarvio N/M asialla), kirjattu aika päivineen ja lähteineen;
-  arvioimattomat ("kokonaiskuormaa ei tiedetä"); päivät ilman kirjauksia
-  ("tuntemattomia, eivät nollaa").
+  arvioimattomat ("kokonaiskuormaa ei tiedetä") ja alueet, joiden
+  suunnitelmasta puuttuu kesto ("N alueen suunnitelmasta puuttuu kesto
+  (Perhe, Työ)."); päivät ilman kirjauksia ("4 päivää ilman kirjauksia —
+  tuntemattomia, eivät nollaa." / "1 päivä ilman kirjauksia — tuntematon,
+  ei nolla.").
+- "Mikä jäi huomiotta?" luettelee vain todetut vajeet (`isNeglectShortfall`);
+  `plan_unknown`-alueet ovat "Ei tiedossa" -rivillä.
 - Ei vakiintunutta kirjausta: "Kirjattu X N päivänä (kirjaukset alkoivat
   <pvm>). Päivät ilman kirjauksia ovat tuntemattomia, eivät nollaa."
 - Ei kuormitusta mutta arvioimattomia: "Arvioitu työ (X) mahtui

@@ -147,7 +147,7 @@ export function explainSignal(signal, areas = []) {
           text: `${name}: kirjattu ${formatMinutes(m.actualMinutes)}, vaikka tavoitteesi mukaan tähän mennessä `
             + `olisi kertynyt noin ${formatMinutes(m.expectedByNowMinutes)} `
             + `(viikon tavoite ${formatMinutes(m.targetMinutes)}`
-            + (partialWindow ? `, verrattuna ${shortDate(m.trackedFrom)} alkaen` : '') + ').',
+            + (partialWindow ? `, vertailu ${shortDate(m.trackedFrom)} alkaen` : '') + ').',
           why: `Alue on sinulle ${importanceLabel(byId.get(signal.areaId)?.importance).toLowerCase() || 'tärkeä'}, `
             + `ja kirjattu aika on alle ${Math.round(RULES.NEGLECT_RATIO * 100)} % siitä, mitä `
             + `${windowPercent} % viikosta vastaa.`
@@ -159,7 +159,7 @@ export function explainSignal(signal, areas = []) {
           title: `${name}: suunnitelman kesto ei vielä tiedossa`,
           text: `${name}: ${countOf(m.unknownCount, 'asia', 'asiaa')} ilman kestoarviota, joten suunnitelman aika `
             + `ei ole vielä tiedossa; arvioitua ${formatMinutes(m.plannedMinutes)}, tavoite ${formatMinutes(m.targetMinutes)}. `
-            + 'Riittääkö aika, selviää kun asiat on arvioitu.',
+            + 'Riittääkö aika, selviää, kun asiat on arvioitu.',
           why: 'Tärkeä alue, jonka suunnitelmasta osa on ilman kestoa. Tuntematon ei ole nolla, joten vajetta ei väitetä.'
         };
       }

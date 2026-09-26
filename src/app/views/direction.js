@@ -21,7 +21,8 @@ import {
 import { weekDates, weekStartOf, capacityWarnings, capacityForWeek } from '../../domain/weeklyCapacity.js';
 import { entriesInRange } from '../../domain/timeEntry.js';
 import {
-  SIGNAL, SEVERITY, SEVERITY_LABELS, QUALITY, TRACKING, buildAttributionIndex, areaForTimeEntry
+  SIGNAL, SEVERITY, SEVERITY_LABELS, QUALITY, TRACKING, buildAttributionIndex, areaForTimeEntry,
+  NEGLECT_PLAN_UNKNOWN, isNeglectShortfall
 } from '../../domain/alignment.js';
 import { estimateCandidates, ESTIMATE_BUCKET_LABELS } from '../../domain/estimateQueue.js';
 import { categoryImpact } from '../../domain/alignmentSetup.js';
@@ -257,7 +258,8 @@ function signalKey(signal) {
 
 /** Havainnon luvut suomeksi ("Tekniset luvut"). Tuntematon avain näytetään sellaisenaan. */
 const METRIC_LABELS = Object.freeze({
-  plannedMinutes: 'Suunniteltu (min)',
+  // "Arvioitu": vain kestoarvion saaneet asiat. Arvioimaton ei ole nolla.
+  plannedMinutes: 'Arvioitu suunniteltu (min)',
   availableMinutes: 'Kapasiteetti (min)',
   overageMinutes: 'Ylitys (min)',
   percentOfCapacity: 'Osuus kapasiteetista (%)',
@@ -270,7 +272,10 @@ const METRIC_LABELS = Object.freeze({
   trackedPercent: 'Vertailujakso viikosta (%)',
   trackedFrom: 'Vertailu alkaen',
   trackedDays: 'Kirjauspäiviä',
-  percentOfTarget: 'Suunniteltu tavoitteesta (%)',
+  percentOfTarget: 'Arvioitu tavoitteesta (%)',
+  openUnknownCount: 'Avoimia ilman kestoarviota (kpl)',
+  excludedAreaCount: 'Kesken jakson luotuja alueita, ei vertailussa (kpl)',
+  comparedTargetsMinutes: 'Vertailtujen alueiden tavoitteet (min)',
   actualTracked: 'Aikaa kirjattu viikolle',
   trackingLevel: 'Kirjaamisen tila',
   direction: 'Suunta',
@@ -1132,7 +1137,7 @@ function daysSoFar(analysis) {
  * ei kirjattu. Kirjaamaton päivä ja arvioimaton asia ovat tuntemattomia,
  * eivät nollaa — tämä sanotaan ennen yhtäkään johtopäätöstä.
  */
-function knownUnknownHtml(analysis) {
+function knownUnknownHtml(analysis, areas = []) {
   const { planned, actual } = analysis;
   const split = timeSourceSplit(actual.bySource || {})
     .map(part => `${part.label} ${hours(part.minutes)}`).join(', ');
@@ -1144,17 +1149,29 @@ function knownUnknownHtml(analysis) {
       ? `kirjattu ${hours(actual.minutes)} ${actual.daysWithEntries} päivänä${split ? ` (${split})` : ''}`
       : null
   ].filter(Boolean).join('; ');
-  const unknown = planned.unknownCount > 0
+  // Tärkeät alueet, joiden suunnitelmasta puuttuu kesto (`neglect.plan_unknown`):
+  // ne ovat tuntemattomia, eivät "huomiotta jääneitä".
+  const areaOrder = new Map([...areas].sort((a, b) => b.importance - a.importance || compareLifeAreas(a, b))
+    .map((area, index) => [area.id, index]));
+  const planUnknownNames = analysis.signals
+    .filter(signal => signal.kind === SIGNAL.NEGLECT && signal.rule === NEGLECT_PLAN_UNKNOWN && areaOrder.has(signal.areaId))
+    .sort((a, b) => areaOrder.get(a.areaId) - areaOrder.get(b.areaId))
+    .map(signal => areas.find(area => area.id === signal.areaId).name);
+  const planUnknown = planUnknownNames.length > 0
+    ? ` ${planUnknownNames.length} alueen suunnitelmasta puuttuu kesto (${planUnknownNames.join(', ')}).` : '';
+  const unknown = (planned.unknownCount > 0
     ? `${countOf(planned.unknownCount, 'asia', 'asiaa')} ilman kestoarviota, joten kokonaiskuormaa ei tiedetä.`
-    : planned.itemCount > 0 ? 'Kaikilla suunnitelluilla asioilla on kestoarvio.' : '–';
+    : planned.itemCount > 0 ? 'Kaikilla suunnitelluilla asioilla on kestoarvio.' : '–') + planUnknown;
   const so = daysSoFar(analysis);
   const loggedDays = (actual.entryDates || []).length || actual.daysWithEntries || 0;
   const notLogged = Math.max(0, so - loggedDays);
   const unlogged = actual.entryCount === 0
     ? (so > 0 ? 'Tälle viikolle ei ole kirjattu aikaa — toteuma on tuntematon, ei nolla.' : '–')
-    : notLogged > 0
-      ? `${countOf(notLogged, 'päivä', 'päivää')} ilman kirjauksia — tuntemattomia, eivät nollaa.`
-      : 'Jokaiselle päivälle on kirjauksia.';
+    : notLogged === 1
+      ? '1 päivä ilman kirjauksia — tuntematon, ei nolla.'
+      : notLogged > 1
+        ? `${notLogged} päivää ilman kirjauksia — tuntemattomia, eivät nollaa.`
+        : 'Jokaiselle päivälle on kirjauksia.';
   return `
     <div class="dir-review-section dir-known">
       <dl class="dir-review">
@@ -1201,7 +1218,9 @@ function reviewHtml(analysis, areas) {
             + `(${hours(analysis.capacity.availableMinutes)}); ${countOf(unknownCount, 'asia', 'asiaa')} ilman arviota, `
             + 'joten kokonaiskuormaa ei tiedetä.'
           : 'Suunnitelma mahtui kapasiteettiin.'),
-    signalsOfKind(analysis, SIGNAL.NEGLECT, areas).join(' ')
+    // Vain todetut vajeet: alue, jonka suunnitelmasta puuttuu kesto, on
+    // "Ei tiedossa" -rivillä, ei huomiotta jääneenä.
+    analysis.signals.filter(isNeglectShortfall).map(signal => explainSignal(signal, areas).text).join(' ')
       || (trackingEstablished ? 'Yksikään tärkeä alue ei jäänyt selvästi vajaaksi.'
         : 'Yksikään tärkeä alue ei jäänyt selvästi vajaaksi sen perusteella, mitä on tiedossa.'),
     [...signalsOfKind(analysis, SIGNAL.MISALIGNMENT, areas), ...signalsOfKind(analysis, SIGNAL.TARGET_TENSION, areas)].join(' ')
@@ -1226,7 +1245,7 @@ function reviewHtml(analysis, areas) {
       ]
     }
   ];
-  return knownUnknownHtml(analysis) + sections.map(section => `
+  return knownUnknownHtml(analysis, areas) + sections.map(section => `
     <div class="dir-review-section">
       <h3 class="dir-subtitle">${escapeHtml(section.title)} <span class="dir-review-lead">— ${escapeHtml(section.lead)}</span></h3>
       <dl class="dir-review">${section.rows.map(([question, answer]) =>

@@ -239,7 +239,7 @@ test('S3b: torstaina luotu alue ja säännöllinen kirjaus: odotettu lasketaan t
   assert.equal(fam.basis, 'actual');
   assert.equal(fam.metrics.expectedByNowMinutes, Math.round(600 * 4 / 7), 'odotettu to–su, ei koko viikolta');
   assert.equal(fam.severity, SEVERITY.ATTENTION, 'jakso 4/7 < 6/7: ei vahvaa');
-  assert.match(explainSignal(fam, areas).text, /Perhe: kirjattu 0 min, .*verrattuna 1\.10\. alkaen/);
+  assert.match(explainSignal(fam, areas).text, /Perhe: kirjattu 0 min, .*\(viikon tavoite 10 h, vertailu 1\.10\. alkaen\)\./);
   assert.match(explainSignal(fam, areas).why, /sitä edeltävät päivät ovat tuntemattomia, eivät nollaa/);
 });
 
@@ -803,7 +803,11 @@ test('näkymä: ensimmäinen katsaus erottaa tiedetyn, tuntemattoman ja kirjaama
   const review = html('dirReview');
   const known = review.indexOf('<dt>Tiedossa</dt>');
   assert.ok(known > -1 && known < review.indexOf('<h3'), '"Tiedossa"-rivi katsauksen alussa');
-  assert.match(review, /<dt>Ei tiedossa<\/dt><dd>10 asiaa ilman kestoarviota, joten kokonaiskuormaa ei tiedetä\.<\/dd>/);
+  // Muutettu: alueet, joiden suunnitelmasta puuttuu kesto (plan_unknown),
+  // ovat "Ei tiedossa" -rivillä — eivät "Mikä jäi huomiotta?" -vastauksessa.
+  assert.match(review, /<dt>Ei tiedossa<\/dt><dd>10 asiaa ilman kestoarviota, joten kokonaiskuormaa ei tiedetä\. 3 alueen suunnitelmasta puuttuu kesto \(Perhe, Työ, Hyvinvointi\)\.<\/dd>/);
+  assert.match(review, /<dt>Mikä jäi huomiotta\?<\/dt><dd>Yksikään tärkeä alue ei jäänyt selvästi vajaaksi sen perusteella, mitä on tiedossa\.<\/dd>/);
+  assert.doesNotMatch(review, /suunnitelman aika ei ole vielä tiedossa/, 'plan_unknown ei ole huomiotta jäänyt alue');
   assert.match(review, /<dt>Ei kirjattu<\/dt><dd>4 päivää ilman kirjauksia — tuntemattomia, eivät nollaa\.<\/dd>/);
   assert.match(review, /kirjattu 3 h 45 min 3 päivänä \(käsin 3 h 15 min, ajastimella 30 min\)/);
   assert.match(review, /Kirjattu 3 h 45 min 3 päivänä \(kirjaukset alkoivat 1\.10\.\)\. Päivät ilman kirjauksia ovat tuntemattomia, eivät nollaa\./);
@@ -869,6 +873,35 @@ test('näkymä: valmiiksi merkityt ilman kestoa ovat tieto, eivät "Arvioi"-keho
   assert.doesNotMatch(html('todayDirection'), /open_estimate/);
   assert.match(html('dirWeekSummary'), /3 valmiiksi merkittyä ilman arviota/);
   assert.doesNotMatch(html('dirWeekSummary'), /asiaa ilman kestoarviota — niitä ei ole laskettu/);
+});
+
+test('näkymä: "Mikä jäi huomiotta?" vain todetuista vajeista; kesto puuttuu -> "Ei tiedossa"; luvut "Arvioitu"', async (t) => {
+  await changeTargetWeek(t);
+  // Sunnuntaina luotu alue, jonka ainoalta asialta puuttuu kesto: plan_unknown.
+  await createLifeArea({ name: 'Hyvinvointi', importance: 4, targetMinutesPerWeek: 180, categoryKey: 'hyvinvointi' });
+  setTasks([task('h1', day(6), null, { category: 'hyvinvointi' })]);
+  renderDirection();
+  const review = html('dirReview');
+  const missed = review.match(/<dt>Mikä jäi huomiotta\?<\/dt><dd>([^<]*)<\/dd>/)[1];
+  assert.match(missed, /^Perhe: kirjattu 1 h, /, 'todettu vaje');
+  assert.doesNotMatch(missed, /Hyvinvointi|ei vielä tiedossa/, 'arvioimaton ei ole huomiotta jäänyt');
+  assert.match(review, /<dt>Ei tiedossa<\/dt><dd>1 asia ilman kestoarviota, joten kokonaiskuormaa ei tiedetä\. 1 alueen suunnitelmasta puuttuu kesto \(Hyvinvointi\)\.<\/dd>/);
+  const signals = html('dirSignals');
+  assert.match(signals, /Arvioitu suunniteltu \(min\): 0/);
+  assert.match(signals, /Arvioitu tavoitteesta \(%\): 0/);
+  assert.doesNotMatch(signals, /Suunniteltu tavoitteesta|Suunniteltu \(min\)/);
+});
+
+test('näkymä: yksi kirjaamaton päivä sanotaan yksikössä', async (t) => {
+  freezeLocalDate(t, day(0));
+  const work = await createLifeArea({ name: 'Työ', importance: 3, targetMinutesPerWeek: 600, categoryKey: 'tyo' });
+  for (const i of [0, 1, 2, 3, 4, 5]) {
+    moveClock(t, day(i));
+    await logTime({ entryDate: day(i), minutes: 60, lifeAreaId: work.area.id });
+  }
+  moveClock(t, day(6), '20:00');
+  renderDirection();
+  assert.match(html('dirReview'), /<dt>Ei kirjattu<\/dt><dd>1 päivä ilman kirjauksia — tuntematon, ei nolla\.<\/dd>/);
 });
 
 // ================================================================ ERR-04: vajaa lataus
