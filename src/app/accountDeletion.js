@@ -24,7 +24,8 @@ import {
   previewAccountDeletion, executeAccountDeletion, deletionErrorMessage
 } from '../data/accountDeletionClient.js';
 import {
-  dryRunDeletion, authAccountDeletable, authAccountBlockedReason, domainLabel
+  dryRunDeletion, authAccountDeletable, authAccountBlockedReason, domainLabel,
+  serverPreviewRows, summarizePreview, previewRowValue
 } from '../domain/accountLifecycle.js';
 import {
   FLOW, FLOW_EVENT, DELETION_PHRASE, initialFlowState, nextFlowState, confirmationStatus
@@ -54,21 +55,27 @@ function dispatch(event, extra = {}) {
   return flow;
 }
 
-function rowsHtml(rows) {
-  const filled = rows.filter(row => row.count > 0);
-  if (!filled.length) return '<div class="hint">Ei yhtään riviä missään kokoelmassa.</div>';
-  return filled.map(row =>
-    `<div class="preview-row"><span>${escapeHtml(domainLabel(row.name))}</span><strong>${row.count}</strong></div>`
+// Laskematon kokoelma näytetään ("ei voitu laskea") eikä pudoteta pois:
+// muuten se näyttäisi samalta kuin tyhjä. Puuttuvat taulut (tuotanto ennen
+// aaltoa J) luetellaan yhdellä rivillä "ei käytössä".
+function rowsHtml(summary) {
+  const rows = summary.rows.map(row =>
+    `<div class="preview-row"><span>${escapeHtml(domainLabel(row.name))}</span><strong>${escapeHtml(previewRowValue(row))}</strong></div>`
   ).join('');
+  const absent = summary.absent.length
+    ? `<div class="hint">Ei käytössä tässä tietokannassa: ${escapeHtml(summary.absent.map(domainLabel).join(', '))}.</div>`
+    : '';
+  if (!rows) return `<div class="hint">Ei yhtään riviä missään kokoelmassa.</div>${absent}`;
+  return rows + absent;
 }
 
 function previewHtml() {
   if (!previewRows) return '';
-  const total = previewRows.reduce((sum, row) => sum + row.count, 0);
+  const summary = summarizePreview(previewRows);
   return `
     <div class="preview-block" style="margin-top:8px;">
-      <div class="preview-title">Poisto vaikuttaisi ${total} riviin</div>
-      ${rowsHtml(previewRows)}
+      <div class="preview-title">Poisto vaikuttaisi ${summary.partial ? 'vähintään ' : ''}${summary.total} riviin</div>
+      ${rowsHtml(summary)}
       <div class="hint">Ei tallennettuja tiedostoja (kuittikuvia ei säilytetä).</div>
       ${previewNote ? `<div class="hint">${escapeHtml(previewNote)}</div>` : ''}
     </div>`;
@@ -210,10 +217,10 @@ const openPreview = singleFlight(async () => {
   if (endpointEnabled()) {
     const result = await previewAccountDeletion({ accessToken: await currentAccessToken() });
     if (result.ok && Array.isArray(result.value.domains)) {
-      previewRows = result.value.domains
-        .filter(entry => Number.isInteger(entry.rowCount))
-        .map(entry => ({ name: entry.domain, count: entry.rowCount }));
-      previewNote = 'Laskettu palvelimelta.';
+      previewRows = serverPreviewRows(result.value.domains);
+      previewNote = summarizePreview(previewRows).partial
+        ? 'Laskettu palvelimelta. Osaa kokoelmista ei voitu laskea; poisto poistaa nekin.'
+        : 'Laskettu palvelimelta.';
     }
   }
   previewSeen = true;
