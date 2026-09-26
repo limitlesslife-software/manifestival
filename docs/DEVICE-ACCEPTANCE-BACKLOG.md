@@ -301,9 +301,12 @@ paketista — ja silloin kaksi järjestelmää lupaisi samaa asiaa.
 
 ### 2. Puheentunnistus — tuki vaihtelee alustoittain
 
-`src/app/speechInput.js` käyttää selaimen `SpeechRecognition`-rajapintaa.
-Tuki vaihtelee selaimittain ja WebView-versioittain, ja
-Capacitor-kuoressa se voi puuttua kokonaan.
+`src/app/speechInput.js` ja `src/app/voice.js` käyttävät alustasovitinta
+`src/platform/speech.js`: selaimessa `SpeechRecognition`-rajapintaa,
+Android-sovelluksessa omaa `ManifestivalSpeech`-liitännäistä
+(`SpeechPlugin.java`, järjestelmän `SpeechRecognizer`). WebView'n omaa
+tunnistinta ei käytetä Android-sovelluksessa lainkaan: Capacitor hylkäisi
+sen mikrofonipyynnön.
 
 - [ ] Mikrofonipainike **piilotetaan**, jos tunnistusta ei ole
       (`speechAvailable()` palauttaa epätoden)
@@ -320,7 +323,8 @@ Capacitor-kuoressa se voi puuttua kokonaan.
 
 Viimeinen on nimenomaan WebView-ongelma: osa alustoista ei laukaise
 `onend`-tapahtumaa, ja ilman aikakatkaisua mikrofonipainike jäisi
-ikuisesti aktiiviseksi.
+ikuisesti aktiiviseksi. Aikaraja on nyt yhteinen (`speech.js`) ja koskee
+myös puhepaneelia ja natiivia liitännäistä.
 
 **Ääntä ei tallenneta.** Sitä ei voi todentaa käyttöliittymästä, mutta
 sen voi todentaa lähdekoodista — ja `tests/assistant-ui.test.mjs` tekee
@@ -329,10 +333,14 @@ sen jokaisella ajolla.
 ### 3. Sijaintilupa — sääntö on olemassa, geoaita ei
 
 Paikkamuistutus on **sääntö, ei toteutus**. Sääntö voidaan kirjata,
-nähdä ja kytkeä päälle, mutta mikään ei seuraa sijaintia.
+nähdä ja kytkeä päälle, mutta mikään ei seuraa sijaintia. Android-sovellus
+ei julista sijaintilupaa lainkaan (`NATIVE_LOCATION_ENABLED = false`).
 
 - [ ] Uusi sääntö on listassa **Pois päältä**
-- [ ] "Kytke päälle" avaa vahvistusdialogin
+- [ ] "Kytke päälle" avaa vahvistusdialogin, jonka teksti sanoo
+      paikkamuistutusten **eivät vielä laukea** eikä sovellus seuraa sijaintia
+- [ ] Päälle kytketyn säännön merkintä on "Päällä — ei vielä laukea"
+- [ ] Kytkeminen ei avaa järjestelmän sijaintilupadialogia
 - [ ] Dialogin teksti mahtuu puhelimen leveydelle
 - [ ] Peruutus jättää säännön pois päältä
 - [ ] Hyväksyntä kytkee säännön päälle ja tila säilyy latauksen yli
@@ -484,19 +492,63 @@ tuotannossa.** Yhtäkään kohtaa ei saa merkitä hyväksytyksi ilman laiteajoa.
       ja uudelleenyritys toimii; fokus palaa avaajapainikkeeseen suljettaessa
 - [P2] Suomen kielen tunnistuslaatu (`fi-FI`) arkilauseilla riittää
 
+### Puhe Android-sovelluksessa: ManifestivalSpeech-liitännäinen (P0, EI SUORITETTU)
+
+Liitännäinen on käännetty (`gradlew compileDebugJavaWithJavac`) mutta sitä
+ei ole ajettu puhelimessa. Asenna tuore debug-APK (`npm run build:android`).
+
+- [P0] Tuore asennus: sovelluksen käynnistys **ei** avaa mikrofonilupadialogia;
+      Asetukset → Sovellukset → Manifestival → Käyttöoikeudet näyttää
+      mikrofonin tilassa "ei sallittu / kysy"
+- [P0] Kultainen mikrofoni → paneeli "Käynnistetään mikrofonia…" ja
+      järjestelmän lupadialogi. **Salli** → "Kuuntelen…" → sano "lisää tehtävä
+      pestä auto huomenna" → teksti näkyy muokattavana
+- [P0] **Estä** (ensimmäinen kerta) → viesti "Mikrofonin käyttöä ei sallittu";
+      ei "Yritä uudelleen" -painiketta; "Kirjoita sen sijaan" toimii; uusi
+      napautus kysyy luvan uudelleen
+- [P0] **Estä pysyvästi** (toinen kielto / "älä kysy uudelleen") → viesti
+      polusta Asetukset → Sovellukset → Manifestival → Käyttöoikeudet →
+      Mikrofoni ja painike **"Avaa asetukset"**, joka avaa sovelluksen
+      järjestelmäasetukset; luvan salliminen ja paluu → uusi napautus toimii
+- [P0] Kuuntelun aikana Koti-painike / sovelluksen vaihto → Androidin
+      mikrofoni-ilmaisin (vihreä piste) **sammuu** heti; palatessa paneeli on
+      suljettu eikä myöhäistä tekstiä ilmesty
+- [P0] Lupadialogin aikana Koti-painike → palatessa ja sallittaessa mikrofoni
+      **ei** aukea itsestään (odotus perutaan `onStop`issa)
+- [P0] Kirjauspalkin sanelu: napautus aloittaa, toinen napautus lopettaa ilman
+      virheilmoitusta; mikrofoni-ilmaisin sammuu
+- [P1] Hiljaisuus 15 s → "Kuuntelu keskeytyi" tai "En kuullut mitään";
+      mikrofoni-ilmaisin sammuu
+- [P1] Lentotila → selkeä verkkoviesti (järjestelmän tunnistin tarvitsee
+      yleensä verkon), ei jumia
+- [P1] Laite ilman Googlen tunnistinta (tai se poistettu käytöstä) →
+      "Puheentunnistus ei ole käytettävissä…", mikrofoni ei jää auki
+- [P1] Tietosuoja: mikään kohta sovelluksessa ei väitä äänen käsittelyn
+      tapahtuvan laitteella; Play-kaupan tietoturvalomake kertoo, että
+      järjestelmän tunnistin (yleensä Google) käsittelee äänen
+
 ### Sijainti (P1)
 
-- [P1] Sijaintilupa pyydetään vasta kun käyttäjä painaa "käytä sijaintia";
-      ei käynnistyksessä
-- [P1] Lupa evätty → selitys ja käyttäjän antama matka-aika toimii
-- [P1] Lupa evätty pysyvästi (`blocked`) → ohjaus järjestelmäasetuksiin, ei
-      toistuvaa kysymistä
-- [P1] Laitteen sijainti pois päältä → selkeä viesti, ei jumia
-- [P1] Kertahaku onnistuu; Androidin sijaintikuvake ei jää päälle haun jälkeen
+**Android: EI SOVELLU.** Android-sovellus ei julista sijaintilupaa
+(`NATIVE_LOCATION_ENABLED = false`, 26.9.2026), koska mikään toteutettu
+ominaisuus ei käytä sijaintia: matka-aika on aina käyttäjän antama. Profiili
+näyttää vain syyn, ei "Salli sijainti" -painiketta. Alla olevat kohdat
+koskevat **selainta (PWA)**, jossa kertahaku on Profiilin diagnostiikka.
+
+- [P0] Android: Asetukset → Sovellukset → Manifestival → Käyttöoikeudet
+      **ei listaa sijaintia lainkaan**; `aapt2 dump permissions` ei näytä
+      `ACCESS_*_LOCATION`-lupia eikä `aapt2 dump badging` pakollista
+      `android.hardware.location`-ominaisuutta
+- [P1] Selain: sijaintilupa pyydetään vasta kun käyttäjä painaa Profiilissa
+      "Salli sijainti"; ei käynnistyksessä
+- [P1] Selain: lupa evätty → selitys; matka-aika toimii yhä käyttäjän antamana
+- [P1] Selain: lupa evätty pysyvästi (`blocked`) → ohjaus selaimen
+      asetuksiin, ei toistuvaa kysymistä
+- [P1] Selain: kertahaku onnistuu ja näyttää vain tarkkuuden
 - [P0] **Koordinaatteja ei löydy** localStoragesta, IndexedDB:stä, lokeista,
       viennistä eikä tilin inventaarioista (tarkista selaimen/WebView:n
       tallennus etätarkastajalla)
-- [P0] Asetuksissa/luvissa **ei ole taustasijaintia** (vain "vain käytön aikana")
+- [P0] Asetuksissa/luvissa **ei ole taustasijaintia**
 
 ### Lähtöaika ja ilmoitukset (P1)
 

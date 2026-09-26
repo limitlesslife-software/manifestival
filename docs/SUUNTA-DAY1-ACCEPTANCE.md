@@ -74,5 +74,5 @@ täytetty eikä kukaan ole päättänyt puolestasi, mikä sinulle on tärkeää.
 | Kahden laitteen kilpailutilanne (sama viikon kapasiteetti / alueen nimi) näyttää yleisen virheen | Lataa sivu ja yritä uudelleen | P1 |
 | Tallennetun katsauksen tilannekuva lasketaan uudelleen, jos katsaus tallennetaan uudelleen samalle viikolle | Historia päivittyy | PRODUCT_DECISION_REQUIRED |
 | Avustajan kirjaus (aalto H) vaatii yhteyden | Epäonnistuu näkyvästi, ei valehtele | tunnettu |
-| Puhekomennot eivät toimi Android-sovelluksessa (mikrofonilupaa ei ole) | Suunta ei tarvitse puhetta | P1 |
+| Puhe Android-sovelluksessa: aiemmissa APK:issa ei toimi (WebView'n tunnistimen mikrofonipyyntö menee `onPermissionRequest(AUDIO_CAPTURE)`-polkuun, Capacitor vaatii kaksi julistamatonta lupaa → `not-allowed`). Korjaus on koodissa: oma `ManifestivalSpeech`-liitännäinen, `RECORD_AUDIO` kysytään vasta napautuksesta. Ei laitetestattu | Suunta ei tarvitse puhetta; kirjoittaminen toimii aina | P1 |
 | AI-selitys (`/api/explain`) ei ole käytössä | Deterministinen selitys näkyy aina | OPTIONAL DAY-1 |

@@ -10,7 +10,8 @@ Toteutus: `src/ai/intentSchema.js` (turvamalli), `src/ai/commandClient.js`
 Testit: `tests/ai-command-client.test.mjs`, `tests/ai-command-handlers.test.mjs`,
 `tests/api-command-validation.test.mjs`, `tests/app-ai-commands.test.mjs`,
 `tests/command-bar.test.mjs`, `tests/voice-command-pipeline.test.mjs`,
-`tests/voice-flow.test.mjs`, `tests/fi-temporal.test.mjs`,
+`tests/voice-flow.test.mjs`, `tests/speech-platform.test.mjs`,
+`tests/voice-android-ui.test.mjs`, `tests/fi-temporal.test.mjs`,
 `tests/temporal-reconcile.test.mjs`, `tests/ai-command-prompt.test.mjs`,
 `tests/ai-command-adversarial.test.mjs`, `tests/ai-command-idempotency.test.mjs`
 
@@ -20,7 +21,8 @@ Testit: `tests/ai-command-client.test.mjs`, `tests/ai-command-handlers.test.mjs`
 
 | Osa | Tila |
 |---|---|
-| Puheentunnistus selaimessa | IMPLEMENTED (Web Speech API, Chrome/Edge) |
+| Puheentunnistus selaimessa | IMPLEMENTED (Web Speech API, Chromium-selaimet) |
+| Puheentunnistus Android-sovelluksessa | IMPLEMENTED, EI LAITETESTATTU (oma `ManifestivalSpeech`-liitännäinen, ks. "Android" alla) |
 | Kirjoitettu varasyöte | IMPLEMENTED — toimii kaikkialla |
 | Yksi tulkintaputki tekstille ja puheelle | IMPLEMENTED — `runTypedCommand({source})` |
 | Kaikki 20 komentoa (ei vain luonti) puheessa | IMPLEMENTED, käytössä |
@@ -192,13 +194,64 @@ Palvelinpuolella on myös:
 
 ## Puheentunnistus ja sen varasyöte
 
-Web Speech API toimii käytännössä vain Chromessa ja Edgessä. Safari ja
-Firefox eivät tue sitä luotettavasti.
+Tunnistus kulkee yhden alustasovittimen kautta (`src/platform/speech.js`),
+jota käyttävät sekä puheohjaus (`src/app/voice.js`) että kirjauspalkin sanelu
+(`src/app/speechInput.js`). Sovitin valitsee taustajärjestelmän:
+
+| Tausta | Milloin | Toteutus |
+|---|---|---|
+| `native` | Android-sovellus, jossa `ManifestivalSpeech`-liitännäinen | `SpeechPlugin.java` → järjestelmän `SpeechRecognizer` |
+| `web` | Selain, jossa on `SpeechRecognition` | Web Speech API |
+| `none` | Kumpaakaan ei ole (myös Android-kuori ilman liitännäistä) | Vain kirjoittaminen |
+
+Selaimessa Web Speech API toimii käytännössä Chromium-pohjaisissa selaimissa;
+Safari ja Firefox eivät tue sitä luotettavasti.
 
 Siksi puhenäkymässä on aina **"Kirjoita sen sijaan"** -tila. Se ei ole
 virhetila vaan tasavertainen tapa: sama tulkintaputki, sama vahvistus, sama
-lopputulos. Sovellus ei saa olla käyttökelvoton siksi, että selain ei osaa
-kuunnella.
+lopputulos. Sovellus ei saa olla käyttökelvoton siksi, että alusta ei osaa
+kuunnella. Kun puhe ei ole käytettävissä, kirjoituspaneeli kertoo syyn
+(`#vfFallbackReason`, kyvykkyysrekisterin `reason`).
+
+Jokainen kuuntelu päättyy: tulokseen, virheeseen, perumiseen, 15 sekunnin
+aikarajaan tai sovelluksen siirtymiseen taustalle. Peruminen on `abort()`,
+ei `stop()`: kesken jäänyt tulos hylätään, eikä perutun kuuntelun myöhäinen
+tulos päädy kenttään. Virheilmoitukset tulevat yhdestä alustakohtaisesta
+taulukosta (`speechErrorMessage`): selaimessa neuvotaan selaimen asetuksiin,
+Android-sovelluksessa polkuun Asetukset → Sovellukset → Manifestival →
+Käyttöoikeudet → Mikrofoni.
+
+### Android
+
+- **Tausta:** oma liitännäinen `ManifestivalSpeech`
+  (`android/app/src/main/java/fi/limitlesslife/manifestival/SpeechPlugin.java`),
+  rekisteröidään `MainActivity`ssä. Natiivikuoressa WebView'n
+  `webkitSpeechRecognition`ia ei koskaan rakenneta.
+- **Lupa vain käytettäessä:** `RECORD_AUDIO` kysytään vasta liitännäisen
+  `listen()`-kutsussa, eli kun käyttäjä napauttaa mikrofonia. Käynnistys ja
+  kyvykkyyskysely vain lukevat tilan (`checkPermissions`). Lupadialogin
+  aikana paneeli näyttää "Käynnistetään mikrofonia…", ei "Kuuntelen…", eikä
+  15 sekunnin raja kulu.
+- **Kielto:** kertakielto (`not-allowed`) ja pysyvä kielto (`blocked`) eivät
+  tarjoa "Yritä uudelleen" -painiketta; tarjolla on "Kirjoita sen sijaan", ja
+  pysyvässä kiellossa myös "Avaa asetukset" (sovelluksen järjestelmäasetukset).
+- **Taustalle siirto katkaisee:** liitännäinen perii kuuntelun
+  `onPause`-tapahtumassa, ja JS-puoli perii sen myös App-liitännäisen
+  `pause`-tapahtumasta (`main.js`). Androidin oma lupadialogi keskeyttää
+  aktiviteetin, mutta ei peru pyyntöä; jos sovellus oikeasti poistuu
+  näkyvistä dialogin aikana, `onStop` perii odotuksen.
+- **Äänen asetusten muokkauslupaa ei julisteta tarkoituksella.** Ilman sitä
+  Capacitor hylkää WebView'n omat mikrofonipyynnöt, joten web-koodi ei voi
+  avata mikrofonia liitännäisen ohi. `tests/android.test.mjs` vartioi tätä.
+- **Yksityisyys:** järjestelmän tunnistin (yleensä Googlen) käsittelee
+  äänen, usein palvelimella. Manifestival ei tallenna ääntä eikä pyydä
+  väliaikatuloksia; se saa vain lopullisen tekstin, jonka käyttäjä tarkistaa
+  ennen kuin mitään tehdään.
+- **Ei taustakuuntelua, ei lukitun puhelimen puhekomentoa**
+  (`speech.supportsBackgroundCapture()` on `false`).
+- **Ei laitetestattu.** Liitännäinen on käännetty (`compileDebugJavaWithJavac`),
+  mutta toiminta puhelimessa on laitehyväksynnän asia
+  (`docs/DEVICE-ACCEPTANCE-BACKLOG.md`).
 
 Kun mikrofoni tuottaa tuloksen, käyttäjä näkee tunnistetun tekstin
 muokattavana ennen kuin mitään tulkitaan (`voiceState-transcript`,
@@ -213,19 +266,24 @@ uusi tila piirretään (`applyState`). Kielletty siirtymä palauttaa saman tilan
 
 ```
 IDLE → REQUESTING_PERMISSION → LISTENING → TRANSCRIPT_READY ──SUBMIT──▶ CLASSIFYING
-        │ (ei tukea)                          ▲ (kirjoitettu: TYPE_FALLBACK ─SUBMIT─┘)
-        └▶ TYPE_FALLBACK                      │
+        │ (ei tukea)      │                   ▲ (kirjoitettu: TYPE_FALLBACK ─SUBMIT─┘)
+        └▶ TYPE_FALLBACK  └─ FAIL_PERMANENT ─▶ MIC_DENIED ─TYPE_INSTEAD─▶ TYPE_FALLBACK
 CLASSIFYING → [TARGET_SELECTION] → REVIEW → [CONFIRMATION] → EXECUTING → SUCCESS | ERROR | IDLE
 ```
 
-Takuut (testattu `tests/voice-flow.test.mjs`):
+Takuut (testattu `tests/voice-flow.test.mjs` ja `tests/voice-android-ui.test.mjs`):
 
 - Litterointi ei etene tulkintaan ilman käyttäjän SUBMIT-toimintoa.
 - Mikrofoni on päällä vain tiloissa `REQUESTING_PERMISSION` ja `LISTENING`;
-  jokaisessa muussa tilassa tunnistus sammutetaan.
-- `visibilitychange` (piilotettu) ja `pagehide` sammuttavat mikrofonin
-  (`HIDDEN`); ei taustakuuntelua, `continuous = false`, ääntä ei tallenneta
-  (ei `getUserMedia`/`MediaRecorder`).
+  jokaisessa muussa tilassa tunnistus katkaistaan.
+- `REQUESTING_PERMISSION` näyttää oman paneelinsa (`voiceState-permission`);
+  "Kuuntelen…" vasta kun mikrofoni on auki.
+- Pysyvä virhe (lupa estetty, tunnistin puuttuu) → `MIC_DENIED`, josta
+  `RETRY` ei käynnistä uutta kuuntelua.
+- `visibilitychange` (piilotettu), `pagehide` ja sovelluksen `pause`
+  katkaisevat mikrofonin (`HIDDEN`); ei taustakuuntelua, `continuous = false`,
+  ääntä ei tallenneta (ei `getUserMedia`/`MediaRecorder`).
+- Hiljainen tunnistin ei jätä paneelia kuuntelemaan: 15 sekunnin raja.
 - Peruutus onnistuu joka tilasta; suljetun paneelin myöhäinen tulos ei avaa
   paneelia uudelleen.
 - Vaiheet CLASSIFYING/REVIEW/TARGET_SELECTION/CONFIRMATION/EXECUTING tulevat

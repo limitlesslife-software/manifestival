@@ -33,11 +33,21 @@ päälle (sama versionCode sallitaan päivityksenä).
 
 ## Luvat (manifestista, `aapt dump badging`)
 
-| Lupa | Tarvitaanko Day 1:nä | Huom |
-|---|---|---|
-| `INTERNET`, `ACCESS_NETWORK_STATE` | Kyllä | Supabase, yhteyden tila |
-| `POST_NOTIFICATIONS`, `SCHEDULE_EXACT_ALARM`, `RECEIVE_BOOT_COMPLETED`, `WAKE_LOCK` | Vain muistutuksiin | Suunta toimii ilman; kysytään käyttäjän eleestä |
-| `ACCESS_COARSE_LOCATION`, `ACCESS_FINE_LOCATION` | **Ei** | Vain lähtöaikaominaisuus; ajonaikainen lupa pyydetään vasta käyttäjän eleestä (testit vartioivat). Suunta ei käytä sijaintia |
-| mikrofoni | ei ilmoitettu | Puhekomennot eivät siksi toimi natiivisti; Suunta ei tarvitse |
+> **Päivitetty 26.9.2026 (puhe- ja sijaintikorjaus, ei vielä aallon J
+> APK:ssa).** Taulukko kuvaa koodin nykytilaa, joka on todennettu
+> yhdistetystä debug-manifestista (`processDebugMainManifest`) ja
+> manifestiyhdistäjän raportista. Yllä kuvattu aallon J APK on rakennettu
+> ennen korjausta ja sisältää yhä sijaintiluvat ja pakollisen
+> `android.hardware.location`-ominaisuuden, mutta ei mikrofonilupaa: se on
+> rakennettava uudelleen ja tarkistettava `aapt2 dump permissions` /
+> `aapt2 dump badging` -komennoilla.
+
+| Lupa | Lähde | Tarvitaanko Day 1:nä | Huom |
+|---|---|---|---|
+| `INTERNET` | oma manifesti | Kyllä | Supabase, palvelinkutsut |
+| `ACCESS_NETWORK_STATE` | `io.ionic.libs:iongeolocation-android` (tulee `@capacitor/geolocation`-riippuvuuden mukana) | Ei | Ei ajonaikainen lupa; sovellus ei käytä sitä itse |
+| `POST_NOTIFICATIONS`, `SCHEDULE_EXACT_ALARM`, `RECEIVE_BOOT_COMPLETED`, `WAKE_LOCK` | `@capacitor/local-notifications` | Vain muistutuksiin | Suunta toimii ilman; kysytään käyttäjän eleestä |
+| `RECORD_AUDIO` | oma manifesti (`SpeechPlugin.java`) | **Ei** | Vain puheeseen. Ajonaikainen lupa kysytään **vasta kun käyttäjä napauttaa mikrofonia**, ei koskaan käynnistyksessä. Ei taustakuuntelua. Äänen asetusten muokkauslupaa ei julisteta tarkoituksella |
+| sijainti (`ACCESS_*_LOCATION`) | — | — | **Ei julisteta.** Mikään toteutettu ominaisuus ei käytä sijaintia (`NATIVE_LOCATION_ENABLED = false`); lähtöaika käyttää käyttäjän antamaa matka-aikaa |
 
 Sovellus toimii ilman valinnaisia lupia; Suunta ei tarvitse yhtäkään niistä.
