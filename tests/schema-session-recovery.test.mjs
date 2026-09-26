@@ -175,6 +175,14 @@ test('reaktiivinen kirjanpito: puuttuva taulu kumoutuu tarkistuksen "ok":lla, PG
   assert.equal(results.table_during, PROBE_RESULT.MISSING_TABLE, 'tarkistusta tuoreempi virhe kumottiin');
 });
 
+test('reaktiivinen kirjanpito: tarkistuksen aikana TOISTUNUT virhe ei kumoudu sen "ok":lla', () => {
+  recordReactiveFailures({ repeated: PROBE_RESULT.MISSING_TABLE });
+  const mark = reactiveMark();
+  assert.equal(recordReactiveFailures({ repeated: PROBE_RESULT.MISSING_TABLE }), false, 'toisto ei ole muutos');
+  recordProbeResults({ repeated: PROBE_RESULT.OK }, { from: 'probe', reactiveUpTo: mark });
+  assert.equal(currentResults().repeated, PROBE_RESULT.MISSING_TABLE);
+});
+
 // =====================================================================
 // 2. ISTUNTORAJA: UUDELLEENTARKISTUS JA KIELLOT
 // =====================================================================

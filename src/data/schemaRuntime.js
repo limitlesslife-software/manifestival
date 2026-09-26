@@ -284,10 +284,11 @@ export function recordReactiveFailures(failures, { sticky = false } = {}) {
     if (!isFailure(result)) continue;
     const previous = reactiveResults[id];
     const keepSticky = Boolean(sticky || (previous && previous.sticky));
-    if (previous && previous.result === result && previous.sticky === keepSticky) continue;
+    const same = Boolean(previous && previous.result === result && previous.sticky === keepSticky);
+    // Toistuva virhe päivittää järjestyksen: kesken oleva tarkistus ei kumoa sitä.
     reactiveSeq += 1;
     reactiveResults = { ...reactiveResults, [id]: { result, sticky: keepSticky, seq: reactiveSeq } };
-    changed = true;
+    if (!same) changed = true;
   }
   return changed;
 }
