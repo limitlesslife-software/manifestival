@@ -183,3 +183,7 @@ data-hakemisto sekä jokaisen luetun SQL-tiedoston git-blob-tiivisteen.
    ja `score-sql-result.mjs` oletti 01..N. Nyt vertailu on SQL-tiedoston
    omiin numeroihin (`sql-result-fixtures.mjs`,
    `tests/activation-sql-result.test.mjs`).
+10. `--only=backup` antoi 10 hylkäystä harjoituksen omista odotuksista:
+    B9 odotti 0010:n peruutukselta 23514:ää, vaikka vartija kieltäytyy
+    ensin (P0001), ja B15 otti tilan P kuvan kannasta, jossa N oli jo
+    ajettu. Korjattu: 271/271 (`docs/activation/REHEARSAL-REPORT.md`).

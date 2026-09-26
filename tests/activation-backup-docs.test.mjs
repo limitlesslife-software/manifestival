@@ -148,7 +148,7 @@ test('KRIITTINEN: vain tuotannossa todennettavat asiat on lueteltu', () => {
 test('harjoittelun lukutaulukko on sisäisesti johdonmukainen', () => {
   const local = section(doc(), '### Todennettu paikallisesti');
   const rows = [...local.matchAll(/^\| B(\d+) \|[^\n]*\| (\d+)\/(\d+) \|$/gm)];
-  assert.deepEqual(rows.map(r => Number(r[1])), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]);
+  assert.deepEqual(rows.map(r => Number(r[1])), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
   const pass = rows.reduce((n, r) => n + Number(r[2]), 0);
   const total = rows.reduce((n, r) => n + Number(r[3]), 0);
   assert.match(local, new RegExp(`\\*\\*${pass}/${total} PASS\\.\\*\\*`));

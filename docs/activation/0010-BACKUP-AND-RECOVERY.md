@@ -475,7 +475,11 @@ Aja samassa välilehdessä `rollback;`.
 
 `node tools/pg-rehearsal/rehearse-backup.mjs` (PostgreSQL 17.10, oma
 kertakäyttöinen klusteri 127.0.0.1): jokaiselle N = 0009…0013 ja
-molemmille lähtötiloille (`text`, `typed`), P = N−1. **231/231 PASS.**
+molemmille lähtötiloille (`text`, `typed`), P = N−1. **271/271 PASS.**
+Viimeisin ajo 2026-09-26, commit `7c7f157`, portti 54369
+(`docs/activation/REHEARSAL-REPORT.md`). B9 odottaa nyt 0010:n
+ROLLBACK-osion vartijaa (P0001) ja B15 ottaa kuvan kannan nykyisestä
+tilasta N; ennen korjausta lähtökohta `e44644c` antoi näissä 10 hylkäystä.
 
 | # | Mitä | PASS |
 |---|---|---|
@@ -487,13 +491,13 @@ molemmille lähtötiloille (`text`, `typed`), P = N−1. **231/231 PASS.**
 | B6 | idempotentti | 10/10 |
 | B7 | uniikkitörmäys ilman karsintaa kaatuu kiinni (23505); `--prune` → kaikki SAMA, liipaisimet päällä | 20/20 |
 | B8 | peukaloitu skripti kaatuu; kontrollit: JS-sarjallistus (82.40 → 82.4) ja palautus ilman `disable trigger user` kaatuvat | 30/30 |
-| B9 | ROLLBACK(N) + palautus → katalogi == ennen N:ää ja data sama; 0010:n ROLLBACK kieltäytyy `maintenance`-tilassa | 12/12 |
+| B9 | ROLLBACK(N) + palautus → katalogi == ennen N:ää ja data sama; 0010:n ROLLBACK:n vartija kieltäytyy `maintenance`-tilassa (P0001) | 12/12 |
 | B10 | N:n jälkeinen kuva peruutettuun skeemaan hylätään, mitään ei muutu | 10/10 |
 | B11 | N:n jälkeinen kuva → ROLLBACK → N uudelleen → palautus identtinen; 0010: `maintenance`, mittari, välitavoitteet, `depends_on`; haara C `--tables=goals` | 14/14 |
 | B12 | väärä kanta, puuttuva käyttäjä, puuttuva omistaja, väärä saraketyyppi hylätään | 35/35 |
 | B13 | ei-superuser (NOBYPASSRLS) taulujen omistajana onnistuu; FORCE RLS ja ei-omistaja kaatuvat kiinni | 30/30 |
 | B14 | kuivaharjoitus: onnistuu, päättyy `rollback;`iin, katalogi ja sisältö ennallaan | 10/10 |
-| B15 | RLS:n suodattama kuva hylätään (FORCE RLS omistajalle, ei-omistaja ilman BYPASSRLS:ää); omistaja ja BYPASSRLS kelpaavat | lisätty 2026-09-26, ei vielä ajettu |
+| B15 | RLS:n suodattama kuva hylätään (FORCE RLS omistajalle, ei-omistaja ilman BYPASSRLS:ää); omistaja ja BYPASSRLS kelpaavat (kuva tilasta N) | 40/40 |
 
 Ajo: `PG_REHEARSAL_PORT=54349 node tools/pg-rehearsal/rehearse-backup.mjs`
 tai `node tools/pg-rehearsal/rehearse.mjs --only=backup`. Ennen yhtäkään
