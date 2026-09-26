@@ -415,9 +415,14 @@ dataa ja joiden portit ovat auki tuotannossa:**
 | `tasks` | migraatiot 0001/0002 ajettu, portti auki |
 
 Erityisesti: **`goals_status_check` pudotetaan ja luodaan uudelleen**.
-Keskeytynyt ajo jättäisi taulun ilman tilarajoitetta, eikä mikään
-sovelluksessa huomaisi sitä. Migraation vaihe 5 tarkistaa sen ennen
-committia; `verify_0010.sql` tarkistukset 20–22 sen jälkeen.
+Migraatio on yksi transaktio: keskeytynyt tai virheeseen päättynyt ajo
+perutaan kokonaan, ja rajoite jää ennalleen. Taulu voi jäädä ilman
+tilarajoitetta **vain, jos tiedostosta ajetaan VALINTA** (osa lauseista
+editorissa valittuna) — eikä mikään sovelluksessa huomaisi sitä. Siksi
+tiedosto ajetaan aina kokonaan; `preflight_0010.sql` rivi 09 ja
+`verify_0010.sql` rivi 20 paljastavat puuttuvan rajoitteen. Migraation
+vaihe 5 tarkistaa sen ennen committia; `verify_0010.sql` tarkistukset
+20–22 sen jälkeen.
 
 **Varmuuskopio ei ole muodollisuus. Esitarkistus on pakollinen.**
 

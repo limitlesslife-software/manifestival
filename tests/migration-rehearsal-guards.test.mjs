@@ -67,6 +67,28 @@ test('BK-06: 0010 ei väitä keskeytyneen ajon jättävän taulua ilman tilarajo
   assert.match(lf(read('supabase/verify/verify_0010.sql')), /select '20', 'tilarajoite', 'goals_status_check on olemassa'/);
 });
 
+test('BK-06: dokumentit eivät väitä keskeytyneen ajon jättävän taulua ilman tilarajoitetta', () => {
+  for (const file of ['docs/acceptance/WAVE-G.md', 'docs/GOAL-TO-ACTION.md']) {
+    const doc = lf(read(file)).replace(/\s+/g, ' ');
+    assert.equal(/keskeytynyt ajo jättäisi taulun ilman tilarajoitetta/i.test(doc), false, file);
+    assert.match(doc, /perutaan kokonaan/, `${file}: keskeytyneen ajon peruutus`);
+    assert.match(doc, /vain, jos tiedostosta ajetaan VALINTA/, `${file}: valinnan riski`);
+    assert.match(doc, /`preflight_0010\.sql` rivi 09/, file);
+    assert.match(doc, /`verify_0010\.sql` rivi 20/, file);
+  }
+});
+
+test('WAVE-G §6: restore --tables=goals -varaus ja kapeampi vaihtoehto', () => {
+  const g = lf(read('docs/acceptance/WAVE-G.md'));
+  const s6 = g.slice(g.indexOf('## 6. Peruutus'), g.indexOf('## 7.'));
+  const flat = s6.replace(/[>\s]+/g, ' ');
+  assert.match(flat, /`restore --tables=goals` palauttaa \*\*JOKAISEN\*\* tilannekuvassa olevan tavoiterivin/);
+  assert.match(flat, /Kapeampi vaihtoehto/);
+  assert.match(flat, /muuttuneet_id/);
+  assert.match(s6, /set status = 'maintenance'/);
+  assert.match(s6, /and id in \('<kirjattu-tunniste-1>'/);
+});
+
 test('KRIITTINEN F8: peruutusvartijat ennen ensimmäistä pudotusta', () => {
   const rb10 = extractRollback(migration('0010'));
   const guard10 = rb10.indexOf("where status = 'maintenance'");
@@ -127,6 +149,8 @@ test('F12: ei viittauksia vanhaan 16-lauseiseen inventaarioon ajettavana askelee
   const files = [
     ...Object.values(FILES).map(f => `supabase/migrations/${f}`),
     ...fs.readdirSync(path.join(ROOT, 'docs/activation')).filter(f => f.endsWith('.md')).map(f => `docs/activation/${f}`),
+    ...fs.readdirSync(path.join(ROOT, 'docs/acceptance')).filter(f => f.endsWith('.md')).map(f => `docs/acceptance/${f}`),
+    'docs/LIFE-ALIGNMENT-SUPABASE-INVENTORY.md', 'docs/SUUNTA-ACTIVATION-GO-NOGO.md', 'docs/SUUNTA-FAST-ACTIVATION.md',
     'tools/pg-rehearsal/README.md'
   ];
   for (const f of files) assert.equal(read(f).includes('life_alignment_readonly_inventory.sql'), false, f);
