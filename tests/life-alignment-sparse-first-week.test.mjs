@@ -313,19 +313,37 @@ test('alue ei voi samaan aikaan jäädä huomiotta ja viedä liikaa (ei "yli"-po
 
 // ================================================================ ARVIOIDEN KATTAVUUS (F3, F4)
 
-/** Sama 12 tehtävän viikko, arvioituna `count` kappaletta (ensin työ, sitten perhe). */
-function ladder(count) {
+/**
+ * Sama 12 tehtävän viikko, arvioituna `count` kappaletta (ensin työ, sitten perhe).
+ *
+ * `unknownInAreas`: arvioimattomat kuuluvat työlle ja perheelle (omistajan
+ * tilanne). Oletuksena ne ovat liittämättömiä ('muu'): alue, jonka avoimelta
+ * työltä puuttuu kesto, ei saa osuusväitettä lainkaan (tuntematon ei ole
+ * nolla), joten kattavuuskynnykset testataan alueilla, joiden työ on arvioitu.
+ * Arvioitujen minuutit ja siten osuudet ovat samat kummassakin muodossa.
+ */
+function ladder(count, { unknownInAreas = false } = {}) {
   const order = ['t0', 't1', 't8', 't2', 't3', 't4', 't9', 't5', 't6', 't10', 't7', 't11'];
   const estimated = new Set(order.slice(0, count));
   const tasks = Array.from({ length: 12 }, (_, i) => {
     const id = 't' + i;
-    const category = i < 8 ? 'tyo' : 'perhe';
-    const minutes = estimated.has(id) ? (category === 'tyo' ? 120 : 120) : null;
-    return task(id, day(i % 5), minutes, { category });
+    const areaCategory = i < 8 ? 'tyo' : 'perhe';
+    const known = estimated.has(id);
+    const category = known || unknownInAreas ? areaCategory : 'muu';
+    return task(id, day(i % 5), known ? 120 : null, { category });
   });
   const areas = [area('work', 'Työ', 3, 600, 'tyo'), area('fam', 'Perhe', 3, 600, 'perhe')];
   return { areas, analysis: analyzeWeek({ weekStart: WEEK, todayIso: day(1), areas, tasks, capacity: capacity(2400) }) };
 }
+
+test('suunnitelman jakauma: alue, jonka avoimelta työltä puuttuu kesto, ei saa osuusväitettä millään kattavuudella', () => {
+  for (const count of [2, 6, 8, 10]) {
+    const { areas, analysis } = ladder(count, { unknownInAreas: true });
+    assert.equal(signalsOf(analysis, SIGNAL.MISALIGNMENT).length, 0, `${count}/12 arvioitu`);
+    const proposals = proposeAdjustments(analysis, { areas });
+    assert.equal(proposals.some(p => p.type === ADJUSTMENT.CHANGE_TARGET), false, `${count}/12: ei tavoitteen muutosta`);
+  }
+});
 
 test('suunnitelman jakauma kattavuuden mukaan: 17 % ei havaintoa, 50 % ja 67 % tiedoksi, 83 % huomio', () => {
   const rows = [
@@ -670,6 +688,36 @@ test('yksikään tavoitteen muutosehdotus ei esitäytä alle 30 min (satunnaiset
     }
   }
   assert.ok(changes > 20, `aineisto tuottaa tavoitteen muutoksia (${changes})`);
+});
+
+test('suunnitelman jakauma: korkea kattavuus, mutta tärkeän alueen avoimelta asialta puuttuu kesto -> ei osuusväitettä eikä tavoitteen muutosta', () => {
+  const areas = [area('work', 'Työ', 3, 600, 'tyo'), area('fam', 'Perhe', 5, 600, 'perhe')];
+  const tasks = [...Array.from({ length: 9 }, (_, i) => task('w' + i, day(i % 5), 60, { category: 'tyo' })),
+    task('f1', day(3), null, { category: 'perhe' })];
+  const analysis = analyzeWeek({ weekStart: WEEK, todayIso: day(1), areas, tasks, capacity: capacity(2400) });
+  assert.equal(analysis.dataQuality.estimateCoveragePercent, 90);
+  assert.equal(signalsOf(analysis, SIGNAL.MISALIGNMENT).some(s => s.areaId === 'fam'), false, 'ennen: "Perhe saa vähemmän" (Huomio)');
+  assert.equal(signalsOf(analysis, SIGNAL.NEGLECT).find(s => s.areaId === 'fam').rule, 'neglect.plan_unknown');
+  const proposals = proposeAdjustments(analysis, { areas });
+  assert.equal(proposals.some(p => p.type === ADJUSTMENT.CHANGE_TARGET && p.payload.areaId === 'fam'), false);
+  // Työn osuus on arvioidusta työstä, ja se näkyy yhä.
+  assert.equal(signalsOf(analysis, SIGNAL.MISALIGNMENT).find(s => s.areaId === 'work').metrics.direction, 'over');
+});
+
+test('plan_unknown perustuu avoimiin asioihin: valmiiksi merkitty ilman kestoa on tieto', () => {
+  const areas = [area('fam', 'Perhe', 5, 600, 'perhe')];
+  const completed = analyzeWeek({ weekStart: WEEK, todayIso: day(3), areas,
+    tasks: [task('f1', day(0), null, { category: 'perhe', completed: true }), task('f2', day(1), 60, { category: 'perhe' })] });
+  const fam = signalsOf(completed, SIGNAL.NEGLECT).find(s => s.areaId === 'fam');
+  assert.equal(fam.rule, 'neglect.plan_below_target', 'ennen: plan_unknown valmiista asiasta');
+  assert.deepEqual([fam.metrics.unknownCount, fam.metrics.openUnknownCount], [1, 0]);
+  assert.equal(explainSignal(fam, areas).text,
+    'Tämän viikon suunnitelmassa Perhe saa 1 h, tavoitteesi on 10 h. Tiedoksi: 1 valmiiksi merkitty ilman kestoa ei ole mukana.');
+  const open = analyzeWeek({ weekStart: WEEK, todayIso: day(3), areas,
+    tasks: [task('f1', day(0), null, { category: 'perhe' }), task('f2', day(1), 60, { category: 'perhe' })] });
+  const openSignal = signalsOf(open, SIGNAL.NEGLECT).find(s => s.areaId === 'fam');
+  assert.equal(openSignal.rule, 'neglect.plan_unknown');
+  assert.match(explainSignal(openSignal, areas).text, /Riittääkö aika, selviää, kun asiat on arvioitu\.$/);
 });
 
 // ================================================================ NÄKYMÄ: DOM-tynkä

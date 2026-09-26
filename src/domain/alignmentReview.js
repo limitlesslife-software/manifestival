@@ -155,19 +155,29 @@ export function explainSignal(signal, areas = []) {
         };
       }
       if (signal.rule === NEGLECT_PLAN_UNKNOWN) {
+        // Avoimet asiat ilman kestoa (vanhassa tilannekuvassa vain unknownCount).
+        const open = Number.isInteger(m.openUnknownCount) ? m.openUnknownCount : m.unknownCount;
         return {
           title: `${name}: suunnitelman kesto ei vielä tiedossa`,
-          text: `${name}: ${countOf(m.unknownCount, 'asia', 'asiaa')} ilman kestoarviota, joten suunnitelman aika `
+          text: `${name}: ${countOf(open, 'asia', 'asiaa')} ilman kestoarviota, joten suunnitelman aika `
             + `ei ole vielä tiedossa; arvioitua ${formatMinutes(m.plannedMinutes)}, tavoite ${formatMinutes(m.targetMinutes)}. `
             + 'Riittääkö aika, selviää, kun asiat on arvioitu.',
           why: 'Tärkeä alue, jonka suunnitelmasta osa on ilman kestoa. Tuntematon ei ole nolla, joten vajetta ei väitetä.'
         };
       }
+      // Valmiiksi merkityt ilman kestoa ovat tieto, eivät "arvioi"-kehotus:
+      // arviointi ei kysy niitä (vanhassa tilannekuvassa ei erottelua).
+      const completedUnknown = Number.isInteger(m.openUnknownCount)
+        ? Math.max(0, (m.unknownCount || 0) - m.openUnknownCount) : 0;
+      const openUnknown = Math.max(0, (m.unknownCount || 0) - completedUnknown);
       return {
         title: `${name}: suunnitelmassa vähän aikaa`,
         text: `Tämän viikon suunnitelmassa ${name} saa ${formatMinutes(m.plannedMinutes)}, `
           + `tavoitteesi on ${formatMinutes(m.targetMinutes)}.`
-          + (m.unknownCount > 0 ? ` (${countOf(m.unknownCount, 'asia', 'asiaa')} ilman kestoa.)` : ''),
+          + (openUnknown > 0 ? ` (${countOf(openUnknown, 'asia', 'asiaa')} ilman kestoa.)` : '')
+          + (completedUnknown > 0
+            ? ` Tiedoksi: ${countOf(completedUnknown, 'valmiiksi merkitty', 'valmiiksi merkittyä')} ilman kestoa ei ole mukana.`
+            : ''),
         why: `Tärkeä alue, jolle suunniteltu aika on alle ${Math.round(RULES.NEGLECT_RATIO * 100)} % `
           + 'viikkotavoitteesta. Suunnitelma on vielä muutettavissa.'
       };

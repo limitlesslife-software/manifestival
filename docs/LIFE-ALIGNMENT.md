@@ -72,9 +72,13 @@ Vain aktiiviset alueet, joiden **tärkeys ≥ 4** ja **tavoite ≥ 30 min**.
   toteuma alle 25 %.
 - **Suunnitelmaan perustuva** (muuten): `suunniteltu < 50 % tavoitteesta` →
   **Tiedoksi** (suunnitelma on vielä muutettavissa). Jos alueella on
-  arvioimattomia asioita, sääntö on `neglect.plan_unknown` ("suunnitelman
-  kesto ei vielä tiedossa"): vajetta ei väitetä, eikä sitä käytetä suojattuun
-  aikaan, painotukseen, varausehdotukseen eikä tavoitteen muutokseen.
+  **avoimia** arvioimattomia asioita (`openUnknownCount`), sääntö on
+  `neglect.plan_unknown` ("suunnitelman kesto ei vielä tiedossa"): vajetta ei
+  väitetä, eikä sitä käytetä suojattuun aikaan, painotukseen,
+  varausehdotukseen, tavoitteen muutokseen eikä katsauksen "Mikä jäi
+  huomiotta?" -vastaukseen. Valmiiksi merkitty ilman kestoa ei laukaise sitä
+  (arviointi ei kysy valmiita); teksti kertoo sen tietona ("Tiedoksi: 1
+  valmiiksi merkitty ilman kestoa ei ole mukana.").
 - Maanantaina toteumaa ei verrata. Vähemmän tärkeä alue, tavoite 0/puuttuu tai
   pois käytöstä oleva alue ei ole koskaan "huomiotta".
 - Teksti sanoo "kirjattu X", ei "on saanut X": kirjattu aika ei ole eletty aika.

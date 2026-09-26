@@ -645,17 +645,20 @@ function neglectSignals({ areas, planned, actual, progress, dates, reference, to
     }
 
     // Suunnitelmaan perustuva: ennakoiva, siksi vain tiedoksi. Jos osalta
-    // alueen työstä puuttuu kesto, vajetta ei väitetä: tuntematon ei ole
-    // nolla (`neglect.plan_unknown`, ei kuormaa eikä suojattua aikaa).
+    // alueen AVOIMESTA työstä puuttuu kesto, vajetta ei väitetä:
+    // tuntematon ei ole nolla (`neglect.plan_unknown`, ei kuormaa eikä
+    // suojattua aikaa). Valmiiksi merkitty ilman kestoa ei laukaise sitä
+    // (arviointi ei kysy valmiita); se kerrotaan tekstissä tietona.
     const plannedShare = ratio(plannedBucket.knownMinutes, target);
     if (plannedShare !== null && plannedShare < RULES.NEGLECT_RATIO) {
       signals.push({
         kind: SIGNAL.NEGLECT, severity: SEVERITY.INFO,
         areaId: area.id, basis: 'planned',
-        rule: plannedBucket.unknownCount > 0 ? NEGLECT_PLAN_UNKNOWN : 'neglect.plan_below_target',
+        rule: plannedBucket.openUnknownCount > 0 ? NEGLECT_PLAN_UNKNOWN : 'neglect.plan_below_target',
         metrics: {
           targetMinutes: target, plannedMinutes: plannedBucket.knownMinutes,
           percentOfTarget: percent(plannedShare), unknownCount: plannedBucket.unknownCount,
+          openUnknownCount: plannedBucket.openUnknownCount,
           actualTracked, trackingLevel: tracking.level
         }
       });
@@ -734,6 +737,11 @@ function misalignmentSignals({ areas, planned, actual, neglected, tracking, prog
   const signals = [];
 
   for (const area of compared) {
+    // Suunnitelman jakauma: alue, jonka avoimelta työltä puuttuu kesto,
+    // ei saa osuusväitettä — tuntematon ei ole nolla. Se näkyy
+    // arvioimattomana (laatu, `neglect.plan_unknown`, katsauksen
+    // "Ei tiedossa"), ei poikkeamana.
+    if (source.basis === 'planned' && (planned.byArea.get(area.id) || emptyBucket()).openUnknownCount > 0) continue;
     const want = desired.shares.get(area.id) ?? 0;
     const got = source.minutesFor(area.id) / source.assigned;
     // Alue, jolle ei toivottu osuutta eikä käytetty aikaa, ei ole poikkeama.
