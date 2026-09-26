@@ -267,6 +267,17 @@ test('REGRESSIO: PARSE_REQUIRE_AUTH=false ei avaa selitystä anonyymille', async
   assert.equal(calls.length, 0, 'Anthropicia ei kutsuttu anonyymisti');
 });
 
+test('PARSE_REQUIRE_AUTH=false: 401 myös voimassa olevalla tokenilla (docs/DEPLOYMENT.md)', async () => {
+  // Hätätilassa tokenia ei tarkisteta lainkaan, joten käyttäjää ei tunneta:
+  // selitys on kiinni kaikilta, ja selain näyttää deterministisen selityksen.
+  enable();
+  process.env.PARSE_REQUIRE_AUTH = 'false';
+  const calls = mockNetwork();
+  const res = await call(post());
+  assert.equal(res.statusCode, 401);
+  assert.equal(calls.length, 0, 'ei todennusta eikä Anthropic-kutsua');
+});
+
 test('todennuspalvelun virhe -> 503, mallia ei kutsuta', async () => {
   enable();
   const calls = [];

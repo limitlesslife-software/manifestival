@@ -105,9 +105,13 @@ kutsu päätepistettä. Käyttöönotto = **molemmat** samassa julkaisussa, ja s
 omistajan päätös (`docs/SUUNTA-ACTIVATION-GO-NOGO.md`). Kumpikin yksin pitää
 selityksen poissa, ja käyttäjä näkee aina deterministisen selityksen.
 
-`PARSE_REQUIRE_AUTH=false` **ei** avaa selitystä: `/api/explain` vaatii aina
-kirjautuneen käyttäjän. Hätävara koskee puheohjausta ja muita
-AI-päätepisteitä (`parse`, `extract`, `plan`, `capture`, `command`).
+`PARSE_REQUIRE_AUTH=false` **ei** avaa selitystä — se sulkee sen kaikilta.
+Hätätilassa `authenticate()` (`api/_auth.js`) ei tarkista tokenia lainkaan,
+joten käyttäjää ei tunneta, ja `/api/explain` vastaa **401 jokaiselle
+pyynnölle**, myös kirjautuneelle käyttäjälle voimassa olevalla tokenilla.
+Selain näyttää silloin deterministisen selityksen ("Miksi tämä näkyy?").
+Hätävara koskee puheohjausta ja muita AI-päätepisteitä (`parse`,
+`extract`, `plan`, `capture`, `command`).
 
 Funktion enimmäiskesto on `vercel.json`issa 20 s: todennus enintään 5 s +
 Anthropic-kutsu enintään 8 s. Selain odottaa 16 s (vähintään 2 s palvelimen

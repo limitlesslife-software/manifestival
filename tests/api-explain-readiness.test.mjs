@@ -87,6 +87,17 @@ test('dokumentit: käyttöönotto on omistajan päätös ja J:n hyväksyntä tar
   assert.match(read('docs/LIFE-ALIGNMENT.md'), /Tekoälyselitys \+ varapolku \| OPTIONAL_DAY1/);
 });
 
+test('dokumentit: hätävara sulkee selityksen (401), käyttöönotto päivittää KATKAISIN-testit', () => {
+  const flat = file => read(file).replace(/\s+/g, ' ');
+  assert.match(flat('docs/DEPLOYMENT.md'), /`PARSE_REQUIRE_AUTH=false` \*\*ei\*\* avaa selitystä[^|]*\*\*401 jokaiselle pyynnölle\*\*[^|]*deterministisen selityksen/);
+  assert.match(flat('docs/SECURITY.md'), /`PARSE_REQUIRE_AUTH=false`[^|]*401 kaikille[^|]*deterministisen selityksen/);
+  const goNoGo = read('docs/SUUNTA-ACTIVATION-GO-NOGO.md');
+  for (const file of ['tests/life-alignment-explain.test.mjs', 'tests/api-explain-readiness.test.mjs']) {
+    assert.ok(goNoGo.includes('`' + file + '`'), 'käyttöönoton ohje ei mainitse vartijatestiä: ' + file);
+  }
+  assert.equal(read('docs/DEVICE-ACCEPTANCE-BACKLOG.md').includes('Selitä tarkemmin'), false, 'vanhentunut painikkeen nimi');
+});
+
 test('SECURITY.md nimeää jokaisen ANTHROPIC_API_KEY:tä lukevan päätepisteen', () => {
   const row = read('docs/SECURITY.md').split(/\r?\n/).find(line => line.startsWith('| `ANTHROPIC_API_KEY`'));
   assert.ok(row, 'salaisuustaulukon rivi puuttuu');

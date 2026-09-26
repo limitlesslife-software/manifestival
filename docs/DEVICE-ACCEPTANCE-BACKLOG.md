@@ -700,8 +700,12 @@ jälkeen, ei että jokin laskisi taustalla.
 - [P2] Tumma/vaalea tila: ajastinpalkin kontrasti, Tauolla-tilan väri
 - [P2] Ilmoituksia ei käytetä ajastimessa eikä päivän havainnoissa:
       mitään ei ilmoiteta taustalla
-- [P2] Tekoälyselitys: ilman verkkoa "Selitä tarkemmin" näyttää
-      deterministisen selityksen eikä jumiudu
+- [P2] Havainnon selitys (tekoälyselitys oletuksena pois): havainnossa EI
+      ole "Selitä tekoälyllä" -painiketta; "Miksi tämä näkyy?" näyttää
+      deterministisen selityksen, myös ilman verkkoa. Vasta jos omistaja
+      kytkee selityksen päälle (`docs/SUUNTA-ACTIVATION-GO-NOGO.md`):
+      ilman verkkoa "Selitä tekoälyllä" näyttää saman deterministisen
+      selityksen eikä jumiudu
 
 ---
 

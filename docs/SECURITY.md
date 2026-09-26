@@ -271,7 +271,10 @@ saa sallintaa. CORS ei korvaa todennusta.
 
 **Tekoälyselitys** (`/api/explain`, valinnainen): oletuksena pois kahdella
 kytkimellä (palvelimen `EXPLAIN_ENABLED`, selaimen `AI_EXPLAIN_ENABLED`).
-Vaatii aina kirjautuneen käyttäjän, myös kun `PARSE_REQUIRE_AUTH=false`.
+Vaatii aina todennetun käyttäjän. Kun `PARSE_REQUIRE_AUTH=false`, todennus
+ohitetaan eikä käyttäjää tunneta, joten `/api/explain` vastaa 401 kaikille
+(myös voimassa olevalla tokenilla) ja selain näyttää deterministisen
+selityksen: hätävara ei koskaan avaa selitystä anonyymille.
 Säännöt kulkevat `system`-kentässä, data yksin käyttäjän viestissä. Vain
 luonnollisesti päättynyt (`stop_reason: end_turn`), enintään 1 200 merkin
 vastaus kelpaa; muuten 502 ja selain näyttää deterministisen selityksen.
