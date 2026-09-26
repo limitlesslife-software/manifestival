@@ -70,6 +70,28 @@ export function resolveTimeZone(value) {
   return formatterFor(name) ? name : DEFAULT_TIME_ZONE;
 }
 
+const ISO_DATE_PARTS = /^(\d{4})-(\d{2})-(\d{2})$/;
+const DAYS_IN_MONTH = Object.freeze([31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]);
+
+/**
+ * Onko arvo kalenterissa oleva 'YYYY-MM-DD'-päivä?
+ *
+ * Sama vastaus kuin task.js:n isIsoDate (testi varmistaa), mutta ilman
+ * Date-olion luontia: suurilla kirjausmäärillä ero on satoja millisekunteja.
+ */
+export function isCalendarDate(value) {
+  if (typeof value !== 'string') return false;
+  const match = ISO_DATE_PARTS.exec(value);
+  if (!match) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (month < 1 || month > 12 || day < 1) return false;
+  const leap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+  const limit = month === 2 && leap ? 29 : DAYS_IN_MONTH[month - 1];
+  return day <= limit;
+}
+
 function isValidMs(ms) {
   return typeof ms === 'number' && Number.isFinite(ms) && ms >= MIN_MS && ms <= MAX_MS;
 }
