@@ -17,7 +17,7 @@ import {
   createLifeArea, logTime, editTimeEntry, analyzeCurrentWeek, resetAppliedAdjustments,
   setTimeEntryWriterForTests
 } from '../src/app/alignment.js';
-import { timeEntriesRepo, routinesRepo } from '../src/data/collectionsRepo.js';
+import { timeEntriesRepo, routinesRepo, goalsRepo } from '../src/data/collectionsRepo.js';
 import { setTimerRepoForTests, currentTimer, cancelTracking } from '../src/app/timeTracking.js';
 import { createTimeEntryWriter } from '../src/app/timeEntryWriter.js';
 import { loadOutbox, saveOutbox, resetTimerStoreForTests } from '../src/data/timerStore.js';
@@ -373,10 +373,16 @@ test('F8 KRIITTINEN: tavoitteen elämänalue asetetaan tavoitelomakkeelta ja tal
   await flush();
   assert.equal(getState().goals.find(g => g.id === goal.id).lifeAreaId, area.id);
   const update = client.calls.slice(before).find(c => c.table === 'goals' && c.operation === 'update');
-  if (columnGateOpen('GOAL_LIFE_AREA_FIELD') && update) {
-    assert.equal(update.payload.life_area_id, area.id, 'portti auki: life_area_id lähtee kantaan');
-  } else if (update) {
-    assert.equal('life_area_id' in update.payload, false, 'portti kiinni: saraketta ei lähetetä');
+  if (goalsRepo.isPersistent()) {
+    // Taulu auki: päivityksen on lähdettävä, muuten sarakeväite ei todista mitään.
+    assert.ok(update, 'goals-taulu auki: tavoitteen päivitys lähtee kantaan');
+    if (columnGateOpen('GOAL_LIFE_AREA_FIELD')) {
+      assert.equal(update.payload.life_area_id, area.id, 'sarakeportti auki: life_area_id lähtee kantaan');
+    } else {
+      assert.equal('life_area_id' in update.payload, false, 'sarakeportti kiinni: saraketta ei lähetetä');
+    }
+  } else {
+    assert.equal(update, undefined, 'goals-taulu kiinni: ei kantakutsua');
   }
   // Tavoitteen näkymä kertoo alueen.
   setOpenGoalId(goal.id);
