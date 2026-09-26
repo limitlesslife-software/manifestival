@@ -22,7 +22,9 @@ import path from 'node:path';
 import { ROOT, read } from './helpers/sources.mjs';
 import { buildInventorySql } from '../tools/activation/build-inventory.mjs';
 import { buildPreflight, PREFLIGHT_NUMBERS } from '../tools/activation/build-preflights.mjs';
-import { parseInventory, scoreInventory } from '../tools/activation/score-inventory.mjs';
+import {
+  REQUIRED_ROWS, ROW, TABLE_REQUIRED_ROWS, classifyActivation, parseInventory, scoreInventory
+} from '../tools/activation/score-inventory.mjs';
 
 const lf = text => text.replace(/\r\n/g, '\n');
 const INVENTORY = 'supabase/acceptance/activation_readonly_inventory.sql';
@@ -124,4 +126,231 @@ test('avoin transaktio on varoitus, ei pysäytys', () => {
   const result = scoreInventory(rows);
   assert.equal(result.decision, 'GO');
   assert.ok(result.warnings.some(w => /idle in transaction/.test(w)));
+});
+
+// =====================================================================
+// ACT-11: PUUTTUVA RIVI EI OLE "KUNNOSSA"
+// =====================================================================
+
+const rows0008 = () => ({ ...JSON.parse(fixture('state-0008.json')).rows });
+
+test('KRIITTINEN: puuttuva rivi 43, 44 tai 45 pysäyttää (ei hiljaista GO:ta)', () => {
+  for (const key of ['43', '44', '45']) {
+    const rows = rows0008();
+    delete rows[key];
+    const result = scoreInventory(rows);
+    assert.equal(result.decision, 'STOP', `rivi ${key}`);
+    assert.ok(result.stops.some(s => s.startsWith(`rivi ${key} puuttuu`)), result.stops.join('; '));
+  }
+  for (const key of ['44', '45']) {
+    const rows = rows0008();
+    rows[key] = 'puuttuu';
+    assert.equal(scoreInventory(rows).decision, 'STOP', `rivi ${key} = puuttuu`);
+  }
+});
+
+test('puuttuva rivi 01 ei väitä versiota 17.10 riittämättömäksi', () => {
+  const rows = rows0008();
+  delete rows['01'];
+  const result = scoreInventory(rows);
+  assert.equal(result.decision, 'STOP');
+  assert.ok(result.stops.some(s => /^rivi 01 puuttuu/.test(s)));
+  assert.equal(result.stops.some(s => /17\.10.*vähintään/.test(s)), false, result.stops.join('; '));
+
+  const old = { ...rows0008(), '01': '140009', '02': '14.9' };
+  assert.ok(scoreInventory(old).stops.some(s => /server_version_num 140009 \(14\.9\)/.test(s)));
+});
+
+test('puuttuva migraatiorivi: viesti sanoo "puuttuu", ei "undefined"', () => {
+  const rows = rows0008();
+  delete rows['22'];
+  const result = scoreInventory(rows);
+  assert.equal(result.decision, 'STOP');
+  assert.ok(result.stops.some(s => /rivi 22 puuttuu/.test(s)));
+  assert.equal(result.stops.some(s => /undefined/.test(s)), false, result.stops.join('; '));
+});
+
+test('KRIITTINEN: taulukko ilman rivejä 50–52 ei ole inventaario (exit 2)', () => {
+  const rows = rows0008();
+  const table = Object.entries(rows).filter(([k]) => !['50', '51', '52'].includes(k))
+    .map(([k, v]) => `${k}\tosio\ttarkistus\t${v}`).join('\n');
+  assert.equal(parseInventory(table), null);
+  // Mikä tahansa yli kymmenen rivin taulukko ei enää kelpaa.
+  const random = Array.from({ length: 20 }, (_, i) => `${String(i + 10)}\ta\tb\t1`).join('\n');
+  assert.equal(parseInventory(random), null);
+  assert.ok(TABLE_REQUIRED_ROWS.includes('50') && TABLE_REQUIRED_ROWS.includes('30'));
+});
+
+test('JSON-solu kelpaa myös muotoiltuna (välilyönnit)', () => {
+  const pretty = JSON.stringify({ inventory: 'mv-activation-v1', rows: rows0008() }, null, 2);
+  assert.equal(scoreInventory(parseInventory(pretty)).nextMigration, '0009');
+});
+
+test('rivi 89 (kesto > 0) on inventaariossa ja pisteytyksen faktoissa, mutta ei pakollinen', () => {
+  const sql = read(INVENTORY);
+  assert.match(sql, /select '89'::text as nro/);
+  assert.match(sql, /duration_minutes > 0/);
+  assert.equal(ROW.tasksWithPositiveDuration, '89');
+  assert.equal(REQUIRED_ROWS.includes('89'), false);
+  const withRow = { ...rows0008(), 89: '1' };
+  assert.equal(scoreInventory(withRow).facts.tasksWithPositiveDuration, 1);
+  assert.equal(scoreInventory(rows0008()).facts.tasksWithPositiveDuration, null);
+});
+
+// =====================================================================
+// ACT-05: KOODIAALTO + KANTA -> SEURAAVA TOIMENPIDE
+// =====================================================================
+
+const CODE_WAVES = ['BASE', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J'];
+
+/** Täysi odotustaulukko: tila -> koodiaalto -> [päätös, laji, aalto, migraatio]. */
+const EXPECTED_ACTIONS = {
+  '0008': { C: ['GO', 'DEPLOY', 'D'], D: ['GO', 'DEPLOY', 'E'], E: ['GO', 'MIGRATE', 'F', '0009'] },
+  '0009': { E: ['GO', 'DEPLOY', 'F'], F: ['GO', 'MIGRATE', 'G', '0010'] },
+  '0010': { F: ['GO', 'DEPLOY', 'G'], G: ['GO', 'MIGRATE', 'H', '0011'] },
+  '0011': { G: ['GO', 'DEPLOY', 'H'], H: ['GO', 'MIGRATE', 'I', '0012'] },
+  '0012': { H: ['GO', 'DEPLOY', 'I'], I: ['GO', 'MIGRATE', 'J', '0013'] },
+  '0013': { I: ['GO', 'DEPLOY', 'J'], J: ['GO', 'DONE', 'J'] }
+};
+const DB_WAVE = { '0008': 'E', '0009': 'F', '0010': 'G', '0011': 'H', '0012': 'I', '0013': 'J' };
+
+test('KRIITTINEN: koko taulukko — tila 0008–0013 × koodiaalto BASE, A–J', () => {
+  for (const [state, expectations] of Object.entries(EXPECTED_ACTIONS)) {
+    const rows = parseInventory(fixture(`state-${state}.json`));
+    const dbIndex = CODE_WAVES.indexOf(DB_WAVE[state]);
+    for (const codeWave of CODE_WAVES) {
+      const c = classifyActivation(rows, { codeWave });
+      const label = `${state} × ${codeWave}`;
+      assert.equal(c.currentDbWave, DB_WAVE[state], label);
+      assert.equal(c.lastMigration, state, label);
+      const expected = expectations[codeWave];
+      if (expected) {
+        const [decision, kind, wave, migration] = expected;
+        assert.equal(c.decision, decision, `${label}: ${c.reason}`);
+        assert.equal(c.nextAction.kind, kind, label);
+        assert.equal(c.nextAction.wave, wave, label);
+        if (migration) assert.equal(c.nextAction.migration, migration, label);
+      } else {
+        assert.equal(c.decision, 'STOP', `${label}: ${c.reason}`);
+        const ahead = CODE_WAVES.indexOf(codeWave) > dbIndex;
+        assert.equal(c.nextAction.kind, ahead ? 'ROLLBACK_CODE' : 'STOP', label);
+      }
+    }
+  }
+});
+
+test('ACT-05 yksityiskohdat: esitarkistus, varmuuskopio, verify_0012-edellytys ja sallitut aallot', () => {
+  const at = (state, codeWave) => classifyActivation(parseInventory(fixture(`state-${state}.json`)), { codeWave });
+  assert.equal(at('0008', 'E').nextAction.preflight, 'supabase/preflight/preflight_0009.sql');
+  assert.equal(at('0008', 'E').nextAction.ownerGate, 'OWNER_PRODUCTION_MIGRATION_APPROVAL_REQUIRED');
+  assert.equal(at('0008', 'C').nextAction.ownerGate, 'OWNER_DEPLOY_APPROVAL_REQUIRED');
+  assert.equal(at('0008', 'C').nextAction.requiresAcceptanceOf, 'C');
+  assert.equal(at('0009', 'F').nextAction.backupRequired, true);
+  assert.equal(at('0008', 'E').nextAction.backupRequired, false);
+  assert.equal(at('0012', 'I').nextAction.verifyPrerequisite, 'supabase/verify/verify_0012.sql');
+  assert.equal(at('0009', 'E').nextAction.verify, 'supabase/verify/verify_0009.sql');
+  assert.match(at('0008', 'F').reason, /koodi edellä kantaa/);
+  assert.deepEqual(at('0008', 'C').allowedCodeWaves, ['C', 'D', 'E']);
+  assert.deepEqual(at('0010', 'G').allowedCodeWaves, ['F', 'G']);
+  assert.equal(at('0013', 'J').nextAction.kind, 'DONE');
+});
+
+test('KRIITTINEN: keskeneräinen 0012 ja puuttuva omistaja pysäyttävät jokaisella koodiaallolla', () => {
+  for (const name of ['state-0011-partial-0012.json', 'state-0008-no-owner.json']) {
+    const rows = parseInventory(fixture(name));
+    for (const codeWave of [...CODE_WAVES, null]) {
+      const c = classifyActivation(rows, { codeWave });
+      assert.equal(c.decision, 'STOP', `${name} × ${codeWave}`);
+      assert.equal(c.nextAction.kind, 'STOP', `${name} × ${codeWave}`);
+    }
+  }
+});
+
+test('KRIITTINEN: koodiaalto tuntematon -> STOP VERIFY_CODE_WAVE, odotus silti kerrotaan', () => {
+  const c = classifyActivation(parseInventory(fixture('state-0008.json')), { codeWave: null });
+  assert.equal(c.decision, 'STOP');
+  assert.equal(c.nextAction.kind, 'VERIFY_CODE_WAVE');
+  assert.equal(c.expectedCodeWave, 'E');
+  assert.equal(c.currentDbWave, 'E');
+  // Kannan terveys (scoreInventory) on ennallaan GO.
+  assert.equal(c.base.decision, 'GO');
+});
+
+test('CLI-rivit: CURRENT_DB_WAVE, EXPECTED_CODE_WAVE, NEXT_ACTION ja GO/STOP + syy', async () => {
+  const { classificationLines } = await import('../tools/activation/score-inventory.mjs');
+  const rows = parseInventory(fixture('state-0008.json'));
+  const go = classificationLines(classifyActivation(rows, { codeWave: 'C' }));
+  assert.equal(go[0], 'CURRENT_DB_WAVE: E (viimeisin ajettu migraatio 0008)');
+  assert.equal(go[1], 'EXPECTED_CODE_WAVE: E (sallitut koodiaallot: C, D, E)');
+  assert.equal(go[3], 'NEXT_ACTION: DEPLOY D');
+  assert.match(go[4], /^GO: kanta 0008 tukee aaltoa E, tuotannossa C: deployaa D/);
+  const migrate = classificationLines(classifyActivation(parseInventory(fixture('state-0009.json')), { codeWave: 'F' }));
+  assert.match(migrate[3], /^NEXT_ACTION: MIGRATE G 0010 \[esitarkistus supabase\/preflight\/preflight_0010\.sql\] \[VARMUUSKOPIO PAKOLLINEN\]/);
+  const stop = classificationLines(classifyActivation(rows, { codeWave: 'F' }));
+  assert.match(stop[4], /^STOP: koodi edellä kantaa/);
+});
+
+test('hyväksytty aalto ja lukon SHA kulkevat toimenpiteeseen', () => {
+  const lock = JSON.parse(read('docs/activation/release-train-c-j.json'));
+  const c = classifyActivation(parseInventory(fixture('state-0008.json')), { codeWave: 'C', acceptedWaves: ['C'], lock });
+  assert.equal(c.nextAction.requiresAcceptanceOf, null);
+  assert.equal(c.nextAction.expectedSha, lock.waves.find(w => w.wave === 'D').deployTarget);
+});
+
+// =====================================================================
+// TUOTANNON INVENTAARIO 2026-09-26 (rekonstruoitu yhteenvedosta)
+// =====================================================================
+
+const PRODUCTION = 'production-2026-09-26.json';
+
+test('KRIITTINEN: tuotannon inventaario 2026-09-26: kanta GO (0008), koodi C -> DEPLOY D', () => {
+  const rows = parseInventory(fixture(PRODUCTION));
+  const base = scoreInventory(rows);
+  assert.equal(base.decision, 'GO', base.stops.join('; '));
+  assert.equal(base.nextMigration, '0009');
+  assert.equal(base.facts.postgres, '17.6');
+  assert.equal(base.facts.authUsers, 1);
+  assert.equal(base.facts.tasks, 36);
+  assert.equal(base.facts.tasksWithDuration, 0);
+  const c = classifyActivation(rows, { codeWave: 'C' });
+  assert.equal(c.decision, 'GO');
+  assert.equal(c.currentDbWave, 'E');
+  assert.equal(c.nextAction.kind, 'DEPLOY');
+  assert.equal(c.nextAction.wave, 'D');
+});
+
+test('KRIITTINEN: tuotannon fixture kertoo provenienssin, ja rivi 43 on merkitty johdetuksi', () => {
+  const parsed = JSON.parse(fixture(PRODUCTION));
+  const p = parsed.provenance;
+  assert.equal(p.reconstructed, true);
+  assert.equal(p.capturedOn, '2026-09-26');
+  assert.ok(fs.existsSync(path.join(ROOT, p.doc)), p.doc);
+  assert.equal(parsed.rows['43'], '1');
+  assert.match(p.derived['43'], /EI HAVAITTU/);
+  // Jokainen rivi on joko havaittu tai johdettu — ei kolmatta, selittämätöntä luokkaa.
+  for (const key of Object.keys(parsed.rows)) {
+    assert.ok(p.observed.includes(key) || key in p.derived, `rivi ${key}: ei havaittu eikä johdettu`);
+    assert.equal(p.observed.includes(key) && key in p.derived, false, `rivi ${key}: sekä havaittu että johdettu`);
+  }
+  for (const key of Object.keys(p.omitted)) assert.equal(key in parsed.rows, false, `rivi ${key} on pois jätetty mutta mukana`);
+  // Dokumentin "Johdettu"-taulukko nimeää jokaisen johdetun rivin (yksittäin tai välinä 11–17).
+  const doc = read(p.doc);
+  const section = doc.slice(doc.indexOf('## Johdettu'), doc.indexOf('## Jätetty pois'));
+  const named = new Set();
+  for (const m of section.matchAll(/^\| \**(\d{2})(?:–(\d{2}))?\**/gm)) {
+    const from = Number(m[1]);
+    const to = Number(m[2] || m[1]);
+    for (let n = from; n <= to; n++) named.add(String(n).padStart(2, '0'));
+  }
+  assert.deepEqual([...named].sort(), Object.keys(p.derived).sort(), 'dokumentin johdetut rivit eivät vastaa fixturea');
+});
+
+test('KRIITTINEN: pelkillä havaituilla riveillä pisteytys pysähtyy ja nimeää puuttuvat rivit', () => {
+  const parsed = JSON.parse(fixture(PRODUCTION));
+  const observed = Object.fromEntries(Object.entries(parsed.rows).filter(([k]) => parsed.provenance.observed.includes(k)));
+  const result = scoreInventory(observed);
+  assert.equal(result.decision, 'STOP');
+  for (const key of ['10', '11', '17', '22', '43']) {
+    assert.ok(result.stops.some(s => s.startsWith(`rivi ${key} puuttuu`)), `rivi ${key}: ${result.stops.join('; ')}`);
+  }
 });

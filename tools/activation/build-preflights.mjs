@@ -16,17 +16,21 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EXPECTED } from './build-inventory.mjs';
+import { MIGRATION_WAVE, TRAIN_MIGRATIONS, WAVES } from '../release/waves.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const OWNER = '2cc00622-f927-4604-a518-361a4328481b';
 
+// Migraatio -> tiedosto ja migraatio -> aalto luetaan waves.mjs:stä
+// (ACT-12), ei kopioida käsin. 0008 on junaa edeltävä migraatio, jonka
+// esitarkistus 0009 tarvitsee "edellinen ajettu" -rivinä.
 const FILES = Object.freeze({
-  '0008': '0008_ai_audit.sql', '0009': '0009_finance_2.sql', '0010': '0010_goal_to_action.sql',
-  '0011': '0011_personal_assistant.sql', '0012': '0012_life_alignment.sql',
-  '0013': '0013_alignment_reality.sql'
+  '0008': '0008_ai_audit.sql',
+  ...Object.fromEntries(WAVES.filter(w => w.migration)
+    .map(w => [w.migration, path.posix.basename(w.migrationFile)]))
 });
 
-const WAVE = Object.freeze({ '0009': 'F', '0010': 'G', '0011': 'H', '0012': 'I', '0013': 'J' });
+const WAVE = MIGRATION_WAVE;
 
 function detection(number) {
   const src = fs.readFileSync(path.join(ROOT, 'supabase/migrations', FILES[number]), 'utf8').replace(/\r\n/g, '\n');
@@ -152,7 +156,7 @@ order by c.check_no;
 `;
 }
 
-export const PREFLIGHT_NUMBERS = Object.freeze(['0009', '0010', '0011', '0012', '0013']);
+export const PREFLIGHT_NUMBERS = TRAIN_MIGRATIONS;
 
 if (process.argv[1] && process.argv[1].endsWith('build-preflights.mjs')) {
   let stale = 0;

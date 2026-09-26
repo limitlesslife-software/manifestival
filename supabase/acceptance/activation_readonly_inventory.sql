@@ -615,6 +615,11 @@ with rivit as (
   select '88'::text as nro, 'data'::text as osio, 'rivejä: alignment_item_settings'::text as tarkistus,
          (case when to_regclass('public.alignment_item_settings') is null then 'puuttuu'
               else (xpath('/row/c/text()', query_to_xml('select count(*) as c from public.alignment_item_settings', false, true, '')))[1]::text end)::text as arvo
+  union all
+  select '89'::text as nro, 'data'::text as osio, 'Tehtäviä, joilla kesto > 0 (rivin 62 tarkennus)'::text as tarkistus,
+         (case when (select count(*) from information_schema.columns
+        where table_schema = 'public' and table_name = 'tasks' and column_name = 'duration_minutes') = 0 then 'puuttuu'
+        else (xpath('/row/c/text()', query_to_xml('select count(*) as c from public.tasks where duration_minutes > 0', false, true, '')))[1]::text end)::text as arvo
 )
 select '00' as nro, 'tiiviste' as osio, 'KOPIOI TÄMÄ SOLU CLAUDELLE' as tarkistus,
        json_build_object('inventory', 'mv-activation-v1',

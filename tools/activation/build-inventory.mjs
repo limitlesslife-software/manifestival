@@ -123,6 +123,20 @@ export function buildInventorySql() {
     rows.push(row(String(dn++), 'data', `rivejä: ${table}`, countIfExists(table)));
   }
 
+  // RIVI 89: tehtäviä, joiden kesto on POSITIIVINEN (ACT-11).
+  //
+  // Rivi 62 laskee `duration_minutes is not null`. Jos tuotanto tallentaa
+  // arvioimattoman keston nollana, rivi 62 liioittelee arvioituja
+  // tehtäviä. Uusi rivi lisätään LOPPUUN eikä olemassa olevia numeroida
+  // uudelleen: liitetyt vanhat inventaariot ja fixturet pysyvät
+  // luettavina, ja pisteytys ei vaadi tätä riviä.
+  if (dn !== 89) {
+    throw new Error(`rivilaskuri on ${dn}, ei 89: uusi taulu törmäisi riviin 89 — numeroi rivitaulukko uudelleen harkiten`);
+  }
+  rows.push(row('89', 'data', 'Tehtäviä, joilla kesto > 0 (rivin 62 tarkennus)', `case when (select count(*) from information_schema.columns
+        where table_schema = 'public' and table_name = 'tasks' and column_name = 'duration_minutes') = 0 then 'puuttuu'
+        else (xpath('/row/c/text()', query_to_xml('select count(*) as c from public.tasks where duration_minutes > 0', false, true, '')))[1]::text end`));
+
   const union = rows.join('\n  union all\n');
   const expected = Object.entries(EXPECTED).map(([k, v]) => `${k}=${v}`).join(' ');
 
