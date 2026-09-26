@@ -12,7 +12,7 @@
 
 import { todayMidnight, startOfWeek } from '../lib/datetime.js';
 import { getDevicePreference, clearDevicePreferences } from '../data/preferences.js';
-import { subscribe, resetState, setViewDate, setWeekStart, getState } from './state.js';
+import { subscribe, resetState, setViewDate, setWeekStart, getState, batch } from './state.js';
 import { loadUserData, clearLocalUserData } from './actions.js';
 import { renderTimerBar, initTimeLog, closeTimeLogDialog } from './views/timeLog.js';
 import { restoreLocalTimer, initTimerCrossTabSync, stopTimerCrossTabSync, resetTimerSync } from './timerState.js';
@@ -22,7 +22,10 @@ import {
 } from './alignment.js';
 import { createReconnectController } from './reconnect.js';
 import { initAuth, showAuthGate, hideAuthGate } from './auth.js';
-import { initNavigation, restoreLastScreen } from './navigation.js';
+import {
+  initNavigation, restoreLastScreen, setScreenRenderers, markScreensDirty, renderVisible,
+  renderEveryScreen, forgetRenderedScreens
+} from './navigation.js';
 import { initVoice } from './voice.js';
 import { initSearch, closeSearch } from './search.js';
 import { initOnboarding, maybeShowOnboarding } from './onboarding.js';
@@ -30,7 +33,7 @@ import { renderToday, initTodayNavigation } from './views/today.js';
 import { renderWeek, initWeekNavigation } from './views/week.js';
 import { renderTasks, initTaskForm, closeForm } from './views/tasks.js';
 import { initRoutineForm, closeRoutineForm } from './views/routines.js';
-import { renderGoals, initGoalForm, closeGoalForm } from './views/goals.js';
+import { renderGoals, initGoalForm, closeGoalForm, refreshGoalPicker } from './views/goals.js';
 import { renderProjects, initProjectForm, closeProjectForm } from './views/projects.js';
 import {
   renderFinance, initFinanceForms,
@@ -45,7 +48,7 @@ import { initPlanning, resetPlanning } from './views/planning.js';
 import { clearIdempotencyKeys } from './planning.js';
 import { renderProfile, initProfileForm, fillProfileForm } from './views/profile.js';
 import { renderNotificationSettings } from './views/notificationSettings.js';
-import { initInbox, closeCaptureReview } from './views/inbox.js';
+import { initInbox, closeCaptureReview, renderInbox } from './views/inbox.js';
 import { initReminderForm, closeReminderForm } from './views/reminders.js';
 import { initTravelForms, closeTravelForm, closeLocationRuleForm }
   from './views/travel.js';
@@ -118,7 +121,8 @@ async function sendPending() {
 async function loadFresh() {
   const mark = beginDataLoad();
   const result = await loadUserData();
-  if (!result.discarded) keepWritesSince(mark);
+  // Palautetut tallennukset yhtenä ilmoituksena (loadUserData on jo yksi).
+  if (!result.discarded) batch(() => keepWritesSince(mark));
   return result;
 }
 
@@ -177,21 +181,40 @@ function registerServiceWorker() {
   });
 }
 
-/** Renderöi kaikki näkymät. Kutsutaan tilamuutoksesta. */
+/**
+ * Näyttöjen piirtäjät. Näyttö piirretään vain näkyvänä (renderAll) tai
+ * juuri ennen näyttämistä (navigation.js switchTab) — ei jokaisesta
+ * tilamuutoksesta piilossa (CRIT-01).
+ *
+ * Ryhmässä on kaikki, mitä näytön DOM:issa näkyy, myös toisen moduulin
+ * täyttämä osa: tehtävälomakkeen tavoitevalikko (refreshGoalPicker) ja
+ * päivänäkymän kirjauksen tarkistuskortti (renderInbox).
+ */
+const SCREEN_RENDERERS = Object.freeze({
+  'screen-today': () => { renderToday(); renderInbox(); renderNotices(); },
+  'screen-direction': () => { renderDirection(); },
+  'screen-week': () => { renderWeek(); },
+  'screen-tasks': () => { renderTasks(); refreshGoalPicker(); },
+  'screen-goals': () => { renderGoals(); renderProjects(); },
+  'screen-finance': () => { renderFinance(); },
+  'screen-profile': () => { renderProfile(); renderNotificationSettings(); }
+});
+
+/** Joka tilamuutoksessa: ajastinpalkki ja päivän Suunta-kortti (kevyt, välimuistista). */
+const ALWAYS_RENDERED = Object.freeze([renderTimerBar, renderTodayDirection]);
+
+/**
+ * Piirrä tilamuutoksen jälkeen. Kutsutaan tilamuutoksesta (subscribe).
+ *
+ * VAIN NÄKYVÄ PIIRRETÄÄN HETI: ajastinpalkki, päivän Suunta-kortti ja avoin
+ * näyttö (navigation.js renderVisible). Muut merkitään likaisiksi, ja
+ * switchTab piirtää likaisen näytön ennen kuin näyttää sen. Aiemmin jokainen
+ * tilamuutos piirsi kaikki näytöt, myös piilossa olevan Suunnan
+ * viikkoanalyyseineen (CRIT-01).
+ */
 function renderAll() {
   if (!signedIn) return;
-  renderTimerBar();
-  renderToday();
-  renderTodayDirection();
-  renderDirection();
-  renderWeek();
-  renderTasks();
-  renderGoals();
-  renderProjects();
-  renderFinance();
-  renderProfile();
-  renderNotificationSettings();
-  renderNotices();
+  renderVisible();
 }
 
 /**
@@ -312,7 +335,7 @@ async function onSignedIn() {
   // tilan, joka natiivikuoressa on luettavissa vain asynkronisesti.
   await refreshNotificationPermission();
 
-  renderAll();
+  renderEveryScreen();
 
   // Muistutukset synkronoidaan vasta kun data on ladattu. Jos käyttäjä ei
   // ole kytkenyt niitä päälle, tämä peruu aiemmin ajastetut eikä tee muuta.
@@ -344,6 +367,8 @@ function onSignedOut() {
   cancelDeviceNotifications().catch(() => {});
   reconnect.cancelPending();
   lastNotifiableRefs = { tasks: null, routines: null, routineExceptions: null, travelPlans: null };
+  // Seuraavan istunnon ensimmäinen piirto ei luota edellisen piirtoihin.
+  forgetRenderedScreens();
   closeForm();
   closeRoutineForm();
   closeGoalForm();
@@ -432,7 +457,8 @@ async function start() {
   initSearch();
   initOnboarding();
 
-  // 2. Näkymät seuraavat tilaa.
+  // 2. Näkymät seuraavat tilaa: avoin näyttö heti, muut ennen näyttämistä.
+  setScreenRenderers(SCREEN_RENDERERS, { always: ALWAYS_RENDERED, enabled: () => signedIn });
   subscribe(renderAll);
   subscribe(watchNotifiableChanges);
   // Skeematarkistuksen tila (rajoitettu / huoltokatko) ENNEN istunnon
@@ -458,6 +484,9 @@ async function start() {
   // 4. NYT/MYÖHÄSSÄ/ETUAJASSA pysyy ajan tasalla ilman sivun päivitystä.
   setInterval(() => {
     if (!signedIn) return;
+    // Aika kului: piilossa olevat näytöt (esim. "tänään"-korostus, rästit)
+    // piirretään uudelleen, kun ne seuraavan kerran avataan.
+    markScreensDirty();
     renderToday();
     runAssistantSweeps();
     // Lähettämättömät aikakirjaukset uudelleen (F16): heikko kenttä tai
@@ -484,6 +513,7 @@ async function start() {
   lifecycle.bind({
     onResume: () => {
       if (!signedIn) return;
+      markScreensDirty();
       renderToday();
       runAssistantSweeps();
       syncNotifications().catch(error => {

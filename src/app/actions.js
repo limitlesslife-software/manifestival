@@ -82,7 +82,7 @@ import {
   removeMilestoneFromState, findMilestone, replaceMilestonesInState,
   setPendingReplan, clearPendingReplan,
   setInboxItems, setReminders, setNotices, setTravelPlans, setLocationRules,
-  setAiAudit, setDomainLoadStatus,
+  setAiAudit, setDomainLoadStatus, batch,
   setLifeAreas, setWeeklyCapacities, setTimeEntries, setAlignmentReviews,
   setAlignmentItemSettings, removeItemSettingsFromState
 } from './state.js';
@@ -210,6 +210,19 @@ export async function loadUserData() {
     alignmentItemSettingsRepo.list(),
     runningTimersRepo.list()
   ]);
+
+  // Istunto on voinut vaihtua odotuksen aikana.
+  if (!isSameSession(startedIn)) {
+    return { tasksOk: false, profileOk: false, discarded: true };
+  }
+
+  // Koko tulos tilaan YHDELLÄ ilmoituksella (state.js batch): muuten
+  // jokainen kokoelma ja sen latausstatus piirsi näkymät erikseen (CRIT-01).
+  return batch(() => applyLoadedData(loaded, timerSeq));
+}
+
+/** loadUserData():n hakutulokset tilaan. Synkroninen: ajetaan batchissa. */
+function applyLoadedData(loaded, timerSeq) {
   const [tasksResult, profileResult, routinesResult, exceptionsResult,
     goalsResult, projectsResult, wellbeingResult, preferencesResult,
     billsResult, expensesResult, savingsResult, transactionsResult,
@@ -217,11 +230,6 @@ export async function loadUserData() {
     inboxResult, remindersResult, noticesResult, travelResult,
     locationResult, areasResult, capacitiesResult, entriesResult,
     reviewsResult, itemSettingsResult, timersResult] = loaded;
-
-  // Istunto on voinut vaihtua odotuksen aikana.
-  if (!isSameSession(startedIn)) {
-    return { tasksOk: false, profileOk: false, discarded: true };
-  }
 
   // Jokainen kokoelma kulkee applyLoadResult():n läpi: onnistunut haku
   // korvaa kokoelman (myös tyhjällä listalla — se on kelvollinen tulos),

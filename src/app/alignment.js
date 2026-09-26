@@ -7,7 +7,8 @@
 // KAKSI SÄÄNTÖÄ:
 //
 //   1. Havaintoja ei tallenneta. analyzeCurrentWeek() laskee ne aina
-//      tilan lähdefaktoista. Ainoa tallennettu johdos on viikkokatsauksen
+//      tilan lähdefaktoista (samoille kokoelmille vain muistissa oleva
+//      välimuisti). Ainoa tallennettu johdos on viikkokatsauksen
 //      tilannekuva, ja se on tarkoituksella historiaa.
 //
 //   2. Mikään muutosehdotus ei muuta mitään ilman vahvistusta.
@@ -113,7 +114,48 @@ export function analysisLoadProblems(state = getState()) {
 }
 
 /**
+ * Analyysien välimuisti (CRIT-01). Yksi piirto tarvitsee saman viikon
+ * analyysin useaan kertaan (Suunta, päivän kortti, vertailu, ehdotukset),
+ * ja jokainen tilamuutos piirtää uudelleen: ilman välimuistia yksi piirto
+ * teki noin kuusi täyttä analyysia.
+ *
+ * AVAIN ON KOKOELMIEN VIITTAUKSET, EI SISÄLTÖ. Tilan kokoelmia ei koskaan
+ * mutatoida paikallaan: jokainen muutos korvaa taulukon uudella (state.js),
+ * joten sama viittaus tarkoittaa samaa sisältöä (sama periaate kuin
+ * main.js:n muistutusten vahdissa). Lisäksi avaimessa ovat viikko, päivä ja
+ * minuutti: analyysi riippuu kellosta ("jäljellä tällä viikolla").
+ *
+ * Tulosta EI SAA MUTATOIDA: sama olio palautetaan kaikille kutsujille.
+ * Pieni LRU riittää: kahdeksan viikon kehitys, seuraava viikko ja
+ * mahdollinen toinen katseltu viikko mahtuvat kerralla.
+ */
+const ANALYSIS_CACHE_SIZE = 12;
+let analysisCache = [];
+/** Vaihdettavissa testeissä (setWeekAnalyzerForTests): laskee kutsut. */
+let weekAnalyzer = analyzeWeek;
+
+/** Analyysin lähdekokoelmat: vain nämä vaikuttavat analyzeWeek()-tulokseen. */
+function analysisSources(state) {
+  return [
+    state.lifeAreas, state.goals, state.projects, state.tasks, state.routines,
+    state.routineExceptions, state.timeEntries, state.weeklyCapacities, state.alignmentItemSettings
+  ];
+}
+
+/**
+ * Vain testeille: korvaa analyzeWeek (esim. kutsujen laskenta) ja tyhjennä
+ * välimuisti. null palauttaa oikean analyysin.
+ */
+export function setWeekAnalyzerForTests(analyzer) {
+  weekAnalyzer = typeof analyzer === 'function' ? analyzer : analyzeWeek;
+  analysisCache = [];
+}
+
+/**
  * Viikon analyysi tilan lähdefaktoista. Ei tallenna mitään.
+ *
+ * Välimuistista, kun kokoelmat, viikko, päivä ja minuutti ovat samat (ks.
+ * ANALYSIS_CACHE_SIZE). Palautettu olio on jaettu: älä muuta sitä.
  *
  * @param {string} [weekStart] mikä tahansa viikon päivä (oletus: tämä viikko)
  * @param {{todayIso?: string, nowMinutes?: number}} [clock]
@@ -121,7 +163,17 @@ export function analysisLoadProblems(state = getState()) {
 export function analyzeCurrentWeek(weekStart = null, clock = clockNow()) {
   const state = getState();
   const monday = weekStartOf(weekStart || clock.todayIso || fmtISO(todayMidnight()));
-  return analyzeWeek({
+  const todayIso = clock.todayIso;
+  const minute = Number.isFinite(clock.nowMinutes) ? Math.floor(clock.nowMinutes) : clock.nowMinutes;
+  const sources = analysisSources(state);
+  const hit = analysisCache.findIndex(entry => entry.monday === monday && entry.todayIso === todayIso
+    && entry.minute === minute && entry.sources.every((source, index) => source === sources[index]));
+  if (hit >= 0) {
+    const [entry] = analysisCache.splice(hit, 1);
+    analysisCache.unshift(entry);
+    return entry.analysis;
+  }
+  const analysis = weekAnalyzer({
     weekStart: monday,
     todayIso: clock.todayIso,
     nowMinutes: clock.nowMinutes,
@@ -135,10 +187,22 @@ export function analyzeCurrentWeek(weekStart = null, clock = clockNow()) {
     capacity: capacityForWeek(state.weeklyCapacities, monday),
     itemSettings: state.alignmentItemSettings
   });
+  analysisCache.unshift({ monday, todayIso, minute, sources, analysis });
+  if (analysisCache.length > ANALYSIS_CACHE_SIZE) analysisCache.length = ANALYSIS_CACHE_SIZE;
+  return analysis;
+}
+
+/** Laskettujen ehdotuskierrosten määrä (vain testeille: proposalRunsForTests). */
+let proposalRuns = 0;
+
+/** Vain testeille: montako kertaa currentProposals() on laskenut ehdotukset. */
+export function proposalRunsForTests() {
+  return proposalRuns;
 }
 
 /** Seuraavan viikon muutosehdotukset tämän viikon analyysista. */
 export function currentProposals(analysis, clock = clockNow()) {
+  proposalRuns += 1;
   const state = getState();
   const next = nextWeekStart(analysis.weekStart);
   const nextAnalysis = analyzeCurrentWeek(next, clock);
@@ -823,6 +887,8 @@ export function resetAlignmentSession() {
   outboxFlush = null;
   recentWrites.length = 0;
   weekSaves.clear();
+  // Analyysit sisältävät edellisen käyttäjän alueet ja kohteet.
+  analysisCache = [];
 }
 
 /**

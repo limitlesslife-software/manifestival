@@ -1,8 +1,13 @@
 // Suunta-näkymä: elämänalueet, viikon kapasiteetti, suunnitelma vs.
 // toteuma, havainnot ja viikkokatsaus.
 //
-// Näkymä ei laske mitään itse: yksi analyzeCurrentWeek()-kutsu per
-// renderöinti, ja jokainen osio lukee saman tuloksen. Havainnon
+// Näkymä ei laske mitään itse: analyysit tulevat alignment.js:n
+// analyzeCurrentWeek()-välimuistista. Piirto tarvitsee tämän viikon,
+// vertailuun edellisen, ehdotuksiin seuraavan ja kaksi edellistä sekä
+// päivän korttiin kuluvan viikon — muuttumattomilla kokoelmilla ne ovat
+// välimuistiosumia, eikä ehdotuksia lasketa uudelleen saman analyysin
+// päälle (tests/render-cost.test.mjs). Piilossa olevaa Suuntaa ei
+// piirretä lainkaan (main.js renderAll, navigation.js). Havainnon
 // vakavuus kerrotaan aina TEKSTINÄ (ei vain värillä), ja jokaisella
 // havainnolla on "Miksi?"-osio, joka näyttää säännön ja luvut.
 //
@@ -69,6 +74,12 @@ let renderedWeek = null;
 let editingAreaId = null;
 /** Viimeksi näytetyt ehdotukset: painike viittaa tunnisteella. */
 let shownProposals = [];
+/**
+ * Analyysi, jolle shownProposals laskettiin. Sama analyysiolio
+ * (välimuistiosuma) tarkoittaa samoja lähdekokoelmia ja kelloa, joten
+ * ehdotukset ovat samat eikä niitä lasketa uudelleen.
+ */
+let proposalsAnalysis = null;
 /** Valitut ehdotukset ryhmävahvistusta varten. */
 let selectedProposalIds = new Set();
 /** Viimeisin esikatselu (valinnoille); valinnan muutos mitätöi sen. */
@@ -1078,9 +1089,11 @@ function goalsHtml(areas, goals) {
 }
 
 /** Kirjauksen kohde sanoin: alue, tehtävä, rutiini, projekti tai tavoite. */
-function entryTargetLabel(entry, byId) {
+function entryTargetLabel(entry, byId, tasksById) {
   if (entry.lifeAreaId && byId.has(entry.lifeAreaId)) return byId.get(entry.lifeAreaId).name;
-  if (entry.taskId && findTask(entry.taskId)) return findTask(entry.taskId).title;
+  // Hakemisto, ei findTask(): lineaarinen haku jokaiselle kirjaukselle teki
+  // listasta kirjaukset × tehtävät -kokoisen (2000 tehtävää: piirron suurin kulu).
+  if (entry.taskId && tasksById.has(entry.taskId)) return tasksById.get(entry.taskId).title;
   if (entry.routineId && findRoutine(entry.routineId)) return findRoutine(entry.routineId).title;
   if (entry.projectId && findProject(entry.projectId)) return findProject(entry.projectId).name;
   if (entry.goalId && findGoal(entry.goalId)) return findGoal(entry.goalId).title;
@@ -1112,6 +1125,8 @@ function timeListHtml(entries, areas) {
   });
   const tasksById = new Map(state.tasks.map(task => [task.id, task]));
   const activeAreas = areas.filter(area => area.active);
+  // Sama valikko jokaiselle alueettomalle: järjestetään kerran, ei riveittäin.
+  const assignOptions = areaOptions(activeAreas, null, 'Valitse alue');
   const unassigned = entry => !areaForTimeEntry(entry, index, tasksById).areaId;
   const shown = timeListUnassignedOnly ? entries.filter(unassigned) : entries;
   const filterNote = timeListUnassignedOnly
@@ -1134,14 +1149,14 @@ function timeListHtml(entries, areas) {
       ? `<div class="dir-time-assign">
           <label class="field-label" for="dirTimeAssign-${escapeHtml(entry.id)}">Liitä alueeseen (${escapeHtml(label)})</label>
           <select id="dirTimeAssign-${escapeHtml(entry.id)}" data-time-area="${escapeHtml(entry.id)}">
-            ${areaOptions(activeAreas, null, 'Valitse alue')}</select>
+            ${assignOptions}</select>
         </div>`
       : '';
     return `
     <div class="assist-row">
       <div class="assist-meta">
         ${escapeHtml(shortDate(entry.entryDate))} · ${escapeHtml(hours(entry.minutes))}
-        · ${escapeHtml(entryTargetLabel(entry, byId))}
+        · ${escapeHtml(entryTargetLabel(entry, byId, tasksById))}
         · ${entry.source === 'timer' ? 'Ajastin' : 'Käsin'}${tag(entry)}
       </div>
       ${entry.note ? `<div class="assist-reason">${escapeHtml(entry.note)}</div>` : ''}
@@ -1565,7 +1580,13 @@ export function renderDirection() {
     if (!field || document.activeElement === field || field.dataset.dirty) continue;
     field.value = existingReview && existingReview.reflectionAnswers ? existingReview.reflectionAnswers[code] || '' : '';
   }
-  shownProposals = incomplete ? [] : currentProposals(analysis);
+  if (incomplete) {
+    shownProposals = [];
+    proposalsAnalysis = null;
+  } else if (proposalsAnalysis !== analysis) {
+    shownProposals = currentProposals(analysis);
+    proposalsAnalysis = analysis;
+  }
   const ids = new Set(shownProposals.map(proposal => proposal.id));
   selectedProposalIds = new Set([...selectedProposalIds].filter(id => ids.has(id)));
   for (const map of [proposalErrors, proposalDrafts]) {
@@ -2385,6 +2406,7 @@ export function resetDirectionView() {
   pinnedByDraft = false;
   editingAreaId = null;
   shownProposals = [];
+  proposalsAnalysis = null;
   selectedProposalIds = new Set();
   lastPreview = null;
   estimateOpen = false;

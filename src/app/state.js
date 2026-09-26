@@ -222,7 +222,20 @@ export function subscribe(listener) {
   return () => listeners.delete(listener);
 }
 
+/**
+ * Sisäkkäisten batch()-kutsujen syvyys. Sillä aikaa commit() ei ilmoita
+ * tilaajille, vaan ilmoitus jää velaksi ja lähtee kerran uloimman batchin
+ * lopussa.
+ */
+let batchDepth = 0;
+/** Muuttuiko tila batchin aikana (ilmoitus on velkaa)? */
+let notifyOwed = false;
+
 function notify() {
+  if (batchDepth > 0) {
+    notifyOwed = true;
+    return;
+  }
   for (const listener of listeners) {
     try {
       listener(state);
@@ -236,6 +249,39 @@ function notify() {
 function commit(changes) {
   state = { ...state, ...changes };
   notify();
+}
+
+/**
+ * Kokoa useampi tilamuutos YHDEKSI ilmoitukseksi.
+ *
+ * MIKSI: jokainen commit() ilmoittaa tilaajille synkronisesti, ja tilaaja
+ * (main.js renderAll) piirtää näkymät. Yksi lataus (loadUserData) asettaa
+ * parikymmentä kokoelmaa ja niiden latausstatuksen — ilman tätä yksi
+ * lataus tuotti 52 täyttä piirtoa (CRIT-01).
+ *
+ * Muutokset tehdään heti (getState() näkee ne batchin sisälläkin); vain
+ * ilmoitus odottaa uloimman batchin loppuun. Jos mikään ei muuttunut,
+ * ilmoitusta ei lähetetä. Heittävä `fn` ei jätä ilmoitusta lähettämättä:
+ * jo tehdyt muutokset näkyvät tilaajille, ja virhe välittyy kutsujalle.
+ *
+ * VAIN SYNKRONISELLE KOODILLE. Odotus (await) batchin sisällä päättäisi
+ * batchin ennen kuin odotuksen jälkeiset muutokset tehdään.
+ *
+ * @template T
+ * @param {() => T} fn
+ * @returns {T} fn:n paluuarvo
+ */
+export function batch(fn) {
+  batchDepth += 1;
+  try {
+    return fn();
+  } finally {
+    batchDepth -= 1;
+    if (batchDepth === 0 && notifyOwed) {
+      notifyOwed = false;
+      notify();
+    }
+  }
 }
 
 // ------------------------------------------------------------------ tehtävät
