@@ -42,6 +42,7 @@ import { installGlobalErrorHandlers, showStartupFailure } from '../src/app/globa
 import { interpretItem } from '../src/app/capture.js';
 import { captureReasonText } from '../src/app/views/inbox.js';
 import { AppError, ERROR_CODE, failWith, fail } from '../src/lib/result.js';
+import { failFromCause, failFromThrown } from '../src/data/repoErrors.js';
 import { UNEXPECTED_ERROR_MESSAGE } from '../src/lib/errorMessages.js';
 import { normalizeTask } from '../src/domain/task.js';
 import { normalizeInboxItem } from '../src/domain/inbox.js';
@@ -195,6 +196,26 @@ test('ERR-17: sama viesti ei pinoudu', () => {
   assert.equal(shown.length, 2, 'eri sävy on eri ilmoitus');
 });
 
+test('ERR-17: sama virhe ei pinoudu, mutta kuulutetaan uudelleen (role="alert")', async () => {
+  showError('Tallennus ei onnistunut.');
+  const host = registry.get('toastHost');
+  const [node] = host.children;
+  assert.equal(node.getAttribute('role'), 'alert');
+  assert.equal(node.textContent, 'Tallennus ei onnistunut.');
+
+  showError('Tallennus ei onnistunut.');
+  assert.equal(host.children.length, 1, 'ei pinoudu');
+  assert.equal(node.textContent, '', 'teksti tyhjennetään...');
+  await Promise.resolve();
+  assert.equal(node.textContent, 'Tallennus ei onnistunut.', '...ja asetetaan uudelleen: ruudunlukija kuulee sen');
+
+  // Tiedote (role="status") ei toistu: sama tieto ei keskeytä uudelleen.
+  notify('Muutos jonossa.');
+  notify('Muutos jonossa.');
+  const info = host.children.find(child => child.getAttribute('role') === 'status');
+  assert.equal(info.textContent, 'Muutos jonossa.');
+});
+
 test('ERR-05: latauksen kooste luokittelee syyt eikä syytä yhteyttä istunto- tai skeemavirheestä', () => {
   const failure = cause => ({ ok: false, error: new AppError('x', { cause }) });
   const auth = { code: 'PGRST301', status: 401, message: 'JWT expired' };
@@ -211,6 +232,31 @@ test('ERR-05: latauksen kooste luokittelee syyt eikä syytä yhteyttä istunto- 
   assert.doesNotMatch(busy, /yhteys toimii/);
   assert.equal(loadFailureMessage([failure(network), failure(schema)]),
     'Osa tiedoista ei latautunut. Mitään ei kadonnut — päivitä, kun yhteys toimii.');
+});
+
+test('ERR-05: heitetty poikkeus ei ole verkkovirhe koosteessa eikä näkymän ohjeessa (luokka luetaan virheestä)', () => {
+  const context = { op: 'load', fallback: 'Tehtävien lataus ei onnistunut.', code: 'tasks.list' };
+  const thrown = failFromThrown(new Error('Ei kirjautunutta käyttäjää'), context);
+  assert.equal(thrown.error.code, ERROR_CODE.UNKNOWN);
+  assert.equal(thrown.error.errorClass, 'unknown', 'failFromCause tallentaa luokan virheeseen');
+
+  const summary = loadFailureMessage([thrown, thrown]);
+  assert.doesNotMatch(summary, /yhteys/, summary);
+  assert.match(summary, /yritä hetken päästä uudelleen/);
+  const html = loadFailureHtml({ dataLoadStatus: { tasks: { ok: false, error: thrown.error } } }, ['tasks']);
+  assert.doesNotMatch(html, /yhteys toimii/);
+  assert.match(html, /Yritä hetken päästä uudelleen\./);
+
+  // Tyypitetty koodi ilman tallennettua luokkaa: koodi valitsee luokan.
+  const typed = (code, cause = new Error('x')) => ({ ok: false, error: new AppError('x', { code, cause }) });
+  assert.match(loadFailureMessage([typed(ERROR_CODE.AUTH_REQUIRED)]), /Kirjaudu uudelleen sisään/);
+  assert.match(loadFailureMessage([typed(ERROR_CODE.PERSISTENCE_UNAVAILABLE)]), /palvelua päivitetään/);
+  assert.match(loadFailureMessage([typed(ERROR_CODE.SERVICE_UNAVAILABLE)]), /Palvelu ei vastannut/);
+  assert.match(loadFailureMessage([typed(ERROR_CODE.NETWORK_ERROR, {})]), /yhteys toimii/);
+  // Oikea verkkovirhe (Supabasen { error }) on yhä verkkovirhe.
+  const network = failFromCause({ message: 'TypeError: Failed to fetch', code: '' }, context);
+  assert.equal(network.error.errorClass, 'network');
+  assert.match(loadFailureMessage([network]), /yhteys toimii/);
 });
 
 test('ERR-17 KRIITTINEN: latauksen epäonnistuminen näyttää yhden ilmoituksen, ei kolmea', async () => {
@@ -344,6 +390,15 @@ test('ERR-03 KRIITTINEN: vajaa vienti ei väitä onnistuneensa', async () => {
   assert.match(forced.message, /Vajaa vienti/);
   const file = JSON.parse(downloads[0][1]);
   assert.deepEqual(file.incomplete, ['lifeAreas'], 'tiedosto ei kerro puuttuvista kokoelmista');
+});
+
+test('ERR-03: vajaan viennin lukumäärä on suomea: "1 tietotyyppi puuttuu", "2 tietotyyppiä puuttuu"', async () => {
+  setDomainLoadStatus('lifeAreas', false);
+  const one = await exportUserData({ confirmFn: async () => true, download: () => {} });
+  assert.match(one.message, /Vajaa vienti ladattu: 1 tietotyyppi puuttuu\./);
+  setDomainLoadStatus('tasks', false);
+  const two = await exportUserData({ confirmFn: async () => true, download: () => {} });
+  assert.match(two.message, /Vajaa vienti ladattu: 2 tietotyyppiä puuttuu\./);
 });
 
 test('ERR-03: täydellinen vienti ladataan kysymättä, ja poiston esikatselu kertoo vajaista luvuista', async () => {
@@ -488,6 +543,18 @@ test('ERR-18: epäonnistuneen muutoksen syy kerrotaan, ja hylkäyksessä uusinta
   assert.match(failedReason('unavailable').text, /Palvelu ei vastannut/);
   for (const code of ['invalid_task', 'rejected', 'id_collision', 'retries_exhausted', 'unavailable', 'changed_during_sync', null]) {
     assert.doesNotMatch(failedReason(code).text, /invalid_task|rejected|_/);
+  }
+});
+
+test('ERR-18: tuntematon syy ei ole "yhteys katkesi" -- vain verkkovirhe ja vanha yleiskoodi ovat', () => {
+  for (const code of ['unknown', 'exception', null]) {
+    const reason = failedReason(code);
+    assert.doesNotMatch(reason.text, /Yhteys/, String(code));
+    assert.match(reason.text, /Muutos ei mennyt perille useista yrityksistä huolimatta\. Yritetäänkö uudelleen\?/);
+    assert.equal(reason.retryHelps, true);
+  }
+  for (const code of ['network', 'retries_exhausted']) {
+    assert.match(failedReason(code).text, /Yhteys katkesi toistuvasti/, code);
   }
 });
 

@@ -207,10 +207,10 @@ test('KRIITTINEN: portti kiinni ei väitä tallennuksen onnistuneen pysyvästi',
 // PORTTI TOSI — rakenteellinen sopimus
 // =====================================================================
 
-/** Repositoriomoduulin koodi ilman kommentteja. */
 /** Epäonnistunut tulos palautettuna: fail, failWith tai syystä kuvattu (repoErrors.js). */
 const RETURN_FAIL = /return (?:fail|failWith|failFromCause|failFromThrown)\(/g;
 
+/** Repositoriomoduulin koodi ilman kommentteja. */
 function repoKoodi() {
   return read('src/data/collectionsRepo.js').split(NEWLINE)
     .filter(line => !line.trim().startsWith('//') && !line.trim().startsWith('*'))

@@ -34,10 +34,14 @@
 // kanta liittää rivin kirjautuneeseen käyttäjään (running_timers.user_id =
 // auth.uid()), joten käyttäjän vaihduttua A:n ajastin menisi B:n tilille.
 //
-// KANNASSA (synced) VAIN LISÄYKSEN JÄLKEEN: nollaan riviin osuva UPDATE
-// onnistuu ilman virhettä, joten onnistunut päivitys ei todista, että rivi
-// on kannassa. Muuten offline-käynnistetty ajastin merkittäisiin kannassa
-// olevaksi, ja seuraava tyhjä lista pudottaisi sen "muualla pysäytettynä".
+// KANNASSA (synced) VAIN LISÄYKSEN JÄLKEEN: päivitys ei merkitse ajastinta
+// kannassa olevaksi. Nollaan riviin osuva UPDATE palauttaa NOT_FOUND
+// (collectionsRepo.update ketjuttaa .select('id'):n), jolloin kuittausta ei
+// tehdä: laitteen kopio jää kantaan ehtimättömäksi (dirty) ja lähetetään
+// uudelleen, ja kun lista ei sisällä riviä, kannasta puuttuva ajastin
+// lisätään uudelleen (reinsert). Muuten offline-käynnistetty ajastin
+// merkittäisiin kannassa olevaksi, ja seuraava tyhjä lista pudottaisi sen
+// "muualla pysäytettynä".
 //
 // Tämä moduuli ei tuo actions.js:ää eikä alignment.js:ää, jotta lataus
 // (actions.loadUserData) voi kutsua sitä ilman kehäriippuvuutta.
@@ -188,9 +192,11 @@ export function syncTimerToRepo(action, timer, { owner = userId() } = {}) {
  * Kanta kuittasi lisäyksen tai päivityksen.
  *
  * Vain lisäys (myös uusinta) merkitsee ajastimen kannassa olevaksi.
- * Päivitys säilyttää aiemman lipun: nollaan riviin osuva UPDATE onnistuu
- * sekin (offline-käynnistys, jonka lisäys ei mennyt perille), eikä se saa
- * tehdä ajastimesta "kannassa ollutta", jonka tyhjä lista pudottaisi.
+ * Päivitys säilyttää aiemman lipun. Nollaan riviin osuva UPDATE
+ * (offline-käynnistys, jonka lisäys ei mennyt perille) ei tule tänne
+ * lainkaan: se palauttaa NOT_FOUND, joten laitteen kopio jää likaiseksi
+ * (dirty), ja seuraava lataus lisää kannasta puuttuvan ajastimen
+ * uudelleen (reinsert) eikä pudota sitä "kannassa olleena".
  */
 function markTimerSynced(owner, sent, { inserted = false } = {}) {
   const record = loadTimerRecord(owner);

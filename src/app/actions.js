@@ -97,6 +97,7 @@ import { showError, success, notify } from '../ui/toast.js';
 import { confirmDelete, confirmAction } from '../ui/confirm.js';
 import { logError } from '../lib/result.js';
 import { loadSummaryMessage } from '../lib/errorMessages.js';
+import { errorClassOf } from '../data/repoErrors.js';
 import { EXPORTED_COLLECTIONS } from '../domain/dataExport.js';
 
 /** Kertaalleen näytettävä huomautus kentistä, jotka eivät vielä tallennu. */
@@ -346,8 +347,10 @@ export function loadFailureMessage(failures = []) {
   // Yleisin syy valitsee tekstin (src/lib/errorMessages.js): istunto ->
   // kirjaudu uudelleen, skeema -> palvelua päivitetään, palvelin ei vastaa
   // -> yritä hetken päästä, verkko -> päivitä, kun yhteys toimii.
+  // Tyypitetyn virheen luokka luetaan virheestä (errorClassOf): heitetty
+  // poikkeus ei ole verkkovirhe.
   const offline = !isOnlineNow();
-  return loadSummaryMessage(failures.map(result => classifyError(result && result.error, { offline })));
+  return loadSummaryMessage(failures.map(result => errorClassOf(result && result.error, { offline })));
 }
 
 /**

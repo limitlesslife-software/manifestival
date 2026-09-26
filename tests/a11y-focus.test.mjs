@@ -20,7 +20,9 @@ import {
 import { mountSuunta, echoClient, flush, USER } from './helpers/a11ySuunta.mjs';
 import { getState, setTasks, setGoals, setDomainLoadStatus } from '../src/app/state.js';
 import { createGoal } from '../src/app/actions.js';
-import { createLifeArea, saveWeeklyCapacity } from '../src/app/alignment.js';
+import { createLifeArea, saveWeeklyCapacity, setTimeEntryWriterForTests } from '../src/app/alignment.js';
+import { openGeneralLog } from '../src/app/views/timeLog.js';
+import { clearToasts } from '../src/ui/toast.js';
 import {
   startTracking, cancelTracking, setTimerRepoForTests, discardPendingTracking, pendingTimer
 } from '../src/app/timeTracking.js';
@@ -432,6 +434,31 @@ test('CRIT-03: ajastintoiminnon ajan KAIKKI palkin painikkeet ovat aria-disabled
   } finally {
     release();
   }
+});
+
+// ================================================================ ILMOITUKSET
+
+test('kirjausdialogi ilman yhteyttä (vain istunnon muistissa): yksi ilmoitus, ei kahta lähes samaa', async (t) => {
+  freezeLocalDate(t, THURSDAY, '10:00');
+  const { doc } = mount();
+  t.after(() => clearToasts());
+  setTimeEntryWriterForTests({
+    insert: async () => ({ ok: true, queued: true, sessionOnly: true }),
+    pendingCount: () => 1
+  });
+  t.after(() => setTimeEntryWriterForTests(null));
+  const outcome = openGeneralLog();
+  const minutes = doc.getElementById('timeLogMinutes');
+  type(minutes, '30');
+  minutes.focus();
+  press(doc, 'Enter'); // implisiittinen lähetys: "Kirjaa"
+  const result = await outcome;
+  await flush();
+  assert.equal(result.action, 'logged');
+  assert.equal(result.result.queued, true);
+  const shown = doc.getElementById('toastHost').children.map(node => node.textContent);
+  assert.equal(shown.length, 1, JSON.stringify(shown));
+  assert.match(shown[0], /30 min kirjattu tälle istunnolle/);
 });
 
 test('dom.js: renderHtml palauttaa fokuksen avaimella; estetty sama ohjain -> varaotsikko', async () => {

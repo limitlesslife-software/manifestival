@@ -24,8 +24,23 @@ const active = new Set();
  * useamman päällekkäisen ilmoituksen (esim. jokaisesta hylätystä
  * kirjauksesta oma). Näkyvissä jo oleva sama viesti vain pysyy
  * näkyvissä pidempään: sen ajastin alkaa alusta.
+ *
+ * SAMA VIRHE KUULUTETAAN SILTI UUDELLEEN. Käyttäjä, joka toistaa
+ * epäonnistuneen toiminnon, ei muuten kuulisi mitään (role="alert" ei
+ * muuttunut). Teksti tyhjennetään ja asetetaan seuraavassa mikrotehtävässä
+ * uutena tekstisolmuna; näkyvä ilmoitus ei monistu.
  */
 const visible = new Map();
+
+/** Kuuluta näkyvä ilmoitus uudelleen samalla tekstillä. */
+function reannounceToast(node, message) {
+  node.textContent = '';
+  const again = () => {
+    if (active.has(node)) node.textContent = message;
+  };
+  if (typeof queueMicrotask === 'function') queueMicrotask(again);
+  else Promise.resolve().then(again);
+}
 
 const keyOf = (message, tone) => tone + '\u0000' + message;
 
@@ -54,6 +69,7 @@ function render(message, tone, duration) {
   if (existing && active.has(existing.node)) {
     clearTimeout(existing.timer);
     existing.timer = setTimeout(existing.remove, Math.max(duration, existing.duration));
+    if (tone === 'error') reannounceToast(existing.node, String(message));
     return existing.remove;
   }
 
