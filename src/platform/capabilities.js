@@ -115,8 +115,34 @@ export function setLocationPermissionState(state) {
   locationPermissionState = LOCATION_STATES.includes(state) ? state : 'error';
 }
 
+/**
+ * Natiivisijainti Android-sovelluksessa: POIS KÄYTÖSTÄ.
+ *
+ * Mikään toteutettu ominaisuus ei käytä sijaintia: matka ja lähtöaika
+ * toimivat paikannimillä ja käyttäjän antamalla kestolla, eikä
+ * paikkamuistutuksia arvioida. Siksi Android-manifesti ei julista
+ * sijaintilupaa lainkaan, ja tämä lippu pitää JS-puolen samassa linjassa:
+ * natiivikuoressa sijaintisovitinta ei valita, Profiili näyttää vain syyn
+ * eikä "Salli sijainti" -painiketta, jonka pyyntö kaatuisi puuttuvaan
+ * manifestilupaan.
+ *
+ * Selaimen (PWA) kertahaku ei tarvitse manifestilupaa, joten se säilyy.
+ *
+ * JOS TÄMÄ KÄÄNNETÄÄN TODEKSI, manifestiin on lisättävä likimääräinen
+ * sijaintilupa ja android.hardware.location required="false"
+ * (tests/android.test.mjs vartioi molempia).
+ */
+export const NATIVE_LOCATION_ENABLED = false;
+
 function locationSupport() {
   if (isNativeShell()) {
+    if (!NATIVE_LOCATION_ENABLED) {
+      return {
+        supported: true,
+        reason: 'Mikään toiminto ei vielä tarvitse sijaintia, joten sovellus ei pyydä sijaintilupaa.',
+        implemented: false
+      };
+    }
     const plugins = globalThis.Capacitor && globalThis.Capacitor.Plugins;
     const available = Boolean(plugins && plugins.Geolocation);
     return {
@@ -234,7 +260,7 @@ const REGISTRY = Object.freeze({
     label: 'Sijainti',
     support: locationSupport,
     permission: locationPermission,
-    plannedNote: 'Kertaluonteinen etualan sijainti (ei taustaseurantaa)'
+    plannedNote: 'Ei käytössä tässä sovellusversiossa (ei taustaseurantaa)'
   },
   [CAPABILITY.BACKGROUND]: {
     label: 'Taustatoiminta',

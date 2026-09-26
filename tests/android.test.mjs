@@ -272,29 +272,50 @@ test('selväkielinen liikenne on nimenomaisesti kielletty', { skip: !hasAndroid 
 });
 
 test('luvat rajoittuvat siihen, mitä toteutetut ominaisuudet vaativat', { skip: !hasAndroid }, () => {
-  // Oma manifesti pyytää INTERNETin ja etualan sijainnin (kertahaku,
-  // src/platform/geolocation.js; Capacitor-liitännäinen ei julista niitä
-  // itse). Loput tulevat ilmoituslisäosasta yhdistämisen kautta, eikä niitä
+  // Oma manifesti pyytää vain INTERNETin. Sijaintilupaa EI ole: mikään
+  // toteutettu ominaisuus ei käytä sijaintia (NATIVE_LOCATION_ENABLED =
+  // false). Loput luvat tulevat lisäosista yhdistämisen kautta, eikä niitä
   // lisätä käsin.
   const manifest = appManifest();
   const permissions = [...manifest.matchAll(/uses-permission android:name="([^"]+)"/g)]
     .map(m => m[1]);
 
   assert.deepEqual(permissions, [
-    'android.permission.INTERNET',
-    'android.permission.ACCESS_COARSE_LOCATION',
-    'android.permission.ACCESS_FINE_LOCATION'
+    'android.permission.INTERNET'
   ], 'omaan manifestiin lisättiin lupa: ' + permissions.join(', '));
 
-  // GPS ei saa rajata jakelua: laite ilman GPS:ää käyttää käyttäjän antamaa matka-aikaa.
-  assert.match(manifest, /uses-feature android:name="android\.hardware\.location\.gps" android:required="false"/);
-
-  // Taustasijaintia ei ole eikä tule: vain etualan kertahaku.
-  for (const forbidden of ['ACCESS_BACKGROUND_LOCATION', 'FOREGROUND_SERVICE_LOCATION',
+  // Kielletyt. includes() koko tiedostoon, joten nimet eivät saa esiintyä
+  // edes kommentissa. Sijaintia ei julisteta ennen kuin jokin ominaisuus
+  // käyttää sitä; taustasijaintia ja etualapalvelua ei ole eikä tule.
+  for (const forbidden of ['ACCESS_BACKGROUND_LOCATION', 'FOREGROUND_SERVICE',
+    'ACCESS_COARSE_LOCATION', 'ACCESS_FINE_LOCATION',
     'CAMERA', 'RECORD_AUDIO',
     'READ_EXTERNAL_STORAGE', 'READ_CONTACTS']) {
     assert.equal(manifest.includes(forbidden), false,
       'lupa ilman toteutusta: ' + forbidden);
+  }
+});
+
+test('LOC-3: jos sijaintilupa joskus palaa, se ei saa rajata jakelua', { skip: !hasAndroid }, () => {
+  // Sijaintilupa synnyttää Play-kaupassa implisiittisen PAKOLLISEN
+  // android.hardware.location-ominaisuuden, joka suodattaa laitteet ilman
+  // sijaintilaitteistoa. Pelkkä .gps required=false ei riitä.
+  const manifest = appManifest();
+  const location = [...manifest.matchAll(/uses-permission android:name="android\.permission\.(ACCESS_\w*LOCATION)"/g)];
+  if (location.length === 0) return;
+  assert.match(manifest,
+    /uses-feature android:name="android\.hardware\.location" android:required="false"/,
+    'sijaintilupa ilman android.hardware.location required="false" -riviä');
+});
+
+test('LOC-1: natiivisijainnin lippu ja manifesti ovat samaa mieltä', { skip: !hasAndroid }, async () => {
+  const { NATIVE_LOCATION_ENABLED } = await import('../src/platform/capabilities.js');
+  const declares = /uses-permission android:name="android\.permission\.ACCESS_\w*LOCATION"/.test(appManifest());
+  if (NATIVE_LOCATION_ENABLED) {
+    assert.match(appManifest(), /android\.permission\.ACCESS_COARSE_LOCATION/,
+      'natiivisijainti päällä, mutta manifesti ei julista lupaa: pyyntö kaatuisi');
+  } else {
+    assert.equal(declares, false, 'natiivisijainti pois päältä, mutta manifesti julistaa sijaintiluvan');
   }
 });
 

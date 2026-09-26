@@ -59,13 +59,10 @@
     <uses-permission android:name="android.permission.INTERNET" />
 
     <!--
-        SIJAINTI: vain etualan kertahaku (src/platform/geolocation.js).
-        Tarkka + likimaarainen, jotta kayttaja voi valita "likimaarainen"
-        Android 12+:n luvassa. Taustasijaintia ja etualapalvelua sijaintiin
-        EI pyyheta: sovellus ei seuraa sijaintia taustalla. Testit
-        (android.test, geolocation.test) vartioivat tata.
+        SIJAINTI: lupaa ei julisteta, koska mikaan toteutettu ominaisuus ei
+        kayta sijaintia (src/platform/capabilities.js NATIVE_LOCATION_ENABLED
+        = false). Jos sijainti joskus palaa (reittipalvelu, WP11), vain
+        likimaarainen etualan lupa lisataan, ja sen rinnalle
+        android.hardware.location required="false", jottei jakelu rajaudu.
     -->
-    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
-    <uses-feature android:name="android.hardware.location.gps" android:required="false" />
 </manifest>

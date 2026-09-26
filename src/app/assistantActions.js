@@ -784,9 +784,12 @@ export async function editLocationRule(id, changes = {}) {
 /**
  * Kytke sääntö päälle tai pois.
  *
- * PÄÄLLE KYTKEMINEN KYSYY VAHVISTUKSEN. Sijainti on eri asia kuin
- * muu tieto: se kertoo missä ihminen asuu, työskentelee ja käy.
- * Lupaa ei oleteta, ja kytkin on se hetki jossa käyttäjä sen antaa.
+ * PÄÄLLE KYTKEMINEN KYSYY VAHVISTUKSEN, ja vahvistus kertoo totuuden:
+ * paikkamuistutukset EIVÄT vielä laukea. Sovellus ei seuraa sijaintia
+ * eikä pyydä sijaintilupaa (Android-manifestissa ei ole sijaintilupaa),
+ * joten kytkin tallentaa vain käyttäjän aikeen. Sijaintilupaa ei pyydetä
+ * tästä virrasta, eikä sitä saa lisätä ennen kuin säännöt oikeasti
+ * arvioidaan -- ja silloinkin vain etualalla.
  *
  * Pois kytkeminen ei kysy mitään — turvallisempaan suuntaan
  * siirtyminen ei tarvitse kitkaa.
@@ -798,9 +801,10 @@ export async function toggleLocationRule(id, active) {
   if (active && !previous.active) {
     const confirmed = await confirmAction({
       title: 'Kytketäänkö sijaintisääntö päälle?',
-      message: 'Sääntö tarvitsee tiedon siitä, missä olet. Sijaintiasi '
-        + 'ei tallenneta, ei viedä mukaan viennissä eikä lähetetä '
-        + 'mihinkään.',
+      message: 'Paikkamuistutukset eivät vielä laukea: sovellus ei seuraa '
+        + 'sijaintiasi eikä pyydä sijaintilupaa. Kytkin tallentaa vain '
+        + 'aikeesi. Sijaintiasi ei tallenneta, ei viedä mukaan viennissä '
+        + 'eikä lähetetä mihinkään.',
       confirmLabel: 'Kytke päälle'
     });
     if (!confirmed) return { ok: false };

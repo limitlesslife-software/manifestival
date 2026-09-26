@@ -178,7 +178,7 @@ function ruleRowHtml(rule) {
       <div class="assist-title">${escapeHtml(rule.place)}</div>
       <div class="assist-meta">
         <span class="assist-tag${rule.active ? '' : ' tone-warn'}">
-          ${rule.active ? 'Päällä' : 'Pois päältä'}
+          ${rule.active ? 'Päällä — ei vielä laukea' : 'Pois päältä'}
         </span>
         ${escapeHtml(TRIGGER_LABELS[rule.trigger] || rule.trigger)}
       </div>
