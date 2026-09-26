@@ -39,6 +39,8 @@
 //   - nollakesto: alle puolen minuutin ajastus ei tuota kirjausta
 //   - unohtunut ajastin: yli REVIEW_AFTER_MINUTES pyydetään tarkistamaan
 //   - kaksoispysäytys: kirjauksilla on deterministinen operaatiotunniste
+//   - osittain epäonnistunut pysäytys: pysäytyssuunnitelma (stopAtMs,
+//     overrideMinutes) tallentuu laitteelle, joten uusinta tuottaa samat osat
 
 import { TIMER_RULES } from './alignmentPolicy.js';
 import { OPERATION, TIME_SOURCE, MAX_ENTRY_MINUTES } from './timeEntry.js';
@@ -70,6 +72,32 @@ function msOf(iso) {
   return Number.isFinite(ms) ? ms : null;
 }
 
+/** Enintään näin monta jo kirjattua osaa muistetaan suunnitelmassa. */
+const MAX_PLAN_PARTS = 64;
+
+/**
+ * Pysäytyssuunnitelma: VAIN laitteella (kannassa ei ole sarakkeita, eikä
+ * runningTimersRepo.toRow lähetä näitä). Kun pysäytyshetki ja korjattu
+ * kesto on tallessa ennen ensimmäistä kirjausta, uusinta laskee täsmälleen
+ * samat osat ja operaatiotunnisteet — myös uudelleenlatauksen jälkeen —
+ * ja kirjaa vain puuttuvat osat (`loggedOperationIds`).
+ */
+function stopPlanFields(input) {
+  if (input.stopAtMs === null || input.stopAtMs === undefined || input.stopAtMs === '') return {};
+  const at = Number(input.stopAtMs);
+  if (!Number.isFinite(at)) return {};
+  const override = Number.isInteger(input.overrideMinutes) && input.overrideMinutes >= 0 ? input.overrideMinutes : null;
+  const logged = Array.isArray(input.loggedOperationIds)
+    ? [...new Set(input.loggedOperationIds.filter(id => typeof id === 'string' && id))].slice(0, MAX_PLAN_PARTS)
+    : [];
+  return { stopAtMs: at, overrideMinutes: override, loggedOperationIds: logged };
+}
+
+/** Onko ajastimen pysäytys jo päätetty (kirjaus kesken tai uusittavana)? */
+export function hasStopPlan(timer) {
+  return Boolean(timer) && Number.isFinite(timer.stopAtMs);
+}
+
 export function normalizeTimer(input = {}) {
   const paused = Number(input.pausedSeconds);
   const note = input.note == null ? null : String(input.note).trim().slice(0, MAX_TIMER_NOTE_LENGTH) || null;
@@ -92,7 +120,8 @@ export function normalizeTimer(input = {}) {
     pausedSeconds: Number.isFinite(paused) && paused > 0 ? Math.min(Math.round(paused), MAX_PAUSED_SECONDS) : 0,
     note,
     createdAt: input.createdAt ?? null,
-    updatedAt: input.updatedAt ?? null
+    updatedAt: input.updatedAt ?? null,
+    ...stopPlanFields(input)
   };
 }
 

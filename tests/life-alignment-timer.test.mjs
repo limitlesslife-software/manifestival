@@ -14,7 +14,7 @@ import assert from 'node:assert/strict';
 
 import {
   startTimer, pauseTimer, resumeTimer, stopTimer, timerStatus, formatElapsed,
-  normalizeTimer, validateTimer, timerTargetFields, LOCAL_CALENDAR, TIMER_TARGET
+  normalizeTimer, validateTimer, timerTargetFields, LOCAL_CALENDAR, TIMER_TARGET, hasStopPlan
 } from '../src/domain/timer.js';
 import { TIMER_RULES } from '../src/domain/alignmentPolicy.js';
 import { weekStartOf } from '../src/domain/weeklyCapacity.js';
@@ -286,4 +286,25 @@ test('REGRESSIO: sama ajastin pysäytettynä yhtenä tai jaettuna jakaa ensimmä
   assert.equal(after.entries.length, 2);
   assert.equal(before.entries[0].operationId, after.entries[0].operationId,
     'kanta hylkää toisen pysäytyksen ensimmäisen osan (23505)');
+});
+
+test('REGRESSIO (RACE-01): pysäytyssuunnitelma normalisoituu ja tuottaa samat osat myös laitteelta luettuna', () => {
+  const plain = started(local(2026, 9, 20, 23, 30), { kind: 'none' }, 'P');
+  assert.equal('stopAtMs' in plain, false, 'tavallisella ajastimella ei ole suunnitelmaa');
+  assert.equal(hasStopPlan(plain), false);
+  const at = local(2026, 9, 21, 0, 45);
+  const planned = normalizeTimer({
+    ...plain, stopAtMs: String(at), overrideMinutes: 1.5, loggedOperationIds: ['timer:P', 'timer:P', 5, '']
+  });
+  assert.equal(planned.stopAtMs, at);
+  assert.equal(planned.overrideMinutes, null, 'vain kokonaisluku kelpaa korjatuksi kestoksi');
+  assert.deepEqual(planned.loggedOperationIds, ['timer:P']);
+  assert.equal(hasStopPlan(planned), true);
+  // Laitteen kautta kulkenut kopio (JSON) laskee täsmälleen samat osat.
+  const restored = normalizeTimer(JSON.parse(JSON.stringify(planned)));
+  const a = stopTimer(planned, planned.stopAtMs);
+  const b = stopTimer(restored, restored.stopAtMs);
+  assert.deepEqual(b.entries.map(e => [e.operationId, e.entryDate, e.minutes]),
+    a.entries.map(e => [e.operationId, e.entryDate, e.minutes]));
+  assert.deepEqual(a.entries.map(e => e.minutes), [30, 45]);
 });
