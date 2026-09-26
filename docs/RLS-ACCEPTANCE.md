@@ -22,6 +22,16 @@ jälkivarmistus. Runbook viittaa tänne eikä toista sisältöä.
 > `routines` ja `routine_exceptions`, joiden RLS:stä ei ole elävää
 > todistetta. Työkalu kattaa ne nyt (osiot R1–R5 ja E1–E6), ja testi on
 > **ajettava uudelleen ennen kuin rutiiniportit avataan**.
+>
+> **MIGRAATIOT 0009–0013 VAATIVAT (CRIT-07) — EI VIELÄ AJETTU.** Ne luovat
+> neljätoista uutta käyttäjäkohtaista taulua, kuusi niistä Suunnan
+> (pohdinnat, kirjattu aika muistiinpanoineen, käynnissä oleva ajastin),
+> ja kuusitoista uutta yhdistelmävierasavainta. Työkalu kattaa ne nyt
+> aaltokohtaisesti: **aalto I 589 tarkistusta, aalto J 660** (tekokannan
+> harjoitusajo). Ajo on **aaltojen I ja J hyväksyntävaihe**, ja se vaatii
+> omistajan kertakäyttöisen toisen tilin ja nimenomaisen luvan. Ks.
+> [Aallot I ja J](#aallot-i-ja-j-migraatiot-00090013). Kukaan agentti tai
+> CI ei aja tätä työkalua: se puhuu tuotannolle.
 
 ## Työnkulku yhdellä silmäyksellä
 
@@ -99,6 +109,11 @@ läpi ja raportti kertoisi vain siitä.
 | **X1–X8** | **Ristiinkiinnitys INSERTillä, kahdeksan viitettä** | yhdistelmävierasavaimet (23503) |
 | **U1–U8** | **Ristiinkiinnitys UPDATElla, samat kahdeksan** | eri koodipolku — rivi läpäisee RLS:n |
 | **X9** | B saa liittää tehtävänsä **omaan** tavoitteeseensa | kielto ei johdu siitä että viitteet ovat rikki |
+| **TR, IV … AS** | Sama matriisi 0009–0013:n neljälletoista taululle (aallon mukaan) | politiikat toimivat oikeaa PostgRESTiä vasten |
+| **XV-, UV-** | **Ristiinkiinnitys 0009–0013:n kuuteentoista viitteeseen**, INSERT ja UPDATE | yhdistelmävierasavaimet (23503) |
+| **XV-ok** | B saa liittää aikakirjauksensa **omaan** alueeseensa | kielto ei johdu rikkinäisistä viitteistä |
+| **AR6a–b** | B ei voi kirjoittaa A:n pohdintaan, eikä A:n pohdinta muutu | yksityisin sarake erillisellä arvolla |
+| **P2, P3** | A:lla eikä B:llä ole käynnissä olevaa ajastinta | yksi ajastin käyttäjää kohti ei kaada testiä |
 
 ### Ristiinkiinnityshyökkäykset ovat osuuden ydin
 
@@ -401,13 +416,138 @@ jota vian selvittäminen vaatii: kuinka moni kielto petti ja mitkä.
 
 ---
 
+# Aallot I ja J: migraatiot 0009–0013
+
+> **ÄLÄ AJA ILMAN OMISTAJAN LUPAA.** Työkalu puhuu **tuotannolle**.
+> Yksikään agentti, skripti tai CI ei aja sitä; repon testit ajavat sen
+> vain tekokantaa vasten (`tests/rls-acceptance.test.mjs`). Ajo vaatii
+> omistajan **kertakäyttöisen toisen tilin** (B) ja omistajan
+> **nimenomaisen luvan jokaiselle ajolle**. Tuotannossa on tänään yksi
+> auth-käyttäjä; tili B luodaan vasta luvan jälkeen (kohta A) ja
+> poistetaan heti hyväksytyn siivouksen jälkeen (kohta F).
+
+## Miksi tämä on WAVE-I- ja WAVE-J-vaihe
+
+Suunnan data on sovelluksen yksityisintä: viikkokatsausten pohdinnat,
+aikakirjausten muistiinpanot, elämänalueiden nimet ja käynnissä oleva
+ajastin. Niiden RLS oli todistettu vain SQL:ää lukemalla ja paikallisella
+PG17-harjoituksella (`set role`, ei JWT:tä eikä PostgRESTiä). Tämä ajo on
+ainoa todiste siitä, että oikea pino — anon-avain, JWT, PostgREST,
+politiikat ja yhdistelmävierasavaimet — eristää ne toisesta käyttäjästä.
+
+| Aalto | Migraatio | Taulut | Milloin ajetaan |
+|---|---|---|---|
+| F | 0009 | `transactions`, `investments` | kun 0009 on tuotannossa |
+| G | 0010 | `milestones` (+ `tasks`/`projects.milestone_id`) | kun 0010 on tuotannossa |
+| H | 0011 | `inbox_items`, `reminders`, `notices`, `travel_plans`, `location_rules` | kun 0011 on tuotannossa |
+| **I** | **0012** | `life_areas`, `weekly_capacities`, `time_entries`, `alignment_reviews` (+ `goals.life_area_id`) | **ennen Suunnan porttien avaamista** |
+| **J** | **0013** | `running_timers`, `alignment_item_settings` (+ `time_entries.project_id/routine_id`) | **ennen ajastimen porttien avaamista** |
+
+Aalto luetaan `tools/release/waves.mjs`:stä: taulun aalto sen `tables`-
+listasta, vierasavaimen aalto sen migraatiosta (`MIGRATION_WAVE`).
+`goals.life_area_id` on siksi aallossa I, vaikka `goals` on aallosta B.
+
+## Miten ajo eroaa 0003–0008:sta
+
+1. **Valitse aalto** työkalun kentästä *Tuotannon kanta*: viimeisin
+   tuotantoon **ajettu** migraatio. Myöhempien migraatioiden tauluihin ja
+   sarakkeisiin ei lähetetä yhtään lausetta (testattu lauselokista).
+   Oletus E (0008) ajaa täsmälleen vanhan 271 tarkistuksen ajon.
+2. **Pysäytä tilin A ajastin** sovelluksessa ennen aallon J ajoa.
+   `running_timers_one_per_user` sallii yhden ajastimen käyttäjää kohti;
+   käynnissä oleva ajastin pysäyttää ajon lähtötilaan (`P2`) ennen
+   yhtäkään kirjoitusta.
+3. **Lähtötila tarkistetaan tauluittain molemmilla tileillä**
+   (`P0-<tunnus>-a`, `P0-<tunnus>-b`): edellisen ajon jäänne pysäyttää
+   ajon, koska viikkorivit ja nimet ovat uniikkeja käyttäjää kohti.
+4. **Testirivit väistävät yksikäsitteisyyden rakenteella:** viikkorivit
+   käyttävät vuoden 1990 maanantaita (eri A:lle, B:lle ja väärennökselle),
+   nimet ja ilmoitusavaimet johdetaan ajon tunnisteesta, eikä
+   muistiinpanoihin eikä pohdintoihin kirjoiteta vapaata tekstiä.
+
+## Mitä ajo todistaa 0009–0013:lle
+
+- **Omistajuusmatriisi** jokaiselle aallon taululle (`TR`, `IV`, `MS`,
+  `IB`, `RM`, `NT`, `TP`, `LR`, `LA`, `WC`, `TE`, `AR`, `RT`, `AS`, kukin
+  `1a`–`5b`): A hallitsee omansa, B ei näe, muuta, poista eikä väärennä,
+  B hallitsee omansa, A ei näe B:n riviä.
+- **`AR3a` ja `AR6a`–`AR6b`:** B:n UPDATE A:n viikkokatsauksen
+  pohdintaan osuu nollaan riviin, ja A:n pohdinta on luettaessa A:n
+  kirjoittama. `AR6a` käyttää eri arvoa kuin A, jotta onnistunut
+  kaappaus näkyisi. Raportti ei tulosta pohdintaa.
+- **`RT2a`–`RT2b`:** B ei näe A:n käynnissä olevaa ajastinta
+  omistajasuodattimella eikä tunnisteella.
+- **`XV-<taulu>.<sarake>`** (16 kpl): B luo rivin, jonka viite osoittaa
+  A:n riviin — esimerkiksi `XV-time_entries.life_area_id`: B:n
+  aikakirjaus A:n elämänalueeseen. Odotus **23503**; RLS ei estä tätä,
+  koska rivin omistaja on oikein.
+- **`UV-<taulu>.<sarake>`** (16 kpl): B kääntää OMAN rivinsä viitteen
+  A:n riviin. Odotus 23503.
+- **`XV-ok`:** B saa liittää kirjauksensa omaan alueeseensa.
+- **`T6-<tunnus>-<operaatio>`:** kirjautumaton ei saa yhtäkään
+  operaatiota yhteenkään uuteen tauluun (42501).
+- **Siivous `CV-<tunnus>-a/b`** lapset ennen vanhempia, ja
+  **jäännöstarkistus** `C11-<tunnus>` / `C12-<tunnus>` molemmilla
+  tileillä sekä `CV13-<viite>` hyökkäysriveille.
+
+Ristiinkiinnityslista on johdettu migraatioista:
+`tests/rls-acceptance.test.mjs` jäsentää `foreign key (user_id, …)`
+-lauseet tiedostoista 0009–0013 ja vaatii, että työkalun lista on
+täsmälleen sama. Samoin jokaisella `ACCOUNT_DATA_MAP`-taululla
+(`src/domain/accountLifecycle.js`) on oltava testiosio tai perusteltu
+rajaus (`RLS_EXEMPTIONS`, tyhjä).
+
+Jos INSERT-hyökkäys menee läpi, läpi mennyt rivi poistetaan heti
+tunnisteella: yksi ajastin käyttäjää kohti tekisi muuten seuraavista
+hyökkäyksistä 23505:n, eikä niistä näkisi, pitääkö **oma** vierasavain.
+
+## Jälkivarmistus aalloille I ja J
+
+`verify_acceptance.sql` ja `verify_acceptance_0003.sql` eivät tunne
+0009–0013:n tauluja. Kunnes niille on oma jälkivarmistus, aja SQL-
+editorissa **vain lukeva** jäännöshaku tilin B poiston jälkeen (RLS ei
+rajaa SQL-editoria, joten se näkee myös toisen tilin jäännökset):
+
+```sql
+select 'transactions' as taulu, count(*) from public.transactions where id like 'manifestival_rls_acceptance_%'
+union all select 'investments', count(*) from public.investments where id like 'manifestival_rls_acceptance_%'
+union all select 'milestones', count(*) from public.milestones where id like 'manifestival_rls_acceptance_%'
+union all select 'inbox_items', count(*) from public.inbox_items where id like 'manifestival_rls_acceptance_%'
+union all select 'reminders', count(*) from public.reminders where id like 'manifestival_rls_acceptance_%'
+union all select 'notices', count(*) from public.notices where id like 'manifestival_rls_acceptance_%'
+union all select 'travel_plans', count(*) from public.travel_plans where id like 'manifestival_rls_acceptance_%'
+union all select 'location_rules', count(*) from public.location_rules where id like 'manifestival_rls_acceptance_%'
+union all select 'life_areas', count(*) from public.life_areas where id like 'manifestival_rls_acceptance_%'
+union all select 'weekly_capacities', count(*) from public.weekly_capacities where id like 'manifestival_rls_acceptance_%'
+union all select 'time_entries', count(*) from public.time_entries where id like 'manifestival_rls_acceptance_%'
+union all select 'alignment_reviews', count(*) from public.alignment_reviews where id like 'manifestival_rls_acceptance_%'
+union all select 'running_timers', count(*) from public.running_timers where id like 'manifestival_rls_acceptance_%'
+union all select 'alignment_item_settings', count(*) from public.alignment_item_settings where id like 'manifestival_rls_acceptance_%';
+```
+
+Jätä pois rivit, joiden taulua ei vielä ole: aallossa I
+`running_timers` ja `alignment_item_settings` (ne syntyvät vasta
+0013:ssa). **Odotus: jokainen `count` = 0.**
+
+## Hyväksymisportti aalloille I ja J
+
+Aallon I (tai J) portteja ei avata tuotantoon, ennen kuin:
+
+1. Selaintestin raportti valitulla aallolla: `TULOS: PASS`, ei FAIL,
+   ERROR eikä SKIP, ja loppurivi `aalto: I` (tai `J`) listaa aallon taulut
+2. Tili B on poistettu
+3. Jäännöshaku yllä: jokainen `count` = 0
+
+---
+
 ## Työkalun rakenne
 
 | Tiedosto | Vastuu |
 |---|---|
 | `tools/rls-acceptance/acceptance.js` | koko päättely: testit, luokittelu, siivous, raportti |
-| `tools/rls-acceptance/main.js` | clientit, kirjautuminen, piirto |
-| `tools/rls-acceptance/index.html` | runko, ei logiikkaa |
+| `tools/rls-acceptance/tableSpecs.js` | 0009–0013:n taulut, testirivit, 16 ristiinkiinnitystä ja aallot |
+| `tools/rls-acceptance/main.js` | clientit, kirjautuminen, aallon valinta, piirto |
+| `tools/rls-acceptance/index.html` | runko, ei logiikkaa; pakottava CSP, supabase-js omasta `vendor/`-hakemistosta |
 | `supabase/acceptance/verify_acceptance.sql` | jälkivarmistus, vain lukeva |
 | `tests/rls-acceptance.test.mjs` | ajurin testit |
 

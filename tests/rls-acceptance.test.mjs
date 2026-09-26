@@ -21,8 +21,13 @@ import { runAcceptance, formatReport, idsFor, taskRow, profileRow,
          routineRow, exceptionRow, exceptionDates, ANON_KOHTEET, NIL_UUID,
          goalRow, projectRow, wellbeingRow, recurringExpenseRow,
          billRow, savingsGoalRow, auditRow, notificationPrefsRow,
-         MARKER_PREFIX, STATUS }
+         MARKER_PREFIX, STATUS, specIdsFor, attackIdFor,
+         BESPOKE_COVERAGE, RLS_EXEMPTIONS }
   from '../tools/rls-acceptance/acceptance.js';
+import { TABLE_SPECS, COMPOSITE_FK_PROBES, CLEANUP_ORDER, ACCEPTANCE_WAVES, inWave }
+  from '../tools/rls-acceptance/tableSpecs.js';
+import { WAVES, MIGRATION_WAVE } from '../tools/release/waves.mjs';
+import { ACCOUNT_DATA_MAP } from '../src/domain/accountLifecycle.js';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -76,6 +81,21 @@ function makeDb() {
     bills: [],
     savings_goals: [],
     ai_action_audit: [],
+    // Migraatioiden 0009–0013 taulut (tools/rls-acceptance/tableSpecs.js).
+    transactions: [],
+    investments: [],
+    milestones: [],
+    inbox_items: [],
+    reminders: [],
+    notices: [],
+    travel_plans: [],
+    location_rules: [],
+    life_areas: [],
+    weekly_capacities: [],
+    time_entries: [],
+    alignment_reviews: [],
+    running_timers: [],
+    alignment_item_settings: [],
     users: [OWNER_A, USER_B]
   };
 }
@@ -110,7 +130,25 @@ const YHDISTELMAVIERASAVAIMET = [
   { table: 'tasks',              column: 'project_id',           parent: 'projects' },
   { table: 'routines',           column: 'goal_id',              parent: 'goals' },
   { table: 'bills',              column: 'task_id',              parent: 'tasks' },
-  { table: 'bills',              column: 'recurring_expense_id', parent: 'recurring_expenses' }
+  { table: 'bills',              column: 'recurring_expense_id', parent: 'recurring_expenses' },
+  // 0010–0013. Kirjoitettu käsin eikä luettu työkalusta: jos tekokanta
+  // lainaisi listansa työkalulta, väärä lista todistaisi itsensä.
+  { table: 'milestones',         column: 'goal_id',              parent: 'goals' },
+  { table: 'tasks',              column: 'milestone_id',         parent: 'milestones' },
+  { table: 'projects',           column: 'milestone_id',         parent: 'milestones' },
+  { table: 'travel_plans',       column: 'task_id',              parent: 'tasks' },
+  { table: 'location_rules',     column: 'task_id',              parent: 'tasks' },
+  { table: 'goals',              column: 'life_area_id',         parent: 'life_areas' },
+  { table: 'time_entries',       column: 'life_area_id',         parent: 'life_areas' },
+  { table: 'time_entries',       column: 'goal_id',              parent: 'goals' },
+  { table: 'time_entries',       column: 'task_id',              parent: 'tasks' },
+  { table: 'time_entries',       column: 'project_id',           parent: 'projects' },
+  { table: 'time_entries',       column: 'routine_id',           parent: 'routines' },
+  { table: 'running_timers',     column: 'life_area_id',         parent: 'life_areas' },
+  { table: 'running_timers',     column: 'goal_id',              parent: 'goals' },
+  { table: 'running_timers',     column: 'task_id',              parent: 'tasks' },
+  { table: 'running_timers',     column: 'project_id',           parent: 'projects' },
+  { table: 'running_timers',     column: 'routine_id',           parent: 'routines' }
 ];
 
 /**
@@ -129,13 +167,27 @@ const YHDISTELMAVIERASAVAIMET = [
  */
 const YKSIKASITTEISYYDET = [
   { table: 'routine_exceptions', columns: ['routine_id', 'date'] },
-  { table: 'wellbeing_entries',  columns: ['user_id', 'date'] }
+  { table: 'wellbeing_entries',  columns: ['user_id', 'date'] },
+  // 0011–0013. Näitä vastaan hyväksyntätestin rivit on rakennettu
+  // (vuoden 1990 maanantait, ajosta johdetut nimet ja avaimet, yksi
+  // ajastin): jos tekokanta ei tuntisi niitä, rakenteen virhe näkyisi
+  // vasta tuotannossa kuten E4:n 23505.
+  { table: 'notices',                 columns: ['user_id', 'notice_key'] },
+  { table: 'life_areas',              columns: ['user_id', 'name'] },
+  { table: 'life_areas',              columns: ['user_id', 'category_key'] },
+  { table: 'weekly_capacities',       columns: ['user_id', 'week_start'] },
+  { table: 'alignment_reviews',       columns: ['user_id', 'week_start'] },
+  { table: 'time_entries',            columns: ['user_id', 'operation_id'] },
+  { table: 'running_timers',          columns: ['user_id'] },
+  { table: 'alignment_item_settings', columns: ['user_id', 'item_kind', 'item_id'] }
 ];
 
 /** Osuuko rivi olemassa olevaan yksikasitteisyysrajoitteeseen? */
 function tarkistaYksikasitteisyys(db, table, row, omaOid) {
   for (const rajoite of YKSIKASITTEISYYDET) {
     if (rajoite.table !== table) continue;
+    // SQL:n unique sallii useita NULL-arvoja: NULL ei ole yhtä kuin NULL.
+    if (rajoite.columns.some(sarake => row[sarake] == null)) continue;
     const osuma = (db[table] || []).find(vanha =>
       vanha !== omaOid
       && rajoite.columns.every(sarake => vanha[sarake] === row[sarake]));
@@ -416,8 +468,13 @@ function makeClient(db, uid, flaws = {}, ledger = null) {
   return { from: table => new Query(server, table) };
 }
 
-/** Aja ajuri tekokantaa vasten. */
-async function runAgainst(flaws = {}, mutate = null) {
+/**
+ * Aja ajuri tekokantaa vasten.
+ *
+ * `wave` puuttuu = ajurin oletus (0008, aalto E): 0009–0013:n tauluja ei
+ * kosketa. Kolmas parametri valitsee aallon, kuten operaattori tekee.
+ */
+async function runAgainst(flaws = {}, mutate = null, { wave } = {}) {
   const db = makeDb();
   if (mutate) mutate(db);
   const ledger = [];
@@ -429,7 +486,8 @@ async function runAgainst(flaws = {}, mutate = null) {
     userBId: USER_B,
     expectedTaskCount: TASK_COUNT,
     runId: 'testiajo',
-    today: '2026-09-05'
+    today: '2026-09-05',
+    ...(wave === undefined ? {} : { wave })
   });
   return { ...result, db, ledger };
 }
@@ -1482,42 +1540,52 @@ test('KRIITTINEN: tekokannan vierasavainlista vastaa migraatioita', async () => 
   // lista erkanisi migraatioista, hyökkäystestit menisivät läpi
   // tekokantaa vasten vaikka oikeassa kannassa suojaa ei olisi — eli
   // testi todistaisi vain itsensä.
-  const fs = await import('node:fs');
-  const migraatiot = ['0003_routines.sql', '0004_goals_projects.sql',
-                      '0007_finance.sql'];
+  const kannassa = compositeForeignKeys(migrationFiles());
 
-  const kannassa = [];
-  for (const nimi of migraatiot) {
-    const lahde = fs.readFileSync(`supabase/migrations/${nimi}`, 'utf8')
-      .split('\n')
-      .filter(line => !line.trim().startsWith('--'))
-      .join('\n');
+  // Migraatiot luovat 25 omistajuusviitettä: yksi 0003:ssa, kuusi
+  // 0004:ssä, kaksi 0007:ssä, kolme 0010:ssä, kaksi 0011:ssä, neljä
+  // 0012:ssa ja seitsemän 0013:ssa.
+  assert.equal(kannassa.length, 25,
+    `migraatioista löytyi ${kannassa.length} yhdistelmävierasavainta, odotettiin 25`);
 
-    for (const m of lahde.matchAll(
-      /foreign key \(user_id,\s*(\w+)\)\s*references public\.(\w+)\s*\(user_id,\s*id\)/g)) {
-      kannassa.push({ column: m[1], parent: m[2] });
-    }
-  }
-
-  // Migraatiot luovat yhdeksän omistajuusviitettä: yksi 0003:ssa,
-  // kuusi 0004:ssä ja kaksi 0007:ssä.
-  assert.equal(kannassa.length, 9,
-    `migraatioista löytyi ${kannassa.length} yhdistelmävierasavainta, odotettiin 9`);
-
-  for (const { column, parent } of kannassa) {
+  for (const { table, column, parent } of kannassa) {
     const loytyi = YHDISTELMAVIERASAVAIMET.some(
-      fk => fk.column === column && fk.parent === parent);
+      fk => fk.table === table && fk.column === column && fk.parent === parent);
     assert.ok(loytyi,
-      `migraatio luo viitteen ${column} -> ${parent}, jota tekokanta ei tunne`);
+      `migraatio luo viitteen ${table}.${column} -> ${parent}, jota tekokanta ei tunne`);
   }
 
   for (const fk of YHDISTELMAVIERASAVAIMET) {
     const loytyi = kannassa.some(
-      k => k.column === fk.column && k.parent === fk.parent);
+      k => k.table === fk.table && k.column === fk.column && k.parent === fk.parent);
     assert.ok(loytyi,
-      `tekokanta tuntee viitteen ${fk.column} -> ${fk.parent}, jota migraatio ei luo`);
+      `tekokanta tuntee viitteen ${fk.table}.${fk.column} -> ${fk.parent}, jota migraatio ei luo`);
   }
 });
+
+/**
+ * Migraatioiden yhdistelmävierasavaimet käyttäjän omistamiin tauluihin:
+ * `foreign key (user_id, C) references public.P (user_id, id)`. Viittaava
+ * taulu on lähin edeltävä `create table` tai `alter table` (0003 määrittää
+ * avaimen taulun luonnissa, myöhemmät alter tablella). Kommentit riisutaan
+ * ensin, koska peruutusohjeet toistavat lauseita kommentteina.
+ */
+function compositeForeignKeys(files) {
+  const found = [];
+  for (const nimi of files) {
+    const lahde = sql(nimi)
+      .split(NEWLINE)
+      .filter(line => !line.trim().startsWith('--'))
+      .join(NEWLINE);
+    const owners = [...lahde.matchAll(/(?:create|alter) table (?:if not exists )?public\.(\w+)/g)];
+    for (const m of lahde.matchAll(
+      /foreign key \(user_id,\s*(\w+)\)\s*references public\.(\w+)\s*\(user_id,\s*id\)/g)) {
+      const owner = owners.filter(candidate => candidate.index < m.index).pop();
+      found.push({ migration: nimi.slice(0, 4), table: owner ? owner[1] : null, column: m[1], parent: m[2] });
+    }
+  }
+  return found;
+}
 
 test('KRIITTINEN: uusien taulujen testirivit vastaavat sovelluksen sarakkeita', async () => {
   // Työkalu puhuu kannalle suoraan, joten se voisi kirjoittaa
@@ -1849,4 +1917,481 @@ test('KRIITTINEN: tekokanta tarkistaa uuid-tyypin ennen oikeuksia', async () => 
     .update({ id: 'mika-tahansa' }).eq('id', 'mika-tahansa').select();
   assert.equal(teksti.error?.code, '42501',
     'tekstiavaimellinen taulu tyypittää turhaan');
+});
+
+// =====================================================================
+// MIGRAATIOT 0009–0013 (CRIT-07): 14 TAULUA JA 16 RISTIINKIINNITYSTÄ
+// =====================================================================
+//
+// Ajuri ajaa nämä vain, kun operaattori valitsee aallon, jonka
+// migraatiot tuotannossa on ajettu. Tekokanta tuntee kaikki 14 taulua,
+// niiden yksikäsitteisyysrajoitteet ja yhdistelmävierasavaimet.
+
+const NEW_MIGRATIONS = ['0009', '0010', '0011', '0012', '0013'];
+const newMigrationFiles = () => migrationFiles().filter(name => NEW_MIGRATIONS.includes(name.slice(0, 4)));
+const codeOf = table => TABLE_SPECS.find(entry => entry.table === table).code;
+
+/** Taulun luontilause migraatiosta. */
+function createStatement(table) {
+  for (const name of migrationFiles()) {
+    const match = new RegExp(`create table public\\.${table} \\(([\\s\\S]*?)\\n\\);`).exec(sql(name));
+    if (match) return match[1];
+  }
+  return null;
+}
+
+/** NOT NULL -sarakkeet ilman oletusarvoa: testirivin on annettava ne. */
+function requiredColumns(table) {
+  const body = createStatement(table);
+  const required = [];
+  for (const line of body.split(NEWLINE)) {
+    const column = /^ {2}(\w+)\s+/.exec(line);
+    if (!column) continue;
+    // Monirivinen sarakemäärittely (references …) jatkuu seuraavalla rivillä.
+    if (/not null/.test(line) && !/default/.test(line)) required.push(column[1]);
+  }
+  return required.filter(name => !['user_id'].includes(name));
+}
+
+test('0009–0013: TABLE_SPECS kattaa täsmälleen migraatioiden luomat taulut', () => {
+  const luodut = [];
+  for (const name of newMigrationFiles()) {
+    for (const m of sql(name).matchAll(/create table public\.(\w+) \(/g)) luodut.push(m[1]);
+  }
+  assert.equal(luodut.length, 14, `migraatiot 0009–0013 luovat ${luodut.length} taulua`);
+  assert.deepEqual(TABLE_SPECS.map(entry => entry.table).sort(), [...luodut].sort());
+  // Tunnukset ovat yksilöllisiä eivätkä törmää 0003–0008:n osioihin.
+  const codes = TABLE_SPECS.map(entry => entry.code);
+  assert.equal(new Set(codes).size, codes.length);
+  for (const code of codes) {
+    assert.match(code, /^[A-Z]{2}$/, `${code}: kaksikirjaiminen tunnus erottuu T1a/G1a-tyyleistä`);
+  }
+  // Siivousjärjestys kattaa jokaisen taulun.
+  assert.deepEqual([...CLEANUP_ORDER].sort(), [...luodut].sort());
+});
+
+test('0009–0013: jokaisen taulun aalto tulee tools/release/waves.mjs:stä', () => {
+  for (const entry of TABLE_SPECS) {
+    const wave = WAVES.find(candidate => candidate.tables.includes(entry.table));
+    assert.ok(wave, `${entry.table} ei kuulu yhteenkään aaltoon`);
+    assert.equal(entry.wave, wave.id, entry.table);
+    assert.equal(entry.migration, wave.migration, entry.table);
+    assert.ok(NEW_MIGRATIONS.includes(entry.migration), `${entry.table}: ${entry.migration}`);
+  }
+  // Aallot, joita vasten ajon voi valita: kannan lattiasta (0008) J:hin.
+  assert.deepEqual([...ACCEPTANCE_WAVES], ['E', 'F', 'G', 'H', 'I', 'J']);
+});
+
+test('KRIITTINEN: ristiinkiinnityslista on johdettu migraatioista 0009–0013', () => {
+  // Staattinen jäsennys `foreign key (user_id, …)` → jokaiselle
+  // käyttäjän omistaman taulun yhdistelmävierasavaimelle on kokeilu.
+  const kannassa = compositeForeignKeys(newMigrationFiles());
+  assert.equal(kannassa.length, 16, `migraatioista löytyi ${kannassa.length}`);
+
+  const avain = fk => `${fk.migration}:${fk.table}.${fk.column}->${fk.parent}`;
+  assert.deepEqual(COMPOSITE_FK_PROBES.map(avain).sort(), kannassa.map(avain).sort());
+
+  // Aalto on migraation aalto, ei taulun: goals.life_area_id tulee 0012:sta.
+  for (const probe of COMPOSITE_FK_PROBES) {
+    assert.equal(probe.wave, MIGRATION_WAVE[probe.migration], probe.key);
+  }
+  assert.equal(COMPOSITE_FK_PROBES.find(p => p.key === 'goals.life_area_id').wave, 'I');
+  assert.equal(COMPOSITE_FK_PROBES.find(p => p.key === 'time_entries.project_id').wave, 'J');
+
+  // Jokainen vanhempi on käyttäjän omistama taulu, jonka A:n rivi ajo luo.
+  for (const probe of COMPOSITE_FK_PROBES) {
+    assert.ok(Object.values(ACCOUNT_DATA_MAP).some(entry => entry.table === probe.parent),
+      `${probe.key}: vanhempi ${probe.parent} ei ole käyttäjän taulu`);
+  }
+});
+
+test('KRIITTINEN: jokainen ACCOUNT_DATA_MAP-taulu on todistettu tai perustellusti rajattu', () => {
+  const specTables = new Set(TABLE_SPECS.map(entry => entry.table));
+  const puuttuvat = [];
+  for (const [name, { table }] of Object.entries(ACCOUNT_DATA_MAP)) {
+    const exemption = RLS_EXEMPTIONS[table];
+    if (exemption !== undefined) {
+      assert.ok(typeof exemption === 'string' && exemption.trim().length >= 20,
+        `${table}: rajaus ilman kunnollista perustelua`);
+      continue;
+    }
+    if (!BESPOKE_COVERAGE[table] && !specTables.has(table)) puuttuvat.push(`${name} (${table})`);
+  }
+  assert.deepEqual(puuttuvat, [], 'tauluja ilman RLS-hyväksyntätestiä');
+  // Rajaus ei saa peittää taulua, joka on jo testattu (kaksi totuutta).
+  for (const table of Object.keys(RLS_EXEMPTIONS)) {
+    assert.equal(specTables.has(table) || Boolean(BESPOKE_COVERAGE[table]), false, table);
+  }
+});
+
+test('KRIITTINEN: aallossa J jokainen ACCOUNT_DATA_MAP-taulu todella kohtaa B:n lukukiellon ja anonin', async () => {
+  // Kattavuuslista voi valehdella; lauseloki ei. Jokaiseen käyttäjän
+  // tauluun on lähtenyt B:n SELECT ja kirjautumattoman yritys.
+  const { ledger } = await runAgainst({}, null, { wave: 'J' });
+  for (const { table } of Object.values(ACCOUNT_DATA_MAP)) {
+    if (RLS_EXEMPTIONS[table] !== undefined) continue;
+    assert.ok(ledger.some(entry => entry.uid === USER_B && entry.table === table && entry.op === 'select'),
+      `${table}: B ei yrittänyt lukea`);
+    assert.ok(ledger.some(entry => entry.uid === null && entry.table === table),
+      `${table}: kirjautumatonta ei kokeiltu`);
+  }
+});
+
+test('ehjä RLS aallossa J: jokainen 0003–0013:n tarkistus menee läpi', async () => {
+  const { rows, summary } = await runAgainst({}, null, { wave: 'J' });
+  const notPassing = rows.filter(entry => entry.status !== STATUS.PASS);
+  assert.deepEqual(notPassing.map(entry => `${entry.test_no}:${entry.status}:${entry.actual}`), []);
+  assert.equal(summary.verdict, 'PASS');
+  assert.equal(summary.wave, 'J');
+  assert.deepEqual([...summary.tablesInScope].sort(), TABLE_SPECS.map(entry => entry.table).sort());
+
+  const numerot = new Set(rows.map(entry => entry.test_no));
+  for (const entry of TABLE_SPECS) {
+    for (const suffix of ['1a', '1b', '1c', '1d', '2a', '2b', '3a', '3b', '3c', '3d', '3e', '4a', '5a', '5b']) {
+      assert.ok(numerot.has(`${entry.code}${suffix}`), `${entry.code}${suffix} puuttuu`);
+    }
+    const lyhenne = entry.code.toLowerCase();
+    for (const op of ['select', 'insert', 'update', 'delete']) {
+      assert.ok(numerot.has(`T6-${lyhenne}-${op}`), `T6-${lyhenne}-${op} puuttuu`);
+    }
+    for (const tunnus of ['C11', 'C12']) assert.ok(numerot.has(`${tunnus}-${lyhenne}`));
+    for (const kuka of ['a', 'b']) {
+      assert.ok(numerot.has(`P0-${lyhenne}-${kuka}`));
+      assert.ok(numerot.has(`CV-${lyhenne}-${kuka}`));
+    }
+  }
+  for (const probe of COMPOSITE_FK_PROBES) {
+    for (const no of [`XV-${probe.key}`, `UV-${probe.key}`, `CV13-${probe.key}`]) {
+      assert.ok(numerot.has(no), `${no} puuttuu`);
+    }
+  }
+  for (const no of ['P2', 'P3', 'XV-ok', 'AR6a', 'AR6b']) assert.ok(numerot.has(no), no);
+});
+
+test('KRIITTINEN: B:n aikakirjaus A:n elämänalueeseen torjutaan vierasavaimella (23503)', async () => {
+  const { rows, ledger } = await runAgainst({}, null, { wave: 'J' });
+  const entry = byNumber(rows, 'XV-time_entries.life_area_id');
+  assert.equal(entry.status, STATUS.PASS, entry.actual);
+  assert.match(entry.expected, /23503/);
+  assert.match(entry.actual, /23503/);
+  // Lause oli B:n INSERT, jonka life_area_id on A:n alue — ei mitään muuta.
+  const attack = ledger.find(item => item.uid === USER_B && item.op === 'insert'
+    && item.table === 'time_entries' && item.payload.id === attackIdFor('testiajo', { table: 'time_entries', column: 'life_area_id' }));
+  assert.ok(attack, 'hyökkäyslausetta ei lähetetty');
+  assert.equal(attack.payload.life_area_id, specIdsFor('testiajo', 'LA').a);
+  assert.equal('user_id' in attack.payload, false, 'omistaja on kannan asettama — muuten testi mittaisi RLS:ää');
+});
+
+test('KRIITTINEN: B:n UPDATE A:n viikkokatsauksen pohdintaan osuu nollaan riviin', async () => {
+  const { rows, ledger, db } = await runAgainst({}, null, { wave: 'J' });
+  const aReview = specIdsFor('testiajo', 'AR').a;
+  for (const no of ['AR3a', 'AR6a']) {
+    assert.equal(byNumber(rows, no).status, STATUS.PASS, `${no}: ${byNumber(rows, no).actual}`);
+    assert.match(byNumber(rows, no).actual, /0 riviä/);
+  }
+  const updates = ledger.filter(item => item.uid === USER_B && item.op === 'update'
+    && item.table === 'alignment_reviews'
+    && item.filters.some(filter => filter.column === 'id' && filter.value === aReview));
+  assert.ok(updates.some(item => 'reflection' in item.payload), 'B ei yrittänyt pohdintaa');
+  assert.equal(byNumber(rows, 'AR6b').status, STATUS.PASS);
+  // Raportti ei kanna pohdinnan tekstiä.
+  assert.equal(JSON.stringify(rows).includes('B:n kaappaama pohdinta'), false);
+  assert.deepEqual(db.alignment_reviews, [], 'katsausrivejä jäi kantaan');
+});
+
+test('KRIITTINEN: B ei näe A:n käynnissä olevaa ajastinta', async () => {
+  const { rows } = await runAgainst({}, null, { wave: 'J' });
+  for (const no of ['RT2a', 'RT2b', 'RT5a']) {
+    assert.equal(byNumber(rows, no).status, STATUS.PASS, `${no}: ${byNumber(rows, no).actual}`);
+  }
+  const { rows: auki } = await runAgainst({ selectUsingOff: true }, null, { wave: 'J' });
+  for (const no of ['RT2a', 'RT2b']) {
+    assert.equal(byNumber(auki, no).status, STATUS.FAIL, `${no} ei huomannut, että B näkee A:n ajastimen`);
+  }
+});
+
+test('KRIITTINEN: kaikki 16 uutta ristiinkiinnitystä torjutaan 23503:lla, INSERT ja UPDATE', async () => {
+  const { rows } = await runAgainst({}, null, { wave: 'J' });
+  for (const probe of COMPOSITE_FK_PROBES) {
+    for (const no of [`XV-${probe.key}`, `UV-${probe.key}`]) {
+      const entry = byNumber(rows, no);
+      assert.equal(entry.status, STATUS.PASS, `${no}: ${entry.actual}`);
+      assert.match(entry.actual, /23503/, `${no} torjuttiin väärällä koodilla`);
+    }
+  }
+  assert.equal(byNumber(rows, 'XV-ok').status, STATUS.PASS, 'sallittu oma viite ei toiminut');
+});
+
+test('MUTAATIO: yhdistelmävierasavaimet pois — kaikki 32 uutta hyökkäystä huomataan', async () => {
+  const { rows, summary } = await runAgainst({ compositeFkOff: true }, null, { wave: 'J' });
+  assert.equal(summary.verdict, 'FAIL');
+  for (const probe of COMPOSITE_FK_PROBES) {
+    for (const no of [`XV-${probe.key}`, `UV-${probe.key}`]) {
+      assert.notEqual(byNumber(rows, no).status, STATUS.PASS, `${no}: ristiinkiinnitys meni läpi huomaamatta`);
+    }
+    assert.equal(byNumber(rows, `UV-${probe.key}`).status, STATUS.FAIL, `UV-${probe.key}`);
+  }
+});
+
+test('KRIITTINEN: jokainen uusi hyökkäys osuu OMAAN vierasavaimeensa', async () => {
+  const kaikki = COMPOSITE_FK_PROBES.flatMap(probe => [`XV-${probe.key}`, `UV-${probe.key}`]);
+  for (const probe of COMPOSITE_FK_PROBES) {
+    const { rows } = await runAgainst({ fkOff: new Set([probe.key]) }, null, { wave: 'J' });
+    const omat = [`XV-${probe.key}`, `UV-${probe.key}`];
+    for (const no of omat) {
+      assert.notEqual(byNumber(rows, no).status, STATUS.PASS, `${probe.key} pois, mutta ${no} ei huomannut`);
+    }
+    for (const no of kaikki.filter(candidate => !omat.includes(candidate))) {
+      assert.equal(byNumber(rows, no).status, STATUS.PASS,
+        `${probe.key} pois, mutta myös ${no} kaatui — testit eivät erottele viitteitä`);
+    }
+  }
+});
+
+test('MUTAATIO aallossa J: rikkinäinen politiikka huomataan jokaisessa uudessa taulussa', async () => {
+  const tapaukset = [
+    [{ selectUsingOff: true }, ['2a', '2b']],
+    [{ updateUsingOff: true }, ['3a', '3d']],
+    [{ deleteUsingOff: true }, ['3b']],
+    [{ withCheckOff: true }, ['3c']]
+  ];
+  for (const [flaws, suffixes] of tapaukset) {
+    const { rows, summary } = await runAgainst(flaws, null, { wave: 'J' });
+    assert.equal(summary.verdict, 'FAIL');
+    for (const entry of TABLE_SPECS) {
+      for (const suffix of suffixes) {
+        const no = `${entry.code}${suffix}`;
+        assert.notEqual(byNumber(rows, no).status, STATUS.PASS,
+          `${no}: ${JSON.stringify(flaws)} jäi huomaamatta`);
+      }
+    }
+    if (flaws.updateUsingOff) {
+      assert.equal(byNumber(rows, 'AR6a').status, STATUS.FAIL, 'pohdinnan kaappaus jäi huomaamatta');
+      assert.equal(byNumber(rows, 'AR6b').status, STATUS.FAIL, 'muuttunut pohdinta jäi huomaamatta');
+    }
+  }
+  const { rows } = await runAgainst({ anonAllowed: true }, null, { wave: 'J' });
+  for (const entry of TABLE_SPECS) {
+    assert.equal(byNumber(rows, `T6-${entry.code.toLowerCase()}-select`).status, STATUS.FAIL, entry.table);
+  }
+});
+
+test('aalto rajaa ajon: myöhempiin migraatioihin kuuluviin tauluihin ei lähetetä lausetta', async () => {
+  const uudet = new Set(TABLE_SPECS.map(entry => entry.table));
+  const kosketut = ledger => new Set(ledger.map(entry => entry.table).filter(table => uudet.has(table)));
+
+  // Oletus = 0008 (aalto E): ei yhtään uutta taulua eikä uutta saraketta.
+  const oletus = await runAgainst();
+  assert.deepEqual([...kosketut(oletus.ledger)], []);
+  assert.equal(oletus.summary.wave, 'E');
+  assert.equal(oletus.ledger.some(entry => entry.payload && ('milestone_id' in entry.payload
+    || 'life_area_id' in entry.payload)), false, 'myöhemmän migraation sarake lähti kantaan');
+
+  for (const wave of ['F', 'G', 'H', 'I', 'J']) {
+    const { ledger, summary, rows } = await runAgainst({}, null, { wave });
+    const odotetut = TABLE_SPECS.filter(entry => inWave(entry, wave)).map(entry => entry.table);
+    assert.deepEqual([...kosketut(ledger)].sort(), [...odotetut].sort(), `aalto ${wave}`);
+    assert.equal(summary.verdict, 'PASS', `aalto ${wave}: ${rows.filter(r => r.status !== STATUS.PASS).map(r => r.test_no).join(', ')}`);
+    const kokeillut = COMPOSITE_FK_PROBES.filter(probe => rows.some(entry => entry.test_no === `XV-${probe.key}`));
+    assert.deepEqual(kokeillut.map(probe => probe.key),
+      COMPOSITE_FK_PROBES.filter(probe => inWave(probe, wave)).map(probe => probe.key), `aalto ${wave}`);
+  }
+  // Aallossa I 0013:n sarakkeita (project_id, routine_id) ei kokeilla.
+  const { rows: aaltoI } = await runAgainst({}, null, { wave: 'I' });
+  assert.equal(byNumber(aaltoI, 'XV-time_entries.project_id'), undefined);
+  assert.ok(byNumber(aaltoI, 'XV-time_entries.life_area_id'));
+});
+
+test('tuntematon tai liian vanha aalto keskeyttää ennen yhtäkään kyselyä', async () => {
+  const db = makeDb();
+  const ledger = [];
+  const base = {
+    a: makeClient(db, OWNER_A, {}, ledger), b: makeClient(db, USER_B, {}, ledger),
+    anon: makeClient(db, null, {}, ledger), ownerAId: OWNER_A, userBId: USER_B,
+    expectedTaskCount: TASK_COUNT, runId: 'aalto', today: '2026-09-05'
+  };
+  for (const wave of ['K', 'A', 'BASE', '', null]) {
+    await assert.rejects(() => runAcceptance({ ...base, wave }), /aalto/, String(wave));
+  }
+  assert.deepEqual(ledger, []);
+});
+
+test('KRIITTINEN: A:n käynnissä oleva ajastin pysäyttää ajon ennen yhtäkään kirjoitusta', async () => {
+  const { rows, summary, ledger, db } = await runAgainst({}, database => {
+    database.running_timers.push({
+      id: 'oikea-ajastin', user_id: OWNER_A, target_kind: 'none', started_at: '2026-09-05T06:00:00Z',
+      paused_seconds: 0
+    });
+  }, { wave: 'J' });
+  assert.equal(byNumber(rows, 'P2').status, STATUS.FAIL);
+  assert.ok(summary.aborted);
+  assert.equal(ledger.some(entry => entry.op !== 'select'), false, 'epäselvästä lähtötilasta kirjoitettiin');
+  assert.deepEqual(db.running_timers.map(timer => timer.id), ['oikea-ajastin']);
+});
+
+test('MUTAATIO: edellisen ajon Suunta-jäänne pysäyttää ajon', async () => {
+  const { rows, summary } = await runAgainst({}, database => {
+    database.weekly_capacities.push({
+      id: `${MARKER_PREFIX}vanha_a_wc`, user_id: OWNER_A, week_start: '1990-01-01', available_minutes: 600
+    });
+  }, { wave: 'I' });
+  assert.equal(byNumber(rows, 'P0-wc-a').status, STATUS.FAIL);
+  assert.ok(summary.aborted);
+  assert.equal(rows.some(entry => entry.test_no.startsWith('T')), false);
+});
+
+test('KRIITTINEN: A:n oikea Suunta-data säilyy kaikissa vikatiloissa', async () => {
+  // A:n omat alueet, kirjaukset ja katsaus ovat samoissa tauluissa kuin
+  // testirivit. Siivous on sidottu etuliitteeseen, ja jokainen kirjoitus
+  // kohdistuu testiriviin — myös silloin, kun kaikki kiellot pettävät.
+  const oikeat = database => {
+    database.life_areas.push({ id: 'oikea-alue', user_id: OWNER_A, name: 'Terapia', importance: 5 });
+    database.time_entries.push({ id: 'oikea-kirjaus', user_id: OWNER_A, entry_date: '2026-09-04',
+      minutes: 45, life_area_id: 'oikea-alue', note: 'yksityinen muistiinpano' });
+    database.alignment_reviews.push({ id: 'oikea-katsaus', user_id: OWNER_A, week_start: '2026-08-31',
+      snapshot: {}, reflection: 'oikea pohdinta' });
+  };
+  const kuva = database => JSON.stringify(['life_areas', 'time_entries', 'alignment_reviews']
+    .map(table => database[table].filter(row => !String(row.id).startsWith(MARKER_PREFIX))));
+  const odotettu = (() => { const db = makeDb(); oikeat(db); return kuva(db); })();
+
+  for (const flaws of [{}, { selectUsingOff: true, updateUsingOff: true, deleteUsingOff: true,
+    withCheckOff: true, anonAllowed: true }, { compositeFkOff: true }]) {
+    const { db, rows } = await runAgainst(flaws, oikeat, { wave: 'J' });
+    assert.equal(kuva(db), odotettu, `${JSON.stringify(flaws)}: A:n oikea data muuttui`);
+    for (const secret of ['Terapia', 'yksityinen muistiinpano', 'oikea pohdinta']) {
+      assert.equal(JSON.stringify(rows).includes(secret), false, `raportti kantaa arvon ${secret}`);
+    }
+  }
+});
+
+test('KRIITTINEN: aallossa J yksikään muuttava lause ei ole rajaamaton', async () => {
+  const { ledger } = await runAgainst({}, null, { wave: 'J' });
+  const muuttavat = ledger.filter(entry => entry.op === 'update' || entry.op === 'delete');
+  assert.ok(muuttavat.length >= 100);
+  for (const entry of muuttavat) {
+    assert.ok(entry.filters.length >= 1, `rajaamaton ${entry.op} tauluun ${entry.table}`);
+    for (const filter of entry.filters) {
+      if (filter.kind !== 'like') continue;
+      assert.ok(String(filter.value).startsWith(MARKER_PREFIX), `${entry.op}: ${filter.value}`);
+    }
+  }
+});
+
+test('KRIITTINEN: siivous tyhjentää 0009–0013:n taulut, ja jäännös huomataan', async () => {
+  const { db, rows } = await runAgainst({}, null, { wave: 'J' });
+  for (const entry of TABLE_SPECS) {
+    assert.deepEqual(db[entry.table], [], `tauluun ${entry.table} jäi rivejä`);
+  }
+  const { rows: jaannos, summary } = await runAgainst({
+    deleteDrops: row => String(row.id).endsWith('_b_te')
+  }, null, { wave: 'J' });
+  assert.equal(summary.verdict, 'FAIL');
+  assert.equal(byNumber(jaannos, 'C12-te').status, STATUS.FAIL, 'B:n jäljelle jäänyttä kirjausta ei huomattu');
+  assert.equal(byNumber(jaannos, 'C11-te').status, STATUS.PASS);
+  assert.ok(rows.length > 0);
+});
+
+test('KRIITTINEN: 0009–0013:n testirivit kirjoittavat vain sovelluksen sarakkeita ja kaikki pakolliset', async () => {
+  const { ALL_REPOSITORIES } = await import('../src/data/collectionsRepo.js');
+  const ctx = { today: '2026-09-07', parents: { goalA: 'g-a', goalB: 'g-b' } };
+  for (const entry of TABLE_SPECS) {
+    const repo = ALL_REPOSITORIES.find(candidate => candidate.table === entry.table);
+    assert.ok(repo, `${entry.table}: sovelluksella ei ole repositoriota`);
+    // Sovelluksen sarakkeet: repositorion toRow normalisoidulle oliolle.
+    const sovellus = Object.keys(repo.mapping.toRow(repo.mapping.normalize({ id: 'x' })));
+    const pakolliset = requiredColumns(entry.table);
+    assert.ok(pakolliset.length > 0 || entry.table === 'investments', `${entry.table}: jäsennys`);
+    for (const variant of ['a', 'b', 'forged']) {
+      const testirivi = entry.row(`${MARKER_PREFIX}t_${variant}`, variant, ctx);
+      for (const sarake of Object.keys(testirivi)) {
+        assert.ok(sovellus.includes(sarake), `${entry.table}.${sarake}: sovellus ei kirjoita tätä saraketta`);
+      }
+      for (const sarake of pakolliset) {
+        assert.ok(testirivi[sarake] !== undefined && testirivi[sarake] !== null,
+          `${entry.table}.${sarake}: NOT NULL ilman oletusta puuttuu testiriviltä`);
+      }
+      for (const kielletty of ['user_id', 'created_at', 'updated_at']) {
+        assert.equal(kielletty in testirivi, false, `${entry.table}: ${kielletty}`);
+      }
+    }
+  }
+});
+
+test('0009–0013: testirivit väistävät yksikäsitteisyyden rakenteella', () => {
+  const ctx = { today: '2026-09-07', parents: { goalA: 'g-a', goalB: 'g-b' } };
+  const ids = specIdsFor('20260926120000', 'LA');
+  const la = TABLE_SPECS.find(entry => entry.table === 'life_areas');
+  const names = ['a', 'b', 'forged'].map(variant => la.row(ids[variant], variant, ctx).name);
+  assert.equal(new Set(names).size, 3, 'nimet törmäävät');
+  for (const name of names) assert.ok(name.length <= 60, `nimi liian pitkä: ${name.length}`);
+  for (const table of ['weekly_capacities', 'alignment_reviews']) {
+    const entry = TABLE_SPECS.find(candidate => candidate.table === table);
+    const weeks = ['a', 'b', 'forged'].map(variant => entry.row('x', variant, ctx).week_start);
+    assert.equal(new Set(weeks).size, 3, `${table}: viikot törmäävät`);
+    for (const week of weeks) {
+      assert.equal(new Date(`${week}T00:00:00Z`).getUTCDay(), 1, `${table}: ${week} ei ole maanantai`);
+      assert.ok(week < '2000-01-01', `${table}: viikko voisi olla käyttäjän oikea viikko`);
+    }
+  }
+  // Tekokanta tuntee jokaisen 0009–0013:n yksikäsitteisyysrajoitteen
+  // (pl. (user_id, id), joka ei rajaa mitään testin kannalta).
+  for (const name of newMigrationFiles()) {
+    for (const m of sql(name).matchAll(/alter table public\.(\w+)\s+add constraint (\w+) unique \(([^)]*)\)/g)) {
+      const columns = m[3].split(',').map(column => column.trim());
+      if (columns.join(',') === 'user_id,id') continue;
+      assert.ok(YKSIKASITTEISYYDET.some(rule => rule.table === m[1] && rule.columns.join(',') === columns.join(',')),
+        `${m[2]} (${columns.join(', ')}) puuttuu tekokannan mallista`);
+    }
+  }
+});
+
+test('tekokanta: NULL ei törmää yksikäsitteisyyteen, arvo törmää', async () => {
+  const db = makeDb();
+  const a = makeClient(db, OWNER_A);
+  const eka = await a.from('life_areas').insert({ id: 'l1', name: 'Yksi', category_key: null }).select();
+  const toka = await a.from('life_areas').insert({ id: 'l2', name: 'Kaksi', category_key: null }).select();
+  assert.equal(eka.error, null);
+  assert.equal(toka.error, null, 'kaksi kategoriatonta aluetta on sallittu');
+  const sama = await a.from('life_areas').insert({ id: 'l3', name: 'Yksi', category_key: null }).select();
+  assert.equal(sama.error?.code, '23505', 'saman niminen alue hyväksyttiin');
+  await a.from('running_timers').insert({ id: 't1', started_at: '2026-09-05T06:00:00Z' }).select();
+  const toinen = await a.from('running_timers').insert({ id: 't2', started_at: '2026-09-05T07:00:00Z' }).select();
+  assert.equal(toinen.error?.code, '23505', 'toinen ajastin samalle käyttäjälle hyväksyttiin');
+});
+
+test('KRIITTINEN: tableSpecs ei lue sovelluksen porttitilaa', () => {
+  const specs = readCode('tools/rls-acceptance/tableSpecs.js');
+  assert.equal(/from\s+['"][^'"]*schema\.js['"]/.test(specs), false);
+  assert.equal(/hasTable|\bTABLES\b/.test(specs), false);
+  assert.match(specs, /from '\.\.\/release\/waves\.mjs'/, 'aallot luetaan julkaisutyökalusta');
+});
+
+test('TURVA: työkalun sivu lataa skriptit vain omasta originista ja valitsee aallon', async () => {
+  const html = read('tools/rls-acceptance/index.html');
+  const sources = [...html.matchAll(/<script\b[^>]*\bsrc="([^"]+)"/g)].map(m => m[1]);
+  assert.ok(sources.length >= 2);
+  for (const src of sources) {
+    assert.equal(/^(https?:)?\/\//i.test(src), false, `ulkoinen skripti työkalussa: ${src}`);
+  }
+  assert.ok(sources.some(src => /vendor\/supabase-js-\d+\.\d+\.\d+\.min\.js$/.test(src)),
+    'supabase-js ladataan vendoroituna, ei CDN:stä');
+  const options = [...html.matchAll(/<option value="([A-Z])"/g)].map(m => m[1]);
+  assert.deepEqual(options, [...ACCEPTANCE_WAVES], 'aaltovalinta ei vastaa sallittuja aaltoja');
+  const main = read('tools/rls-acceptance/main.js');
+  assert.match(main, /wave:\s*\$\('wave'\)\.value/, 'valittu aalto ei päädy ajuriin');
+  assert.match(html, /http-equiv="Content-Security-Policy"/, 'työkalun sivulla ei ole CSP:tä');
+});
+
+test('TURVA: tableSpecs ei sisällä avaimia eikä kirjoita vapaata tekstiä muistiinpanoihin', () => {
+  const source = read('tools/rls-acceptance/tableSpecs.js');
+  assert.equal(source.includes('service_role'), false);
+  assert.equal(/eyJ[A-Za-z0-9_-]{20,}/.test(source), false);
+  const ctx = { today: '2026-09-07', parents: { goalA: 'g-a', goalB: 'g-b' } };
+  for (const entry of TABLE_SPECS) {
+    const rivi = entry.row('x', 'a', ctx);
+    for (const sarake of ['note', 'description', 'message', 'reason', 'reflection', 'proposal']) {
+      if (sarake in rivi) assert.equal(rivi[sarake], null, `${entry.table}.${sarake}`);
+    }
+  }
 });
