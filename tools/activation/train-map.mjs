@@ -13,8 +13,11 @@
 //                   sukulinja). Poikkeama = VIRHE, poistumiskoodi 1.
 //   --write         ratkaise aliakset, rakenna tietueet ja kirjoita lukko.
 //                   Kieltäytyy, jos yksikin alias puuttuu.
-//   --sync-docs     päivitä dokumenttien push-rivit lukon SHA:ihin
-//                   (docs/SUUNTA-ACTIVATION-GO-NOGO.md ja
+//   --sync-docs     päivitä dokumenttien deploy- ja push-rivit lukon
+//                   SHA:ihin, STOP-huomautukset lukon missingPatches-
+//                   tilaan ja SQL-lähteen viitteet lukon sqlSourceen
+//                   (docs/SUUNTA-ACTIVATION-GO-NOGO.md,
+//                   docs/SUUNTA-FAST-ACTIVATION.md ja
 //                   docs/acceptance/WAVE-D..J.md). Käytä --write:n jälkeen,
 //                   kun H/I/J on leikattu uudelleen.
 //
@@ -47,7 +50,7 @@ import {
 } from '../release/waves.mjs';
 import { createGit, isFullSha } from '../release/git-layer.mjs';
 import { originMainStateFrom } from '../release/lineage.mjs';
-import { syncPushLines, syncTableDeployTargets } from './push-lines.mjs';
+import { syncPushLines, syncSqlSourceRefs, syncTableDeployTargets, syncWaveShaArgs } from './push-lines.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 export const LOCK_PATH = 'docs/activation/release-train-c-j.json';
@@ -259,11 +262,21 @@ export function readLock(root = ROOT, fsImpl = fs) {
   }
 }
 
-/** Dokumentit, joiden push-rivit seuraavat lukkoa (ACT-14). */
+/** Dokumentit, joiden deploy- ja push-rivit seuraavat lukkoa (ACT-14). */
 export function pushLineDocs(lock) {
-  const docs = [{ file: 'docs/SUUNTA-ACTIVATION-GO-NOGO.md', wave: null }];
-  for (const w of (lock.waves || []).slice(1)) docs.push({ file: `docs/acceptance/WAVE-${w.wave}.md`, wave: w.wave });
+  const docs = [
+    { file: 'docs/SUUNTA-ACTIVATION-GO-NOGO.md', wave: null, table: true },
+    { file: 'docs/SUUNTA-FAST-ACTIVATION.md', wave: null, table: false }
+  ];
+  for (const w of (lock.waves || []).slice(1)) docs.push({ file: `docs/acceptance/WAVE-${w.wave}.md`, wave: w.wave, table: false });
   return docs;
+}
+
+/** Yhden dokumentin synkronointi lukkoon (LF-teksti sisään ja ulos). */
+export function syncDoc(text, { lock, wave = null, table = false }) {
+  let out = syncPushLines(text, { lock, wave });
+  if (table) out = syncTableDeployTargets(out, { lock });
+  return syncWaveShaArgs(syncSqlSourceRefs(out, { lock }), { lock });
 }
 
 if (process.argv[1] && process.argv[1].endsWith('train-map.mjs')) {
@@ -286,12 +299,11 @@ if (process.argv[1] && process.argv[1].endsWith('train-map.mjs')) {
   const lock = readLock();
   if (args.includes('--sync-docs')) {
     if (!lock) { console.error('lukkoa ei voitu lukea'); process.exit(1); }
-    for (const { file, wave } of pushLineDocs(lock)) {
+    for (const { file, wave, table } of pushLineDocs(lock)) {
       const full = path.join(ROOT, file);
       const before = fs.readFileSync(full, 'utf8');
       const crlf = before.includes('\r\n');
-      let after = syncPushLines(before.replace(/\r\n/g, '\n'), { lock, wave });
-      if (!wave) after = syncTableDeployTargets(after, { lock });
+      let after = syncDoc(before.replace(/\r\n/g, '\n'), { lock, wave, table });
       if (crlf) after = after.replace(/\n/g, '\r\n');
       if (after !== before) { fs.writeFileSync(full, after); console.log(`päivitetty ${file}`); }
     }

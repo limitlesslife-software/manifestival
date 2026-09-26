@@ -14,6 +14,12 @@ Push tehdään orkestroijalla (`npm run activation:orchestrate -- --execute-depl
 --approved-sha=<deployTarget>`), joka tarkistaa ensin, että `origin`in main on
 yhä odotettu edellinen SHA.
 
+**Hyväksyntä (omistajan päätös 2026-09-26):** junan portti on koneellinen
+`AUTOMATED_TECHNICAL_ACCEPTANCE` — ehdot, komennot ja kirjauspaikka:
+[`docs/activation/AUTOMATED-ACCEPTANCE-POLICY.md`](../activation/AUTOMATED-ACCEPTANCE-POLICY.md). Kohdan 4 selainhyväksyntä on
+`LIVE_USE_VALIDATION_PENDING`: se tehdään oikeassa käytössä, **ei estä junaa
+eikä ole koskaan PASS**. Omistajan viesti **"hyväksyn 0010/G"** avaa migraation 0010 ja deployn.
+
 ---
 
 ## LUE TÄMÄ ENSIN: aalto G on ESTETTY
@@ -48,11 +54,16 @@ dataa ja joiden portit ovat auki tuotannossa:**
 Konkreettisesti:
 
 1. **`goals_status_check` korvataan.** Rajoite pudotetaan ja luodaan
-   uudelleen. Transaktion sisällä muut istunnot eivät näe välitilaa,
-   mutta **keskeytynyt ajo jättäisi taulun ilman tilarajoitetta** —
-   eikä mikään sovelluksessa huomaisi sitä. Migraation vaihe 5
-   tarkistaa sen ennen committia ja `verify_0010.sql` tarkistus 20 ajon
-   jälkeen.
+   uudelleen. Koko tiedosto on yksi transaktio: muut istunnot eivät näe
+   välitilaa, ja **keskeytynyt tai virheeseen päättynyt ajo perutaan
+   kokonaan** — rajoite jää ennalleen. Taulu voi jäädä ilman
+   tilarajoitetta **vain, jos tiedostosta ajetaan VALINTA** (osa
+   lauseista editorissa valittuna), eikä mikään sovelluksessa huomaisi
+   sitä. Siksi tiedosto ajetaan aina kokonaan uudessa välilehdessä;
+   `preflight_0010.sql` rivi 09 (rajoite olemassa ennen ajoa) ja
+   `verify_0010.sql` rivi 20 (rajoite olemassa ajon jälkeen) paljastavat
+   puuttuvan rajoitteen. Migraation vaihe 5 tarkistaa sen lisäksi ennen
+   committia.
 
 2. **`ALTER TABLE` ottaa ACCESS EXCLUSIVE -lukon.** Nämä ovat tauluja,
    joita jokainen sovelluksen käynnistys lukee. `lock_timeout` on
@@ -144,6 +155,20 @@ Vain `src/data/schema.js`, `sw.js`, `docs/PRODUCTION-STATUS.md`.
 
 ## 2. Deploy
 
+Omistajan viesti **"hyväksyn 0010/G"** kattaa migraation 0010 ja tämän askeleen.
+Deploy vasta, kun `verify_0010.sql` = 0 poikkeavaa; tulos annetaan
+orkestroijalle (`--verify-result`). Ensisijainen (ja ainoa suositeltu)
+deploy-askel on orkestroija: se tarkistaa lukon, tuotannon aallon teknisen
+hyväksynnän, ehdokkaan kirjatun testiajon ja julkaisun esitarkistuksen,
+tekee compare-and-swapin, pushaa ja todentaa tuotannon:
+
+```
+npm run activation:orchestrate -- --execute-deploy --approved-sha=173afd5dc01d16e244ec07e72fb6e29918415e81 --verify-result=<verify_0010-tulos>
+```
+
+Viitteeksi (älä aja käsin): orkestroija ajaa compare-and-swapin jälkeen
+täsmälleen tämän — ei koskaan forcea:
+
 ```
 git push origin 173afd5dc01d16e244ec07e72fb6e29918415e81:refs/heads/main
 ```
@@ -163,6 +188,10 @@ npm run production:verify-assets -- --wave=G
 ---
 
 ## 4. Selainhyväksyntä
+
+> **`LIVE_USE_VALIDATION_PENDING`** (omistajan päätös 2026-09-26): tämä osio
+> tehdään oikeassa käytössä. Se **ei estä junaa** eikä sitä merkitä koskaan
+> PASSiksi; junan portti on `AUTOMATED_TECHNICAL_ACCEPTANCE` ([`docs/activation/AUTOMATED-ACCEPTANCE-POLICY.md`](../activation/AUTOMATED-ACCEPTANCE-POLICY.md)).
 
 Jokainen kohta tarkistetaan **sivun latauksen jälkeen** — se on ainoa
 tapa erottaa tallennus muistista.
@@ -281,6 +310,30 @@ Palauttaa **aallon F** tilan.
 > 3. Revertin jälkeen älä muokkaa niitä tavoitteita. Jos niin kävi,
 >    palauta tila aallon G palattua: `restore <vienti> --tables=goals`
 >    (kuivaharjoitus `--dry-run` ensin).
+>
+>    **Varaus:** `restore --tables=goals` palauttaa **JOKAISEN**
+>    tilannekuvassa olevan tavoiterivin kaikkine sarakkeineen kuvan
+>    tilaan — myös tavoitteet, joita on muokattu oikein kuvan jälkeen
+>    (niiden muutokset katoavat). Kuvan jälkeen luodut tavoitteet jäävät
+>    (`--prune` poistaisi ne, ja `--prune --tables=goals` kieltäytyy,
+>    koska `goals`-tauluun viittaavat taulut eivät ole valittuina).
+>
+>    **Kapeampi vaihtoehto (suositus):** aja ensin `compare <vienti>
+>    --tables=goals` → `compare.sql`:n sarake `muuttuneet_id` kertoo
+>    muuttuneet tunnisteet. Jos muutos koskee vain kohdassa 2 kirjattuja
+>    `maintenance`-tavoitteita, palauta **vain niiden tila** omistajan
+>    hyväksynnällä, uudessa välilehdessä:
+>
+>    ```sql
+>    update public.goals
+>       set status = 'maintenance'
+>     where status = 'active'
+>       and id in ('<kirjattu-tunniste-1>', '<kirjattu-tunniste-2>');
+>    ```
+>
+>    ja tarkista `select id, status from public.goals where id in (…)` →
+>    `maintenance`. (`compare` näyttää nämä rivit yhä MUUTTUNEINA, koska
+>    `updated_at` päivittyy; muut tavoitteet pysyvät koskemattomina.)
 >
 > Varmuuskopio, palautus ja päätöspuu:
 > [`docs/activation/0010-BACKUP-AND-RECOVERY.md`](../activation/0010-BACKUP-AND-RECOVERY.md).

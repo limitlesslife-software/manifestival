@@ -15,6 +15,12 @@ Push tehdään orkestroijalla (`npm run activation:orchestrate -- --execute-depl
 --approved-sha=<deployTarget>`), joka tarkistaa ensin, että `origin`in main on
 yhä odotettu edellinen SHA.
 
+**Hyväksyntä (omistajan päätös 2026-09-26):** junan portti on koneellinen
+`AUTOMATED_TECHNICAL_ACCEPTANCE` — ehdot, komennot ja kirjauspaikka:
+[`docs/activation/AUTOMATED-ACCEPTANCE-POLICY.md`](../activation/AUTOMATED-ACCEPTANCE-POLICY.md). Kohdan 4 selainhyväksyntä on
+`LIVE_USE_VALIDATION_PENDING`: se tehdään oikeassa käytössä, **ei estä junaa
+eikä ole koskaan PASS**. Omistajan viesti **"hyväksyn 0012/I"** avaa migraation 0012 ja deployn.
+
 ---
 
 ## LÄHTÖTILANNE: kanta puuttuu (ESTETTY)
@@ -50,7 +56,8 @@ F → G → H → I: aaltoa ei avata ohi edeltäjiensä.
 
 1. Panun kirjallinen hyväksyntä migraatiolle `0012`
 2. **Varmuuskopio**
-3. Vain lukeva inventaario: `supabase/acceptance/life_alignment_readonly_inventory.sql`
+3. Vain lukeva inventaario: `supabase/acceptance/activation_readonly_inventory.sql`
+   (rivi 00 Claudelle; `node tools/activation/score-inventory.mjs`)
 4. Migraation esitarkistus (vain lukeva, tiedoston lopussa):
    - `uudet_taulut` = **0**
    - `goals_sarake` = **0**
@@ -133,8 +140,22 @@ Vain `src/data/schema.js`, `sw.js`, `docs/PRODUCTION-STATUS.md`.
 
 ## 2. Deploy
 
+Omistajan viesti **"hyväksyn 0012/I"** kattaa migraation 0012 ja tämän askeleen.
+Deploy vasta, kun `verify_0012.sql` = 0 poikkeavaa; tulos annetaan
+orkestroijalle (`--verify-result`). Ensisijainen (ja ainoa suositeltu)
+deploy-askel on orkestroija: se tarkistaa lukon, tuotannon aallon teknisen
+hyväksynnän, ehdokkaan kirjatun testiajon ja julkaisun esitarkistuksen,
+tekee compare-and-swapin, pushaa ja todentaa tuotannon:
+
 ```
-git push origin 4cfb4bcfea649146fb0bc9202d309aea8d1ffd9e:refs/heads/main
+# STOP I — TRAIN_RECUT_REQUIRED: lukon deployTarget 4cfb4bc ei sisällä pakollista korjausta 5aa0d53; ei push- eikä deploy-komentoa ennen uudelleenleikkausta (leikkaa, sitten node tools/activation/train-map.mjs --write ja --sync-docs) [deploy --verify-result=<verify_0012-tulos>]
+```
+
+Viitteeksi (älä aja käsin): orkestroija ajaa compare-and-swapin jälkeen
+täsmälleen tämän — ei koskaan forcea:
+
+```
+# STOP I — TRAIN_RECUT_REQUIRED: lukon deployTarget 4cfb4bc ei sisällä pakollista korjausta 5aa0d53; ei push- eikä deploy-komentoa ennen uudelleenleikkausta (leikkaa, sitten node tools/activation/train-map.mjs --write ja --sync-docs) [push]
 ```
 
 ---
@@ -151,6 +172,10 @@ npm run production:verify-assets -- --wave=I
 ---
 
 ## 4. Selainhyväksyntä
+
+> **`LIVE_USE_VALIDATION_PENDING`** (omistajan päätös 2026-09-26): tämä osio
+> tehdään oikeassa käytössä. Se **ei estä junaa** eikä sitä merkitä koskaan
+> PASSiksi; junan portti on `AUTOMATED_TECHNICAL_ACCEPTANCE` ([`docs/activation/AUTOMATED-ACCEPTANCE-POLICY.md`](../activation/AUTOMATED-ACCEPTANCE-POLICY.md)).
 
 Jokainen kohta tarkistetaan **sivun latauksen jälkeen** — se on ainoa
 tapa erottaa tallennus muistista.

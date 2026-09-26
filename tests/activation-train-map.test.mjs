@@ -13,10 +13,11 @@ import { cacheVersionOf, cumulativeGates, WAVE_IDS } from '../tools/release/wave
 import { versionNumber } from '../tools/release/lineage.mjs';
 import { createGit } from '../tools/release/git-layer.mjs';
 import {
-  REQUIRED_PATCHES, TRAIN, buildTrainMap, checkTrainMap, pushLineDocs
+  REQUIRED_PATCHES, TRAIN, buildTrainMap, checkTrainMap, pushLineDocs, syncDoc
 } from '../tools/activation/train-map.mjs';
 import {
-  goNoGoTableRows, pushLineProblems, pushLinesIn, syncPushLines, syncTableDeployTargets
+  deployLinesIn, goNoGoTableRows, pushLineProblems, pushLinesIn, sqlSourceProblems, stopLinesIn, syncPushLines,
+  syncTableDeployTargets, waveShaArgProblems
 } from '../tools/activation/push-lines.mjs';
 import { shaOf, stubGit } from './helpers/activation-history.mjs';
 
@@ -224,16 +225,88 @@ test('ACT-09 (ehdollinen): manifestin aaltocommit on lukon waveCommit ja deployT
 // ACT-14: dokumenttien push-rivit ja GO/NO-GO-taulukko seuraavat lukkoa
 // =====================================================================
 
-test('KRIITTINEN: jokainen "git push origin X:main" -rivi käyttää lukon 40-merkkistä deployTargetia (tai HEAD:ia)', () => {
+test('KRIITTINEN: jokainen push- ja deploy-rivi käyttää lukon 40-merkkistä deployTargetia (tai HEAD:ia), ja STOP-rivit vastaavat lukkoa', () => {
   const problems = [];
   let lines = 0;
   for (const { file, wave } of pushLineDocs(map)) {
     const text = read(file);
-    lines += pushLinesIn(text).length;
+    lines += pushLinesIn(text).length + deployLinesIn(text).length + stopLinesIn(text).length;
     problems.push(...pushLineProblems(text, { lock: map, wave, file }));
+    problems.push(...sqlSourceProblems(text, { lock: map, file }));
+    problems.push(...waveShaArgProblems(text, { lock: map, file }));
   }
   assert.deepEqual(problems, []);
-  assert.ok(lines >= 14, `push-rivejä löytyi vain ${lines}`);
+  assert.ok(lines >= 30, `push-, deploy- ja STOP-rivejä löytyi vain ${lines}`);
+});
+
+test('KRIITTINEN: ensisijainen deploy-askel on orkestroija: jokaisessa WAVE-D..J.md:n kohdassa 2 orkestroijan komento tai STOP-huomautus', () => {
+  for (const w of map.waves.slice(1)) {
+    const doc = read(`docs/acceptance/WAVE-${w.wave}.md`).replace(/\r\n/g, '\n');
+    const start = doc.indexOf('\n## 2. Deploy');
+    const s2 = doc.slice(start, doc.indexOf('\n## 3. ', start));
+    const firstBlock = /```\n([^\n]*)\n```/.exec(s2);
+    assert.ok(firstBlock, `${w.wave}: kohdassa 2 ei ole koodilohkoa`);
+    const expected = w.missingPatches.length
+      ? new RegExp(`^# STOP ${w.wave} — TRAIN_RECUT_REQUIRED: .*\\[deploy`)
+      : new RegExp(`^npm run activation:orchestrate -- --execute-deploy --approved-sha=${w.deployTarget}`);
+    assert.match(firstBlock[1], expected, `${w.wave}: ensimmäinen deploy-rivi ei ole orkestroija`);
+    assert.match(s2, /Omistajan viesti \*\*"hyväksyn /, `${w.wave}: omistajan viesti puuttuu`);
+    assert.ok(s2.indexOf('npm run activation:orchestrate') === -1 || s2.indexOf('npm run activation:orchestrate') < (s2.indexOf('git push origin') === -1 ? Infinity : s2.indexOf('git push origin')),
+      `${w.wave}: raaka push ennen orkestroijaa`);
+  }
+});
+
+test('KRIITTINEN: raaka push- tai deploy-rivi aallolle, jonka lukossa on missingPatches, kaatuu; STOP-huomautus kelpaa', () => {
+  const lock = JSON.parse(JSON.stringify(map));
+  const h = lock.waves.find(w => w.wave === 'H');
+  h.missingPatches = [REQUIRED_PATCHES[0].commit];
+  const sha = h.deployTarget;
+  for (const [text, wave] of [
+    [`git push origin ${sha}:refs/heads/main   # H v21`, null],
+    [`git push origin ${sha}:refs/heads/main   # H v21 (leikataan uudelleen)`, null],
+    [`git push origin ${sha}:refs/heads/main`, 'H'],
+    [`npm run activation:orchestrate -- --execute-deploy --approved-sha=${sha}`, 'H'],
+    [`npm run activation:orchestrate -- --execute-deploy --approved-sha=${sha} --verify-result=<x>   # H v21`, null]
+  ]) {
+    const problems = pushLineProblems(text, { lock, wave });
+    assert.ok(problems.some(p => /missingPatches: raaka (push|deploy)-rivi on korvattava STOP-huomautuksella/.test(p)), `${text}: ${problems.join('; ')}`);
+  }
+  // --sync-docs muuttaa rivin STOP-huomautukseksi, joka kelpaa ja on idempotentti.
+  const synced = syncPushLines(`\`\`\`\ngit push origin ${sha}:refs/heads/main   # H v21 (leikataan uudelleen)\n\`\`\``, { lock });
+  assert.match(synced, /^# STOP H — TRAIN_RECUT_REQUIRED: lukon deployTarget [0-9a-f]{7} ei sisällä pakollista korjausta 5aa0d53; .*\[push {3}# H v21\]$/m);
+  assert.deepEqual(pushLineProblems(synced, { lock }), []);
+  assert.equal(syncPushLines(synced, { lock }), synced);
+  // Ilman missingPatches STOP-huomautus on itse virhe (vanhentunut).
+  const clean = JSON.parse(JSON.stringify(lock));
+  clean.waves.find(w => w.wave === 'H').missingPatches = [];
+  assert.ok(pushLineProblems(synced, { lock: clean }).some(p => /STOP-huomautus aallolle H, mutta lukossa ei ole missingPatches/.test(p)));
+  // Muokattu STOP-teksti ei vastaa lukkoa.
+  assert.ok(pushLineProblems(synced.replace('5aa0d53', '1234567'), { lock }).some(p => /ei vastaa lukkoa/.test(p)));
+});
+
+test('KRIITTINEN: uudelleenleikkaus palauttaa STOP-rivit komennoiksi uusilla SHA:illa ja säilyttää liput', () => {
+  const recut = JSON.parse(JSON.stringify(map));
+  const fresh = { H: '1'.repeat(40), I: '2'.repeat(40), J: '3'.repeat(40) };
+  for (const [wave, sha] of Object.entries(fresh)) {
+    const record = recut.waves.find(w => w.wave === wave);
+    record.deployTarget = sha;
+    record.missingPatches = [];
+  }
+  recut.sqlSource = { ...recut.sqlSource, sha: fresh.J, ref: 'rehearsal/wave-j-v2' };
+  const stale = map.waves.filter(w => fresh[w.wave]).map(w => w.deployTarget);
+  for (const { file, wave, table } of pushLineDocs(map)) {
+    const text = read(file).replace(/\r\n/g, '\n');
+    const updated = syncDoc(text, { lock: recut, wave, table });
+    for (const old of stale) assert.equal(updated.includes(old), false, `${file}: vanha SHA ${old.slice(0, 7)} jäi`);
+    assert.deepEqual(pushLineProblems(updated, { lock: recut, wave, file }), [], file);
+    assert.deepEqual(sqlSourceProblems(updated, { lock: recut, file }), [], file);
+    assert.deepEqual(waveShaArgProblems(updated, { lock: recut, file }), [], file);
+    assert.equal(stopLinesIn(updated).length, 0, `${file}: STOP-rivi jäi uudelleenleikkauksen jälkeen`);
+  }
+  const fast = syncDoc(read('docs/SUUNTA-FAST-ACTIVATION.md').replace(/\r\n/g, '\n'), { lock: recut });
+  assert.match(fast, new RegExp(`--approved-sha=${fresh.H} --inventory=<uusi-inventaario> --verify-result=<verify_0011-tulos> {3}# H v21`));
+  assert.match(fast, new RegExp(`git show ${fresh.J}:supabase/migrations/0013_alignment_reality\\.sql`));
+  assert.match(fast, /SQL-lähde \(lukon sqlSource\): `rehearsal\/wave-j-v2` @ `3{40}`/);
 });
 
 test('push-rivien tarkistus hylkää haaran nimen, lyhyen SHA:n ja väärän aallon SHA:n', () => {
@@ -249,10 +322,9 @@ test('push-rivien tarkistus hylkää haaran nimen, lyhyen SHA:n ja väärän aal
 });
 
 test('--sync-docs on idempotentti nykyisellä lukolla ja päivittää vanhentuneen SHA:n', () => {
-  for (const { file, wave } of pushLineDocs(map)) {
+  for (const { file, wave, table } of pushLineDocs(map)) {
     const text = read(file).replace(/\r\n/g, '\n');
-    let synced = syncPushLines(text, { lock: map, wave });
-    if (!wave) synced = syncTableDeployTargets(synced, { lock: map });
+    const synced = syncDoc(text, { lock: map, wave, table });
     assert.equal(synced, text, `${file} ei vastaa lukkoa: aja node tools/activation/train-map.mjs --sync-docs`);
   }
   const recut = JSON.parse(JSON.stringify(map));

@@ -1,5 +1,12 @@
 # Aalto C — omistajan hyväksyntä (tiivis, ~10 min)
 
+> **Tila 2026-09-26: `LIVE_USE_VALIDATION_PENDING` — ei enää junan portti.**
+> Omistajan päätöksellä tämä lista tehdään oikeassa käytössä; se ei estä
+> aaltoa D eikä sitä merkitä PASSiksi. Junan portti on C:n
+> `AUTOMATED_TECHNICAL_ACCEPTANCE`, joka kirjataan live-todennuksesta:
+> `npm run production:verify-assets -- --wave=C --sha=cf259d0ef755f7e875cc9cd9c15405eba632e408 --record-acceptance`.
+> Politiikka: [`docs/activation/AUTOMATED-ACCEPTANCE-POLICY.md`](../activation/AUTOMATED-ACCEPTANCE-POLICY.md).
+
 **Tilanne:** aalto C on **deployattu** (`origin/main` = `cf259d0`, v16) mutta
 **ei hyväksytty**. Tuotannon tarjoilemat tiedostot todennettu 2026-09-25
 yöllä: `npm run production:verify-assets -- --wave=C` → **21/21 PASS**
@@ -56,9 +63,9 @@ testirivit — ne ovat tavallista dataa, ja voit poistaa ne lopuksi.
 
 ## 5. Valmis, kun
 
-- [ ] Kohdat 1–4 kaikki OK → **aalto C hyväksytty**. Kerro Claudelle
-      "C hyväksytty", niin `docs/PRODUCTION-STATUS.md` päivitetään ja
-      seuraavaksi on vuorossa aalto D.
+- [ ] Kohdat 1–4 kaikki OK → kerro Claudelle, niin käyttötodennus kirjataan
+      muistiinpanoksi. Tämä **ei** ole aallon D edellytys (D:n avaa
+      omistajan viesti "hyväksyn D" ja C:n tekninen hyväksyntä).
 
 **Jos jokin epäonnistuu:** älä jatka aaltoon D. Kerro Claudelle mikä
 kohta. Peruutus (vain jos tallennus ei toimi) on `git revert` +

@@ -14,6 +14,12 @@ Push tehdään orkestroijalla (`npm run activation:orchestrate -- --execute-depl
 --approved-sha=<deployTarget>`), joka tarkistaa ensin, että `origin`in main on
 yhä odotettu edellinen SHA.
 
+**Hyväksyntä (omistajan päätös 2026-09-26):** junan portti on koneellinen
+`AUTOMATED_TECHNICAL_ACCEPTANCE` — ehdot, komennot ja kirjauspaikka:
+[`docs/activation/AUTOMATED-ACCEPTANCE-POLICY.md`](../activation/AUTOMATED-ACCEPTANCE-POLICY.md). Kohdan 4 selainhyväksyntä on
+`LIVE_USE_VALIDATION_PENDING`: se tehdään oikeassa käytössä, **ei estä junaa
+eikä ole koskaan PASS**. Omistajan viesti **"hyväksyn 0009/F"** avaa migraation 0009 ja deployn.
+
 ---
 
 ## LUE TÄMÄ ENSIN: aalto F on ESTETTY
@@ -115,6 +121,20 @@ Vain `src/data/schema.js`, `sw.js`, `docs/PRODUCTION-STATUS.md`.
 
 ## 2. Deploy
 
+Omistajan viesti **"hyväksyn 0009/F"** kattaa migraation 0009 ja tämän askeleen.
+Deploy vasta, kun `verify_0009.sql` = 0 poikkeavaa; tulos annetaan
+orkestroijalle (`--verify-result`). Ensisijainen (ja ainoa suositeltu)
+deploy-askel on orkestroija: se tarkistaa lukon, tuotannon aallon teknisen
+hyväksynnän, ehdokkaan kirjatun testiajon ja julkaisun esitarkistuksen,
+tekee compare-and-swapin, pushaa ja todentaa tuotannon:
+
+```
+npm run activation:orchestrate -- --execute-deploy --approved-sha=5e4e7cf50e40fe1e0ba7b4543b147767e3a0eb32 --verify-result=<verify_0009-tulos>
+```
+
+Viitteeksi (älä aja käsin): orkestroija ajaa compare-and-swapin jälkeen
+täsmälleen tämän — ei koskaan forcea:
+
 ```
 git push origin 5e4e7cf50e40fe1e0ba7b4543b147767e3a0eb32:refs/heads/main
 ```
@@ -134,6 +154,10 @@ npm run production:verify-assets -- --wave=F
 ---
 
 ## 4. Selainhyväksyntä
+
+> **`LIVE_USE_VALIDATION_PENDING`** (omistajan päätös 2026-09-26): tämä osio
+> tehdään oikeassa käytössä. Se **ei estä junaa** eikä sitä merkitä koskaan
+> PASSiksi; junan portti on `AUTOMATED_TECHNICAL_ACCEPTANCE` ([`docs/activation/AUTOMATED-ACCEPTANCE-POLICY.md`](../activation/AUTOMATED-ACCEPTANCE-POLICY.md)).
 
 Jokainen kohta tarkistetaan **sivun latauksen jälkeen** — se on ainoa
 tapa erottaa tallennus muistista.
