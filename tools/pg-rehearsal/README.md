@@ -40,6 +40,7 @@ ja jokaisen jälkeen sen oman `supabase/verify/verify_XXXX.sql`:n.
 | `rollback:data` | 0010 (ylläpitotila → selkeä kieltäytyminen, korjauksen jälkeen läpi), 0012 (liitetty tavoite + kirjattu aika), 0013 (minuutit säilyvät, kohdistuksen menetys ennakkokyselystä) — vanhat rivit ja katalogi täsmälleen ennallaan. |
 | `rollback:reverse-chain` | 0008 → 0013 datan kanssa → peruutukset 0013…0009 → katalogi = tuotannon 0008; 0012 ennen 0013:a kaatuu vartijaan. |
 | `role:nonsuper` | Migraatiot NOSUPERUSER-omistajaroolina; preflightin esteet-rivit `pg_read_all_stats`-oikeuden kanssa ja ilman. |
+| `backup` (vain `--only=backup`) | Looginen tilannekuva ja palautus B1–B15 (`backup-scenario.mjs`, ks. `docs/activation/0010-BACKUP-AND-RECOVERY.md` §10) jokaiselle 0009–0013 molemmilla lähtötiloilla; B15: RLS:n suodattama kuva hylätään. Ei kuulu oletusajoon. Sama ajo erikseen: `rehearse-backup.mjs`. |
 
 ## Mitä tämä EI todista (tunnetut erot Supabaseen)
 
@@ -95,6 +96,36 @@ node tools/pg-rehearsal/chain.mjs text                  # pelkkä ketju + verify
 node tools/pg-rehearsal/bundle-hashes.mjs               # MIGRATION-BUNDLES.md:n blob-taulukko
 ```
 
+### Varmuuskopioharjoittelu (`backup`)
+
+Ei kuulu oletusajoon. Kaksi samanarvoista tapaa (PowerShellissä
+`$env:PG_REHEARSAL_PORT = '54349'`):
+
+```sh
+PG_REHEARSAL_PORT=54349 node tools/pg-rehearsal/rehearse.mjs --only=backup
+PG_REHEARSAL_PORT=54349 node tools/pg-rehearsal/rehearse.mjs --only=backup --backup-fixtures=tests/fixtures/backup
+PG_REHEARSAL_PORT=54349 node tools/pg-rehearsal/rehearse-backup.mjs --fixtures=tests/fixtures/backup [--numbers=0010] [--variants=text]
+```
+
+Yksikkötestien aineisto (`state-0009.json`) menee **omaan hakemistoonsa**
+`tests/fixtures/backup` — `--fixtures` on inventaarion aineistolle
+(`tests/fixtures/activation-inventory`), `--backup-fixtures` tälle.
+
+Ennen yhtäkään kantaa tai roolia ajetaan tiukka vahti
+(`lib.guardBackupRehearsal`), jolla ei ole ohitusta:
+
+1. `PG_REHEARSAL_PORT` on annettu **nimenomaisesti** eikä se ole `54329`
+   (toisen projektin PostgreSQL 15) — tarkistetaan ennen yhteyttä;
+   `connect()` kieltäytyy portista 54329 aina;
+2. palvelin on PostgreSQL 17 (`server_version_num >= 170000`) ja kertoo
+   portikseen saman kuin pyydettiin;
+3. `data_directory` on projektin **pääkansion** `.claude/pg-local/`-hakemistossa
+   (`git rev-parse --git-common-dir`, myös worktreestä ajettaessa);
+   `PG_REHEARSAL_ALLOW_FOREIGN` ja `PG_REHEARSAL_PGLOCAL` eivät koske sitä.
+
+Muuten ajo keskeytyy (`KESKEYTYS`), eikä mitään luoda. Vahti on
+yksikkötestattu ilman palvelinta: `tests/pg-rehearsal-backup-guard.test.mjs`.
+
 Poistumiskoodi on 0 vain, jos yksikään tarkistus ei hylätty. Raportti
 (`--json`) sisältää alkuperätiedon: git HEAD, palvelimen versio ja
 data-hakemisto sekä jokaisen luetun SQL-tiedoston git-blob-tiivisteen.
@@ -108,6 +139,7 @@ data-hakemisto sekä jokaisen luetun SQL-tiedoston git-blob-tiivisteen.
 | `prodshape.mjs` | tuotannon tila 0008 mallikantana, kloonit, inventaarion vertailu, todisteet migraation ympärillä |
 | `waves.mjs`, `app-gate-hooks.mjs` | junan taukopisteet ja sovelluksen rivimuunnokset aallon sarakeporteilla |
 | `*-scenarios.mjs` | uudet skenaariot (tuotannon muoto, virheet ja lukot, peruutukset) |
+| `backup-scenario.mjs`, `rehearse-backup.mjs` | looginen tilannekuva ja palautus B1–B15 (`--only=backup` tai erillinen ajo) |
 | `expected/` | omistajan inventaario 0008 ja kultaiset skeemaerot 0009–0013 |
 
 ## Löydökset, jotka tämä on jo tehnyt

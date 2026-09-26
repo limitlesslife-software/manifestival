@@ -30,6 +30,14 @@
 //   rollback:reverse-chain 0013..0009 käänteisessä järjestyksessä -> tuotannon 0008
 //   role:nonsuper          migraatiot NOSUPERUSER-omistajana, preflightin näkyvyys
 //
+// Vain nimenomaisesti (--only=backup; ei kuulu oletusajoon, OPT_IN_SCENARIOS):
+//   backup         looginen tilannekuva ja palautus B1–B15 (backup-scenario.mjs);
+//                  --backup-fixtures=tests/fixtures/backup kirjoittaa yksikkötestien
+//                  aineiston (ERI hakemisto kuin --fixtures). Ennen yhtäkään yhteyttä
+//                  sama vahti kuin rehearse-backup.mjs:ssä (lib.guardBackupRehearsal):
+//                  PG_REHEARSAL_PORT nimenomaisesti ja ei 54329, PostgreSQL >= 17,
+//                  data_directory pääkansion .claude/pg-local/-hakemistossa.
+//
 // Jokainen kanta on kertakäyttöinen (mv_rehearsal_*) ja poistetaan lopuksi.
 // Pelkkä importti ei aja mitään (pääohjelmavahti alla).
 
@@ -37,7 +45,8 @@ import fs, { writeFileSync } from 'node:fs';
 import path from 'node:path';
 import {
   connect, createDatabase, dropDatabase, runSql, runVerify, readSql, asUser, tryAs,
-  catalogItems, diffCatalog, scalar, provenance, isMain, extractRollback, SERVER, OWNER, USER_B
+  catalogItems, diffCatalog, scalar, provenance, isMain, extractRollback, guardBackupRehearsal,
+  SERVER, OWNER, USER_B
 } from './lib.mjs';
 import { MIGRATIONS, numberOf, prepareBaseline, applyMigration } from './chain.mjs';
 import { SEEDS, ID_OWNED } from './seeds.mjs';
@@ -54,9 +63,14 @@ export const SCENARIOS = Object.freeze([
   'rollback:data', 'rollback:reverse-chain', 'failure:0010-locks', 'role:nonsuper'
 ]);
 
+/** Skenaariot, jotka ajetaan VAIN nimettyinä (--only=backup), eivät oletusajossa. */
+export const OPT_IN_SCENARIOS = Object.freeze(['backup']);
+
 let args = {};
 let only = null;
 const want = name => !only || only.has(name) || only.has(name.split(':')[0]);
+/** Nimenomaisesti pyydetty (OPT_IN_SCENARIOS): pelkkä oletusajo ei riitä. */
+const wantExplicit = name => Boolean(only && only.has(name));
 
 const report = {
   startedAt: null,
@@ -748,6 +762,10 @@ function summarize(name, value) {
       return `failure:0010-locks: estäjämatriisi ${passCount(m)}, muut ${passCount(parts)}`;
     }
     case 'role:nonsuper': return `role:nonsuper: ${passCount(value.migrations || [])} migraatiota NOSUPERUSER-roolina`;
+    case 'backup': {
+      const ids = [...new Set(value.map(r => r.id))].sort((a, b) => a.localeCompare(b, 'en', { numeric: true }));
+      return `backup: ${passCount(value)} PASS (${ids.map(id => `${id} ${passCount(value.filter(r => r.id === id))}`).join(' · ')})`;
+    }
     default: return `${name}: ajettu`;
   }
 }
@@ -762,7 +780,7 @@ async function runScenario(name, fn) {
   report.durationsMs = { ...(report.durationsMs || {}), [name]: Date.now() - t0 };
 }
 
-export async function main(argv = process.argv.slice(2)) {
+export async function main(argv = process.argv.slice(2), { guard = guardBackupRehearsal, env = process.env } = {}) {
   args = Object.fromEntries(argv.map(a => {
     const [k, v] = a.replace(/^--/, '').split('=');
     return [k, v ?? true];
@@ -773,11 +791,19 @@ export async function main(argv = process.argv.slice(2)) {
   const ps = () => import('./prodshape-scenarios.mjs');
   const fs2 = () => import('./failure-scenarios.mjs');
   const rb = () => import('./rollback-scenarios.mjs');
+  const bk = () => import('./backup-scenario.mjs');
+  // Mallikannat poistetaan vain, jos palvelin todennettiin: epäonnistunut
+  // vahti ei saa johtaa yhteenkään uuteen yhteysyritykseen.
+  let serverVerified = false;
   try {
+    // Varmuuskopioharjoittelu: tiukka vahti ENNEN ensimmäistäkään yhteyttä
+    // (portti nimenomaisesti ja ei 54329), sitten versio ja data-hakemisto.
+    if (wantExplicit('backup')) report.backupGuard = await guard({ env });
     // Ensimmäinen yhteys todentaa palvelimen (versio + data-hakemisto).
     const probe = await connect();
     report.server = { ...SERVER, versionString: await scalar(probe, 'select version()') };
     await probe.end();
+    serverVerified = true;
 
     if (want('preflight')) await runScenario('preflight', preflightScenario);
     if (want('rollback')) await runScenario('rollback', rollbackScenario);
@@ -802,10 +828,21 @@ export async function main(argv = process.argv.slice(2)) {
     if (want('rollback:reverse-chain')) await runScenario('rollback:reverse-chain', async () => (await rb()).reverseChainScenario(ctx));
     if (want('failure:0010-locks')) await runScenario('failure:0010-locks', async () => (await fs2()).locksScenario(ctx));
     if (want('role:nonsuper')) await runScenario('role:nonsuper', async () => (await fs2()).roleNonsuperScenario(ctx));
+    if (wantExplicit('backup')) {
+      await runScenario('backup', async () => {
+        const dir = args['backup-fixtures'] ? String(args['backup-fixtures']) : null;
+        if (dir) fs.mkdirSync(dir, { recursive: true });
+        const results = await (await bk()).backupScenario({ fixtureDir: dir });
+        for (const r of results.filter(x => !x.pass)) fail('backup', `[${r.variant} ${r.migration}] ${r.id} ${r.label}: ${r.detail}`);
+        return results;
+      });
+    }
   } catch (error) {
     report.failures.push(`KESKEYTYS: ${error.stack || error.message}`);
   } finally {
-    try { await dropTemplates(); } catch (error) { report.failures.push(`mallikantojen poisto: ${error.message}`); }
+    if (serverVerified) {
+      try { await dropTemplates(); } catch (error) { report.failures.push(`mallikantojen poisto: ${error.message}`); }
+    }
   }
   report.finishedAt = new Date().toISOString();
   report.git = provenance();

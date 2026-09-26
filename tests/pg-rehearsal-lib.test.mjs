@@ -29,7 +29,8 @@ test('KRIITTINEN: harjoittelumoduulien importti ei avaa yhteyttä eikä aja mit�
   // pg-ajurin hakemisto osoittaa olemattomaan paikkaan: jos yksikin moduuli
   // lataisi ajurin tai yrittäisi yhteyttä importissa, lapsiprosessi kaatuisi.
   const modules = ['lib.mjs', 'chain.mjs', 'baseline.mjs', 'seeds.mjs', 'prodshape.mjs', 'waves.mjs',
-    'prodshape-scenarios.mjs', 'failure-scenarios.mjs', 'rollback-scenarios.mjs', 'rehearse.mjs'];
+    'prodshape-scenarios.mjs', 'failure-scenarios.mjs', 'rollback-scenarios.mjs', 'rehearse.mjs',
+    'backup-scenario.mjs', 'rehearse-backup.mjs'];
   const urls = modules.map(m => pathToFileURL(path.join(ROOT, 'tools/pg-rehearsal', m)).href);
   const script = `for (const u of ${JSON.stringify(urls)}) await import(u); console.log('IMPORTED');`;
   const res = spawnSync(process.execPath, ['--input-type=module', '-e', script], {

@@ -21,10 +21,14 @@
 //   B12 väärä kanta, puuttuva käyttäjä, puuttuva omistaja, väärä saraketyyppi hylätään
 //   B13 ei-superuser taulujen omistajana onnistuu; FORCE RLS ja ei-omistaja kaatuvat kiinni
 //   B14 kuivaharjoitus: katalogi ja sisältö ennallaan, skripti päättyy rollback;iin
+//   B15 RLS:n suodattama kuva ei läpäise tarkistusta: taulujen omistaja (ei FORCE)
+//       ja BYPASSRLS-rooli kelpaavat; FORCE RLS omistajalle ja ei-omistaja ilman
+//       BYPASSRLS:ää hylätään (manifestin rlsFiltered)
 //
-// Kytkentä: node tools/pg-rehearsal/rehearse-backup.mjs (erillinen ajo).
-// Integraattori voi kytkeä tämän rehearse.mjs:n valitsimeen --only=backup
-// kutsumalla backupScenario().
+// Kytkentä: node tools/pg-rehearsal/rehearse-backup.mjs (erillinen ajo) tai
+// node tools/pg-rehearsal/rehearse.mjs --only=backup
+// (--backup-fixtures=tests/fixtures/backup). Kumpikin ajaa ensin
+// lib.guardBackupRehearsal-vahdin.
 //
 // Harjoittelun lib/chain/seeds tuodaan VAIN LUKUUN. extractRollback ja
 // seedFor on kopioitu tähän, koska rehearse.mjs:n tuonti ajaisi sen.
@@ -157,6 +161,25 @@ async function takeSnapshot(c, state) {
   return { rows, single: !Array.isArray(res), unchanged: before.hash === after.hash };
 }
 
+/** Tilannekuva roolina `role` (READ ONLY): rivit tai heitetty virhe. */
+async function snapshotAs(c, state, role) {
+  const sql = readSql(`supabase/backup/snapshot_state_${state}.sql`);
+  await c.query(`set role ${role}`);
+  try {
+    await c.query('begin isolation level repeatable read read only');
+    try {
+      const res = await c.query(sql);
+      return res.rows.map(r => ({ nro: r.nro, taulu: r.taulu, rivit: r.rivit == null ? null : String(r.rivit),
+                                  tiiviste: r.tiiviste, sisalto: r.sisalto }));
+    } finally { await c.query('rollback'); }
+  } finally { await c.query('reset role'); }
+}
+
+/** Jäsennetty kuva tai virhe (B15). */
+async function parsedAs(c, state, role) {
+  try { return parseSnapshot(await snapshotAs(c, state, role)); } catch (error) { return error; }
+}
+
 /** Tilannekuvan rivit (tunnisteet) tilannekuvan sarakkeilla -> tiiviste == manifesti? */
 async function snapRowsDiffer(c, snap) {
   const bad = [];
@@ -242,7 +265,7 @@ export async function backupScenario({ fixtureDir = null, variants = ['text', 't
       const db1 = `mv_rehearsal_bk_${variant}_${n}_a`;
       const db2 = `mv_rehearsal_bk_${variant}_${n}_b`;
       const db3 = `mv_rehearsal_bk_${variant}_${n}_c`;
-      const roles = [`mv_bk_owner_${pid}`, `mv_bk_notowner_${pid}`];
+      const roles = [`mv_bk_owner_${pid}`, `mv_bk_notowner_${pid}`, `mv_bk_reader_${pid}`];
       let c;
       let snapP;
       try {
@@ -384,6 +407,12 @@ export async function backupScenario({ fixtureDir = null, variants = ['text', 't
         check('B13', 'ei-superuser (nobypassrls) taulujen omistajana: palautus hyväksytty ja identtinen',
           out.ok && differ.length === 0, out.error?.message || differ.join(','));
 
+        // B15: taulujen omistaja ohittaa RLS:n (ei FORCE): kuva kelpaa.
+        let asOwner = await parsedAs(c, p, owner);
+        check('B15', 'tilannekuva taulujen omistajana (nobypassrls, ei FORCE): kelpaa, rlsFiltered = false',
+          !(asOwner instanceof Error) && Object.values(asOwner.manifest.tables).every(m => m.rlsFiltered === false),
+          asOwner instanceof Error ? asOwner.message : 'rlsFiltered ei ole false kaikissa tauluissa');
+
         await c.query('alter table public.tasks force row level security');
         await asUser(c, OWNER, () => c.query(`update public.tasks set title = 'RIKKI-FORCE' where id = 'seed1'`));
         out = await asRole(owner, restoreSql);
@@ -391,6 +420,11 @@ export async function backupScenario({ fixtureDir = null, variants = ['text', 't
         check('B13', 'FORCE RLS ilman BYPASSRLS:ää: suoja kieltäytyy, mitään ei muutu',
           !out.ok && /FORCE ROW LEVEL SECURITY/.test(out.error.message) && forced === 'RIKKI-FORCE',
           out.error?.message || 'meni läpi');
+        // B15: FORCE RLS: omistajakin näkee vain politiikan sallimat rivit -> hylätään.
+        asOwner = await parsedAs(c, p, owner);
+        check('B15', 'FORCE RLS: omistajan tilannekuva hylätään (tasks: RLS suodatti rivit)',
+          asOwner instanceof Error && /tasks: RLS suodatti rivit/.test(asOwner.message),
+          asOwner instanceof Error ? asOwner.message : 'suodatettu kuva kelpasi');
         await c.query('alter table public.tasks no force row level security');
 
         await c.query(`create role ${notOwner} nologin nosuperuser bypassrls`);
@@ -405,6 +439,23 @@ export async function backupScenario({ fixtureDir = null, variants = ['text', 't
           !out.ok && /ei omista tauluja/.test(out.error.message) && still === 'RIKKI-FORCE'
             && fpCat2.hash === (await catalogFingerprint(c)).hash,
           out.error?.message || 'meni läpi');
+
+        // B15: BYPASSRLS ohittaa RLS:n; ei-omistaja ilman sitä näkee vain
+        // politiikan sallimat rivit (tässä ei yhtään) -> hylätään.
+        const asBypass = await parsedAs(c, p, notOwner);
+        check('B15', 'tilannekuva ei-omistajana BYPASSRLS-oikeudella: kelpaa, rlsFiltered = false',
+          !(asBypass instanceof Error) && Object.values(asBypass.manifest.tables).every(m => m.rlsFiltered === false),
+          asBypass instanceof Error ? asBypass.message : 'rlsFiltered ei ole false kaikissa tauluissa');
+        const reader = roles[2];
+        await c.query(`create role ${reader} nologin nosuperuser nobypassrls`);
+        await c.query(`grant usage on schema auth, public to ${reader}`);
+        await c.query(`grant select on auth.users to ${reader}`);
+        await c.query(`grant select on all tables in schema public to ${reader}`);
+        const asReader = await parsedAs(c, p, reader);
+        check('B15', 'tilannekuva ei-omistajana ilman BYPASSRLS:ää hylätään (RLS suodatti rivit)',
+          asReader instanceof Error && /tasks: RLS suodatti rivit/.test(asReader.message)
+            && /goals: RLS suodatti rivit/.test(asReader.message),
+          asReader instanceof Error ? asReader.message : 'suodatettu kuva kelpasi');
         await c.end(); c = null;
         await dropDatabase(db1);
 

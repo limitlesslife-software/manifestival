@@ -10,7 +10,10 @@
 // Siksi jokainen yhteys tarkistaa ensin assertRehearsalServer():llä,
 // että palvelin on vähintään PostgreSQL 17 ja sen data-hakemisto on
 // projektin omassa .claude/pg-local-hakemistossa. Ohitus vain
-// nimenomaisesti: PG_REHEARSAL_ALLOW_FOREIGN=1.
+// nimenomaisesti: PG_REHEARSAL_ALLOW_FOREIGN=1. Porttiin 54329
+// (FOREIGN_PORT) ei yhdistetä lainkaan. Varmuuskopioharjoittelu
+// (guardBackupRehearsal) on tiukempi: portti annettava nimenomaisesti,
+// eikä ohitusta ole.
 //
 // `pg`-ajuri EI ole projektin riippuvuus. Se ladataan LAISKASTI
 // hakemistosta, jonka ympäristömuuttuja PG_REHEARSAL_MODULES nimeää
@@ -93,6 +96,90 @@ export function rehearsalServerProblem({ versionNum, dataDirectory }, {
   return null;
 }
 
+/**
+ * Portti, johon EI KOSKAAN oteta yhteyttä: 2026-09-26 siinä vastasi toisen
+ * projektin PostgreSQL 15. connect() kieltäytyy siitä ennen yhteyttä.
+ */
+export const FOREIGN_PORT = 54329;
+
+/**
+ * Puhdas päätös ennen yhteyttä (varmuuskopioharjoittelu): portti on
+ * annettu NIMENOMAISESTI (PG_REHEARSAL_PORT) eikä se ole FOREIGN_PORT.
+ * Palauttaa null (kelpaa) tai virheilmoituksen.
+ */
+export function rehearsalPortProblem(env = process.env) {
+  const raw = env.PG_REHEARSAL_PORT;
+  if (raw === undefined || raw === null || String(raw).trim() === '') {
+    return 'PG_REHEARSAL_PORT puuttuu: anna oman harjoitteluklusterin portti nimenomaisesti '
+      + '(README: 54349). Oletusporttiin ei yhdistetä.';
+  }
+  const text = String(raw).trim();
+  if (!/^\d{1,5}$/.test(text) || Number(text) < 1 || Number(text) > 65535) return `PG_REHEARSAL_PORT=${raw} ei ole portti.`;
+  if (Number(text) === FOREIGN_PORT) {
+    return `PG_REHEARSAL_PORT=${FOREIGN_PORT} kuuluu toisen projektin PostgreSQL 15:lle (2026-09-26): ei yhteyttä.`;
+  }
+  return null;
+}
+
+/**
+ * Projektin PÄÄKANSIO (ei worktree): git rev-parse --git-common-dir
+ * osoittaa pääkansion .git-hakemistoon myös worktreestä ajettaessa.
+ * Jos git ei vastaa, polkulogiikka (projectRoot). `gitCommonDir` on
+ * testejä varten ('' = ei gitiä).
+ */
+export function mainProjectRoot({ root = ROOT, gitCommonDir = null } = {}) {
+  let common = gitCommonDir;
+  if (common === null) {
+    try {
+      common = execFileSync('git', ['-C', root, 'rev-parse', '--path-format=absolute', '--git-common-dir'],
+        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    } catch { common = ''; }
+  }
+  const trimmed = String(common || '').replace(/[\\/]+$/, '');
+  if (trimmed && /[\\/]\.git$/.test(trimmed)) return trimmed.replace(/[\\/]\.git$/, '');
+  return projectRoot(root);
+}
+
+/**
+ * Tiukka palvelinpäätös (varmuuskopioharjoittelu): PostgreSQL >= 17 ja
+ * data-hakemisto pääkansion .claude/pg-local/-hakemistossa. Ei ohitusta
+ * (PG_REHEARSAL_ALLOW_FOREIGN) eikä toista pg-local-polkua
+ * (PG_REHEARSAL_PGLOCAL).
+ */
+export function strictRehearsalServerProblem({ versionNum, dataDirectory }, { mainRoot = mainProjectRoot() } = {}) {
+  return rehearsalServerProblem({ versionNum, dataDirectory },
+    { pgLocal: join(mainRoot, '.claude', 'pg-local'), allowForeign: false });
+}
+
+/**
+ * Varmuuskopioharjoittelun vahti: kutsutaan ENNEN yhtäkään kannan tai
+ * roolin luontia. 1) portti nimenomaisesti ja ei 54329 — ennen yhteyttä;
+ * 2) yhteys, jonka jälkeen tiukka palvelintarkistus (versio >= 170000,
+ * data_directory pääkansion .claude/pg-local/-hakemistossa, palvelimen
+ * oma portti = pyydetty). Heittää virheen; muuten palauttaa palvelimen
+ * tiedot. `connectFn` ja `env` injektoidaan testeissä (ei kantaa).
+ */
+export async function guardBackupRehearsal({ env = process.env, connectFn = () => connect(), mainRoot = null } = {}) {
+  const portProblem = rehearsalPortProblem(env);
+  if (portProblem) throw new Error(`KESKEYTYS ennen yhteyttä: ${portProblem}`);
+  const client = await connectFn();
+  try {
+    const res = await client.query(
+      `select current_setting('server_version_num') as num, current_setting('server_version') as ver,
+              current_setting('data_directory') as dir, current_setting('port') as port, version() as full`);
+    const { num, ver, dir, port, full } = res.rows[0] || {};
+    const problem = strictRehearsalServerProblem({ versionNum: num, dataDirectory: dir },
+      { mainRoot: mainRoot ?? mainProjectRoot() });
+    if (problem) throw new Error(`KESKEYTYS: ${problem}`);
+    if (Number(port) !== Number(String(env.PG_REHEARSAL_PORT).trim())) {
+      throw new Error(`KESKEYTYS: palvelin kertoo portikseen ${port}, pyydettiin ${env.PG_REHEARSAL_PORT}.`);
+    }
+    return { versionNum: Number(num), version: ver, versionString: full ?? null, dataDirectory: dir, port: Number(port) };
+  } finally {
+    await client.end();
+  }
+}
+
 /** Palvelin, joka on todennettu tässä prosessissa (raportin alkuperätieto). */
 export const SERVER = { verified: false, version: null, versionNum: null, dataDirectory: null, port: PG_PORT };
 
@@ -117,6 +204,9 @@ export async function assertRehearsalServer(client) {
  * sallitaan vain, kun sama prosessi on jo todentanut palvelimen.
  */
 export async function connect(database = 'postgres', { user = 'postgres' } = {}) {
+  if (PG_PORT === FOREIGN_PORT) {
+    throw new Error(`KESKEYTYS: portti ${FOREIGN_PORT} kuuluu toisen projektin PostgreSQL 15:lle; ei yhteyttä (PG_REHEARSAL_PORT).`);
+  }
   if (user !== 'postgres' && !SERVER.verified) {
     throw new Error('Palvelinta ei ole todennettu superuser-yhteydellä ennen roolin yhteyttä.');
   }
