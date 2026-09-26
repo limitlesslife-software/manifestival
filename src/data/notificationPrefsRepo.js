@@ -13,7 +13,7 @@
 // Omistajuuden asettaa tietokanta (DEFAULT auth.uid()), ei selain.
 
 import { getClient } from './client.js';
-import { requireUserId } from './session.js';
+import { requireUserId, sessionSnapshot, isSameSession } from './session.js';
 import { hasTable, isTableMissing, writeRefusal, noteSchemaError } from './schema.js';
 import { ok, fail, failWith, ERROR_CODE } from '../lib/result.js';
 import { normalizePreferences, DEFAULT_PREFERENCES } from '../domain/notification.js';
@@ -104,13 +104,17 @@ export async function loadPreferences() {
     return fail('Muistutusasetusten lataus ei onnistunut.',
       { cause: loaded.cause, code: 'notificationPrefs.load' });
   }
-  serverLoadedFor = loaded.userId;
+  if (loaded.current) serverLoadedFor = loaded.userId;
   return ok(preferencesFromRow(loaded.row));
 }
 
-/** Käyttäjän rivi kannasta: { ok, row, userId } tai { ok: false, cause }. Ei heitä. */
+/**
+ * Käyttäjän rivi kannasta: { ok, row, userId, current } tai { ok: false, cause }.
+ * `current` = istunto ei vaihtunut kyselyn aikana. Ei heitä.
+ */
 async function readServerRow() {
   try {
+    const session = sessionSnapshot();
     const userId = String(requireUserId());
     const { data, error } = await getClient()
       .from(TABLE)
@@ -122,7 +126,7 @@ async function readServerRow() {
       noteSchemaError(TABLE, error);
       return { ok: false, cause: error };
     }
-    return { ok: true, row: data || null, userId };
+    return { ok: true, row: data || null, userId, current: isSameSession(session) };
   } catch (cause) {
     return { ok: false, cause };
   }
@@ -145,6 +149,9 @@ async function ensureServerBaseline() {
       { cause: loaded.cause, code: 'notificationPrefs.save' });
   }
   if (loaded.row) return failWith(ERROR_CODE.CONFLICT, PREFERENCES_NOT_LOADED_MESSAGE);
+  if (!loaded.current) {
+    return fail('Muistutusasetusten tallennus ei onnistunut.', { code: 'notificationPrefs.save' });
+  }
   serverLoadedFor = loaded.userId;
   return null;
 }

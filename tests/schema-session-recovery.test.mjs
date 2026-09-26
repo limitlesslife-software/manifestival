@@ -405,6 +405,27 @@ graphTest('aalto J: uusi käyttäjä ilman riviä voi tallentaa asetukset ilman 
   g.session.clearUser();
 });
 
+graphTest('aalto J: edellisen istunnon myöhästynyt lataus ei kelpaa tallennuksen lähtötiedoksi', async () => {
+  const g = await loadWaveJ();
+  await freshSession(g);
+  const server = createSchemaServer({ applied: ALL, currentUserId: () => USER.id });
+  server.rows('notification_preferences').push({ ...PREFS_ROW });
+  const gate = deferred();
+  g.client.setClient(delayed(server, gate.promise));
+  const stale = g.prefs.loadPreferences();
+  // Uloskirjautuminen ja uusi kirjautuminen kesken latauksen.
+  g.session.clearUser();
+  g.prefs.clearPreferences();
+  g.session.setUser(USER);
+  gate.resolve();
+  await stale;
+  g.client.setClient(server);
+  const saved = await g.prefs.savePreferences({ enabled: false });
+  assert.equal(saved.ok, false, 'vanhan istunnon lataus hyväksyi oletusten tallennuksen');
+  assert.equal(server.rows('notification_preferences')[0].enabled, true);
+  g.session.clearUser();
+});
+
 graphTest('KRIITTINEN aalto J: puuttuva taulu (PGRST205) ei jää voimaan, kun uusi tarkistus löytää sen', async () => {
   const g = await loadWaveJ();
   await freshSession(g);
