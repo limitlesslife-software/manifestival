@@ -25,7 +25,9 @@ test('KRIITTINEN: odotettu inventaario sisältää täsmälleen omistajan toimit
   assert.deepEqual(owner, {
     '01': '170006', '02': '17.6', 40: '1', 41: '1', 42: '5', 44: '0', 45: '0', 50: '0', 51: '0', 52: '0',
     60: 'text', 61: 'text', 62: '0', 63: '36', 64: '1', 65: '1', 66: '1', 67: '0', 68: '0', 69: '1',
-    70: '1', 71: '0', 72: '0', 73: '0', 74: '0'
+    70: '1', 71: '0', 72: '0', 73: '0', 74: '0',
+    // Omistaja: "tasks with duration = 0" — kattaa myös rivin 89 (kesto > 0).
+    89: '0'
   });
   const byTable = { tasks: '63', profile: '64', goals: '65', projects: '66', routines: '67', routine_exceptions: '68',
     notification_preferences: '69', wellbeing_entries: '70', bills: '71', recurring_expenses: '72',
@@ -36,14 +38,28 @@ test('KRIITTINEN: odotettu inventaario sisältää täsmälleen omistajan toimit
 });
 
 test('KRIITTINEN: jokainen inventaariorivi on luokiteltu (owner / derived / absent)', () => {
-  assert.deepEqual(Object.keys(expected.rows).sort(), Object.keys(harness0008).sort(),
-    'odotettu inventaario ja harjoittelun inventaario eivät kata samoja rivejä');
+  // Harjoittelun fixture (2026-09-24) on vanhempi kuin rivi 89: sen rivit
+  // ovat osajoukko. Täysi joukko tulee inventaario-SQL:stä (testi alla).
+  for (const nro of Object.keys(harness0008)) {
+    assert.ok(nro in expected.rows, `harjoittelun inventaarion rivi ${nro} puuttuu odotetusta inventaariosta`);
+  }
   for (const [nro, spec] of Object.entries(expected.rows)) {
     assert.ok(['owner', 'derived', 'absent'].includes(spec.source), `rivi ${nro}: lähde ${spec.source}`);
     assert.ok(['exact', 'major', 'none'].includes(spec.compare), `rivi ${nro}: vertailu ${spec.compare}`);
     if (spec.source === 'absent') assert.equal(spec.compare, 'none', `rivi ${nro}: antamatonta ei verrata`);
     assert.ok(spec.note, `rivi ${nro}: selite puuttuu`);
   }
+});
+
+test('KRIITTINEN: odotetun inventaarion rivit = inventaario-SQL:n rivinumerot', () => {
+  // Uusi inventaariorivi ilman luokitusta rikkoisi prodshape:fixturen
+  // vasta oikealla kannalla ("(ei odotusta)"). Tämä pysäyttää sen ilman kantaa.
+  const sql = read('supabase/acceptance/activation_readonly_inventory.sql');
+  const numbers = [...sql.matchAll(/select '(\d{2})'::text as nro/g)].map(m => m[1]);
+  assert.ok(numbers.length > 50, `rivinumeroita ${numbers.length}`);
+  assert.equal(new Set(numbers).size, numbers.length, 'inventaariossa toistuva rivinumero');
+  assert.deepEqual(Object.keys(expected.rows).sort(), [...numbers].sort(),
+    'luokittele uusi rivi (owner / derived / absent): tools/pg-rehearsal/expected/production-inventory-0008.json');
 });
 
 test('compareInventory: poikkeama havaitaan, antamaton kirjataan, pääversio riittää', () => {
