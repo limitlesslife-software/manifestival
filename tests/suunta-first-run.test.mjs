@@ -125,6 +125,8 @@ beforeEach(() => {
   clearUser();
   clearLocalUserData();
   resetState();
+  // Alueiden haku on onnistunut (tyhjä kanta): aloitus näytetään vasta silloin.
+  setDomainLoadStatus('lifeAreas', true);
   resetAppliedAdjustments();
   resetDirectionView();
   resetTimerStoreForTests();
@@ -490,6 +492,31 @@ test('F2: ladattujen tietojen puuttuessa aloitusta ei näytetä (tuntematon ei o
   // Lataus kesken (jokin kokoelma tiedossa, alueet eivät): ei hetkellistä aloitusta.
   resetState();
   setDomainLoadStatus('tasks', true);
+  renderDirection();
+  assert.equal(setup().hidden, true);
+});
+
+test('F2 KRIITTINEN: tyhjä latausstatus {} ei ole "ladattu" — ei "Vaihe 1/7" eikä "Aloita Suunta" kylmäkäynnistyksessä', (t) => {
+  freezeLocalDate(t, THURSDAY);
+  // resetState -> ensimmäinen loadUserData-tulos: mitään ei vielä tiedetä.
+  resetState();
+  assert.deepEqual(getState().dataLoadStatus, {});
+  initDirection();
+  renderDirection();
+  renderTodayDirection();
+  assert.equal(setup().hidden, true, 'palaavalle käyttäjälle ei näytetä aloitusta latauksen ajan');
+  assert.equal(stepLine(), undefined);
+  assert.equal(node('screen-direction').classList.contains('dir-setup-active'), false);
+  assert.doesNotMatch(html('todayDirection'), /Aloita Suunta|data-open-setup/);
+  assert.match(html('todayDirection'), /role="status">Ladataan…<\/p>/, 'neutraali odotus');
+  // Onnistunut haku ilman alueita: vasta nyt aloitus on totta.
+  setDomainLoadStatus('lifeAreas', true);
+  renderDirection();
+  renderTodayDirection();
+  assert.equal(stepLine(), '1');
+  assert.match(html('todayDirection'), /Aloita Suunta/);
+  // Myöhempi epäonnistunut haku: taas tuntematon (lastSuccessAt ei riitä).
+  setDomainLoadStatus('lifeAreas', false, new Error('verkko'));
   renderDirection();
   assert.equal(setup().hidden, true);
 });

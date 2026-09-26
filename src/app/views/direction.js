@@ -395,6 +395,16 @@ export function alignmentLoadProblems(state = getState()) {
   return ALIGNMENT_DOMAINS.filter(domain => status[domain] && status[domain].ok === false);
 }
 
+/**
+ * Tunnetaanko käyttäjän elämänalueet? Vain onnistuneen haun jälkeen:
+ * tyhjä latausstatus ({} uloskirjautumisesta ensimmäiseen lataustulokseen)
+ * tarkoittaa "ei vielä tiedossa", ei "ei alueita".
+ */
+function lifeAreasKnown(state) {
+  const status = (state.dataLoadStatus || {}).lifeAreas;
+  return Boolean(status) && status.ok !== false && status.lastSuccessAt != null;
+}
+
 function loadProblemHtml(problems) {
   if (problems.length === 0) return '';
   return '<p class="hint" role="alert"><strong>Osa Suunnan tiedoista ei latautunut.</strong> '
@@ -1449,13 +1459,14 @@ export function renderDirection() {
   el('dirPersistNote').innerHTML = loadProblemHtml(problems) + persistNoteHtml();
   // Aloitus (F2) ensin. Tuntematon ei ole nolla: jos Suunnan tietoja ei
   // saatu ladattua (tai lataus on kesken eikä alueita vielä tunneta),
-  // aloitusta ei näytetä — alueet voivat olla kannassa.
+  // aloitusta ei näytetä — alueet voivat olla kannassa. Myös tyhjä
+  // latausstatus ({} ennen ensimmäistä lataustulosta) on tuntematon: muuten
+  // palaava käyttäjä näki joka kylmäkäynnistyksessä "Vaihe 1/7".
   const loadStatus = state.dataLoadStatus || {};
-  const areasPending = Object.keys(loadStatus).length > 0 && !loadStatus.lifeAreas;
   // Aloituksen vaiheet luetaan myös tehtävistä ja tavoitteista.
   const setupSourcesFailed = ['tasks', 'goals'].some(domain => loadStatus[domain] && loadStatus[domain].ok === false);
   const setupActive = renderDirectionSetup({
-    unknown: problems.length > 0 || areasPending || setupSourcesFailed, queueHtml: estimateQueueHtml
+    unknown: problems.length > 0 || !lifeAreasKnown(state) || setupSourcesFailed, queueHtml: estimateQueueHtml
   });
   // Ei tyhjän tilan kehotusta ("aloita elämänalueista"), kun alueita ei
   // saatu ladattua: niitä voi olla kannassa.
@@ -1558,6 +1569,13 @@ export function renderTodayDirection() {
     container.innerHTML = `<div class="dir-today">
       <div class="dir-today-title">Suunta</div>
       <p class="dir-line" role="status">Suunnan tietoja ei voitu ladata. Ne ovat tallessa — päivitä, kun yhteys toimii.</p></div>`;
+    return;
+  }
+  if (state.lifeAreas.length === 0 && !lifeAreasKnown(state)) {
+    // Lataus kesken: tuntematon ei ole "ei alueita", joten ei "Aloita Suunta" -kehotusta.
+    container.innerHTML = `<div class="dir-today">
+      <div class="dir-today-title">Suunta</div>
+      <p class="dir-line" role="status">Ladataan…</p></div>`;
     return;
   }
   if (state.lifeAreas.length === 0) {

@@ -69,6 +69,9 @@ async function boot() {
   const datetime = await import('/src/lib/datetime.js');
   const task = await import('/src/domain/task.js');
 
+  // Tekokanta on tyhjä ja "haku" onnistui: ilman merkintää alueet olisivat
+  // tuntemattomia (lataus kesken), eikä aloitusta näytettäisi.
+  state.setDomainLoadStatus('lifeAreas', true);
   direction.initDirection();
   timeLog.initTimeLog();
   const render = () => {

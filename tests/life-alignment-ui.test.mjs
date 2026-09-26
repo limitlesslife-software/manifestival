@@ -460,6 +460,8 @@ test('suunnittelun palaute: käyttäjän kapasiteetti rajaa suunnittelun viikkoa
 
 test('päivänäkymän kortti: kapasiteetti jäljellä, yksi havainto, liittämätön työ', async (t) => {
   freezeLocalDate(t, THURSDAY);
+  // Alueet on haettu (0 kpl): vasta silloin kehotus aloittaa on totta.
+  setDomainLoadStatus('lifeAreas', true);
   renderTodayDirection();
   assert.match(html('todayDirection'), /Kerro mikä elämässäsi on tärkeää/);
 
