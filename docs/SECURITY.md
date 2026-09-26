@@ -137,7 +137,8 @@ turvallisuusarvionsa — ei tämän laajennus.
 
 | Arvo | Sijainti | Julkinen? | Huomiot |
 |---|---|---|---|
-| `ANTHROPIC_API_KEY` | Vercelin ympäristömuuttuja | **EI** | Vain palvelinpuolen `api/parse.js`, `api/extract.js` ja `api/plan.js` lukevat. Ei koskaan selaimeen. |
+| `ANTHROPIC_API_KEY` | Vercelin ympäristömuuttuja | **EI** | Vain palvelinpuolen `api/parse.js`, `api/extract.js`, `api/plan.js`, `api/capture.js`, `api/command.js` ja `api/explain.js` lukevat. Ei koskaan selaimeen. (`tests/api-explain-readiness.test.mjs` vertaa tätä listaa koodiin.) |
+| `EXPLAIN_ENABLED` | Vercelin ympäristömuuttuja | Ei (katkaisin, ei salaisuus) | Vain täsmälleen `true` avaa `/api/explain`in; muuten 503 ennen todennusta. **Oletus: ei asetettu = pois.** Käyttöönotto on omistajan päätös yhdessä selaimen lipun `AI_EXPLAIN_ENABLED` kanssa. |
 | Supabase URL | `index.html` | Kyllä | Julkinen projektin osoite |
 | Supabase anon-avain | `index.html` | Kyllä | Suunniteltu julkiseksi. Turva perustuu RLS:ään. |
 | Supabase `service_role` | **Ei missään repossa, ei selaimessa, ei `api/`-koodissa** | **EI KOSKAAN** | Ohittaa RLS:n. Ainoa sallittu paikka on Supabasen oma Edge Function -salaisuusvarasto (alla). |
@@ -249,7 +250,32 @@ Selain                Vercel serverless            Anthropic
   |     today, weekday }     |                         |
   |                          |<-- vastaus -------------|
   |<-- { content } ----------|                         |
+  |                          |                         |
+  |-- POST /api/explain ---->|  (vain jos EXPLAIN_ENABLED=true,
+  |   { context: luvut,      |   muuten 503 ilman verkkokutsua)
+  |     tunnukset A1.. }     |-- system: säännöt ----->|
+  |                          |   user: vain data       |
+  |<-- { text } -------------|<-- vastaus -------------|
 ```
+
+Samat suojaukset koskevat kaikkia AI-päätepisteitä (`parse`, `extract`,
+`plan`, `capture`, `command`, `explain`); `tests/api-security.test.cjs`
+käy ne läpi hakemistosta, ei kiinteästä listasta.
+
+**CORS** (`api/_cors.js`): Android-kuori lataa sivun originista
+`https://localhost` ja kutsuu tuotannon päätepisteitä. Vain
+`https://localhost` ja `capacitor://localhost` saavat
+`Access-Control-Allow-Origin`-otsakkeen (kaiutettuna, `Vary: Origin`),
+esikysely (OPTIONS) saa 204:n ennen POST-tarkistusta, eikä tuntematon origin
+saa sallintaa. CORS ei korvaa todennusta.
+
+**Tekoälyselitys** (`/api/explain`, valinnainen): oletuksena pois kahdella
+kytkimellä (palvelimen `EXPLAIN_ENABLED`, selaimen `AI_EXPLAIN_ENABLED`).
+Vaatii aina kirjautuneen käyttäjän, myös kun `PARSE_REQUIRE_AUTH=false`.
+Säännöt kulkevat `system`-kentässä, data yksin käyttäjän viestissä. Vain
+luonnollisesti päättynyt (`stop_reason: end_turn`), enintään 1 200 merkin
+vastaus kelpaa; muuten 502 ja selain näyttää deterministisen selityksen.
+Lokiin vain tilakoodi tai lopetussyyn luettelokoodi.
 
 - **API-avain ei koskaan päädy selaimeen.** Todennettu: `index.html` ei sisällä
   merkkijonoa `ANTHROPIC_API_KEY` eikä kutsu `api.anthropic.com`-osoitetta.

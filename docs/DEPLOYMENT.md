@@ -89,6 +89,29 @@ sisällä salaisuuksia.
 |---|---|---|
 | `ANTHROPIC_API_KEY` | Production (+ Preview jos puheohjausta testataan) | Kyllä, muuten `/api/parse` palauttaa 500 |
 | `PARSE_REQUIRE_AUTH` | Valinnainen | Ei. Vain hätävara — ks. alla |
+| `EXPLAIN_ENABLED` | Valinnainen | Ei. **Jätetään asettamatta**, kunnes omistaja ottaa tekoälyselityksen käyttöön — ks. alla |
+
+### EXPLAIN_ENABLED — tekoälyselityksen katkaisin
+
+`/api/explain` (Suunnan havainnon tekoälyselitys) on **oletuksena pois**.
+Ehto on `api/explain.js`:ssä: vain täsmälleen `EXPLAIN_ENABLED=true` avaa
+päätepisteen. Muuten se vastaa `503 {"error":"Palvelu ei ole käytössä"}`
+heti metoditarkistuksen jälkeen — ennen todennusta, joten yhtään
+Supabase- tai Anthropic-kutsua ei tehdä eikä kiintiötä kulu.
+
+Selaimessa on vastinpari: `AI_EXPLAIN_ENABLED` (`src/ai/alignmentExplainClient.js`).
+Kun se on `false`, "Selitä tekoälyllä" -painiketta ei näytetä eikä selain
+kutsu päätepistettä. Käyttöönotto = **molemmat** samassa julkaisussa, ja se on
+omistajan päätös (`docs/SUUNTA-ACTIVATION-GO-NOGO.md`). Kumpikin yksin pitää
+selityksen poissa, ja käyttäjä näkee aina deterministisen selityksen.
+
+`PARSE_REQUIRE_AUTH=false` **ei** avaa selitystä: `/api/explain` vaatii aina
+kirjautuneen käyttäjän. Hätävara koskee puheohjausta ja muita
+AI-päätepisteitä (`parse`, `extract`, `plan`, `capture`, `command`).
+
+Funktion enimmäiskesto on `vercel.json`issa 20 s: todennus enintään 5 s +
+Anthropic-kutsu enintään 10 s. Selain odottaa 16 s ja näyttää sitten
+deterministisen selityksen.
 
 Asetetaan: Vercel -> projekti -> **Settings** -> **Environment Variables**.
 

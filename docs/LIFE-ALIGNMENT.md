@@ -122,8 +122,8 @@ Havainnot ovat deterministisiä; testi vartioi, ettei domain tuo mitään
 ai-kerroksesta. `src/ai/alignmentContext.js` rakentaa selitystä varten
 minimoidun kontekstin (luvut, havainnot, aluenimet tunnuksina A1…, ei
 otsikoita/muistiinpanoja/pohdintoja). Suunta 2 lisäsi valinnaisen
-kutsupolun (`/api/explain`, ks. "Tekoälyselitys" alla); deterministinen
-selitys (`explainSignal`) on aina varapolku ja oletus.
+kutsupolun (`/api/explain`, ks. "Tekoälyselitys" alla), joka on oletuksena
+pois; deterministinen selitys (`explainSignal`) on aina varapolku ja oletus.
 
 ## Laajennuspisteet
 
@@ -282,14 +282,27 @@ ei estä hyväksyntää.
 
 ### Tekoälyselitys (valinnainen)
 
-"Selitä tarkemmin" havainnon "Miksi?"-osiossa → `/api/explain`
-(`api/explain.js`, `api/_validateExplain.js`): vain valittu havainto,
-alueet tunnuksina A1…, ajat tunteina, lueteltuja arvoja; ei otsikoita, ei
-pohdintoja. Kehote kieltää tärkeyden/tavoitteiden/kapasiteetin muuttamisen,
-diagnoosit ja moralisoinnin. Vastaus hylätään, jos se väittää tehneensä
-muutoksen tai sisältää linkin. Jokainen virhe (ei tokenia, verkko, 5xx,
-aikakatkaisu, kelvoton vastaus) → deterministinen selitys. Lokiin vain lähde
-ja lopputulos.
+**Oletuksena pois** kahdella kytkimellä: selaimen `AI_EXPLAIN_ENABLED`
+(`src/ai/alignmentExplainClient.js`, `false`) ja palvelimen
+`EXPLAIN_ENABLED` (Vercel, ei asetettu → 503 ilman verkkokutsua).
+Käyttöönotto on omistajan päätös (`docs/SUUNTA-ACTIVATION-GO-NOGO.md`).
+Pois ollessa painiketta ei ole, ja havainnon "Miksi tämä näkyy?" on
+selitys.
+
+Päällä: "Selitä tekoälyllä" (vihje: "Lähettää vain luvut, ei nimiä eikä
+otsikoita") havainnon "Miksi?"-osiossa → `/api/explain`
+(`api/explain.js`, `api/_validateExplain.js`): vain valittu havainto ja
+sen tarvitsemat alueet (kuormitus: ei alueita; tavoitejännite: tärkeys ja
+tavoite), alueet tunnuksina A1…, ajat tunteina tuntinimisissä kentissä
+(`targetHours`), lueteltuja arvoja; ei otsikoita, ei pohdintoja, ei
+sääntötekstiä. Säännöt ovat palvelimella `system`-kentässä: ne kieltävät
+tärkeyden/tavoitteiden/kapasiteetin muuttamisen, diagnoosit ja
+moralisoinnin. Vastaus hylätään, jos se on kesken jäänyt tai kieltäytyvä
+(`stop_reason` ≠ `end_turn`), yli 1 200 merkkiä, väittää tehneensä
+muutoksen tai sisältää linkin. Jokainen virhe (katkaisin, ei tokenia,
+verkko, 5xx, aikakatkaisu 16 s, kelvoton vastaus) → deterministinen
+selitys. Kesken oleva haku pitää painikkeen estettynä. Lokiin vain lähde
+ja lopputulos. Android-kuori tarvitsee CORS-vastauksen (`api/_cors.js`).
 
 ### Toteuman lähteet (laajennuspisteet)
 
@@ -330,7 +343,7 @@ kosketa. Aalto J (v23), riippuu aallosta I. **verify_0012 ajetaan ennen
 | Viikkokatsaus v2, vertailu, kehitys | COMPLETE_LOCAL |
 | Tasapainotus + esikatselu + ryhmävahvistus | COMPLETE_LOCAL |
 | Suunnittelun rajat ja suunnitelman tarkistus | COMPLETE_LOCAL |
-| Tekoälyselitys + varapolku | PARTIAL (koodi ja testit valmiit; /api/explain ei deployattu) |
+| Tekoälyselitys + varapolku | OPTIONAL_DAY1: koodi ja testit valmiit, **oletuksena pois** (`AI_EXPLAIN_ENABLED=false`, `EXPLAIN_ENABLED` ei asetettu). Aalto J deployaa päätepisteen suljettuna (503); käyttöönotto omistajan päätöksellä |
 | Toteuman lähteet: kalenteri, aktiivisuus, talous, hyvinvointi | ARCHITECTURE_ONLY |
 | Sääntöpolitiikka ja versio | COMPLETE_LOCAL |
 | Pysyvyys kantaan (0012, 0013) | BLOCKED (ajo vaatii omistajan hyväksynnän) |

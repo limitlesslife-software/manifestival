@@ -73,6 +73,7 @@ tauko minkä tahansa aallon jälkeen on turvallinen.
 | OWNER_DEPLOY_APPROVAL_REQUIRED | Aallon C hyväksyntä; aaltojen D–J deployt |
 | OWNER_PRODUCTION_MIGRATION_APPROVAL_REQUIRED | 0009, **0010 (erikseen, varmuuskopio)**, 0011, 0012, 0013 |
 | PHONE_ACCEPTANCE_REQUIRED | Day 1 puhelimella J:n jälkeen |
-| EXTERNAL_PROVIDER_REQUIRED | `ANTHROPIC_API_KEY` Verceliin: AI-selitys (valinnainen, Day 1 ei tarvitse) ja tekstikomennot (aalto H:n ensimmäinen oikea AI-kirjausrivi) |
+| EXTERNAL_PROVIDER_REQUIRED | `ANTHROPIC_API_KEY` Vercelissä (`docs/DEPLOYMENT.md` kirjaa sen olemassa olevaksi, Production + Preview — tarkista hallintapaneelista): tekstikomennot (aalto H:n ensimmäinen oikea AI-kirjausrivi). AI-selitys ei käytä avainta ennen kuin se kytketään päälle (alla) |
+| OPTIONAL_DAY1 · OWNER_DECISION | **AI-selitys (`/api/explain`) on pois, eikä Day 1 tarvitse sitä.** Aalto J deployaa päätepisteen suljettuna: `EXPLAIN_ENABLED` ei asetettu → 503 ennen todennusta, ei Anthropic-kutsuja; selaimen `AI_EXPLAIN_ENABLED = false` → ei "Selitä tekoälyllä" -painiketta. Käyttöönotto = omistajan päätös: (1) `EXPLAIN_ENABLED=true` Verceliin (Production), (2) `AI_EXPLAIN_ENABLED = true` omassa commitissaan + `CACHE_VERSION`-nosto, (3) deploy. Kumpikin yksin pitää selityksen pois. Päätös kirjataan tähän riviin |
 | PRODUCT_DECISION_REQUIRED | Android versionCode-strategia; tallennetun katsauksen tilannekuva uudelleentallennuksessa; `routine_exceptions`-uniikkius (`docs/FOLLOWUP-routine-exceptions-uniqueness.md`) |
 | REAL_DB_ENVIRONMENT_REQUIRED | PostgREST-kerros ja Supabasen `postgres`-rooli (harjoitus ajoi superuserina) — jokaisen aallon tuotantohyväksyntä kattaa |

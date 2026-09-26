@@ -100,6 +100,9 @@ npm test && npm run check && npm run smoke && npm run build:web
 - [ ] `ALIGNMENT_REALITY_FIELDS` on `true`
 - [ ] `GOAL_LIFE_AREA_FIELD`, `TASK_EXTENDED_FIELDS` ja `GOAL_PLANNING_FIELDS` yhä `true`
 - [ ] `CACHE_VERSION` on `v23`
+- [ ] **AI-selitys pois:** `AI_EXPLAIN_ENABLED = false` (`src/ai/alignmentExplainClient.js`)
+      ja Vercelissä **ei** ole `EXPLAIN_ENABLED`-muuttujaa (ellei omistaja
+      ole kirjannut käyttöönottoa `docs/SUUNTA-ACTIVATION-GO-NOGO.md`:hen)
 
 ### Diffin tarkistus
 
@@ -128,6 +131,28 @@ npm run production:verify-assets -- --wave=J
 - [ ] HTTP 200, `CACHE_VERSION` `v23`
 - [ ] Kaikki kaksikymmentäneljä porttia `true`
 
+### AI-selitys (`/api/explain`) — uusi maksullinen päätepiste, suljettuna
+
+Aalto J tuo päätepisteen tuotantoon ensimmäistä kertaa. Se on **pois**,
+kunnes omistaja päättää toisin. `verify-assets` ei kutsu `/api/`-polkuja,
+joten nämä ajetaan käsin (ei tunnuksia, ei maksullista kutsua):
+
+```
+curl -s -o /dev/null -w "%{http_code}\n" https://manifestival-ten.vercel.app/api/explain
+curl -s -w "\n%{http_code}\n" -X POST -H "Content-Type: application/json" -d "{}" https://manifestival-ten.vercel.app/api/explain
+curl -s -i -X OPTIONS -H "Origin: https://localhost" -H "Access-Control-Request-Method: POST" https://manifestival-ten.vercel.app/api/explain
+```
+
+| Tarkistus | Odotus |
+|---|---|
+| `GET /api/explain` | **405** |
+| `POST /api/explain` ilman tokenia | **503** `{"error":"Palvelu ei ole käytössä"}` (katkaisin pois; ei todennusta, ei Anthropic-kutsua) |
+| `OPTIONS` originista `https://localhost` | **204** ja `Access-Control-Allow-Origin: https://localhost` (Android-kuoren esikysely) |
+
+- [ ] Kolme riviä yllä täsmäävät. Jos `POST` antaa **401** tai **200**,
+      `EXPLAIN_ENABLED` on asetettu Verceliin: poista se tai kirjaa
+      omistajan päätös ennen hyväksyntää.
+
 ---
 
 ## 4. Selainhyväksyntä
@@ -147,6 +172,8 @@ Jokainen kohta tarkistetaan **sivun latauksen jälkeen**.
 - [ ] Merkitse tehtävän kuormittavuus → säilyy latauksen yli
 - [ ] Aseta kuormittavan ajan raja → energiakuormitus näkyy erillään aikakuormituksesta
 - [ ] Katsauksen pohdintavastaukset ja sääntöversio säilyvät
+- [ ] Havainnon "Miksi tämä näkyy?" näyttää selityksen; "Selitä tekoälyllä"
+      -painiketta **ei** ole (AI-selitys pois)
 
 ### Aiemmat aallot
 
