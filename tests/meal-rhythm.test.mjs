@@ -217,6 +217,10 @@ test('ROSKA: mikään syöte ei kaada, syötettä ei muuteta', () => {
     assert.doesNotThrow(() => validateMealRhythm(value));
     assert.doesNotThrow(() => waterReminderTimes(value || undefined));
   }
+  for (const bad of [null, 5, 'x', true]) {
+    assert.deepEqual(dailyMealItems(bad), []);
+    assert.deepEqual(waterReminderTimes(bad), []);
+  }
   const input = Object.freeze({ ...rhythm(), meals: Object.freeze(rhythm().meals.map(m => Object.freeze(m))) });
   const before = JSON.stringify(input);
   dailyMealItems({ mealRhythm: input, dateIso: DAY });

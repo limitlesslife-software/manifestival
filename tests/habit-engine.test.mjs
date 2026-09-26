@@ -513,6 +513,12 @@ test('ROSKA: mikään syöte ei kaada moottoria', () => {
     }
   }
   assert.doesNotThrow(() => { status(); progress(); nextPlannedTime(); habitActionText(); });
+  for (const bad of [null, 5, 'x', true]) {
+    assert.doesNotThrow(() => {
+      status(bad); progress(bad); nextPlannedTime(bad); moneySaved(bad); habitActionText('use', bad);
+    });
+    assert.equal(status(bad), null);
+  }
 });
 
 test('SUORITUSKYKY: 100 000 kirjausta käsitellään lähes lineaarisesti', () => {

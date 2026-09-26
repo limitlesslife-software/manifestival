@@ -48,6 +48,9 @@ const HHMM = /^([01]\d|2[0-3]):([0-5]\d)$/;
 const MAX_ID_LENGTH = 100;
 const collator = new Intl.Collator('fi');
 
+/** Hajotettava olio: null, luku tai merkkijono ei kaada funktiota. */
+const argsOf = value => (value !== null && typeof value === 'object' ? value : {});
+
 function isObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
@@ -90,7 +93,8 @@ function intIn(value, min, max) {
  *
  * @returns {ReadonlyArray<string>} 'HH:MM'-ajat, enintään WATER_MAX_REMINDERS_PER_DAY
  */
-export function waterReminderTimes({ waterEveryMinutes, waterFrom, waterTo } = {}) {
+export function waterReminderTimes(input) {
+  const { waterEveryMinutes, waterFrom, waterTo } = argsOf(input);
   const every = intIn(waterEveryMinutes, 1, 1440);
   const from = minutesOf(waterFrom);
   const to = minutesOf(waterTo);
@@ -121,7 +125,8 @@ function compareItems(a, b) {
  * @returns {ReadonlyArray<{id:string, date:string, time:string, kind:string,
  *   title:string, topic:string, sourceId:string|null}>}
  */
-export function dailyMealItems({ mealRhythm, dateIso } = {}) {
+export function dailyMealItems(input) {
+  const { mealRhythm, dateIso } = argsOf(input);
   if (!isObject(mealRhythm) || !isIsoDate(dateIso)) return Object.freeze([]);
   const items = [];
   const push = (kind, key, minutes, title, sourceId) => {

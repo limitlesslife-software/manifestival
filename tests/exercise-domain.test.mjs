@@ -205,6 +205,11 @@ test('ROSKA: ei kaadu, ei muuta syötettä, rajojen ulkopuolinen arvo on tuntema
   findDuplicateSessions(frozen);
   assert.equal(JSON.stringify(frozen), before);
   assert.doesNotThrow(() => { weeklyExercise(); exerciseForGoal(); findDuplicateSessions(); });
+  for (const bad of [null, 5, 'x', true]) {
+    assert.equal(weeklyExercise(bad), null);
+    assert.equal(exerciseForGoal(bad), null);
+    assert.deepEqual(findDuplicateSessions(bad), []);
+  }
 });
 
 test('SUORITUSKYKY: 50 000 kirjausta', () => {

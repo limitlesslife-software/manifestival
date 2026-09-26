@@ -81,6 +81,9 @@ const ACTION_RANK = Object.freeze({
 
 // ------------------------------------------------------------ lukeminen
 
+/** Hajotettava olio: null, luku tai merkkijono ei kaada funktiota. */
+const argsOf = value => (value !== null && typeof value === 'object' ? value : {});
+
 function isObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
@@ -286,7 +289,8 @@ function horizonFor(nowMs) {
  *
  * null, kun väliä ei ole, kirjauksia ei ole tai nykyhetki puuttuu.
  */
-export function nextPlannedTime({ plan, events, nowMs, timeZone = DEFAULT_TIME_ZONE } = {}) {
+export function nextPlannedTime(input) {
+  const { plan, events, nowMs, timeZone = DEFAULT_TIME_ZONE } = argsOf(input);
   const read = readPlan(plan);
   if (!read || typeof nowMs !== 'number' || !Number.isFinite(nowMs)) return null;
   const zone = resolveTimeZone(timeZone);
@@ -321,7 +325,8 @@ function nextTimeText(nextAtMs, todayIso, zone) {
  *   usesToday:number, dailyTarget:number|null, intervalMinutes:number|null,
  *   todayIso:string, text:string}|null} null vain, jos nykyhetki ei ole luku
  */
-export function status({ plan, events, nowMs, timeZone = DEFAULT_TIME_ZONE } = {}) {
+export function status(input) {
+  const { plan, events, nowMs, timeZone = DEFAULT_TIME_ZONE } = argsOf(input);
   if (typeof nowMs !== 'number' || !Number.isFinite(nowMs)) return null;
   const zone = resolveTimeZone(timeZone);
   const today = zonedParts(nowMs, zone);
@@ -396,7 +401,8 @@ export function status({ plan, events, nowMs, timeZone = DEFAULT_TIME_ZONE } = {
  * null, kun lähtötasoa, yksikköhintaa tai seurattuja päiviä ei ole —
  * tuntematon säästö ei ole nolla. Voi olla negatiivinen.
  */
-export function moneySaved({ plan, uses, trackedDays } = {}) {
+export function moneySaved(input) {
+  const { plan, uses, trackedDays } = argsOf(input);
   const read = readPlan(plan);
   if (!read || read.baselinePerDay === null || read.unitCostMinor === null) return null;
   const useCount = intIn(uses, 0, Number.MAX_SAFE_INTEGER);
@@ -419,10 +425,10 @@ function round1(value) {
  * kirjauksesta (kumpi aiempi). Sitä edeltävät päivät ovat tuntemattomia,
  * eivät nollia. Seurannan aikana päivä ilman kirjauksia on nolla kertaa.
  */
-export function progress({
-  plan, events, todayIso, days = HABIT_RULES.PROGRESS_DEFAULT_DAYS,
-  timeZone = DEFAULT_TIME_ZONE, currency
-} = {}) {
+export function progress(input) {
+  const {
+    plan, events, todayIso, days = HABIT_RULES.PROGRESS_DEFAULT_DAYS, timeZone = DEFAULT_TIME_ZONE, currency
+  } = argsOf(input);
   const read = readPlan(plan);
   if (!read || !isIsoDate(todayIso)) return null;
   const windowDays = intIn(days, 1, HABIT_RULES.PROGRESS_MAX_DAYS) ?? HABIT_RULES.PROGRESS_DEFAULT_DAYS;
@@ -558,7 +564,8 @@ export function progress({
  * @param {{nextAtMs?:number|null, nowMs?:number, timeZone?:string}} [context]
  * @returns {string|null}
  */
-export function habitActionText(action, { nextAtMs = null, nowMs = null, timeZone = DEFAULT_TIME_ZONE } = {}) {
+export function habitActionText(action, options) {
+  const { nextAtMs = null, nowMs = null, timeZone = DEFAULT_TIME_ZONE } = argsOf(options);
   let head;
   if (action === HABIT_ACTION.USE) head = 'Kirjattu.';
   else if (action === HABIT_ACTION.DELAY) head = `Siirretty ${HABIT_RULES.DELAY_MINUTES} min myöhemmäksi.`;

@@ -38,6 +38,9 @@ const DEFAULT_KIND = 'Liikunta';
 const MAX_ID_LENGTH = 200;
 const collator = new Intl.Collator('fi');
 
+/** Hajotettava olio: null, luku tai merkkijono ei kaada funktiota. */
+const argsOf = value => (value !== null && typeof value === 'object' ? value : {});
+
 function isObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
@@ -165,7 +168,8 @@ function durationText(minutes) {
  * @param {{sessions: Array, weekStart: string}} input viikko = weekStart + 6 päivää
  * @returns {object|null} null, jos viikon alku ei ole päivämäärä
  */
-export function weeklyExercise({ sessions, weekStart } = {}) {
+export function weeklyExercise(input) {
+  const { sessions, weekStart } = argsOf(input);
   if (!isIsoDate(weekStart)) return null;
   const weekEnd = addDaysIso(weekStart, 6);
   const list = sessionsBetween(sessions, weekStart, weekEnd);
@@ -271,7 +275,8 @@ export function weeklyExercise({ sessions, weekStart } = {}) {
  * Tavoitteeseen liitetty liikunta aikaväliltä (molemmat päät mukaan).
  * Rajat ovat valinnaisia; null = ei rajaa.
  */
-export function exerciseForGoal({ sessions, goalId, fromIso = null, toIso = null } = {}) {
+export function exerciseForGoal(input) {
+  const { sessions, goalId, fromIso = null, toIso = null } = argsOf(input);
   const id = cleanId(goalId);
   if (id === null) return null;
   const from = isIsoDate(fromIso) ? fromIso : null;
