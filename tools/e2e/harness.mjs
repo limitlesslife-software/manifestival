@@ -29,7 +29,7 @@
 // supabase-js:n verkkovirheen. Sivu itse latautuu paikalliselta
 // palvelimelta (tuotannossa service worker); se on tämän valjaan raja.
 
-import { createFakeDatabase, createFakeSupabase } from './fakeSupabase.mjs';
+import { createFakeDatabase, createFakeSupabase, OWNER_BY_ID } from './fakeSupabase.mjs';
 import { SEEDS, LEGACY_USER_ID, LEGACY_EMAIL } from './seeds.mjs';
 
 const KEYS = Object.freeze({
@@ -186,7 +186,7 @@ async function boot() {
   };
   const userId = () => (readJson(KEYS.session, null)?.user?.id) || null;
   const ownRows = table => database.rows(table)
-    .filter(row => String(table === 'profile' ? row.id : row.user_id) === String(userId()));
+    .filter(row => String(OWNER_BY_ID.includes(table) ? row.id : row.user_id) === String(userId()));
 
   window.__e2e = {
     ready: true,

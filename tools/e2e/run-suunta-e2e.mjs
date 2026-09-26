@@ -827,9 +827,9 @@ const LEGACY_SCENARIOS = [
  * raportoidaan ODOTTAA-rivinä eikä kaada ajoa; onnistuminen kaataa, jotta
  * merkintä poistetaan heti integraation jälkeen.
  */
-const PENDING_ON = Object.freeze({
-  'legacy: näppäimistö: Tauko pitää fokuksen ajastinpalkissa': 'saavutettavuuspaketti (timeLog.js renderTimerBar, CRIT-03)'
-});
+// Tyhjä: saavutettavuuspaketti (renderTimerBar, CRIT-03) on integroitu, ja
+// Tauko-fokus-skenaario on tavallinen, kaatava skenaario.
+const PENDING_ON = Object.freeze({});
 
 const OPEN_DIRECTION = `(async () => {
   H.tab('screen-direction');
@@ -867,7 +867,10 @@ async function main() {
   const wanted = (process.env.E2E_GROUPS || '').split(',').map(s => s.trim()).filter(Boolean);
   const groups = GROUPS.filter(group => wanted.length === 0 || wanted.includes(group.key));
   const schemaSource = fs.readFileSync(path.join(ROOT, 'src/data/schema.js'), 'utf8');
-  const jGates = resolveGateMode('J', { cwd: ROOT, schemaSource });
+  // J-portit ratkaistaan vain, jos jokin valittu ryhmä tarvitsee niitä: pelkkä
+  // suljettujen porttien ajo ei kaadu J-ehdokkaan ja junan eroon.
+  const needsJ = groups.some(group => group.query.gates === 'J');
+  const jGates = needsJ ? resolveGateMode('J', { cwd: ROOT, schemaSource }) : { source: null, provenance: 'ei tarvita' };
   console.log(`J-portit: ${jGates.provenance}`);
 
   const httpPort = await freePort();

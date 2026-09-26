@@ -118,13 +118,14 @@ test('J-porttitila: import map vain J-tilassa; ohjaa jokaisen schema.js-importin
 test('J-porttitila: lähde on J-ehdokas, junan määrittely varmistaa; ristiriita keskeyttää', () => {
   assert.equal(DEFAULT_GATES_REF, 'rehearsal/wave-j-v1');
   const jSource = patchSchemaGates(SCHEMA, trainMatrix('J'));
-  const ok = resolveGateMode('J', { cwd: '.', schemaSource: SCHEMA, show: () => jSource, sha: () => 'abc1234' });
+  // ref annetaan erikseen: kehittäjän E2E_GATES_REF ei saa muuttaa testiä.
+  const ok = resolveGateMode('J', { cwd: '.', ref: DEFAULT_GATES_REF, schemaSource: SCHEMA, show: () => jSource, sha: () => 'abc1234' });
   assert.match(ok.provenance, /rehearsal\/wave-j-v1 \(abc1234\)/);
   assert.equal(parseGates(ok.source).lifeAreas, true);
-  const missing = resolveGateMode('J', { cwd: '.', schemaSource: SCHEMA, show: () => { throw new Error('unknown revision'); } });
+  const missing = resolveGateMode('J', { cwd: '.', ref: DEFAULT_GATES_REF, schemaSource: SCHEMA, show: () => { throw new Error('unknown revision'); } });
   assert.match(missing.provenance, /waves\.mjs/, 'ref puuttuu -> junan määrittely, ja se sanotaan');
   const iSource = patchSchemaGates(SCHEMA, trainMatrix('I'));
-  assert.throws(() => resolveGateMode('J', { cwd: '.', schemaSource: SCHEMA, show: () => iSource, sha: () => 'x' }),
+  assert.throws(() => resolveGateMode('J', { cwd: '.', ref: DEFAULT_GATES_REF, schemaSource: SCHEMA, show: () => iSource, sha: () => 'x' }),
     /ei vastaa junan aaltoa J/);
   assert.equal(resolveGateMode('closed', { schemaSource: SCHEMA }).source, null, 'suljettu = haaran oma tiedosto');
 });

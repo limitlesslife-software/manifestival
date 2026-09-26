@@ -8,7 +8,7 @@ import { read } from './sources.mjs';
 import { createDocument, installDocument } from './a11yDom.mjs';
 import { setUser, clearUser } from '../../src/data/session.js';
 import { setClient } from '../../src/data/client.js';
-import { resetState, subscribe } from '../../src/app/state.js';
+import { resetState, subscribe, setDomainLoadStatus } from '../../src/app/state.js';
 import { clearLocalUserData } from '../../src/app/actions.js';
 import { resetAppliedAdjustments, setTimeEntryWriterForTests } from '../../src/app/alignment.js';
 import { setTimerRepoForTests, currentTimer, cancelTracking } from '../../src/app/timeTracking.js';
@@ -116,6 +116,9 @@ export function mountSuunta({ client = echoClient(), screen = 'screen-direction'
   setClient(client);
   doc.getElementById('app').classList.remove('app-hidden');
   showScreen(doc, screen);
+  // Alueiden lataus onnistui (tyhjä kanta): tuntematonta latausta ei näytetä
+  // aloituksena, joten asennus merkitsee sen tunnetuksi kuten oikea lataus.
+  setDomainLoadStatus('lifeAreas', true);
   initDirection();
   initTimeLog();
   const render = () => {
