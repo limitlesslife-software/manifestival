@@ -16,7 +16,10 @@ import path from 'node:path';
 
 import { read } from './helpers/sources.mjs';
 import { ALL_GATES, expectedMatrix } from '../tools/release/waves.mjs';
-import { APP_ID, EXPECTED_SIGNER_CERT_SHA256 } from '../tools/android/apk.mjs';
+import {
+  APK_FORBIDDEN_PERMISSIONS, APP_ID, EXPECTED_CAPACITOR_PLUGINS, EXPECTED_SIGNER_CERT_SHA256,
+  REQUIRED_QUERY_INTENT_ACTIONS, expectedPermissions
+} from '../tools/android/apk.mjs';
 import {
   METADATA_SCHEMA, REQUIRED_METADATA_KEYS, buildPackageMetadata, packageFileName,
   parsePackageFileName, serializeMetadata, versionPolicyStatus
@@ -354,4 +357,53 @@ test('koontiskripti ei luo liitoksia eikä koske pakettiin ennen tarkastusta', (
     'järjestys: tarkastus -> palautus + puhdas puu -> paketti');
   assert.match(source, /serializeMetadata\(meta\)/, 'metatiedot kirjoitetaan ilman BOMia serializeMetadatan kautta');
   assert.match(source, /--dry-run|'dry-run'/);
+});
+
+// ------------------------------------------------------------ dokumentaatio
+
+const ACCEPTANCE_DOC = 'docs/activation/ANDROID-ACCEPTANCE-BUILD.md';
+
+test('ANDROID-ACCEPTANCE-BUILD.md mainitsee jokaisen sallitun ja kielletyn luvan', () => {
+  const doc = read(ACCEPTANCE_DOC);
+  for (const permission of expectedPermissions()) {
+    const short = permission.split('.').pop();
+    assert.ok(doc.includes(short), `luparaulukosta puuttuu ${short} (APK_PERMISSION_ALLOWLIST)`);
+  }
+  for (const rule of APK_FORBIDDEN_PERMISSIONS) {
+    assert.ok(doc.includes(rule.split('.').pop()), `kielletty lupa ${rule} puuttuu dokumentista`);
+  }
+  for (const action of REQUIRED_QUERY_INTENT_ACTIONS) assert.ok(doc.includes(action));
+  for (const plugin of EXPECTED_CAPACITOR_PLUGINS) assert.ok(doc.includes(plugin));
+  assert.match(doc, /Sijaintilupia ei ole/);
+  assert.match(doc, /RECORD_AUDIO[^\n]*napauttaa mikrofonia/, 'mikrofoniluvan pyytämisen hetki puuttuu');
+});
+
+test('ANDROID-ACCEPTANCE-BUILD.md: menettely, versiointipäätös ja allekirjoitus', () => {
+  const doc = read(ACCEPTANCE_DOC);
+  for (const needle of [
+    'npm run android:acceptance', '--dry-run', 'mklink /J', 'cmd /c rmdir', 'Remove-Item -Recurse',
+    ...GENERATED_GRADLE_FILES,
+    'jdk-21.0.12.101-hotspot', 'VERSION_21',
+    'OWNER PRODUCT DECISION', '--version-code=commit-epoch', '1767225600', 'INSTALL_FAILED_VERSION_DOWNGRADE',
+    EXPECTED_SIGNER_CERT_SHA256, 'debug.keystore', 'secrets',
+    'release-train-c-j.json', 'train-map.mjs --write'
+  ]) {
+    assert.ok(doc.includes(needle), `${ACCEPTANCE_DOC}: puuttuu "${needle}"`);
+  }
+  assert.doesNotMatch(doc, /versionCode\/versionName jätettiin ennalleen/, 'vanha "versio jätettiin ennalleen" -teksti');
+});
+
+test('Java-ohjeet eivät neuvo Android Studion JBR:ää, kun daemon on kiinnitetty JDK 21:een', () => {
+  const pinned = /^\s*org\.gradle\.java\.home\s*=/m.test(read('android/gradle.properties'));
+  for (const file of ['docs/ANDROID-STRATEGY.md', 'docs/DEPLOYMENT.md']) {
+    const doc = read(file);
+    if (pinned) {
+      assert.doesNotMatch(doc, /JAVA_HOME=["']?[^\n"']*Android Studio\/jbr/,
+        `${file} neuvoo yhä JAVA_HOME=…/jbr, vaikka gradle.properties kiinnittää JDK 21:n`);
+    }
+    assert.match(doc, /VERSION_21/, `${file}: Java 21 -vaatimuksen syy puuttuu`);
+    assert.match(doc, /OMISTAJAN TUOTEPÄÄTÖS/, `${file}: versionCode-päätöksen tila puuttuu`);
+  }
+  assert.match(read('docs/DEPLOYMENT.md'), /npm run android:acceptance/);
+  assert.doesNotMatch(read('docs/ANDROID-STRATEGY.md'), /tasan kaksi JDK:ta|ne 41 tiedostoa/);
 });

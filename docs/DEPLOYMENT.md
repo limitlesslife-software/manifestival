@@ -324,18 +324,30 @@ Käy nämä läpi kerran:
 Android on erillinen julkaisukanava eikä se vaikuta web-tuotantoon.
 
 ```bash
-npm run build:android    # dist/ -> android -> APK
+npm run build:android    # dist/ -> android -> APK (kehityskoonti)
+npm run android:acceptance -- --worktree <työpuu> --wave <X>   # hyväksyntä-APK
 ```
 
-APK: `android/app/build/outputs/apk/debug/app-debug.apk`
+Kehityskoonnin APK: `android/app/build/outputs/apk/debug/app-debug.apk`.
+Hyväksyntäpaketit (APK + metatieto-JSON) syntyvät hakemistoon
+`.claude/release-packages/`. Toistettava menettely, tarkastus ja
+allekirjoitus on kuvattu tiedostossa
+`docs/activation/ANDROID-ACCEPTANCE-BUILD.md`.
 
-**Java-versio:** Capacitor 8 vaatii Java 21+. Koneen oletus-JDK on 17, joten
-koonti epäonnistuu virheeseen `invalid source release: 21`. Android Studion
-mukana tuleva JDK 25 kelpaa:
+**Java-versio:** Capacitor 8 kääntää Java 21 -tasolla
+(`JavaVersion.VERSION_21`), joten JDK 17 kaatuu virheeseen
+`invalid source release: 21`. Gradle-daemon on kiinnitetty JDK 21:een
+(`android/gradle.properties`, `org.gradle.java.home`), eikä komentotulkin
+`JAVA_HOME`lla ole väliä. Aja Gradle PowerShellistä:
 
-```bash
-JAVA_HOME="/c/Program Files/Android/Android Studio/jbr" ./gradlew assembleDebug
+```powershell
+Set-Location android; .\gradlew.bat assembleDebug
 ```
+
+**APK:n versio:** hyväksyntäkoonnin versionName on muotoa
+`<versio>-wave<X>.<välimuisti>+<sha7>-debug`, kehityskoonnin `1.0.0-debug`.
+versionCode on 1, kunnes omistaja päättää toisin (OMISTAJAN TUOTEPÄÄTÖS:
+suurempi versionCode laitteella estää vanhemman APK:n asentamisen päälle).
 
 **Huomio versioinnista:** web ja Android julkaistaan eri tahdissa. Käyttäjällä
 voi olla vanha APK, kun web on jo päivittynyt. Siksi **Supabase-skeeman pitää

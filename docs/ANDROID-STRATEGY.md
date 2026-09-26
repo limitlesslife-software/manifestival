@@ -251,25 +251,63 @@ npm run sync:android    # dist/ -> android/app/src/main/assets/public
 npm run build:android   # koko ketju + Gradle
 ```
 
-### Java-versio — huomio ympäristöstä
+### Java-versio — JDK 21 kiinnitetty
 
-Capacitor 8 vaatii **Java 21 tai uudemman**. Koneen oletus-JDK on 17, joten
-koonti epäonnistuu virheeseen `invalid source release: 21`, jos `JAVA_HOME`
-osoittaa siihen.
+Capacitor 8 kääntää **Java 21 -tasolla**. Generoitu
+`android/app/capacitor.build.gradle` ja
+`node_modules/@capacitor/android/capacitor/build.gradle` asettavat
+`JavaVersion.VERSION_21`. JDK 17:llä koonti kaatuu siksi virheeseen
+`invalid source release: 21`. Vaatimus tulee Capacitorista: Gradle 9.1 itse
+toimisi JVM 17:llä.
 
-Android Studion mukana tulee JDK 25, joka kelpaa. Uutta koneenlaajuista
-asennusta ei siis tarvita — riittää osoittaa koonti siihen:
+Gradle-daemon on kiinnitetty JDK 21:een tiedostossa
+`android/gradle.properties`:
 
-```bash
-JAVA_HOME="/c/Program Files/Android/Android Studio/jbr" ./gradlew assembleDebug
+```
+org.gradle.java.home=C:/Program Files/Eclipse Adoptium/jdk-21.0.12.101-hotspot
 ```
 
-Android Studiosta rakennettaessa tämä tapahtuu automaattisesti.
+Komentotulkin `JAVA_HOME` (tällä koneella Temurin 17) ei siksi enää ratkaise
+daemonin JDK:ta, eikä `JAVA_HOME`a tarvitse asettaa. Gradle ajetaan
+PowerShellistä:
+
+```powershell
+Set-Location android; .\gradlew.bat assembleDebug
+```
+
+Kiinnitys on koneen oma, absoluuttinen polku versionhallinnassa. Kaksi
+vaihtoehtoa on kirjattu omistajan tai kehityksen valinnaksi:
+
+- (a) siirrä rivi käyttäjäkohtaiseen `%USERPROFILE%\.gradle\gradle.properties`-tiedostoon
+- (b) korvaa rivi tiedostolla `gradle/gradle-daemon-jvm.properties` (`toolchainVersion=21`)
+
+Temurinin päivitys asentaa uuden hakemistonimen, jolloin kiinnitys on
+päivitettävä. Tätä ei ole todennettu. Kiinnitys (a7f8cb3) puuttuu aaltojen
+C–G ehdokkailta. Ks. `docs/activation/ANDROID-ACCEPTANCE-BUILD.md`, kohta
+"JDK-kiinnitys".
+
+### Versiointi
+
+Hyväksyntä-APK rakennetaan komennolla `npm run android:acceptance`
+(`docs/activation/ANDROID-ACCEPTANCE-BUILD.md`).
+
+- **versionName** on muotoa `<package.json version>-wave<X>.<välimuisti>+<sha7>`,
+  ja debug-koonti lisää päätteen `-debug`. Ilman koontiskriptiä tulos on
+  `1.0.0-debug`.
+- **versionCode** on 1, kunnes omistaja päättää toisin. Tämä on
+  OMISTAJAN TUOTEPÄÄTÖS (OWNER PRODUCT DECISION). Suositus on commitin aika
+  sekunteina hetkestä 2026-01-01Z (`--version-code=commit-epoch`). Se on
+  laitteella yksisuuntainen ovi: vanhempaa APK:ta ei voi asentaa suuremman
+  versionCoden päälle.
+
+Arvot tulevat Gradle-ominaisuuksista `manifestival.versionCode` ja
+`manifestival.versionName` (`android/app/build.gradle`).
+Sovellustunnukseen ei lisätä debug-päätettä.
 
 ### Gradle 9.1 — miksi versio nostettiin
 
-Koneella on tasan kaksi JDK:ta: Adoptium 17 ja Android Studion mukana tuleva
-JBR 25. Kumpikaan ei toiminut Gradle 8.14.3:n kanssa:
+Noston hetkellä koneella oli kaksi JDK:ta: Adoptium 17 ja Android Studion
+mukana tuleva JBR 25. Kumpikaan ei toiminut Gradle 8.14.3:n kanssa:
 
 | JDK | Ongelma |
 |---|---|
@@ -290,8 +328,9 @@ gradle/wrapper/gradle-wrapper.properties
 ```
 
 AGP 8.13.0 toimii Gradle 9.1:n kanssa; sekä `assembleDebug` että
-`assembleRelease` menevät läpi. Jos koneelle joskus asennetaan JDK 21,
-kumpikin versio toimii — Gradle 9.1 tukee myös sitä.
+`assembleRelease` menevät läpi. Myöhemmin koneelle asennettiin JDK 21
+(Temurin 21.0.12), ja daemon kiinnitettiin siihen (ks. "Java-versio"
+yllä). Koneella on nyt kolme JDK:ta: 17, 21 ja JBR 25.
 
 ### Web-koonti (`dist/`) — miksi se on olemassa
 
@@ -300,8 +339,10 @@ juuresta ilman käännösvaihetta. `dist/` on olemassa vain siksi, että Capacit
 kopioi `webDir`-hakemiston APK:hon. Jos `webDir` olisi repon juuri, APK:hon
 menisivät `node_modules`, `tests`, `docs`, `supabase` ja `android` itse.
 
-`scripts/build-web.mjs` kopioi täsmälleen ne 41 tiedostoa, jotka selain
-oikeasti lataa. Se ei muunna eikä minifioi mitään.
+`scripts/build-web.mjs` kopioi täsmälleen ne tiedostot, jotka selain
+oikeasti lataa: juuren kuusi tiedostoa ja koko `src/`-puun, pois lukien
+`src/package.json` (aalto J: 148 tiedostoa). Se ei muunna eikä minifioi
+mitään.
 
 ---
 
