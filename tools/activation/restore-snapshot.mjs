@@ -17,7 +17,12 @@
 //            tilannekuvan rivi ole lopuksi tavu tavulta sama.
 //            --dry-run: sama skripti, joka päättyy rollback;iin.
 //            --prune:   poistaa myös tilannekuvan jälkeen luodut rivit.
-//            --tables:  vain nimetyt taulut.
+//            --tables:  vain nimetyt taulut. Yhdessä --prune-valinnan kanssa
+//                       kieltäytyy, ellei jokainen valittuun tauluun
+//                       viittaava taulu ole myös valittu (listaa puuttuvat).
+//
+//   check hylkää myös kuvan, jonka RLS suodatti (rooli ei ohittanut
+//   rivitason suojausta): sellainen kuva on sisäisesti eheä mutta vajaa.
 //
 // TIETOSUOJA (docs/activation/0010-BACKUP-AND-RECOVERY.md): vienti ja
 // palautusskripti sisältävät henkilötietoja. Tämä työkalu kirjoittaa VAIN
@@ -35,7 +40,8 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import {
-  parseExport, parseSnapshot, buildRestoreSql, buildCompareSql, describeSnapshot, defaultOutputDir
+  parseExport, parseSnapshot, buildRestoreSql, buildCompareSql, describeSnapshot, defaultOutputDir,
+  pruneSelectionProblem
 } from './snapshot-core.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -162,7 +168,15 @@ function main(argv) {
     return 0;
   }
 
-  const sql = buildRestoreSql(snap, { tables: flags.tables, prune: flags.prune, dryRun: flags.dryRun });
+  if (flags.prune && flags.tables) {
+    let problem;
+    try { problem = pruneSelectionProblem(snap, flags.tables); } catch (error) { throw new Refusal(error.message); }
+    if (problem) throw new Refusal(`KIELTÄYDYN: ${problem}`);
+  }
+  let sql;
+  try {
+    sql = buildRestoreSql(snap, { tables: flags.tables, prune: flags.prune, dryRun: flags.dryRun });
+  } catch (error) { throw new Refusal(error.message); }
   const [out] = prepareOutputs(outDir, [`restore${suffix(flags)}.sql`]);
   writeNew(out, sql);
   console.log(`Kirjoitettu ${out.rel} (${Buffer.byteLength(sql)} t)`);

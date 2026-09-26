@@ -25,7 +25,8 @@ import { ROOT, read } from './helpers/sources.mjs';
 import { buildSnapshotFile, snapshotPath } from '../tools/activation/build-snapshots.mjs';
 import {
   SNAPSHOT_STATES, OWNER, md5, parseExport, parseSnapshot, splitJsonArray, buildRestoreSql,
-  buildCompareSql, restorePlan, rowDigests, describeSnapshot, defaultOutputDir, tablesAtState
+  buildCompareSql, restorePlan, rowDigests, describeSnapshot, defaultOutputDir, tablesAtState,
+  rlsFilterOf, rlsFilterProblems, pruneDependents, pruneSelectionProblem
 } from '../tools/activation/snapshot-core.mjs';
 
 const lf = text => text.replace(/\r\n/g, '\n');
@@ -200,6 +201,82 @@ test('kanta myöhemmässä tilassa kuin tiedosto: varoitus', () => {
   assert.match(snap.warnings[0], /milestones/);
 });
 
+// ---------------------------------------------------------------------
+// RLS:n hiljainen suodatus (tilannekuva on eheä mutta vajaa)
+// ---------------------------------------------------------------------
+
+const FOREIGN_OWNER = 'supabase_admin';
+
+test('KRIITTINEN: tilannekuvan SQL kirjaa taulukohtaisen rlsFiltered-päätöksen (palvelin laskee)', () => {
+  for (const state of SNAPSHOT_STATES) {
+    const sql = lf(read(snapshotPath(state)));
+    assert.match(sql, /'rlsFiltered', \(tb\.relrowsecurity\n/, `${state}: rlsFiltered puuttuu`);
+    assert.match(sql, /and not coalesce\(\(select r\.rolsuper or r\.rolbypassrls from pg_roles r\n\s+where r\.rolname = current_user\), false\)/, state);
+    assert.match(sql, /and \(tb\.relforcerowsecurity or not pg_has_role\(current_user, tb\.relowner, 'USAGE'\)\)/, state);
+  }
+});
+
+test('KRIITTINEN: vanha vienti: bypassrls=false, ei superuser ja vieras taulujen omistaja -> hylätään (RLS)', () => {
+  const rows = rewrite(fixtureRows(), (_, m) => {
+    m.superuser = false;
+    m.bypassrls = false;
+    for (const t of Object.values(m.tables)) t.tableOwner = FOREIGN_OWNER;
+  });
+  let error = null;
+  try { parseSnapshot(rows); } catch (e) { error = e; }
+  assert.ok(error, 'RLS:n suodattama kuva kelpasi');
+  assert.match(error.message, /tasks: RLS suodatti rivit/);
+  assert.match(error.message, /goals: RLS suodatti rivit/);
+  assert.equal(error.errors.filter(e => /RLS suodatti rivit/.test(e)).length, 14, error.message);
+  // Vertailukohta: sama kuva ilman mutaatiota kelpaa (ks. yllä), ja
+  // omistajana (ei FORCE) otettu kuva kelpaa ilman BYPASSRLS:ää.
+  const asOwner = rewrite(fixtureRows(), (_, m) => { m.superuser = false; m.bypassrls = false; });
+  assert.doesNotThrow(() => parseSnapshot(asOwner));
+});
+
+test('KRIITTINEN: FORCE RLS ilman ohitusta hylätään omistajallekin; superuser/BYPASSRLS ohittaa', () => {
+  const forced = rewrite(fixtureRows(), (_, m) => {
+    m.superuser = false; m.bypassrls = false; m.tables.tasks.forceRls = true;
+  });
+  assert.throws(() => parseSnapshot(forced), /tasks: RLS suodatti rivit[^\n]*FORCE RLS/);
+  const bypass = rewrite(fixtureRows(), (_, m) => {
+    m.superuser = false; m.bypassrls = true; m.tables.tasks.forceRls = true;
+    for (const t of Object.values(m.tables)) t.tableOwner = FOREIGN_OWNER;
+  });
+  assert.doesNotThrow(() => parseSnapshot(bypass));
+});
+
+test('KRIITTINEN: uusi vienti: manifestin rlsFiltered ratkaisee; puuttuva tieto = ei voida todentaa', () => {
+  const clean = rewrite(fixtureRows(), (_, m) => { for (const t of Object.values(m.tables)) t.rlsFiltered = false; });
+  assert.doesNotThrow(() => parseSnapshot(clean));
+  const one = rewrite(fixtureRows(), (_, m) => {
+    for (const t of Object.values(m.tables)) t.rlsFiltered = false;
+    m.tables.bills.rlsFiltered = true;
+  });
+  assert.throws(() => parseSnapshot(one), /bills: RLS suodatti rivit/);
+  // Palvelin sanoo false, mutta FORCE RLS ilman ohitusta on aina suodatus.
+  const contradicts = rewrite(fixtureRows(), (_, m) => {
+    m.superuser = false; m.bypassrls = false;
+    for (const t of Object.values(m.tables)) t.rlsFiltered = false;
+    m.tables.goals.forceRls = true;
+  });
+  assert.throws(() => parseSnapshot(contradicts), /goals: RLS suodatti rivit/);
+  const garbage = rewrite(fixtureRows(), (_, m) => { m.tables.tasks.rlsFiltered = 'ei'; });
+  assert.throws(() => parseSnapshot(garbage), /tasks: RLS-suodatusta ei voida todentaa/);
+  const noRole = rewrite(fixtureRows(), (_, m) => { delete m.superuser; });
+  assert.throws(() => parseSnapshot(noRole), /RLS-suodatusta ei voida todentaa/);
+  // Taulu ilman RLS:ää ei suodatu koskaan.
+  const m = { superuser: false, bypassrls: false, role: 'x', tables: { t: { rls: false } } };
+  assert.equal(rlsFilterOf(m, 't'), false);
+  assert.deepEqual(rlsFilterProblems(snap0009().manifest), []);
+});
+
+test('check-yhteenveto kertoo RLS-suodatuksen lähteen', () => {
+  assert.match(describeSnapshot(snap0009()), /RLS-suodatus {4}ei yhdessäkään taulussa \(johdettu roolista ja omistajasta: vanha vienti\)/);
+  const clean = parseSnapshot(rewrite(fixtureRows(), (_, m) => { for (const t of Object.values(m.tables)) t.rlsFiltered = false; }));
+  assert.match(describeSnapshot(clean), /RLS-suodatus {4}ei yhdessäkään taulussa \(rlsFiltered manifestissa\)/);
+});
+
 test('KRIITTINEN: CSV-, sarkain- ja JSON-vienti antavat saman tavu tavulta', () => {
   const rows = fixtureRows();
   const cols = ['nro', 'taulu', 'rivit', 'tiiviste', 'sisalto'];
@@ -347,6 +424,42 @@ test('--tables rajaa palautuksen ja tuntematon taulu hylätään', () => {
   assert.throws(() => buildRestoreSql(snap, { tables: ['milestones'] }), /ei ole tilannekuvassa/);
 });
 
+const GOALS_CLOSURE = ['goals', 'projects', 'tasks', 'routines', 'bills', 'routine_exceptions'];
+
+test('KRIITTINEN: --prune --tables kieltäytyy, ellei jokainen viittaava taulu ole valittu (ja listaa ne)', () => {
+  const snap = snap0009();
+  const deps = pruneDependents(snap.manifest, ['goals']);
+  assert.deepEqual([...new Set(deps.map(d => d.table))].sort(), ['projects', 'routines', 'tasks']);
+  assert.ok(deps.every(d => d.ref === 'goals'));
+  assert.throws(() => buildRestoreSql(snap, { tables: ['goals'], prune: true }),
+    /karsinta koskisi myös tauluja, joita ei valittu[\s\S]*Lisää --tables-listaan myös: projects, routines, tasks/);
+  // Välitaso: tasks ja routines mukana -> niihin viittaavat bills ja routine_exceptions puuttuvat.
+  assert.match(pruneSelectionProblem(snap, ['goals', 'projects', 'tasks', 'routines']),
+    /Lisää --tables-listaan myös: bills, routine_exceptions/);
+  // Suljettu joukko kelpaa; itseensä viittaava goals.parent_goal_id ei ole este.
+  assert.equal(pruneSelectionProblem(snap, GOALS_CLOSURE), null);
+  const sql = buildRestoreSql(snap, { tables: GOALS_CLOSURE, prune: true });
+  assert.equal([...sql.matchAll(/^delete from public\.(\w+) x where not exists/gm)].length, GOALS_CLOSURE.length);
+  // Ilman karsintaa --tables=goals on yhä sallittu (B11, haara C).
+  assert.doesNotThrow(() => buildRestoreSql(snap, { tables: ['goals'] }));
+  assert.equal(pruneSelectionProblem(snap, null), null);
+});
+
+test('KRIITTINEN: osittainen karsinta tarkistaa kannassa myös tilannekuvan ulkopuoliset viittaajat', () => {
+  const snap = snap0009();
+  const partial = buildRestoreSql(snap, { tables: GOALS_CLOSURE, prune: true });
+  const guard = /do \$mv_guard\$([\s\S]*?)end \$mv_guard\$;/.exec(partial)[1];
+  assert.match(guard, /KARSINTA ESTETTY/);
+  assert.match(guard, /con\.contype = 'f'/);
+  assert.match(guard, /not \(c\.relnamespace = 'public'::regnamespace and c\.relname = any \(array\[/);
+  // Suoja on ennen ensimmäistä muutosta (sama $mv_guard$-lohko).
+  const code_ = withoutPayload(partial);
+  assert.ok(code_.indexOf('KARSINTA ESTETTY') < code_.search(/\n(update|insert|delete|alter) /));
+  // Täysi karsinta ja rajaus ilman karsintaa eivät sisällä tätä suojaa (B7, B9, B11).
+  assert.equal(buildRestoreSql(snap, { prune: true }).includes('KARSINTA ESTETTY'), false);
+  assert.equal(buildRestoreSql(snap, { tables: ['goals'] }).includes('KARSINTA ESTETTY'), false);
+});
+
 // ---------------------------------------------------------------------
 // compare.sql
 // ---------------------------------------------------------------------
@@ -466,6 +579,37 @@ test('CLI kirjoittaa ignoroituun hakemistoon: check --save, compare, restore --d
     assert.equal(r.status, 0, r.stderr);
     assert.ok(fs.existsSync(path.join(out.abs, 'restore.goals+projects.sql')));
     assert.equal(/Synteettinen|82\.40/.test(r.stdout), false);
+  } finally { out.cleanup(); }
+});
+
+test('KRIITTINEN: CLI restore --prune --tables=goals kieltäytyy, listaa viittaavat taulut eikä kirjoita', { skip: !hasGit && 'git puuttuu' }, () => {
+  const out = tempOut();
+  try {
+    const r = cli('restore', FIXTURE, '--prune', '--dry-run', '--tables=goals', `--out=${out.rel}`);
+    assert.equal(r.status, 2, r.stdout);
+    assert.match(r.stderr, /KIELTÄYDYN: --prune --tables=goals/);
+    assert.match(r.stderr, /projects, routines, tasks/);
+    assert.equal(fs.existsSync(out.abs), false, 'tuloshakemisto luotiin, vaikka kieltäydyttiin');
+    const ok = cli('restore', FIXTURE, '--prune', '--dry-run', `--tables=${GOALS_CLOSURE.join(',')}`, `--out=${out.rel}`);
+    assert.equal(ok.status, 0, ok.stderr);
+  } finally { out.cleanup(); }
+});
+
+test('KRIITTINEN: CLI check hylkää RLS:n suodattaman kuvan koodilla 1', { skip: !hasGit && 'git puuttuu' }, () => {
+  const out = tempOut();
+  try {
+    fs.mkdirSync(out.abs, { recursive: true });
+    const rows = rewrite(fixtureRows(), (_, m) => {
+      m.superuser = false; m.bypassrls = false;
+      for (const t of Object.values(m.tables)) t.tableOwner = FOREIGN_OWNER;
+    });
+    const file = path.join(out.abs, 'rls.json');
+    fs.writeFileSync(file, JSON.stringify(rows));
+    const r = cli('check', file);
+    assert.equal(r.status, 1, r.stdout);
+    assert.match(r.stderr, /TILANNEKUVA HYLÄTTY/);
+    assert.match(r.stderr, /RLS suodatti rivit/);
+    assert.equal(/TILANNEKUVA KUNNOSSA/.test(r.stdout), false);
   } finally { out.cleanup(); }
 });
 

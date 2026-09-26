@@ -28,6 +28,11 @@
 //      luetaan YHDESSÄ lauseessa (yksi MVCC-tilannekuva).
 //   5. timestamptz:n JSON-muoto riippuu istunnon aikavyöhykkeestä. Siksi
 //      manifesti kirjaa vyöhykkeen ja palautus asettaa saman.
+//   6. RLS suodattaa HILJAA: rooli, joka ei ohita rivitason suojausta
+//      (ei superuser, ei BYPASSRLS, eikä taulun omistaja tai FORCE RLS
+//      päällä), näkee vain osan riveistä — ja tiivisteet, rivimäärät ja
+//      viite-eheys täsmäävät silti. Siksi manifesti kirjaa taulukohtaisesti
+//      `rlsFiltered`, ja `check` hylkää suodatetun kuvan (rlsFilterProblems).
 
 import { createHash } from 'node:crypto';
 
@@ -147,7 +152,11 @@ manifest as (
                            from keys k where k.reloid = tb.reloid and k.kind = 'f'), '[]'::jsonb),
         'triggers', coalesce(tr.names, '[]'::jsonb),
         'tableOwner', pg_get_userbyid(tb.relowner),
-        'rls', tb.relrowsecurity, 'forceRls', tb.relforcerowsecurity))
+        'rls', tb.relrowsecurity, 'forceRls', tb.relforcerowsecurity,
+        'rlsFiltered', (tb.relrowsecurity
+                        and not coalesce((select r.rolsuper or r.rolbypassrls from pg_roles r
+                                           where r.rolname = current_user), false)
+                        and (tb.relforcerowsecurity or not pg_has_role(current_user, tb.relowner, 'USAGE')))))
       from dump d join tabs tb on tb.t = d.t join cols c on c.reloid = tb.reloid
       left join trg tr on tr.reloid = tb.reloid)
   )::text as m
@@ -276,6 +285,54 @@ export function splitJsonArray(raw) {
 const refTable = ref => String(ref || '').replace(/^public\./, '');
 
 /**
+ * Suodattiko RLS taulun rivit ottohetkellä? Palauttaa true / false tai
+ * null (ei voida todentaa).
+ *
+ * Uusi vienti: manifestin `rlsFiltered` (palvelin laski sen:
+ * relrowsecurity and not (rolsuper or rolbypassrls) and
+ * (relforcerowsecurity or not pg_has_role(current_user, relowner, 'USAGE'))).
+ *
+ * Vanha vienti (ennen kenttää): johdetaan manifestin kentistä rls,
+ * forceRls, superuser, bypassrls, tableOwner ja role. Jäsenyyttä
+ * omistajarooliin ei tunneta, joten "eri rooli kuin taulun omistaja"
+ * tulkitaan suodatukseksi (fail closed). FORCE RLS ilman ohitusta on
+ * suodatus aina, vaikka manifesti väittäisi muuta.
+ */
+export function rlsFilterOf(manifest, table) {
+  const m = manifest.tables[table] || {};
+  const bool = v => typeof v === 'boolean';
+  const noBypass = bool(manifest.superuser) && bool(manifest.bypassrls) && !manifest.superuser && !manifest.bypassrls;
+  const forced = m.rls === true && m.forceRls === true && noBypass;
+  if ('rlsFiltered' in m) {
+    if (!bool(m.rlsFiltered)) return null;
+    return m.rlsFiltered || forced;
+  }
+  if (m.rls === false) return false;
+  if (m.rls !== true || !bool(manifest.superuser) || !bool(manifest.bypassrls)) return null;
+  if (manifest.superuser || manifest.bypassrls) return false;
+  if (!bool(m.forceRls) || typeof m.tableOwner !== 'string' || typeof manifest.role !== 'string') return null;
+  return m.forceRls || m.tableOwner !== manifest.role;
+}
+
+/** RLS-suodatuksen ongelmat: [] = jokainen taulu luettiin kokonaan. */
+export function rlsFilterProblems(manifest) {
+  const problems = [];
+  for (const t of Object.keys(manifest.tables || {}).sort()) {
+    const filtered = rlsFilterOf(manifest, t);
+    const m = manifest.tables[t];
+    if (filtered === null) {
+      problems.push(`${t}: RLS-suodatusta ei voida todentaa (manifestista puuttuu rlsFiltered tai rooli-/omistajatieto). `
+        + 'Ota tilannekuva uudelleen nykyisellä snapshot_state_00NN.sql-tiedostolla.');
+    } else if (filtered) {
+      problems.push(`${t}: RLS suodatti rivit — rooli ${manifest.role} ei ohita rivitason suojausta `
+        + `(superuser ${manifest.superuser}, bypassrls ${manifest.bypassrls}, taulun omistaja ${m.tableOwner}`
+        + `${m.forceRls ? ', FORCE RLS' : ''}). Kuva olisi hiljaa vajaa: ota se taulujen omistajana (postgres).`);
+    }
+  }
+  return problems;
+}
+
+/**
  * Todenna vienti. Heittää virheen, jos yksikin tiiviste, rivimäärä tai
  * viite ei täsmää. Palauttaa { manifest, raw, data, elements, users, warnings }.
  * `raw[t]` on tiivisteellä todennettu alkuperäinen teksti.
@@ -299,6 +356,9 @@ export function parseSnapshot(rows) {
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(String(manifest.at))) throw new Error('MANIFEST: kelvoton aikaleima');
   if (manifest.owner !== OWNER) errors.push(`MANIFEST: omistaja ${manifest.owner} ei ole hyväksytty omistaja`);
   if (manifest.ownerPresent !== true) errors.push('omistajaa ei löytynyt tilannekuvan kannasta (väärä projekti?)');
+  // RLS:n suodattama kuva on sisäisesti eheä (tiivisteet, rivimäärät ja
+  // viitteet täsmäävät näkyviin riveihin) — siksi erillinen tarkistus.
+  errors.push(...rlsFilterProblems(manifest));
 
   const tables = Object.keys(manifest.tables).sort();
   const payloadRows = rows.filter(r => r !== head);
@@ -454,6 +514,41 @@ function selectTables(snap, tables) {
   return all.filter(t => chosen.includes(t));
 }
 
+/**
+ * Karsinnan (--prune) riippuvat taulut: tilannekuvan taulut, jotka EIVÄT
+ * ole valittuja mutta viittaavat vierasavaimella valittuun tauluun.
+ * Karsinta poistaisi valitusta taulusta rivejä, joihin ne viittaavat —
+ * ja vierasavaimen säännön mukaan (cascade / set null / restrict) poistaisi,
+ * muuttaisi tai estäisi rivejä tauluissa, joita ei palauteta.
+ *
+ * @returns {{table: string, fk: string, ref: string}[]}
+ */
+export function pruneDependents(manifest, chosen) {
+  const set = new Set(chosen);
+  const out = [];
+  for (const t of Object.keys(manifest.tables).sort()) {
+    if (set.has(t)) continue;
+    for (const fk of manifest.tables[t].fks || []) {
+      if (fk.ref === 'auth.users') continue;
+      const ref = refTable(fk.ref);
+      if (set.has(ref)) out.push({ table: t, fk: fk.name, ref });
+    }
+  }
+  return out;
+}
+
+/** Virheilmoitus, jos --prune --tables jättäisi riippuvan taulun pois; muuten null. */
+export function pruneSelectionProblem(snap, tables) {
+  if (!tables || !tables.length) return null;
+  const chosen = selectTables(snap, tables);
+  const deps = pruneDependents(snap.manifest, chosen);
+  if (!deps.length) return null;
+  const missing = [...new Set(deps.map(d => d.table))];
+  return `--prune --tables=${chosen.join(',')}: karsinta koskisi myös tauluja, joita ei valittu `
+    + `(${deps.map(d => `${d.table}.${d.fk} -> ${d.ref}`).join('; ')}). `
+    + `Lisää --tables-listaan myös: ${missing.join(', ')} — tai jätä --prune pois.`;
+}
+
 function timezoneOf(manifest) {
   const tz = String(manifest.timezone || '');
   if (!/^[A-Za-z0-9_/+\-:.]+$/.test(tz)) throw new Error(`MANIFEST: kelvoton aikavyöhyke ${tz}`);
@@ -469,6 +564,13 @@ function timezoneOf(manifest) {
 export function buildRestoreSql(snap, { tables, prune = false, dryRun = false } = {}) {
   const { manifest, raw } = snap;
   const chosen = selectTables(snap, tables);
+  // Osittainen karsinta: jokaisen valittuun tauluun viittaavan taulun on
+  // oltava mukana (tilannekuvan taulut tässä, kannan muut taulut suojassa 5).
+  const partialPrune = prune && Boolean(tables && tables.length);
+  if (partialPrune) {
+    const problem = pruneSelectionProblem(snap, tables);
+    if (problem) throw new Error(problem);
+  }
   const { info, order } = restorePlan(manifest, chosen);
   const tz = timezoneOf(manifest);
   const tag = dollarTag(chosen.map(t => raw[t]));
@@ -564,7 +666,19 @@ begin
                 and c.relforcerowsecurity)
      and not exists (select 1 from pg_roles r where r.rolname = current_user and (r.rolsuper or r.rolbypassrls)) then
     raise exception 'FORCE ROW LEVEL SECURITY on päällä ja roolilla % ei ole BYPASSRLS-oikeutta: rivit suodattuisivat.', current_user;
-  end if;
+  end if;${partialPrune ? `
+  -- 5. Osittainen karsinta: yksikään valitsematon taulu (myöskään
+  --    tilannekuvan jälkeen luotu) ei saa viitata valittuun tauluun.
+  select string_agg(distinct c.relname::text, ', ' order by c.relname::text) into puuttuu
+    from pg_constraint con
+    join pg_class c on c.oid = con.conrelid
+    join pg_class p on p.oid = con.confrelid
+   where con.contype = 'f'
+     and p.relnamespace = 'public'::regnamespace and p.relname = any (${tableArray})
+     and not (c.relnamespace = 'public'::regnamespace and c.relname = any (${tableArray}));
+  if puuttuu is not null then
+    raise exception 'KARSINTA ESTETTY: valittuihin tauluihin viittaavat myös taulut %. Lisää ne --tables-listaan tai jätä --prune pois.', puuttuu;
+  end if;` : ''}
   raise notice 'Suojat kunnossa: % taulua, % käyttäjää.', ${chosen.length}, ${users.length};
 end $mv_guard$;`);
   out.push('');
@@ -744,7 +858,7 @@ export function describeSnapshot(snap) {
   const { manifest } = snap;
   const tables = Object.keys(manifest.tables).sort();
   const lines = [];
-  lines.push(`TILANNEKUVA KUNNOSSA (${manifest.format}): tiivisteet, rivimäärät ja viite-eheys täsmäävät.`);
+  lines.push(`TILANNEKUVA KUNNOSSA (${manifest.format}): tiivisteet, rivimäärät, viite-eheys ja RLS-suodatus täsmäävät.`);
   lines.push(`  tila            ${manifest.state} (migraatiot 0001–${manifest.state} ajettu)`);
   lines.push(`  otettu          ${manifest.at} (UTC), aikavyöhyke ${manifest.timezone}`);
   lines.push(`  kanta           ${manifest.db}, PostgreSQL ${manifest.server}`);
@@ -759,6 +873,8 @@ export function describeSnapshot(snap) {
   const owners = [...new Set(tables.map(t => manifest.tables[t].tableOwner))];
   const forced = tables.filter(t => manifest.tables[t].forceRls);
   lines.push(`  taulujen omistaja: ${owners.join(', ')}; RLS päällä ${tables.filter(t => manifest.tables[t].rls).length}/${tables.length}; FORCE RLS: ${forced.length ? forced.join(', ') : 'ei yhdessäkään'}`);
+  const derived = tables.some(t => !('rlsFiltered' in manifest.tables[t]));
+  lines.push(`  RLS-suodatus    ei yhdessäkään taulussa (${derived ? 'johdettu roolista ja omistajasta: vanha vienti' : 'rlsFiltered manifestissa'})`);
   if (manifest.state === '0009') {
     lines.push('  Vertaa preflight_0010.sql:n INFO-riveihin (samat luvut):');
     for (const [nro, t] of Object.entries(PREFLIGHT_0010_ROWS)) {

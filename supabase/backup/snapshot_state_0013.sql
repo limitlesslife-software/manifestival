@@ -204,7 +204,11 @@ manifest as (
                            from keys k where k.reloid = tb.reloid and k.kind = 'f'), '[]'::jsonb),
         'triggers', coalesce(tr.names, '[]'::jsonb),
         'tableOwner', pg_get_userbyid(tb.relowner),
-        'rls', tb.relrowsecurity, 'forceRls', tb.relforcerowsecurity))
+        'rls', tb.relrowsecurity, 'forceRls', tb.relforcerowsecurity,
+        'rlsFiltered', (tb.relrowsecurity
+                        and not coalesce((select r.rolsuper or r.rolbypassrls from pg_roles r
+                                           where r.rolname = current_user), false)
+                        and (tb.relforcerowsecurity or not pg_has_role(current_user, tb.relowner, 'USAGE')))))
       from dump d join tabs tb on tb.t = d.t join cols c on c.reloid = tb.reloid
       left join trg tr on tr.reloid = tb.reloid)
   )::text as m
