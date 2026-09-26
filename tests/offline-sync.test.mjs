@@ -556,3 +556,18 @@ test('kelvoton tehtävä (validointi) hylätään toistossa näkyvästi eikä l�
   assert.equal(server.writes.length <= 1, true);
   assert.ok(run.ran);
 });
+
+// ------------------------------------------------------- tilin poisto
+
+test('purge + uloskirjautuminen: poistetun tilin jonoavainta ei luoda uudelleen', () => {
+  // Tilin poisto kutsuu purgea, ja sitä seuraava uloskirjautuminen
+  // deactivatea. Aiemmin deactivate tallensi tyhjän jonon takaisin
+  // poistetun käyttäjän avaimelle, jolloin laitteelle jäi tilin tunniste.
+  net.online = false;
+  sync.enqueueTaskCreate(task('t1'));
+  sync.purge(ALICE.id);
+  sync.deactivate();
+  assert.equal(stored.has(ALICE.id), false, 'avain jäi laitteelle');
+  assert.equal(store.load(ALICE.id), null);
+  assert.equal(sync.isActive(), false);
+});

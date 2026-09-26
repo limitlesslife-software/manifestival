@@ -124,11 +124,22 @@ export function createOfflineSync(deps) {
     emit();
   }
 
-  /** Poista käyttäjän jono kokonaan (tilin poisto). */
+  /**
+   * Poista käyttäjän jono kokonaan (tilin poisto).
+   *
+   * Poistetun käyttäjän jonoa ei jätetä muistiin: omistaja nollataan, jotta
+   * myöhempi deactivate() (uloskirjautuminen) ei tallenna tyhjää jonoa
+   * takaisin poistetun tilin avaimelle. Muuten laitteelle jäisi tilin
+   * tunniste, vaikka poisto lupaa tyhjentää jonon.
+   */
   function purge(userId) {
     const target = userId == null ? owner : String(userId);
     if (target != null) store.purge(target);
-    if (target === owner) queue = emptyQueue(owner);
+    if (target === owner) {
+      owner = null;
+      queue = emptyQueue(null);
+      rerunRequested = false;
+    }
     emit();
   }
 
