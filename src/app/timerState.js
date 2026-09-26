@@ -28,6 +28,14 @@
 // KANNAN KIRJOITUKSET JONOSSA: lisäys, päivitys ja poisto lähtevät
 // järjestyksessä (syncTimerToRepo). Heti käynnistyksen jälkeinen poisto ei
 // voi ohittaa lisäystä, jolloin rivi jäisi kantaan ja ajastin palaisi.
+// Jonossa odottanut työ lähtee vain samassa istunnossa, jossa se jonotettiin:
+// kanta liittää rivin kirjautuneeseen käyttäjään (running_timers.user_id =
+// auth.uid()), joten käyttäjän vaihduttua A:n ajastin menisi B:n tilille.
+//
+// KANNASSA (synced) VAIN LISÄYKSEN JÄLKEEN: nollaan riviin osuva UPDATE
+// onnistuu ilman virhettä, joten onnistunut päivitys ei todista, että rivi
+// on kannassa. Muuten offline-käynnistetty ajastin merkittäisiin kannassa
+// olevaksi, ja seuraava tyhjä lista pudottaisi sen "muualla pysäytettynä".
 //
 // Tämä moduuli ei tuo actions.js:ää eikä alignment.js:ää, jotta lataus
 // (actions.loadUserData) voi kutsua sitä ilman kehäriippuvuutta.
@@ -64,6 +72,9 @@ let timerSync = Promise.resolve();
 /** Poistot (tunniste -> määrä), jotka ovat jonossa tai matkalla: niiden hautakiveä ei pureta. */
 const pendingRemovals = new Map();
 
+/** Jonon sukupolvi: nollauksen jälkeen edellisen jonon työt eivät koske uuteen kirjanpitoon. */
+let queueEpoch = 0;
+
 /**
  * Ajastinmuutosten järjestysnumero. Kasvaa jokaisessa tämän laitteen
  * ajastinmuutoksessa (käynnistys, tauko, pysäytys, kannan kuittaus,
@@ -83,6 +94,18 @@ export function setTimerStateRepo(replacement) {
   repo = replacement || runningTimersRepo;
   // Uusi repositorio = uusi jono: edellisen testin jumiin jäänyt pyyntö
   // ei saa pysäyttää seuraavan kirjoituksia.
+  resetTimerSync();
+}
+
+/**
+ * Uloskirjautuminen ja tilinvaihto (main.js onSignedOut): jono ja
+ * poistojen kirjanpito alusta. Edellisen istunnon jonossa odottavat työt
+ * ohitetaan joka tapauksessa (send), mutta jumiin jäänyt pyyntö ei saa
+ * pidätellä seuraavan käyttäjän kirjoituksia. Laitteelle jäävät liput ja
+ * hautakivet hoitavat uusinnan, kun sama käyttäjä palaa.
+ */
+export function resetTimerSync() {
+  queueEpoch += 1;
   timerSync = Promise.resolve();
   pendingRemovals.clear();
 }
@@ -98,7 +121,14 @@ function isUniqueViolation(error) {
 
 // ------------------------------------------------------------ kanta
 
-async function send(target, action, timer, owner) {
+async function send(target, action, timer, owner, session) {
+  // Käyttäjä vaihtui (tai kävi uloskirjautuneena) sillä välin, kun työ
+  // odotti jonossa: pyyntö lähtisi uuden istunnon tokenilla, ja kanta
+  // kirjoittaisi A:n ajastimen (muistiinpanoineen) B:n tilille. Ohitetaan
+  // eikä kuitata: laitteen liput ja hautakivet uusivat työn, kun A palaa.
+  if (!isSameSession(session) || userId() !== owner) {
+    return { ok: false, skipped: true, sessionChanged: true };
+  }
   if (action === 'reinsert') {
     // Jonossa ehtinyt odottaa: jos alkuperäinen lisäys meni sillä välin
     // perille (tai ajastin pysäytettiin), uusintaa ei tarvita.
@@ -115,20 +145,23 @@ async function send(target, action, timer, owner) {
     result = { ok: false, error };
   }
   result = result || { ok: false };
-  if (result.ok && action !== 'remove' && owner) markTimerSynced(owner, timer);
+  if (result.ok && action !== 'remove' && owner) markTimerSynced(owner, timer, { inserted: action === 'insert' });
   return result;
 }
 
 function enqueue(action, timer, owner) {
   if (!repo.isPersistent()) return Promise.resolve({ ok: true });
   const target = repo;
+  const epoch = queueEpoch;
+  // Istunto talteen jonotettaessa: send ohittaa työn, jos se on vaihtunut.
+  const session = sessionSnapshot();
   const removal = action === 'remove' ? String(timer.id) : null;
   if (removal) pendingRemovals.set(removal, (pendingRemovals.get(removal) || 0) + 1);
-  const run = timerSync.then(() => send(target, action, timer, owner));
+  const run = timerSync.then(() => send(target, action, timer, owner, session));
   timerSync = run.catch(() => {});
   if (!removal) return run;
   return run.finally(() => {
-    if (repo !== target) return;
+    if (epoch !== queueEpoch) return;
     const left = (pendingRemovals.get(removal) || 1) - 1;
     if (left > 0) pendingRemovals.set(removal, left);
     else pendingRemovals.delete(removal);
@@ -149,13 +182,23 @@ export function syncTimerToRepo(action, timer, { owner = userId() } = {}) {
   return enqueue(action, timer, owner);
 }
 
-/** Kanta kuittasi lisäyksen tai päivityksen. */
-function markTimerSynced(owner, sent) {
+/**
+ * Kanta kuittasi lisäyksen tai päivityksen.
+ *
+ * Vain lisäys (myös uusinta) merkitsee ajastimen kannassa olevaksi.
+ * Päivitys säilyttää aiemman lipun: nollaan riviin osuva UPDATE onnistuu
+ * sekin (offline-käynnistys, jonka lisäys ei mennyt perille), eikä se saa
+ * tehdä ajastimesta "kannassa ollutta", jonka tyhjä lista pudottaisi.
+ */
+function markTimerSynced(owner, sent, { inserted = false } = {}) {
   const record = loadTimerRecord(owner);
   if (!record || record.timer.id !== sent.id) return;
   // Kuittaus koskee lähetettyä versiota: jos laitteella on sen jälkeen
   // tehty muutos (tauko matkalla), se on yhä kannasta puuttuva.
-  saveTimer(owner, record.timer, { synced: true, dirty: record.dirty && !sameContent(record.timer, sent) });
+  saveTimer(owner, record.timer, {
+    synced: inserted || record.synced,
+    dirty: record.dirty && !sameContent(record.timer, sent)
+  });
   bump();
 }
 

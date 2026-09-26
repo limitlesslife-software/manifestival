@@ -15,7 +15,7 @@ import { getDevicePreference, clearDevicePreferences } from '../data/preferences
 import { subscribe, resetState, setViewDate, setWeekStart, getState } from './state.js';
 import { loadUserData, clearLocalUserData } from './actions.js';
 import { renderTimerBar, initTimeLog, closeTimeLogDialog } from './views/timeLog.js';
-import { restoreLocalTimer, initTimerCrossTabSync, stopTimerCrossTabSync } from './timerState.js';
+import { restoreLocalTimer, initTimerCrossTabSync, stopTimerCrossTabSync, resetTimerSync } from './timerState.js';
 import {
   flushTimeOutbox, retryTimeOutbox, pendingTimeEntryCount, beginDataLoad, keepWritesSince,
   resetAlignmentSession
@@ -388,6 +388,10 @@ function onSignedOut() {
   // kirjataanko ...") ei jää kirjautumisportin päälle, eikä sen myöhempi
   // hyväksyntä käynnistä mitään uudessa istunnossa (RACE-14).
   closeConfirmDialogs();
+  // Ajastimen kannan kirjoitusjono alusta: edellisen käyttäjän jonotetut
+  // työt eivät lähde seuraavan tokenilla (ne ohitetaan), eikä jumiin
+  // jäänyt pyyntö pidättele seuraavan käyttäjän kirjoituksia.
+  resetTimerSync();
   resetDirectionView();
   resetAppliedAdjustments();
   resetAlignmentSession();

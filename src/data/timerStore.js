@@ -22,7 +22,8 @@
 // AJASTIMEN LIPUT (kumpi kopio voittaa, src/app/timerState.js):
 //
 //   synced  ajastin on ollut kannassa (lisäys onnistui tai se ladattiin
-//           onnistuneesta listasta)
+//           onnistuneesta listasta); onnistunut päivitys EI todista tätä,
+//           koska nollaan riviin osuva UPDATE onnistuu sekin
 //   dirty   laitteella on muutos, joka ei ole vielä kannassa (esim. tauko
 //           ilman verkkoa)
 

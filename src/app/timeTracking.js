@@ -208,6 +208,12 @@ export async function startTracking(target = { kind: 'none' }, { now = nowMs() }
       result = await syncTimerToRepo('insert', timer, { owner });
     }
   }
+  if (result.sessionChanged) {
+    // Käyttäjä vaihtui ennen kuin lisäys ehti lähteä: sitä ei lähetetty
+    // uuden istunnon tokenilla. Ajastin jää omistajan laitteelle (ei
+    // kannassa), ja kanta saa sen, kun omistaja kirjautuu takaisin.
+    return { ok: false, code: 'timer.session_changed' };
+  }
   if (!result.ok && isUniqueViolation(result.error)) {
     // YKSI AJASTIN KÄYTTÄJÄÄ KOHTI: toisella laitteella on jo ajastin.
     // Vain tämä ajastin siivotaan, ja vain sen omistajan avaimelta.

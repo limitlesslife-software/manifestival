@@ -28,7 +28,8 @@ import {
   discardPendingTracking
 } from '../src/app/timeTracking.js';
 import {
-  restoreLocalTimer, adoptLoadedTimers, timerMutationSeq, initTimerCrossTabSync, stopTimerCrossTabSync
+  restoreLocalTimer, adoptLoadedTimers, timerMutationSeq, initTimerCrossTabSync, stopTimerCrossTabSync,
+  resetTimerSync
 } from '../src/app/timerState.js';
 import { logTime, setTimeEntryWriterForTests, flushTimeOutbox } from '../src/app/alignment.js';
 import { createTimeEntryWriter } from '../src/app/timeEntryWriter.js';
@@ -400,6 +401,7 @@ test('RACE-03: main.js kytkee välilehtisynkronoinnin kirjautuessa ja purkaa sen
   const signedOut = main.match(/function onSignedOut\(\) \{[\s\S]*?\n\}/)[0];
   assert.match(signedIn, /restoreLocalTimer\(\);\s*[\s\S]*?initTimerCrossTabSync\(\);/);
   assert.match(signedOut, /stopTimerCrossTabSync\(\);/);
+  assert.match(signedOut, /resetTimerSync\(\);/, 'kannan kirjoitusjono nollataan uloskirjautuessa');
 });
 
 test('RACE-03 / offline F8: offline-käynnistetty ajastin lisätään kantaan kerran, kun lataus palauttaa tyhjän listan', async () => {
@@ -478,6 +480,8 @@ test('RACE-08: käynnistyksen 23505 käyttäjän vaihduttua ei koske B:n ajastim
   repo.insertGate = hold.promise;
   setTimerRepoForTests(repo);
   const pending = startTracking({ kind: 'none' }, { now: T0 });
+  await settle(); // lisäys on matkalla A:n istunnossa (jonossa odottava ohitettaisiin)
+  assert.deepEqual(repo.calls.map(call => call[0]), ['insert']);
   switchTo(USER_B);
   saveTimer(USER_B.id, { id: 'b-timer', startedAt: iso(T0), targetKind: 'none' });
   restoreLocalTimer();
@@ -897,3 +901,123 @@ test('kesken jäänyt pysäytys: palkki kertoo tilan, tauko estetään, kirjatta
   assert.equal(/data-timer="pause"/.test(bar.innerHTML), false);
   assert.equal((await pauseTracking({ now: start + 501 * MIN })).code, 'timer.stopping');
 });
+
+// ============================================ katselmointi: kuittaus ja istunto
+
+test('REGRESSIO: offline-käynnistys, verkon palattua tauko (UPDATE osuu nollaan riviin) -> tyhjä lista ei pudota ajastinta, se lisätään kantaan', async () => {
+  const repo = timerDb();
+  repo.insertError = NETWORK;
+  setTimerRepoForTests(repo);
+  const started = await startTracking({ kind: 'none' }, { now: T0 });
+  assert.equal(started.ok, true);
+  assert.equal(loadTimerRecord(USER_A.id).synced, false);
+
+  repo.insertError = null; // verkko palasi
+  assert.equal((await pauseTracking({ now: T0 + 20 * MIN })).ok, true);
+  assert.deepEqual(repo.calls.at(-1), ['update', started.timer.id]);
+  assert.equal(repo.rows.size, 0, 'päivitys onnistui, mutta ei osunut yhteenkään riviin');
+  const record = loadTimerRecord(USER_A.id);
+  assert.equal(record.synced, false, 'onnistunut päivitys ei todista, että rivi on kannassa');
+  assert.equal(record.dirty, false, 'päivitys kuittaa vain muutoksen');
+
+  const before = repo.calls.length;
+  adoptLoadedTimers([], { sinceSeq: timerMutationSeq() });
+  assert.equal(currentTimer()?.id, started.timer.id, 'ajastin säilyy (ei "pysäytetty muualla")');
+  assert.equal(loadTimer(USER_A.id)?.id, started.timer.id);
+  await settle();
+  assert.deepEqual(repo.calls.slice(before), [['insert', started.timer.id]], 'ja se lisätään kantaan');
+  assert.equal(repo.rows.get(started.timer.id).pausedAt, iso(T0 + 20 * MIN), 'tauko mukana');
+  assert.equal(loadTimerRecord(USER_A.id).synced, true, 'lisäys kuittaa kannassa olevaksi');
+});
+
+test('istunto: A:n jonossa odottava päivitys ei lähde A->B-vaihdon jälkeen; A:n palatessa se lähtee A:n istunnossa', async () => {
+  const repo = timerDb();
+  const hold = gate();
+  repo.insertGate = hold.promise;
+  setTimerRepoForTests(repo);
+  const starting = startTracking({ kind: 'none' }, { now: T0 });
+  await settle(); // lisäys on matkalla A:n istunnossa
+  const id = loadTimer(USER_A.id).id;
+  const pausing = pauseTracking({ now: T0 + 5 * MIN }); // päivitys jonoon lisäyksen taakse
+  await settle();
+  switchTo(USER_B);
+  hold.release();
+  await starting;
+  await pausing;
+  await settle();
+  assert.deepEqual(repo.calls, [['insert', id]], 'A:n päivitys ei lähtenyt B:n tokenilla');
+  assert.equal(currentTimer(), null, 'B ei näe A:n ajastinta');
+  const record = loadTimerRecord(USER_A.id);
+  assert.equal(record.synced, true, 'A:n istunnossa lähtenyt lisäys kuitataan A:lle');
+  assert.equal(record.dirty, true, 'ohitettu päivitys ei kuittaudu');
+  assert.equal(loadTimer(USER_B.id), null);
+
+  switchTo(USER_A);
+  restoreLocalTimer();
+  adoptLoadedTimers([...repo.rows.values()], { sinceSeq: timerMutationSeq() });
+  await settle();
+  assert.deepEqual(repo.calls.at(-1), ['update', id], 'tauko lähtee uudelleen A:n istunnossa');
+  assert.equal(repo.rows.get(id).pausedAt, iso(T0 + 5 * MIN));
+  assert.equal(loadTimerRecord(USER_A.id).dirty, false);
+});
+
+test('istunto: A:n jonossa odottava lisäys ei lähde B:n istunnossa eikä kuittaudu; A:n palatessa se lisätään A:lle', async () => {
+  const repo = timerDb();
+  setTimerRepoForTests(repo);
+  useEntryDb(entryDb());
+  await startTracking({ kind: 'none' }, { now: T0 });
+  const first = currentTimer().id;
+  const hold = gate();
+  repo.removeGate = hold.promise;
+  const stopping = stopTracking({ now: T0 + 30 * MIN });
+  for (let i = 0; i < 20 && !repo.calls.some(call => call[0] === 'remove'); i += 1) await settle(1);
+  // Poisto on matkalla; uuden ajastimen lisäys jää jonoon sen taakse.
+  const starting = startTracking({ kind: 'none' }, { now: T0 + 31 * MIN });
+  await settle();
+  switchTo(USER_B);
+  hold.release();
+  await stopping;
+  const started = await starting;
+  await settle();
+  assert.equal(started.ok, false);
+  assert.equal(started.code, 'timer.session_changed');
+  assert.deepEqual(repo.calls, [['insert', first], ['remove', first]], 'A:n lisäys ei lähtenyt B:n tokenilla');
+  const second = loadTimerRecord(USER_A.id);
+  assert.notEqual(second.timer.id, first);
+  assert.equal(second.synced, false, 'ohitettua lisäystä ei kuitattu');
+  assert.equal(currentTimer(), null, 'B ei näe A:n ajastinta');
+
+  switchTo(USER_A);
+  restoreLocalTimer();
+  adoptLoadedTimers([...repo.rows.values()], { sinceSeq: timerMutationSeq() });
+  await settle();
+  assert.deepEqual(repo.calls.at(-1), ['insert', second.timer.id], 'A:n palatessa lisäys lähtee A:n istunnossa');
+  assert.equal(currentTimer().id, second.timer.id);
+  assert.equal(loadTimerRecord(USER_A.id).synced, true);
+});
+
+test('istunto: uloskirjautumisen nollaus (resetTimerSync) -> A:n jumiin jäänyt pyyntö ei pidättele B:n kirjoituksia', async () => {
+  const repo = timerDb();
+  const hold = gate();
+  repo.insertGate = hold.promise;
+  setTimerRepoForTests(repo);
+  const startingA = startTracking({ kind: 'none' }, { now: T0 });
+  await settle();
+  const idA = loadTimer(USER_A.id).id;
+  switchTo(USER_B);
+  resetTimerSync(); // main.js onSignedOut
+  repo.insertGate = null;
+  const startingB = startTracking({ kind: 'none' }, { now: T0 + MIN });
+  const idB = loadTimer(USER_B.id).id;
+  await settle();
+  assert.deepEqual(repo.calls, [['insert', idA], ['insert', idB]], 'B:n lisäys ei jäänyt A:n pyynnön taakse');
+  assert.equal(loadTimerRecord(USER_B.id).synced, true);
+
+  repo.insertError = NETWORK; // A:n pyyntö päättyy lopulta verkkovirheeseen
+  hold.release();
+  await startingA;
+  assert.equal((await startingB).ok, true);
+  assert.equal(loadTimerRecord(USER_A.id).synced, false, 'A:n ajastin odottaa uusintaa A:n laitteella');
+  assert.equal(currentTimer().id, idB, 'B:n tila koskematon');
+});
+
