@@ -43,7 +43,7 @@ import { toRow, TASK_COLUMNS_CORE } from '../src/lib/rows.js';
 import { normalizeTask } from '../src/domain/task.js';
 import { createOfflineSync, SCHEMA_PENDING_CODE, SCHEMA_PENDING_NOTE } from '../src/app/offlineSync.js';
 import { describeSyncLine } from '../src/app/offlineStatus.js';
-import { unwritableTaskFields } from '../src/data/tasksRepo.js';
+import { unwritableTaskFields, unwritableInsert } from '../src/data/tasksRepo.js';
 import { createTimeEntryWriter } from '../src/app/timeEntryWriter.js';
 
 const WAVES = WAVE_IDS.slice(WAVE_IDS.indexOf('C'));
@@ -510,6 +510,75 @@ graphTest('KRIITTINEN aalto J: jonottu välitavoitemuutos ei katoa, kun kanta ei
   assert.equal(sync.status().total, 0);
   const row = fixed.rows('tasks').find(r => r.id === task.id);
   assert.deepEqual([row.milestone_id, row.title], ['m3', 'Uusi otsikko']);
+});
+
+/** Offline-jono aallon repositoriolle, muistitallennuksella ja säädettävällä kellolla. */
+function queueFor(g, saved, clock, prefix) {
+  return createOfflineSync({
+    repo: g.tasksRepo,
+    store: { load: id => saved.get(id) || null, save: (id, text) => { saved.set(id, text); return { ok: true, persistent: true }; }, purge: id => saved.delete(id) },
+    session: { userId: () => USER.id, snapshot: () => ({}), isSame: () => true },
+    now: () => clock.now, isOnline: () => true, newId: (() => { let n = 0; return () => prefix + (++n); })(),
+    canSync: g.runtime.isWritable
+  });
+}
+
+graphTest('KRIITTINEN aalto J: jonottu lisäys + yhdistetty välitavoite: rivi syntyy, välitavoite odottaa ja tallentuu portin palattua', async () => {
+  // Kanta 0001-0009: tasks.milestone_id puuttuu -> GOAL_PLANNING_FIELDS lasketaan.
+  const { g, server } = await start('J', DB_STATES['+0009']);
+  assert.equal(g.schema.columnGateOpen('GOAL_PLANNING_FIELDS'), false, 'lähtötilanne: portti laskettu');
+  const saved = new Map();
+  const clock = { now: 1_000 };
+  const sync = queueFor(g, saved, clock, 'cq-op');
+  sync.activate(USER.id);
+
+  const task = normalizeTask({ id: 'cq-1', title: 'Offline-tehtävä', date: '2026-09-26' });
+  assert.equal(sync.enqueueTaskCreate(task).ok, true);
+  const merged = sync.enqueueTaskUpdate({ id: task.id, previous: task, updated: { ...task, milestoneId: 'm2' } });
+  assert.deepEqual([merged.ok, merged.coalesced], [true, true], 'lähtötilanne: muokkaus yhdistyi lisäykseen');
+
+  // Rivi syntyy ilman välitavoitetta, eikä välitavoitetta raportoida tallentuneeksi.
+  const first = await sync.replay();
+  assert.deepEqual([first.synced, first.failed, first.conflicts], [1, 0, 0]);
+  const insert = server.writes().filter(call => call.op === 'insert' && call.table === 'tasks').at(-1);
+  assert.equal(insert.payloadKeys.includes('milestone_id'), false);
+  assert.ok(server.rows('tasks').some(row => row.id === task.id), 'rivi ei syntynyt');
+  assert.equal(sync.status().pending, 1, 'välitavoite katosi hiljaa (lisäys merkittiin onnistuneeksi)');
+  const [op] = sync.list();
+  assert.deepEqual([op.operation, op.lastErrorCode], ['tasks.update', SCHEMA_PENDING_CODE]);
+  const stored = JSON.parse(saved.get(USER.id)).ops[0];
+  assert.deepEqual([stored.payload, stored.baseValues], [{ milestoneId: 'm2' }, { milestoneId: null }],
+    'odottaa vain pois jäänyt kenttä, perusarvona kannan oletus');
+
+  // Uusi muokkaus samaan kenttään yhdistyy odottavaan (ei väärää konfliktia myöhemmin).
+  const shown = { ...task, milestoneId: 'm2' };
+  assert.equal(sync.enqueueTaskUpdate({ id: task.id, previous: shown, updated: { ...shown, milestoneId: 'm3' } }).ok, true);
+  assert.equal(sync.status().total, 1);
+
+  // Kanta päivitetään (0010): uusi tarkistus nostaa portin, ja välitavoite tallentuu.
+  const fixed = createSchemaServer({ ...DB_STATES['+0010'], currentUserId: () => USER.id });
+  fixed.rows('tasks').push({ ...server.rows('tasks').find(row => row.id === task.id) });
+  g.client.setClient(fixed);
+  await g.probe.ensureSchemaCompatibility({ client: fixed, isOnline: () => true, storage: memoryStorage(), force: true });
+  assert.equal(g.schema.columnGateOpen('GOAL_PLANNING_FIELDS'), true);
+  clock.now += 60_000;
+  const second = await sync.replay();
+  assert.deepEqual([second.synced, second.conflicts, second.failed], [1, 0, 0]);
+  assert.equal(sync.status().total, 0);
+  const row = fixed.rows('tasks').find(r => r.id === task.id);
+  assert.deepEqual([row.milestone_id, row.title], ['m3', 'Offline-tehtävä']);
+});
+
+test('unwritableInsert: lisäyksen pois jäävät kentät ja tehtävä sellaisena kuin kanta sen tallentaa', () => {
+  const task = normalizeTask({ id: 'u2', title: 'T', date: '2026-09-26', description: 'Kuvaus' });
+  const lowered = unwritableInsert(task, TASK_COLUMNS_CORE);
+  assert.deepEqual(lowered.fields, COMPILE_COLUMN_GATES.TASK_EXTENDED_FIELDS ? ['description'] : []);
+  assert.equal(lowered.stored.description, null);
+  assert.equal(lowered.stored.title, 'T');
+  assert.deepEqual(unwritableInsert(task).fields, [], 'mitään ei laskettu: kaikki tallentuu');
+  // Käännösaikaisesti kiinni oleva portti ei ole "odottava".
+  const planned = unwritableInsert({ ...task, milestoneId: 'm1' }, TASK_COLUMNS_CORE).fields;
+  assert.equal(planned.includes('milestoneId'), COMPILE_COLUMN_GATES.GOAL_PLANNING_FIELDS);
 });
 
 test('unwritableTaskFields: vain ajon aikana lasketun portin kentät odottavat', () => {

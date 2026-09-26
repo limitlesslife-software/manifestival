@@ -73,7 +73,14 @@ export async function listTasks() {
   }
 }
 
-/** Lisää tehtävä. */
+/**
+ * Lisää tehtävä.
+ *
+ * Payload (ja sen sarakejoukko) rakennetaan synkronisesti ennen
+ * ensimmäistä odotusta: offline-jono laskee juuri ennen kutsua, mitkä
+ * kentät lisäys jättää pois (unwritableInsert), ja luottaa siihen, että
+ * kyvykkyys ei ehdi muuttua välissä.
+ */
 export async function insertTask(task) {
   const refused = writeRefusal();
   if (refused) return refused;
@@ -261,6 +268,26 @@ export function unwritableTaskFields(changes, expected, columns = taskColumns())
     if (touched.length > 0 && touched.every(column => !columns.includes(column))) out.push(field);
   }
   return out;
+}
+
+/**
+ * Lisäyksen kentät, jotka EIVÄT tallennu, koska kanta on käännöstä
+ * jäljessä (ajon aikana laskettu sarakeportti), ja tehtävä sellaisena kuin
+ * kanta sen tallentaa: pois jätetyt sarakkeet saavat oletusarvonsa.
+ *
+ * Sama johdettu sääntö kuin unwritableTaskFields, lähtökohtana tallentuva
+ * rivi: kenttä odottaa, jos sen arvo poikkeaa tallentuvasta ja ero osuu
+ * vain laskettuihin sarakkeisiin. Offline-jono pitää ne odottamassa eikä
+ * raportoi lisäystä kokonaan onnistuneeksi.
+ *
+ * @param {object} task lisättävä tehtävä
+ * @param {ReadonlyArray<string>} [columns] kirjoitettavat sarakkeet (testejä varten)
+ * @returns {{fields: string[], stored: object}}
+ */
+export function unwritableInsert(task, columns = taskColumns()) {
+  const normalized = normalizeTask(task);
+  const stored = normalizeTask(fromRow(payloadFor(normalized, columns)));
+  return { fields: unwritableTaskFields(normalized, stored, columns), stored };
 }
 
 /**

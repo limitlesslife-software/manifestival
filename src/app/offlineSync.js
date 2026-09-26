@@ -23,8 +23,9 @@
 //     tarkistetaan uudelleen; tilapäinen palvelinvirhe uusitaan viiveellä
 //   - OSITTAIN KIRJOITETTU MUUTOS: jos kanta ei vielä tue osaa kentistä
 //     (ajon aikana laskettu portti), kirjoitettavat lähtevät ja loput jäävät
-//     jonoon odottamaan (SCHEMA_PENDING_CODE). Pudotettua kenttää ei
-//     koskaan raportoida onnistuneeksi.
+//     jonoon odottamaan (SCHEMA_PENDING_CODE). Sama koskee lisäystä: rivi
+//     syntyy ilman niitä, ja ne jäävät odottamaan muokkauksena. Pudotettua
+//     kenttää ei koskaan raportoida onnistuneeksi.
 //
 // FIXED HANDLER MAP: (domain.operation) -> funktio on käsin kirjoitettu
 // taulukko. Jonossa oleva merkkijono ei valitse koodia.
@@ -53,20 +54,28 @@ const has = (object, key) => Boolean(object) && Object.prototype.hasOwnProperty.
 /**
  * Rajaa operaatio kenttiin, jotka eivät vielä tallentuneet, ja jätä se
  * odottamaan. Muut kentät ovat jo kannassa, joten niitä ei lähetetä uudelleen.
+ *
+ * LISÄYS muuttuu muokkaukseksi: rivi on jo kannassa, ja jäljelle jäävät
+ * vain kentät, jotka saivat kannan oletusarvon. Niiden perusarvo on se
+ * oletus (`insertedBase`), ei muutoksen oma arvo: myöhempi muokkaus
+ * yhdistyy tähän ilman väärää konfliktia, ja muualla tehty muutos
+ * tunnistetaan konfliktiksi.
  */
-function keepWaitingFields(queue, id, fields, nowMs) {
+function keepWaitingFields(queue, id, fields, nowMs, insertedBase = null) {
   return {
     ...queue,
     ops: queue.ops.map(op => {
       if (op.id !== id) return op;
+      const base = op.operation === 'create' ? insertedBase : op.baseValues;
       const payload = {};
       const baseValues = {};
       for (const field of fields) {
         if (has(op.payload, field)) payload[field] = op.payload[field];
-        if (has(op.baseValues, field)) baseValues[field] = op.baseValues[field];
+        if (has(base, field)) baseValues[field] = base[field];
       }
       return {
-        ...op, payload, baseValues, status: OP_STATUS.PENDING, lastErrorCode: SCHEMA_PENDING_CODE,
+        ...op, operation: 'update', payload, baseValues, status: OP_STATUS.PENDING,
+        lastErrorCode: SCHEMA_PENDING_CODE,
         nextAttemptAt: Number.isFinite(nowMs) ? nowMs + SCHEMA_PENDING_RETRY_MS : null
       };
     })
@@ -99,7 +108,7 @@ function sameValue(a, b) {
 
 /**
  * @param {object} deps
- * @param {object} deps.repo      { insertTask, getTask, patchTask }
+ * @param {object} deps.repo      { insertTask, getTask, patchTask, unwritableInsert? }
  * @param {object} deps.store     { load(userId), save(userId, text), purge(userId) }
  * @param {object} deps.session   { userId(), snapshot(), isSame(snapshot) }
  * @param {() => number} deps.now
@@ -258,21 +267,55 @@ export function createOfflineSync(deps) {
     return { kind: 'retry', code: 'unknown' };
   }
 
+  /**
+   * Lisäyksen pois jättämät kentät: { fields, stored } (ks. tasksRepo.
+   * unwritableInsert). Korvike ilman laskentaa ei jätä mitään pois.
+   */
+  function leftOutOnInsert(task) {
+    if (typeof repo.unwritableInsert !== 'function') return { fields: [], stored: {} };
+    try {
+      const result = repo.unwritableInsert(task);
+      return {
+        fields: Array.isArray(result && result.fields) ? result.fields : [],
+        stored: (result && result.stored) || {}
+      };
+    } catch {
+      return { fields: [], stored: {} };
+    }
+  }
+
+  /** Rivi on kannassa: onnistui kokonaan, vai odottaako osa kentistä? */
+  function insertedOutcome(op, leftOut) {
+    const waiting = leftOut.fields.filter(field => has(op.payload, field));
+    if (waiting.length === 0) return { kind: 'success' };
+    const insertedBase = {};
+    for (const field of waiting) insertedBase[field] = has(leftOut.stored, field) ? leftOut.stored[field] : null;
+    return { kind: 'partial', fields: waiting, wrote: true, insertedBase, code: SCHEMA_PENDING_CODE };
+  }
+
   async function executeTaskCreate(op) {
     const task = normalizeTask({ ...op.payload, id: op.entityId });
     if (!validateTask(task).valid) return { kind: 'rejected', code: 'invalid_task' };
 
+    // Kanta ei vielä tue kaikkia kenttiä (ajon aikana laskettu portti):
+    // lisäys jättää ne pois. Aiemmin lisäys merkittiin onnistuneeksi ja
+    // esimerkiksi lisäykseen yhdistetty välitavoitteen muutos katosi
+    // hiljaa. Lasketaan SAMALLA sarakejoukolla kuin lisäyksen payload:
+    // insertTask rakentaa sen synkronisesti ennen ensimmäistä odotusta.
+    const leftOut = leftOutOnInsert(task);
     const inserted = await repo.insertTask(task);
-    if (inserted.ok) return { kind: 'success' };
+    if (inserted.ok) return insertedOutcome(op, leftOut);
 
     const outcome = outcomeFor(inserted.error);
     if (outcome.kind !== 'duplicate') return outcome;
 
     // 23505: rivi on jo olemassa. Aiempi yritys onnistui -- MUTTA vain jos
     // rivi on TÄMÄN käyttäjän. Tarkistus estää törmäyksen väärän rivin kanssa.
+    // Aiempi yritys on voinut jättää samat kentät pois: ne odottavat samoin
+    // (jo kannassa oleva arvo todetaan myöhemmin "jo tehdyksi").
     const existing = await repo.getTask(op.entityId);
     if (!existing.ok) return outcomeFor(existing.error);
-    return existing.value ? { kind: 'success' } : { kind: 'rejected', code: 'id_collision' };
+    return existing.value ? insertedOutcome(op, leftOut) : { kind: 'rejected', code: 'id_collision' };
   }
 
   async function executeTaskUpdate(op) {
@@ -383,7 +426,7 @@ export function createOfflineSync(deps) {
           } else if (outcome.kind === 'partial') {
             // Kirjoitettavat kentät ovat kannassa; loput odottavat jonossa
             // omalla viiveellään, eivätkä pysäytä muiden toistoa.
-            commit(keepWaitingFields(queue, op.id, outcome.fields, now()));
+            commit(keepWaitingFields(queue, op.id, outcome.fields, now(), outcome.insertedBase));
             if (outcome.wrote) result.synced += 1;
           } else if (outcome.kind === 'network' || outcome.kind === 'auth') {
             commit(markPaused(queue, op.id, outcome.kind));
