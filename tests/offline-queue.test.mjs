@@ -320,9 +320,62 @@ test('classifyError: verkko, istunto, kaksoiskappale, hylkäys ja tuntematon', (
     [{ message: 'RLS', code: '42501' }, ERROR_CLASS.REJECTED],
     [{ message: 'no rows', code: 'PGRST116' }, ERROR_CLASS.REJECTED],
     [{ message: 'bad request', status: 400, code: '' }, ERROR_CLASS.REJECTED],
-    [{ message: 'salaperäinen', code: 'x', status: 500 }, ERROR_CLASS.UNKNOWN]
+    // Aiemmin UNKNOWN. Uusi sääntö: tila 5xx ilman tunnettua koodia on
+    // palvelimen tilapäinen häiriö (UNAVAILABLE), jota uusitaan viiveellä
+    // -- ei hylätä eikä pudoteta.
+    [{ message: 'salaperäinen', code: 'x', status: 500 }, ERROR_CLASS.UNAVAILABLE],
+    [{ message: 'salaperäinen', code: 'x' }, ERROR_CLASS.UNKNOWN]
   ];
   for (const [error, expected] of cases) assert.equal(classifyError(error), expected, JSON.stringify(error));
+});
+
+test('classifyError: skeemavirhe ja tilapäinen häiriö erotetaan hylkäyksestä', () => {
+  // Taulukko: [virhe, odotettu luokka]. Skeema ja häiriö tarkistetaan
+  // ENNEN yleistä hylkäyssääntöä: niiden toisto onnistuu myöhemmin.
+  const cases = [
+    [{ code: 'PGRST204', message: "Could not find the 'milestone_id' column of 'tasks' in the schema cache", status: 400 }, ERROR_CLASS.SCHEMA],
+    [{ code: 'PGRST205', message: "Could not find the table 'public.time_entries' in the schema cache", status: 404 }, ERROR_CLASS.SCHEMA],
+    [{ code: '42703', message: 'column tasks.milestone_id does not exist' }, ERROR_CLASS.SCHEMA],
+    [{ code: '42P01', message: 'relation "public.time_entries" does not exist' }, ERROR_CLASS.SCHEMA],
+    // Sovelluksen oma kieltäytyminen (ominaisuus ei käytössä / huoltokatko).
+    [{ code: 'persistence_unavailable', message: 'x' }, ERROR_CLASS.SCHEMA],
+    [{ code: 'PGRST000', status: 503 }, ERROR_CLASS.UNAVAILABLE],
+    [{ code: 'PGRST001', status: 503 }, ERROR_CLASS.UNAVAILABLE],
+    [{ code: 'PGRST002', message: 'Could not query the database for the schema cache. Retrying.', status: 503 }, ERROR_CLASS.UNAVAILABLE],
+    [{ code: 'PGRST003', status: 504 }, ERROR_CLASS.UNAVAILABLE],
+    [{ code: '08006' }, ERROR_CLASS.UNAVAILABLE],
+    [{ code: '08001' }, ERROR_CLASS.UNAVAILABLE],
+    [{ code: '53300', message: 'too many connections' }, ERROR_CLASS.UNAVAILABLE],
+    [{ code: '53100' }, ERROR_CLASS.UNAVAILABLE],
+    [{ code: '57014', message: 'canceling statement due to statement timeout' }, ERROR_CLASS.UNAVAILABLE],
+    [{ code: '57P01' }, ERROR_CLASS.UNAVAILABLE],
+    [{ code: '57P03' }, ERROR_CLASS.UNAVAILABLE],
+    [{ code: '40001' }, ERROR_CLASS.UNAVAILABLE],
+    [{ code: '40P01' }, ERROR_CLASS.UNAVAILABLE],
+    [{ code: '55P03' }, ERROR_CLASS.UNAVAILABLE],
+    [{ message: 'x', status: 503 }, ERROR_CLASS.UNAVAILABLE],
+    [{ message: 'x', status: 502 }, ERROR_CLASS.UNAVAILABLE],
+    [{ message: 'x', status: 408 }, ERROR_CLASS.UNAVAILABLE],
+    [{ message: 'x', status: 425 }, ERROR_CLASS.UNAVAILABLE],
+    [{ message: 'x', status: 429 }, ERROR_CLASS.UNAVAILABLE],
+    // Nämä pysyvät hylkäyksinä: toisto ei auta.
+    [{ code: '23514', status: 400 }, ERROR_CLASS.REJECTED],
+    [{ code: '23503', status: 409 }, ERROR_CLASS.REJECTED],
+    [{ code: '22P02', status: 400 }, ERROR_CLASS.REJECTED],
+    [{ code: '42501', status: 403 }, ERROR_CLASS.REJECTED],
+    [{ code: 'PGRST116', status: 406 }, ERROR_CLASS.REJECTED],
+    // Istunto ja kaksoiskappale voittavat edelleen.
+    [{ code: 'PGRST301', status: 401 }, ERROR_CLASS.AUTH],
+    [{ code: '23505', status: 409 }, ERROR_CLASS.DUPLICATE]
+  ];
+  for (const [error, expected] of cases) {
+    assert.equal(classifyError(error), expected, JSON.stringify(error));
+    // AppError-kääre (repositorion palauttama) luokitellaan samoin.
+    assert.equal(classifyError({ code: 'tasks.insert', cause: error }), expected, 'kääre: ' + JSON.stringify(error));
+  }
+  // Offline-lippu: koodillinen häiriö on yhä häiriö, koodition 5xx on verkko.
+  assert.equal(classifyError({ code: 'PGRST002' }, { offline: true }), ERROR_CLASS.UNAVAILABLE);
+  assert.equal(classifyError({ message: 'x', status: 503 }, { offline: true }), ERROR_CLASS.NETWORK);
 });
 
 test('classifyError: AppError-kääre luetaan .causesta, ja offline-lippu tulkitaan verkoksi', () => {

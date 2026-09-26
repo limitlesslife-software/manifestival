@@ -17,6 +17,10 @@
 //     yhden käyttäjän jonoa ei koskaan lähetetä toisen tilillä
 //   - EI SILENT LOSS: epäonnistunut ja ristiriitainen operaatio pysyy
 //     jonossa ja näkyy käyttäjälle
+//   - HUOLTOTILA (canSync): kun kannan ydin puuttuu, jonoa ei toisteta
+//     eikä uusia muutoksia jonoteta -- jono säilyy koskemattomana
+//   - SKEEMAVIRHE ei ole hylkäys: operaatio jää odottamaan ja skeema
+//     tarkistetaan uudelleen; tilapäinen palvelinvirhe uusitaan viiveellä
 //
 // FIXED HANDLER MAP: (domain.operation) -> funktio on käsin kirjoitettu
 // taulukko. Jonossa oleva merkkijono ei valitse koodia.
@@ -55,11 +59,14 @@ function sameValue(a, b) {
  * @param {() => string} deps.newId
  * @param {(status:object) => void} [deps.onChange]  jonon tila muuttui
  * @param {() => void} [deps.onSynced]               jokin operaatio onnistui/ratkesi -> lataa uudelleen
+ * @param {() => boolean} [deps.canSync]             false = huoltotila: ei toistoa eikä jonotusta
+ * @param {() => void} [deps.onSchemaError]          kanta vastasi skeemavirheellä -> tarkista uudelleen
  */
 export function createOfflineSync(deps) {
   const {
     repo, store, session, now, isOnline, newId,
-    onChange = () => {}, onSynced = () => {}
+    onChange = () => {}, onSynced = () => {},
+    canSync = () => true, onSchemaError = () => {}
   } = deps;
 
   let queue = emptyQueue(null);
@@ -147,6 +154,9 @@ export function createOfflineSync(deps) {
 
   function addOperation(spec) {
     if (owner == null || owner !== session.userId()) return { ok: false, reason: 'no_session' };
+    // Huoltotila: muutosta ei jonoteta. Kutsuja peruu näkyvän muutoksen ja
+    // kertoo syyn; jonoon kertyvä työ ei saa odottaa kantaa, jota ei ole.
+    if (!canSync()) return { ok: false, reason: 'maintenance' };
 
     const created = createOperation({ id: newId(), now: now(), ...spec });
     if (!created.ok) return { ok: false, reason: created.reason };
@@ -187,6 +197,14 @@ export function createOfflineSync(deps) {
     const kind = classifyError(error, { offline: offline() });
     if (kind === ERROR_CLASS.NETWORK) return { kind: 'network' };
     if (kind === ERROR_CLASS.AUTH) return { kind: 'auth' };
+    // Tilapäinen palvelinvirhe (503, aikakatkaisu, kanta ei vastaa):
+    // uusitaan viiveellä. EI hylkäys -- aiemmin tämä merkitsi muutoksen
+    // epäonnistuneeksi.
+    if (kind === ERROR_CLASS.UNAVAILABLE) return { kind: 'retry', code: 'unavailable' };
+    // Kanta ei vastaa sovellusta: odotetaan ja tarkistetaan skeema.
+    if (kind === ERROR_CLASS.SCHEMA) return { kind: 'schema', code: 'schema' };
+    // Hylkäys, myös 23503 (viitattu tavoite tai projekti on poistettu):
+    // toisto ei auta, joten muutos näkyy käyttäjälle epäonnistuneena.
     if (kind === ERROR_CLASS.REJECTED) return { kind: 'rejected', code: 'rejected' };
     if (kind === ERROR_CLASS.DUPLICATE) return { kind: 'duplicate' };
     return { kind: 'retry', code: 'unknown' };
@@ -264,6 +282,7 @@ export function createOfflineSync(deps) {
       return { ...result, reason: 'busy' };
     }
     if (!isOnline()) return { ...result, reason: 'offline' };
+    if (!canSync()) return { ...result, reason: 'schema' };
 
     replaying = true;
     let finishRun = () => {};
@@ -284,6 +303,7 @@ export function createOfflineSync(deps) {
           // Istunto vaihtui: pysähdy heti, älä koske uuden käyttäjän jonoon.
           if (owner !== startedFor || !session.isSame(snapshot)) { result.reason = 'session_changed'; return result; }
           if (!isOnline()) { result.reason = 'offline'; break; }
+          if (!canSync()) { result.reason = 'schema'; break; }
 
           const op = nextRunnable(queue, now());
           if (!op) break;
@@ -309,6 +329,13 @@ export function createOfflineSync(deps) {
           } else if (outcome.kind === 'network' || outcome.kind === 'auth') {
             commit(markPaused(queue, op.id, outcome.kind));
             result.reason = outcome.kind;
+            return result;
+          } else if (outcome.kind === 'schema') {
+            // Ei kuluteta yrityksiä eikä hylätä: sama muutos onnistuu, kun
+            // skeema on tarkistettu (portti laskettu tai kanta päivitetty).
+            commit(markPaused(queue, op.id, 'schema'));
+            try { onSchemaError(); } catch { /* tarkistus ei kaada toistoa */ }
+            result.reason = 'schema';
             return result;
           } else if (outcome.kind === 'conflict') {
             commit(markConflict(queue, op.id, { fields: outcome.fields, reason: outcome.reason }));

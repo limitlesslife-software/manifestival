@@ -57,7 +57,22 @@ export function createTimeEntryWriter({
 }) {
   function retryable(error) {
     const kind = classifyError(error, { offline: isOffline() });
-    return kind === ERROR_CLASS.NETWORK || kind === ERROR_CLASS.AUTH;
+    // Skeemavirhe (sarake/taulu puuttuu tai kirjoitus torjuttiin ennen
+    // verkkoa) ja tilapäinen palvelinvirhe (503, aikakatkaisu) eivät tee
+    // kirjauksesta viallista: se odottaa korissa kuten verkkovirheessä.
+    return kind === ERROR_CLASS.NETWORK || kind === ERROR_CLASS.AUTH
+      || kind === ERROR_CLASS.UNAVAILABLE || kind === ERROR_CLASS.SCHEMA;
+  }
+
+  /**
+   * Korissa odottava kirjaus hylätään VAIN tiedon omasta virheestä
+   * (22xxx arvo, 23xxx rajoite; 23505 = jo perillä). Kaikki muu jättää
+   * sen koriin: käyttäjälle on jo kerrottu, että aika on tallessa.
+   */
+  function rejectable(error) {
+    const cause = (error && error.cause) || error || {};
+    const code = String(cause.code || '');
+    return /^2[23][0-9A-Z]{3}$/.test(code) && code !== '23505';
   }
 
   /** Tämän välilehden lähetyksessä olevat operaatiot -> valmistumislupaus. */
@@ -162,7 +177,7 @@ export function createTimeEntryWriter({
           if (result.ok) sentEntries.push(stored);
           continue;
         }
-        if (retryable(result.error)) {
+        if (!rejectable(result.error)) {
           left.push(...outbox.slice(index));
           break;
         }
