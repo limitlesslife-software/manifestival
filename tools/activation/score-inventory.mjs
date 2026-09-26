@@ -20,13 +20,20 @@
 // siitä, mikä SOVELLUSAALTO on tuotannossa: kanta 0008 + koodi C
 // tarkoittaa "deployaa D", ei "aja 0009". Koodiaalto annetaan
 // --code-wave=<X>, tai --code-wave=origin-main, jolloin se luetaan
-// paikallisesta origin/mainista (tools/release/lineage.mjs, ei verkkoa).
+// paikallisesta origin/mainista (tools/release/lineage.mjs, ei verkkoa)
+// ja luokitellaan matriisin JA välimuistin mukaan (codeWaveFromOrigin):
+// peruutus -> STOP TRAIN_HALTED_RECUT_REQUIRED, epäjohdonmukainen ->
+// STOP PRODUCTION_INCONSISTENT.
+//
+// Hyväksyntä tarkoittaa AUTOMATED_TECHNICAL_ACCEPTANCE-kirjausta
+// (docs/activation/AUTOMATED-ACCEPTANCE-POLICY.md); käsin tehtävä
+// UI-hyväksyntä ei ole junan portti.
 
 import fs from 'node:fs';
 import { EXPECTED } from './build-inventory.mjs';
 import {
   DB_FLOOR, MIGRATION_WAVE, TRAIN_FLOOR_WAVE, TRAIN_MIGRATIONS, WAVE_IDS,
-  nextWaveId, preflightPathOf, previousWaveId, schemaWaveOfMigration,
+  classifyDeployedState, nextWaveId, preflightPathOf, previousWaveId, schemaWaveOfMigration,
   verifyPathOf, waveById, waveIndex
 } from '../release/waves.mjs';
 
@@ -232,11 +239,12 @@ export function scoreInventory(rows) {
     nextAction = 'Kaikki migraatiot 0009–0013 on ajettu. Seuraava: aallon J deploy/hyväksyntä, sitten Day 1 -hyväksyntä puhelimella.';
   } else {
     const wave = MIGRATION_WAVE[next];
-    const before = { F: 'aallot D ja E on deployattu ja hyväksytty', G: 'aalto F on deployattu ja hyväksytty',
-      H: 'aalto G on deployattu ja hyväksytty', I: 'aalto H on deployattu ja hyväksytty',
-      J: 'aalto I on deployattu ja hyväksytty, ja verify_0012 on ajettu' }[wave];
+    const accepted = 'teknisesti hyväksytty (AUTOMATED_TECHNICAL_ACCEPTANCE)';
+    const before = { F: `aallot D ja E on deployattu ja E ${accepted}`, G: `aalto F on deployattu ja ${accepted}`,
+      H: `aalto G on deployattu ja ${accepted}`, I: `aalto H on deployattu ja ${accepted}`,
+      J: `aalto I on deployattu ja ${accepted}, ja verify_0012 on ajettu` }[wave];
     nextAction = `Seuraava migraatio on ${next} (aalto ${wave}). Aja se VASTA kun ${before}. `
-      + `Ensin supabase/preflight/preflight_${next}.sql (vain luku) -> 0 FAIL, sitten Panun hyväksyntä, sitten migraatio, sitten verify_${next}.sql.`;
+      + `Ensin supabase/preflight/preflight_${next}.sql (vain luku) -> 0 FAIL, sitten Panun hyväksyntä ("hyväksyn ${next}/${wave}"), sitten migraatio, sitten verify_${next}.sql.`;
   }
 
   return {
@@ -300,7 +308,8 @@ function emptyAction(kind) {
  * @param {object} rows parseInventory()-tulos
  * @param {object} [options]
  * @param {string|null} [options.codeWave] tuotannon koodiaalto
- * @param {string[]} [options.acceptedWaves] omistajan hyväksymät aallot
+ * @param {string[]} [options.acceptedWaves] teknisesti hyväksytyt aallot
+ *   (AUTOMATED_TECHNICAL_ACCEPTANCE päiväkirjassa tuotannon commitille)
  * @param {object} [options.lock] docs/activation/release-train-c-j.json
  *   (expectedSha luetaan sen deployTarget-kentästä)
  */
@@ -365,7 +374,7 @@ export function classifyActivation(rows, { codeWave = null, acceptedWaves = [], 
     action.expectedSha = lockSha(wave);
     return result('GO', action,
       `kanta ${lastMigration} tukee aaltoa ${currentDbWave}, tuotannossa ${codeWave}: deployaa ${wave}`
-      + (accepted ? '' : ` (edellyttää aallon ${codeWave} hyväksyntää)`), known);
+      + (accepted ? '' : ` (edellyttää aallon ${codeWave} teknistä hyväksyntää)`), known);
   }
 
   // codeWave === currentDbWave
@@ -427,15 +436,66 @@ function report(result, classification) {
   return lines.join('\n');
 }
 
-async function resolveCodeWave(value) {
-  if (!value) return { codeWave: null, note: null };
-  if (value === 'origin-main') {
-    const { originMainState } = await import('../release/lineage.mjs');
-    const origin = originMainState();
-    if (!origin.available) return { codeWave: null, note: 'origin/main ei ole paikallisesti saatavilla' };
-    return { codeWave: origin.wave, note: `origin/main ${origin.sha} = ${origin.wave || 'tuntematon'} (${origin.cacheVersion})` };
+/**
+ * Koodiaalto origin/mainin tilasta. Pelkkä porttimatriisi EI riitä:
+ * peruutus (ACT-10) palauttaa edellisen aallon matriisin, mutta nostaa
+ * välimuistia. Siksi tila luokitellaan classifyDeployedState({gates,
+ * cacheVersion}):lla, kuten orkestroija tekee.
+ *
+ *   WAVE          -> koodiaalto
+ *   ROLLBACK      -> STOP TRAIN_HALTED_RECUT_REQUIRED
+ *   INCONSISTENT  -> STOP PRODUCTION_INCONSISTENT
+ *
+ * @param {{sha: string, gates: object|null, cacheVersion: string|null}} origin
+ * @returns {{codeWave: string|null, note: string, stop: {class: string, reason: string}|null}}
+ */
+export function codeWaveFromOrigin(origin) {
+  const deployed = classifyDeployedState({ gates: origin.gates, cacheVersion: origin.cacheVersion });
+  const note = `origin/main ${origin.sha} = ${deployed.label} (${origin.cacheVersion || '?'})`;
+  if (deployed.state === 'ROLLBACK') {
+    return {
+      codeWave: null, note,
+      stop: {
+        class: 'TRAIN_HALTED_RECUT_REQUIRED',
+        reason: `origin/main on aallon ${deployed.rollbackOf} peruutus (matriisi ${deployed.matrixWave}, ${origin.cacheVersion}): `
+          + 'myöhempien ehdokkaiden välimuistiversiot törmäävät — leikkaa uudelleen ja kirjoita lukko (train-map --write)'
+      }
+    };
   }
-  return { codeWave: value.toUpperCase(), note: null };
+  if (deployed.state !== 'WAVE') {
+    return { codeWave: null, note, stop: { class: 'PRODUCTION_INCONSISTENT', reason: `origin/mainin tila on epäjohdonmukainen: ${deployed.label}` } };
+  }
+  return { codeWave: deployed.wave, note, stop: null };
+}
+
+/**
+ * --code-wave-arvo koodiaalloksi. `origin-main` luetaan paikallisesta
+ * origin/mainista (ei verkkoa); `originState` on testien tynkä.
+ *
+ * @returns {Promise<{codeWave: string|null, note: string|null, stop: object|null}>}
+ */
+export async function resolveCodeWave(value, { originState = null } = {}) {
+  if (!value) return { codeWave: null, note: null, stop: null };
+  if (value === 'origin-main') {
+    const read = originState || (await import('../release/lineage.mjs')).originMainState;
+    const origin = read();
+    if (!origin || !origin.available) return { codeWave: null, note: 'origin/main ei ole paikallisesti saatavilla', stop: null };
+    return codeWaveFromOrigin(origin);
+  }
+  return { codeWave: value.toUpperCase(), note: null, stop: null };
+}
+
+/**
+ * classifyActivation, mutta origin/mainin STOP-tila (peruutus tai
+ * epäjohdonmukainen) voittaa: juna ei etene, vaikka kanta olisi kunnossa.
+ */
+export function classifyResolved(rows, { codeWave = null, stop = null } = {}, options = {}) {
+  const classification = classifyActivation(rows, { ...options, codeWave });
+  if (!stop) return classification;
+  return {
+    ...classification, decision: 'STOP', codeWave: null, stopClass: stop.class,
+    nextAction: emptyAction(stop.class), reason: `${stop.class}: ${stop.reason}`
+  };
 }
 
 if (process.argv[1] && process.argv[1].endsWith('score-inventory.mjs')) {
@@ -449,9 +509,10 @@ if (process.argv[1] && process.argv[1].endsWith('score-inventory.mjs')) {
     console.error('Syötettä ei voitu lukea: odotettiin rivin 00 JSON-solua tai koko taulukkoa.');
     process.exit(2);
   }
-  const { codeWave, note } = await resolveCodeWave(codeWaveArg);
+  const resolved = await resolveCodeWave(codeWaveArg);
+  const note = resolved.note;
   const result = scoreInventory(rows);
-  const classification = classifyActivation(rows, { codeWave });
+  const classification = classifyResolved(rows, resolved);
   if (json) {
     console.log(JSON.stringify({ ...result, activation: { ...classification, base: undefined, codeWaveSource: note } }, null, 2));
   } else {

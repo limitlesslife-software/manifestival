@@ -23,8 +23,10 @@ import { ROOT, read } from './helpers/sources.mjs';
 import { buildInventorySql } from '../tools/activation/build-inventory.mjs';
 import { buildPreflight, PREFLIGHT_NUMBERS } from '../tools/activation/build-preflights.mjs';
 import {
-  REQUIRED_ROWS, ROW, TABLE_REQUIRED_ROWS, classifyActivation, parseInventory, scoreInventory
+  REQUIRED_ROWS, ROW, TABLE_REQUIRED_ROWS, classificationLines, classifyActivation, classifyResolved,
+  codeWaveFromOrigin, parseInventory, resolveCodeWave, scoreInventory
 } from '../tools/activation/score-inventory.mjs';
+import { expectedMatrix } from '../tools/release/waves.mjs';
 
 const lf = text => text.replace(/\r\n/g, '\n');
 const INVENTORY = 'supabase/acceptance/activation_readonly_inventory.sql';
@@ -74,7 +76,8 @@ test('KRIITTINEN: tuotannon nykytila (0008): GO, seuraava 0009 / aalto F', () =>
   assert.equal(result.decision, 'GO');
   assert.equal(result.nextMigration, '0009');
   assert.equal(result.nextWave, 'F');
-  assert.match(result.nextAction, /aallot D ja E on deployattu ja hyväksytty/);
+  assert.match(result.nextAction, /aallot D ja E on deployattu ja E teknisesti hyväksytty \(AUTOMATED_TECHNICAL_ACCEPTANCE\)/);
+  assert.match(result.nextAction, /"hyväksyn 0009\/F"/);
 });
 
 test('jokainen junan tila johtaa seuraavaan migraatioon', () => {
@@ -343,6 +346,45 @@ test('KRIITTINEN: tuotannon fixture kertoo provenienssin, ja rivi 43 on merkitty
     for (let n = from; n <= to; n++) named.add(String(n).padStart(2, '0'));
   }
   assert.deepEqual([...named].sort(), Object.keys(p.derived).sort(), 'dokumentin johdetut rivit eivät vastaa fixturea');
+});
+
+// ---------------------------------------------------------------------
+// --code-wave=origin-main: matriisi JA välimuisti (classifyDeployedState)
+// ---------------------------------------------------------------------
+
+const origin = (wave, cacheVersion) => ({ available: true, sha: 'ab'.repeat(20), gates: expectedMatrix(wave), cacheVersion });
+
+test('KRIITTINEN: --code-wave=origin-main: peruutusmatriisi (C + v18) -> STOP TRAIN_HALTED_RECUT_REQUIRED', async () => {
+  const rows = parseInventory(fixture('state-0008.json'));
+  const resolved = await resolveCodeWave('origin-main', { originState: () => origin('C', 'v18') });
+  assert.equal(resolved.codeWave, null, 'peruutusta ei saa lukea aalloksi C');
+  assert.equal(resolved.stop.class, 'TRAIN_HALTED_RECUT_REQUIRED');
+  assert.match(resolved.stop.reason, /aallon D peruutus/);
+  const c = classifyResolved(rows, resolved);
+  assert.equal(c.decision, 'STOP');
+  assert.equal(c.nextAction.kind, 'TRAIN_HALTED_RECUT_REQUIRED');
+  assert.match(classificationLines(c).join('\n'), /STOP: TRAIN_HALTED_RECUT_REQUIRED/);
+  // Sama kanta ja oikea C (v16) -> DEPLOY D: ero tulee vain välimuistista.
+  const ok = await resolveCodeWave('origin-main', { originState: () => origin('C', 'v16') });
+  assert.equal(ok.stop, null);
+  assert.equal(classifyResolved(rows, ok).nextAction.kind, 'DEPLOY');
+});
+
+test('KRIITTINEN: --code-wave=origin-main: epäjohdonmukainen tila -> STOP PRODUCTION_INCONSISTENT', async () => {
+  const rows = parseInventory(fixture('state-0008.json'));
+  for (const bad of [origin('D', 'v16'), origin('C', null), { ...origin('C', 'v16'), gates: null }, origin('J', 'v24')]) {
+    const resolved = codeWaveFromOrigin(bad);
+    assert.equal(resolved.stop && resolved.stop.class, 'PRODUCTION_INCONSISTENT', JSON.stringify(bad.cacheVersion));
+    assert.equal(classifyResolved(rows, resolved).decision, 'STOP');
+  }
+  const missing = await resolveCodeWave('origin-main', { originState: () => ({ available: false }) });
+  assert.equal(classifyResolved(rows, missing).nextAction.kind, 'VERIFY_CODE_WAVE');
+});
+
+test('score-inventory-komentorivi ei lue origin/mainin aaltoa pelkästä matriisista', () => {
+  const src = read('tools/activation/score-inventory.mjs');
+  assert.equal(/origin\.wave/.test(src), false, 'CLI käyttää yhä origin.wave-kenttää (matriisi ilman välimuistia)');
+  assert.match(src, /classifyResolved\(rows, resolved\)/);
 });
 
 test('KRIITTINEN: pelkillä havaituilla riveillä pisteytys pysähtyy ja nimeää puuttuvat rivit', () => {
