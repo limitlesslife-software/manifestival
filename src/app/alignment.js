@@ -663,8 +663,16 @@ export function setTimeEntryWriterForTests(replacement) {
  * tilaan ja laitteen lähtökoriin (`queued: true`) ja lähetetään kun
  * yhteys palaa (flushTimeOutbox). Aika ei katoa hiljaa. Tämä koskee
  * VAIN aikakirjauksia; yleistä offline-jonoa ei laajenneta.
+ *
+ * @param {object} input
+ * @param {object} [options]
+ * @param {boolean} [options.silent] ei yhtään ilmoitusta (kutsuja kertoo itse)
+ * @param {boolean} [options.announceQueued] kerrotaanko jonotuksesta täällä.
+ *   false, kun kutsuja kertoo kirjauksesta itse (timeTracking.announceLogged):
+ *   muuten yksi kirjaus näytti kaksi lähes samanlaista ilmoitusta. Virhe ja
+ *   kaksoiskappale kerrotaan silti täällä.
  */
-export async function logTime(input, { silent = false } = {}) {
+export async function logTime(input, { silent = false, announceQueued = true } = {}) {
   const id = newTaskId();
   const entry = normalizeTimeEntry({ ...input, id, operationId: input?.operationId || `log:${id}` });
   const { valid, errors } = validateTimeEntry(entry);
@@ -725,7 +733,7 @@ export async function logTime(input, { silent = false } = {}) {
     if (result.queued) {
       // Laitteen tallennus ei toimi: kirjaus elää vain istunnon muistissa,
       // eikä "tallennetaan, kun yhteys palaa" pidä, jos sovellus suljetaan.
-      if (!silent) {
+      if (!silent && announceQueued) {
         notify(result.sessionOnly
           ? 'Ei yhteyttä, eikä laite voi tallentaa kirjausta: se on tallessa vain tämän istunnon ajan. '
             + 'Älä sulje sovellusta ennen kuin yhteys palaa.'

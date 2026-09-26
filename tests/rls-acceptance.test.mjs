@@ -326,6 +326,10 @@ function makeClient(db, uid, flaws = {}, ledger = null) {
       if (flaws.transportFails && flaws.transportFails(query)) {
         return { data: null, error: { code: '08006', message: 'connection failure' } };
       }
+      // Taulua ei ole kannassa (aalto uudempi kuin tuotannon skeema).
+      if (flaws.missingTable && flaws.missingTable(query.table)) {
+        return { data: null, error: { code: 'PGRST205', message: `Could not find the table 'public.${query.table}' in the schema cache` } };
+      }
 
       // TYYPPI ENNEN OIKEUKSIA — SUODATTIMEN ARVOLLE.
       //
@@ -654,6 +658,30 @@ test('MUTAATIO: väärä rivimäärä lähtötilassa — ajo pysähtyy', async (
   assert.equal(byNumber(rows, 'P1').status, STATUS.FAIL);
   assert.equal(summary.verdict, 'FAIL');
   assert.ok(summary.aborted);
+});
+
+test('KRIITTINEN: aalto uudempi kuin kannan skeema (taulu puuttuu) — ajo pysähtyy ennen yhtäkään kirjoitusta', async () => {
+  // Operaattori valitsee aallon J, mutta kannassa on vasta 0012:
+  // 0013:n taulut puuttuvat (PGRST205). Lähtötilan virhe ei ole "0 riviä".
+  const puuttuvat = new Set(['running_timers', 'alignment_item_settings']);
+  const { rows, summary, ledger } = await runAgainst({ missingTable: table => puuttuvat.has(table) }, null, { wave: 'J' });
+
+  assert.equal(byNumber(rows, 'P2').status, STATUS.ERROR);
+  assert.ok(rows.filter(entry => entry.status === STATUS.ERROR).length >= 3, 'P0-jäänne- ja P2/P3-tarkistukset');
+  assert.equal(summary.verdict, 'FAIL');
+  assert.match(String(summary.aborted), /taulu puuttuu kannasta \(42P01\/PGRST205\)/);
+  assert.match(String(summary.aborted), /Aallon J/);
+  assert.match(String(summary.aborted), /Mitään ei kirjoitettu/);
+  assert.equal(rows.some(entry => entry.test_no.startsWith('T') || entry.test_no.startsWith('C')), false,
+    'varsinaisia testejä tai siivousta ajettiin tarkistamattomasta lähtötilasta');
+  assert.deepEqual(ledger.filter(entry => entry.op !== 'select').map(entry => `${entry.op} ${entry.table}`), [],
+    'kantaan lähti kirjoitus ennen kuin lähtötila oli tarkistettu');
+});
+
+test('KRIITTINEN: lähtötilan kysely epäonnistuu (ei taulun puute) — ajo pysähtyy ilman kirjoituksia', async () => {
+  const { summary, ledger } = await runAgainst({ transportFails: query => query.table === 'tasks' && query.op === 'select' });
+  assert.match(String(summary.aborted), /lähtötilaa ei voitu tarkistaa \(P0, P1\): kysely epäonnistui/);
+  assert.deepEqual(ledger.filter(entry => entry.op !== 'select'), []);
 });
 
 // ---------------------------------------------------------------------

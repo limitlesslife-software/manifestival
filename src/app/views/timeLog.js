@@ -174,9 +174,32 @@ function updateTimerBar(bar, timer, pending, status, now) {
     if (parts.skew.hidden !== !status.clockSkew) parts.skew.hidden = !status.clockSkew;
   }
   // Kirjaamaton ajastus omassa lokerossaan: sen painikkeiden fokus palautuu.
+  // Tyhjentynyt lokero (kirjattu tai hylätty) vie fokuksen palkin omaan
+  // painikkeeseen, ei <body>:yyn.
   if (slot.hidden !== !pending) slot.hidden = !pending;
-  renderHtml(slot, pending ? pendingHtml(pending, now) : '');
+  const fallback = timer
+    ? [bar.querySelector('[data-timer="pause"], [data-timer="resume"]'), bar.querySelector('[data-timer="stop"]')]
+      .filter(Boolean)
+    : [];
+  renderHtml(slot, pending ? pendingHtml(pending, now) : '', { fallback });
+  syncTimerButtonsBusy(bar);
   return true;
+}
+
+/**
+ * Ajastintoiminto kesken: KAIKKI palkin painikkeet kertovat sen
+ * (aria-disabled), koska onTimerAction ohittaa jokaisen napautuksen, ei
+ * vain painetun. Piirrossa syntyneet uudet painikkeet saavat saman tilan.
+ */
+function syncTimerButtonsBusy(bar) {
+  if (!bar || typeof bar.querySelectorAll !== 'function') return;
+  for (const node of bar.querySelectorAll('[data-timer]')) {
+    if (timerActionBusy) {
+      if (node.getAttribute('aria-disabled') !== 'true') node.setAttribute('aria-disabled', 'true');
+    } else if (node.hasAttribute('aria-disabled')) {
+      node.removeAttribute('aria-disabled');
+    }
+  }
 }
 
 export function renderTimerBar(now = nowMs()) {
@@ -197,6 +220,7 @@ export function renderTimerBar(now = nowMs()) {
   if (barStructure.get(bar) === key && updateTimerBar(bar, timer, pending, status, now)) return;
   renderHtml(bar, timerBarHtml(timer, pending, status, now));
   barStructure.set(bar, key);
+  syncTimerButtonsBusy(bar);
 }
 
 /** Vain kuluneen ajan teksti; ei koske painikkeisiin (fokus säilyy). */
@@ -561,9 +585,12 @@ async function onTimerAction(event) {
   if (!button || timerActionBusy) return;
   // aria-disabled eikä disabled: estetyksi muuttuva painike menettää
   // fokuksen (osa selaimista siirtää sen <body>:yyn), ja Tauko/Jatka on
-  // sama elementti ennen ja jälkeen (CRIT-03).
+  // sama elementti ennen ja jälkeen (CRIT-03). Kaikki palkin painikkeet,
+  // ei vain painettu: toinen napautus ohitetaan jokaisessa niistä.
+  const bar = maybe('timerBar');
   timerActionBusy = true;
   button.setAttribute('aria-disabled', 'true');
+  syncTimerButtonsBusy(bar);
   try {
     switch (button.dataset.timer) {
       case 'pause': await pauseTracking(); break;
@@ -581,6 +608,7 @@ async function onTimerAction(event) {
   } finally {
     timerActionBusy = false;
     button.removeAttribute('aria-disabled');
+    syncTimerButtonsBusy(bar);
   }
 }
 

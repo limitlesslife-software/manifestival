@@ -29,7 +29,7 @@ import {
   raisedTables, raisedColumnGates, setReprobeHandler, PROBE_RESULT, SCHEMA_STATUS
 } from '../src/data/schemaRuntime.js';
 import {
-  SCHEMA_REQUIREMENTS, taskColumns, noteSchemaError, TASK_EXTENDED_FIELDS
+  SCHEMA_REQUIREMENTS, taskColumns, noteSchemaError, TASK_EXTENDED_FIELDS, COMPILE_COLUMN_GATES
 } from '../src/data/schema.js';
 import { setClient } from '../src/data/client.js';
 import { setUser, clearUser } from '../src/data/session.js';
@@ -131,7 +131,10 @@ test('KRIITTINEN: huoltotila -> lista PGRST205 -> kanta korjattu -> "Yritä uude
   assert.equal(retried.recovered, true);
   assert.equal(schemaSnapshot().status, SCHEMA_STATUS.OK, 'tila jäi rajoitetuksi huoltokatkon jälkeen');
   assert.equal(isColumnGateLowered('TASK_EXTENDED_FIELDS'), false);
-  const full = [...taskColumns(name => name === 'TASK_EXTENDED_FIELDS' ? TASK_EXTENDED_FIELDS : false)];
+  // Täysi = käännösaikaiset sarakeportit (kanta on 0013 asti), ei vain
+  // TASK_EXTENDED_FIELDS: aallosta G alkaen suunnittelu- ja liitossarakkeet
+  // kuuluvat tehtävään.
+  const full = [...taskColumns(name => COMPILE_COLUMN_GATES[name] === true)];
   assert.deepEqual([...taskColumns()], full, 'tehtävien sarakkeet jäivät laskettuina');
 
   // Seuraava tallennus lähettää kuvauksen ja keston.

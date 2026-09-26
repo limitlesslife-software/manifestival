@@ -28,8 +28,13 @@ export const USER = { id: 'a11a11a1-1111-4111-8111-00000000a11a', email: 'a11y@e
  * Supabase-korvike, joka kuittaa kirjoitukset rivinä (päivitys ei ole
  * "nolla riviä") ja palauttaa haulle tyhjän listan. `hold` = lupaus, jota
  * kirjoitukset odottavat (tallennus kesken -tila).
+ *
+ * `holdWhen(table, operation)` rajaa odottavat kirjoitukset. Oletus: kaikki.
+ * Rajaa aina, kun testi kirjoittaa muuhunkin tauluun: auki olevalla
+ * portilla (esim. lifeAreas aktivointiaallossa J) alueen luonti kulkee
+ * samaa korviketta, eikä se saa jäädä odottamaan.
  */
-export function echoClient({ hold = null } = {}) {
+export function echoClient({ hold = null, holdWhen = () => true } = {}) {
   const calls = [];
   return {
     calls,
@@ -46,7 +51,8 @@ export function echoClient({ hold = null } = {}) {
         const chain = new Proxy({}, {
           get(_, prop) {
             if (prop === 'then') {
-              return (resolve, reject) => Promise.resolve(operation === 'select' ? null : hold)
+              const held = operation !== 'select' && holdWhen(table, operation);
+              return (resolve, reject) => Promise.resolve(held ? hold : null)
                 .then(() => {
                   const data = rows();
                   return { data: entry.single ? data[0] ?? null : data, error: null, count: data.length };

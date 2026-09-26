@@ -23,6 +23,10 @@ export class AppError extends Error {
    * @param {string}  [options.op]     Operaatio lokitusta varten (esim. 'tasks.insert').
    *   Tyypitetyssä virheessä (failWith) koodi on ERROR_CODE-arvo, joten
    *   operaatio kulkee erikseen.
+   * @param {string}  [options.errorClass] Syyn luokka, jolla viesti valittiin
+   *   (src/data/repoErrors.js failFromCause). Kooste ja näkymän ohje lukevat
+   *   sen eivätkä luokittele syytä uudelleen: heitetty poikkeus ilman koodia
+   *   näytti muuten verkkovirheeltä.
    */
   constructor(userMessage, options = {}) {
     super(userMessage);
@@ -31,6 +35,7 @@ export class AppError extends Error {
     this.code = options.code || 'unknown';
     this.op = options.op || null;
     this.cause = options.cause;
+    this.errorClass = options.errorClass || null;
   }
 
   /** Kehittäjälle tarkoitettu esitys. Ei näytetä käyttäjälle. */

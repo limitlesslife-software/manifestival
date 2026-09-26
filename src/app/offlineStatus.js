@@ -61,8 +61,15 @@ export function failedReason(code) {
       return { text: 'Palvelu ei vastannut toistuvasti. Yritetäänkö uudelleen?', retryHelps: true };
     case 'changed_during_sync':
       return { text: 'Tehtävä muuttui toistuvasti toisaalla lähetyksen aikana. Yritetäänkö uudelleen?', retryHelps: true };
-    default:
+    case 'network':
+    case 'retries_exhausted':
+      // Vain verkkovirhe (ja vanhan jonon yleiskoodi) on katkennut yhteys.
       return { text: 'Yhteys katkesi toistuvasti. Yritetäänkö uudelleen?', retryHelps: true };
+    case 'unknown':
+    default:
+      // Tuntematon tai heitetty virhe ('exception') ei ole verkkovirhe:
+      // "yhteys katkesi" ohjaisi etsimään vikaa verkosta.
+      return { text: 'Muutos ei mennyt perille useista yrityksistä huolimatta. Yritetäänkö uudelleen?', retryHelps: true };
   }
 }
 

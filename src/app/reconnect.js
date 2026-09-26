@@ -13,6 +13,8 @@
 // lähetys ja parikymmentä rinnakkaista hakua. Siksi:
 //   - paluu etualalle ('resume') ei päivitä, jos edellinen päivitys
 //     ALKOI alle MIN_REFRESH_INTERVAL_MS sitten (nopea sovellusten vaihto)
+//     — paitsi jos verkon palautumista ei ole vielä katettu (taustalle
+//     siirtyminen perui sen ajastetun päivityksen)
 //   - verkon palautuminen ('online') päivittää vain, jos yksikään
 //     päivitys ei ole alkanut palautumisen jälkeen; kesken olevan
 //     päivityksen perään ajetaan yksi kierros vain, jos se alkoi ennen
@@ -106,10 +108,36 @@ export function createReconnectController({
   }
 
   /**
+   * Onko verkko palannut ilman, että yksikään päivitys on alkanut sen
+   * jälkeen? Näin käy, kun taustalle siirtyminen (cancelPending) perui
+   * odottavan online-päivityksen.
+   */
+  function onlineUncovered() {
+    return online && onlineSeq > 0 && !startedSinceOnline();
+  }
+
+  /**
+   * Onko viimeisimmästä päivityksen alusta alle vähimmäisväli? Kello voi
+   * hypätä taaksepäin (käyttäjä tai verkkoaika korjaa sitä): negatiivinen
+   * kulunut aika on vanhentunut ikkuna, ei "juuri äsken".
+   */
+  function withinMinInterval() {
+    if (lastStartedAt === null) return false;
+    const elapsed = now() - lastStartedAt;
+    return elapsed >= 0 && elapsed < minIntervalMs;
+  }
+
+  /**
    * @param {string} reason REFRESH_REASON
    * @returns {'started'|'queued'|'skipped'}
    */
   function runRefresh(reason) {
+    // Paluu etualalle kattaa verkon palautumisen, jonka ajastettu päivitys
+    // peruttiin taustalle siirryttäessä: se ajetaan kuten 'online' eikä
+    // odota vähimmäisväliä. Muuten jonossa olevat muutokset lähtisivät
+    // vasta seuraavalla paluulla yli MIN_REFRESH_INTERVAL_MS:n päästä.
+    if (reason === REFRESH_REASON.RESUME && onlineUncovered()) reason = REFRESH_REASON.ONLINE;
+
     // Verkon palautuminen on jo katettu, jos päivitys alkoi sen jälkeen
     // (esim. paluu etualalle debounce-ikkunan aikana).
     if (reason === REFRESH_REASON.ONLINE && startedSinceOnline()) return 'skipped';
@@ -127,8 +155,7 @@ export function createReconnectController({
     }
 
     // Nopea sovellusten vaihto ei lataa kaikkea joka paluulla.
-    if (reason !== REFRESH_REASON.ONLINE && !UNTHROTTLED.has(reason)
-        && lastStartedAt !== null && now() - lastStartedAt < minIntervalMs) {
+    if (reason !== REFRESH_REASON.ONLINE && !UNTHROTTLED.has(reason) && withinMinInterval()) {
       return 'skipped';
     }
 
@@ -214,8 +241,15 @@ export function createReconnectController({
     /**
      * Täysi lataus alkoi ohjaimen ohi (kirjautuminen, synkronoinnin
      * jälkeinen lataus): paluu etualalle heti perään ei lataa toista kertaa.
+     * Kutsu ENNEN lähetysvaihetta, ei vasta latauksen alussa.
+     *
+     * Ohjaimen oman päivityksen aikana ei tee mitään: runRefresh kirjasi
+     * alun jo ennen lähetysvaihetta. Latauksen alussa kirjattu uusi alku
+     * saisi lähetyksen aikana palanneen verkon näyttämään katetulta, ja
+     * jonossa olevat muutokset jäisivät lähettämättä seuraavaan paluuseen asti.
      */
     noteRefreshStarted() {
+      if (refreshing) return;
       noteStart();
     },
 

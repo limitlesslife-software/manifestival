@@ -513,10 +513,12 @@ export async function discardPendingTracking({ confirmFn = confirmAction, expect
 export async function logQuickTime({ target = { kind: 'none' }, minutes, entryDate = null, operationId = null, note = null } = {}) {
   const fields = entryFieldsFor(target);
   const date = entryDate || (target.kind === 'routine' && target.occurrenceDate) || fmtISO(new Date(nowMs()));
+  // Kirjauksesta ja jonotuksesta kertoo kutsuja (announceLogged) yhdellä
+  // ilmoituksella; logTime kertoo vain virheen ja kaksoiskappaleen.
   return logTime({
     ...fields, minutes: Number(minutes), entryDate: date, note, source: 'manual',
     operationId: operationId || undefined
-  });
+  }, { announceQueued: false });
 }
 
 /** Tehtävälle kirjattu aika yhteensä (näyttöä varten). */
