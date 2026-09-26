@@ -328,6 +328,19 @@ Aja vain kohdissa B2 ja C5 — ei koskaan refleksinä.
 begin;
 set local lock_timeout = '5s';
 
+-- VARTIJA: ylläpitotilassa oleva tavoite ei mahdu vanhaan
+-- tilarajoitteeseen. Pysähdytään heti ja kerrotaan mitä tehdä,
+-- ennen kuin mitään on pudotettu.
+do $$
+declare
+  n integer;
+begin
+  select count(*) into n from public.goals where status = 'maintenance';
+  if n > 0 then
+    raise exception 'Peruutus keskeytetty: % tavoitetta on tilassa maintenance. Paata ensin niiden tila, esim. update public.goals set status = ''active'' where status = ''maintenance''; ja aja peruutus sitten uudelleen.', n;
+  end if;
+end $$;
+
 alter table public.tasks drop constraint tasks_milestone_fkey;
 alter table public.projects drop constraint projects_milestone_fkey;
 drop table public.milestones;
