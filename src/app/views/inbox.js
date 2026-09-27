@@ -328,7 +328,7 @@ function areaSelectHtml(item, proposal, areas) {
       + `${escapeHtml(area.name)}</option>`));
   return `
       <div class="triage-area">
-        <label for="triageArea-${id}">Alue</label>
+        <label for="triageArea-${id}">Alue<span class="visually-hidden">: ${escapeHtml(item.text)}</span></label>
         <select id="triageArea-${id}" data-triage-area="${id}">${options.join('')}</select>
       </div>`;
 }
@@ -546,6 +546,8 @@ export function initInbox() {
 
   const input = maybe('captureInput');
   if (input) {
+    // Yksi totuuden lähde rajalle: domainin MAX_DUMP_LENGTH (merkinnässä sama luku).
+    input.maxLength = MAX_DUMP_LENGTH;
     input.addEventListener('keydown', event => {
       // Enter kirjaa, Shift+Enter tekee uuden rivin. Kirjoitusmenetelmän
       // (IME) kesken oleva Enter ei kirjaa.
@@ -678,9 +680,9 @@ function openWaitingPrompt() {
 function closeWaitingPrompt() {
   waitingPrompt = null;
   renderInbox();
-  const button = maybe('inboxListContainer');
-  const waitButton = button && typeof button.querySelector === 'function'
-    ? button.querySelector(`[data-triage="${TRIAGE_DECISION.WAITING}"]`) : null;
+  const list = maybe('inboxListContainer');
+  const waitButton = list && typeof list.querySelector === 'function'
+    ? list.querySelector(`[data-triage="${TRIAGE_DECISION.WAITING}"]`) : null;
   if (waitButton && typeof waitButton.focus === 'function' && !waitButton.disabled) waitButton.focus();
 }
 
