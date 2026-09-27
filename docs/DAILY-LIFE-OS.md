@@ -98,3 +98,25 @@ eikä tee kalenteriin muutoksia ilman hyväksyntää.
 Jokainen opittu ehdotus kertoo syynsä ("Viimeisten 6 työmatkan mediaani oli 38 min").
 Käyttäjä voi hyväksyä, ohittaa tai nollata oppimisen. Myöhästelyn oppiminen ei koskaan siirrä
 kelloa salaa: se ehdottaa lähtömuistutuksen aikaistamista, ja käyttäjä päättää.
+
+## Paikallinen selain-E2E (`npm run e2e:daily-life`)
+
+`tools/e2e/run-daily-life-e2e.mjs` käynnistää oikean `src/app/main.js`:n headless-Chromessa
+tekaistulla istunnolla ja tallentavalla kannan korvikkeella (`tools/e2e/fakeSupabase.mjs`, joka
+mallintaa myös 0014:n uniikki- ja viiteavaimet sekä time-sarakkeiden `HH:MM:SS`-muodon). Ei
+tuotantoa: `*.supabase.co`, Anthropic ja Googlen nimet estetään DNS-tasolla, jokainen pyyntö
+kirjataan, ja yksikin ulkoinen pyyntö kaataa ajon. Kello on kuluvan viikon keskiviikko klo 10.
+
+- **closed** (haaran omat portit): Kalenteri, Arki, Hyvinvointi, Paikat ja Asetukset kertovat,
+  että tieto säilyy vain istunnon ajan; 0014:n tauluihin ei kirjoiteta, eikä mikään kaadu.
+- **K** (aallon K portit; K-ehdokasta ei vielä ole, joten portit tulevat junan määrittelystä
+  `trainMatrix('K')`, tai ehdokkaasta `E2E_K_GATES_REF=<ref>`): uusi meno tallennetulla paikalla
+  ja omalla matka-arviolla (suojatut rivit, "Lähde 14.15", Avaa reitti), toistuvan menon yhden
+  kerran ohitus, kuukausi ja nuolinäppäimet, puuttuva matka-aika, näppäimistö (Tab, Escape),
+  Arki, ohjaustyyli, Paikat (nollaus ja poisto vahvistuksella) ja Hyvinvointi. Jokainen
+  todennetaan näkymästä ja kannan riveistä oikean uudelleenlatauksen yli.
+
+Avoimet löydökset (ajossa ODOTTAA, PENDING_ON): tapakirjaukselle (`habit_events`) ja Tänään-
+näkymän motivaatio- ja hallinnan tunne -kirjaukselle (`wellbeing_checkins`) ei ole näkymää,
+vaikka `tools/release/reachability.mjs` lupaa "kirjaus Tänään-kortista":
+`dailyLifeActions.logHabitEvent` ja `saveWellbeingCheckin` eivät ole kytkettyjä mihinkään.
