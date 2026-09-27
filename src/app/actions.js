@@ -863,12 +863,12 @@ export async function setGoalStatus(id, status) {
  * Tehtäviä EI koskaan poisteta tavoitteen mukana — niiden yhteys vain
  * katkeaa. Työ, joka on jo tehty, ei katoa siksi että tavoite poistuu.
  */
-export async function deleteGoal(id) {
+export async function deleteGoal(id, { confirm = confirmAction } = {}) {
   const goal = findGoal(id);
   if (!goal) return false;
 
   const linked = getState().tasks.filter(task => task.goalId === id);
-  const confirmed = await confirmAction({
+  const confirmed = await confirm({
     title: 'Poistetaanko tavoite?',
     message: linked.length
       ? `"${goal.title}" poistetaan. ${linked.length} tehtävää säilyy, mutta niiden yhteys tavoitteeseen katkeaa.`

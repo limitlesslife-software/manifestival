@@ -122,6 +122,34 @@ export async function selectOwnedRows(table, orderColumn,
   return { data: null, error: null, overflow: true };
 }
 
+// ------------------------------------------ poistosäännöt muistipolulla
+//
+// Kanta hoitaa poiston seuraukset itse (0014: ON DELETE SET NULL ja
+// CASCADE). Muistivarasto ei: paikan poiston jälkeen menon muistiriville
+// jäi kuollut place_id, ja seuraava lataus (paluu sovellukseen, verkon
+// palautuminen) toi sen tilaan. Lähtö muuttui tuntemattomaksi ja aamun
+// suunnitelma putosi profiilin työmatkaan, joten suositeltu herätys
+// aikaistui ilman käyttäjän muutosta.
+//
+// Siksi onnistunut poisto peilaa kannan säännön niihin lapsitauluihin,
+// jotka elävät muistissa. Kannassa oleva lapsi on kannan vastuulla (ja
+// muistissa elävään vanhempaan se ei voi viitata: vierasavain estäisi).
+
+/** Kannan ON DELETE -toiminnot. */
+export const ON_DELETE = Object.freeze({ SET_NULL: 'set null', CASCADE: 'cascade' });
+
+async function mirrorDeleteInMemory(references, id) {
+  for (const { repo, field, onDelete } of references) {
+    if (repo.isPersistent()) continue;
+    const listed = await repo.memory.list();
+    for (const row of listed.value || []) {
+      if (row[field] == null || String(row[field]) !== String(id)) continue;
+      if (onDelete === ON_DELETE.CASCADE) await repo.memory.remove(row.id);
+      else await repo.memory.patch(row.id, { [field]: null });
+    }
+  }
+}
+
 /**
  * Luo repositorio, joka käyttää Supabasea jos taulu on olemassa ja
  * muistivarastoa muuten.
@@ -136,6 +164,9 @@ export async function selectOwnedRows(table, orderColumn,
  *   (arvot, joita kanta ei vielä hyväksy; tarkistetaan ennen verkkoa)
  * @param {string} [config.listOrder] uniikki sarake: lataus sivuittain tämän
  *   mukaan järjestettynä (selectOwnedRows). Puuttuu = yksi haku.
+ * @param {Function} [config.referencedBy] () => [{repo, field, onDelete}]:
+ *   kannan vierasavaimet tähän tauluun, peilataan muistiin poistossa
+ *   (laiska, koska lapsirepositoriot määritellään myöhemmin)
  *
  * AJONAIKAINEN SKEEMATARKISTUS (src/data/schema.js, schemaRuntime.js):
  * käännösaikainen portti valitsee yhä kannan ja muistin välillä. Jos kanta
@@ -150,12 +181,32 @@ export async function selectOwnedRows(table, orderColumn,
  * Torjunta tapahtuu ENNEN verkkokutsua ja kertoo syyn käyttäjälle.
  */
 export function createRepository({
-  table, schemaKey, normalize, toRow, fromRow, guardWrite = null, listOrder = null
+  table, schemaKey, normalize, toRow, fromRow, guardWrite = null, listOrder = null, referencedBy = null
 }) {
   const memory = createMemoryRepository({ normalize, name: table });
 
   const usesDatabase = () => hasTable(schemaKey);
   const refusal = normalized => writeRefusal(schemaKey) || (guardWrite ? guardWrite(normalized) : null);
+
+  async function removeRow(id) {
+    if (!usesDatabase()) return memory.remove(id);
+    const refused = writeRefusal(schemaKey);
+    if (refused) return refused;
+    try {
+      const { error } = await getClient()
+        .from(table)
+        .delete()
+        .eq('user_id', requireUserId())
+        .eq('id', id);
+      if (error) {
+        noteSchemaError(table, error, [], { write: true });
+        return failFromCause(error, { op: 'delete', fallback: 'Poisto ei onnistunut.', code: table + '.delete' });
+      }
+      return ok({ id });
+    } catch (cause) {
+      return failFromThrown(cause, { op: 'delete', fallback: 'Poisto ei onnistunut.', code: table + '.delete' });
+    }
+  }
 
   return {
     table,
@@ -163,6 +214,10 @@ export function createRepository({
 
     /** Sivutetun latauksen järjestyssarake, tai null (yksi haku). */
     listOrder,
+
+    /** Muistiin peilattavat vierasavaimet tarkastelua varten: [{table, field, onDelete}]. */
+    references: () => (referencedBy ? referencedBy() : [])
+      .map(({ repo, field, onDelete }) => ({ table: repo.table, field, onDelete })),
 
     /** Säilyykö tieto tallennuksen yli tällä hetkellä? */
     isPersistent: () => usesDatabase(),
@@ -268,24 +323,11 @@ export function createRepository({
       }
     },
 
+    /** Poisto; onnistuessa kannan poistosäännöt peilataan muistissa eläviin lapsiin. */
     async remove(id) {
-      if (!usesDatabase()) return memory.remove(id);
-      const refused = writeRefusal(schemaKey);
-      if (refused) return refused;
-      try {
-        const { error } = await getClient()
-          .from(table)
-          .delete()
-          .eq('user_id', requireUserId())
-          .eq('id', id);
-        if (error) {
-          noteSchemaError(table, error, [], { write: true });
-          return failFromCause(error, { op: 'delete', fallback: 'Poisto ei onnistunut.', code: table + '.delete' });
-        }
-        return ok({ id });
-      } catch (cause) {
-        return failFromThrown(cause, { op: 'delete', fallback: 'Poisto ei onnistunut.', code: table + '.delete' });
-      }
+      const result = await removeRow(id);
+      if (result.ok && referencedBy) await mirrorDeleteInMemory(referencedBy(), id);
+      return result;
     },
 
     /** Tyhjennä muistivarasto. Kutsutaan uloskirjautumisessa. */
@@ -374,6 +416,11 @@ export const goalsRepo = createRepository({
     maintenanceAllowed: columnGateOpen('GOAL_MAINTENANCE_MODE')
   }) ? null : failWith(ERROR_CODE.VALIDATION_ERROR,
     'Ylläpitotila ei ole vielä käytössä. Valitse tavoitteelle toinen tila.')),
+  // 0014: menot ja liikuntakerrat säilyvät, tavoiteliitos katkeaa.
+  referencedBy: () => [
+    { repo: calendarEventsRepo, field: 'goalId', onDelete: ON_DELETE.SET_NULL },
+    { repo: exerciseSessionsRepo, field: 'goalId', onDelete: ON_DELETE.SET_NULL }
+  ],
   toRow: goal => ({
     id: goal.id,
     title: goal.title,
@@ -1203,6 +1250,12 @@ export const savedPlacesRepo = createRepository({
   schemaKey: 'savedPlaces',
   normalize: normalizeSavedPlace,
   listOrder: 'id',
+  // 0014: menot jäävät ilman paikkaa; nimitykset ja havainnot poistuvat.
+  referencedBy: () => [
+    { repo: calendarEventsRepo, field: 'placeId', onDelete: ON_DELETE.SET_NULL },
+    { repo: placeAliasesRepo, field: 'placeId', onDelete: ON_DELETE.CASCADE },
+    { repo: commuteObservationsRepo, field: 'placeId', onDelete: ON_DELETE.CASCADE }
+  ],
   toRow: place => ({
     id: place.id,
     name: place.name,
@@ -1456,6 +1509,8 @@ export const habitPlansRepo = createRepository({
   schemaKey: 'habitPlans',
   normalize: normalizeHabitPlan,
   listOrder: 'id',
+  // 0014: suunnitelman kirjaukset poistuvat sen mukana.
+  referencedBy: () => [{ repo: habitEventsRepo, field: 'planId', onDelete: ON_DELETE.CASCADE }],
   toRow: plan => ({
     id: plan.id,
     kind: plan.kind,
