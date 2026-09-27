@@ -302,6 +302,36 @@ test('oppiminen: 6 matkan mediaani ehdotetaan, hyväksyntä ottaa käyttöön, a
   assert.equal(view.q('[data-action="learned-on"][data-id="p2"]'), null);
 });
 
+test('oppiminen viikonpäivän ja lähtöajan mukaan: tarkentuneet luvut näkyvät perusteluineen, harva ryhmä ei', async t => {
+  const view = mount(t);
+  await seed(savedPlacesRepo, setSavedPlaces, [{ id: 'p1', name: 'Työ', usualTravelMinutes: 30, useLearned: true }]);
+  const trip = (observedOn, plannedDeparture, travelMinutes, i) => ({
+    id: `b-${i}`, placeId: 'p1', observedOn, plannedDeparture, actualDeparture: plannedDeparture,
+    travelMinutes, source: 'user_confirmed', createdAt: `${observedOn}T06:00:00Z`
+  });
+  // Maanantait 8.10 hitaita (4), tiistait 8.30 nopeita (3), keskiviikko vain kerran.
+  await seed(commuteObservationsRepo, setCommuteObservations, [
+    trip('2026-08-31', '08:10', 48, 1), trip('2026-09-07', '08:10', 50, 2),
+    trip('2026-09-14', '08:10', 52, 3), trip('2026-09-21', '08:10', 50, 4),
+    trip('2026-09-08', '08:30', 29, 5), trip('2026-09-15', '08:30', 30, 6), trip('2026-09-22', '08:30', 28, 7),
+    trip('2026-09-23', '17:00', 25, 8)
+  ]);
+  const row = view.q('[data-place-row="p1"]').textContent.replace(/\s+/g, ' ');
+  assert.match(row, /Opittu kesto on käytössä\./);
+  assert.match(row, /Näinä aikoina lähtö lasketaan niiden omista matkoista:/);
+  assert.match(row, /Maanantaisin klo 8\.00–8\.30 lähteneet: mediaani 50 min, varman päälle 52 min \(4 matkaa\)/);
+  assert.match(row, /Tiistaisin klo 8\.30–9\.00 lähteneet: mediaani 29 min, varman päälle 30 min \(3 matkaa\)/);
+  assert.doesNotMatch(row, /Keskiviikkoisin/, 'yksi matka ei tarkenna mitään');
+  assert.match(row, /Tarkennus tarvitsee vähintään 3 matkaa samalta viikonpäivältä ja lähtöajalta \(30 min\)\./);
+  assert.equal(getState().savedPlaces[0].useLearned, true, 'näkymä ei muuta mitään');
+
+  // Ilman hyväksyntää sama tieto on ehdotuksen perustelu.
+  action(view, 'learned-off', 'p1').click();
+  await flush();
+  assert.match(view.q('[data-place-row="p1"]').textContent.replace(/\s+/g, ' '),
+    /Käyttöön otettuna lähtö tarkentuu näinä aikoina niiden omista matkoista:/);
+});
+
 // ================================================================ myöhästely ja etuaika
 
 test('myöhästelyehdotus: kysymys ei muuta mitään; "Ei nyt" piilottaa; hyväksyntä ja palautus', async t => {

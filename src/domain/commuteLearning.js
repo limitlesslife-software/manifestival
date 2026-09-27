@@ -246,6 +246,167 @@ export function summarizeCommute(observations, options) {
   return summarize(observations, readFilter(options), false);
 }
 
+// ------------------------------------------------------------ viikonpäivä ja kellonaika
+//
+// Sama paikka voi olla eri matka eri aikaan: maanantaiaamun ruuhka ei ole
+// perjantai-iltapäivä. Opittu kesto tarkentuu siksi lähdön viikonpäivään ja
+// lähtöikkunaan (30 min), KUN niille on tarpeeksi omia matkoja — muuten
+// käytetään väljempää rajausta. Järjestys tarkimmasta alkaen:
+//
+//   weekday_time  sama viikonpäivä ja sama lähtöikkuna
+//   time          sama lähtöikkuna, mikä tahansa viikonpäivä
+//   weekday       sama viikonpäivä, mikä tahansa kellonaika
+//   all           kaikki paikan matkat (kuten ennen)
+//
+// Jokainen rajaus kerrotaan tekstinä (scopeText), ja vähimmäismäärä on sama
+// kuin muuallakin (MIN_LEARNING_OBSERVATIONS). Tämä EI ota oppimista
+// käyttöön: kutsuja käyttää tulosta vain, kun käyttäjä on hyväksynyt
+// opitun keston paikalle (place.useLearned).
+
+export const LEARNING_SCOPE = Object.freeze({
+  WEEKDAY_TIME: 'weekday_time',
+  TIME: 'time',
+  WEEKDAY: 'weekday',
+  ALL: 'all'
+});
+
+const WEEKDAY_ADVERBS = Object.freeze([
+  'maanantaisin', 'tiistaisin', 'keskiviikkoisin', 'torstaisin', 'perjantaisin', 'lauantaisin', 'sunnuntaisin'
+]);
+
+/** Minuutit keskiyöstä -> '7.30' (suomalainen kellonaika). */
+function clockFi(minutes) {
+  const [hours, mins] = fromMinutes(((minutes % 1440) + 1440) % 1440).split(':');
+  return `${Number(hours)}.${mins}`;
+}
+
+/**
+ * Rajauksen selitys: "maanantaisin klo 7.30–8.00 lähteneet", "klo 7.30–8.00
+ * lähteneet", "maanantaisin lähteneet" tai '' (kaikki matkat).
+ */
+export function learningScopeText(summary) {
+  if (!isObject(summary)) return '';
+  const weekday = intIn(summary.weekday, 1, 7);
+  const bucket = timeBucket(summary.timeBucket);
+  const parts = [];
+  if (weekday !== null) parts.push(WEEKDAY_ADVERBS[weekday - 1]);
+  if (bucket !== null) {
+    const start = toMinutes(bucket);
+    parts.push(`klo ${clockFi(start)}–${clockFi(start + TIME_BUCKET_MINUTES)}`);
+  }
+  return parts.length ? `${parts.join(' ')} lähteneet` : '';
+}
+
+function scoped(summary, scope) {
+  return Object.freeze({ ...summary, scope, scopeText: scope === LEARNING_SCOPE.ALL ? '' : learningScopeText(summary) });
+}
+
+/**
+ * Opittu kesto yhdelle lähdölle: tarkin rajaus, jolla on vähintään
+ * MIN_LEARNING_OBSERVATIONS matkaa (ks. yllä).
+ *
+ * Lähtöikkuna riippuu lähtöajasta, joka riippuu matka-ajasta. Siksi
+ * kutsuja antaa `leaveFor(summary) -> {date, time}|null`: se laskee
+ * alustavan lähdön saman viikonpäivän matkoista (jos niitä on tarpeeksi,
+ * muuten kaikista), ja sen lähtöikkuna ja -päivä valitsevat rajauksen.
+ * Ilman sitä käytetään annettua `departureTime`-kellonaikaa.
+ *
+ * @param {Array} observations
+ * @param {{placeId:string, weekday?:number, departureTime?:string,
+ *          leaveFor?:(summary:object)=>({date?:string, time:string}|null), windowSize?:number}} options
+ * @returns {object} summarizeCommute-yhteenveto + {scope, scopeText}
+ */
+export function learnedCommuteFor(observations, options) {
+  const opts = isObject(options) ? options : {};
+  const base = readFilter({ placeId: opts.placeId, windowSize: opts.windowSize });
+  const list = Array.isArray(observations) ? observations : [];
+  const overall = summarize(list, { ...base, weekday: null, bucket: null }, false);
+  if (overall.count < MIN_LEARNING_OBSERVATIONS) return scoped(overall, LEARNING_SCOPE.ALL);
+
+  let weekday = intIn(opts.weekday, 1, 7);
+  let bucket = timeBucket(opts.departureTime);
+  if (typeof opts.leaveFor === 'function') {
+    const sameDay = weekday === null ? null : summarize(list, { ...base, weekday, bucket: null }, false);
+    const rough = sameDay && sameDay.count >= MIN_LEARNING_OBSERVATIONS ? sameDay : overall;
+    let leave = null;
+    try {
+      leave = opts.leaveFor(rough);
+    } catch {
+      leave = null;
+    }
+    if (isObject(leave)) {
+      bucket = timeBucket(leave.time);
+      // Keskiyön yli: lähtö edellisenä päivänä on sen päivän lähtö.
+      if (isIsoDate(leave.date)) weekday = weekdayOfIso(leave.date);
+    } else {
+      bucket = null;
+    }
+  }
+
+  const attempts = [];
+  if (weekday !== null && bucket !== null) attempts.push([LEARNING_SCOPE.WEEKDAY_TIME, { weekday, bucket }]);
+  if (bucket !== null) attempts.push([LEARNING_SCOPE.TIME, { weekday: null, bucket }]);
+  if (weekday !== null) attempts.push([LEARNING_SCOPE.WEEKDAY, { weekday, bucket: null }]);
+  for (const [scope, narrow] of attempts) {
+    const summary = summarize(list, { ...base, ...narrow }, false);
+    if (summary.count >= MIN_LEARNING_OBSERVATIONS) return scoped(summary, scope);
+  }
+  return scoped(overall, LEARNING_SCOPE.ALL);
+}
+
+/**
+ * Paikan tarkentuneet luvut selitettäviksi (Profiili → Paikat): jokainen
+ * viikonpäivä + lähtöikkuna, jolla on vähintään MIN_LEARNING_OBSERVATIONS
+ * matkaa, ja lähtöikkuna ilman viikonpäivää, jos siinä on matkoja, joiden
+ * omalla viikonpäivällä ei ole tarpeeksi. Eniten matkoja ensin.
+ *
+ * @returns {ReadonlyArray<object>} scoped-yhteenvedot, enintään `limit` (oletus 3)
+ */
+export function learnedCommuteBuckets(observations, options) {
+  const opts = isObject(options) ? options : {};
+  const base = readFilter({ placeId: opts.placeId, windowSize: opts.windowSize });
+  if (base.placeId === null) return Object.freeze([]);
+  const limit = intIn(opts.limit, 1, 20) ?? 3;
+  const list = Array.isArray(observations) ? observations : [];
+
+  const trips = [];
+  for (const observation of list) {
+    if (!isObject(observation) || observation.placeId !== base.placeId) continue;
+    if (observedTravelMinutes(observation) === null) continue;
+    const bucket = timeBucket(departureTimeOf(observation));
+    if (bucket === null) continue;
+    trips.push({ weekday: weekdayOf(observation), bucket });
+  }
+
+  const rows = [];
+  const coveredDays = new Map();
+  const pairs = new Map();
+  for (const trip of trips) {
+    if (trip.weekday !== null) pairs.set(`${trip.weekday}|${trip.bucket}`, trip);
+  }
+  for (const { weekday, bucket } of pairs.values()) {
+    const summary = summarize(list, { ...base, weekday, bucket }, false);
+    if (summary.count < MIN_LEARNING_OBSERVATIONS) continue;
+    rows.push(scoped(summary, LEARNING_SCOPE.WEEKDAY_TIME));
+    if (!coveredDays.has(bucket)) coveredDays.set(bucket, new Set());
+    coveredDays.get(bucket).add(weekday);
+  }
+  const buckets = new Set();
+  for (const trip of trips) {
+    const covered = coveredDays.get(trip.bucket);
+    if (!covered || trip.weekday === null || !covered.has(trip.weekday)) buckets.add(trip.bucket);
+  }
+  for (const bucket of buckets) {
+    const summary = summarize(list, { ...base, weekday: null, bucket }, false);
+    if (summary.count >= MIN_LEARNING_OBSERVATIONS) rows.push(scoped(summary, LEARNING_SCOPE.TIME));
+  }
+
+  rows.sort((a, b) => b.count - a.count
+    || (a.weekday ?? 8) - (b.weekday ?? 8)
+    || (a.timeBucket < b.timeBucket ? -1 : a.timeBucket > b.timeBucket ? 1 : 0));
+  return Object.freeze(rows.slice(0, limit));
+}
+
 function tripWordOf(value) {
   if (typeof value !== 'string') return 'matkan';
   const word = value.trim();

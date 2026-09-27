@@ -29,7 +29,9 @@ import { renderHtml, singleFlight, setBusy } from '../../ui/dom.js';
 import { success } from '../../ui/toast.js';
 import { escapeHtml } from '../../lib/format.js';
 import { hasTable, isTableAvailable } from '../../data/schema.js';
-import { summarizeCommute, latenessSuggestion, MIN_LEARNING_OBSERVATIONS } from '../../domain/commuteLearning.js';
+import {
+  summarizeCommute, latenessSuggestion, learnedCommuteBuckets, MIN_LEARNING_OBSERVATIONS
+} from '../../domain/commuteLearning.js';
 import { TRAVEL_MODE, TRAVEL_MODES, travelModeLabel } from '../../domain/travel.js';
 import {
   ARRIVAL_BUFFER_CHOICES, MAX_ARRIVAL_BUFFER_MINUTES, MAX_PLACE_NAME_LENGTH, MAX_ADDRESS_LENGTH,
@@ -210,17 +212,42 @@ function latenessHtml(state, settings) {
 
 // ------------------------------------------------------------ paikat
 
+/**
+ * Viikonpäivän ja lähtöajan mukaan tarkentuneet luvut
+ * (commuteLearning.learnedCommuteBuckets): sama sääntö kuin lähtöajassa
+ * (calendarPlan.departureForOccurrence), joten tämä selittää, miksi
+ * maanantaiaamun lähtö voi olla aiemmin kuin perjantain.
+ */
+function learnedBucketsHtml(place, state) {
+  const rows = learnedCommuteBuckets(state.commuteObservations, { placeId: place.id });
+  if (rows.length === 0) return '';
+  const items = rows.map(row => {
+    const scope = row.scopeText.charAt(0).toUpperCase() + row.scopeText.slice(1);
+    const safer = row.p80 !== null && row.p80 > row.median ? `, varman päälle ${row.p80} min` : '';
+    return `<li><span>${escapeHtml(scope)}: mediaani ${row.median} min${safer} (${row.count} matkaa)</span></li>`;
+  }).join('');
+  const lead = place.useLearned
+    ? 'Näinä aikoina lähtö lasketaan niiden omista matkoista:'
+    : 'Käyttöön otettuna lähtö tarkentuu näinä aikoina niiden omista matkoista:';
+  return `<p class="assist-reason">${lead}</p>
+      <ul class="lh-aliases">${items}</ul>
+      <p class="assist-reason">Tarkennus tarvitsee vähintään ${MIN_LEARNING_OBSERVATIONS} matkaa samalta `
+    + 'viikonpäivältä ja lähtöajalta (30 min). Muina aikoina käytetään kaikkien matkojen lukua.</p>';
+}
+
 function learningHtml(place, state) {
   const summary = summarizeCommute(state.commuteObservations, { placeId: place.id });
   const id = escapeHtml(place.id);
   if (summary.count >= MIN_LEARNING_OBSERVATIONS && summary.median !== null) {
     const base = `Viimeisten ${summary.count} matkan mediaani oli ${summary.median} min`;
+    const buckets = learnedBucketsHtml(place, state);
     if (place.useLearned) {
       const safer = summary.p80 !== null && summary.p80 > summary.median
         ? ` Lähtö lasketaan ${summary.p80} minuutin mukaan, johon useimmat matkat ovat mahtuneet.`
         : '';
       return `<div class="lh-learning">
           <p class="assist-reason">${base}. Opittu kesto on käytössä.${safer}</p>
+          ${buckets}
           <div class="assist-actions">
             <button type="button" class="assist-btn" data-action="learned-off" data-id="${id}">Käytä omaa arviota</button>
           </div>
@@ -231,6 +258,7 @@ function learningHtml(place, state) {
       : '';
     return `<div class="lh-learning">
         <p class="assist-reason">${base} — käytä tätä?</p>
+        ${buckets}
         <div class="assist-actions">
           <button type="button" class="assist-btn primary" data-action="learned-on" data-id="${id}">Käytä opittua kestoa</button>
           ${setUsual}

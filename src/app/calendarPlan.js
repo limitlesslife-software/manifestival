@@ -27,7 +27,8 @@ import { expandEventOccurrences, addDaysToIso } from '../domain/calendar.js';
 import { deriveBlocks } from '../domain/calendarBlocks.js';
 import { planDeparture, selectTravelEstimate } from '../domain/departure.js';
 import { minusMinutes } from '../domain/travel.js';
-import { summarizeCommute } from '../domain/commuteLearning.js';
+import { learnedCommuteFor } from '../domain/commuteLearning.js';
+import { isoWeekday } from '../domain/wallClock.js';
 import { sleepScheduleFor } from '../domain/sleepRhythm.js';
 import { morningOfDay } from '../domain/alarmPlan.js';
 import { buildDayPlan } from '../domain/scheduler.js';
@@ -71,17 +72,26 @@ export function departureForOccurrence(occurrence, {
   providerResult = null, nowMs = null
 } = {}) {
   const place = occurrence && occurrence.placeId ? placesById.get(occurrence.placeId) || null : null;
-  const learned = place && place.useLearned === true
-    ? summarizeCommute(listOf(observations), { placeId: place.id })
-    : null;
-  const estimate = selectTravelEstimate({
-    event: { travelMinutes: occurrence ? occurrence.travelMinutes : null },
-    place,
-    learned,
-    providerResult,
-    nowMs
+  const event = { travelMinutes: occurrence ? occurrence.travelMinutes : null };
+  const planWith = learnedSummary => planDeparture({
+    occurrence, place, settings, todayIso, nowMinutes, offsetMinutesFn,
+    estimate: selectTravelEstimate({ event, place, learned: learnedSummary, providerResult, nowMs })
   });
-  return planDeparture({ occurrence, place, settings, estimate, todayIso, nowMinutes, offsetMinutesFn });
+  // Opittu kesto tarkentuu lähdön viikonpäivään ja lähtöikkunaan, kun niille
+  // on tarpeeksi omia matkoja (commuteLearning.learnedCommuteFor); muuten
+  // kaikkien matkojen luku kuten ennen. Rajaus kerrotaan selityksessä.
+  // Vain hyväksynnällä (place.useLearned): mitään ei oteta käyttöön hiljaa.
+  const learned = place && place.useLearned === true
+    ? learnedCommuteFor(listOf(observations), {
+      placeId: place.id,
+      weekday: occurrence && isIsoDate(occurrence.date) ? isoWeekday(occurrence.date) : null,
+      leaveFor: rough => {
+        const draft = planWith(rough);
+        return draft && draft.known === true && draft.leave ? draft.leave : null;
+      }
+    })
+    : null;
+  return planWith(learned);
 }
 
 /**
