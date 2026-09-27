@@ -767,6 +767,53 @@ test('lomake: virheet suomeksi kenttäkohtaisesti; kelvotonta lukua ei pudoteta 
   assert.equal(validateEventForm(undefined).errors.ceTitle, 'Anna menolle nimi.');
 });
 
+test('lomake: selaimen lukematon numerosyöte ("10-15") on virhe, ei tyhjä "ei asetettu"', () => {
+  // type=number antaa arvoksi '' myös tekstistä, jota se ei osaa lukea
+  // (validity.badInput). Ilman merkintää '' olisi "ei asetettu" (null), ja
+  // lähtö laskettaisiin hiljaa paikan oletuksista.
+  const bad = validateEventForm({
+    ...VALID, travel: '', preparation: '', early: '', overhead: '', duration: '',
+    unreadable: ['ceTravel', 'cePrep', 'ceEarly', 'ceOverhead', 'ceDuration']
+  });
+  assert.equal(bad.valid, false);
+  assert.deepEqual(bad.errors, {
+    ceDuration: 'Anna kesto minuutteina (1–1440).',
+    ceTravel: 'Anna matka-aika minuutteina (1–1440).',
+    cePrep: 'Anna valmistautumisaika minuutteina (0–480).',
+    ceEarly: 'Anna etuaika minuutteina (0–240).',
+    ceOverhead: 'Anna pysäköinti ja kävely minuutteina (0–240).'
+  });
+  // Koko päivän menolla kestoa ei lueta; tuntematon tunniste ja roska ohitetaan.
+  assert.equal(validateEventForm({ ...VALID, allDay: true, duration: '', unreadable: ['ceDuration'] }).valid, true);
+  assert.equal(validateEventForm({ ...VALID, unreadable: ['ceTitle', 'ei-kenttä'] }).valid, true);
+  assert.equal(validateEventForm({ ...VALID, unreadable: 'ceTravel' }).valid, true);
+});
+
+test('lomake: lukematon valmistautumisaika näkyy virheenä kentän alla eikä menoa tallenneta', async (t) => {
+  freezeLocalDate(t, TUESDAY);
+  const { doc, byId } = mountCalendar({ before: () => seed({ events: [], tasks: [] }) });
+  byId('calNewEvent').click();
+  type(byId('ceTitle'), 'Hammaslääkäri');
+  type(byId('ceStart'), '16:00');
+  choose(byId('cePlace'), 'p-hammas');
+  // Käyttäjä kirjoitti "10-15": selain antaa arvoksi '' ja badInput = true.
+  const prep = byId('cePrep');
+  type(prep, '');
+  prep.validity = { badInput: true };
+  byId('ceSave').click();
+  await flush();
+  assert.equal(getState().calendarEvents.length, 0, 'ei tallennettu paikan oletuksella');
+  assert.equal(byId('cePrepError').textContent, 'Anna valmistautumisaika minuutteina (0–480).');
+  assert.equal(prep.getAttribute('aria-invalid'), 'true');
+  assertSameNode(doc.activeElement, prep);
+
+  prep.validity = { badInput: false };
+  type(prep, '10');
+  byId('ceSave').click();
+  await flush();
+  assert.equal(getState().calendarEvents[0].preparationMinutes, 10);
+});
+
 // ================================================================ LOMAKE: TALLENNUS
 
 test('uusi meno: avaus, tallennus dailyLifeActionsin kautta, lomake sulkeutuu ja meno näkyy', async (t) => {
