@@ -162,26 +162,37 @@ function invalidAttrs(id, message) {
   return message ? ` aria-invalid="true" aria-describedby="${id}Error"` : '';
 }
 
-function numberField({ id, label, value, min, max, step = 1, error = '', data = '' }) {
+/**
+ * Kentän nimilappu. `row` ("Vaihe 2") toistuvan rivin kentille: ilman sitä
+ * jokaisen aamurutiinin vaiheen kentät olivat ruudunlukijan kenttälistassa
+ * "Nimi, Nimi, Nimi…", eikä niitä voinut erottaa. Rivin numero on vain
+ * ruudunlukijalle (näkyvä rivin otsikko kertoo sen jo), kuten wellbeingHubissa.
+ */
+function fieldLabel(id, label, row) {
+  const context = row ? `<span class="visually-hidden">${escapeHtml(row)}: </span>` : '';
+  return `<label class="field-label" for="${id}">${context}${escapeHtml(label)}</label>`;
+}
+
+function numberField({ id, label, value, min, max, step = 1, error = '', data = '', row = '' }) {
   return `<div>
-      <label class="field-label" for="${id}">${escapeHtml(label)}</label>
+      ${fieldLabel(id, label, row)}
       <input type="number" id="${id}" min="${min}" max="${max}" step="${step}" inputmode="${step === 1 ? 'numeric' : 'decimal'}"`
     + ` value="${escapeHtml(value)}"${data}${invalidAttrs(id, error)}>
       ${errorHtml(id, error)}
     </div>`;
 }
 
-function timeField({ id, label, value, error = '', data = '' }) {
+function timeField({ id, label, value, error = '', data = '', row = '' }) {
   return `<div>
-      <label class="field-label" for="${id}">${escapeHtml(label)}</label>
+      ${fieldLabel(id, label, row)}
       <input type="time" id="${id}" value="${escapeHtml(value)}"${data}${invalidAttrs(id, error)}>
       ${errorHtml(id, error)}
     </div>`;
 }
 
-function textField({ id, label, value, max, error = '', data = '' }) {
+function textField({ id, label, value, max, error = '', data = '', row = '' }) {
   return `<div>
-      <label class="field-label" for="${id}">${escapeHtml(label)}</label>
+      ${fieldLabel(id, label, row)}
       <input type="text" id="${id}" maxlength="${max}" autocomplete="off" value="${escapeHtml(value)}"${data}`
     + `${invalidAttrs(id, error)}>
       ${errorHtml(id, error)}
@@ -444,13 +455,14 @@ function stepRowHtml(row, index, count, errors) {
   const protectionError = errors[`${index}.protection`];
   const shown = textOf(row.name) || `vaihe ${index + 1}`;
   const protectionId = `dsStepProtection-${index}`;
+  const step = `Vaihe ${index + 1}`;
   return `<li class="ds-row" data-step-row data-step-id="${escapeHtml(row.id || '')}">
-      <div class="ds-row-title">Vaihe ${index + 1}</div>
-      ${textField({ id: `dsStepName-${index}`, label: 'Nimi', value: row.name, max: MAX_STEP_NAME_LENGTH, error: nameError, data: ' data-step-field="name"' })}
+      <div class="ds-row-title">${step}</div>
+      ${textField({ id: `dsStepName-${index}`, label: 'Nimi', value: row.name, max: MAX_STEP_NAME_LENGTH, error: nameError, data: ' data-step-field="name"', row: step })}
       <div class="form-row">
-        ${numberField({ id: `dsStepMinutes-${index}`, label: 'Minuutit', value: row.minutes, min: 1, max: MAX_STEP_MINUTES, error: minutesError, data: ' data-step-field="minutes"' })}
+        ${numberField({ id: `dsStepMinutes-${index}`, label: 'Minuutit', value: row.minutes, min: 1, max: MAX_STEP_MINUTES, error: minutesError, data: ' data-step-field="minutes"', row: step })}
         <div>
-          <label class="field-label" for="${protectionId}">Suojaus</label>
+          ${fieldLabel(protectionId, 'Suojaus', step)}
           <select id="${protectionId}" data-step-field="protection"${invalidAttrs(protectionId, protectionError)}>${protectionOptions(row.protection)}</select>
           ${errorHtml(protectionId, protectionError)}
         </div>
@@ -1174,11 +1186,12 @@ export function validateMealDraft(draft) {
 
 function mealRowHtml(meal, index, errors) {
   const shown = textOf(meal.name) || `ateria ${index + 1}`;
+  const row = `Ateria ${index + 1}`;
   return `<li class="ds-row" data-meal-row data-meal-id="${escapeHtml(meal.id || '')}">
-      ${textField({ id: `dsMealName-${index}`, label: 'Ateria', value: meal.name, max: MAX_STEP_NAME_LENGTH, error: errors[`meals.${index}.name`], data: ' data-meal-field="name"' })}
+      ${textField({ id: `dsMealName-${index}`, label: 'Ateria', value: meal.name, max: MAX_STEP_NAME_LENGTH, error: errors[`meals.${index}.name`], data: ' data-meal-field="name"', row })}
       <div class="form-row">
-        ${timeField({ id: `dsMealTime-${index}`, label: 'Aika', value: meal.time, error: errors[`meals.${index}.time`], data: ' data-meal-field="time"' })}
-        ${numberField({ id: `dsMealPrep-${index}`, label: 'Valmistelu (min)', value: meal.prep, min: 0, max: MAX_MEAL_PREP_MINUTES, error: errors[`meals.${index}.prepMinutes`], data: ' data-meal-field="prep"' })}
+        ${timeField({ id: `dsMealTime-${index}`, label: 'Aika', value: meal.time, error: errors[`meals.${index}.time`], data: ' data-meal-field="time"', row })}
+        ${numberField({ id: `dsMealPrep-${index}`, label: 'Valmistelu (min)', value: meal.prep, min: 0, max: MAX_MEAL_PREP_MINUTES, error: errors[`meals.${index}.prepMinutes`], data: ' data-meal-field="prep"', row })}
       </div>
       <div class="ds-row-actions">
         <button class="form-btn danger" type="button" data-meal-remove="${index}" aria-label="Poista ateria: ${escapeHtml(shown)}">Poista</button>
@@ -1188,10 +1201,11 @@ function mealRowHtml(meal, index, errors) {
 
 function supplementRowHtml(item, index, errors) {
   const shown = textOf(item.name) || `muistutus ${index + 1}`;
+  const row = `Lisäravinne ${index + 1}`;
   return `<li class="ds-row" data-sup-row data-sup-id="${escapeHtml(item.id || '')}">
       <div class="form-row">
-        ${textField({ id: `dsSupName-${index}`, label: 'Lisäravinne', value: item.name, max: MAX_STEP_NAME_LENGTH, error: errors[`supplements.${index}.name`], data: ' data-sup-field="name"' })}
-        ${timeField({ id: `dsSupTime-${index}`, label: 'Aika', value: item.time, error: errors[`supplements.${index}.time`], data: ' data-sup-field="time"' })}
+        ${textField({ id: `dsSupName-${index}`, label: 'Lisäravinne', value: item.name, max: MAX_STEP_NAME_LENGTH, error: errors[`supplements.${index}.name`], data: ' data-sup-field="name"', row })}
+        ${timeField({ id: `dsSupTime-${index}`, label: 'Aika', value: item.time, error: errors[`supplements.${index}.time`], data: ' data-sup-field="time"', row })}
       </div>
       <div class="ds-row-actions">
         <button class="form-btn danger" type="button" data-sup-remove="${index}" aria-label="Poista lisäravinne: ${escapeHtml(shown)}">Poista</button>

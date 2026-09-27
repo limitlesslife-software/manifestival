@@ -380,6 +380,35 @@ test('aamurutiini: lisää, nimeä, siirrä, poista ja tallenna suojausluokkinee
   assert.match(text($('toastHost')), /Aamurutiini tallennettu/);
 });
 
+test('toistuvien rivien kentät nimetään riveittäin: ruudunlukija erottaa vaiheen, aterian ja lisäravinteen', async () => {
+  const { $ } = mount();
+  $('dsStepAdd').click();
+  $('dsStepAdd').click();
+  $('dsMealAdd').click();
+  $('dsMealAdd').click();
+  $('dsSupAdd').click();
+  $('dsSupAdd').click();
+
+  const names = ids => ids.map(id => accessibleName($(id)));
+  assert.deepEqual(names(['dsStepName-0', 'dsStepMinutes-0', 'dsStepProtection-0', 'dsStepName-1', 'dsStepMinutes-1', 'dsStepProtection-1']), [
+    'Vaihe 1: Nimi', 'Vaihe 1: Minuutit', 'Vaihe 1: Suojaus', 'Vaihe 2: Nimi', 'Vaihe 2: Minuutit', 'Vaihe 2: Suojaus'
+  ]);
+  assert.deepEqual(names(['dsMealName-0', 'dsMealTime-0', 'dsMealPrep-0', 'dsMealName-1', 'dsMealTime-1']), [
+    'Ateria 1: Ateria', 'Ateria 1: Aika', 'Ateria 1: Valmistelu (min)', 'Ateria 2: Ateria', 'Ateria 2: Aika'
+  ]);
+  assert.deepEqual(names(['dsSupName-0', 'dsSupTime-0', 'dsSupName-1', 'dsSupTime-1']), [
+    'Lisäravinne 1: Lisäravinne', 'Lisäravinne 1: Aika', 'Lisäravinne 2: Lisäravinne', 'Lisäravinne 2: Aika'
+  ]);
+  // Rivin numero on vain ruudunlukijalle: näkyvä nimilappu ei muutu.
+  const label = mounted.doc.querySelector('label[for="dsStepName-1"]');
+  assert.equal(label.querySelector('.visually-hidden').textContent, 'Vaihe 2: ');
+
+  // Koko Arki-osiossa kenttälistan nimet ovat yksilöllisiä.
+  const all = $('profileDailySection').querySelectorAll('input, select').map(field => accessibleName(field));
+  const duplicates = all.filter((name, index) => all.indexOf(name) !== index);
+  assert.deepEqual([...new Set(duplicates)], []);
+});
+
 test('aamurutiini: puuttuva nimi ja kesto näkyvät virheinä; peruutus palauttaa tallennetun', async () => {
   const { $ } = mount();
   await saveLifeSettings({ morningRoutine: [{ id: 'aamu-1', name: 'Suihku', minutes: 10, protection: PROTECTION.MANDATORY }] });
