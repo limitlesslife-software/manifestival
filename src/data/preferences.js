@@ -144,7 +144,9 @@ export const USER_DEFAULTS = Object.freeze({
    * aloitus on kertaalleen käyty loppuun. Vaiheen valmius päätellään
    * tiedoista (src/domain/alignmentSetup.js), ei tästä.
    */
-  suuntaSetup: Object.freeze({ skipped: Object.freeze([]), completed: false })
+  suuntaSetup: Object.freeze({ skipped: Object.freeze([]), completed: false }),
+  /** Profiilin Aloitusasetukset-lista piilotettu (views/setupChecklist.js). Tila tulee tiedoista. */
+  setupChecklistHidden: false
 });
 
 function userKey(userId) {

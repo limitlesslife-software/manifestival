@@ -31,6 +31,7 @@ import { initOnboarding, maybeShowOnboarding } from './onboarding.js';
 import { renderToday, initTodayNavigation } from './views/today.js';
 import { resetTodayDailyLife } from './views/todayDailyLife.js';
 import { initPurchaseCheck, resetPurchaseCheck } from './views/purchaseCheck.js';
+import { renderSetupChecklist, initSetupChecklist } from './views/setupChecklist.js';
 import { renderWeek, initWeekNavigation } from './views/week.js';
 import { initCalendar, renderCalendar, resetCalendarView } from './views/calendar.js';
 import { renderTasks, initTaskForm, closeForm } from './views/tasks.js';
@@ -230,7 +231,7 @@ const SCREEN_RENDERERS = Object.freeze({
   'screen-goals': () => { renderGoals(); renderProjects(); },
   'screen-finance': () => { renderFinance(); },
   'screen-profile': () => {
-    renderProfileSegments(); renderProfile(); renderNotificationSettings();
+    renderSetupChecklist(); renderProfileSegments(); renderProfile(); renderNotificationSettings();
     renderDailySettings(); renderGuidanceSettings();
     renderWellbeingHub(maybe('profileWellbeingSection')); renderPlacesSettings(maybe('profilePlacesSection'));
   }
@@ -585,6 +586,7 @@ async function start() {
   initPlanning();
   initProfileForm();
   initProfileSegments();
+  initSetupChecklist();
   initDailySettings();
   initGuidanceSettings();
   initWellbeingHub(maybe('profileWellbeingSection'));

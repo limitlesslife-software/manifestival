@@ -1011,3 +1011,14 @@ a.cal-inline-btn { display:inline-flex; align-items:center; }
 .purchase-check .pc-work { margin:0 0 6px; color:var(--forest); font-weight:700; }
 .purchase-check .pc-goals { margin:4px 0 10px; padding-left:18px; }
 .purchase-check .pc-goals li { margin:2px 0; overflow-wrap:anywhere; }
+
+/* ============ Aloitusasetukset (views/setupChecklist.js) ============ */
+.setup-checklist { margin-bottom:16px; }
+.setup-list { list-style:none; margin:8px 0; padding:0; }
+.setup-open { display:flex; align-items:center; gap:10px; width:100%; min-height:44px; padding:6px 4px;
+  background:none; border:none; border-bottom:1px solid var(--line, rgba(0,0,0,0.08)); text-align:left; cursor:pointer; font:inherit; color:inherit; }
+.setup-open:focus-visible { outline:2px solid var(--gold); outline-offset:2px; border-radius:8px; }
+.setup-mark { width:1.4em; text-align:center; font-weight:700; }
+.setup-row.is-done .setup-mark { color:var(--forest); }
+.setup-label { flex:1; font-weight:600; overflow-wrap:anywhere; }
+.setup-note { font-size:12.5px; color:var(--text-2); }

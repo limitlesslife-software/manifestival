@@ -47,7 +47,7 @@ const STEPS = [
   // puolesta, eikä kortin ohittaminen jätä mitään kesken.
   {
     title: 'Oma rytmi, jos haluat',
-    body: 'Valinnainen: Profiili → Arki. Kerro unitavoite, aamurutiini ja ateriat, niin herätys, nukkumaanmeno ja muistutukset seuraavat omaa rytmiäsi. Voit jättää tämän myöhemmäksi.',
+    body: 'Valinnainen: Profiili → Arki. Aloitusasetukset-lista näyttää, mitä on jo kerrottu. Kerro ainakin unitavoite ja arkiherätys; aamurutiini, ateriat ja muut ovat valinnaisia, ja voit täydentää niitä myöhemmin.',
     optional: true
   },
   {

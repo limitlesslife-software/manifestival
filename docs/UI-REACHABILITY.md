@@ -1,6 +1,6 @@
-# Käyttöliittymän tavoitettavuus — kahdeksantoista domainia
+# Käyttöliittymän tavoitettavuus — kolmekymmentäneljä domainia
 
-**Tila:** kaikki kahdeksantoista tavoitettavissa. Auditoitu ja korjattu.
+**Tila:** kaikki kolmekymmentäneljä tavoitettavissa (aallon K kymmenen mukaan lukien). Auditoitu ja korjattu.
 **Lähde:** `tools/release/reachability.mjs`, testattu
 `tests/ui-reachability.test.mjs`.
 

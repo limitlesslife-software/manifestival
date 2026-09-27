@@ -92,7 +92,7 @@ PERSONAL_USE_P1 (ensimmäiset viikot), **P2** = PERSONAL_USE_P2, **CL** = COMMER
 | Tieto | Useampi välilehti ja kilpatilanteet | P0 | COMPLETE_LOCAL | K | istuntovartija `app/dailyLifeActions.js`, `tests/daily-life-actions.test.mjs` |
 | Laatu | Yksityisyys (ei sijaintihistoriaa, arkaluonteinen ei tekoälylle) | P0 | COMPLETE_LOCAL | K | `docs/SECURITY.md`, `docs/DAILY-LIFE-OS.md` |
 | Laatu | Saavutettavuus (näppäimistö, 44 px, nimet) | P0 | COMPLETE_LOCAL | K | a11y-testit |
-| Käyttöönotto | Ensikäytön asetukset (vaiheittain) | P1 | COMPLETE_LOCAL | K | Profiili → Arki; opastuksen kaksi valinnaista arjen korttia |
+| Käyttöönotto | Ensikäytön asetukset (vaiheittain) | P1 | COMPLETE_LOCAL | K | Profiili → Aloitusasetukset: 11 kohtaa tiedoista (ydin: unitavoite ja arkiherätys), napautus vie kenttään, piilotus käyttäjäkohtainen (`views/setupChecklist.js`); opastusikkuna kevyt |
 | Android | APK (henkilökäyttö) | P0 | IMPLEMENTED_DEVICE_UNVERIFIED | K | rakennetaan K-ehdokkaasta, EI ASENNETTAVAKSI ennen aaltoa K |
 | Kaupallinen | Perhetila | CL | FUTURE_COMMERCIAL | — | — |
 | Kaupallinen | Yrittäjätila | CL | FUTURE_COMMERCIAL | — | — |
