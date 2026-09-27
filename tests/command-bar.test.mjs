@@ -143,6 +143,37 @@ test('verkkovirhe ei koskaan tuota arvattua komentoa', async () => {
   assert.equal(result.status, 'error');
 });
 
+test('menolause käsitellään laitteella: /api/commandia ei kutsuta, vahvistus kysytään silti', async () => {
+  let called = 0;
+  let confirmed = null;
+  const result = await runTypedCommand('lisää parturi keskiviikkona klo 16', {
+    now: new Date(2026, 8, 28, 12, 0),
+    fetchImpl: async () => { called += 1; throw new Error('ei pitäisi kutsua'); },
+    confirmFn: async proposal => { confirmed = proposal; return true; },
+    chooseFn: async () => null
+  });
+  assert.equal(called, 0);
+  assert.equal(result.ok, true);
+  assert.equal(result.local, true);
+  assert.equal(confirmed.preview.destructive, false);
+  assert.equal(getState().calendarEvents[0].date, '2026-09-30');
+  assert.equal(getState().tasks.length, 0, 'meno ei ole tehtävä');
+});
+
+test('KRIITTINEN: epäselvä menolause ilman valintaa ei tallenna eikä siirry tekoälylle arvattavaksi', async () => {
+  let called = 0;
+  const result = await runTypedCommand('teatteri lauantaina seitsemältä', {
+    now: new Date(2026, 8, 28, 12, 0),
+    fetchImpl: async () => { called += 1; throw new Error('verkko poikki'); },
+    confirmFn: async () => true,
+    chooseFn: async () => null
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 'cancelled');
+  assert.equal(called, 0);
+  assert.deepEqual(getState().calendarEvents, []);
+});
+
 test('kohde jota ei löydy ei tarjoa tyhjää valitsinta', async () => {
   const result = await runTypedCommand('merkitse olematon tehtävä tehdyksi', {
     fetchImpl: fetchReturning('{"intent":"complete_task","targetName":"Olematon"}'),
