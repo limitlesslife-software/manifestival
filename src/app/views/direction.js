@@ -64,6 +64,7 @@ import {
   timeEntrySaving
 } from '../alignment.js';
 import { showError } from '../../ui/toast.js';
+import { datelessTasksAllowed } from '../../data/schema.js';
 import { saveItemSettings, itemSettingsFor, currentTimer, newOperationId } from '../timeTracking.js';
 import { editTask, editRoutine } from '../actions.js';
 import { openGeneralLog, openTimerChooser } from './timeLog.js';
@@ -1806,7 +1807,9 @@ export function renderTodayDirection() {
 
 function fillCategorySelect(selected) {
   const select = el('dirAreaCategory');
-  const taken = new Set(getState().lifeAreas
+  // Migraation 0015 jälkeen useampi alue saa jakaa kategorian (perivä alue
+  // valitaan deterministisesti, lifeArea.categoryOwnerArea).
+  const taken = datelessTasksAllowed() ? new Set() : new Set(getState().lifeAreas
     .filter(area => area.id !== editingAreaId && area.categoryKey).map(area => area.categoryKey));
   select.innerHTML = '<option value="">Ei kategoriaa</option>'
     + CATEGORIES.map(category => `<option value="${escapeHtml(category.key)}"`
@@ -1815,7 +1818,7 @@ function fillCategorySelect(selected) {
 }
 
 function clearAreaErrors() {
-  for (const id of ['dirAreaNameError', 'dirAreaImportanceError', 'dirAreaTargetError', 'dirAreaCategoryError']) {
+  for (const id of ['dirAreaNameError', 'dirAreaImportanceError', 'dirAreaTargetError', 'dirAreaCategoryError', 'dirAreaKindError']) {
     setError(id, '');
   }
 }
@@ -1854,6 +1857,8 @@ export function openAreaForm(id = null, prefill = {}) {
   el('dirAreaImportance').value = area ? String(area.importance) : '';
   el('dirAreaTarget').value = area ? toHoursInput(area.targetMinutesPerWeek) : '';
   fillCategorySelect(area ? area.categoryKey : (prefill.categoryKey || ''));
+  const kind = maybe('dirAreaKind');
+  if (kind) kind.value = area && area.kind ? area.kind : (prefill.kind || 'STANDARD');
   renderCategoryImpact();
   el('dirAreaDescription').value = area && area.description ? area.description : '';
   el('dirAreaActive').checked = area ? area.active : true;
@@ -1893,6 +1898,7 @@ async function submitAreaForm() {
     importance: Number(el('dirAreaImportance').value),
     targetMinutesPerWeek: target,
     categoryKey: el('dirAreaCategory').value || null,
+    kind: maybe('dirAreaKind') ? el('dirAreaKind').value || 'STANDARD' : undefined,
     description: el('dirAreaDescription').value || null,
     active: el('dirAreaActive').checked
   };
@@ -1903,6 +1909,7 @@ async function submitAreaForm() {
     if (errors.importance) setError('dirAreaImportanceError', errors.importance);
     if (errors.targetMinutesPerWeek) setError('dirAreaTargetError', errors.targetMinutesPerWeek);
     if (errors.categoryKey) setError('dirAreaCategoryError', errors.categoryKey);
+    if (errors.kind) setError('dirAreaKindError', errors.kind);
     return;
   }
   closeAreaForm();

@@ -320,6 +320,21 @@
             <div class="field-error" id="dirAreaTargetError" role="alert"></div>
             <p class="hint">Tyhjä = ei tavoitetta. 0 = en halua käyttää tähän aikaa nyt.</p>
           </div>
+          <!-- Alueen laji (aalto L, omistajan päätös 1): tavallinen, hyvinvointi,
+               ilo, oma aika, vapaa-aika tai loma. Asian luonne johdetaan erikseen. -->
+          <div>
+            <label class="field-label" for="dirAreaKind">Millainen alue tämä on?</label>
+            <select id="dirAreaKind">
+              <option value="STANDARD">Tavallinen</option>
+              <option value="WELLBEING">Hyvinvointi</option>
+              <option value="ENJOYMENT">Ilo</option>
+              <option value="OWN_TIME">Oma aika</option>
+              <option value="FREE_TIME">Vapaa-aika</option>
+              <option value="VACATION">Loma</option>
+            </select>
+            <div class="field-error" id="dirAreaKindError" role="alert"></div>
+            <p class="hint">Hyvinvoinnin, ilon ja vapaa-ajan asiat eivät vie päivän fokuspaikkaa, ellet valitse niitä itse.</p>
+          </div>
           <div>
             <label class="field-label" for="dirAreaCategory">Laske tähän kategorian tehtävät (valinnainen)</label>
             <select id="dirAreaCategory"></select>
