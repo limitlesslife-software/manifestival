@@ -261,3 +261,19 @@ Ei toista hyvinvointimoduulia: kaikki kulkee
 - Tänään-näkymän tapakortti näyttää enintään 2 riviä (ajankohtaiset ensin),
   loput "Näytä loput (N)" -osion takana (`wellbeing.boundWellnessRows`).
   Rutiinimuistutukset eivät vie Rauhallisen tänään -fokuspaikkoja.
+
+## Toteutuskartta (aalto L, paikallinen)
+
+| Ketjun osa | Toteutus | Todisteet |
+|---|---|---|
+| Brain Dump | `domain/inbox.js` splitBrainDump, `app/capture.js` captureBrainDump + triageInboxItems, `domain/triage.js` (deterministiset ehdotukset: horisontti, alue, luonne), `views/inbox.js` erä-käsittely, puhe ja komentopalkki → Saapuvat | `tests/brain-dump.test.mjs`, `tests/triage.test.mjs`, E2E Brain Dump |
+| Elämänalueet | `life_areas.kind` (6 lajia), jaettu kategoria 0015:n jälkeen (`categoryOwnerArea`), Suunnan aluelomakkeen laji | `tests/mental-load-core.test.mjs` |
+| Luonne | `domain/itemNature.js` deriveNature (ei tallenneta) | sama |
+| Kapasiteettijarru | `domain/capacity.js` (puskuri, unen vaje, vähimmäisvapaa-aika), `domain/protectedTime.js` lohkot, `app/capacityBrake.js` yksi polku (Suunnittelu, tekoälysuunnitelma, uudelleensuunnittelu, viikkokatsaus, Tänään, sunnuntain nollaus) | `tests/mental-load-l0.test.mjs`, core, E2E kapasiteetti |
+| Prioriteetti / aktiivinen joukko | `domain/lifeLoad.js` computeLifeLoad, `app/lifeLoadModel.js` (Tänään, Tallessa, avustaja, muistutusten kuorma), `isSchedulable` (suunnittelija) | core |
+| Rauhallinen tänään | `views/today.js` (fokus ≤ 3, tallessa-luku, suojattu aika, loma, rauhallinen rivi aiemmista), `views/stored.js` Tallessa | core, E2E |
+| Oma aika / vapaa-aika / loma | `protected_periods`, `views/protectedTimeSettings.js`, `app/mentalLoadActions.js` | core, E2E |
+| Sunnuntain nollaus | `views/sundayReset.js`, `weekly_plans` | `tests/sunday-reset.test.mjs`, E2E |
+| Todellisuus / ajautuminen | `domain/driftSignals.js`, Suunta-näkymän osio | `tests/drift-v2.test.mjs`, E2E |
+| Katsaus ja säätö | viikkokatsauksen siirrot kohdeviikon tilan mukaan, CAPACITY_BIAS kapasiteettiehdotukseen | L0, drift |
+| Hyvinvoinnin kuorma | aiheen poiskytkentä, vesi/lisäravinteet koosteeseen, korkea kuorma (myös kapasiteetin ylitys) keventää valinnaiset, rajattu tapakortti | `tests/wellbeing-load.test.mjs` |
