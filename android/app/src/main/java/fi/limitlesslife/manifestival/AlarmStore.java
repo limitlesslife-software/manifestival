@@ -12,6 +12,7 @@ import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Heratysten pysyva tila laitteella (SharedPreferences, sovelluksen oma
@@ -21,9 +22,10 @@ import java.util.Map;
  *   entries   ajastetut heratykset ja puhutut muistutukset SEINAKELLOAIKANA
  *             (date + time) seka viimeksi laskettu hetki (epoch). Hetki
  *             lasketaan uudelleen, kun kello tai aikavyohyke vaihtuu.
- *   events    jono tapahtumista (soi, kuitattu, torkutettu, ...), jotka
- *             syntyivat kun sovellus (WebView) ei ollut kaynnissa. JS lukee
- *             ja tyhjentaa jonon consumeEvents()-kutsulla. Rajattu koko.
+ *   events    jono tapahtumista (soi, kuitattu, torkutettu, ...). Jokainen
+ *             tapahtuma menee jonoon; avoimelle sovellukselle se valitetaan
+ *             myos elavana, ja JS kuittaa kasittelemansa (ackEvents). Loput
+ *             JS lukee ja tyhjentaa consumeEvents()-kutsulla. Rajattu koko.
  *   handled   lyhyt muisti jo kuitatuista esiintymista (id|paiva|aika), jotta
  *             kuitattu heratys ei ajastu uudelleen seuraavassa synkronoinnissa.
  *   sound     kayttajan valitseman heratysaanen content-URI.
@@ -118,7 +120,8 @@ final class AlarmStore {
      * Lisaa tapahtuma jonoon ja valita se elavalle liitannaiselle (jos
      * sovellus on auki). Jokaisella tapahtumalla on kasvava jarjestysnumero
      * (seq), jonka avulla JS poistaa kaksoiskappaleet: sama tapahtuma voi
-     * tulla seka suoraan etta myohemmin jonosta.
+     * tulla seka suoraan etta myohemmin jonosta. Elavana kasitellyn JS
+     * kuittaa (ackEvents), jolloin se poistuu jonosta pysyvasti.
      */
     static JSONObject recordEvent(Context context, String type, String id, String kind, JSONObject extra) {
         JSONObject event = new JSONObject();
@@ -158,6 +161,30 @@ final class AlarmStore {
         JSONArray queue = readArray(prefs.getString(KEY_EVENTS, "[]"));
         prefs.edit().putString(KEY_EVENTS, "[]").apply();
         return queue;
+    }
+
+    /**
+     * Poista jonosta tapahtumat, jotka avoin sovellus jo kasitteli elavana
+     * (AlarmPlugin.ackEvents). Jono pitaa tapahtuman, kunnes JS kuittaa sen
+     * tai lukee jonon: jos sovellus kuolee ennen kasittelya, tapahtuma ei
+     * katoa. Ilman kuittausta consumeEvents antoi saman tapahtuman uudelleen
+     * seuraavassa istunnossa, kun JS:n muistissa oleva suodatus oli jo tyhja.
+     *
+     * @return poistettujen maara
+     */
+    static synchronized int ackEvents(Context context, Set<Long> seqs) {
+        if (seqs == null || seqs.isEmpty()) return 0;
+        SharedPreferences prefs = prefs(context);
+        JSONArray queue = readArray(prefs.getString(KEY_EVENTS, "[]"));
+        List<Object> kept = new ArrayList<>();
+        for (int index = 0; index < queue.length(); index++) {
+            JSONObject event = queue.optJSONObject(index);
+            if (event != null && seqs.contains(event.optLong("seq", -1L))) continue;
+            kept.add(queue.opt(index));
+        }
+        int removed = queue.length() - kept.size();
+        if (removed > 0) prefs.edit().putString(KEY_EVENTS, new JSONArray(kept).toString()).apply();
+        return removed;
     }
 
     // ------------------------------------------------------------ kuitatut

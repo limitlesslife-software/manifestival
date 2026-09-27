@@ -94,9 +94,32 @@ test('KRIITTINEN: jokainen JS:n kutsuma metodi on Javassa @PluginMethod, eikä k
   const unused = [...javaMethods].filter(n => !jsCalls.has(n));
   assert.deepEqual(unused, [], 'natiivimetodi ilman JS-kutsujaa');
   assert.deepEqual([...javaMethods].sort(), [
-    'cancel', 'cancelAll', 'consumeEvents', 'list', 'openExactAlarmSettings', 'openFullScreenSettings',
+    'ackEvents', 'cancel', 'cancelAll', 'consumeEvents', 'list', 'openExactAlarmSettings', 'openFullScreenSettings',
     'openNavigation', 'pickAlarmSound', 'schedule', 'speak', 'status', 'stopSpeaking'
   ]);
+});
+
+test('REGRESSIO: elävänä käsitelty tapahtuma kuitataan pois laitteen jonosta (ei toista kertaa uudessa istunnossa)', () => {
+  // native-events-redelivered-after-restart: recordEvent lisää jokaisen
+  // tapahtuman jonoon JA välittää sen elävänä. Jonosta se poistui vain
+  // consumeEventsillä, ja JS:n kaksoiskappaleiden suodatus (seenSeq) on
+  // muistissa: sovelluksen uudelleenkäynnistyksen jälkeen sama kuittaus tai
+  // "Lähdin" käsiteltiin toiseen kertaan. JS-puoli: tests/platform-alarms.test.mjs.
+  const store = javaCode('AlarmStore.java');
+  const record = methodBody(store, 'static JSONObject recordEvent(');
+  assert.ok(record.indexOf('kept.add(event)') < record.indexOf('AlarmPlugin.pushLive(event)'),
+    'tapahtuma jonoon ennen elävää välitystä (kuittaus ei saa ohittaa sitä)');
+  const ack = methodBody(store, 'static synchronized int ackEvents(');
+  assert.match(ack, /seqs\.contains\(event\.optLong\("seq", -1L\)\)\) continue;/);
+  assert.match(ack, /putString\(KEY_EVENTS, /);
+  const plugin = methodBody(javaCode('AlarmPlugin.java'), 'public void ackEvents(PluginCall call)');
+  assert.match(plugin, /Math\.min\(raw\.length\(\), AlarmStore\.MAX_EVENTS\)/, 'rajaton syöte');
+  assert.match(plugin, /AlarmStore\.ackEvents\(getContext\(\), seqs\)/);
+  // JS kuittaa kuuntelijan jälkeen, ei ennen sitä.
+  const js = readCode('src/platform/alarms.js');
+  const onEvent = js.slice(js.indexOf('export function onEvent('), js.indexOf('export function resetAlarmsForTests('));
+  assert.ok(onEvent.indexOf('callback(event)') > -1
+    && onEvent.indexOf('callback(event)') < onEvent.indexOf("callPlugin(plugin, 'ackEvents'"));
 });
 
 test('KRIITTINEN: herätyskoodi ratkaisee kutsut eikä koskaan hylkää niitä', () => {
