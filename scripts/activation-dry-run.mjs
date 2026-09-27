@@ -1,4 +1,4 @@
-// Junan C–J kuivaharjoitus: mikä on tuotannossa ja mikä on seuraava askel?
+// Junan C–K kuivaharjoitus: mikä on tuotannossa ja mikä on seuraava askel?
 //
 //   npm run activation:dry-run
 //   npm run activation:dry-run -- --offline

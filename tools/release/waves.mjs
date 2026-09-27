@@ -579,7 +579,7 @@ export function releasePlan() {
 // GO/NO-GO-taulukkoa näihin kenttiin.
 
 /**
- * Junan C–J ensimmäinen aalto: tuotannossa jo oleva lattia. Kanta 0008
+ * Junan C–K ensimmäinen aalto: tuotannossa jo oleva lattia. Kanta 0008
  * tukee aaltoja A–E, mutta tuotanto ei voi palata C:tä vanhempaan
  * (välimuistiversio ei saa laskea), joten sallitut koodiaallot alkavat
  * tästä.

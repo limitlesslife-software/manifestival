@@ -243,7 +243,7 @@ export function isDetachedHead(cwd = ROOT) {
  *
  * @param {string} [ref] git-referenssi, oletus 'HEAD'
  * @param {string} [cwd] mistä työpuusta `ref` ratkaistaan
- * @returns {string|null} 'BASE', 'A'..'J', tai null jos commit ei
+ * @returns {string|null} 'BASE', 'A'..'K' (WAVES), tai null jos commit ei
  *   kanna tunnettua aaltomerkintää
  */
 export function waveOfCommit(ref = 'HEAD', cwd = ROOT) {
