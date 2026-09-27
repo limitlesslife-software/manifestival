@@ -188,6 +188,52 @@ final class AlarmMath {
         return b * MINUTE_MS;
     }
 
+    // ------------------------------------------------------------ myohastyminen ja uudelleenajastus
+
+    /**
+     * Onko laukeamishetki niin kaukana takana, ettei heratysta enaa soiteta
+     * ("missed"). YKSI saanto kaikille poluille: laukeaminen (AlarmReceiver),
+     * uudelleenajastus (kaynnistys, kello, vyohyke, sovelluksen avaus) ja
+     * JS:n sovitus. Muuten epatarkka, muutaman minuutin myohassa toimitettava
+     * heratys soisi laukeamisessa, mutta katoaisi, jos sovellus avattiin sita
+     * ennen.
+     */
+    static boolean tooLate(long target, long now) {
+        return now - target > MAX_LATE_MS;
+    }
+
+    /** Tallessa olevan heratyksen kohtalo uudelleenajastuksessa ja sovituksessa. */
+    enum Restore {
+        /** Tuleva hetki: ajastetaan siihen. */
+        ARM,
+        /**
+         * Hetki meni, mutta heratys oli ajastettu eika ole viela soinut, ja
+         * myohastys on rajan sisalla: ajastetaan heti (AlarmManager laukaisee
+         * menneen hetken valittomasti).
+         */
+        ARM_NOW,
+        /** Ajastettu, ei soinut ja yli rajan myohassa: pois, tapahtumana "missed". */
+        MISSED,
+        /** Mennyt hetki, jota ei ollut ajastettu tai joka jo soi: pois ilman tapahtumaa. */
+        PAST
+    }
+
+    /**
+     * Mita tallessa olevalle (tai JS:n uudelleen lahettamalle) heratykselle
+     * tehdaan.
+     *
+     * @param target laukeamishetki (AlarmScheduler.targetOf)
+     * @param firedAt milloin tama esiintyma (tai sen torkku) laukesi; 0 = ei viela
+     * @param wasScheduled oliko esiintyma jo ajastettuna talla laitteella (sama
+     *     tunniste, paiva ja aika). Uutta, jo mennytta esiintymaa ei soiteta
+     *     jalkikateen: se on JS:lle "past", kuten ennenkin.
+     */
+    static Restore restorePlan(long target, long now, long firedAt, boolean wasScheduled) {
+        if (target > now) return Restore.ARM;
+        if (firedAt != 0L || !wasScheduled) return Restore.PAST;
+        return tooLate(target, now) ? Restore.MISSED : Restore.ARM_NOW;
+    }
+
     /** Hetki -> "HH:MM" annetussa vyohykkeessa (heratysnakyman kello). */
     static String clockText(long epochMs, TimeZone zone) {
         Calendar calendar = Calendar.getInstance(zone == null ? TimeZone.getDefault() : zone, Locale.ROOT);

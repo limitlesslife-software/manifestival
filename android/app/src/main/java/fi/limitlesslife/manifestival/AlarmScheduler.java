@@ -156,6 +156,10 @@ final class AlarmScheduler {
      *   (sovelluksen synkronointi ei nollaa kaynnissa olevaa torkkua).
      * - Jo kuitattu esiintyma (sama id, paiva ja aika): ei ajasteta uudelleen.
      * - Mennyt hetki: pudotetaan (koodi "past"), paitsi jos torkku on tulossa.
+     *   Jo ajastettu, soimaton esiintyma, joka on myohassa rajan
+     *   (AlarmMath.MAX_LATE_MS) sisalla, ajastetaan heti: epatarkka heratys
+     *   voi tulla minuutteja myohassa, eika synkronointi saa pyyhkia sita
+     *   ennen laukeamista. Yli rajan myohassa oleva kirjataan "missed".
      *
      * @param incoming tarkistetut merkinnat (AlarmPlugin.parseEntry), tunnisteet uniikit
      */
@@ -173,7 +177,8 @@ final class AlarmScheduler {
                 continue;
             }
             JSONObject old = stored.get(id);
-            if (old != null && date.equals(old.optString("date")) && time.equals(old.optString("time"))) {
+            boolean sameOccurrence = old != null && date.equals(old.optString("date")) && time.equals(old.optString("time"));
+            if (sameOccurrence) {
                 copy(old, entry, "snoozeCount");
                 copy(old, entry, "snoozeUntil");
                 copy(old, entry, "autoSnoozed");
@@ -185,9 +190,13 @@ final class AlarmScheduler {
                 continue;
             }
             put(entry, "epoch", epoch);
-            long target = targetOf(entry);
-            if (target <= now) {
+            AlarmMath.Restore plan = AlarmMath.restorePlan(targetOf(entry), now, entry.optLong("firedAt", 0L), sameOccurrence);
+            if (plan == AlarmMath.Restore.MISSED || plan == AlarmMath.Restore.PAST) {
                 outcome.dropped.add(new String[] { id, "past" });
+                if (plan == AlarmMath.Restore.MISSED) {
+                    // Oli ajastettu talla laitteella, mutta ei koskaan soinut.
+                    AlarmStore.recordEvent(context, AlarmStore.EVENT_MISSED, id, entry.optString("kind"), null);
+                }
                 continue;
             }
             if (next.size() >= AlarmMath.MAX_ENTRIES) {
@@ -204,7 +213,8 @@ final class AlarmScheduler {
         List<String> failed = new ArrayList<>();
         for (JSONObject entry : next.values()) {
             String id = entry.optString("id");
-            String result = arm(context, entry, targetOf(entry));
+            // Eraantynyt mutta rajan sisalla: heti (ARM_NOW), muuten omaan hetkeensa.
+            String result = arm(context, entry, Math.max(targetOf(entry), now));
             put(entry, "exact", RESULT_EXACT.equals(result));
             if (RESULT_FAILED.equals(result)) {
                 failed.add(id);
@@ -226,13 +236,20 @@ final class AlarmScheduler {
      *
      * Seinakelloaika muunnetaan NYKYISESSA vyohykkeessa: klo 7.00 heratys
      * soi klo 7.00 myos matkalla. Torkku on kesto, joten sen hetki sailyy.
-     * Mennyt, laukeamaton heratys kirjataan tapahtumaksi "missed" (puhelin
-     * oli pois paalta) ja poistetaan.
+     *
+     * Eraantynyt, laukeamaton heratys (AlarmMath.restorePlan):
+     *   - myohassa enintaan AlarmMath.MAX_LATE_MS: ajastetaan heti, samalla
+     *     saannolla kuin laukeaminen soittaa myohastyneen heratyksen
+     *     (epatarkka heratys voi tulla minuutteja myohassa, eika sovelluksen
+     *     avaus saa pyyhkia sita ennen laukeamista)
+     *   - yli rajan: kirjataan "missed" JOKAISELLA polulla (puhelin oli pois
+     *     paalta, sovellus pakkosuljettiin tai kelloa siirrettiin) ja poistetaan.
      *
      * EI KOSKAAN kaynnista palvelua: Android 15 kieltaa BOOT_COMPLETED-
-     * vastaanottimelta mediaPlayback-etualapalvelun.
+     * vastaanottimelta mediaPlayback-etualapalvelun. Soitto alkaa aina
+     * AlarmManagerin laukaisusta (AlarmReceiver).
      */
-    static synchronized int rescheduleAll(Context context, long now, TimeZone zone, boolean reportMissed) {
+    static synchronized int rescheduleAll(Context context, long now, TimeZone zone) {
         Map<String, JSONObject> stored = AlarmStore.entries(context);
         Map<String, JSONObject> next = new LinkedHashMap<>();
         int armed = 0;
@@ -248,14 +265,15 @@ final class AlarmScheduler {
                 put(entry, "epoch", epoch);
             }
             long target = targetOf(entry);
-            if (target <= now) {
+            AlarmMath.Restore plan = AlarmMath.restorePlan(target, now, entry.optLong("firedAt", 0L), true);
+            if (plan == AlarmMath.Restore.MISSED || plan == AlarmMath.Restore.PAST) {
                 disarm(context, id);
-                if (reportMissed && entry.optLong("firedAt", 0L) == 0L) {
+                if (plan == AlarmMath.Restore.MISSED) {
                     AlarmStore.recordEvent(context, AlarmStore.EVENT_MISSED, id, entry.optString("kind"), null);
                 }
                 continue;
             }
-            String result = arm(context, entry, target);
+            String result = arm(context, entry, Math.max(target, now));
             if (RESULT_FAILED.equals(result)) continue;
             put(entry, "exact", RESULT_EXACT.equals(result));
             next.put(id, entry);

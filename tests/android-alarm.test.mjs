@@ -193,10 +193,38 @@ test('KRIITTINEN: BootReceiver vain ajastaa uudelleen, ei koskaan käynnistä pa
     'android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED']) {
     assert.ok(receiver.includes(`<action android:name="${action}" />`), action);
   }
-  // Uudelleenlaskenta seinäkelloajasta nykyisessä vyöhykkeessä; menneet pois.
+  // Uudelleenlaskenta seinäkelloajasta nykyisessä vyöhykkeessä; menneet
+  // AlarmMath.restorePlanin mukaan (ks. seuraava testi).
   const reschedule = methodBody(javaCode('AlarmScheduler.java'), 'static synchronized int rescheduleAll(');
   assert.match(reschedule, /AlarmMath\.wallClockToEpoch\(entry\.optString\("date"\), entry\.optString\("time"\), zone\)/);
-  assert.match(reschedule, /if \(target <= now\)/);
+  assert.match(reschedule, /AlarmMath\.restorePlan\(/);
+});
+
+test('REGRESSIO: erääntynyt, toimittamaton herätys ei katoa avauksessa eikä synkronoinnissa (sama 30 min raja kuin laukeamisessa)', () => {
+  // native-zero-grace-drop: ilman tarkkojen herätysten oikeutta (Android 14+
+  // oletus) herätys on epätarkka ja voi tulla minuutteja myöhässä. Aiemmin
+  // sovelluksen avaus (rescheduleAll) ja JS:n synkronointi (reconcile)
+  // pudottivat sen heti hetken jälkeen (target <= now): ei soittoa eikä
+  // "missed"-tapahtumaa, vaikka laukeaminen olisi vielä soittanut sen.
+  const scheduler = javaCode('AlarmScheduler.java');
+  const reschedule = methodBody(scheduler, 'static synchronized int rescheduleAll(');
+  const reconcile = methodBody(scheduler, 'static synchronized Outcome reconcile(');
+  assert.equal(/target <= now/.test(reschedule + reconcile), false, 'nollan armonajan pudotus palasi');
+  assert.match(reschedule, /AlarmMath\.restorePlan\(target, now, entry\.optLong\("firedAt", 0L\), true\)/);
+  assert.match(reconcile, /AlarmMath\.restorePlan\(targetOf\(entry\), now, entry\.optLong\("firedAt", 0L\), sameOccurrence\)/);
+  // Rajan sisällä heti: AlarmManager laukaisee menneen hetken välittömästi.
+  assert.match(reschedule, /arm\(context, entry, Math\.max\(target, now\)\)/);
+  assert.match(reconcile, /arm\(context, entry, Math\.max\(targetOf\(entry\), now\)\)/);
+  // "missed" kirjataan jokaisella polulla, ei vain käynnistyksessä.
+  for (const body of [reschedule, reconcile]) {
+    assert.match(body, /if \(plan == AlarmMath\.Restore\.MISSED\) \{\s*AlarmStore\.recordEvent\(context, AlarmStore\.EVENT_MISSED/);
+  }
+  assert.equal(/reportMissed/.test(ALARM_FILES.map(javaCode).join('\n')), false);
+  // Yksi raja: laukeaminen ja uudelleenajastus kysyvät saman funktion.
+  assert.match(methodBody(javaCode('AlarmMath.java'), 'static boolean tooLate('), /return now - target > MAX_LATE_MS;/);
+  assert.match(methodBody(javaCode('AlarmMath.java'), 'static Restore restorePlan('), /tooLate\(target, now\)/);
+  assert.match(javaCode('AlarmReceiver.java'), /AlarmMath\.tooLate\(target, now\)/);
+  assert.equal(/MAX_LATE_MS/.test(javaCode('AlarmReceiver.java') + scheduler), false, 'raja kirjoitettu toiseen kertaan');
 });
 
 test('KRIITTINEN: tarkkojen herätysten ja koko näytön asetukset avataan vain omista metodeistaan', () => {

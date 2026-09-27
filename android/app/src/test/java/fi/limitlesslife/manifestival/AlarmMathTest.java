@@ -127,6 +127,42 @@ public class AlarmMathTest {
         assertEquals(9, AlarmMath.DEFAULT_SNOOZE_MINUTES);
     }
 
+    /** 28.9.2026 klo 7.00 Helsingissa. */
+    private static final long T = 1790568000000L;
+
+    @Test
+    public void dueButUndeliveredAlarmIsArmedNowWithinTheLateLimit() {
+        // REGRESSIO (native-zero-grace-drop): epatarkka "lahde nyt" klo 8.15 on viela
+        // toimittamatta klo 8.16, kun sovellus avataan tai JS synkronoi. Aiemmin se
+        // poistettiin hiljaa (ei soittoa, ei "missed"); nyt se ajastetaan heti.
+        assertEquals(AlarmMath.Restore.ARM_NOW, AlarmMath.restorePlan(T, T + AlarmMath.MINUTE_MS, 0L, true));
+        assertEquals(AlarmMath.Restore.ARM_NOW, AlarmMath.restorePlan(T, T, 0L, true));
+        assertEquals(AlarmMath.Restore.ARM_NOW, AlarmMath.restorePlan(T, T + AlarmMath.MAX_LATE_MS, 0L, true));
+        // Yli rajan: "missed" (kaikilla poluilla, ei vain kaynnistyksessa).
+        assertEquals(AlarmMath.Restore.MISSED, AlarmMath.restorePlan(T, T + AlarmMath.MAX_LATE_MS + 1, 0L, true));
+        // Tuleva hetki: omaan hetkeensa.
+        assertEquals(AlarmMath.Restore.ARM, AlarmMath.restorePlan(T, T - 1, 0L, true));
+        // Uutta, jo mennytta esiintymaa (JS lahetti sen myohassa) ei soiteta jalkikateen.
+        assertEquals(AlarmMath.Restore.PAST, AlarmMath.restorePlan(T, T + AlarmMath.MINUTE_MS, 0L, false));
+        // Jo soinut esiintyma ei ole "missed" eika soi uudelleen.
+        assertEquals(AlarmMath.Restore.PAST, AlarmMath.restorePlan(T, T + AlarmMath.MINUTE_MS, T, true));
+    }
+
+    @Test
+    public void lateLimitIsTheSameAsWhenTheAlarmFires() {
+        // Laukeaminen (AlarmReceiver) soittaa enintaan 30 min myohassa; uudelleenajastus
+        // ja sovitus kayttavat samaa rajaa, joten polku ei ratkaise, soiko heratys.
+        assertEquals(30L * AlarmMath.MINUTE_MS, AlarmMath.MAX_LATE_MS);
+        assertFalse(AlarmMath.tooLate(T, T + AlarmMath.MAX_LATE_MS));
+        assertTrue(AlarmMath.tooLate(T, T + AlarmMath.MAX_LATE_MS + 1));
+        long[] lateness = { 0L, 1L, AlarmMath.MINUTE_MS, AlarmMath.MAX_LATE_MS, AlarmMath.MAX_LATE_MS + 1, 2L * AlarmMath.MAX_LATE_MS };
+        for (long late : lateness) {
+            boolean ringsWhenFired = !AlarmMath.tooLate(T, T + late);
+            boolean armedNowOnRestore = AlarmMath.restorePlan(T, T + late, 0L, true) == AlarmMath.Restore.ARM_NOW;
+            assertEquals("myohastys " + late + " ms", ringsWhenFired, armedNowOnRestore);
+        }
+    }
+
     @Test
     public void cleanTextStripsControlsAndBoundsLength() {
         assertEquals("Lahde nyt", AlarmMath.cleanText("Lahde\u0000 \t nyt\u0007", 50));

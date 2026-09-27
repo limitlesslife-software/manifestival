@@ -73,7 +73,7 @@ public class AlarmReceiver extends BroadcastReceiver {
             return;
         }
         String kind = entry.optString("kind");
-        if (now - target > AlarmMath.MAX_LATE_MS) {
+        if (AlarmMath.tooLate(target, now)) {
             // Puoli tuntia myohassa soiva heratys tai "lahde nyt" olisi harhaanjohtava.
             AlarmStore.removeEntry(context, id);
             AlarmStore.recordEvent(context, AlarmStore.EVENT_MISSED, id, kind, null);
@@ -211,6 +211,6 @@ public class AlarmReceiver extends BroadcastReceiver {
 
     /** Uudelleenajastus nykyisessa vyohykkeessa (AlarmPlugin.load). */
     static void rescheduleFromApp(Context context) {
-        AlarmScheduler.rescheduleAll(context, System.currentTimeMillis(), TimeZone.getDefault(), false);
+        AlarmScheduler.rescheduleAll(context, System.currentTimeMillis(), TimeZone.getDefault());
     }
 }
