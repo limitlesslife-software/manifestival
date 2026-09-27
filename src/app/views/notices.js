@@ -38,9 +38,12 @@ import {
   readNotice, actOnNotice, dismissNotice, deleteNotice,
   snoozeReminderBy, completeReminder, acknowledgeReminder
 } from '../assistantActions.js';
-import { setTasksSegment, setGoalsSegment } from '../state.js';
+import { setTasksSegment, setGoalsSegment, setProfileSegment, findCalendarEvent } from '../state.js';
 import { proposeReplan } from '../actions.js';
 import { switchTab } from '../navigation.js';
+import { openCalendarDay } from './calendar.js';
+import { isIsoDate } from '../../domain/task.js';
+import { fmtISO, todayMidnight } from '../../lib/datetime.js';
 
 /** Onko keskus auki? Näkymän oma tila — ei kuulu sovelluksen tilaan. */
 let open = false;
@@ -138,14 +141,49 @@ export function renderNotices() {
   }
 }
 
+/** Profiilin osiot, joihin huomautus voi viedä (tuntematon -> Arki). */
+const PROFILE_TARGETS = new Set(['daily', 'places', 'wellbeing']);
+
+/**
+ * Menohuomautuksen päivä: esiintymän päivä avaimesta
+ * ('departure|event:<meno>:<päivä>|...'), muuten kertaluonteisen menon oma
+ * päivä, muuten huomautuksen luontipäivä, muuten tämä päivä.
+ */
+export function calendarDateOf(notice) {
+  const fromKey = typeof notice.key === 'string' ? /\|event:[^:|]+:(\d{4}-\d{2}-\d{2})\|/.exec(notice.key) : null;
+  if (fromKey && isIsoDate(fromKey[1])) return fromKey[1];
+  const event = notice.targetId ? findCalendarEvent(notice.targetId) : null;
+  const recurring = event && Array.isArray(event.recurrenceWeekdays) && event.recurrenceWeekdays.length > 0;
+  if (event && !recurring && isIsoDate(event.date)) return event.date;
+  if (isIsoDate(notice.createdDate)) return notice.createdDate;
+  return fmtISO(todayMidnight());
+}
+
 /**
  * Vie ilmoituksen kohteeseen.
  *
  * Siirtymä on NAVIGOINTI, ei toimenpide: se ei muuta mitään, se vain
  * näyttää missä asia on.
  */
-function openTarget(notice) {
+export function openTarget(notice) {
   if (!notice) return;
+
+  // Arjen asetuksiin viittaava huomautus (rytmi, maanantaivalmius,
+  // myöhästely) on ehdotus, jonka käyttäjä hyväksyy itse Profiilissa.
+  // Tarkistetaan ENNEN muutosehdotusta: nämä ovat lajiltaan REPLAN, mutta
+  // eivät tehtävien siirtoehdotuksia.
+  if (notice.targetType === 'settings') {
+    switchTab('screen-profile');
+    setProfileSegment(PROFILE_TARGETS.has(notice.targetId) ? notice.targetId : 'daily');
+    return;
+  }
+
+  // Menon lähtöhuomautus: Kalenterin päivänäkymä sille päivälle.
+  if (notice.targetType === 'calendar_event') {
+    switchTab('screen-week');
+    openCalendarDay(calendarDateOf(notice));
+    return;
+  }
 
   // MUUTOSEHDOTUS EI OLE KOHDE VAAN LASKELMA. Se rakennetaan vasta
   // kun käyttäjä pyytää -- ilmoituksessa ei ole eikä saa olla
