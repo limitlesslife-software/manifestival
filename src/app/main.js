@@ -48,6 +48,15 @@ import { initPlanning, resetPlanning } from './views/planning.js';
 import { clearIdempotencyKeys } from './planning.js';
 import { renderProfile, initProfileForm, fillProfileForm } from './views/profile.js';
 import { renderNotificationSettings } from './views/notificationSettings.js';
+// Arjen käyttöjärjestelmä (aalto K): profiilin osiot ja niiden näkymät.
+import { renderProfileSegments, initProfileSegments } from './views/profileSegments.js';
+import { renderDailySettings, initDailySettings, resetDailySettings } from './views/dailySettings.js';
+import { renderGuidanceSettings, initGuidanceSettings, resetGuidanceSettings } from './views/guidanceSettings.js';
+import { renderWellbeingHub, initWellbeingHub, resetWellbeingHub } from './views/wellbeingHub.js';
+import { renderPlacesSettings, initPlacesSettings, resetPlacesSettings } from './views/placesSettings.js';
+import { runEventDepartureSweep, resetDepartureWatch } from './departureWatch.js';
+import { runDailyLifeNotices } from './dailyLifeNotices.js';
+import { resetDailyLifeActions } from './dailyLifeActions.js';
 import { initInbox, closeCaptureReview, renderInbox } from './views/inbox.js';
 import { initReminderForm, closeReminderForm } from './views/reminders.js';
 import { initTravelForms, closeTravelForm, closeLocationRuleForm }
@@ -204,7 +213,11 @@ const SCREEN_RENDERERS = Object.freeze({
   'screen-tasks': () => { renderTasks(); refreshGoalPicker(); },
   'screen-goals': () => { renderGoals(); renderProjects(); },
   'screen-finance': () => { renderFinance(); },
-  'screen-profile': () => { renderProfile(); renderNotificationSettings(); }
+  'screen-profile': () => {
+    renderProfileSegments(); renderProfile(); renderNotificationSettings();
+    renderDailySettings(); renderGuidanceSettings();
+    renderWellbeingHub(maybe('profileWellbeingSection')); renderPlacesSettings(maybe('profilePlacesSection'));
+  }
 });
 
 /** Joka tilamuutoksessa: ajastinpalkki ja päivän Suunta-kortti (kevyt, välimuistista). */
@@ -274,6 +287,9 @@ function runAssistantSweeps() {
   Promise.all([
     runReminderSweep(),
     runDepartureSweep(),
+    // Kalenterin menojen lähdöt ja arjen huomautukset (aalto K).
+    runEventDepartureSweep(),
+    runDailyLifeNotices(),
     runReplanCheck(),
     pruneNoticeHistory()
   ]).catch(error => {
@@ -418,6 +434,14 @@ function onSignedOut() {
   // Avain viittaa ehdotukseen, joka ei sekään elä uloskirjautumisen
   // yli — jäänyt avain estäisi seuraavaa käyttäjää tallentamasta.
   resetPlanning();
+  // Arjen näkymien luonnokset ja muistissa olevat lähdöt eivät vuoda
+  // seuraavalle käyttäjälle.
+  resetDailySettings();
+  resetGuidanceSettings();
+  resetWellbeingHub();
+  resetPlacesSettings();
+  resetDepartureWatch();
+  resetDailyLifeActions();
   closeAreaForm();
   closeTimeLogDialog();
   stopTimerCrossTabSync();
@@ -463,6 +487,11 @@ async function start() {
   initGoalDetail();
   initPlanning();
   initProfileForm();
+  initProfileSegments();
+  initDailySettings();
+  initGuidanceSettings();
+  initWellbeingHub(maybe('profileWellbeingSection'));
+  initPlacesSettings(maybe('profilePlacesSection'));
   initInbox();
   initReminderForm();
   initTravelForms();
