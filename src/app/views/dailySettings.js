@@ -665,8 +665,16 @@ function savedAlarmValues(settings) {
 function readAlarmForm() {
   const root = maybe(CONTAINERS.alarm);
   if (!root || !root.querySelector('#dsAlarmEnabled')) return null;
+  // Kiinteät kellonajat piirretään vain "Kiinteä aika" -valinnalla.
+  // Piirtämätön kenttä EI ole tyhjä arvo: se luetaan edellisestä
+  // luonnoksesta tai tallennetusta. Aiemmin vaihto "Seuraa suunnitelmaa" ->
+  // "Kiinteä aika" tyhjensi ajat, ja pelkän arkiajan tallennus poisti
+  // tallennetun viikonloppuajan.
+  const previous = drafts.alarm || savedAlarmValues(currentLifeSettings(getState()));
   const values = { enabled: checkedIn(root, '#dsAlarmEnabled') };
-  for (const [key, id] of Object.entries(ALARM_IDS)) values[key] = valueIn(root, `#${id}`);
+  for (const [key, id] of Object.entries(ALARM_IDS)) {
+    values[key] = root.querySelector(`#${id}`) ? valueIn(root, `#${id}`) : previous[key];
+  }
   values.timing = checkedIn(root, '#dsAlarmTimingFixed') ? 'fixed' : 'plan';
   return values;
 }

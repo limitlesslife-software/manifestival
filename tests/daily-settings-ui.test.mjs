@@ -482,6 +482,37 @@ test('herätys seuraa suunnitelmaa: aamun meno aikaistaa seuraavaa herätystä',
   assert.match(text($('dailyAlarmNext')), new RegExp(`klo ${Number(early.time.slice(0, 2))}\\.${early.time.slice(3)}`));
 });
 
+test('herätys: "Seuraa suunnitelmaa" ja takaisin "Kiinteä aika" ei tyhjennä tallennettuja kellonaikoja', async () => {
+  const { $ } = mount();
+  await saveLifeSettings({ alarm: { enabled: true, followPlan: false, weekdayTime: '06:30', weekendTime: '08:15' } });
+  assert.deepEqual([$('dsAlarmWeekday').value, $('dsAlarmWeekend').value], ['06:30', '08:15']);
+
+  $('dsAlarmTimingPlan').click();
+  assert.equal($('dsAlarmWeekday'), null, 'kiinteät ajat piiloon');
+  $('dsAlarmTimingFixed').click();
+  assert.deepEqual([$('dsAlarmWeekday').value, $('dsAlarmWeekend').value], ['06:30', '08:15'],
+    'piilossa ollut kenttä ei ole tyhjä arvo');
+
+  // Vain arkiajan muutos: viikonlopun tallennettu aika säilyy.
+  fill($('dsAlarmWeekday'), '06:00');
+  $('dsAlarmSave').click();
+  await flush();
+  const alarm = currentLifeSettings(getState()).alarm;
+  assert.deepEqual([alarm.followPlan, alarm.weekdayTime, alarm.weekendTime], [false, '06:00', '08:15']);
+
+  // Kirjoitettu (tallentamaton) aika säilyy myös edestakaisin vaihdossa.
+  fill($('dsAlarmWeekend'), '09:00');
+  $('dsAlarmTimingPlan').click();
+  $('dsAlarmTimingFixed').click();
+  assert.deepEqual([$('dsAlarmWeekday').value, $('dsAlarmWeekend').value], ['06:00', '09:00']);
+  // "Seuraa suunnitelmaa" tallentuu ilman omia aikoja kuten ennenkin.
+  $('dsAlarmTimingPlan').click();
+  $('dsAlarmSave').click();
+  await flush();
+  const plan = currentLifeSettings(getState()).alarm;
+  assert.deepEqual([plan.followPlan, plan.weekdayTime, plan.weekendTime], [true, null, null]);
+});
+
 test('mukautettu voimistus säilyy, kun tasoa ei vaihdeta', async () => {
   const custom = [{ afterSeconds: 0, step: 'soft' }, { afterSeconds: 120, step: 'loud' }, { afterSeconds: 240, step: 'loud' }];
   const { $ } = mount();
