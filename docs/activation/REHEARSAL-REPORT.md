@@ -114,7 +114,7 @@ käyttäjää); ketju ei käytä sitä hylkäysehtona, kuten ennenkin.
 DO-lohkot ja lukituslauseen transaktion sisällä; yksikään taulu, sarake,
 rajoite, indeksi, politiikka, liipaisin tai funktio ei muutu.
 `prodshape:chain` vertasi jokaisen migraation katalogieron muuttamattomiin
-tiedostoihin (5/5 sama); `docs/activation/SCHEMA-DIFFS-0009-0013.md` on
+tiedostoihin (5/5 sama); `docs/activation/SCHEMA-DIFFS-0009-0013.md` (nyt `SCHEMA-DIFFS-0009-0014.md`) on
 ajan tasalla (`schema-diff-summary.mjs --check`).
 
 **Johdetut tiedostot tarkistettu:** `build-preflights.mjs --check`,
@@ -235,4 +235,143 @@ PG_REHEARSAL_PORT=54369 node tools/pg-rehearsal/rehearse.mjs --json=raportti.jso
 PG_REHEARSAL_PORT=54369 node tools/pg-rehearsal/rehearse.mjs --only=backup          # varmuuskopio B1–B15 (~1,5 min)
 PG_REHEARSAL_PORT=54369 node tools/pg-rehearsal/rehearse.mjs --only=failure:0010-locks  # lukot (~2,5 min)
 PG_REHEARSAL_PORT=54369 node tools/pg-rehearsal/sql-result-fixtures.mjs             # tests/fixtures/sql-results
+```
+
+---
+
+# Migraatio 0014 (aalto K) — harjoittelu 2026-09-27
+
+**Tulos: 0 hylättyä kaikissa lopullisissa ajoissa oikealla PostgreSQL
+17:llä.** Harjoittelu löysi 0014:stä yhden lukitusvian, joka korjattiin
+ja todennettiin (alla).
+
+**Ympäristö:** PostgreSQL **17.10** (`PostgreSQL 17.10 on x86_64-windows,
+compiled by msvc-19.44.35226, 64-bit`), oma klusteri `127.0.0.1:54359`,
+data `.claude/pg-local/data-rehearsal` (ei ollut käytössä: portti ja
+`postmaster.pid` tarkistettiin ennen käynnistystä; käynnistetty tätä
+ajoa varten ja pysäytetty lopuksi). Portteihin 54329 ja 54349 ei
+yhdistetty. Jokainen yhteys todensi `server_version_num = 170010` ja
+data-hakemiston (`lib.assertRehearsalServer`), varmuuskopioajo lisäksi
+nimenomaisen portin (`PG_REHEARSAL_PORT=54359`).
+
+**Koodi (alkuperä):** tuotehaara `feature/daily-life-operating-system`
+`8ba874a` + tämän harjoittelun commitit. Lopullinen oletusajo luki 50
+tiedostoa commitista `3a555b129317158afa7446fbba8fa45e912636b8`
+(0 commitoimatonta). Harjoitteluun lisättiin 0014 kaikkiin skenaarioihin
+(`chain.mjs`, `seeds.mjs`, `rehearse.mjs`, `prodshape*.mjs`, `waves.mjs`,
+`failure-scenarios.mjs`, `rollback-scenarios.mjs`,
+`sql-result-fixtures.mjs`, `bundle-hashes.mjs`, `schema-diff-summary.mjs`,
+`backup-scenario.mjs`). Aalto K ei ole vielä lukossa
+(`release-train-c-j.json` tuntee C–J), joten `waves.trainWaves()` johtaa
+sen `tools/release/waves.mjs`:stä: J:n 24 taulua + 0014:n 10 porttia, ei
+uusia sarakeportteja (`locked: false`).
+
+**Ajot** (kaikki `PG_REHEARSAL_PORT=54359`):
+
+| Ajo | Komento | Commit | Aika (UTC) | Tulos |
+|---|---|---|---|---|
+| Kaikki 18 skenaariota (lopullinen) | `rehearse.mjs --fixtures=tests/fixtures/activation-inventory --fixture-states=0014,0013-partial-0014 --json=…` | `3a555b1` | 08:31:19–08:46:29 | **0 hylättyä** |
+| Varmuuskopio B1–B15 | `rehearse.mjs --only=backup --backup-fixtures=<työhakemisto> --json=…` | `5b98ee0` | 08:51:25–08:54:18 | **324/324, 0 hylättyä** |
+| SQL-tulosfixturet | `sql-result-fixtures.mjs --numbers=0014` | `af4cd49` | 08:50:20–08:50:51 | 4/4 odotettu päätös (2 GO, 2 STOP) |
+| Kultainen ero | `rehearse.mjs --only=prodshape:chain --write-golden` | `dec6010` | ennen koko ajoa | 0014 kirjoitettu; **0009–0013 "sama", ei kirjoitettu** |
+| Ensimmäinen koko ajo (alkuperäinen 0014) | `rehearse.mjs --json=…` | `dec6010` | 08:12:35–08:20:39 | 0 hylättyä (lukitusmittausta ei vielä ollut) |
+| Lukitusvian todennus | `rehearse.mjs --only=failure:0010-locks` | `dec6010` + uusi mittaus | ennen korjausta | **3 hylättyä = löydös** → korjaus `a664514` → 0 hylättyä |
+
+Lopullisen ajon kesto (15 min) on pidempi kuin ensimmäisen (8 min):
+koneella ajettiin samaan aikaan muita töitä. Lukkojen aikarajat ovat
+palvelimen `lock_timeout`-arvoja eivätkä riipu kuormasta.
+
+## 0014: tulokset skenaarioittain
+
+| Skenaario | Tulos | 0014 |
+|---|---|---|
+| preflight | 48/48 (oli 35) | `preflight_0014` PASS vain tilassa 0013 (18 riviä, 0 FAIL); tilassa 0014 jokainen `preflight_0009…0014` FAIL |
+| rollback | 6/6 | ajo → ROLLBACK-osio (10 pudotusta lapsista vanhempiin) → katalogirivit täsmälleen samat → ajo uudelleen |
+| inventory | 45/45 (oli 38) | tila 0013 → GO, seuraava 0014; tila 0014 → GO, ei seuraavaa (rivi 23 = 153); keskeneräinen 0014 (yksi taulu) → STOP, `0014 = partial`; text ja typed |
+| upgrade:text / :typed | 14/14 | `verify_0014` 39 PASS / 0 FAIL (50 riviä, 11 INFO), `preflight_0014` 0 FAIL, ajo 306 ms; 26 vanhan taulun 92 riviä: arvot, `xmin` ja `relfilenode` ennallaan |
+| rls | 36 taulua, 427 tarkistusta, 0 hylättyä (oli 26 / 311) | 116 tarkistusta 0014:n tauluissa: A ei lue, päivitä, poista, lisää B:n nimissä (42501) eikä siirrä riviään B:lle (42501); **kuusi yhdistelmävierasavainta** (`place_aliases.place_id`, `calendar_events.place_id`/`goal_id`, `commute_observations.place_id`, `habit_events.plan_id`, `exercise_sessions.goal_id`): viittaus B:n riviin → 23503; anon 42501; ei-sub näkee 0 riviä; ei anon/PUBLIC-oikeuksia |
+| lifecycle | 54/54 (30 uutta) | Tavoitteen poisto nollaa **vain** `goal_id`:n (meno ja liikuntakerta jäävät omistajalleen: sarakekohtainen `set null (goal_id)`); paikan poisto: lisänimi ja havainto kaskadoituvat, menon `place_id` nollautuu, B:n rivit koskematta; suunnitelman poisto vie kirjaukset; toinen asetusrivi, sama heräämispäivä, sama tuntemuspäivä, `KUNTOSALI` vs. `Kuntosali` → 23505 (nimi käyttäjäkohtainen); 16 CHECK-rajaa → 23514 (koko päivä + alkuaika, ajastettu ilman alkua, loppu ilman alkua, viikonpäivä 8 tai NULL, ohitettu NULL-päivä, toisto ennen alkua, matka 0 min, motivaatio 6, hallinta 0, tuntematon kirjaus, jsonb väärää tyyppiä tai yli 8 192 tavua, `eur`, uni `deep`); havainnon `event_id` ei ole vierasavain (menon poisto ei vie havaintoa); tuntematon matka-aika = NULL; tilin poisto vie B:n rivit kaikista 36 taulusta |
+| failure | 44/44 (13 uutta) | "JO AJETTU" heti 0014:n jälkeen ja koko ketjun jälkeen (jokainen 0009–0014); 0014 ilman 0013:a ja ilman 0012+0013:a → "Migraatio 0013 pitaa ajaa ensin"; osittainen tila (taulu `saved_places`, indeksin nimi `calendar_events_user_date_idx` toisessa taulussa, rajoitteen nimi `life_settings_one_per_user` toisessa taulussa) → "kesken: 1 objektia 153:sta"; goals- ja auth.users-kirjoitus (ROW EXCLUSIVE) → lukon aikakatkaisu, katalogi ennallaan, uusi ajo läpi lukon vapauduttua; goals-lukukysely **ei estä** (läpi); ylimääräinen politiikka vanhassa taulussa → kaatuu vaiheessa 11 kaikkien kymmenen taulun luonnin jälkeen, katalogi ennallaan |
+| prodshape:fixture / values:0010 | 10/10 / 10/10 | ennallaan |
+| prodshape:chain | 6/6 | 0014 tuotannon datalla täsmälleen J:n skeemaan (tila 0013): vanhat rivit ennallaan; kultainen ero `expected/schema-diff-0014.txt`: 10 taulua, 137 saraketta, 29 indeksiä, 108 rajoitetta (88 nimettyä + 10 pääavainta + 10 omistaja-avainta), 40 politiikkaa, 10 liipaisinta; **0 poistoa, 0 funktiota, yksikään rivi ei koske vanhaa objektia** |
+| prodshape:pause | 7/7, 504 kirjoitusta | Tauko 0013 (I → J): J:n kirjoitusten jälkeen `preflight_0014` 0 FAIL. **Tauko 0014 (J → K):** elävän aallon J 52 ja aallon K 74 kirjoitusta sovelluksen omilla rivimuunnoksilla (`repo.mapping.toRow`): kaikki kymmenen taulua insert + update (+ koko päivän menon delete); `verify_0014` datan kanssa 0 FAIL; peruutuksen kuiva-ajo menee läpi (data ei estä) |
+| verify:null | 6/6 | `verify_0014`:n jokainen tarkistus on `count()` tai `coalesce()`, joten NULL-tulosta ei synny; rikottu uniikkiavain → FAIL-rivit 20 ja 24 = `poikkeavia_yhteensa` 2 |
+| preflight:blockers | 33/33 (oli 25) | Estäjä `goals`/`auth.users` → rivi 14 FAIL (ja 11 idle); ilman estäjää 0 FAIL; ylimääräinen politiikka `running_timers`-taulussa → rivi 09 FAIL (41 ≠ 40) ennen ajoa ja migraatio kaatuu kiinni; F13 `verify_0014`: vieraat taulut → 0 FAIL, rivi 36 INFO; `goals`-avain ilman CASCADEa → vain rivi 34; ilman avainta → vain rivi 35; uuden taulun (`sleep_logs`) avain ilman CASCADEa → rivit 33 ja 34 |
+| rollback:data | 4/4 | 0014 aallon K datalla (72 kirjoitusta, rivi jokaisessa kymmenessä taulussa) → ROLLBACK → katalogi = tila 0013, vanhat rivit ennallaan, `verify_0013` 0 FAIL, 0014 uudelleen läpi |
+| rollback:reverse-chain | PASS | 0008 → 0009…0014 aaltojen F–K datalla (24/27/37/45/50/72 kirjoitusta) → 0012 ennen 0013:a kaatuu vartijaan → peruutukset 0014…0009 → katalogi = tuotannon 0008 |
+| failure:0010-locks | estäjämatriisi 22/22, muut 7/7 | 0014 × goals/auth.users × luku/kirjoitus: luku läpi (369/260 ms), kirjoitus → 5 031/5 078 ms ja peruutus, **goals-estäjällä 0 DDL-komentoa**, katalogi ja rivit ennallaan, uusi ajo läpi. Uudelleenajo goals-kirjoituslukon aikana → "JO AJETTU" 40 ms:ssa. **auth.users-kirjoitus 0014:n odottaessa goals-lukkoa: 5 ms** (ennen korjausta 4 996 ms, ks. löydös) |
+| role:nonsuper | 6/6 | 0014 NOSUPERUSER-omistajana: `verify_0014` 39 PASS / 0 FAIL; kaikki 36 taulua roolin omistamia |
+| backup (`--only=backup`) | 324/324 (oli 271) | N = 0014 molemmilla lähtötiloilla 53/53: tilan 0013 kuva, 0014 + verify, vahinko, palautus eri aikavyöhykkeessä, idempotenssi, `--prune`, peukalointi, ROLLBACK(0014) + palautus → katalogi = 0013 (B9), 0014:n kuva peruutettuun skeemaan hylätään (B10), 0014 uudelleen → palautus identtinen (B11: erikoismerkit, jsonb, `smallint[]`, `date[]`, `bigint`), B12–B15 |
+
+## 0014: löydös (korjattu) — migraatio piti auth.users-lukkoa odottaessaan goals-lukkoa
+
+**Oire.** Kun sovelluksella on avoin `goals`-kirjoitus (ROW EXCLUSIVE),
+alkuperäinen 0014 (`8ba874a`) ehti luoda `saved_places`- ja
+`place_aliases`-taulut (**58 DDL-komentoa**) ja jäi sitten odottamaan
+`goals`-lukkoa `calendar_events_goal_fkey`:n kohdalla — pitäen samalla
+`auth.users`-tauluun SHARE ROW EXCLUSIVE -lukkoa (ensimmäisen taulun
+omistaja-avain). GoTruen kaltainen `auth.users`-kirjoitus
+(kirjautuminen) oli jumissa **4 981 ms** (toisella mittauksella
+4 996 ms), kunnes 0014 luovutti. Migraation otsikon väite "lukot …
+hetkeksi" ei pitänyt. Sama vikaluokka kuin 0010:n F11.
+
+**Korjaus** (`a664514`, vain `supabase/migrations/0014_daily_life.sql`):
+uusi vaihe 0d `lock table public.goals in share row exclusive mode;`
+heti uudelleenajon tunnistuksen ja `touch_updated_at`-tarkistuksen
+jälkeen, ennen ensimmäistä DDL:ää. Sama lukitustila, jonka vierasavain
+ottaisi muutenkin — ei vahvempaa lukkoa. `auth.users`-tauluun ei lisätä
+`lock table`-lausetta: Supabasessa se vaatisi postgres-roolilta
+auth-skeeman taulun muokkausoikeuden, jota ei ole todennettu.
+Objektimäärä (153), tunnistus, `preflight_0014` ja `verify_0014` ennallaan
+(`build-preflights.mjs --check`, `build-inventory.mjs --check`,
+`build-snapshots.mjs --check` ajan tasalla).
+
+**Todennus:** goals-kirjoitus estäjänä → 0 DDL-komentoa ennen
+perumista, auth.users-kirjoitus **5–6 ms**, "JO AJETTU" yhä heti
+(37–40 ms). Vertailu vanhaan versioon ajetaan joka kerta
+(`failure:0010-locks` → `authStall0014Before`, git `8ba874a`).
+Yksikkötesti `tests/pg-rehearsal-lib.test.mjs` vartioi lukituksen
+paikkaa.
+
+## 0014: tiedoksi (ei vikaa 0014:ssä; 0013 on lukittu)
+
+**0013:n peruutuksella ei ole vartijaa 0014:ää vastaan.** Omassa
+kloonissaan: 0013:n ROLLBACK-osio menee läpi 0014:n ollessa ajettu ja
+jättää 0014:n kymmenen taulua tilaan, jota juna ei tunne. 0012:lla
+vastaava vartija on (0013:a vastaan), mutta 0013:a ei muuteta.
+Turvaverkko todennettiin: inventaario pysäyttää tilan (STOP: "Migraatio
+0014 on ajettu mutta 0013 ei: järjestys on rikki."). Ohje on jo 0014:n
+ROLLBACK-otsikossa ja `MIGRATION-BUNDLES.md`:ssä: 0014 ensin, sitten 0013.
+
+## 0014: alkuperä ja generoidut tiedostot
+
+| Tiedosto | git-blob |
+|---|---|
+| `supabase/migrations/0014_daily_life.sql` | `457150dfa00b3f008d55c2ece454a2323fb69f35` (ennen korjausta `a687961f4bebad8e0f6e556242e6e7eff8243d32`) |
+| `supabase/preflight/preflight_0014.sql` | `590ccb549225151cc13418cbe594e1280cab6778` (ennallaan) |
+| `supabase/verify/verify_0014.sql` | `4db67930ccffd779d26cedf66e48d94d244b1156` (ennallaan) |
+| `supabase/backup/snapshot_state_0014.sql` | `8c775b31c20fb949ad2e2837a152eccf3f8e0113` (ennallaan) |
+| `supabase/acceptance/activation_readonly_inventory.sql` | `7072e9c1c713be8bd3e87c1750dd9f477ed295d8` (ennallaan) |
+
+0001–0013:n SQL-tiedostot ovat tavu tavulta samat kuin yllä (esim. 0013
+`3825a11a…`, `preflight_0013` `04aaf286…`, `verify_0013` `7b5b7fdb…`).
+
+Generoidut: `tools/pg-rehearsal/expected/schema-diff-0014.txt` (uusi;
+0009–0013 ennallaan), `docs/activation/SCHEMA-DIFFS-0009-0014.md`
+(nimetty uudelleen 0009-0013:sta, generaattorilla),
+`docs/activation/MIGRATION-BUNDLES.md` (blobit + 0014:n paketti),
+`tests/fixtures/activation-inventory/state-0014.json` ja
+`state-0013-partial-0014.json` (vain nämä: `--fixture-states`),
+`tests/fixtures/sql-results/{preflight,verify}_0014-{pass,fail}.tsv` +
+manifestin 0014-rivit (`--numbers=0014`: 0009–0013:n rivit ennallaan).
+Varmuuskopion fixture (`tests/fixtures/backup/state-0009.json`)
+kirjoitettiin työhakemistoon eikä repositorioon: sen SQL ei muuttunut.
+
+## 0014: toistaminen
+
+```sh
+PG_REHEARSAL_PORT=54359 node tools/pg-rehearsal/rehearse.mjs --json=raportti.json        # 18 skenaariota
+PG_REHEARSAL_PORT=54359 node tools/pg-rehearsal/rehearse.mjs --only=backup                # B1–B15, N = 0009…0014
+PG_REHEARSAL_PORT=54359 node tools/pg-rehearsal/rehearse.mjs --only=failure:0010-locks    # lukot + authStall0014
+PG_REHEARSAL_PORT=54359 node tools/pg-rehearsal/sql-result-fixtures.mjs --numbers=0014
 ```

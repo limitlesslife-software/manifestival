@@ -188,3 +188,9 @@ data-hakemisto sekä jokaisen luetun SQL-tiedoston git-blob-tiivisteen.
     B9 odotti 0010:n peruutukselta 23514:ää, vaikka vartija kieltäytyy
     ensin (P0001), ja B15 otti tilan P kuvan kannasta, jossa N oli jo
     ajettu. Korjattu: 271/271 (`docs/activation/REHEARSAL-REPORT.md`).
+11. 0014 (2026-09-27): sovelluksen avoimen `goals`-kirjoituksen aikana 0014
+    ehti luoda kaksi taulua (58 DDL-komentoa) ja piti `auth.users`-tauluun
+    SHARE ROW EXCLUSIVE -lukkoa odottaessaan `goals`-lukkoa: kirjautuminen
+    (`auth.users`-kirjoitus) jumissa 4 981 ms. Nyt `goals` lukitaan ennen
+    ensimmäistä DDL:ää: 0 DDL, kirjautuminen 5 ms (`failure:0010-locks`,
+    `authStall0014`).
