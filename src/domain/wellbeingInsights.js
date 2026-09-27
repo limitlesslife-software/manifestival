@@ -194,13 +194,13 @@ const METRICS = Object.freeze(['energy', 'mood', 'stress', 'sleepHours', 'motiva
  */
 export function windowAverages(input) {
   const { entries, checkins, fromIso, toIso, todayIso, days } = argsOf(input);
-  const window = windowOf({ fromIso, toIso, todayIso, days });
-  if (!window) return null;
-  const rows = mergeDays(entries, checkins, { fromIso: window.from, toIso: window.to });
+  const span = windowOf({ fromIso, toIso, todayIso, days });
+  if (!span) return null;
+  const rows = mergeDays(entries, checkins, { fromIso: span.from, toIso: span.to });
   const result = {
-    fromIso: window.from,
-    toIso: window.to,
-    days: dayCount(window.from, window.to),
+    fromIso: span.from,
+    toIso: span.to,
+    days: dayCount(span.from, span.to),
     reportedDays: 0
   };
   const counts = {};
@@ -288,19 +288,19 @@ export function strainSuggestion(input) {
   let days = 0;
   let text = null;
   let why = null;
-  const window = WELLBEING_RULES.STRAIN_WINDOW_DAYS;
+  const span = WELLBEING_RULES.STRAIN_WINDOW_DAYS;
   if (counts.lowEnergyDays >= WELLBEING_RULES.STRAIN_MIN_DAYS) {
     rule = STRAIN_RULE.LOW_ENERGY;
     days = counts.lowEnergyDays;
     text = 'Harkitse kuorman keventämistä tällä viikolla.';
     why = `Kuormitus oli korkea (${WELLBEING_RULES.HIGH_LOAD_MIN}–${SCALE_MAX}) ja energia matala `
-      + `(${SCALE_MIN}–${WELLBEING_RULES.LOW_ENERGY_MAX}) ${days} päivänä viimeisistä ${window} päivästä omien merkintöjesi mukaan.`;
+      + `(${SCALE_MIN}–${WELLBEING_RULES.LOW_ENERGY_MAX}) ${days} päivänä viimeisistä ${span} päivästä omien merkintöjesi mukaan.`;
   } else if (counts.lowControlDays >= WELLBEING_RULES.STRAIN_MIN_DAYS) {
     rule = STRAIN_RULE.LOW_CONTROL;
     days = counts.lowControlDays;
     text = 'Harkitse, voisiko jonkin tämän viikon asian siirtää tai jakaa.';
     why = `Kuormitus oli korkea (${WELLBEING_RULES.HIGH_LOAD_MIN}–${SCALE_MAX}) ja hallinnan tunne vähäinen `
-      + `(${SCALE_MIN}–${WELLBEING_RULES.LOW_CONTROL_MAX}) ${days} päivänä viimeisistä ${window} päivästä omien merkintöjesi mukaan.`;
+      + `(${SCALE_MIN}–${WELLBEING_RULES.LOW_CONTROL_MAX}) ${days} päivänä viimeisistä ${span} päivästä omien merkintöjesi mukaan.`;
   }
   if (rule === null) return null;
 
@@ -319,7 +319,7 @@ export function strainSuggestion(input) {
     /** Ehdotus ei koskaan muuta suunnitelmaa itsestään. */
     appliesAutomatically: false,
     metrics: Object.freeze({
-      windowDays: window,
+      windowDays: span,
       reportedDays: counts.reportedDays,
       strainedDays: days,
       plannedPercent

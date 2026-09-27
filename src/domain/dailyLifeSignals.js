@@ -214,10 +214,10 @@ function declaredOf(sleepDeclared) {
 export function sleepRhythmDrift(input) {
   const { weekStart, todayIso, sleepLogs, sleepDeclared } = argsOf(input);
   const kind = DAILY_LIFE_SIGNAL.SLEEP_RHYTHM_DRIFT;
-  const window = windowOf(weekStart, todayIso);
-  if (!window) return evaluation(kind, EVALUATION_STATUS.INSUFFICIENT_DATA, { reason: 'no_week' });
+  const span = windowOf(weekStart, todayIso);
+  if (!span) return evaluation(kind, EVALUATION_STATUS.INSUFFICIENT_DATA, { reason: 'no_week' });
   const declared = declaredOf(sleepDeclared);
-  const nights = nightsIn(sleepLogs, window.weekStart, window.end);
+  const nights = nightsIn(sleepLogs, span.weekStart, span.end);
 
   let reported = 0;
   let withActuals = 0;
@@ -254,16 +254,16 @@ export function sleepRhythmDrift(input) {
   }
 
   const metrics = {
-    windowNights: window.days,
+    windowNights: span.days,
     reportedNights: reported,
-    coveragePercent: percent(reported, window.days),
+    coveragePercent: percent(reported, span.days),
     driftNights: drifted,
     meanAbsDeviationMinutes: reported > 0 ? Math.round(absSum / reported) : null
   };
   if (reported === 0 && withActuals > 0) {
     return evaluation(kind, EVALUATION_STATUS.NO_REFERENCE, { reason: 'no_rhythm', metrics });
   }
-  if (reported < SLEEP_SIGNAL_RULES.MIN_REPORTED_NIGHTS || reported < window.days * SLEEP_SIGNAL_RULES.MIN_COVERAGE) {
+  if (reported < SLEEP_SIGNAL_RULES.MIN_REPORTED_NIGHTS || reported < span.days * SLEEP_SIGNAL_RULES.MIN_COVERAGE) {
     return evaluation(kind, EVALUATION_STATUS.INSUFFICIENT_DATA, { reason: 'few_nights', metrics });
   }
   if (drifted < SLEEP_SIGNAL_RULES.DRIFT_MIN_NIGHTS) return evaluation(kind, EVALUATION_STATUS.CLEAR, { metrics });
@@ -291,13 +291,13 @@ export function sleepRhythmDrift(input) {
 export function sleepOpportunityLow(input) {
   const { weekStart, todayIso, sleepLogs, sleepDeclared, timeZone = DEFAULT_TIME_ZONE } = argsOf(input);
   const kind = DAILY_LIFE_SIGNAL.SLEEP_OPPORTUNITY_LOW;
-  const window = windowOf(weekStart, todayIso);
-  if (!window) return evaluation(kind, EVALUATION_STATUS.INSUFFICIENT_DATA, { reason: 'no_week' });
+  const span = windowOf(weekStart, todayIso);
+  if (!span) return evaluation(kind, EVALUATION_STATUS.INSUFFICIENT_DATA, { reason: 'no_week' });
   const declared = declaredOf(sleepDeclared);
   if (declared.targetMinutes === null) {
     return evaluation(kind, EVALUATION_STATUS.NO_REFERENCE, { reason: 'no_sleep_target' });
   }
-  const nights = nightsIn(sleepLogs, window.weekStart, window.end);
+  const nights = nightsIn(sleepLogs, span.weekStart, span.end);
 
   let reported = 0;
   let short = 0;
@@ -318,16 +318,16 @@ export function sleepOpportunityLow(input) {
   const meanMinutes = reported > 0 ? Math.round(sum / reported) : null;
   const meanShortfall = meanMinutes === null ? null : Math.max(0, declared.targetMinutes - meanMinutes);
   const metrics = {
-    windowNights: window.days,
+    windowNights: span.days,
     reportedNights: reported,
-    coveragePercent: percent(reported, window.days),
+    coveragePercent: percent(reported, span.days),
     shortNights: short,
     meanMinutes,
     targetMinutes: declared.targetMinutes,
     meanShortfallMinutes: meanShortfall,
     measuredNights: measured
   };
-  if (reported < SLEEP_SIGNAL_RULES.MIN_REPORTED_NIGHTS || reported < window.days * SLEEP_SIGNAL_RULES.MIN_COVERAGE) {
+  if (reported < SLEEP_SIGNAL_RULES.MIN_REPORTED_NIGHTS || reported < span.days * SLEEP_SIGNAL_RULES.MIN_COVERAGE) {
     return evaluation(kind, EVALUATION_STATUS.INSUFFICIENT_DATA, { reason: 'few_nights', metrics });
   }
   if (short < SLEEP_SIGNAL_RULES.SHORT_MIN_NIGHTS) return evaluation(kind, EVALUATION_STATUS.CLEAR, { metrics });
@@ -354,21 +354,21 @@ export function sleepOpportunityLow(input) {
 export function wellbeingStrain(input) {
   const { weekStart, todayIso, wellbeingEntries, wellbeingCheckins } = argsOf(input);
   const kind = DAILY_LIFE_SIGNAL.WELLBEING_STRAIN;
-  const window = windowOf(weekStart, todayIso);
-  if (!window || window.days === 0) return evaluation(kind, EVALUATION_STATUS.INSUFFICIENT_DATA, { reason: 'no_week' });
+  const span = windowOf(weekStart, todayIso);
+  if (!span || span.days === 0) return evaluation(kind, EVALUATION_STATUS.INSUFFICIENT_DATA, { reason: 'no_week' });
   const counts = strainCounts({
-    entries: wellbeingEntries, checkins: wellbeingCheckins, fromIso: window.weekStart, toIso: window.end
+    entries: wellbeingEntries, checkins: wellbeingCheckins, fromIso: span.weekStart, toIso: span.end
   });
   const metrics = {
-    windowDays: window.days,
+    windowDays: span.days,
     reportedDays: counts.reportedDays,
-    coveragePercent: percent(counts.reportedDays, window.days),
+    coveragePercent: percent(counts.reportedDays, span.days),
     strainedDays: counts.strainedDays,
     lowEnergyDays: counts.lowEnergyDays,
     lowControlDays: counts.lowControlDays
   };
   if (counts.reportedDays < WELLBEING_SIGNAL_RULES.MIN_REPORTED_DAYS
-    || counts.reportedDays < window.days * WELLBEING_SIGNAL_RULES.MIN_COVERAGE) {
+    || counts.reportedDays < span.days * WELLBEING_SIGNAL_RULES.MIN_COVERAGE) {
     return evaluation(kind, EVALUATION_STATUS.INSUFFICIENT_DATA, { reason: 'few_days', metrics });
   }
   if (counts.strainedDays < WELLBEING_SIGNAL_RULES.STRAIN_MIN_DAYS) return evaluation(kind, EVALUATION_STATUS.CLEAR, { metrics });
@@ -454,8 +454,8 @@ function compareSignals(a, b) {
  */
 export function dailyLifeSignals(input) {
   const args = argsOf(input);
-  const window = windowOf(args.weekStart, args.todayIso);
-  if (!window) return null;
+  const span = windowOf(args.weekStart, args.todayIso);
+  if (!span) return null;
   const evaluations = [
     sleepOpportunityLow(args),
     sleepRhythmDrift(args),
@@ -464,10 +464,10 @@ export function dailyLifeSignals(input) {
   ];
   const signals = evaluations.filter(e => e.signal !== null).map(e => e.signal).sort(compareSignals);
   return Object.freeze({
-    weekStart: window.weekStart,
-    weekEnd: window.weekEnd,
-    windowEnd: window.end,
-    windowDays: window.days,
+    weekStart: span.weekStart,
+    weekEnd: span.weekEnd,
+    windowEnd: span.end,
+    windowDays: span.days,
     signals: Object.freeze(signals),
     evaluations: Object.freeze(evaluations)
   });

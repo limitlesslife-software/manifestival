@@ -121,13 +121,13 @@ test('aika unelle: keskiyön jälkeinen nukkumaanmeno, päiväuni ja mitattu uni
   const logs = [
     night('2026-06-08', '00:30', '07:00'),
     night('2026-06-09', '09:00', '15:00'), // yövuoro: saman päivän uni
-    night('2026-06-10', '23:00', '07:00', { kind: 'measured' }),
+    night('2026-06-10', '23:30', '06:30', { kind: 'measured' }), // 7 h: kolmas lyhyt yö
     night('2026-06-11', '07:00', '07:00') // nollakesto ohitetaan
   ];
   const e = sleepOpportunityLow({ weekStart: WEEK, todayIso: '2026-06-11', sleepLogs: logs, sleepDeclared: DECLARED });
   assert.equal(e.metrics.reportedNights, 3);
   assert.equal(e.metrics.measuredNights, 1);
-  assert.equal(e.metrics.meanMinutes, Math.round((390 + 360 + 480) / 3));
+  assert.equal(e.metrics.meanMinutes, Math.round((390 + 360 + 420) / 3));
   assert.match(e.signal.explanation, /^Aikaa unelle tai mitattua unta/);
 });
 
