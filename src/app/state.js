@@ -114,6 +114,18 @@ function initialState() {
     /** Ilmoitushistoria. Ei säily ennen migraatiota 0011. */
     notices: [],
 
+    /**
+     * Käyttäjän poistamien ilmoitusten avaimet tämän istunnon ajan.
+     *
+     * "Poista" vie rivin tilasta ja kannasta, mutta kierros (30 s välein)
+     * loisi saman avaimen uudelleen lukemattomana niin kauan kuin ehto on
+     * voimassa. Kirjaus torjuu sen addNoticeToState-funktiossa, jonka
+     * kautta JOKAINEN luontipolku kulkee. Vain muistissa: kannassa ei ole
+     * saraketta piilotetulle riville, ja uloskirjautuminen (resetState)
+     * unohtaa kirjauksen.
+     */
+    deletedNoticeKeys: [],
+
     /** Matkasuunnitelmat. Ei säily ennen migraatiota 0011. */
     travelPlans: [],
 
@@ -1037,13 +1049,47 @@ export function setNotices(notices) {
  *
  * Kaksoiskappaleiden esto on tässä ensimmäinen este ja kannan
  * `notices_key_unique` toinen. Palauttaa `true`, jos rivi syntyi.
+ *
+ * Käyttäjän tässä istunnossa poistama avain lasketaan olemassa olevaksi:
+ * poistettu ilmoitus ei palaa lukemattomana, vaikka ehto olisi voimassa.
  */
 export function addNoticeToState(notice) {
   const normalized = normalizeNotice(notice);
   if (!normalized.key) return false;
   if (state.notices.some(n => n.key === normalized.key)) return false;
+  if (state.deletedNoticeKeys.includes(normalized.key)) return false;
   commit({ notices: [...state.notices, normalized] });
   return true;
+}
+
+/**
+ * Käyttäjän "Poista": rivi pois tilasta ja avain kirjatuksi poistetuksi.
+ *
+ * Yksi muutos, jotta mikään kierros ei ehdi väliin tilaan, jossa rivi on
+ * poissa mutta avain vapaana. Ei koske removeNoticeFromState-funktioon:
+ * sitä käytetään myös epäonnistuneen luonnin peruutukseen, jolloin avain
+ * EI ole käyttäjän poistama.
+ *
+ * @returns {object|null} poistettu ilmoitus palautusta varten
+ */
+export function deleteNoticeFromState(id) {
+  const notice = findNotice(id);
+  if (!notice) return null;
+  const keys = state.deletedNoticeKeys;
+  commit({
+    notices: state.notices.filter(n => n.id !== id),
+    deletedNoticeKeys: notice.key && !keys.includes(notice.key) ? [...keys, notice.key] : keys
+  });
+  return notice;
+}
+
+/** Kumoa deleteNoticeFromState: kannan poisto epäonnistui, rivi palaa. */
+export function restoreDeletedNotice(notice) {
+  const normalized = normalizeNotice(notice);
+  batch(() => {
+    commit({ deletedNoticeKeys: state.deletedNoticeKeys.filter(key => key !== normalized.key) });
+    addNoticeToState(normalized);
+  });
 }
 
 export function replaceNoticeInState(id, notice) {

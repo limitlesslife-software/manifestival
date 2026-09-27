@@ -62,7 +62,7 @@ import {
   addReminderToState, replaceReminderInState, removeReminderFromState,
   findReminder, replaceRemindersInState,
   addNoticeToState, replaceNoticeInState, removeNoticeFromState, findNotice,
-  replaceNoticesInState,
+  replaceNoticesInState, deleteNoticeFromState, restoreDeletedNotice,
   addTravelPlanToState, replaceTravelPlanInState, removeTravelPlanFromState,
   findTravelPlan,
   addLocationRuleToState, replaceLocationRuleInState, removeLocationRuleFromState,
@@ -307,7 +307,9 @@ export async function runReminderSweep({ now = new Date() } = {}) {
   const today = todayIso();
   const minutes = nowMinutes(now);
 
-  const deliveredKeys = new Set(state.notices.map(n => n.key).filter(Boolean));
+  // Käyttäjän poistama ilmoitus on näytetty: sen avain ei hälytä uudelleen.
+  const deliveredKeys = new Set([...state.notices.map(n => n.key), ...state.deletedNoticeKeys]
+    .filter(Boolean));
 
   const { alerts, expired, orphaned } = evaluateReminders({
     reminders: state.reminders,
@@ -466,16 +468,23 @@ export async function pruneNoticeHistory() {
   return removed.length;
 }
 
-/** Poista yksi ilmoitus. */
+/**
+ * Poista yksi ilmoitus.
+ *
+ * POISTETTU EI PALAA. Kierrokset ajetaan 30 sekunnin välein, ja niin
+ * kauan kuin ilmoituksen ehto on voimassa (muistutus toimitettu,
+ * myöhästymisehdotus, iltailmoitus, lähtö), sama avain syntyisi
+ * uudelleen lukemattomana. Siksi avain kirjataan poistetuksi
+ * (deleteNoticeFromState), ja jokainen luontipolku kunnioittaa kirjausta.
+ * Epäonnistunut kannan poisto palauttaa sekä rivin että avaimen.
+ */
 export async function deleteNotice(id) {
-  const notice = findNotice(id);
+  const notice = deleteNoticeFromState(id);
   if (!notice) return false;
-
-  removeNoticeFromState(id);
 
   const result = await noticesRepo.remove(id);
   if (!result.ok) {
-    addNoticeToState(notice);
+    restoreDeletedNotice(notice);
     showError(result.error);
     return false;
   }
