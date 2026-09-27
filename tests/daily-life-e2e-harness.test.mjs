@@ -288,7 +288,9 @@ test('arjen E2E: tuotanto estetään DNS-tasolla, jokainen pyyntö kirjataan ja 
 test('arjen E2E: debug-portti todennetaan vapaaksi; profiili tmp/:ssä ja sen poisto on tulosrivi', () => {
   assert.match(RUNNER, /if \(await cdpReachable\(debugPort\)\) throw/);
   assert.match(RUNNER, /--user-data-dir=\$\{profile\}/);
-  assert.match(RUNNER, /path\.join\(ROOT, 'tmp', `e2e-daily-chrome-/);
+  // Yhteinen ajo (runE2E): arjen E2E käyttää tunnistetta 'daily', mielen kuorman E2E 'mental-load'.
+  assert.match(RUNNER, /path\.join\(ROOT, 'tmp', `e2e-\$\{profileTag\}-chrome-/);
+  assert.match(RUNNER, /profileTag = 'daily'/);
   assert.match(RUNNER, /fs\.rmSync\(profile/);
   assert.match(RUNNER, /väliaikainen Chrome-profiili poistettu/);
   // Oma selain lapsiprosesseineen suljetaan (vain oma pid), jotta ne eivät lukitse profiilia.
@@ -298,7 +300,7 @@ test('arjen E2E: debug-portti todennetaan vapaaksi; profiili tmp/:ssä ja sen po
   assert.match(RUNNER, /const name = path\.basename\(profile\)/);
   assert.match(RUNNER, /CommandLine -like '\*\$\{name\}\*'/);
   // Irrallinen siivoaja koskee vain tämän ajon profiilia projektin tmp/:ssä.
-  assert.match(RUNNER, /path\.dirname\(profile\) === path\.join\(ROOT, 'tmp'\) && \/\^e2e-daily-chrome-\\d\+-\\d\+\$\/\.test/);
+  assert.match(RUNNER, /path\.dirname\(profile\) === path\.join\(ROOT, 'tmp'\) && \/\^e2e-\[a-z-\]\+-chrome-\\d\+-\\d\+\$\/\.test/);
   assert.match(RUNNER, /browser\.exitCode !== null/, 'oma Chrome ei sammunut ennen yhteyttä');
   assert.match(RUNNER, /Page\.reload/);
   assert.match(RUNNER, /Input\.insertText/);
@@ -417,5 +419,7 @@ test('cdp.mjs: Suunta E2E käyttää samoja apureita (siirretty sellaisenaan) ja
   assert.equal(/^class Cdp|^const HELPERS = `/m.test(SUUNTA_RUNNER), false, 'ei kahta kopiota');
   assert.match(PAGE_HELPERS, /^window\.H = \{/m);
   assert.match(PAGE_HELPERS, /idle: \(sel, label\) =>/);
-  assert.match(RUNNER, /await evaluate\(PAGE_HELPERS\);\s*await evaluate\(DAILY_HELPERS\);/);
+  // Yhteinen ajo (runE2E): PAGE_HELPERS aina, sitten ajon omat apurit (oletus DAILY_HELPERS).
+  assert.match(RUNNER, /await evaluate\(PAGE_HELPERS\);\s*for \(const helper of helpers\) await evaluate\(helper\);/);
+  assert.match(RUNNER, /helpers = \[DAILY_HELPERS\]/);
 });
