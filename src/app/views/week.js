@@ -19,7 +19,7 @@ import {
 } from '../../domain/week.js';
 import { expandRoutines } from '../../domain/routine.js';
 import { buildWeeklyReview, summarizeReview } from '../../domain/review.js';
-import { el, maybe, setText } from '../../ui/dom.js';
+import { el, maybe } from '../../ui/dom.js';
 import { getState, setWeekStart, showCalendarDay } from '../state.js';
 import { toggleComplete } from '../actions.js';
 import { openEditForm } from './tasks.js';
@@ -279,7 +279,11 @@ export function renderWeek() {
   const isoDays = weekDayIsoList(state.weekStart);
   const todayIso = fmtISO(todayMidnight());
 
-  setText('weekRangeLabel', `Viikko ${isoWeekNumber(state.weekStart)} · ${weekRangeLabel(state.weekStart)}`);
+  // Otsikko on live-alue (Kalenteri-välilehti): kirjoitetaan vain muuttuessa,
+  // ettei sama viikko kuulu ruudunlukijalla jokaisella piirrolla.
+  const title = maybe('weekRangeLabel');
+  const label = `Viikko ${isoWeekNumber(state.weekStart)} · ${weekRangeLabel(state.weekStart)}`;
+  if (title && title.textContent !== label) title.textContent = label;
 
   const routineOccurrences = expandRoutines({
     routines: state.routines,

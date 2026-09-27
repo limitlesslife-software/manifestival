@@ -20,7 +20,7 @@
 // Moderni kaava: merkintä renderHtml-funktiolla (fokus säilyy), kuuntelijat
 // delegoidaan kerran initCalendar()-funktiossa staattisiin säiliöihin.
 
-import { el, maybe, setText, toggle, renderHtml, setHtml } from '../../ui/dom.js';
+import { el, maybe, toggle, renderHtml, setHtml } from '../../ui/dom.js';
 import { notify } from '../../ui/toast.js';
 import { escapeHtml, capitalize } from '../../lib/format.js';
 import { fmtISO, parseISO, todayMidnight, startOfWeek } from '../../lib/datetime.js';
@@ -475,6 +475,17 @@ function syncSegments(view) {
   }
 }
 
+/**
+ * Teksti vain muuttuessa. Otsikko on live-alue (aria-live="polite"), jotta
+ * ruudunlukija kertoo uuden päivän nuolen painalluksen jälkeen; sama teksti
+ * ei saa kuulua uudelleen jokaisella piirrolla.
+ */
+function setLabel(id, value) {
+  const node = maybe(id);
+  const label = String(value ?? '');
+  if (node && node.textContent !== label) node.textContent = label;
+}
+
 function syncHeader(state, view, today) {
   toggle('calNav', view !== 'week', 'flex');
   toggle('calWeekNav', view === 'week', 'flex');
@@ -483,14 +494,14 @@ function syncHeader(state, view, today) {
   const next = el('calNext');
   if (view === 'month') {
     const month = state.calendarDate.slice(0, 7);
-    setText('calEyebrow', month === today.slice(0, 7) ? 'Tämä kuukausi' : '');
-    setText('calTitle', capitalize(monthLabel(month)));
+    setLabel('calEyebrow', month === today.slice(0, 7) ? 'Tämä kuukausi' : '');
+    setLabel('calTitle', capitalize(monthLabel(month)));
     prev.setAttribute('aria-label', 'Edellinen kuukausi');
     next.setAttribute('aria-label', 'Seuraava kuukausi');
     return;
   }
-  setText('calEyebrow', relativeDayLabel(state.calendarDate, today));
-  setText('calTitle', dayTitle(state.calendarDate, today));
+  setLabel('calEyebrow', relativeDayLabel(state.calendarDate, today));
+  setLabel('calTitle', dayTitle(state.calendarDate, today));
   prev.setAttribute('aria-label', 'Edellinen päivä');
   next.setAttribute('aria-label', 'Seuraava päivä');
 }

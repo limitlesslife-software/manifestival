@@ -32,7 +32,7 @@ import {
 } from './actions.js';
 import { updatePreferences } from './notifications.js';
 import { switchTab } from './navigation.js';
-import { setViewDate, setWeekStart } from './state.js';
+import { setViewDate, setWeekStart, setCalendarView } from './state.js';
 import { INTENT } from '../ai/intentSchema.js';
 import { applyShift } from './aiCommands.js';
 import { parseISO, startOfWeek } from '../lib/datetime.js';
@@ -167,6 +167,9 @@ export const handlers = Object.freeze({
 
   [INTENT.SHOW_WEEK_PLAN]: async ({ payload }) => {
     setWeekStart(startOfWeek(parseISO(payload.date)));
+    // Kalenteri-välilehti avautuu oletuksena Päivä-osioon: viikkopyyntö
+    // näyttää Viikko-osion.
+    setCalendarView('week');
     switchTab('screen-week');
     return { ok: true };
   }

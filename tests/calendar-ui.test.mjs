@@ -42,6 +42,8 @@ import {
   defaultEventDate
 } from '../src/app/views/calendarForm.js';
 import { renderWeek, initWeekNavigation, isoWeekNumber } from '../src/app/views/week.js';
+import { handlers } from '../src/app/aiCommandHandlers.js';
+import { INTENT } from '../src/ai/intentSchema.js';
 import { closeConfirmDialogs } from '../src/ui/confirm.js';
 import { clearToasts } from '../src/ui/toast.js';
 import { buildDayPlan } from '../src/domain/scheduler.js';
@@ -579,6 +581,15 @@ test('osiot: viikko näyttää kalenterin päivän viikon, ja paluu pitää päi
   byId('segmentCalMonth').click();
   assert.equal(getState().calendarDate, TUESDAY, 'tällä viikolla -> tämä päivä');
   assert.equal(text(byId('calTitle')), 'Syyskuu 2026');
+});
+
+test('puhe- ja AI-komento "näytä viikko" avaa Kalenterin Viikko-osion, ei oletuksena olevaa Päivää', async () => {
+  resetState();
+  assert.equal(getState().calendarView, 'day');
+  const result = await handlers[INTENT.SHOW_WEEK_PLAN]({ payload: { date: '2026-10-02' } });
+  assert.equal(result.ok, true);
+  assert.deepEqual([getState().screen, getState().calendarView], ['screen-week', 'week']);
+  assert.equal(getState().weekStart.getDate(), 28, 'perjantain viikko alkaa maanantaista 28.9.');
 });
 
 test('viikon päivän napautus avaa saman päivän Päivä-osion ja fokus siirtyy otsikkoon', (t) => {
