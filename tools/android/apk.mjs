@@ -29,10 +29,17 @@ export const APPLICATION_ID_PLACEHOLDER = '${applicationId}';
 /**
  * YHDISTETYN (merged) APK-manifestin luvat — TÄSMÄLLEEN nämä.
  *
- * Lähdemanifesti (android/app/src/main/AndroidManifest.xml) julistaa vain
- * INTERNETin ja RECORD_AUDIOn. RECORD_AUDIO on repon oman natiivin
- * SpeechPluginin (rekisteröity MainActivityssä) tarve; ajonaikainen lupa
- * pyydetään vasta kun käyttäjä napauttaa mikrofonia. Sijaintilupia ei ole.
+ * Lähdemanifesti (android/app/src/main/AndroidManifest.xml) julistaa
+ * INTERNETin, RECORD_AUDIOn ja herätysten luvat. RECORD_AUDIO on repon oman
+ * natiivin SpeechPluginin (rekisteröity MainActivityssä) tarve; ajonaikainen
+ * lupa pyydetään vasta kun käyttäjä napauttaa mikrofonia. Sijaintilupia ei ole.
+ *
+ * Herätys (repon oma AlarmPlugin, AlarmService, BootReceiver):
+ *   RECEIVE_BOOT_COMPLETED, SCHEDULE_EXACT_ALARM, POST_NOTIFICATIONS,
+ *   WAKE_LOCK (nämä tulevat myös muistutusliitännäisestä),
+ *   USE_FULL_SCREEN_INTENT (lukitusnäkymä; Android 14+ tarkistaa
+ *   canUseFullScreenIntent), FOREGROUND_SERVICE ja
+ *   FOREGROUND_SERVICE_MEDIA_PLAYBACK (soiva herätys ja puhe; vain toisto).
  *
  * Loput tulevat kirjastojen manifesteista yhdistämisessä:
  *   @capacitor/local-notifications: RECEIVE_BOOT_COMPLETED, WAKE_LOCK,
@@ -50,20 +57,48 @@ export const APK_PERMISSION_ALLOWLIST = Object.freeze([
   'android.permission.WAKE_LOCK',
   'android.permission.POST_NOTIFICATIONS',
   'android.permission.SCHEDULE_EXACT_ALARM',
+  'android.permission.USE_FULL_SCREEN_INTENT',
+  'android.permission.FOREGROUND_SERVICE',
+  'android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK',
   'android.permission.ACCESS_NETWORK_STATE',
   '${applicationId}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION'
+]);
+
+/**
+ * Etualapalvelun tyypit, joita EI saa olla. Sallittu on vain
+ * mediaPlayback (herätyksen ääni ja puhe). Erityisesti mikrofonin
+ * etualapalvelu on kielletty: taustakuuntelua ei ole eikä tule.
+ */
+export const APK_FORBIDDEN_FOREGROUND_SERVICE_TYPES = Object.freeze([
+  'android.permission.FOREGROUND_SERVICE_MICROPHONE',
+  'android.permission.FOREGROUND_SERVICE_LOCATION',
+  'android.permission.FOREGROUND_SERVICE_CAMERA',
+  'android.permission.FOREGROUND_SERVICE_DATA_SYNC',
+  'android.permission.FOREGROUND_SERVICE_SPECIAL_USE',
+  'android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION',
+  'android.permission.FOREGROUND_SERVICE_PHONE_CALL',
+  'android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE',
+  'android.permission.FOREGROUND_SERVICE_HEALTH',
+  'android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING',
+  'android.permission.FOREGROUND_SERVICE_SYSTEM_EXEMPTED'
 ]);
 
 /**
  * Luvat, joita APK:ssa EI saa olla. Päällekkäinen varmistus sallitun
  * joukon kanssa: selkeämpi virheilmoitus ja suoja sille, että joku lisää
  * näistä yhden sallittuihin. `*` = etuliite.
+ *
+ * USE_EXACT_ALARM (automaattisesti myönnetty herätyslupa) on kielletty:
+ * Play sallii sen vain sovelluksille, joiden päätehtävä on herätyskello tai
+ * kalenteri. Tarkat herätykset kulkevat SCHEDULE_EXACT_ALARMilla, jonka
+ * käyttäjä myöntää itse.
  */
 export const APK_FORBIDDEN_PERMISSIONS = Object.freeze([
   'android.permission.ACCESS_BACKGROUND_LOCATION',
   'android.permission.ACCESS_COARSE_LOCATION',
   'android.permission.ACCESS_FINE_LOCATION',
-  'android.permission.FOREGROUND_SERVICE*',
+  ...APK_FORBIDDEN_FOREGROUND_SERVICE_TYPES,
+  'android.permission.USE_EXACT_ALARM',
   'android.permission.CAMERA',
   'android.permission.MODIFY_AUDIO_SETTINGS',
   'android.permission.READ_EXTERNAL_STORAGE',
@@ -76,12 +111,13 @@ export const APK_DECLARED_PERMISSIONS = Object.freeze([
 ]);
 
 /**
- * Pakettien näkyvyys (<queries>): puheentunnistuspalvelu. Ilman tätä
- * Android 11+ piilottaa RecognitionServicen sovellukselta, eikä
- * SpeechPlugin löydä tunnistinta.
+ * Pakettien näkyvyys (<queries>): puheentunnistuspalvelu ja puhesynteesi.
+ * Ilman näitä Android 11+ piilottaa RecognitionServicen (SpeechPlugin ei
+ * löydä tunnistinta) ja puhemoottorin (herätyksen puhe ei kuulu).
  */
 export const REQUIRED_QUERY_INTENT_ACTIONS = Object.freeze([
-  'android.speech.RecognitionService'
+  'android.speech.RecognitionService',
+  'android.intent.action.TTS_SERVICE'
 ]);
 
 /**

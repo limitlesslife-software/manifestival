@@ -10,9 +10,10 @@
 //   - uses-permission-joukko on APK_PERMISSION_ALLOWLISTin osajoukko
 //   - RECORD_AUDIO on mukana (repon oma SpeechPlugin)
 //   - ei yhtään sijaintilupaa (ACCESS_*LOCATION) eikä kiellettyä lupaa
-//   - <queries> sisältää android.speech.RecognitionService
-// ja MainActivitylta, että se rekisteröi SpeechPluginin ennen
-// super.onCreatea (muuten liitännäinen ei päädy siltaan).
+//   - <queries> sisältää android.speech.RecognitionService ja
+//     android.intent.action.TTS_SERVICE
+// ja MainActivitylta, että se rekisteröi SpeechPluginin ja AlarmPluginin
+// ennen super.onCreatea (muuten liitännäinen ei päädy siltaan).
 //
 // Puhdas: saa tiedostojen SISÄLLÖN merkkijonoina.
 
@@ -98,12 +99,26 @@ function javaCode(source) {
     .split(/\r?\n/).filter(line => !line.trim().startsWith('//')).join('\n');
 }
 
-/** Rekisteröikö MainActivity SpeechPluginin ENNEN super.onCreatea? */
-export function registersSpeechPlugin(mainActivitySource) {
+/** Repon omat natiiviliitännäiset, jotka MainActivityn on rekisteröitävä ennen super.onCreatea. */
+export const REQUIRED_PLUGIN_CLASSES = Object.freeze(['SpeechPlugin', 'AlarmPlugin']);
+
+/** Rekisteröikö MainActivity annetun liitännäisluokan ENNEN super.onCreatea? */
+export function registersPlugin(mainActivitySource, className) {
+  if (!/^[A-Z]\w*$/.test(String(className))) return false;
   const code = javaCode(mainActivitySource);
-  const register = code.search(/registerPlugin\(\s*SpeechPlugin\.class\s*\)/);
+  const register = code.search(new RegExp(`registerPlugin\\(\\s*${className}\\.class\\s*\\)`));
   const superCreate = code.indexOf('super.onCreate(');
   return register > -1 && superCreate > -1 && register < superCreate;
+}
+
+/** Rekisteröikö MainActivity SpeechPluginin ENNEN super.onCreatea? */
+export function registersSpeechPlugin(mainActivitySource) {
+  return registersPlugin(mainActivitySource, 'SpeechPlugin');
+}
+
+/** Rekisteröikö MainActivity AlarmPluginin (herätys) ENNEN super.onCreatea? */
+export function registersAlarmPlugin(mainActivitySource) {
+  return registersPlugin(mainActivitySource, 'AlarmPlugin');
 }
 
 /**
@@ -133,8 +148,12 @@ export function sourceManifestProblems({ manifest, mainActivity }) {
     if (missingQueries.length) problems.push('<queries><intent><action> puuttuu: ' + missingQueries.join(', '));
   }
   if (mainActivity === null || mainActivity === undefined) problems.push(`${MAIN_ACTIVITY} puuttuu`);
-  else if (!registersSpeechPlugin(mainActivity)) {
-    problems.push('MainActivity ei rekisteröi SpeechPluginia ennen super.onCreatea');
+  else {
+    for (const className of REQUIRED_PLUGIN_CLASSES) {
+      if (!registersPlugin(mainActivity, className)) {
+        problems.push(`MainActivity ei rekisteröi ${className}ia ennen super.onCreatea`);
+      }
+    }
   }
   return problems;
 }

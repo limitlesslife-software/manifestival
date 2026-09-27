@@ -203,16 +203,16 @@ export function runPreflight(options, deps) {
     : 'android/app/build.gradle ei lue versio-ominaisuuksia: cherry-pickaa versiointicommit ehdokkaalle '
       + '(muuttaa kärjen SHA:n → train-map --write ja activation:verify-wave)'));
 
-  // Lähdemanifesti ja MainActivity: puhe- ja sijaintimuutokset ehdokkaalla.
+  // Lähdemanifesti ja MainActivity: puhe-, herätys- ja sijaintimuutokset ehdokkaalla.
   // Ilman tätä virhe paljastuisi vasta verify-apk:ssa Gradle-koonnin jälkeen.
   const manifestProblems = sourceManifestProblems({
     manifest: tryRead(SOURCE_MANIFEST), mainActivity: tryRead(MAIN_ACTIVITY)
   });
   checks.push(check('manifest.source', manifestProblems.length === 0, manifestProblems.length
-    ? manifestProblems.join('; ') + '. Ehdokkaalta puuttuvat puhe- ja sijaintimuutokset: cherry-pickaa ne '
+    ? manifestProblems.join('; ') + '. Ehdokkaalta puuttuvat puhe-, herätys- tai sijaintimuutokset: cherry-pickaa ne '
       + '(muuttaa kärjen SHA:n → train-map --write ja activation:verify-wave)'
-    : `${SOURCE_MANIFEST}: ${SPEECH_PERMISSION}, <queries> RecognitionService, ei sijaintilupia; `
-      + 'MainActivity rekisteröi SpeechPluginin'));
+    : `${SOURCE_MANIFEST}: ${SPEECH_PERMISSION}, <queries> RecognitionService ja TTS_SERVICE, ei sijaintilupia; `
+      + 'MainActivity rekisteröi SpeechPluginin ja AlarmPluginin'));
 
   // node_modules: Capacitorin gradle-projektit ja CLI.
   const needed = ['node_modules/@capacitor/android/capacitor/build.gradle', 'node_modules/@capacitor/cli/package.json'];
