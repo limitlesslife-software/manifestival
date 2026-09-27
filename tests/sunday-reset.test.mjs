@@ -277,6 +277,7 @@ test('B: "Järjestä saapuvat" vie Tekeminen → Saapuvat ja "Palaa nollaukseen"
   assert.equal(getState().tasksSegment, 'inbox');
   const resume = $('sundayResetResume');
   assert.equal(resume.hidden, false);
+  assert.equal(doc.activeElement, resume, 'fokus paluunappiin, ei piiloon jääneeseen Suuntaan');
   await click(resume);
   assert.equal($('sundayResetDialog').open, true);
   assert.equal(stepKey(), 'sort');
@@ -651,6 +652,50 @@ test('koko polku ohituksin: jokainen vaihe on ohitettavissa ja viikko sulkeutuu'
   assert.ok(plan && plan.closedAt);
   assert.equal(plan.plannedMinutes, 0);
   assert.equal(getState().weeklyCapacities.length, 0, 'ohitettu kapasiteetti ei tallennu');
+});
+
+test('ilman <dialog>-tukea (tynkä-DOM) nollaus avautuu open-attribuutilla ja sulkeutuu', (t) => {
+  freezeLocalDate(t, SUNDAY);
+  // Sama tynkäkuvio kuin life-alignment-ui-v2.test.mjs:ssä: ei showModalia.
+  const ids = new Set([...HTML.matchAll(/\bid="([^"]+)"/g)].map(m => m[1]));
+  const nodes = new Map();
+  const stub = id => {
+    const attributes = {};
+    const listeners = {};
+    return {
+      id, innerHTML: '', textContent: '', hidden: false, open: false, dataset: {},
+      setAttribute: (k, v) => { attributes[k] = String(v); }, getAttribute: k => attributes[k] ?? null,
+      removeAttribute: k => { delete attributes[k]; }, addEventListener: (type, fn) => { (listeners[type] ||= []).push(fn); },
+      focus() { globalThis.document.activeElement = this; }, querySelector: () => null, querySelectorAll: () => [], contains: () => false
+    };
+  };
+  const saved = globalThis.document;
+  globalThis.document = {
+    activeElement: null,
+    getElementById: id => (ids.has(id) ? (nodes.get(id) || nodes.set(id, stub(id)).get(id)) : null)
+  };
+  try {
+    rebindSundayResetForTests();
+    const opened = openSundayReset();
+    assert.deepEqual(opened, { weekStart: WEEK, step: 'dump' });
+    const dialog = globalThis.document.getElementById('sundayResetDialog');
+    assert.equal(dialog.open, true);
+    assert.equal(dialog.getAttribute('open'), '');
+    assert.match(globalThis.document.getElementById('sundayResetCard').innerHTML, /Mitä sinulla on mielessä\?/);
+    closeSundayReset();
+    assert.equal(dialog.open, false);
+    assert.equal(isSundayResetOpen(), false);
+    assert.equal(sundayResetSession().step, 'dump', 'eteneminen säilyy');
+  } finally {
+    globalThis.document = saved;
+  }
+});
+
+test('renderSundayResetEntry ilman säiliötä kertoo vain näkyvyyden', (t) => {
+  freezeLocalDate(t, '2026-10-07');
+  assert.equal(renderSundayResetEntry(null), false, 'keskiviikkona ei korttia');
+  assert.equal(renderSundayResetEntry(null, { now: new Date(2026, 9, 4, 18, 0) }), true, 'sunnuntai-iltana kortti');
+  assert.equal(renderSundayResetEntry(null, { now: new Date(2026, 9, 5, 8, 30) }), true, 'maanantaiaamuna kortti');
 });
 
 test('plannedMinutesForWeek: vain kohdeviikon keskeneräiset, näkyvät tehtävät', () => {

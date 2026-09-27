@@ -1171,6 +1171,9 @@ function openInbox() {
   setTasksSegment('inbox');
   switchTab('screen-tasks');
   showResume(true);
+  // Fokus ei putoa piiloon jääneeseen Suuntaan: paluunappi on seuraava askel.
+  const resume = maybe('sundayResetResume');
+  if (resume && typeof resume.focus === 'function') resume.focus();
 }
 
 function adjustCapacity(deltaHours) {
