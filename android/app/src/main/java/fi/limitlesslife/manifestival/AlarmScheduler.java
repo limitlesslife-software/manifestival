@@ -11,9 +11,11 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TimeZone;
 
 /**
@@ -160,6 +162,9 @@ final class AlarmScheduler {
      *   (AlarmMath.MAX_LATE_MS) sisalla, ajastetaan heti: epatarkka heratys
      *   voi tulla minuutteja myohassa, eika synkronointi saa pyyhkia sita
      *   ennen laukeamista. Yli rajan myohassa oleva kirjataan "missed".
+     * - Jo soinut esiintyma (laukeamistieto kopioitu vanhasta): EI ajasteta
+     *   uudelleen, vaikka vyohykkeen vaihto siirtaisi sen hetken eteenpain
+     *   (koodi "fired"). Se pysyy tallessa, jotta tieto sailyy.
      *
      * @param incoming tarkistetut merkinnat (AlarmPlugin.parseEntry), tunnisteet uniikit
      */
@@ -167,6 +172,7 @@ final class AlarmScheduler {
         Outcome outcome = new Outcome();
         Map<String, JSONObject> stored = AlarmStore.entries(context);
         Map<String, JSONObject> next = new LinkedHashMap<>();
+        Set<String> kept = new HashSet<>();
 
         for (JSONObject entry : incoming) {
             String id = entry.optString("id");
@@ -204,15 +210,20 @@ final class AlarmScheduler {
                 continue;
             }
             next.put(id, entry);
+            if (plan == AlarmMath.Restore.KEEP) {
+                kept.add(id);
+                outcome.dropped.add(new String[] { id, "fired" });
+            }
         }
 
-        // Ensin pois ne, joita ei enaa haluta; sitten (uudelleen)ajastus.
+        // Ensin pois ne, joita ei enaa haluta (ja jo soineet); sitten (uudelleen)ajastus.
         for (String id : stored.keySet()) {
-            if (!next.containsKey(id)) disarm(context, id);
+            if (!next.containsKey(id) || kept.contains(id)) disarm(context, id);
         }
         List<String> failed = new ArrayList<>();
         for (JSONObject entry : next.values()) {
             String id = entry.optString("id");
+            if (kept.contains(id)) continue;
             // Eraantynyt mutta rajan sisalla: heti (ARM_NOW), muuten omaan hetkeensa.
             String result = arm(context, entry, Math.max(targetOf(entry), now));
             put(entry, "exact", RESULT_EXACT.equals(result));
@@ -273,6 +284,13 @@ final class AlarmScheduler {
                 }
                 continue;
             }
+            if (plan == AlarmMath.Restore.KEEP) {
+                // Soi jo; kello siirrettiin taaksepain tai vyohyke vaihtui lanteen.
+                // Ei toista soittoa, mutta tieto sailyy myos JS:n seuraavaan sovitukseen.
+                disarm(context, id);
+                next.put(id, entry);
+                continue;
+            }
             String result = arm(context, entry, Math.max(target, now));
             if (RESULT_FAILED.equals(result)) continue;
             put(entry, "exact", RESULT_EXACT.equals(result));
@@ -281,6 +299,38 @@ final class AlarmScheduler {
         }
         AlarmStore.saveEntries(context, next);
         return armed;
+    }
+
+    /**
+     * Laukeaminen (AlarmReceiver): soitettava merkinta laukeamistieto
+     * kirjattuna, tai null (peruttu, jo soinut, etuajassa tai "missed").
+     *
+     * Samassa lukossa kuin rescheduleAll ja reconcile: ne eivat kirjoita
+     * laukeamistietoa yli vanhalla merkinnalla eivatka ajasta juuri
+     * laukeavaa esiintymaa toiseen kertaan.
+     */
+    static synchronized JSONObject claimFire(Context context, String id, long now) {
+        JSONObject entry = AlarmStore.entry(context, id);
+        if (entry == null) return null; // peruttu
+        long target = targetOf(entry);
+        switch (AlarmMath.fireDecision(target, now, entry.optLong("firedAt", 0L))) {
+            case IGNORE:
+                return null;
+            case DROP:
+                AlarmStore.removeEntry(context, id);
+                return null;
+            case TOO_EARLY:
+                arm(context, entry, target);
+                return null;
+            case MISSED:
+                AlarmStore.removeEntry(context, id);
+                AlarmStore.recordEvent(context, AlarmStore.EVENT_MISSED, id, entry.optString("kind"), null);
+                return null;
+            default:
+                put(entry, "firedAt", now);
+                AlarmStore.putEntry(context, entry);
+                return entry;
+        }
     }
 
     /** Peru annetut tunnisteet: AlarmManagerista JA tallesta. */

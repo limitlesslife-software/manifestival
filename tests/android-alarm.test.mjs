@@ -223,8 +223,36 @@ test('REGRESSIO: erääntynyt, toimittamaton herätys ei katoa avauksessa eikä 
   // Yksi raja: laukeaminen ja uudelleenajastus kysyvät saman funktion.
   assert.match(methodBody(javaCode('AlarmMath.java'), 'static boolean tooLate('), /return now - target > MAX_LATE_MS;/);
   assert.match(methodBody(javaCode('AlarmMath.java'), 'static Restore restorePlan('), /tooLate\(target, now\)/);
-  assert.match(javaCode('AlarmReceiver.java'), /AlarmMath\.tooLate\(target, now\)/);
+  assert.match(methodBody(javaCode('AlarmMath.java'), 'static Fire fireDecision('), /tooLate\(target, now\)/);
   assert.equal(/MAX_LATE_MS/.test(javaCode('AlarmReceiver.java') + scheduler), false, 'raja kirjoitettu toiseen kertaan');
+});
+
+test('REGRESSIO: soinutta herätystä ei ajasteta uudelleen kellon taaksepäin siirrossa eikä vyöhykkeen vaihdossa', () => {
+  // native-refire-after-clock-or-zone-change: kuittaamaton, jo soinut
+  // muistutus (firedAt) ajastettiin uudelleen, kun kelloa siirrettiin
+  // taaksepäin (TIME_SET) tai vyöhyke vaihtui länteen (TIMEZONE_CHANGED tai
+  // JS:n sovitus), ja se soi toiseen kertaan. Hyväksyntä: "kellonajan käsin
+  // siirto ei tuota kahta soittoa".
+  const scheduler = javaCode('AlarmScheduler.java');
+  const math = javaCode('AlarmMath.java');
+  assert.match(methodBody(math, 'static Restore restorePlan('),
+    /if \(firedAt != 0L\) return target > now \? Restore\.KEEP : Restore\.PAST;/);
+  const reschedule = methodBody(scheduler, 'static synchronized int rescheduleAll(');
+  const keep = /if \(plan == AlarmMath\.Restore\.KEEP\) \{([^}]*)\}/.exec(reschedule);
+  assert.ok(keep, 'rescheduleAll: jo soinut (KEEP) puuttuu');
+  assert.match(keep[1], /disarm\(context, id\)/);
+  assert.match(keep[1], /next\.put\(id, entry\)/, 'laukeamistieto katoaisi tallesta');
+  assert.equal(/\barm\(/.test(keep[1]), false, 'jo soinut ajastettaisiin uudelleen');
+  const reconcile = methodBody(scheduler, 'static synchronized Outcome reconcile(');
+  assert.match(reconcile, /if \(kept\.contains\(id\)\) continue;/);
+  assert.match(reconcile, /if \(!next\.containsKey\(id\) \|\| kept\.contains\(id\)\) disarm\(context, id\);/);
+  // Laukeaminen: sama esiintymä ei soi kahdesti, ja päätös tehdään samassa
+  // lukossa kuin uudelleenajastus (ei yli kirjoitettua laukeamistietoa).
+  assert.match(methodBody(math, 'static Fire fireDecision('), /if \(firedAt != 0L\) return Fire\.IGNORE;/);
+  assert.match(methodBody(scheduler, 'static synchronized JSONObject claimFire('), /AlarmMath\.fireDecision\(target, now, entry\.optLong\("firedAt", 0L\)\)/);
+  const onFire = methodBody(javaCode('AlarmReceiver.java'), 'private static void onFire(');
+  assert.match(onFire, /AlarmScheduler\.claimFire\(context, id, System\.currentTimeMillis\(\)\)/);
+  assert.equal(/AlarmStore\.(putEntry|removeEntry|entry)\(/.test(onFire), false, 'onFire kirjoittaa talteen lukon ohi');
 });
 
 test('KRIITTINEN: tarkkojen herätysten ja koko näytön asetukset avataan vain omista metodeistaan', () => {

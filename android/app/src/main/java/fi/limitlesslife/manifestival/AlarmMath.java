@@ -215,7 +215,14 @@ final class AlarmMath {
         /** Ajastettu, ei soinut ja yli rajan myohassa: pois, tapahtumana "missed". */
         MISSED,
         /** Mennyt hetki, jota ei ollut ajastettu tai joka jo soi: pois ilman tapahtumaa. */
-        PAST
+        PAST,
+        /**
+         * Jo soinut esiintyma, jonka hetki on kellon taaksepain siirron tai
+         * lanteen vaihtuneen vyohykkeen jalkeen taas edessa: pidetaan tallessa
+         * (laukeamistieto sailyy seuraavaankin sovitukseen), mutta EI ajasteta.
+         * Muuten sama heratys soisi toiseen kertaan.
+         */
+        KEEP
     }
 
     /**
@@ -223,15 +230,39 @@ final class AlarmMath {
      * tehdaan.
      *
      * @param target laukeamishetki (AlarmScheduler.targetOf)
-     * @param firedAt milloin tama esiintyma (tai sen torkku) laukesi; 0 = ei viela
+     * @param firedAt milloin tama esiintyma (tai sen torkku) laukesi; 0 = ei viela.
+     *     Torku nollaa sen, joten firedAt != 0 tarkoittaa: viimeisin ajastettu
+     *     hetki on jo soinut.
      * @param wasScheduled oliko esiintyma jo ajastettuna talla laitteella (sama
      *     tunniste, paiva ja aika). Uutta, jo mennytta esiintymaa ei soiteta
      *     jalkikateen: se on JS:lle "past", kuten ennenkin.
      */
     static Restore restorePlan(long target, long now, long firedAt, boolean wasScheduled) {
+        if (firedAt != 0L) return target > now ? Restore.KEEP : Restore.PAST;
         if (target > now) return Restore.ARM;
-        if (firedAt != 0L || !wasScheduled) return Restore.PAST;
+        if (!wasScheduled) return Restore.PAST;
         return tooLate(target, now) ? Restore.MISSED : Restore.ARM_NOW;
+    }
+
+    /** Mita AlarmManagerin laukaisema heratys tekee (AlarmScheduler.claimFire). */
+    enum Fire {
+        /** Tama esiintyma soi jo: sama heratys ei soi kahdesti. */
+        IGNORE,
+        /** Hetki ei ole kelvollinen: pois tallesta. */
+        DROP,
+        /** Yli minuutin etuajassa (kelloa siirretty): ajastetaan oikeaan hetkeen. */
+        TOO_EARLY,
+        /** Yli rajan myohassa: "missed" (puoli tuntia myohassa soiva heratys harhaanjohtaisi). */
+        MISSED,
+        /** Soitetaan nyt. */
+        RING
+    }
+
+    static Fire fireDecision(long target, long now, long firedAt) {
+        if (firedAt != 0L) return Fire.IGNORE;
+        if (target < 0) return Fire.DROP;
+        if (now < target - MINUTE_MS) return Fire.TOO_EARLY;
+        return tooLate(target, now) ? Fire.MISSED : Fire.RING;
     }
 
     /** Hetki -> "HH:MM" annetussa vyohykkeessa (heratysnakyman kello). */

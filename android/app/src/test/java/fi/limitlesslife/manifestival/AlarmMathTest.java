@@ -164,6 +164,38 @@ public class AlarmMathTest {
     }
 
     @Test
+    public void firedAlarmIsNotArmedAgainAfterClockOrZoneChange() {
+        // REGRESSIO (native-refire-after-clock-or-zone-change): puhuttu muistutus
+        // soi (firedAt kirjattu), mutta sita ei kuitattu. Aiemmin uudelleenajastus
+        // ja sovitus eivat katsoneet firedAtia, joten sama heratys soi toiseen kertaan.
+        long fired = T + 5_000L;
+        // a) Kello siirretaan tunti taaksepain: hetki on taas edessa -> ei toista soittoa.
+        assertEquals(AlarmMath.Restore.KEEP, AlarmMath.restorePlan(T, fired - 60L * AlarmMath.MINUTE_MS, fired, true));
+        // b) Tornio -> Haaparanta (vyohyke tunnin lanteen): sama seinakelloaika on tunnin myohemmin.
+        long stockholm = AlarmMath.wallClockToEpoch("2026-09-28", "07:00", TimeZone.getTimeZone("Europe/Stockholm"));
+        assertEquals(T + 60L * AlarmMath.MINUTE_MS, stockholm);
+        assertEquals(AlarmMath.Restore.KEEP, AlarmMath.restorePlan(stockholm, fired + AlarmMath.MINUTE_MS, fired, true));
+        assertEquals(AlarmMath.Restore.KEEP, AlarmMath.restorePlan(stockholm, fired + AlarmMath.MINUTE_MS, fired, false));
+        // Hetken mentya jo soinut poistuu hiljaa (se ei ole "missed").
+        assertEquals(AlarmMath.Restore.PAST, AlarmMath.restorePlan(stockholm, stockholm + 1, fired, true));
+        // Torku nollaa firedAtin: torkutettu heratys ajastetaan normaalisti.
+        assertEquals(AlarmMath.Restore.ARM, AlarmMath.restorePlan(T + 9L * AlarmMath.MINUTE_MS, fired, 0L, true));
+    }
+
+    @Test
+    public void sameOccurrenceNeverRingsTwice() {
+        assertEquals(AlarmMath.Fire.IGNORE, AlarmMath.fireDecision(T, T, T - 1_000L));
+        assertEquals(AlarmMath.Fire.IGNORE, AlarmMath.fireDecision(T, T + AlarmMath.MAX_LATE_MS + 1, T));
+        assertEquals(AlarmMath.Fire.RING, AlarmMath.fireDecision(T, T, 0L));
+        // Enintaan minuutin etuajassa soi; sita aiemmin ajastetaan oikeaan hetkeen.
+        assertEquals(AlarmMath.Fire.RING, AlarmMath.fireDecision(T, T - 59_000L, 0L));
+        assertEquals(AlarmMath.Fire.TOO_EARLY, AlarmMath.fireDecision(T, T - AlarmMath.MINUTE_MS - 1, 0L));
+        assertEquals(AlarmMath.Fire.RING, AlarmMath.fireDecision(T, T + AlarmMath.MAX_LATE_MS, 0L));
+        assertEquals(AlarmMath.Fire.MISSED, AlarmMath.fireDecision(T, T + AlarmMath.MAX_LATE_MS + 1, 0L));
+        assertEquals(AlarmMath.Fire.DROP, AlarmMath.fireDecision(-1L, T, 0L));
+    }
+
+    @Test
     public void cleanTextStripsControlsAndBoundsLength() {
         assertEquals("Lahde nyt", AlarmMath.cleanText("Lahde\u0000 \t nyt\u0007", 50));
         assertNull(AlarmMath.cleanText("​‎", 50));

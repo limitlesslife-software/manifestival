@@ -59,28 +59,10 @@ public class AlarmReceiver extends BroadcastReceiver {
     // ------------------------------------------------------------ laukeaminen
 
     private static void onFire(Context context, String id) {
-        JSONObject entry = AlarmStore.entry(context, id);
-        if (entry == null) return; // peruttu
-        long now = System.currentTimeMillis();
-        long target = AlarmScheduler.targetOf(entry);
-        if (target < 0) {
-            AlarmStore.removeEntry(context, id);
-            return;
-        }
-        if (now < target - AlarmMath.MINUTE_MS) {
-            // Liian aikaisin (kelloa siirretty): ajasta oikeaan hetkeen.
-            AlarmScheduler.arm(context, entry, target);
-            return;
-        }
+        // Peruttu, jo soinut, etuajassa tai liian myohassa: AlarmMath.fireDecision.
+        JSONObject entry = AlarmScheduler.claimFire(context, id, System.currentTimeMillis());
+        if (entry == null) return;
         String kind = entry.optString("kind");
-        if (AlarmMath.tooLate(target, now)) {
-            // Puoli tuntia myohassa soiva heratys tai "lahde nyt" olisi harhaanjohtava.
-            AlarmStore.removeEntry(context, id);
-            AlarmStore.recordEvent(context, AlarmStore.EVENT_MISSED, id, kind, null);
-            return;
-        }
-        AlarmScheduler.put(entry, "firedAt", now);
-        AlarmStore.putEntry(context, entry);
 
         Intent start = new Intent(context, AlarmService.class)
             .setAction(AlarmService.ACTION_START)
