@@ -426,7 +426,9 @@ test('KRIITTINEN: säännön päälle kytkeminen kysyy vahvistuksen', () => {
 
 test('ilmoituskeskus tarjoaa vain domainin sallimat toiminnot', () => {
   const source = read('src/app/views/notices.js');
-  assert.match(source, /actionsFor\(notice\)/,
+  // Muistutuslajille kerrotaan, onko takana oikea muistutus (reminderIdOfNotice):
+  // ilman sitä Torkuta ja Hoidettu eivät tekisi mitään.
+  assert.match(source, /actionsFor\(notice(, \{ hasReminder \})?\)/,
     'toimintolista rakennetaan käsin domainin sijaan');
 });
 

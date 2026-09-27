@@ -30,8 +30,9 @@ import { escapeHtml } from '../../lib/format.js';
 import { getState } from '../state.js';
 import {
   NOTICE_KIND, NOTICE_STATUS, NOTICE_LEVEL, NOTICE_ACTION, noticeKindLabel,
-  compareNotices, summarizeNotices, actionsFor
+  compareNotices, summarizeNotices, actionsFor, reminderIdOfNotice
 } from '../../domain/notificationCenter.js';
+import { showError } from '../../ui/toast.js';
 import { hasTable, isTableAvailable } from '../../data/schema.js';
 import { serverUnavailableHintHtml } from '../schemaStatus.js';
 import {
@@ -69,7 +70,8 @@ function levelClass(notice) {
 function rowHtml(notice) {
   const lukematon = notice.status === NOTICE_STATUS.UNREAD;
 
-  const napit = actionsFor(notice)
+  const hasReminder = Boolean(reminderIdOfNotice(notice, getState().reminders));
+  const napit = actionsFor(notice, { hasReminder })
     .filter(action => ACTION_LABELS[action])
     .map(action => `<button class="assist-btn${action === NOTICE_ACTION.DISMISS ? '' : ' primary'}"`
       + ` data-notice-action="${escapeHtml(action)}"`
@@ -217,6 +219,43 @@ export function initNotices() {
   if (container) container.addEventListener('click', onClick);
 }
 
+const REMINDER_ACTIONS = Object.freeze({
+  [NOTICE_ACTION.ACKNOWLEDGE]: { run: id => acknowledgeReminder(id), failure: 'Muistutusta ei voitu kuitata. Yritä uudelleen.' },
+  // TORKUTUS KOSKEE MUISTUTUSTA, EI KOHDETTA. Ilmoitus on vain se paikka,
+  // josta torkutus pyydetään.
+  [NOTICE_ACTION.SNOOZE]: { run: id => snoozeReminderBy(id, 15), failure: 'Muistutusta ei voitu torkuttaa. Yritä uudelleen.' },
+  [NOTICE_ACTION.COMPLETE]: { run: id => completeReminder(id), failure: 'Muistutusta ei voitu merkitä hoidetuksi. Yritä uudelleen.' }
+});
+
+/**
+ * Kuittaa, torkuta tai hoida merkinnän MUISTUTUS (ei kohdetta).
+ *
+ * Muistutus tunnistetaan merkinnän avaimesta (reminderIdOfNotice): kohteen
+ * tunniste on tehtävä, eikä sillä löydy muistutusta -- aiemmin kuittaus
+ * "onnistui" tekemättä mitään, ja seuraava porras tuli silti. Merkintää ei
+ * merkitä hoidetuksi, jos muistutuksen muutos epäonnistui. Merkintä, jonka
+ * takana ei ole muistutusta (esim. illan ennakko), vain kuitataan.
+ *
+ * @returns {Promise<{ok:boolean, reminderId:string|null}>}
+ */
+export async function runReminderAction(action, notice, { reminders = getState().reminders } = {}) {
+  const spec = REMINDER_ACTIONS[action];
+  if (!spec || !notice) return { ok: false, reminderId: null };
+  const reminderId = reminderIdOfNotice(notice, reminders);
+  if (reminderId) {
+    const result = await spec.run(reminderId);
+    if (!result || result.ok !== true) {
+      showError(spec.failure);
+      return { ok: false, reminderId };
+    }
+  } else if (action !== NOTICE_ACTION.ACKNOWLEDGE) {
+    // Torkutusta tai hoitamista ei tarjota ilman muistutusta (actionsFor).
+    return { ok: false, reminderId: null };
+  }
+  await actOnNotice(notice.id);
+  return { ok: true, reminderId };
+}
+
 async function onClick(event) {
   const toggleHandled = event.target.closest('#noticesToggleHandled');
   if (toggleHandled) {
@@ -247,22 +286,9 @@ async function onClick(event) {
       break;
 
     case NOTICE_ACTION.ACKNOWLEDGE:
-      if (notice.targetType === 'task' || notice.targetId) {
-        await acknowledgeReminder(notice.targetId);
-      }
-      await actOnNotice(noticeId);
-      break;
-
     case NOTICE_ACTION.SNOOZE:
-      // TORKUTUS KOSKEE MUISTUTUSTA, EI KOHDETTA. Ilmoitus on vain
-      // se paikka, josta torkutus pyydetään.
-      if (notice.targetId) await snoozeReminderBy(notice.targetId, 15);
-      await actOnNotice(noticeId);
-      break;
-
     case NOTICE_ACTION.COMPLETE:
-      if (notice.targetId) await completeReminder(notice.targetId);
-      await actOnNotice(noticeId);
+      await runReminderAction(noticeAction, notice);
       break;
 
     case NOTICE_ACTION.REVIEW:
