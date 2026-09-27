@@ -46,7 +46,7 @@ import { currentAccessToken } from './auth.js';
 import {
   normalizeInboxItem, validateInboxItem, attachProposal, acceptItem,
   markConverted, dismissItem, restoreItem, atCapacity,
-  INBOX_STATUS, CAPTURE_SOURCE
+  INBOX_STATUS, CAPTURE_SOURCE, splitBrainDump, MAX_OPEN_ITEMS, isOpenItem
 } from '../domain/inbox.js';
 import {
   routeOf, describeRoute, payloadFor, normalizeInterpretation,
@@ -167,6 +167,38 @@ export async function captureText(text, { source = CAPTURE_SOURCE.TEXT } = {}) {
   }
 
   return { ok: true, item };
+}
+
+/**
+ * BRAIN DUMP: kirjaa monirivinen teksti saapuviin, yksi rivi per asia.
+ *
+ * EI TULKINTAA KIRJAUSHETKELLÄ. Mielen tyhjentäminen ei saa vaatia
+ * päätöksiä: luokittelu tehdään myöhemmin erässä (Saapuvat, sunnuntain
+ * nollaus). Rivit syntyvät yksi kerrallaan samaa polkua kuin yksittäinen
+ * kirjaus, joten epäonnistunut rivi ei vie muita mukanaan.
+ *
+ * @param {string} text
+ * @param {{source?: string}} options
+ * @returns {Promise<{ok:boolean, items:object[], failed:number, skipped:number, errors?:object}>}
+ */
+export async function captureBrainDump(text, { source = CAPTURE_SOURCE.TEXT } = {}) {
+  const parts = splitBrainDump(text);
+  if (parts.length === 0) return { ok: false, items: [], failed: 0, skipped: 0, errors: { text: 'Kirjoita jotain ensin.' } };
+  const room = Math.max(0, MAX_OPEN_ITEMS - getState().inboxItems.filter(isOpenItem).length);
+  const accepted = parts.slice(0, room);
+  const items = [];
+  let failed = 0;
+  for (const part of accepted) {
+    const result = await captureText(part, { source });
+    if (result.ok) items.push(result.item);
+    else failed += 1;
+  }
+  const skipped = parts.length - accepted.length;
+  if (items.length === 0) {
+    return { ok: false, items, failed, skipped,
+      errors: { text: skipped > 0 ? 'Saapuvat on täynnä. Käsittele muutama rivi ensin.' : 'Kirjaus ei onnistunut.' } };
+  }
+  return { ok: true, items, failed, skipped };
 }
 
 /**
