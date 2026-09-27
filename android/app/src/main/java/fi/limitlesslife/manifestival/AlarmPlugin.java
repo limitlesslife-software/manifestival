@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.Intent;
+import android.content.UriPermission;
 import android.database.Cursor;
 import android.media.AudioAttributes;
 import android.media.Ringtone;
@@ -128,8 +129,13 @@ public class AlarmPlugin extends Plugin {
         result.put("tts", AlarmStore.ttsStatus(context));
         result.put("soundPicked", AlarmStore.soundUri(context) != null);
         // Oma heratysmusiikki: valittu ja nimi (nimi vain nayttoon, ei tapahtumiin).
-        result.put("musicPicked", AlarmStore.musicUri(context) != null);
-        String musicName = AlarmStore.musicName(context);
+        // Valituksi kerrotaan vain, jos pysyva lukuoikeus on yha voimassa; muuten
+        // musicLost (heratys soi heratysaanella, kunnes musiikki valitaan uudelleen).
+        String music = AlarmStore.musicUri(context);
+        boolean musicHeld = musicGrantHeld(context, music);
+        result.put("musicPicked", musicHeld);
+        if (music != null && !musicHeld) result.put("musicLost", true);
+        String musicName = musicHeld ? AlarmStore.musicName(context) : null;
         if (musicName != null) result.put("musicName", musicName);
         result.put("scheduled", AlarmStore.entries(context).size());
         result.put("ringing", AlarmService.isRingingAny());
@@ -144,7 +150,8 @@ public class AlarmPlugin extends Plugin {
 
     /**
      * Korvaa koko joukko: {alarms:[{id, kind, date, time, title, body, speech,
-     * mode, escalation, snoozeMinutes, maxSnoozes, routeDestination, routeMode}]}.
+     * mode, escalation, snoozeMinutes, maxSnoozes, routeDestination, routeMode,
+     * brief, briefOnDismiss}]}.
      * Virheelliset merkinnat hylataan yksitellen (rejected), muut ajastetaan.
      */
     @PluginMethod
@@ -565,6 +572,22 @@ public class AlarmPlugin extends Plugin {
             // nimi on mukavuus
         }
         return null;
+    }
+
+    /**
+     * Onko valitun musiikin pysyva lukuoikeus yha voimassa. Tiedosto voi
+     * silti puuttua (AlarmService soittaa silloin heratysaanen ja kirjaa sen).
+     */
+    private static boolean musicGrantHeld(Context context, String uri) {
+        if (uri == null) return false;
+        try {
+            for (UriPermission permission : context.getContentResolver().getPersistedUriPermissions()) {
+                if (permission.isReadPermission() && uri.equals(permission.getUri().toString())) return true;
+            }
+        } catch (RuntimeException ignored) {
+            // ei tiedossa: ei kerrota valituksi
+        }
+        return false;
     }
 
     /** Vapauta aiemman valinnan pysyva oikeus (oikeuksien maara on rajattu). */

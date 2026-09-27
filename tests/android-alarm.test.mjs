@@ -26,10 +26,38 @@ const ALARM_FILES = Object.freeze([
 
 /** Java ilman kommentteja: kiellot koskevat koodia, eivät selityksiä. */
 function javaCode(file) {
-  return read(`${JAVA_DIR}/${file}`)
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .split('\n').filter(line => !line.trim().startsWith('//')).join('\n')
-    .replace(/\s\/\/[^\n"]*$/gm, '');
+  return stripJavaComments(read(`${JAVA_DIR}/${file}`))
+    .split('\n').filter(line => line.trim() !== '').join('\n');
+}
+
+/**
+ * Kommentit pois merkkijonot huomioiden. Pelkkä säännöllinen lauseke
+ * luuli merkkijonon "audio/*" kommentin aluksi ja pudotti koodia seuraavaan
+ * kommentin loppuun asti: vartijat olisivat hiljaa ohittaneet sen koodin.
+ */
+function stripJavaComments(source) {
+  let out = '';
+  let index = 0;
+  while (index < source.length) {
+    const char = source[index];
+    const next = source[index + 1];
+    if (char === '"' || char === '\'') {
+      let end = index + 1;
+      while (end < source.length && source[end] !== char && source[end] !== '\n') end += source[end] === '\\' ? 2 : 1;
+      out += source.slice(index, end + 1);
+      index = end + 1;
+    } else if (char === '/' && next === '/') {
+      const end = source.indexOf('\n', index);
+      index = end === -1 ? source.length : end;
+    } else if (char === '/' && next === '*') {
+      const end = source.indexOf('*/', index + 2);
+      index = end === -1 ? source.length : end + 2;
+    } else {
+      out += char;
+      index += 1;
+    }
+  }
+  return out;
 }
 
 /** Metodin runko (aaltosulkeiden tasapainolla) nimen perusteella. */
@@ -95,7 +123,7 @@ test('KRIITTINEN: jokainen JS:n kutsuma metodi on Javassa @PluginMethod, eikä k
   assert.deepEqual(unused, [], 'natiivimetodi ilman JS-kutsujaa');
   assert.deepEqual([...javaMethods].sort(), [
     'ackEvents', 'cancel', 'cancelAll', 'consumeEvents', 'list', 'openExactAlarmSettings', 'openFullScreenSettings',
-    'openNavigation', 'pickAlarmSound', 'schedule', 'speak', 'status', 'stopSpeaking'
+    'openNavigation', 'pickAlarmMusic', 'pickAlarmSound', 'schedule', 'speak', 'status', 'stopSpeaking'
   ]);
 });
 
@@ -322,12 +350,15 @@ test('REGRESSIO: suora käynnistys: herätys palautuu ja soi, vaikka puhelinta e
 test('laitesuojattuun menee vain soittoon tarvittava: jokainen merkinnän kenttä on luokiteltu', () => {
   const privateFields = [...methodBody(javaCode('AlarmMath.java'), 'static boolean isPrivateField(')
     .matchAll(/"(\w+)"\.equals\(key\)/g)].map(m => m[1]).sort();
-  assert.deepEqual(privateFields, ['body', 'routeDestination', 'routeMode', 'speech', 'title']);
+  // brief = aamukatsauksen loppuosa (voi sisältää menon nimen): vain käyttäjän salaamaan.
+  assert.deepEqual(privateFields, ['body', 'brief', 'routeDestination', 'routeMode', 'speech', 'title']);
   const parse = methodBody(javaCode('AlarmPlugin.java'), 'static JSONObject parseEntry(');
   const fields = [...new Set([...parse.matchAll(/AlarmScheduler\.put\(entry, "(\w+)"/g)].map(m => m[1]))];
   // Uusi kenttä luokitellaan tietoisesti: joko tähän (laitesuojattu) tai isPrivateFieldiin.
+  // briefOnDismiss on pelkkä lippu: lukittunakin tiedetään, että katsaus luetaan
+  // (tervehdys ja kellonaika, teksti vasta avauksen jälkeen).
   assert.deepEqual(fields.filter(f => !privateFields.includes(f)).sort(),
-    ['date', 'escalation', 'id', 'kind', 'maxSnoozes', 'mode', 'snoozeMinutes', 'time']);
+    ['briefOnDismiss', 'date', 'escalation', 'id', 'kind', 'maxSnoozes', 'mode', 'snoozeMinutes', 'time']);
   // Lukittuna (ei tekstejä) puhuttu muistutus puhuu yleisnimen eikä jää hiljaiseksi.
   assert.match(methodBody(javaCode('AlarmService.java'), 'private void startSpoken('),
     /if \(text == null\) text = getString\(R\.string\.reminder_default_label\);/);
@@ -477,6 +508,91 @@ test('ääni ja puhe: USAGE_ALARM, suomi, varavaihtoehto kirjataan, puhe sammute
   assert.match(service, /RingtoneManager\.TYPE_ALARM/);
   assert.match(methodBody(service, 'public void onDestroy()'), /tts\.shutdown\(\)/);
   assert.match(methodBody(service, 'public void onDestroy()'), /releasePlayer\(\)/);
+});
+
+test('REGRESSIO: oma musiikki on oikea valinta (SAF, pysyvä lukuoikeus, ei tallennuslupaa) ja soi vain musiikkitavoilla', () => {
+  // trace-alarm-music-mode-fake / claims-alarm-music-mode: "Oma musiikki"
+  // soitti saman herätysäänen kuin "Herätysääni", eikä musiikkia voinut
+  // valita ("vaatisi tiedostoluvan" — ei vaadi: Storage Access Framework).
+  const plugin = javaCode('AlarmPlugin.java');
+  const pick = methodBody(plugin, 'public void pickAlarmMusic(PluginCall call)');
+  assert.match(pick, /new Intent\(Intent\.ACTION_OPEN_DOCUMENT\)/);
+  assert.match(pick, /\.addCategory\(Intent\.CATEGORY_OPENABLE\)/);
+  assert.match(pick, /\.setType\("audio\/\*"\)/);
+  assert.match(pick, /startActivityForResult\(call, intent, "onAlarmMusicPicked"\)/);
+  // Tiedostovalitsin avataan vain tästä metodista (JS kutsuu sitä vain napautuksesta).
+  const openDocs = allJava().map(javaCode).join('\n').match(/ACTION_OPEN_DOCUMENT\b/g) || [];
+  assert.equal(openDocs.length, 1);
+
+  // Pysyvä lukuoikeus ENNEN tallennusta; jos sitä ei saa, valintaa ei tallenneta.
+  const picked = methodBody(plugin, 'private void onAlarmMusicPicked(');
+  const grant = picked.indexOf('takePersistableUriPermission(picked, Intent.FLAG_GRANT_READ_URI_PERMISSION)');
+  assert.ok(grant > -1 && grant < picked.indexOf('AlarmStore.setMusic('), 'oikeus ennen tallennusta');
+  assert.match(picked, /result\.put\("code", "not-persistable"\)/);
+  assert.match(picked, /AlarmMath\.isContentScheme\(picked\.getScheme\(\)\)/);
+  assert.match(picked, /releaseMusicGrant\(context, previous\)/, 'edellisen valinnan oikeus vapautetaan');
+  // Tila kertoo valituksi vain voimassa olevan oikeuden (ei valehtele).
+  const status = methodBody(plugin, 'public void status(PluginCall call)');
+  assert.match(status, /musicGrantHeld\(context, music\)/);
+  assert.match(status, /result\.put\("musicPicked", musicHeld\)/);
+
+  // Ei yhtään tallennustilan lupaa: SAF antaa oikeuden vain valittuun tiedostoon.
+  for (const permission of ['READ_EXTERNAL_STORAGE', 'READ_MEDIA_AUDIO', 'MANAGE_EXTERNAL_STORAGE', 'WRITE_EXTERNAL_STORAGE']) {
+    assert.equal(manifest.includes(permission), false, permission);
+  }
+
+  // Valinta käyttäjän salaamassa tallessa: ennen ensimmäistä avausta (suora
+  // käynnistys) sitä ei lueta, ja soi herätysääni.
+  const store = javaCode('AlarmStore.java');
+  assert.match(methodBody(store, 'static synchronized String musicUri('), /textPrefs\(appContext\(context\)\)/);
+  assert.match(methodBody(store, 'static synchronized boolean setMusic('), /textPrefs\(appContext\(context\)\)/);
+
+  // Soitto: lähteet yhdestä säännöstä, musiikki vain musiikkitavoilla, varavaihtoehto kirjataan.
+  const service = javaCode('AlarmService.java');
+  const sound = methodBody(service, 'private void startSound(');
+  assert.match(sound, /AlarmMath\.modePrefersMusic\(mode\) \? AlarmStore\.musicUri\(this\) : null/);
+  assert.match(sound, /AlarmMath\.soundSources\(mode, music != null, picked != null\)/);
+  assert.match(sound, /AlarmMath\.soundFallbackCode\(mode, sources, played\)/);
+  assert.match(sound, /EVENT_SOUND_FALLBACK/);
+  const math = javaCode('AlarmMath.java');
+  assert.match(methodBody(math, 'static boolean modePrefersMusic('), /MODE_MUSIC\.equals\(mode\) \|\| MODE_COMBINATION\.equals\(mode\)/);
+  // Musiikkikin soi herätyksenä (herätyksen äänenvoimakkuus), ei mediana.
+  assert.match(methodBody(service, 'private static AudioAttributes alarmMusicAudio('), /USAGE_ALARM/);
+});
+
+test('REGRESSIO: aamukatsaus luetaan kerran Sammuta-painalluksen jälkeen tavasta riippumatta, ei torkussa', () => {
+  // claims-morning-brief-silent: oletustavalla (herätysääni, ei puhevaihetta)
+  // "Aamukatsaus puheena" oli hiljainen, eikä sammutuksen jälkeen luettu mitään.
+  const receiver = javaCode('AlarmReceiver.java');
+  const handle = methodBody(receiver, 'static void handleUserAction(');
+  assert.match(handle, /boolean brief = ACTION_DISMISS\.equals\(action\) && entry != null\s*&& AlarmMath\.speaksBriefOnDismiss\(kind, entry\.optBoolean\("briefOnDismiss", false\)\);/);
+  assert.match(handle, /finish\(context, id, entry, brief\);/);
+  // Torkku ja pyyhkäisy eivät lue katsausta.
+  const snooze = /if \(ACTION_SNOOZE\.equals\(action\)\) \{([^}]*)\}/.exec(handle);
+  assert.ok(snooze && !/Brief|brief/.test(snooze[1]));
+  assert.match(handle, /finish\(context, id, entry, false\);/);
+  assert.equal(/Brief|brief/.test(methodBody(receiver, 'static boolean snooze(')), false);
+  const finish = methodBody(receiver, 'private static void finish(');
+  assert.match(finish, /if \(brief\) AlarmService\.stopRingingWithBrief\(id\);\s*else AlarmService\.stopRinging\(id\);/);
+
+  const service = javaCode('AlarmService.java');
+  // Vain juuri soiva herätys: soitto seis, näkymä kiinni, sitten katsaus.
+  const dismiss = methodBody(service, 'private void dismissWithBrief(');
+  assert.match(dismiss, /id\.equals\(ringingId\) \? ringing : null/);
+  assert.ok(dismiss.indexOf('haltRing()') < dismiss.indexOf('startBrief(entry)'));
+  // Aikaraja, hiljainen palveluilmoitus (ei Sammuta/Torku-painikkeita) ja
+  // tervehdys + kellonaika puhehetkellä (oikein myös torkun jälkeen).
+  const brief = methodBody(service, 'private boolean startBrief(');
+  assert.match(brief, /enterForeground\(serviceNotification\(this, R\.string\.alarm_brief_running\)\)/);
+  assert.match(brief, /later\(SPOKEN_MAX_MS, \(\) -> finishSpoken\(id\)\)/);
+  assert.match(brief, /AlarmMath\.briefSpeech\(greeting\(System\.currentTimeMillis\(\)\), ringEntry\.optString\("brief", ""\)\)/);
+  assert.match(brief, /acquireWakeLock\(SPOKEN_MAX_MS \+ WAKE_LOCK_MARGIN_MS\)/);
+  // Katsaus ei ole soittoa: ei merkkiääntä, jos puhetta ei ole (kirjataan speech_fallback).
+  assert.match(methodBody(service, 'private void speechFallback('), /entry == speaking && !entry\.optBoolean\("brief", false\)/);
+  const strings = read('android/app/src/main/res/values/strings.xml');
+  for (const name of ['alarm_greeting_morning', 'alarm_greeting_day', 'alarm_greeting_evening', 'alarm_brief_running']) {
+    assert.ok(strings.includes(`<string name="${name}">`), name);
+  }
 });
 
 test('koko näyttö vain luvalla (Android 14+ canUseFullScreenIntent), muuten nouseva ilmoitus', () => {

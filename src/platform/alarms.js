@@ -463,7 +463,7 @@ export async function alarmStatus() {
     return Object.freeze({
       supported: false, implemented: false, reason: isNativeShell() ? NOT_IN_THIS_VERSION : ALARMS_WEB_REASON,
       exact: false, fullScreen: false, notifications: false, tts: 'unknown', soundPicked: false,
-      musicPicked: false, musicName: null, scheduled: 0, ringing: false, batteryOptimized: null
+      musicPicked: false, musicName: null, musicLost: false, scheduled: 0, ringing: false, batteryOptimized: null
     });
   }
   const result = await callPlugin(plugin, 'status');
@@ -471,7 +471,7 @@ export async function alarmStatus() {
     return Object.freeze({
       supported: true, implemented: true, reason: 'Herätyksen tilaa ei saatu luettua.', code: result.code,
       exact: false, fullScreen: false, notifications: false, tts: 'unknown', soundPicked: false,
-      musicPicked: false, musicName: null, scheduled: 0, ringing: false, batteryOptimized: null
+      musicPicked: false, musicName: null, musicLost: false, scheduled: 0, ringing: false, batteryOptimized: null
     });
   }
   const value = result.value;
@@ -490,8 +490,11 @@ export async function alarmStatus() {
     tts: ['available', 'missing'].includes(value.tts) ? value.tts : 'unknown',
     soundPicked: value.soundPicked === true,
     // Oma herätysmusiikki (pickAlarmMusic): valittu ja tiedoston nimi (vain näyttöteksti).
+    // Laite kertoo valituksi vain, jos pysyvä lukuoikeus on yhä voimassa;
+    // musicLost = valittu musiikki ei ole enää käytettävissä (soi herätysääni).
     musicPicked: value.musicPicked === true,
     musicName: value.musicPicked === true ? displayName(value.musicName) : null,
+    musicLost: value.musicPicked !== true && value.musicLost === true,
     scheduled: Number.isInteger(value.scheduled) && value.scheduled >= 0 ? value.scheduled : 0,
     ringing: value.ringing === true,
     batteryOptimized: typeof value.batteryOptimized === 'boolean' ? value.batteryOptimized : null,
