@@ -444,7 +444,21 @@ export function replaceGoalInState(id, goal) {
   commit({ goals: state.goals.map(g => (g.id === id ? normalizeGoal(goal) : g)) });
 }
 
+/**
+ * Poista tavoite kuten kanta: liitetyt rivit säilyvät, liitos katkeaa.
+ * Palauttaa irrotettujen rivien tunnisteet peruutusta varten
+ * (restoreGoalInState): epäonnistuneen poiston jälkeen irralliseksi jäänyt
+ * rivi olisi seuraavassa muokkauksessa lähettänyt goal_id = null ja
+ * pyyhkinyt kannassa yhä olevan liitoksen.
+ */
 export function removeGoalFromState(id) {
+  const linked = list => list.filter(item => item.goalId === id).map(item => item.id);
+  const unlinked = {
+    taskIds: linked(state.tasks),
+    entryIds: linked(state.timeEntries),
+    eventIds: linked(state.calendarEvents),
+    sessionIds: linked(state.exerciseSessions)
+  };
   commit({
     goals: state.goals.filter(g => g.id !== id),
     // Tehtävät säilyvät, mutta niiden tavoiteyhteys katkeaa — tehtävää ei
@@ -455,6 +469,26 @@ export function removeGoalFromState(id) {
     // Menot ja liikuntakerrat säilyvät (0014: on delete set null (goal_id)).
     calendarEvents: state.calendarEvents.map(e => (e.goalId === id ? { ...e, goalId: null } : e)),
     exerciseSessions: state.exerciseSessions.map(s => (s.goalId === id ? { ...s, goalId: null } : s))
+  });
+  return unlinked;
+}
+
+/**
+ * Peruutus epäonnistuneelle poistolle: tavoite ja sen liitokset takaisin.
+ * Vain yhä irrallinen rivi liitetään: jos käyttäjä ehti odotuksen aikana
+ * liittää rivin toiseen tavoitteeseen, hänen valintansa säilyy.
+ */
+export function restoreGoalInState(goal, unlinked = {}) {
+  const relink = (list, ids) => {
+    const own = new Set(ids || []);
+    return list.map(item => (own.has(item.id) && item.goalId == null ? { ...item, goalId: goal.id } : item));
+  };
+  commit({
+    goals: [...state.goals.filter(g => g.id !== goal.id), normalizeGoal(goal)],
+    tasks: relink(state.tasks, unlinked.taskIds),
+    timeEntries: relink(state.timeEntries, unlinked.entryIds),
+    calendarEvents: relink(state.calendarEvents, unlinked.eventIds),
+    exerciseSessions: relink(state.exerciseSessions, unlinked.sessionIds)
   });
 }
 

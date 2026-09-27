@@ -67,7 +67,7 @@ import {
   clearOtherWakeFlagsInState,
   setRoutines, addRoutineToState, replaceRoutineInState, removeRoutineFromState, findRoutine,
   setRoutineExceptions, addRoutineExceptionToState, removeRoutineExceptionFromState,
-  setGoals, addGoalToState, replaceGoalInState, removeGoalFromState, findGoal,
+  setGoals, addGoalToState, replaceGoalInState, removeGoalFromState, restoreGoalInState, findGoal,
   setProjects, addProjectToState, replaceProjectInState, removeProjectFromState,
   findProject,
   setWellbeing, upsertWellbeingEntry, setNotificationPreferences,
@@ -879,11 +879,23 @@ export async function deleteGoal(id, { confirm = confirmAction } = {}) {
   });
   if (!confirmed) return false;
 
-  removeGoalFromState(id);
+  // Tila luetaan UUDELLEEN vahvistuksen jälkeen (kuten deleteLifeArea):
+  // dialogin aikana ehtinyt lataus tai muutos jäisi muuten peruutuksen
+  // ulkopuolelle.
+  const current = findGoal(id);
+  if (!current) return false;
+  const startedIn = sessionSnapshot();
+  const unlinked = removeGoalFromState(id);
 
   const result = await goalsRepo.remove(id);
+  // Uloskirjautuminen tai tilin vaihto odotuksen aikana: tila on jo
+  // tyhjennetty, eikä edellisen käyttäjän tavoitetta palauteta seuraavalle.
+  if (!isSameSession(startedIn)) return false;
   if (!result.ok) {
-    addGoalToState(goal); // peruutus
+    // Kanta ei muuttunut: tavoite JA liitokset takaisin. Pelkkä tavoite
+    // jätti liitetyt rivit irrallisiksi, ja seuraava muokkaus olisi
+    // tallentanut goal_id = null kantaan.
+    restoreGoalInState(current, unlinked);
     showError(result.error);
     return false;
   }
