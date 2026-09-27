@@ -311,7 +311,10 @@ body.is-offline .offline-banner { display:block; }
 
 /* ---- Segmentoitu valinta (tehtävät / rutiinit) ---- */
 .segment { display:flex; gap:5px; background:var(--sage-soft); padding:4px; border-radius:13px; margin-bottom:16px; }
-.segment-btn { flex:1; appearance:none; -webkit-appearance:none; border:none; background:none; padding:9px; border-radius:9px; font-family:'Manrope',sans-serif; font-size:13px; font-weight:700; color:var(--text-2); cursor:pointer; }
+/* Osiopainike on näkymän päänavigointi (Kalenteri, Profiili, Tekeminen,
+ * Talous): kosketusalue vähintään 44 px. Pelkkä 9 px täyte ja rivi antoivat
+ * noin 34-36 px. */
+.segment-btn { flex:1; appearance:none; -webkit-appearance:none; border:none; background:none; padding:9px; min-height:44px; border-radius:9px; font-family:'Manrope',sans-serif; font-size:13px; font-weight:700; color:var(--text-2); cursor:pointer; }
 .segment-btn.active { background:var(--cream-card); color:var(--forest); }
 .segment-btn:focus-visible { outline:2px solid var(--gold); outline-offset:2px; }
 /* Kolmen osion segmentti (Talous). Nimet ovat pitkia suomeksi --
@@ -935,8 +938,10 @@ a.cal-inline-btn { display:inline-flex; align-items:center; }
 .cal-form .form-row > .checkbox-row { flex:0 1 auto; align-self:flex-end; }
 .cal-repeat { border:none; margin:0; padding:0; min-width:0; display:flex; flex-direction:column; gap:6px; }
 .cal-repeat legend { padding:0; margin-bottom:6px; }
-/* Viikonpäivävalinta on kosketusalue: vähintään 44 px korkea myös tässä lomakkeessa. */
-.cal-repeat .weekday-chip { min-height:44px; }
+/* Viikonpäivävalinta on kosketusalue: vähintään 44 × 44 px myös tässä
+ * lomakkeessa (ei 38 tai kapealla 33 px leveä). Rivi rivittyy, kun seitsemän
+ * ruutua eivät mahdu kapealle näytölle. */
+.cal-repeat .weekday-chip { min-height:44px; min-width:44px; }
 .cal-place-hint { margin-top:4px; }
 
 @media (max-width:380px) {

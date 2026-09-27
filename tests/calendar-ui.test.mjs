@@ -28,7 +28,7 @@ import { setClient } from '../src/data/client.js';
 import { clearAllCollections, calendarEventsRepo, savedPlacesRepo } from '../src/data/collectionsRepo.js';
 import {
   getState, resetState, subscribe, setCalendarView, setCalendarDate, showCalendarDay, setWeekStart,
-  setSavedPlaces, setCalendarEvents, setTasks, setDomainLoadStatus, CALENDAR_VIEWS
+  setSavedPlaces, setCalendarEvents, setTasks, setDomainLoadStatus, setTasksSegment, resetDatesToToday, CALENDAR_VIEWS
 } from '../src/app/state.js';
 import { clearLocalUserData } from '../src/app/actions.js';
 import { resetDailyLifeActions } from '../src/app/dailyLifeActions.js';
@@ -38,17 +38,19 @@ import {
   departureSummary, selectCalendarView, stepCalendar, KIND_LABELS, dayAgendaHtml
 } from '../src/app/views/calendar.js';
 import {
-  validateEventForm, openEventForm, editingEvent, submitEventForm, skipEditedOccurrence, OTHER_PLACE,
+  validateEventForm, openEventForm, editingEvent, submitEventForm, skipEditedOccurrence, deleteEditedEvent, OTHER_PLACE,
   defaultEventDate
 } from '../src/app/views/calendarForm.js';
 import { renderWeek, initWeekNavigation, isoWeekNumber } from '../src/app/views/week.js';
+import { renderTasks } from '../src/app/views/tasks.js';
+import { setScreenRenderers, renderVisible, switchTab } from '../src/app/navigation.js';
 import { handlers } from '../src/app/aiCommandHandlers.js';
 import { INTENT } from '../src/ai/intentSchema.js';
 import { closeConfirmDialogs } from '../src/ui/confirm.js';
 import { clearToasts } from '../src/ui/toast.js';
 import { buildDayPlan } from '../src/domain/scheduler.js';
 import { normalizeTask } from '../src/domain/task.js';
-import { parseISO } from '../src/lib/datetime.js';
+import { parseISO, fmtISO } from '../src/lib/datetime.js';
 
 const INDEX_HTML = read('index.html');
 const HTML = INDEX_HTML.replace(/\r\n/g, '\n');
@@ -254,6 +256,30 @@ test('tyylit: kosketusalueet vähintään 44 px, näkyvä fokus, kapea näyttö 
   assert.match(block, /@media \(max-width:380px\)/);
 });
 
+test('tyylit: osiopainikkeet (Päivä/Viikko/Kuukausi, Profiilin osiot) ja menon viikonpäivät ovat vähintään 44 × 44 px', () => {
+  const rules = parseRules(CSS);
+  // Osiopainike on näkymän päänavigointi: 9 px täyte ja noin 16 px rivi antoivat noin 34 px.
+  assert.ok((px(declarations(rules, '.segment-btn')['min-height']) ?? 0) >= 44, '.segment-btn min-height');
+  for (const selector of ['.segment-3 .segment-btn', '.segment-scroll .segment-btn']) {
+    const own = declarations(rules, selector);
+    assert.equal(own.height, undefined, `${selector}: ei kiinteää korkeutta`);
+    assert.ok(own['min-height'] === undefined || px(own['min-height']) >= 44, `${selector}: min-height`);
+  }
+  // Viikonpäivävalinta: leveys ja korkeus. Kapean näytön .weekday-chip { min-width:33px }
+  // ei kavenna tätä (tarkempi valitsin), eikä mikään @media-sääntö saa laskea sitä.
+  const chip = declarations(rules, '.cal-repeat .weekday-chip');
+  assert.ok(px(chip['min-height']) >= 44 && px(chip['min-width']) >= 44, '.cal-repeat .weekday-chip 44 × 44');
+  for (const rule of rules.filter(r => r.media && r.selectors.some(s => s === '.cal-repeat .weekday-chip' || s === '.segment-btn'))) {
+    for (const property of ['min-width', 'min-height']) {
+      if (rule.decls[property] !== undefined) assert.ok(px(rule.decls[property]) >= 44, `${rule.media} ${property}`);
+    }
+  }
+  // Seitsemän 44 px:n ruutua eivät mahdu 360 px:n näytölle yhdelle riville: rivi rivittyy.
+  assert.equal(declarations(rules, '.weekday-row')['flex-wrap'], 'wrap');
+  const repeat = screenMarkup().slice(screenMarkup().indexOf('id="ceRepeatDays"') - 40);
+  assert.match(repeat, /<div class="weekday-row" id="ceRepeatDays">/);
+});
+
 // ================================================================ TILA
 
 test('tila: oletus päivä ja tämä päivä; asettajat tarkistavat; resetState palauttaa', (t) => {
@@ -290,6 +316,31 @@ test('tila: oletus päivä ja tämä päivä; asettajat tarkistavat; resetState 
 
   resetState();
   assert.deepEqual([getState().calendarView, getState().calendarDate], ['day', TUESDAY], 'uloskirjautuminen nollaa');
+});
+
+test('kirjautuminen keskiyön jälkeen: Kalenteri avautuu tähän päivään, ei uloskirjautumisen päivään', (t) => {
+  freezeLocalDate(t, '2026-09-27', '23:50'); // su: uloskirjautuminen
+  resetState();
+  setCalendarView('month');
+  assert.equal(getState().calendarDate, '2026-09-27');
+  t.mock.timers.setTime(new Date(2026, 8, 28, 0, 10).getTime()); // ma 0.10: kirjautuminen ilman uudelleenlatausta
+
+  let notifications = 0;
+  const stop = subscribe(() => { notifications += 1; });
+  resetDatesToToday();
+  stop();
+  assert.equal(notifications, 1, 'päivät yhdellä ilmoituksella');
+  assert.equal(getState().calendarDate, MONDAY, 'Kalenterin päivä on tämä päivä');
+  assert.equal(relativeDayLabel(getState().calendarDate, MONDAY), 'Tänään');
+  assert.deepEqual([fmtISO(getState().viewDate), fmtISO(getState().weekStart)], [MONDAY, MONDAY]);
+  assert.equal(defaultEventDate(getState(), MONDAY), MONDAY, '"Uusi meno" ehdottaa tätä päivää');
+  assert.equal(getState().calendarView, 'month', 'osiota ei vaihdeta');
+
+  // main.js: kirjautuminen nollaa kaikki katsottavat päivät tällä yhdellä kutsulla.
+  const main = read('src/app/main.js').replace(/\r\n/g, '\n');
+  const signedIn = main.slice(main.indexOf('async function onSignedIn'), main.indexOf('function onSignedOut'));
+  assert.match(signedIn, /\n  resetDatesToToday\(\);\n/);
+  assert.equal(/setViewDate\(|setWeekStart\(/.test(signedIn), false, 'ei erillisiä asettajia, joista yksi voi unohtua');
 });
 
 // ================================================================ LASKENTA: KALENTERI = TÄNÄÄN
@@ -740,6 +791,53 @@ test('lomake: virheet suomeksi kenttäkohtaisesti; kelvotonta lukua ei pudoteta 
   assert.equal(validateEventForm(undefined).errors.ceTitle, 'Anna menolle nimi.');
 });
 
+test('lomake: selaimen lukematon numerosyöte ("10-15") on virhe, ei tyhjä "ei asetettu"', () => {
+  // type=number antaa arvoksi '' myös tekstistä, jota se ei osaa lukea
+  // (validity.badInput). Ilman merkintää '' olisi "ei asetettu" (null), ja
+  // lähtö laskettaisiin hiljaa paikan oletuksista.
+  const bad = validateEventForm({
+    ...VALID, travel: '', preparation: '', early: '', overhead: '', duration: '',
+    unreadable: ['ceTravel', 'cePrep', 'ceEarly', 'ceOverhead', 'ceDuration']
+  });
+  assert.equal(bad.valid, false);
+  assert.deepEqual(bad.errors, {
+    ceDuration: 'Anna kesto minuutteina (1–1440).',
+    ceTravel: 'Anna matka-aika minuutteina (1–1440).',
+    cePrep: 'Anna valmistautumisaika minuutteina (0–480).',
+    ceEarly: 'Anna etuaika minuutteina (0–240).',
+    ceOverhead: 'Anna pysäköinti ja kävely minuutteina (0–240).'
+  });
+  // Koko päivän menolla kestoa ei lueta; tuntematon tunniste ja roska ohitetaan.
+  assert.equal(validateEventForm({ ...VALID, allDay: true, duration: '', unreadable: ['ceDuration'] }).valid, true);
+  assert.equal(validateEventForm({ ...VALID, unreadable: ['ceTitle', 'ei-kenttä'] }).valid, true);
+  assert.equal(validateEventForm({ ...VALID, unreadable: 'ceTravel' }).valid, true);
+});
+
+test('lomake: lukematon valmistautumisaika näkyy virheenä kentän alla eikä menoa tallenneta', async (t) => {
+  freezeLocalDate(t, TUESDAY);
+  const { doc, byId } = mountCalendar({ before: () => seed({ events: [], tasks: [] }) });
+  byId('calNewEvent').click();
+  type(byId('ceTitle'), 'Hammaslääkäri');
+  type(byId('ceStart'), '16:00');
+  choose(byId('cePlace'), 'p-hammas');
+  // Käyttäjä kirjoitti "10-15": selain antaa arvoksi '' ja badInput = true.
+  const prep = byId('cePrep');
+  type(prep, '');
+  prep.validity = { badInput: true };
+  byId('ceSave').click();
+  await flush();
+  assert.equal(getState().calendarEvents.length, 0, 'ei tallennettu paikan oletuksella');
+  assert.equal(byId('cePrepError').textContent, 'Anna valmistautumisaika minuutteina (0–480).');
+  assert.equal(prep.getAttribute('aria-invalid'), 'true');
+  assertSameNode(doc.activeElement, prep);
+
+  prep.validity = { badInput: false };
+  type(prep, '10');
+  byId('ceSave').click();
+  await flush();
+  assert.equal(getState().calendarEvents[0].preparationMinutes, 10);
+});
+
 // ================================================================ LOMAKE: TALLENNUS
 
 test('uusi meno: avaus, tallennus dailyLifeActionsin kautta, lomake sulkeutuu ja meno näkyy', async (t) => {
@@ -995,4 +1093,178 @@ test('lomakkeen sarkainjärjestys kulkee kentästä toiseen ja Peruuta palauttaa
   assert.deepEqual(order.slice(-4), ['ceCategory', 'ceNotes', 'ceCancel', 'ceSave'], 'piilotetut Poista ja Ohita eivät ole järjestyksessä');
   byId('ceCancel').click();
   assertSameNode(doc.activeElement, opener);
+});
+
+// ================================================================ FOKUS: TEHTÄVÄ JA LOMAKKEEN SULKU
+
+/**
+ * Näytöt kuten main.js: tilamuutos piirtää avoimen näytön (renderVisible),
+ * ja switchTab piirtää likaisen näytön ennen näyttämistä. Tekeminen-näytöltä
+ * piirretään vain tehtävät (osiot), koska tehtävän muokkaus avautuu sinne.
+ */
+function withScreens(t, { render }) {
+  setScreenRenderers({ 'screen-week': render, 'screen-tasks': () => renderTasks() });
+  const stop = subscribe(() => renderVisible());
+  t.after(() => {
+    stop();
+    setScreenRenderers({});
+  });
+}
+
+test('tehtävän napautus Kalenterissa avaa näkyvän muokkauslomakkeen, vaikka Tekemisessä oli auki Rutiinit', (t) => {
+  freezeLocalDate(t, TUESDAY);
+  const { doc, byId, render } = mountCalendar({ before: () => seed({ events: [] }) });
+  withScreens(t, { render });
+  // Käyttäjä kävi aiemmin Tekeminen → Rutiinit ja palasi Kalenteriin.
+  switchTab('screen-tasks');
+  setTasksSegment('routines');
+  switchTab('screen-week');
+
+  const row = doc.querySelector('button[data-cal-task="t-raportti"]');
+  row.focus();
+  row.click();
+  assert.equal(getState().screen, 'screen-tasks');
+  assert.equal(getState().tasksSegment, 'tasks', 'muokattava tehtävä on Tehtävät-osiossa');
+  assert.equal(isRendered(byId('addForm')), true, 'lomake näkyy (ei piilotetun osion sisällä)');
+  assert.equal(byId('afTitle').value, 'Raportti');
+  assertSameNode(doc.activeElement, byId('afTitle'), 'fokus lomakkeen otsikkoon, ei piilotettuun kalenteriin');
+
+  // Sama polku Viikko-osion tehtävälistasta (week.js).
+  switchTab('screen-week');
+  setTasksSegment('inbox');
+  byId('segmentCalWeek').click();
+  const edit = doc.querySelector('#weekListContainer [data-edit="t-raportti"]');
+  assert.equal(isRendered(edit), true);
+  edit.click();
+  assert.deepEqual([getState().screen, getState().tasksSegment], ['screen-tasks', 'tasks']);
+  assert.equal(isRendered(byId('addForm')), true);
+  assertSameNode(doc.activeElement, byId('afTitle'));
+});
+
+test('Viikko: menon tallennus vie fokuksen näkyvään viikon riviin, ei piilossa olevan Päivän vanhaan riviin', async (t) => {
+  freezeLocalDate(t, TUESDAY);
+  const { doc, byId } = mountCalendar({ before: () => seed({ tasks: [] }) });
+  // Kalenteri avautuu Päivään: päivälistaan jää hammaslääkärin rivi, kun osio vaihtuu.
+  assert.ok(doc.querySelector('#calDayAgenda [data-cal-open="e-hammas"]'));
+  byId('segmentCalWeek').click();
+  const row = doc.querySelector('#calWeekEvents [data-cal-open="e-hammas"]');
+  row.focus();
+  press(doc, 'Enter');
+  assertSameNode(doc.activeElement, byId('ceTitle'));
+  type(byId('ceTitle'), 'Hammaslääkäri (tarkastus)');
+  press(doc, 'Enter');
+  await flush();
+
+  assert.equal(getState().calendarEvents.find(e => e.id === 'e-hammas').title, 'Hammaslääkäri (tarkastus)');
+  assert.equal(isRendered(byId('calEventForm')), false);
+  const fresh = doc.querySelector('#calWeekEvents [data-cal-open="e-hammas"]');
+  assert.notEqual(fresh, row, 'rivi piirrettiin uudelleen (avaaja katosi)');
+  assertSameNode(doc.activeElement, fresh, 'fokus saman menon näkyvään riviin');
+  assert.equal(isRendered(doc.activeElement), true);
+});
+
+test('Päivä Viikon jälkeen: poisto vie fokuksen "Uusi meno" -painikkeeseen, ei piilossa olevaan viikon riviin', async (t) => {
+  freezeLocalDate(t, TUESDAY);
+  const { doc, byId } = mountCalendar({ before: () => seed({ tasks: [] }) });
+  byId('segmentCalWeek').click();
+  byId('segmentCalDay').click();
+  // Piilossa olevaan viikkolistaan jäi palaverin rivi edelliseltä käynniltä.
+  assert.ok(doc.querySelector('#calWeekEvents [data-cal-open="e-palaveri"]'));
+  const row = doc.querySelector('#calDayAgenda [data-cal-open="e-palaveri"]');
+  row.focus();
+  press(doc, 'Enter');
+  byId('ceDelete').click();
+  doc.getElementById('confirmAccept').click();
+  await flush();
+
+  assert.equal(getState().calendarEvents.some(e => e.id === 'e-palaveri'), false);
+  assertSameNode(doc.activeElement, byId('calNewEvent'), 'fokus "Uusi meno" -painikkeeseen');
+
+  // Toistuvan menon ohitus samassa tilanteessa: kerran rivi katoaa päivältä.
+  showCalendarDay(THURSDAY);
+  byId('segmentCalWeek').click();
+  byId('segmentCalDay').click();
+  doc.querySelector(`#calDayAgenda [data-cal-open="e-jooga"][data-cal-date="${THURSDAY}"]`).click();
+  byId('ceSkip').click();
+  doc.getElementById('confirmAccept').click();
+  await flush();
+  assert.deepEqual(getState().calendarEvents.find(e => e.id === 'e-jooga').skipDates, [THURSDAY]);
+  assertSameNode(doc.activeElement, byId('calNewEvent'));
+});
+
+test('Poista → Peruuta (tai Esc) palauttaa fokuksen Poista-painikkeeseen; epäonnistunut poisto samoin', async (t) => {
+  freezeLocalDate(t, TUESDAY);
+  const { doc, byId } = mountCalendar({ before: () => seed({ tasks: [] }) });
+  doc.querySelector('[data-cal-open="e-palaveri"]').click();
+  const del = byId('ceDelete');
+  del.focus();
+  press(doc, 'Enter');
+  const dialog = doc.getElementById('confirmDialog');
+  assert.ok(dialog.open, 'vahvistus kysytään');
+  // Dialogi palauttaa sulkeutuessaan fokuksen avaajaansa: estettyyn
+  // painikkeeseen fokus ei siirry.
+  assert.equal(del.disabled, false, 'Poista ei ole estetty vahvistuksen aikana');
+  press(doc, 'Escape');
+  await flush();
+  assert.equal(dialog.open, false);
+  assert.ok(getState().calendarEvents.some(e => e.id === 'e-palaveri'), 'peruttu: meno säilyi');
+  assert.equal(isRendered(byId('calEventForm')), true, 'lomake jäi auki');
+  assertSameNode(doc.activeElement, del, 'fokus palasi Poista-painikkeeseen');
+
+  // Peruuta-painike: sama.
+  del.click();
+  doc.getElementById('confirmCancel').click();
+  await flush();
+  assertSameNode(doc.activeElement, del);
+
+  // Hyväksytty mutta epäonnistunut poisto: meno palaa, lomake jää auki ja
+  // fokus palaa Poista-painikkeeseen uutta yritystä varten.
+  const original = calendarEventsRepo.remove;
+  calendarEventsRepo.remove = async () => ({ ok: false, error: { message: 'verkko', userMessage: 'Yhteys katkesi.' } });
+  t.after(() => { calendarEventsRepo.remove = original; });
+  const result = await deleteEditedEvent({
+    confirm: async () => {
+      // Selain siirtää fokuksen bodyyn, kun fokusoitu painike estetään
+      // tallennuksen ajaksi (tynkä-DOM ei tee sitä itse).
+      doc.activeElement = doc.body;
+      return true;
+    }
+  });
+  assert.equal(result.ok, false);
+  assert.ok(getState().calendarEvents.some(e => e.id === 'e-palaveri'), 'epäonnistunut poisto palautettiin');
+  assert.equal(isRendered(byId('calEventForm')), true);
+  assert.equal(del.disabled, false, 'painike vapautui');
+  assertSameNode(doc.activeElement, del);
+});
+
+test('Viikko: "Merkitse tehdyksi" ja muu uudelleenpiirto pitävät fokuksen samassa ohjaimessa', async (t) => {
+  freezeLocalDate(t, TUESDAY);
+  const { doc, byId, render } = mountCalendar({ before: () => seed({ events: [] }) });
+  byId('segmentCalWeek').click();
+  const toggleButton = () => doc.querySelector('#weekListContainer [data-toggle="t-raportti"]');
+  const before = toggleButton();
+  assert.equal(accessibleName(before), 'Merkitse tehdyksi: Raportti');
+  before.focus();
+  press(doc, 'Enter');
+  await flush();
+
+  assert.equal(getState().tasks.find(task => task.id === 't-raportti').completed, true, 'yksi painallus = yksi merkintä');
+  const after = toggleButton();
+  assert.equal(accessibleName(after), 'Merkitse keskeneräiseksi: Raportti');
+  assertSameNode(doc.activeElement, after, 'fokus pysyi saman tehtävän painikkeessa');
+
+  // Viikkonauhan päivä: muu tilamuutos (esim. synkronointi) ei pudota fokusta.
+  const day = doc.querySelector(`#weekStripContainer [data-date="${WEDNESDAY}"]`);
+  day.focus();
+  setTasks([...getState().tasks, normalizeTask({ id: 't-uusi', title: 'Uusi', date: WEDNESDAY })]);
+  const dayAfter = doc.querySelector(`#weekStripContainer [data-date="${WEDNESDAY}"]`);
+  assert.match(accessibleName(dayAfter), /1 tehtävää/);
+  assertSameNode(doc.activeElement, dayAfter, 'fokus pysyi samassa päivässä');
+
+  // Kuuntelijat eivät kasaannu piirroista: napautus avaa päivän kerran.
+  render();
+  render();
+  dayAfter.click();
+  assert.deepEqual([getState().calendarView, getState().calendarDate], ['day', WEDNESDAY]);
+  assertSameNode(doc.activeElement, byId('calTitle'));
 });

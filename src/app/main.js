@@ -10,9 +10,8 @@
 //        - kirjautunut   -> lataa data, näytä sovellus
 //        - kirjautumaton -> näytä kirjautumisportti
 
-import { todayMidnight, startOfWeek } from '../lib/datetime.js';
 import { getDevicePreference, clearDevicePreferences } from '../data/preferences.js';
-import { subscribe, resetState, setViewDate, setWeekStart, getState, batch } from './state.js';
+import { subscribe, resetState, resetDatesToToday, getState, batch } from './state.js';
 import { loadUserData, clearLocalUserData } from './actions.js';
 import { renderTimerBar, initTimeLog, closeTimeLogDialog } from './views/timeLog.js';
 import { restoreLocalTimer, initTimerCrossTabSync, stopTimerCrossTabSync, resetTimerSync } from './timerState.js';
@@ -397,10 +396,10 @@ async function onSignedIn() {
   await ensureSchemaCompatibility({ timeoutMs: SCHEMA_PROBE_TIMEOUT_MS });
   if (!signedIn || !isSameSession(probeSession)) return;
 
-  // Päivä ja viikko nollataan kirjautuessa: sovellus avautuu aina tähän
-  // päivään, ei siihen mihin edellinen istunto jäi.
-  setViewDate(todayMidnight());
-  setWeekStart(startOfWeek(todayMidnight()));
+  // Päivä, viikko ja Kalenterin päivä nollataan kirjautuessa: sovellus
+  // avautuu aina tähän päivään, ei siihen mihin edellinen istunto jäi
+  // (ks. state.js resetDatesToToday: Kalenterin päivä jäi aiemmin pois).
+  resetDatesToToday();
 
   restoreLastScreen(getDevicePreference('lastScreen'));
 

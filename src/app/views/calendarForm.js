@@ -49,6 +49,9 @@ const DOMAIN_FIELDS = Object.freeze({
   recurrenceUntil: 'ceUntil', notes: 'ceNotes'
 });
 
+/** Minuuttikentät (type=number), joiden lukematon syöte näkyy selaimessa tyhjänä. */
+const NUMBER_FIELDS = Object.freeze(['ceDuration', 'ceTravel', 'cePrep', 'ceEarly', 'ceOverhead']);
+
 const WEEKDAYS = Object.freeze([1, 2, 3, 4, 5, 6, 7]);
 
 const WEEKDAY_ADESSIVE = Object.freeze({
@@ -64,8 +67,14 @@ let editing = { eventId: null, occurrenceDate: null, opener: null };
 
 // ------------------------------------------------------------ tarkistus (puhdas)
 
-/** Kokonaisluku minuutteina tai virhe. Tyhjä = ei asetettu (null), ei nolla. */
-function minutesField(text, min, max, message) {
+/**
+ * Kokonaisluku minuutteina tai virhe. Tyhjä = ei asetettu (null), ei nolla.
+ * `unreadable`: selain ei osannut lukea syötettä (esim. "10-15"), ja
+ * type=number-kentän arvo on silloin ''. Se on virhe, ei "ei asetettu":
+ * muuten lähtö laskettaisiin hiljaa paikan tai asetusten oletuksista.
+ */
+function minutesField(text, min, max, message, unreadable = false) {
+  if (unreadable) return { error: message };
   const trimmed = String(text ?? '').trim();
   if (trimmed === '') return { value: null };
   if (!/^\d+$/.test(trimmed)) return { error: message };
@@ -82,13 +91,15 @@ function dayMonth(dateIso) {
 /**
  * Tarkista lomakkeen raakasyöte ja muunna se tallennettavaksi menoksi.
  *
- * @param {object} raw readEventForm()-muotoinen syöte (tekstit ja totuusarvot)
+ * @param {object} raw readEventForm()-muotoinen syöte (tekstit ja totuusarvot);
+ *        `unreadable`: minuuttikenttien tunnisteet, joiden syötettä selain ei osannut lukea
  * @returns {{valid:boolean, errors:Record<string,string>, value:object|null}}
  *          errors: kentän tunniste -> suomenkielinen viesti
  */
 export function validateEventForm(raw = {}) {
   const input = raw && typeof raw === 'object' ? raw : {};
   const errors = {};
+  const unreadable = new Set(Array.isArray(input.unreadable) ? input.unreadable : []);
 
   const title = String(input.title ?? '').trim().replace(/\s+/g, ' ');
   if (!title) errors.ceTitle = 'Anna menolle nimi.';
@@ -108,7 +119,7 @@ export function validateEventForm(raw = {}) {
     if (end && !isTimeOfDay(end)) errors.ceEnd = 'Anna päättymisaika muodossa tt:mm.';
     else if (end && end === start) errors.ceEnd = 'Päättymisaika on sama kuin alkamisaika.';
     duration = minutesField(input.duration, 1, MAX_EVENT_DURATION_MINUTES,
-      `Anna kesto minuutteina (1–${MAX_EVENT_DURATION_MINUTES}).`);
+      `Anna kesto minuutteina (1–${MAX_EVENT_DURATION_MINUTES}).`, unreadable.has('ceDuration'));
     if (duration.error) errors.ceDuration = duration.error;
     else if (end && duration.value !== null) {
       errors.ceDuration = 'Anna joko päättymisaika tai kesto, ei molempia.';
@@ -125,13 +136,13 @@ export function validateEventForm(raw = {}) {
   }
 
   const travel = minutesField(input.travel, 1, MAX_TRAVEL_MINUTES,
-    `Anna matka-aika minuutteina (1–${MAX_TRAVEL_MINUTES}).`);
+    `Anna matka-aika minuutteina (1–${MAX_TRAVEL_MINUTES}).`, unreadable.has('ceTravel'));
   const preparation = minutesField(input.preparation, 0, MAX_PREPARATION_MINUTES,
-    `Anna valmistautumisaika minuutteina (0–${MAX_PREPARATION_MINUTES}).`);
+    `Anna valmistautumisaika minuutteina (0–${MAX_PREPARATION_MINUTES}).`, unreadable.has('cePrep'));
   const early = minutesField(input.early, 0, MAX_PLACE_ARRIVAL_BUFFER_MINUTES,
-    `Anna etuaika minuutteina (0–${MAX_PLACE_ARRIVAL_BUFFER_MINUTES}).`);
+    `Anna etuaika minuutteina (0–${MAX_PLACE_ARRIVAL_BUFFER_MINUTES}).`, unreadable.has('ceEarly'));
   const overhead = minutesField(input.overhead, 0, MAX_OVERHEAD_MINUTES,
-    `Anna pysäköinti ja kävely minuutteina (0–${MAX_OVERHEAD_MINUTES}).`);
+    `Anna pysäköinti ja kävely minuutteina (0–${MAX_OVERHEAD_MINUTES}).`, unreadable.has('ceOverhead'));
   if (travel.error) errors.ceTravel = travel.error;
   if (preparation.error) errors.cePrep = preparation.error;
   if (early.error) errors.ceEarly = early.error;
@@ -278,9 +289,16 @@ function syncRepeat() {
   toggle('ceUntilGroup', checkedWeekdays().length > 0);
 }
 
+/** Selain ei osannut lukea kentän syötettä (type=number: arvo on silloin ''). */
+function unreadableField(id) {
+  const field = maybe(id);
+  return Boolean(field && field.validity && field.validity.badInput);
+}
+
 /** Lomakkeen raakasyöte (tekstit ja totuusarvot) validateEventForm-funktiolle. */
 export function readEventForm() {
   return {
+    unreadable: NUMBER_FIELDS.filter(unreadableField),
     id: editing.eventId,
     title: el('ceTitle').value,
     date: el('ceDate').value,
@@ -430,13 +448,17 @@ function focusAfterClose(opener, eventId) {
     if (typeof document === 'undefined' || document.activeElement === opener) return;
   }
   // Avaaja katosi uudelleenpiirrossa: saman menon rivi, muuten "Uusi meno".
+  // Vain näkyvä osio piirretään uudelleen, joten piilossa olevaan (edellisen
+  // osion) listaan jää vanhentunut rivi samalle menolle. Piilotettu rivi ei
+  // ota fokusta vastaan: siksi tarkistetaan, että fokus todella siirtyi, ja
+  // muuten jatketaan seuraavaan listaan ja lopulta "Uusi meno" -painikkeeseen.
   if (eventId) {
     for (const container of [maybe('calDayAgenda'), maybe('calWeekEvents')]) {
       if (!container || typeof container.querySelectorAll !== 'function') continue;
       const row = [...container.querySelectorAll('[data-cal-open]')].find(node => node.dataset.calOpen === eventId);
       if (row) {
         row.focus();
-        return;
+        if (typeof document === 'undefined' || document.activeElement === row) return;
       }
     }
   }
@@ -523,21 +545,37 @@ export const submitEventForm = singleFlight(async () => {
   return result || { ok: false };
 });
 
-/** Poista koko meno (kysyy vahvistuksen dailyLifeActionsissa). */
-export const deleteEditedEvent = singleFlight(async () => {
+/**
+ * Poista koko meno (kysyy vahvistuksen dailyLifeActionsissa).
+ *
+ * Painike estetään vasta vahvistuksen JÄLKEEN, kuten "Ohita tämä kerta":
+ * dialogi palauttaa sulkeutuessaan fokuksen avaajaansa, eikä estettyyn
+ * painikkeeseen voi siirtää fokusta. Aiemmin Peruuta tai Esc pudotti
+ * fokuksen bodyyn. Tuplapainalluksen estävät singleFlight ja modaali.
+ */
+export const deleteEditedEvent = singleFlight(async ({ confirm = confirmAction } = {}) => {
   const eventId = editing.eventId;
   if (!eventId) return { ok: false };
   const button = el('ceDelete');
-  setBusy(button, true);
   let result;
   try {
-    result = await deleteCalendarEvent(eventId);
+    result = await deleteCalendarEvent(eventId, {
+      confirm: async options => {
+        const confirmed = await confirm(options);
+        if (confirmed) setBusy(button, true);
+        return confirmed;
+      }
+    });
   } finally {
     setBusy(button, false);
   }
   if (result && result.ok) {
     closeEventForm();
     success('Meno poistettu.');
+  } else if (isOpen() && button.isConnected !== false) {
+    // Peruttu tai epäonnistunut: lomake jää auki, ja fokus palaa Poista-
+    // painikkeeseen (estetty painike pudotti sen hyväksynnän jälkeen).
+    button.focus();
   }
   return result || { ok: false };
 });
