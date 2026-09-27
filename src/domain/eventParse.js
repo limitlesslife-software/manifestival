@@ -33,7 +33,8 @@
 // sanoi paikan ("Kampissa"), siitä kysytään.
 
 import {
-  parseFinnishTemporal, DATE_ROLE, addDaysIso, weekdayOfIso, WEEKDAY_NUMBER, clockFromParts
+  parseFinnishTemporal, DATE_ROLE, addDaysIso, weekdayOfIso, WEEKDAY_NUMBER, clockFromParts,
+  nominativeHourValue, bareHourFromParts
 } from './fiTemporal.js';
 import { findFinnishDurations } from './fiDuration.js';
 import { parseInterruption, mentionsDestructiveAction } from './interruptions.js';
@@ -43,6 +44,8 @@ import { shortDateLabel } from './calendar.js';
 import { MAX_EVENT_TITLE_LENGTH } from './dailyLife.js';
 
 export const CREATE_EVENT_INTENT = 'create_event';
+/** "Minun pitää käydä Motonetissä tällä viikolla": avoin asia, ei meno (parseOpenEndedTask). */
+export const CREATE_OPEN_TASK_INTENT = 'create_open_task';
 
 /** Pidempi teksti ei ole yksittäinen komento (komentorivin raja on 300 merkkiä). */
 export const MAX_EVENT_COMMAND_LENGTH = 300;
@@ -100,7 +103,22 @@ const RELATIVE_FOLLOWERS = new Set(['päästä', 'kuluttua', 'sitten', 'ennen', 
 const DAY_PART_TOKENS = new Set(['aamulla', 'aamupäivällä', 'iltapäivällä', 'illalla', 'yöllä', 'aamuyöllä']);
 
 /** Paikan sijapäätteet: -ssa, -lla, -lle, illatiivin pitkä vokaali. Genetiivi (-n) ei ole paikka. */
-const LOCATIVE_SUFFIX = /(?:ssa|ssä|lla|llä|lle|seen|siin|hin|hun|hon|hen|iin|aan|ään|een|oon|uun|yyn|öön)$/u;
+const LOCATIVE_SUFFIX = /(?:ssa|ssä|lla|llä|lle|seen|siin|hin|hun|hon|hen|hön|hyn|iin|aan|ään|een|oon|uun|yyn|öön)$/u;
+/**
+ * Työn arkiset muodot: "töissä", "töihin" (monikko töi-), "työpaikalla",
+ * "duunissa". Nämä tarkoittavat samaa kuin "työ", joten ne haetaan myös
+ * sanalla "työ" -- tallennettu paikka "Työ" on silloin täsmällinen osuma.
+ */
+const WORK_STEMS = new Set(['töi', 'työpaika', 'työpaikka', 'duuni']);
+/** Sanat, joiden edessä pelkkä luku päivän perässä on kellonaika ("maanantaina 18 kestää tunnin"). */
+const SPOKEN_TIME_FOLLOWERS = new Set(['aamulla', 'aamupäivällä', 'iltapäivällä', 'illalla', 'yöllä', 'aamuyöllä',
+  'kestää', 'kestäen', 'kesto', 'alkaen', 'asti', 'saakka', 'ja', 'eli']);
+/** Avoimen asian otsikon alusta pois: "(minun) pitää käydä Motonetissä" -> "Käydä Motonetissä". */
+const TASK_LEAD_FILLERS = new Set(['pitää', 'pitäisi', 'pitäis', 'täytyy', 'täytyisi', 'tarvitsee', 'tarttee', 'pakko',
+  'olisi', 'ois', 'pitänee']);
+/** Avoimen asian otsikon lopusta pois: "hoitaa verot (tämän viikon) aikana". */
+const TASK_TAIL_FILLERS = new Set(['aikana', 'mennessä', 'loppuun', 'lopussa', 'lopulla', 'sisällä', 'jossain', 'joskus',
+  'vielä']);
 const CASE_SUFFIXES = ['ssa', 'ssä', 'lla', 'llä', 'lle', 'lta', 'ltä', 'sta', 'stä'];
 const LONG_VOWEL_ILLATIVE = ['aan', 'ään', 'een', 'iin', 'oon', 'uun', 'yyn', 'öön'];
 
@@ -157,6 +175,14 @@ function freezeAmbiguity(field, options, question, reason) {
   return Object.freeze({ field, options: Object.freeze([...options]), question, reason });
 }
 
+/** Sanat otsikoksi alkuperäisellä kirjoitusasulla, iso alkukirjain, rajattu. '' jos ei sanoja. */
+function titleText(tokens, display) {
+  const text = tokens.map(token => display.slice(token.start, token.end)).join(' ');
+  if (!text) return '';
+  const chars = Array.from(text);
+  return (chars[0].toLocaleUpperCase('fi') + chars.slice(1).join('')).slice(0, MAX_EVENT_TITLE_LENGTH).trim();
+}
+
 // ------------------------------------------------------------ kellonajat
 
 /** Kellonaikaväli "klo 16-17", "16.00–17.30". Palauttaa välit ja niiden tiedot. */
@@ -208,6 +234,56 @@ function wrapDuration(startTime, endTime) {
   return diff > 0 ? diff : null;
 }
 
+const AFTER_DATE_NUMBER = /^[\s,]+(\d{1,2})(?:\s*[-–—]\s*(\d{1,2}))?(?![\p{L}\p{N}]|[.:,]\d)/u;
+const AFTER_DATE_WORD = /^[\s,]+(\p{L}+)(?![\p{L}\p{N}])/u;
+
+/**
+ * Kellonaika ilman klo-sanaa HETI päivän perässä: "torstaina 14-15",
+ * "maanantaina 18", "perjantaina kaksitoista". Luvun jälkeen saa tulla vain
+ * lauseen loppu, vuorokaudenaika tai kesto-/rajasana ("18 kestää tunnin"),
+ * jotta "lauantaina 18 hengelle" tai "huomenna 2 tuntia" eivät ole
+ * kellonaikoja. Tunti 1-11 on epäselvä (klo 7 vai 19) kuten tuntisana.
+ *
+ * @returns {null | {entry:object} | {range:object}}
+ */
+function spokenTimeAfterDate(input, dates, text) {
+  const endsClause = rest => /^[\s,.!]*$/u.test(rest) || (() => {
+    const next = /^[\s,]*(\p{L}+)/u.exec(rest);
+    return Boolean(next && SPOKEN_TIME_FOLLOWERS.has(next[1]));
+  })();
+  for (const date of [...dates].sort((a, b) => a.start - b.start)) {
+    if (date.week || !Number.isInteger(date.end)) continue;
+    const rest = input.slice(date.end);
+    const number = AFTER_DATE_NUMBER.exec(rest);
+    if (number) {
+      if (!endsClause(rest.slice(number[0].length))) continue;
+      const lead = number[0].length - number[0].trimStart().length;
+      const start = date.end + lead;
+      const end = date.end + number[0].length;
+      const startHour = Number(number[1]);
+      if (startHour < 1 || startHour > 23) continue;
+      const entry = { ...bareHourFromParts(startHour, text), expr: number[0].trim(), start, end };
+      if (number[2] === undefined) return { entry };
+      const endHour = Number(number[2]);
+      if (endHour > 24) continue;
+      return {
+        range: {
+          start, end, startEntry: entry,
+          endHour: endHour === 24 ? 0 : endHour, endMinute: 0, startHour, startMinute: 0
+        }
+      };
+    }
+    const word = AFTER_DATE_WORD.exec(rest);
+    const hour = word ? nominativeHourValue(word[1]) : null;
+    if (hour !== null && endsClause(rest.slice(word[0].length))) {
+      const lead = word[0].length - word[0].trimStart().length;
+      const start = date.end + lead;
+      return { entry: { ...bareHourFromParts(hour, text), expr: word[1], start, end: start + word[1].length } };
+    }
+  }
+  return null;
+}
+
 // ------------------------------------------------------------ paikka
 
 function stemCandidates(word) {
@@ -226,8 +302,17 @@ function stemCandidates(word) {
   for (const suffix of LONG_VOWEL_ILLATIVE) if (word.endsWith(suffix)) add(word.slice(0, -2));
   for (const suffix of CASE_SUFFIXES) if (word.endsWith(suffix)) add(word.slice(0, -suffix.length));
   if (word.endsWith('seen')) add(word.slice(0, -4));
+  // Lyhyen sanan illatiivi -hVn: "työhön" -> "työ", "töihin" -> "töi", "maahan" -> "maa".
+  const illative = /h([aeiouyäö])n$/u.exec(word);
+  if (illative && word.length >= 6 && word[word.length - 4] === illative[1]) add(word.slice(0, -3));
   if (word.endsWith('n')) add(word.slice(0, -1));
-  return [...out];
+  // Työn arkiset muodot haetaan myös perusmuodolla "työ".
+  if ([...out].some(stem => WORK_STEMS.has(stem))) out.add('työ');
+  // Perusmuodot ensin, sana itse viimeisenä: yhtä hyvistä osumista voittaa
+  // perusmuoto ("motonetissa" -> "motonet" osuu kaikkiin Motonet-paikkoihin),
+  // ja se on myös opittava nimitys, joka tunnistaa seuraavankin taivutuksen.
+  const [word0, ...stems] = [...out];
+  return [...stems, word0];
 }
 
 function projectMatch(match) {
@@ -261,25 +346,70 @@ function nameRelevant(name, text) {
   return folded.split(/\s+/).some(word => word.length >= 3 && (word.startsWith(text) || text.startsWith(word)));
 }
 
-/** Kutsujan paikkatunnistus suojattuna: heittävä tai outo vastaus on "ei tulosta". */
+/**
+ * Tiukempi osuvuus otsikon sanalle, jota ei sanottu paikan sijassa
+ * ("parturi"): sanan on oltava paikan nimen (tai sen sanan) alku. Pelkkä
+ * sisältyminen ei riitä, koska yhdyssana ei ole paikkamaininta:
+ * "työpalaveri" ei ehdota paikkaa Työ eikä "kotisiivous" paikkaa Koti.
+ */
+function titleRelevant(name, text) {
+  const folded = typeof name === 'string' ? name.normalize('NFC').toLocaleLowerCase('fi').trim() : '';
+  if (!folded || text.length < 3) return false;
+  return folded.startsWith(text) || folded.split(/\s+/).some(word => word.startsWith(text));
+}
+
+/** Käyttäjän vahvistamat nimitykset (vähintään kerran): taitettu teksti -> paikkojen tunnisteet. */
+function confirmedAliasIndex(aliases) {
+  const index = new Map();
+  for (const alias of Array.isArray(aliases) ? aliases : []) {
+    if (!isObject(alias) || typeof alias.placeId !== 'string' || typeof alias.alias !== 'string') continue;
+    if (!(typeof alias.confirmations === 'number' && alias.confirmations >= 1)) continue;
+    const folded = alias.alias.normalize('NFC').replace(/\s+/g, ' ').trim().toLocaleLowerCase('fi');
+    if (!folded) continue;
+    if (!index.has(folded)) index.set(folded, new Set());
+    index.get(folded).add(alias.placeId);
+  }
+  return index;
+}
+
+/**
+ * Kutsujan paikkatunnistus suojattuna: heittävä tai outo vastaus on "ei tulosta".
+ *
+ * Tapa (mode) kertoo, miten paikka mainittiin: 'said' = paikan sijassa
+ * ("Kampissa", "parturiin"), 'title' = otsikon sana ("parturi"). Epävarmoista
+ * ehdokkaista jätetään vain osuvat (ks. nameRelevant, titleRelevant); ehdokas,
+ * jolle käyttäjä on jo kerran vahvistanut juuri tämän sanan, on aina osuva.
+ * Tuloksessa `query` on teksti, jolla osuma löytyi: se on opittava nimitys.
+ */
 function makeResolver(resolvePlace, places, aliases) {
   if (typeof resolvePlace !== 'function') return null;
+  const raw = new Map();
   const cache = new Map();
-  return text => {
-    if (cache.has(text)) return cache.get(text);
-    let projected = null;
-    try {
-      projected = projectMatch(resolvePlace(text, { places, aliases }));
-    } catch {
-      projected = null;
+  const confirmed = confirmedAliasIndex(aliases);
+  return (text, mode = 'said') => {
+    const key = `${mode}:${text}`;
+    if (cache.has(key)) return cache.get(key);
+    if (!raw.has(text)) {
+      let projectedRaw = null;
+      try {
+        projectedRaw = projectMatch(resolvePlace(text, { places, aliases }));
+      } catch {
+        projectedRaw = null;
+      }
+      raw.set(text, projectedRaw);
     }
+    let projected = raw.get(text);
     if (projected && projected.status === 'ambiguous') {
-      const relevant = projected.candidates.filter(candidate => nameRelevant(candidate.name, text));
+      const relevantName = mode === 'title' ? titleRelevant : nameRelevant;
+      const ownAlias = confirmed.get(text);
+      const relevant = projected.candidates
+        .filter(candidate => relevantName(candidate.name, text) || Boolean(ownAlias && ownAlias.has(candidate.id)));
       projected = relevant.length > 0
         ? Object.freeze({ ...projected, candidates: Object.freeze(relevant) })
         : Object.freeze({ ...projected, status: 'none', candidates: Object.freeze([]), reason: 'Tallennettua paikkaa ei löytynyt.' });
     }
-    cache.set(text, projected);
+    if (projected) projected = Object.freeze({ ...projected, query: text });
+    cache.set(key, projected);
     return projected;
   };
 }
@@ -291,11 +421,14 @@ function rankMatch(match) {
   return 1;
 }
 
-function bestMatch(resolver, texts) {
+function bestMatch(resolver, texts, mode = 'said') {
   let best = null;
   for (const text of texts) {
-    const match = resolver(text);
+    const match = resolver(text, mode);
     if (rankMatch(match) > rankMatch(best)) best = match;
+    // Kahdesta epävarmasta se, jossa on enemmän ehdokkaita: valintaa ei kavenneta
+    // hiljaa ("motoneti" osuisi vain kerran vahvistettuun, "motonet" kaikkiin).
+    else if (rankMatch(match) === 2 && rankMatch(best) === 2 && match.candidates.length > best.candidates.length) best = match;
     if (rankMatch(best) === 3) break;
   }
   return best;
@@ -325,8 +458,18 @@ function dateQuestion(entry, todayIso) {
         ? freezeAmbiguity(EVENT_FIELD.DATE, [next], `Tämän viikon ${name} on jo mennyt. Tarkoitatko ${label(next)}?`, entry.reason)
         : freezeAmbiguity(EVENT_FIELD.DATE, [], 'Päivä on jo mennyt. Minä päivänä tapahtuma on?', entry.reason);
     }
-    case 'week_only':
-      return freezeAmbiguity(EVENT_FIELD.DATE, [], `Minä päivänä ${entry.expr}?`, entry.reason);
+    case 'week_only': {
+      // Viikon päivät vaihtoehtoina (tällä viikolla vain jäljellä olevat),
+      // jotta "kokous ensi viikolla klo 10" ei jää umpikujaan.
+      const options = [];
+      if (isIsoDate(entry.weekStart)) {
+        for (let day = 0; day < 7; day += 1) {
+          const iso = addDaysIso(entry.weekStart, day);
+          if (iso >= todayIso) options.push(iso);
+        }
+      }
+      return freezeAmbiguity(EVENT_FIELD.DATE, options, `Minä päivänä ${entry.expr}?`, entry.reason);
+    }
     default:
       return freezeAmbiguity(EVENT_FIELD.DATE, [], 'Päivämäärä ei ole kalenterissa. Minä päivänä tapahtuma on?', entry.reason || 'invalid');
   }
@@ -338,7 +481,8 @@ function resolveDate(parsedDates, todayIso) {
   if (relevant.length === 0) {
     relevant = parsedDates.filter(entry => entry.role === DATE_ROLE.REFERENCE && /n$/u.test(entry.expr));
   }
-  relevant = relevant.map(entry => (entry.week ? { ...entry, iso: null, ambiguous: true, reason: 'week_only' } : entry));
+  relevant = relevant.map(entry => (entry.week
+    ? { ...entry, iso: null, ambiguous: true, reason: 'week_only', weekStart: entry.iso } : entry));
   if (relevant.length === 0) return { date: null, ambiguity: null, any: false };
 
   const unclear = relevant.filter(entry => entry.ambiguous).sort((a, b) => a.start - b.start);
@@ -445,10 +589,40 @@ function daylightSavingQuestion(date, time, offsetMinutesFn) {
  * @param {Function} [options.offsetMinutesFn] aikavyöhyke (wallClock.js); kesäajan vaihtoyön tarkistus
  * @returns {null | {intent:'create_event', title:string|null, date:string|null, time:string|null,
  *   endTime:string|null, durationMinutes:number|null, allDay:boolean, placeText:string|null,
- *   placeMatch:object|null, placeId:string|null, missing:string[], ambiguities:Array<{field, options, question, reason}>,
+ *   placeMatch:object|null, placeId:string|null, placeSaid:boolean, placeTitle:string|null,
+ *   placeAliasText:string|null, missing:string[], ambiguities:Array<{field, options, question, reason}>,
  *   notes:string[], confidence:'high'|'medium'|'low'}}
+ *
+ *   placeSaid       paikka sanottiin paikan sijassa ("Kampissa", "parturiin"): tunnistamattomana se
+ *                   tallennetaan menon sijaintitekstiksi; otsikon sana ("parturi") ei ole sijainti
+ *   placeTitle      otsikko, jos käyttäjä valitsee kysytyn paikan (sanottu paikka ei kuulu otsikkoon)
+ *   placeAliasText  sana, jolla paikka löytyi ("parturiin" -> "parturi"): opitaan vasta hyväksynnästä
+ *
+ * "X tällä viikolla" ilman viikonpäivää ja kellonaikaa ei ole meno (null):
+ * se on avoin asia, ks. parseOpenEndedTask.
  */
 export function parseCreateEvent(text, options = {}) {
+  const found = interpretCreateEvent(text, options);
+  return found && !found.openTask ? found.event : null;
+}
+
+/**
+ * "Minun pitää käydä Motonetissä tällä viikolla" -> avoin asia: tehtävä
+ * ilman päivää, määräaikana viikon sunnuntai. Vain kun lauseessa on viikko
+ * ilman viikonpäivää, kellonaikaa, koko päivää ja kalenterisanaa -- muuten
+ * lause on meno (parseCreateEvent), ja viikon päivä kysytään vaihtoehtoina.
+ * Tulos on EHDOTUS, jonka käyttäjä vahvistaa.
+ *
+ * @param {string} text
+ * @param {{todayIso:string}} options
+ * @returns {null | {intent:'create_open_task', title:string, deadline:string, weekStart:string, week:'this'|'next'}}
+ */
+export function parseOpenEndedTask(text, options = {}) {
+  const found = interpretCreateEvent(text, options);
+  return found && found.openTask ? found.openTask : null;
+}
+
+function interpretCreateEvent(text, options = {}) {
   if (typeof text !== 'string' || text.length > MAX_EVENT_COMMAND_LENGTH * 2) return null;
   const opts = isObject(options) ? options : {};
   const todayIso = isIsoDate(opts.todayIso) ? opts.todayIso : null;
@@ -502,7 +676,16 @@ export function parseCreateEvent(text, options = {}) {
     bareTimes.push({ ...clockFromParts(hour, minute, norm), expr: bare[0], ...span });
   }
 
-  const timeEntries = [...parsed.times, ...bareTimes, ...ranges.map(range => range.startEntry)]
+  // 3b. Kellonaika ilman klo-sanaa heti päivän perässä ("torstaina 14-15",
+  //     "maanantaina 18", "perjantaina kaksitoista"), kun muuta aikaa ei ole.
+  const spokenTimes = [];
+  if (parsed.times.length === 0 && ranges.length === 0 && bareTimes.length === 0) {
+    const spoken = spokenTimeAfterDate(temporalInput, parsed.dates, norm);
+    if (spoken && spoken.range) ranges.push(spoken.range);
+    else if (spoken) spokenTimes.push(spoken.entry);
+  }
+
+  const timeEntries = [...parsed.times, ...bareTimes, ...spokenTimes, ...ranges.map(range => range.startEntry)]
     .sort((a, b) => a.start - b.start);
   const timeSpans = [...timeEntries, ...ranges];
   masks.push(...parsed.dates, ...timeSpans);
@@ -548,6 +731,9 @@ export function parseCreateEvent(text, options = {}) {
   let titleTokens = contentTokens.slice(lo, hi);
 
   if (!hasVerb && (titleTokens.length === 0 || titleTokens.length > MAX_VERBLESS_TITLE_WORDS)) return null;
+  // Avoimen asian otsikko on koko lause ilman ajankohtaa: paikka jää siihen
+  // ("Käydä Motonetissä"), koska tehtävän paikka luetaan otsikosta.
+  const taskTitleTokens = titleTokens;
 
   // 7. Paikka.
   const places = Array.isArray(opts.places) ? opts.places : [];
@@ -557,6 +743,8 @@ export function parseCreateEvent(text, options = {}) {
   let placeMatch = null;
   let placeTokens = [];
   let placeSaid = false;
+  // Otsikon sana osui osittain tallennettuun paikkaan ("parturi" -> Parturi Kallio): ehdotetaan.
+  let placeSuggested = false;
 
   const sentenceStart = tokens[0].start;
   const locatives = titleTokens.filter(token => token.start !== sentenceStart
@@ -584,29 +772,42 @@ export function parseCreateEvent(text, options = {}) {
         break;
       }
     }
-    // c) Otsikko itse on paikka ("Parturi"): koko otsikko, sitten sana kerrallaan.
+    // c) Otsikko itse on paikka ("Parturi") tai sisältää paikan ("hiustenleikkuu
+    //    parturiin", "palaveri työpaikalla"). Järjestys: koko otsikko varmana,
+    //    sana varmana, epävarma sija (sanottu paikka, kysytään), koko otsikko
+    //    ehdotuksena, sana ehdotuksena. Koko otsikko ei koskaan ole sijainti,
+    //    jos yksittäinen sana osuu: "palaveri työpaikalla" -> "työpaikalla".
     if (!placeMatch && titleTokens.length > 0) {
       const whole = titleTokens.map(token => token.text).join(' ');
-      let match = resolver(whole);
-      let matched = titleTokens;
-      if (rankMatch(match) < 3) {
-        for (const token of titleTokens.slice(0, 24)) {
-          const candidate = bestMatch(resolver, stemCandidates(token.text));
-          if (rankMatch(candidate) > rankMatch(match)) {
-            match = candidate;
-            matched = [token];
-          }
-          if (rankMatch(match) === 3) break;
+      const wholeMatch = resolver(whole, 'title');
+      let sure = null;
+      let saidGuess = null;
+      let titleGuess = null;
+      for (const token of titleTokens.slice(0, 24)) {
+        const locative = LOCATIVE_SUFFIX.test(token.text) && !DAY_PART_TOKENS.has(token.text);
+        const candidate = bestMatch(resolver, stemCandidates(token.text), locative ? 'said' : 'title');
+        if (rankMatch(candidate) === 3) {
+          sure = { match: candidate, tokens: [token], locative };
+          break;
+        }
+        if (rankMatch(candidate) === 2) {
+          if (locative && !saidGuess) saidGuess = { match: candidate, tokens: [token], locative };
+          if (!locative && !titleGuess) titleGuess = { match: candidate, tokens: [token], locative };
         }
       }
-      if (rankMatch(match) >= 2) {
-        placeMatch = match;
-        placeText = matched.map(token => display.slice(token.start, token.end)).join(' ');
-        // Otsikon sana ei ole erillinen paikkamaininta, joten se jää otsikkoon --
-        // paitsi sijamuoto, joka on varmasti paikka.
-        if (rankMatch(match) === 3 && matched.length === 1 && LOCATIVE_SUFFIX.test(matched[0].text) && titleTokens.length > 1) {
-          placeTokens = matched;
+      const wholeFound = rankMatch(wholeMatch) >= 2 ? { match: wholeMatch, tokens: titleTokens, locative: false } : null;
+      const chosen = (wholeFound && rankMatch(wholeMatch) === 3 ? wholeFound : null)
+        || sure || saidGuess || wholeFound || titleGuess;
+      if (chosen) {
+        placeMatch = chosen.match;
+        placeText = chosen.tokens.map(token => display.slice(token.start, token.end)).join(' ');
+        if (chosen.locative) {
+          // Sijamuoto on sanottu paikka: varmana se ei kuulu otsikkoon, epävarmana siitä kysytään.
+          placeTokens = chosen.tokens;
           placeSaid = true;
+        } else if (rankMatch(chosen.match) === 2) {
+          // Otsikon sana jää otsikkoon; paikkaa vain ehdotetaan kysymyksellä.
+          placeSuggested = true;
         }
       }
     }
@@ -626,6 +827,13 @@ export function parseCreateEvent(text, options = {}) {
   if (title) {
     const chars = Array.from(title);
     title = (chars[0].toLocaleUpperCase('fi') + chars.slice(1).join('')).slice(0, MAX_EVENT_TITLE_LENGTH).trim();
+  }
+  // Otsikko, jos käyttäjä valitsee kysytyn paikan: sanottu paikka ei silloin
+  // kuulu otsikkoon ("Hiustenleikkuu parturiin" -> "Hiustenleikkuu").
+  let placeTitle = title || null;
+  if (placeMatch && placeMatch.status === 'ambiguous' && placeTokens.length > 0) {
+    const rest = titleTokens.filter(token => !placeTokens.includes(token));
+    if (rest.length > 0 && rest.length < titleTokens.length) placeTitle = titleText(rest, display);
   }
 
   // 8. Päivä ja kellonaika.
@@ -674,12 +882,15 @@ export function parseCreateEvent(text, options = {}) {
   }
   if (!time) endTime = null;
 
-  // 10. Sanottu paikka, jota ei tunnistettu varmasti: kysytään.
-  if (placeSaid && placeMatch && placeMatch.status === 'ambiguous' && placeMatch.candidates.length > 0) {
+  // 10. Sanottu paikka, jota ei tunnistettu varmasti: kysytään. Samoin
+  //     otsikon sana, joka osuu tallennetun paikan nimen alkuun ("parturi"
+  //     -> Parturi Kallio): ehdotetaan, ei liitetä hiljaa. Vahvistus opettaa
+  //     nimityksen (confirmPlaceAlias), ja toistuvasti vahvistettu liitetään.
+  if ((placeSaid || placeSuggested) && placeMatch && placeMatch.status === 'ambiguous' && placeMatch.candidates.length > 0) {
     const names = placeMatch.candidates.slice(0, 5).map(candidate => candidate.name).filter(Boolean);
     const question = names.length === 1 ? `Tarkoitatko paikkaa ${names[0]}?` : `Mikä paikka: ${joinOptions(names)}?`;
     ambiguities.push(freezeAmbiguity(EVENT_FIELD.PLACE, placeMatch.candidates.slice(0, 5).map(candidate => candidate.id),
-      question, 'ambiguous_place'));
+      question, placeSaid ? 'ambiguous_place' : 'suggested_place'));
   }
   const placeId = placeMatch && rankMatch(placeMatch) === 3 ? placeMatch.placeId : null;
 
@@ -692,7 +903,7 @@ export function parseCreateEvent(text, options = {}) {
   if (ambiguities.length > 0 || !title) confidence = EVENT_PARSE_CONFIDENCE.LOW;
   else if (hasVerb && date && (time || allDay)) confidence = EVENT_PARSE_CONFIDENCE.HIGH;
 
-  return Object.freeze({
+  const event = Object.freeze({
     intent: CREATE_EVENT_INTENT,
     title: title || null,
     date,
@@ -703,9 +914,52 @@ export function parseCreateEvent(text, options = {}) {
     placeText,
     placeMatch,
     placeId,
+    placeSaid,
+    placeTitle: placeTitle || null,
+    placeAliasText: placeMatch && typeof placeMatch.query === 'string' ? placeMatch.query : null,
     missing: Object.freeze(missing),
     ambiguities: Object.freeze(ambiguities),
     notes: Object.freeze(notes),
     confidence
+  });
+
+  // 11. Pelkkä viikko ilman viikonpäivää, kellonaikaa, koko päivää ja
+  //     kalenterisanaa: avoin asia, määräaikana viikon sunnuntai.
+  const openTask = calendarWord || allDay || relativeTime || timeEntries.length > 0 || ranges.length > 0
+    ? null
+    : openTaskOf({ dates: parsed.dates, tokens, titleTokens: taskTitleTokens, display, todayIso });
+  return { event, openTask };
+}
+
+/**
+ * Avoin asia viikon ilmauksesta. Kaikkien päivien on oltava saman viikon
+ * ilmauksia ("tällä viikolla", "tämän viikon aikana", "ensi viikolla").
+ * "Ensi viikkoon mennessä" = ennen ensi viikkoa, eli tämän viikon sunnuntai.
+ */
+function openTaskOf({ dates, tokens, titleTokens, display, todayIso }) {
+  if (dates.length === 0 || !dates.every(entry => entry.week && isIsoDate(entry.iso))) return null;
+  const weekStarts = new Set(dates.map(entry => entry.iso));
+  if (weekStarts.size !== 1) return null;
+  const [entry] = dates;
+  const next = tokens.find(token => token.start >= entry.end);
+  const beforeWeek = /viikkoon$/u.test(entry.expr) && next && next.text === 'mennessä';
+  const deadline = addDaysIso(entry.iso, beforeWeek ? -1 : 6);
+  if (deadline < todayIso) return null;
+
+  let lo = 0;
+  let hi = titleTokens.length;
+  while (lo < hi && (TASK_LEAD_FILLERS.has(titleTokens[lo].text) || EDGE_FILLERS.has(titleTokens[lo].text))) lo += 1;
+  while (hi > lo && (TASK_TAIL_FILLERS.has(titleTokens[hi - 1].text) || EDGE_FILLERS.has(titleTokens[hi - 1].text))) hi -= 1;
+  const title = titleText(titleTokens.slice(lo, hi), display);
+  if (!title) return null;
+
+  const thisMonday = addDaysIso(todayIso, -(weekdayOfIso(todayIso) - 1));
+  const weekStart = addDaysIso(deadline, -(weekdayOfIso(deadline) - 1));
+  return Object.freeze({
+    intent: CREATE_OPEN_TASK_INTENT,
+    title,
+    deadline,
+    weekStart,
+    week: weekStart === thisMonday ? 'this' : 'next'
   });
 }

@@ -20,9 +20,10 @@
 
 import { getState } from './state.js';
 import { saveCalendarEvent, confirmPlaceAlias } from './dailyLifeActions.js';
+import { createTask } from './actions.js';
 import { clockOf, shiftIso } from './dailyLifeModel.js';
 import { deviceOffsetMinutes } from './deviceTime.js';
-import { parseCreateEvent, EVENT_FIELD } from '../domain/eventParse.js';
+import { parseCreateEvent, parseOpenEndedTask, EVENT_FIELD } from '../domain/eventParse.js';
 import { parseInterruption, INTERRUPTION_KIND } from '../domain/interruptions.js';
 import { REPLAN_CHANGE } from '../domain/dayReplan.js';
 import { previewDayReplan, splitReplanChanges, applyReplanChanges } from './dayReplanActions.js';
@@ -37,6 +38,14 @@ const NO_PHASE = () => {};
 
 /** Myöhästymisen ja venymisen määrä, kun lause ei kertonut sitä. */
 export const LATE_MINUTE_CHOICES = Object.freeze([5, 10, 15, 30, 60]);
+
+/**
+ * Paikkakysymyksen viimeinen vaihtoehto: ei mikään tallennetuista paikoista.
+ * Meno tallentuu silloin ilman paikkaa -- kieltäytyminen ei peru menoa eikä
+ * opeta mitään.
+ */
+export const NO_SAVED_PLACE = '__no_saved_place__';
+const NO_SAVED_PLACE_LABEL = 'Ei mikään näistä (ilman tallennettua paikkaa)';
 
 function dayLabel(iso, todayIso) {
   if (iso === todayIso) return `Tänään (${shortDateLabel(iso)})`;
@@ -79,6 +88,9 @@ async function clarify(parsed, ui, { state, todayIso }) {
     allDay: parsed.allDay === true,
     placeId: parsed.placeId,
     placeText: parsed.placeText,
+    // Sanottu paikka ("Kampissa") tallennetaan sijaintitekstiksi, jos se ei ole
+    // tallennettu paikka; otsikon sana ("parturi") ei ole sijainti.
+    placeSaid: parsed.placeSaid === true,
     placeChosen: false
   };
 
@@ -98,7 +110,10 @@ async function clarify(parsed, ui, { state, todayIso }) {
         candidates = ambiguity.options.map(minutes => ({ id: String(minutes), label: durationText(minutes), minutes }));
         break;
       case EVENT_FIELD.PLACE:
-        candidates = ambiguity.options.map(id => ({ id, label: placeName(state, id) || 'Tallennettu paikka' }));
+        candidates = [
+          ...ambiguity.options.map(id => ({ id, label: placeName(state, id) || 'Tallennettu paikka' })),
+          { id: NO_SAVED_PLACE, label: NO_SAVED_PLACE_LABEL }
+        ];
         break;
       default:
         return { needsInput: ambiguity.question };
@@ -108,9 +123,13 @@ async function clarify(parsed, ui, { state, todayIso }) {
     if (ambiguity.field === EVENT_FIELD.DATE) draft.date = chosen.id;
     else if (ambiguity.field === EVENT_FIELD.TIME) draft.time = chosen.id;
     else if (ambiguity.field === EVENT_FIELD.DURATION) draft.durationMinutes = chosen.minutes;
-    else if (ambiguity.field === EVENT_FIELD.PLACE) {
+    else if (ambiguity.field === EVENT_FIELD.PLACE && chosen.id === NO_SAVED_PLACE) {
+      draft.placeId = null;
+    } else if (ambiguity.field === EVENT_FIELD.PLACE) {
       draft.placeId = chosen.id;
       draft.placeChosen = true;
+      // Valittu paikka ei jää otsikkoon ("Hiustenleikkuu parturiin" -> "Hiustenleikkuu").
+      if (parsed.placeTitle) draft.title = parsed.placeTitle;
     }
   }
 
@@ -148,7 +167,7 @@ function eventPreview(draft, state, todayIso) {
     { label: 'Aika', before: '—', after: when }
   ];
   if (place) changes.push({ label: 'Paikka', before: '—', after: place });
-  else if (draft.placeText) changes.push({ label: 'Paikka', before: '—', after: `${draft.placeText} (ei tallennettu paikka)` });
+  else if (draft.placeText && draft.placeSaid) changes.push({ label: 'Paikka', before: '—', after: `${draft.placeText} (ei tallennettu paikka)` });
   return {
     local: true,
     kind: 'create_event',
@@ -190,7 +209,8 @@ async function runLocalEvent(parsed, ui, { state, todayIso }) {
     durationMinutes: draft.allDay ? null : draft.durationMinutes,
     allDay: draft.allDay,
     placeId: draft.placeId || null,
-    locationText: draft.placeId ? null : (draft.placeText || null)
+    // Vain sanottu paikka on sijainti; otsikon sana ("parturi") ei ole.
+    locationText: draft.placeId || !draft.placeSaid ? null : (draft.placeText || null)
   });
   logEvent('command.local', { kind: 'create_event', ok: Boolean(saved.ok) });
   if (!saved.ok) {
@@ -200,16 +220,74 @@ async function runLocalEvent(parsed, ui, { state, todayIso }) {
 
   // Uusi nimitys paikalle opitaan vasta hyväksynnän jälkeen: käyttäjä
   // valitsi paikan epäselvälle sanalle, tai jo opittu nimitys vahvistui.
+  // Nimitys on sanan perusmuoto, jolla paikka löytyi ("parturiin" ->
+  // "parturi"), jotta seuraava taivutus tunnistuu samasta vahvistuksesta.
   // Paikan oma nimi (tai sen taivutus) ei ole uusi nimitys.
   const status = parsed.placeMatch ? parsed.placeMatch.status : null;
-  if (draft.placeId && draft.placeText && (draft.placeChosen || status === 'learned')) {
+  const aliasText = parsed.placeAliasText || draft.placeText;
+  if (draft.placeId && aliasText && (draft.placeChosen || status === 'learned')) {
     const name = placeName(getState(), draft.placeId);
-    if (!name || foldPlaceText(name) !== foldPlaceText(draft.placeText)) {
-      await confirmPlaceAlias(draft.placeText, draft.placeId);
+    if (!name || foldPlaceText(name) !== foldPlaceText(aliasText)) {
+      await confirmPlaceAlias(aliasText, draft.placeId);
     }
   }
   success(saved.queued ? 'Meno tallennettiin laitteelle ja lähetetään, kun yhteys palaa.' : 'Meno lisätty kalenteriin.');
   return { ok: true, status: 'executed', local: true, kind: 'create_event', event: saved.event };
+}
+
+// =====================================================================
+// AVOIN ASIA ("tällä viikolla")
+// =====================================================================
+//
+// "Minun pitää käydä Motonetissä tällä viikolla" ei ole meno: sillä ei ole
+// päivää eikä kellonaikaa. Siitä tulee tehtävä ilman kellonaikaa,
+// määräaikana viikon sunnuntai, vasta kun käyttäjä on nähnyt ja hyväksynyt
+// ehdotuksen. Tänään-näkymän Avoimet asiat ehdottaa sille aikaa (paketti §44).
+//
+// MIKSI PÄIVÄ = MÄÄRÄPÄIVÄ. Tehtävällä on aina päivä (validateTask), eikä
+// tuotannon tasks.date-sarakkeen null-kelpoisuutta ole todennettu. Siksi
+// avoin asia tallennetaan määräpäivälleen ilman kellonaikaa: jos sille ei
+// valita aikaa, se on sunnuntain tehtävä. Avoimet asiat tunnistaa sen
+// (todayDailyLife.js openEndedTasks: ei kellonaikaa, päivä = määräaika).
+
+function openTaskPreview(task) {
+  const which = task.week === 'next' ? 'ensi viikon loppu' : 'tämän viikon loppu';
+  return {
+    local: true,
+    kind: 'create_task',
+    requiresConfirmation: true,
+    preview: {
+      targetTypeLabel: 'Avoin asia',
+      action: 'Lisätäänkö avoimeksi asiaksi?',
+      targetLabel: task.title,
+      description: `Asia merkitään määräpäivälle ${shortDateLabel(task.deadline)} ilman kellonaikaa. `
+        + 'Tänään-näkymän Avoimet asiat ehdottaa sille sopivaa aikaa ennen määräaikaa.',
+      changes: [
+        { label: 'Asia', before: '—', after: task.title },
+        { label: 'Määräaika', before: '—', after: `${shortDateLabel(task.deadline)} (${which})` },
+        { label: 'Aika', before: '—', after: 'Ei vielä – Ehdota aikaa Tänään-näkymän Avoimissa asioissa' }
+      ],
+      destructive: false
+    }
+  };
+}
+
+async function runLocalOpenTask(task, ui) {
+  ui.phase('confirmation');
+  const accepted = await ui.confirmFn(openTaskPreview(task));
+  if (!accepted) return { ok: false, status: 'cancelled', reason: 'Peruttu.', local: true, kind: 'create_task' };
+
+  ui.phase('executing');
+  const created = await createTask({ title: task.title, date: task.deadline, time: null, deadline: task.deadline });
+  logEvent('command.local', { kind: 'create_task', ok: Boolean(created && created.ok) });
+  if (!created || !created.ok) {
+    if (created && created.errors) showError(Object.values(created.errors)[0] || 'Asiaa ei voitu tallentaa.');
+    return { ok: false, status: 'error', reason: 'Asiaa ei voitu tallentaa.', local: true, kind: 'create_task' };
+  }
+  success(created.queued
+    ? 'Asia tallennettiin laitteelle ja lähetetään, kun yhteys palaa.'
+    : `Lisätty avoimiin asioihin, määräaika ${shortDateLabel(task.deadline)}.`);
+  return { ok: true, status: 'executed', local: true, kind: 'create_task', task: created.task };
 }
 
 // =====================================================================
@@ -310,17 +388,21 @@ export async function runLocalCommand(text, ui, { now = new Date(), state = getS
   const context = { state, todayIso, now };
   const handlers = { ...ui, phase: ui && typeof ui.phase === 'function' ? ui.phase : NO_PHASE };
   let event = null;
+  let openTask = null;
   let interruption = null;
   try {
     event = parseCreateEvent(text, {
       todayIso, places: state.savedPlaces || [], aliases: state.placeAliases || [],
       resolvePlace: resolvePlaceText, offsetMinutesFn: deviceOffsetMinutes
     });
-    if (!event) interruption = parseInterruption(text, { todayIso });
+    // "X tällä viikolla" ilman päivää ja aikaa: avoin asia (ei meno).
+    if (!event) openTask = parseOpenEndedTask(text, { todayIso });
+    if (!event && !openTask) interruption = parseInterruption(text, { todayIso });
   } catch {
     return null;
   }
   if (event) return runLocalEvent(event, handlers, context);
+  if (openTask) return runLocalOpenTask(openTask, handlers);
   if (interruption) return runLocalInterruption(interruption, handlers, context);
   return null;
 }
