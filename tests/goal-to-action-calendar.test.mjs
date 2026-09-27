@@ -270,9 +270,13 @@ test('myöhästyneiden ilmoitus laskee siirrot samoilla menoilla kuin "Ehdota mu
 // ============================================================ lähteet
 
 test('kaikki neljä kutsujaa antavat menot ja lohkot samasta kalenteripolusta', () => {
+  // Aalto L: kutsujat hakevat kalenterin kapasiteettijarrun kautta
+  // (src/app/capacityBrake.js), joka lukee sen calendarPlanista. Yksi polku:
+  // menot, suojattu aika, puskuri ja unen vaje samasta paikasta.
+  assert.match(readCode('src/app/capacityBrake.js'), /calendarForPlanning\(/, 'jarru hakee kalenterin calendarPlanista');
   for (const file of ['src/app/planning.js', 'src/app/views/planning.js', 'src/app/assistantActions.js', 'src/app/actions.js']) {
     const code = readCode(file);
-    assert.match(code, /calendarForPlanning\(/, `${file} hakee kalenterin calendarPlanista`);
+    assert.match(code, /brakeInputs\(|brakedHorizonCapacity\(/, `${file} hakee kalenterin jarrun kautta`);
   }
 });
 

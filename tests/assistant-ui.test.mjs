@@ -483,13 +483,14 @@ test('jokaisella uudella repositoriolla on portti ja normalisointi', () => {
   }
 });
 
-test('repositorioita on kolmekymmentäkolme', () => {
+test('repositorioita on kolmekymmentäviisi', () => {
   // Luku on käsin laskettu ja tarkoituksella: uusi repositorio kaataa
   // tämän, ja se on oikea hetki tarkistaa, että sillä on portti,
   // migraatio, varmistus ja tavoitettavuusrivi. 0013 toi kaksi:
   // running_timers ja alignment_item_settings. 0014 toi kymmenen
-  // (arjen käyttöjärjestelmä).
-  assert.equal(ALL_REPOSITORIES.length, 33,
+  // (arjen käyttöjärjestelmä). 0015 toi kaksi: protected_periods ja
+  // weekly_plans (mielen kuorman keventäminen).
+  assert.equal(ALL_REPOSITORIES.length, 35,
     `repositorioita on ${ALL_REPOSITORIES.length}`);
 });
 

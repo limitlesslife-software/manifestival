@@ -20,7 +20,7 @@ import { getClient } from './client.js';
 import { requireUserId } from './session.js';
 import {
   hasTable, BILL_PAYMENT_FIELDS, GOAL_PLANNING_FIELDS, GOAL_LIFE_AREA_FIELD,
-  ALIGNMENT_REALITY_FIELDS, columnGateOpen, isTableMissing, writeRefusal,
+  ALIGNMENT_REALITY_FIELDS, MENTAL_LOAD_FIELDS, columnGateOpen, isTableMissing, writeRefusal,
   stripLoweredColumns, noteSchemaError
 } from './schema.js';
 import { createMemoryRepository } from './memoryStore.js';
@@ -56,6 +56,8 @@ import { normalizeSleepLog } from '../domain/sleepLog.js';
 import { normalizeHabitPlan, normalizeHabitEvent } from '../domain/habit.js';
 import { normalizeExerciseSession } from '../domain/exerciseSession.js';
 import { normalizeWellbeingCheckin } from '../domain/wellbeingCheckin.js';
+import { normalizeProtectedPeriod } from '../domain/protectedTime.js';
+import { normalizeWeeklyPlan } from '../domain/weeklyPlan.js';
 
 /** Kentät, joita client ei saa koskaan lähettää. */
 const SERVER_OWNED = Object.freeze(['user_id', 'created_at', 'updated_at']);
@@ -1074,6 +1076,8 @@ export const lifeAreasRepo = createRepository({
     importance: area.importance,
     target_minutes_per_week: area.targetMinutesPerWeek,
     category_key: area.categoryKey,
+    // 0015: sarake puuttuu kunnes migraatio on ajettu -> jätetään pois.
+    ...(MENTAL_LOAD_FIELDS ? { kind: area.kind } : {}),
     active: area.active,
     sort_order: area.sortOrder
   }),
@@ -1084,6 +1088,7 @@ export const lifeAreasRepo = createRepository({
     importance: row.importance,
     targetMinutesPerWeek: row.target_minutes_per_week,
     categoryKey: row.category_key,
+    kind: row.kind,
     active: row.active,
     sortOrder: row.sort_order,
     createdAt: row.created_at,
@@ -1656,6 +1661,78 @@ export const wellbeingCheckinsRepo = createRepository({
   })
 });
 
+// ------------------------------------------- mielen kuorma (migraatio 0015)
+
+/**
+ * Suojattu aika: oma aika, vapaa-ajan säännöt ja loma (protectedTime.js).
+ * `start_time`/`end_time` ovat kannassa time-tyyppiä ('19:00:00'); domain
+ * rajaa ne muotoon 'HH:MM'.
+ */
+export const protectedPeriodsRepo = createRepository({
+  table: 'protected_periods',
+  schemaKey: 'protectedPeriods',
+  normalize: normalizeProtectedPeriod,
+  listOrder: 'id',
+  toRow: period => ({
+    id: period.id,
+    kind: period.kind,
+    recurrence: period.recurrence,
+    title: period.title,
+    start_date: period.startDate,
+    end_date: period.endDate,
+    weekdays: period.weekdays,
+    start_time: period.startTime,
+    end_time: period.endTime,
+    target_minutes: period.targetMinutes,
+    strength: period.strength,
+    active: period.active,
+    note: period.note
+  }),
+  fromRow: row => normalizeProtectedPeriod({
+    id: row.id,
+    kind: row.kind,
+    recurrence: row.recurrence,
+    title: row.title,
+    startDate: row.start_date,
+    endDate: row.end_date,
+    weekdays: row.weekdays,
+    startTime: row.start_time,
+    endTime: row.end_time,
+    targetMinutes: row.target_minutes,
+    strength: row.strength,
+    active: row.active,
+    note: row.note,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  })
+});
+
+/** Viikkosuunnitelma: yksi rivi viikkoa (maanantaita) kohti (sunnuntain nollaus). */
+export const weeklyPlansRepo = createRepository({
+  table: 'weekly_plans',
+  schemaKey: 'weeklyPlans',
+  normalize: normalizeWeeklyPlan,
+  listOrder: 'id',
+  toRow: plan => ({
+    id: plan.id,
+    week_start: plan.weekStart,
+    priorities: plan.priorities,
+    planned_minutes: plan.plannedMinutes,
+    closed_at: plan.closedAt,
+    note: plan.note
+  }),
+  fromRow: row => normalizeWeeklyPlan({
+    id: row.id,
+    weekStart: row.week_start,
+    priorities: row.priorities,
+    plannedMinutes: row.planned_minutes,
+    closedAt: row.closed_at,
+    note: row.note,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  })
+});
+
 // ------------------------------------------------------- AI-kirjausketju
 
 export const aiAuditRepo = createRepository({
@@ -1717,7 +1794,8 @@ export const ALL_REPOSITORIES = Object.freeze([
   aiAuditRepo,
   savedPlacesRepo, placeAliasesRepo, calendarEventsRepo, commuteObservationsRepo,
   lifeSettingsRepo, sleepLogsRepo, habitPlansRepo, habitEventsRepo,
-  exerciseSessionsRepo, wellbeingCheckinsRepo
+  exerciseSessionsRepo, wellbeingCheckinsRepo,
+  protectedPeriodsRepo, weeklyPlansRepo
 ]);
 
 /** Tyhjennä kaikki muistivarastot. Kutsutaan uloskirjautumisessa. */

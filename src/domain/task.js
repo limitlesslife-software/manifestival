@@ -26,6 +26,31 @@ export const SCHEDULING = Object.freeze({
   UNSCHEDULED: 'unscheduled'
 });
 
+/**
+ * Tehtävän horisontti (migraatio 0015, tasks.horizon).
+ *
+ * TALLENNETAAN VAIN KÄYTTÄJÄN VALINTA. null = johdetaan päivästä ja
+ * määräajasta (src/domain/lifeLoad.js). Arkistointi on oma kenttänsä
+ * (archivedAt), ei horisontti.
+ *
+ *   NOW        käyttäjä valitsi tämän päivän fokukseksi (päivä = tänään)
+ *   THIS_WEEK  tällä viikolla, päivää ei tarvitse päättää
+ *   LATER      myöhemmin, ilman keksittyä päivää
+ *   NOT_YET    ei vielä: tallessa, ei tekeillä
+ *   WAITING    odottaa toista ihmistä tai tahoa (waitingOn)
+ */
+export const TASK_HORIZON = Object.freeze({
+  NOW: 'NOW',
+  THIS_WEEK: 'THIS_WEEK',
+  LATER: 'LATER',
+  NOT_YET: 'NOT_YET',
+  WAITING: 'WAITING'
+});
+export const TASK_HORIZONS = Object.freeze(Object.values(TASK_HORIZON));
+
+/** Odottaa kenelle -tekstin enimmäispituus (kannan CHECK 0015). */
+export const MAX_WAITING_ON_LENGTH = 200;
+
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 
@@ -260,23 +285,83 @@ export function normalizeTask(input = {}) {
     schedulingState: time
       ? (input.schedulingState === SCHEDULING.AUTO ? SCHEDULING.AUTO : SCHEDULING.MANUAL)
       : SCHEDULING.UNSCHEDULED,
+
+    // ------------------------------------------------ mielen kuorma (0015)
+    //
+    // Migraatio 0015, EI AJETTU. Portin MENTAL_LOAD_FIELDS ollessa kiinni
+    // nämä elävät istunnon muistissa. Ks. docs/MENTAL-LOAD-CORE.md.
+    /** Käyttäjän valitsema horisontti tai null (johdetaan). */
+    horizon: TASK_HORIZONS.includes(input.horizon) ? input.horizon : null,
+    /** Kenen tai minkä tahon varassa asia odottaa (vain WAITING). */
+    waitingOn: input.horizon === TASK_HORIZON.WAITING ? normalizeText(input.waitingOn, MAX_WAITING_ON_LENGTH) : null,
+    /** Odottavan asian tarkistuspäivä (valinnainen). */
+    followUpDate: isIsoDate(input.followUpDate) ? input.followUpDate : null,
+    /** Poistettu näkyvistä (arkisto). ISO-aikaleima tai null. */
+    archivedAt: typeof input.archivedAt === 'string' && input.archivedAt ? input.archivedAt : null,
+    /** Montako kertaa keskeneräisen tehtävän päivää on siirretty (PLAN_CHURN). */
+    rescheduleCount: Number.isInteger(Number(input.rescheduleCount)) && Number(input.rescheduleCount) > 0
+      ? Math.min(Number(input.rescheduleCount), 10000) : 0,
+    /** Ensimmäinen suunniteltu päivä ennen siirtoja. */
+    originalDate: isIsoDate(input.originalDate) ? input.originalDate : null,
+
     createdAt: input.createdAt ?? null,
     updatedAt: input.updatedAt ?? null
   };
 }
 
 /**
+ * Siirretäänkö keskeneräisen tehtävän päivää? Palauttaa kentät, jotka
+ * siirto päivittää: laskuri kasvaa ja alkuperäinen päivä jää talteen
+ * ENSIMMÄISESSÄ siirrossa. Ei muutosta, jos päivä ei vaihdu tai tehtävä
+ * on valmis. Yksi sääntö kaikille siirtopoluille (lomake, uudelleen-
+ * suunnittelu, viikkokatsaus, Sunnuntain nollaus).
+ *
+ * @returns {object} lisättävät kentät (tyhjä, jos ei siirtoa)
+ */
+export function reschedulePatch(task, nextDate) {
+  if (!task || task.completed) return {};
+  const from = isIsoDate(task.date) ? task.date : null;
+  const to = isIsoDate(nextDate) ? nextDate : null;
+  if (!from || from === to) return {};
+  return {
+    rescheduleCount: Math.min((Number.isInteger(task.rescheduleCount) ? task.rescheduleCount : 0) + 1, 10000),
+    originalDate: isIsoDate(task.originalDate) ? task.originalDate : from
+  };
+}
+
+/** Onko tehtävä arkistoitu (poistettu näkyvistä)? */
+export function isArchived(task) {
+  return Boolean(task && task.archivedAt);
+}
+
+/**
  * Validoi tehtävän. Palauttaa { valid, errors } jossa errors on
  * kenttä -> suomenkielinen viesti.
  */
-export function validateTask(task) {
+export function validateTask(task, { allowDateless = false } = {}) {
   const errors = {};
 
   const title = String(task.title ?? '').trim();
   if (!title) errors.title = 'Anna tehtävälle nimi.';
   else if (title.length > MAX_TITLE_LENGTH) errors.title = `Nimi on liian pitkä (enintään ${MAX_TITLE_LENGTH} merkkiä).`;
 
-  if (!isIsoDate(task.date)) errors.date = 'Valitse päivämäärä.';
+  // PÄIVÄTÖN TEHTÄVÄ (omistajan päätös 2): sallittu, kun käyttäjä on
+  // valinnut horisontin (tällä viikolla, myöhemmin, ei vielä, odottaa) JA
+  // kanta tukee sitä (MENTAL_LOAD_FIELDS, kutsuja kertoo allowDateless).
+  // Keksittyä päivää ei pakoteta, mutta kellonaika vaatii päivän.
+  const datelessOk = allowDateless && task.date == null
+    && task.horizon && task.horizon !== TASK_HORIZON.NOW && !task.time;
+  if (!isIsoDate(task.date) && !datelessOk) {
+    errors.date = allowDateless ? 'Valitse päivä tai "Myöhemmin".' : 'Valitse päivämäärä.';
+  }
+  if (task.horizon != null && !TASK_HORIZONS.includes(task.horizon)) errors.horizon = 'Horisontti ei kelpaa.';
+  if (task.waitingOn != null && task.horizon !== TASK_HORIZON.WAITING) {
+    errors.waitingOn = 'Odotus kuuluu vain odottavalle asialle.';
+  }
+  if (task.waitingOn && String(task.waitingOn).length > MAX_WAITING_ON_LENGTH) {
+    errors.waitingOn = `Enintään ${MAX_WAITING_ON_LENGTH} merkkiä.`;
+  }
+  if (task.followUpDate != null && !isIsoDate(task.followUpDate)) errors.followUpDate = 'Tarkistuspäivä ei kelpaa.';
 
   if (task.time != null && !isTimeOfDay(task.time)) errors.time = 'Kellonaika ei kelpaa.';
   if (task.endTime != null && !isTimeOfDay(task.endTime)) errors.endTime = 'Loppuaika ei kelpaa.';
@@ -321,6 +406,9 @@ export function validateTask(task) {
 export function isOverdue(task, todayIso) {
   if (!task || task.completed) return false;
   if (!isIsoDate(todayIso)) return false;
+  // Arkistoitu, odottava tai "ei vielä" ei ole myöhässä: käyttäjä on
+  // päättänyt, ettei se ole nyt tekeillä (docs/MENTAL-LOAD-CORE.md).
+  if (task.archivedAt || task.horizon === TASK_HORIZON.WAITING || task.horizon === TASK_HORIZON.NOT_YET) return false;
 
   // Määräaika on ensisijainen: se on lupaus ulkopuolelle.
   if (task.deadline) return task.deadline < todayIso;

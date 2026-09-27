@@ -274,10 +274,28 @@ export const BLOCK_KIND = Object.freeze({
   /** Rauhoittuminen ennen nukkumaanmenoa. */
   WIND_DOWN: 'wind_down',
   /** Suojattu uni: [nukkumaanmeno, herätys). */
-  SLEEP: 'sleep'
+  SLEEP: 'sleep',
+  /**
+   * Suojattu oma aika (migraatio 0015, protected_periods). Harrastus,
+   * lepo, yksinolo tai ei mitään: joustavaa työtä ei sijoiteta tähän.
+   */
+  OWN_TIME: 'own_time',
+  /** Suojattu vapaa-aika: suojattu ilta, vapaa sunnuntai, "ei velvoitteita klo X jälkeen". */
+  FREE_TIME: 'free_time',
+  /** Loma: joustava työ ja jono eivät sijoitu tähän. Kiinteät menot pysyvät. */
+  VACATION: 'vacation'
 });
 
 export const BLOCK_KINDS = Object.freeze(Object.values(BLOCK_KIND));
+
+/**
+ * Suojatun ajan lohkot (src/domain/protectedTime.js). Ne ovat varattua aikaa
+ * kapasiteetissa ja vapaissa väleissä kuten matka ja uni, mutta aikajana
+ * näyttää ne omana osionaan ja loma on koko päivän tila, ei rivi.
+ */
+export const PROTECTED_TIME_BLOCK_KINDS = Object.freeze([
+  BLOCK_KIND.OWN_TIME, BLOCK_KIND.FREE_TIME, BLOCK_KIND.VACATION
+]);
 
 /** Lohkot, joiden aikana olet lähdössä tai matkalla: et voi olla samaan aikaan muualla. */
 export const PRESENCE_BLOCK_KINDS = Object.freeze([
@@ -564,7 +582,10 @@ const COLLISION_PHRASES = Object.freeze({
   [BLOCK_KIND.OVERHEAD]: 'pysäköintiin ja kävelyyn',
   [BLOCK_KIND.ARRIVAL_BUFFER]: 'perilläolon varmuusaikaan',
   [BLOCK_KIND.WIND_DOWN]: 'rauhoittumiseen ennen unta',
-  [BLOCK_KIND.SLEEP]: 'suojattuun uneen'
+  [BLOCK_KIND.SLEEP]: 'suojattuun uneen',
+  [BLOCK_KIND.OWN_TIME]: 'suojattuun omaan aikaan',
+  [BLOCK_KIND.FREE_TIME]: 'suojattuun vapaa-aikaan',
+  [BLOCK_KIND.VACATION]: 'lomaan'
 });
 
 /** Suomenkielinen "osui mihin" -ilmaus (illatiivi) lohkolle tai tapahtumalle. */

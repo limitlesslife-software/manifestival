@@ -53,8 +53,6 @@ const ALLOWED_OMISSIONS = Object.freeze({
   'profile.legacy_id': 'Migraation 0001 vanha kiinteä tunniste (id = \'me\'), ei käyttäjän tietoa',
   'profile.automation_level': 'Ei kirjoittajaa eikä lukijaa: automaatiotaso on toistaiseksi '
     + 'laitekohtainen asetus (DEVICE_DEFAULTS.automationLevel); sarake on oletusarvossa',
-  'profile.planning_buffer_ratio': 'Ei kirjoittajaa eikä lukijaa: sarake jää oletusarvoon (0010), '
-    + 'koska tilikohtaiset suunnitteluasetukset (ACCOUNT_DEFAULTS.planning) ovat vielä PLANNED',
   'notification_preferences.created_at': 'Kannan omaa kirjanpitoa (rivin luontihetki), ei käyttäjän syöttämää tietoa',
   'notification_preferences.updated_at': 'Kannan omaa kirjanpitoa (liipaisin), ei käyttäjän syöttämää tietoa',
   'routine_exceptions.created_at': 'Kannan omaa kirjanpitoa (rivin luontihetki), ei käyttäjän syöttämää tietoa',

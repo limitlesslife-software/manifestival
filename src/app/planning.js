@@ -53,8 +53,9 @@ import { normalizeProject } from '../domain/project.js';
 import { normalizeTask } from '../domain/task.js';
 import { normalizeRoutine } from '../domain/routine.js';
 import { normalizeMilestone } from '../domain/milestone.js';
-import { horizonCapacity, horizonEnd } from '../domain/capacity.js';
-import { calendarForPlanning } from './calendarPlan.js';
+import { horizonEnd } from '../domain/capacity.js';
+import { brakedHorizonCapacity } from './capacityBrake.js';
+import { protectedPlanningHours } from '../domain/protectedTime.js';
 import {
   goalsRepo, projectsRepo, milestonesRepo, routinesRepo
 } from '../data/collectionsRepo.js';
@@ -73,6 +74,26 @@ import {
 } from './state.js';
 import { logError } from '../lib/result.js';
 import { currentPlanningFeedback, currentPlanningConstraints } from './alignment.js';
+
+/**
+ * Suunnittelupyynnön konteksti: TÄSMÄLLEEN ne lukukentät, jotka palvelin
+ * hyväksyy (api/_validatePlan.js CONTEXT_LIMITS). Ei nimiä, ei otsikoita.
+ * null-arvot jätetään pois.
+ */
+export const PLAN_CONTEXT_FIELDS = Object.freeze([
+  'activeGoalCount', 'nearestDeadlineDays', 'weeklyFreeHours',
+  'remainingWeeklyHours', 'unestimatedCount', 'heavyRemainingHours', 'protectedHours',
+  'neglectedImportantAreaCount', 'protectedPersonalHoursPerWeek', 'vacationDays'
+]);
+
+export function planRequestContext(context = {}) {
+  const out = {};
+  for (const field of PLAN_CONTEXT_FIELDS) {
+    const value = context ? context[field] : null;
+    if (typeof value === 'number' && Number.isFinite(value)) out[field] = value;
+  }
+  return out;
+}
 
 /**
  * Tallennetut avaimet.
@@ -144,18 +165,14 @@ export async function requestPlan({ goalText, goalId = null, fetchImpl } = {}) {
   // eivät ole vapaata aikaa: ilman niitä toistuva 9-16 meno näytti viikossa
   // noin 26 h liikaa suunniteltavaa. Kalenteri samasta paikasta kuin muualla
   // (calendarPlan.calendarForPlanning). Mallille lähtee edelleen vain luku.
+  //
+  // KAPASITEETTIJARRU (L0/L5): puskuri, suojattu oma aika ja vapaa-aika,
+  // loma, viikon vähimmäisvapaa-aika ja unen vaje varataan ENNEN kuin
+  // suunnitelmalle jää aikaa (src/app/capacityBrake.js, sama polku kuin
+  // Suunnittelu-näkymässä ja Tänään-näkymässä).
   const toIso = horizonEnd(todayIso, 28);
-  const calendar = calendarForPlanning(state, { from: todayIso, to: toIso, todayIso });
-  const capacity = horizonCapacity({
-    tasks: state.tasks,
-    profile: state.profile,
-    fromIso: todayIso,
-    toIso,
-    routines: state.routines,
-    exceptions: state.routineExceptions,
-    events: calendar.events,
-    blocks: calendar.blocks
-  });
+  const { capacity, inputs: brake } = brakedHorizonCapacity(state, { from: todayIso, to: toIso, todayIso });
+  const protectedHours = protectedPlanningHours({ blocks: brake.blocks, from: todayIso, to: toIso });
 
   // SUUNNAN PALAUTE. Jos käyttäjä on itse sanonut ehtivänsä viikossa
   // vähemmän kuin kalenteri näyttää (tai viikko ylittyi), suunnitelma ei
@@ -169,7 +186,8 @@ export async function requestPlan({ goalText, goalId = null, fetchImpl } = {}) {
     todayIso,
     existingGoal: goalId ? state.goals.find(goal => goal.id === goalId) : null,
     alignmentCapHours: feedback ? feedback.capHours : null,
-    alignmentConstraints: currentPlanningConstraints()
+    alignmentConstraints: currentPlanningConstraints(),
+    protectedTime: protectedHours
   });
 
   try {
@@ -189,11 +207,10 @@ export async function requestPlan({ goalText, goalId = null, fetchImpl } = {}) {
         goalText: text,
         today: todayIso,
         mode: goalId ? 'replan' : 'initial',
-        context: {
-          activeGoalCount: context.activeGoalCount,
-          nearestDeadlineDays: context.nearestDeadlineDays,
-          weeklyFreeHours: context.weeklyFreeHours
-        }
+        // L0: Suunnan rajat ja suojattu aika lähtevät mallille (vain lukuja).
+        // Aiemmin konteksti rakennettiin, mutta vain kolme ensimmäistä
+        // kenttää lähetettiin, joten malli ei koskaan nähnyt rajoja.
+        context: planRequestContext(context)
       })
     });
 

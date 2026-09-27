@@ -27,6 +27,7 @@
 // pitää sadassa. Osuus lasketaan minuuteista näytettäessä (desiredShares).
 
 import { isCategory } from './categories.js';
+import { AREA_KIND, isAreaKind } from './itemNature.js';
 
 export const MAX_AREA_NAME_LENGTH = 60;
 export const MAX_AREA_DESCRIPTION_LENGTH = 500;
@@ -113,6 +114,8 @@ export function normalizeLifeArea(input = {}) {
     importance: importance === null ? DEFAULT_IMPORTANCE : importance,
     targetMinutesPerWeek: target,
     categoryKey: isCategory(input.categoryKey) ? input.categoryKey : null,
+    // Alueen laji (0015, omistajan päätös 1). Tuntematon -> STANDARD.
+    kind: isAreaKind(input.kind) ? input.kind : AREA_KIND.STANDARD,
     active: input.active === undefined ? true : Boolean(input.active),
     sortOrder: sortOrder === null ? 0 : Math.min(Math.max(sortOrder, 0), MAX_SORT_ORDER),
     createdAt: input.createdAt ?? null,
@@ -123,9 +126,13 @@ export function normalizeLifeArea(input = {}) {
 /**
  * @param {object} area normalisoitu alue
  * @param {Array} [others] käyttäjän muut alueet (yksikäsitteisyys)
+ * @param {{allowSharedCategory?: boolean}} [options]
+ *   allowSharedCategory: migraatio 0015 on poistanut kannan uniikkiehdon
+ *   (life_areas_category_unique), joten useampi alue saa jakaa kategorian.
+ *   Ennen sitä kanta hylkäisi rivin (23505), joten sääntö pysyy.
  * @returns {{valid: boolean, errors: Object<string,string>}}
  */
-export function validateLifeArea(area, others = []) {
+export function validateLifeArea(area, others = [], { allowSharedCategory = false } = {}) {
   const errors = {};
   if (!area || !area.name) {
     errors.name = 'Anna alueelle nimi.';
@@ -147,11 +154,26 @@ export function validateLifeArea(area, others = []) {
   if (area?.name && rest.some(other => areaNameKey(other.name) === areaNameKey(area.name))) {
     errors.name = 'Sinulla on jo tämänniminen alue.';
   }
-  if (area?.categoryKey && rest.some(other => other.categoryKey === area.categoryKey)) {
+  if (!allowSharedCategory && area?.categoryKey && rest.some(other => other.categoryKey === area.categoryKey)) {
     errors.categoryKey = 'Kategoria on jo kytketty toiseen alueeseen.';
   }
+  if (area?.kind != null && !isAreaKind(area.kind)) errors.kind = 'Alueen laji ei kelpaa.';
 
   return { valid: Object.keys(errors).length === 0, errors };
+}
+
+/**
+ * Kenen alueen kategoria on, kun useampi alue jakaa sen (0015)?
+ * Deterministinen: aktiivinen ensin, sitten pienin järjestysnumero ja nimi
+ * (compareLifeAreas). Sama sääntö kuin Suunnan kohdistuksessa.
+ *
+ * @returns {object|null} alue
+ */
+export function categoryOwnerArea(areas = [], categoryKey) {
+  if (!categoryKey) return null;
+  const candidates = (areas || []).filter(area => area && area.categoryKey === categoryKey);
+  if (candidates.length === 0) return null;
+  return [...candidates].sort(compareLifeAreas)[0];
 }
 
 export function compareLifeAreas(a, b) {

@@ -94,8 +94,9 @@ counting.total = 0;
 // ------------------------------------------------------------ lajit
 
 test('lohkojen lajit ja luokat', () => {
+  // Suojattu aika (0015): oma aika, vapaa-aika ja loma ovat lohkoja kuten uni.
   assert.deepEqual([...BLOCK_KINDS],
-    ['preparation', 'travel', 'overhead', 'arrival_buffer', 'wind_down', 'sleep']);
+    ['preparation', 'travel', 'overhead', 'arrival_buffer', 'wind_down', 'sleep', 'own_time', 'free_time', 'vacation']);
   assert.deepEqual([...PRESENCE_BLOCK_KINDS], ['preparation', 'travel', 'overhead', 'arrival_buffer']);
   assert.deepEqual([...REST_BLOCK_KINDS], ['wind_down', 'sleep']);
   assert.equal(blockKindLabel(BLOCK_KIND.ARRIVAL_BUFFER), 'Ajoissa perillä');

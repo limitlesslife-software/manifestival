@@ -55,6 +55,8 @@ import { dailyObservations } from '../domain/dailyAlignment.js';
 import { weekSummary, compareWeeks, alignmentTrends, FIRST_WEEK_NOTE } from '../domain/reviewComparison.js';
 import { TREND_RULES, POLICY_VERSION } from '../domain/alignmentPolicy.js';
 import { explainWithFallback, aiExplainEnabled } from '../ai/alignmentExplainClient.js';
+import { brakedHorizonCapacity } from './capacityBrake.js';
+import { datelessTasksAllowed } from '../data/schema.js';
 
 /** Suunnan muutokset eivät mene offline-jonoon: ne vaativat vahvistuksen ja verkon. */
 const NO_QUEUE = Object.freeze({ queueOffline: false });
@@ -214,8 +216,33 @@ export function currentProposals(analysis, clock = clockNow()) {
     tasks: state.tasks,
     nextWeekAnalysis: nextAnalysis,
     nextCapacity: capacityForWeek(state.weeklyCapacities, next),
-    recentAnalyses
+    recentAnalyses,
+    destinationRoomMinutes: weekRoomMinutes(state, addDaysIso(next, 7), clock),
+    laterAllowed: datelessTasksAllowed()
   });
+}
+
+/**
+ * Viikon vapaa aika minuutteina siirtojen kohdeviikolle (L0): pienempi
+ * käyttäjän ilmoittaman kapasiteetin jäännöksestä ja kapasiteettijarrun
+ * laskemasta joustavasta ajasta, josta on vähennetty viikolle jo päivätyt
+ * ajattomat tehtävät.
+ */
+export function weekRoomMinutes(state, weekStart, clock = clockNow()) {
+  const monday = weekStartOf(weekStart);
+  if (!monday) return null;
+  const sunday = addDaysIso(monday, 6);
+  const { capacity } = brakedHorizonCapacity(state, { from: monday, to: sunday, todayIso: clock.todayIso });
+  const untimed = (state.tasks || []).filter(task => task && !task.completed && !task.time && task.date
+    && task.date >= monday && task.date <= sunday);
+  const untimedMinutes = untimed.reduce((sum, task) => sum + (Number.isInteger(task.durationMinutes) ? task.durationMinutes : 30), 0);
+  let room = Math.max(0, capacity.totalUsableMinutes - untimedMinutes);
+  const declared = capacityForWeek(state.weeklyCapacities, monday);
+  if (declared && Number.isInteger(declared.availableMinutes)) {
+    const planned = analyzeCurrentWeek(monday, clock).planned.knownMinutes;
+    room = Math.min(room, Math.max(0, declared.availableMinutes - planned));
+  }
+  return room;
 }
 
 /** analyzeWeek()-syötteet tilasta annetulle viikolle (esikatselu ja tarkistus). */
@@ -391,7 +418,7 @@ export async function createLifeArea(input) {
   // korvaa tämän seuraavassa latauksessa): alueen seurantajakso alkaa
   // luontipäivästä, ei viikon maanantaista.
   const area = normalizeLifeArea({ sortOrder: nextOrder, ...input, id: newTaskId(), createdAt: new Date().toISOString() });
-  const { valid, errors } = validateLifeArea(area, state.lifeAreas);
+  const { valid, errors } = validateLifeArea(area, state.lifeAreas, { allowSharedCategory: datelessTasksAllowed() });
   if (!valid) return { ok: false, errors };
 
   addLifeAreaToState(area);
@@ -409,7 +436,7 @@ export async function editLifeArea(id, changes) {
   const previous = findLifeArea(id);
   if (!previous) return { ok: false };
   const updated = normalizeLifeArea({ ...previous, ...changes, id });
-  const { valid, errors } = validateLifeArea(updated, getState().lifeAreas);
+  const { valid, errors } = validateLifeArea(updated, getState().lifeAreas, { allowSharedCategory: datelessTasksAllowed() });
   if (!valid) return { ok: false, errors };
 
   replaceLifeAreaInState(id, updated);
@@ -1215,6 +1242,13 @@ export async function applyAdjustment(proposal, {
         // Kadonnut tai jo valmis tehtävä ohitetaan: ehdotus on voinut vanhentua.
         if (!current || current.completed || !current.date) continue;
         const one = await editTask(taskId, { date: addDaysIso(current.date, days) }, NO_QUEUE);
+        all = all && one.ok;
+      }
+      // Kohdeviikolle mahtumattomat: "Myöhemmin" ilman päivää (0015).
+      for (const taskId of payload.laterTaskIds || []) {
+        const current = findTask(taskId);
+        if (!current || current.completed || !current.date) continue;
+        const one = await editTask(taskId, { date: null, time: null, endTime: null, horizon: 'LATER' }, NO_QUEUE);
         all = all && one.ok;
       }
       result = { ok: all };

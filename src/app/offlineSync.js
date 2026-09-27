@@ -295,7 +295,9 @@ export function createOfflineSync(deps) {
 
   async function executeTaskCreate(op) {
     const task = normalizeTask({ ...op.payload, id: op.entityId });
-    if (!validateTask(task).valid) return { kind: 'rejected', code: 'invalid_task' };
+    // Jonoon päätyi vain createTaskin/editTaskin hyväksymä tehtävä; päivätön
+    // (0015) on siellä vain, jos portti salli sen kirjaushetkellä.
+    if (!validateTask(task, { allowDateless: true }).valid) return { kind: 'rejected', code: 'invalid_task' };
 
     // Kanta ei vielä tue kaikkia kenttiä (ajon aikana laskettu portti):
     // lisäys jättää ne pois. Aiemmin lisäys merkittiin onnistuneeksi ja

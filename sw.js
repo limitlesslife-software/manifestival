@@ -193,6 +193,12 @@ const SHELL = [
   '/src/domain/habit.js',
   '/src/domain/exerciseSession.js',
   '/src/domain/wellbeingCheckin.js',
+  // Mielen kuorman keventäminen (aalto L, 0015).
+  '/src/domain/itemNature.js',
+  '/src/domain/lifeLoad.js',
+  '/src/domain/protectedTime.js',
+  '/src/domain/weeklyPlan.js',
+  '/src/app/capacityBrake.js',
   '/src/lib/datetime.js',
   '/src/lib/errorMessages.js',
   '/src/lib/format.js',

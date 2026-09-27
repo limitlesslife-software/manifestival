@@ -27,13 +27,14 @@ import {
   savedPlacesRepo, placeAliasesRepo, calendarEventsRepo, commuteObservationsRepo,
   lifeSettingsRepo, sleepLogsRepo, habitPlansRepo, habitEventsRepo,
   exerciseSessionsRepo, wellbeingCheckinsRepo,
+  protectedPeriodsRepo, weeklyPlansRepo,
   clearAllCollections
 } from '../data/collectionsRepo.js';
 import { newTaskId } from '../lib/rows.js';
 import { offline, isOnlineNow } from './offline.js';
 import { classifyError, ERROR_CLASS } from '../domain/offlineQueue.js';
 import { fmtISO, todayMidnight } from '../lib/datetime.js';
-import { normalizeTask, validateTask, SCHEDULING } from '../domain/task.js';
+import { normalizeTask, validateTask, SCHEDULING, TASK_HORIZON, reschedulePatch } from '../domain/task.js';
 import { normalizeRoutine, validateRoutine, normalizeException, EXCEPTION } from '../domain/routine.js';
 import { normalizeGoal, validateGoal } from '../domain/goal.js';
 import { normalizeProject, validateProject } from '../domain/project.js';
@@ -55,13 +56,13 @@ import {
 } from '../domain/milestone.js';
 import { buildReplanProposal } from '../domain/replan.js';
 import { horizonEnd } from '../domain/capacity.js';
-import { calendarForPlanning } from './calendarPlan.js';
+import { brakeInputs } from './capacityBrake.js';
 import {
   EXTRACTION_SUBJECT, validateExtraction, approveExtraction,
   toTransaction as extractionToTransaction, toBill as extractionToBill
 } from '../domain/receipts.js';
 import { extractFromImage } from './receiptCapture.js';
-import { volatileFields, hasTable } from '../data/schema.js';
+import { volatileFields, hasTable, datelessTasksAllowed } from '../data/schema.js';
 import { loadOutbox } from '../data/timerStore.js';
 import {
   getState, findTask, addTaskToState, removeTaskFromState,
@@ -92,7 +93,8 @@ import {
   setAlignmentItemSettings, removeItemSettingsFromState,
   setSavedPlaces, setPlaceAliases, setCalendarEvents, setCommuteObservations,
   setLifeSettings, setSleepLogs, setHabitPlans, setHabitEvents,
-  setExerciseSessions, setWellbeingCheckins
+  setExerciseSessions, setWellbeingCheckins,
+  setProtectedPeriods, setWeeklyPlans
 } from './state.js';
 import { adoptLoadedTimers, timerMutationSeq } from './timerState.js';
 import { dailyLifeWriteMark, keepDailyLifeWritesSince } from './dailyLifeActions.js';
@@ -248,7 +250,10 @@ export async function loadUserData() {
     habitPlansRepo.list(),
     habitEventsRepo.list(),
     exerciseSessionsRepo.list(),
-    wellbeingCheckinsRepo.list()
+    wellbeingCheckinsRepo.list(),
+    // Mielen kuorma (0015). LOPPUUN, samasta syystä kuin 0014.
+    protectedPeriodsRepo.list(),
+    weeklyPlansRepo.list()
   ]);
 
   // Istunto on voinut vaihtua odotuksen aikana.
@@ -272,7 +277,7 @@ function applyLoadedData(loaded, timerSeq, dailyLifeMark) {
     reviewsResult, itemSettingsResult, timersResult,
     placesResult, aliasesResult, eventsResult, observationsResult,
     lifeSettingsResult, sleepLogsResult, habitPlansResult, habitEventsResult,
-    exerciseResult, checkinsResult] = loaded;
+    exerciseResult, checkinsResult, protectedResult, weeklyPlansResult] = loaded;
 
   // Jokainen kokoelma kulkee applyLoadResult():n läpi: onnistunut haku
   // korvaa kokoelman (myös tyhjällä listalla — se on kelvollinen tulos),
@@ -340,7 +345,10 @@ function applyLoadedData(loaded, timerSeq, dailyLifeMark) {
     applyLoadResult('habitPlans', habitPlansResult, setHabitPlans),
     applyLoadResult('habitEvents', habitEventsResult, setHabitEvents),
     applyLoadResult('exerciseSessions', exerciseResult, setExerciseSessions),
-    applyLoadResult('wellbeingCheckins', checkinsResult, setWellbeingCheckins)
+    applyLoadResult('wellbeingCheckins', checkinsResult, setWellbeingCheckins),
+    // Mielen kuorma (0015): suojattu aika ja viikkosuunnitelmat.
+    applyLoadResult('protectedPeriods', protectedResult, setProtectedPeriods),
+    applyLoadResult('weeklyPlans', weeklyPlansResult, setWeeklyPlans)
   ];
 
   // Latauksen alun jälkeen valmistuneet arjen tallennukset ladatun listan
@@ -499,7 +507,8 @@ export async function createTask(input, options = {}) {
     schedulingState: input.time ? SCHEDULING.MANUAL : SCHEDULING.UNSCHEDULED
   }));
 
-  const { valid, errors } = validateTask(task);
+  // Päivätön tehtävä (horisontti ilman päivää) vain kun kanta tukee sitä (0015).
+  const { valid, errors } = validateTask(task, { allowDateless: datelessTasksAllowed() });
   if (!valid) return { ok: false, errors };
 
   // Optimistinen lisäys.
@@ -538,9 +547,23 @@ export async function editTask(id, changes, options = {}) {
   const previous = findTask(id);
   if (!previous) return { ok: false };
 
+  // SIIRTOJEN SEURANTA (0015, PLAN_CHURN): jokainen keskeneräisen tehtävän
+  // päivän muutos kasvattaa laskuria ja säilyttää alkuperäisen päivän —
+  // yksi sääntö lomakkeelle, uudelleensuunnittelulle, katsaukselle ja
+  // sunnuntain nollaukselle. Kutsuja voi antaa arvot itse (peruutus).
+  const moved = changes.date !== undefined && changes.rescheduleCount === undefined
+    ? reschedulePatch(previous, changes.date) : {};
+  // Päivä korvaa "tällä viikolla" / "myöhemmin" -valinnan: horisontti
+  // johdetaan taas päivästä. Odottava ja "ei vielä" säilyvät.
+  const horizonReset = typeof changes.date === 'string' && changes.horizon === undefined
+    && (previous.horizon === TASK_HORIZON.THIS_WEEK || previous.horizon === TASK_HORIZON.LATER)
+    ? { horizon: null } : {};
+
   const updated = withOwnLinks(normalizeTask({
     ...previous,
     ...changes,
+    ...moved,
+    ...horizonReset,
     // Käyttäjän tekemä ajan muutos on aina manuaalinen päätös. Automaatti
     // ei saa myöhemmin siirtää sitä.
     //
@@ -562,7 +585,7 @@ export async function editTask(id, changes, options = {}) {
         : (changes.time === null ? SCHEDULING.UNSCHEDULED : previous.schedulingState))
   }), previous);
 
-  const { valid, errors } = validateTask(updated);
+  const { valid, errors } = validateTask(updated, { allowDateless: datelessTasksAllowed() });
   if (!valid) return { ok: false, errors };
 
   replaceTaskInState(id, updated);
@@ -1851,7 +1874,9 @@ export function proposeReplan(trigger = 'manual', options = {}) {
   // myöhästyneet siirtyivät täyteen buukatulle päivälle. Sama kalenteri
   // kuin Suunnittelu-näkymässä ja myöhästyneiden ilmoituksessa.
   const horizonDays = Number.isInteger(options.horizonDays) && options.horizonDays > 0 ? options.horizonDays : 14;
-  const calendar = calendarForPlanning(state, {
+  // Kapasiteettijarru (L5): sama polku kuin Suunnittelu-näkymässä —
+  // kalenteri (calendarForPlanning), suojattu aika, puskuri ja unen vaje.
+  const calendar = brakeInputs(state, {
     from: todayIso, to: horizonEnd(todayIso, horizonDays), todayIso
   });
 
@@ -1866,6 +1891,10 @@ export function proposeReplan(trigger = 'manual', options = {}) {
     automationLevel: state.automationLevel,
     events: calendar.events,
     blocks: calendar.blocks,
+    projects: state.projects,
+    bufferRatio: calendar.bufferRatio,
+    reserves: calendar.reserves,
+    sleepShortfalls: calendar.sleepShortfalls,
     ...options
   });
 

@@ -142,7 +142,12 @@ export const EXPORTED_COLLECTIONS = Object.freeze([
   'habitPlans',
   'habitEvents',
   'exerciseSessions',
-  'wellbeingCheckins'
+  'wellbeingCheckins',
+
+  // Mielen kuorma (0015): käyttäjän itse asettama suojattu aika (oma aika,
+  // vapaa-ajan säännöt, loma) ja viikkosuunnitelmat (viikon prioriteetit).
+  'protectedPeriods',
+  'weeklyPlans'
 ]);
 
 /**

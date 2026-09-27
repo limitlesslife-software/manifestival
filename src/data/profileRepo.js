@@ -6,7 +6,7 @@
 
 import { getClient } from './client.js';
 import { requireUserId } from './session.js';
-import { writeRefusal, noteSchemaError } from './schema.js';
+import { writeRefusal, noteSchemaError, columnGateOpen } from './schema.js';
 import { ok } from '../lib/result.js';
 import { failFromCause, failFromThrown } from './repoErrors.js';
 import { DEFAULT_PROFILE } from '../domain/scheduler.js';
@@ -23,7 +23,12 @@ export function profileFromRow(row) {
     sleepTargetHours: row.sleep_target_hours || DEFAULT_PROFILE.sleepTargetHours,
     defaultWakeTime: row.default_wake_time || DEFAULT_PROFILE.defaultWakeTime,
     commuteMinutes: row.commute_minutes ?? DEFAULT_PROFILE.commuteMinutes,
-    routineMinutes: row.routine_minutes ?? DEFAULT_PROFILE.routineMinutes
+    routineMinutes: row.routine_minutes ?? DEFAULT_PROFILE.routineMinutes,
+    // Suunnittelun puskuri (migraatio 0010). Ennen 0010:tä saraketta ei
+    // ole, jolloin arvo on null ja laitteen asetus/oletus pätee
+    // (src/app/capacityBrake.js planningBufferRatio).
+    planningBufferRatio: row.planning_buffer_ratio == null || !Number.isFinite(Number(row.planning_buffer_ratio))
+      ? null : Number(row.planning_buffer_ratio)
   };
 }
 
@@ -37,7 +42,12 @@ export function profileToRow(profile, userId) {
     sleep_target_hours: profile.sleepTargetHours,
     default_wake_time: profile.defaultWakeTime,
     commute_minutes: profile.commuteMinutes,
-    routine_minutes: profile.routineMinutes
+    routine_minutes: profile.routineMinutes,
+    // 0010: sarake puuttuu kunnes migraatio on ajettu -> jätetään pois.
+    // Puuttuva arvo jätetään myös pois: kannan oletus (0,25) säilyy.
+    ...(columnGateOpen('GOAL_PLANNING_FIELDS') && Number.isFinite(profile.planningBufferRatio)
+      ? { planning_buffer_ratio: Math.max(0, Math.min(0.9, Math.round(profile.planningBufferRatio * 100) / 100)) }
+      : {})
   };
 }
 

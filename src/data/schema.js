@@ -14,7 +14,8 @@
 // Ks. docs/TASK-EXTENDED-FIELDS-ACTIVATION.md.
 
 import {
-  TASK_COLUMNS_CORE, TASK_COLUMNS_EXTENDED, TASK_COLUMNS_PLANNING, TASK_COLUMNS_LINKS
+  TASK_COLUMNS_CORE, TASK_COLUMNS_EXTENDED, TASK_COLUMNS_PLANNING, TASK_COLUMNS_LINKS,
+  TASK_COLUMNS_MENTAL_LOAD
 } from '../lib/rows.js';
 import {
   isTableLowered, isColumnGateLowered, tableState, isWritable, isVerified,
@@ -57,7 +58,22 @@ export const TASK_EXTENDED_FIELDS = true;
 export function taskColumns(isOpen = columnGateOpen) {
   const base = !isOpen('TASK_EXTENDED_FIELDS') ? TASK_COLUMNS_CORE
     : (isOpen('GOAL_PLANNING_FIELDS') ? TASK_COLUMNS_PLANNING : TASK_COLUMNS_EXTENDED);
-  return isOpen('TASK_LINK_FIELDS') ? Object.freeze([...base, ...TASK_COLUMNS_LINKS]) : base;
+  const linked = isOpen('TASK_LINK_FIELDS') ? [...base, ...TASK_COLUMNS_LINKS] : [...base];
+  // Mielen kuorman kentät (0015) vaativat laajennetut kentät (0002): ne
+  // kuvaavat tehtävän tilaa, jota ydintaso ei tunne.
+  if (isOpen('MENTAL_LOAD_FIELDS') && isOpen('TASK_EXTENDED_FIELDS')) linked.push(...TASK_COLUMNS_MENTAL_LOAD);
+  return linked.length === base.length ? base : Object.freeze(linked);
+}
+
+/**
+ * Saako tehtävän tallentaa ilman päivää juuri nyt?
+ *
+ * Vain kun migraatio 0015 on ajettu (MENTAL_LOAD_FIELDS): ennen sitä
+ * horisontti ei tallennu, joten päivätön tehtävä olisi tallessa vain
+ * istunnon ajan eikä kanta välttämättä hyväksy tyhjää päivää.
+ */
+export function datelessTasksAllowed(isOpen = columnGateOpen) {
+  return isOpen('MENTAL_LOAD_FIELDS') && isOpen('TASK_EXTENDED_FIELDS');
 }
 
 /**
@@ -149,7 +165,18 @@ export const TABLES = Object.freeze({
   habitPlans: false,
   habitEvents: false,
   exerciseSessions: false,
-  wellbeingCheckins: false
+  wellbeingCheckins: false,
+  /**
+   * Migraatio 0015 — EI AJETTU. Riippuu 0014:stä.
+   * Ks. supabase/migrations/0015_mental_load.sql ja docs/MENTAL-LOAD-CORE.md.
+   *
+   * Mielen kuorman keventäminen: suojattu aika (oma aika, vapaa-ajan
+   * säännöt, loma) ja viikkosuunnitelma (sunnuntain nollaus, viikon
+   * prioriteetit). Portin ollessa kiinni ne elävät istunnon muistissa,
+   * ja käyttöliittymä kertoo sen käyttäjälle.
+   */
+  protectedPeriods: false,
+  weeklyPlans: false
 });
 
 /**
@@ -247,6 +274,26 @@ export const GOAL_LIFE_AREA_FIELD = false;
  */
 export const ALIGNMENT_REALITY_FIELDS = false;
 
+/**
+ * Onko migraatio 0015 ajettu tasks- ja life_areas-taulujen osalta?
+ *
+ * PRODUCTION GATE, sarakeportti — sama kuvio kuin GOAL_PLANNING_FIELDS.
+ *
+ * false = seuraavia sarakkeita EI ole kannassa:
+ *           tasks.horizon, waiting_on, follow_up_date, archived_at,
+ *                 reschedule_count, original_date
+ *           life_areas.kind
+ *         Ne elävät istunnon muistissa, eikä päivätöntä tehtävää sallita.
+ * true  = ne tallentuvat, ja tehtävän saa tallentaa ilman päivää.
+ *
+ * MIKSI ERITYISEN TARKKA PORTTI: `tasks` on TUOTANNOSSA AUKI ja siinä on
+ * käyttäjän dataa. Sarakkeiden lähettäminen ennen migraatiota — NULLINAKIN
+ * — kaataisi JOKAISEN tehtävän tallennuksen koodilla 42703.
+ *
+ * Tämä saa mennä arvoon true VASTA kun migraatio 0015 on ajettu.
+ */
+export const MENTAL_LOAD_FIELDS = false;
+
 /** Onko taulu käytettävissä tietokannassa? */
 export function hasTable(name) {
   return TABLES[name] === true;
@@ -322,6 +369,14 @@ export function volatileTaskPlanningFields() {
   return columnGateOpen('GOAL_PLANNING_FIELDS') ? [] : ['milestoneId', 'dependsOn'];
 }
 
+/** Mielen kuorman kentät (0015): mitkä eivät vielä säily tallennuksen yli. */
+export function volatileMentalLoadFields() {
+  return datelessTasksAllowed()
+    ? []
+    : ['task.horizon', 'task.waitingOn', 'task.followUpDate', 'task.archivedAt',
+       'task.rescheduleCount', 'task.originalDate', 'lifeArea.kind'];
+}
+
 // =====================================================================
 // AJONAIKAINEN SKEEMATARKISTUS
 // =====================================================================
@@ -352,7 +407,8 @@ export const COMPILE_COLUMN_GATES = Object.freeze({
   GOAL_PLANNING_FIELDS,
   GOAL_MAINTENANCE_MODE,
   GOAL_LIFE_AREA_FIELD,
-  ALIGNMENT_REALITY_FIELDS
+  ALIGNMENT_REALITY_FIELDS,
+  MENTAL_LOAD_FIELDS
 });
 
 /** Käännösaikaiset portit yhtenä arvona puhtaalle ytimelle. */
@@ -465,6 +521,10 @@ export const SCHEMA_REQUIREMENTS = Object.freeze([
     gate: 'GOAL_PLANNING_FIELDS', columns: ['milestone_id'] }),
   req({ id: '0010.goals_status', migration: '0010', kind: 'column', table: 'goals',
     gate: 'GOAL_MAINTENANCE_MODE', columns: ['metric'] }),
+  // Suunnittelun puskuri (kapasiteettijarru, aalto L). Sarake on ollut
+  // kannassa 0010:stä, mutta sillä ei ollut kirjoittajaa eikä lukijaa.
+  req({ id: '0010.profile', migration: '0010', kind: 'column', table: 'profile',
+    gate: 'GOAL_PLANNING_FIELDS', columns: ['planning_buffer_ratio'] }),
 
   req({ id: '0011.inbox_items', migration: '0011', kind: 'table', table: 'inbox_items',
     tableKey: 'inboxItems',
@@ -555,7 +615,20 @@ export const SCHEMA_REQUIREMENTS = Object.freeze([
     columns: ['id', 'session_date', 'kind', 'planned_minutes', 'actual_minutes', 'intensity', 'recovery_demand',
       'goal_id', 'note'] }),
   req({ id: '0014.wellbeing_checkins', migration: '0014', kind: 'table', table: 'wellbeing_checkins',
-    tableKey: 'wellbeingCheckins', columns: ['id', 'date', 'motivation', 'control'] })
+    tableKey: 'wellbeingCheckins', columns: ['id', 'date', 'motivation', 'control'] }),
+
+  // 0015: kaksi uutta taulua ja yksi sarakeportti kahdelle olemassa olevalle
+  // taululle (tasks on tuotannossa auki, life_areas 0012:sta).
+  req({ id: '0015.protected_periods', migration: '0015', kind: 'table', table: 'protected_periods',
+    tableKey: 'protectedPeriods',
+    columns: ['id', 'kind', 'recurrence', 'title', 'start_date', 'end_date', 'weekdays', 'start_time',
+      'end_time', 'target_minutes', 'strength', 'active', 'note'] }),
+  req({ id: '0015.weekly_plans', migration: '0015', kind: 'table', table: 'weekly_plans',
+    tableKey: 'weeklyPlans', columns: ['id', 'week_start', 'priorities', 'planned_minutes', 'closed_at', 'note'] }),
+  req({ id: '0015.tasks', migration: '0015', kind: 'column', table: 'tasks', gate: 'MENTAL_LOAD_FIELDS',
+    columns: [...TASK_COLUMNS_MENTAL_LOAD] }),
+  req({ id: '0015.life_areas', migration: '0015', kind: 'column', table: 'life_areas', gate: 'MENTAL_LOAD_FIELDS',
+    columns: ['kind'] })
 ]);
 
 function req(spec) {

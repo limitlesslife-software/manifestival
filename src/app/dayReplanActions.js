@@ -15,7 +15,9 @@
 
 import { getState, findTask } from './state.js';
 import { editTask, skipRoutineOccurrence, restoreRoutineOccurrence } from './actions.js';
-import { calendarDayPlan, calendarInputs } from './calendarPlan.js';
+import { calendarDayPlan } from './calendarPlan.js';
+import { brakeInputs } from './capacityBrake.js';
+import { datelessTasksAllowed } from '../data/schema.js';
 import { clockOf, shiftIso } from './dailyLifeModel.js';
 import { deviceOffsetMinutes } from './deviceTime.js';
 import { buildDayPlan } from '../domain/scheduler.js';
@@ -43,11 +45,14 @@ function datesBetween(fromIso, toIso) {
  */
 export function horizonDays(fromIso, toIso, { state = getState(), now = new Date() } = {}) {
   const clockNow = clockOf(now);
-  const inputs = calendarInputs(state, {
+  // KAPASITEETTIJARRU (L0/L5): kohdepäivän tila = sama luku kuin
+  // suunnittelussa (puskuri, suojattu oma aika ja vapaa-aika, loma, viikon
+  // vähimmäisvapaa-aika, unen vaje). Aiemmin siirto katsoi vain menot.
+  const brake = brakeInputs(state, {
     from: fromIso, to: toIso, todayIso: clockNow.todayIso, nowMinutes: clockNow.nowMinutes,
     offsetMinutesFn: deviceOffsetMinutes
   });
-  const calendar = { events: inputs.occurrences, blocks: inputs.blocks };
+  const calendar = { events: brake.events, blocks: brake.blocks };
   const days = datesBetween(fromIso, toIso).map(date => {
     const common = {
       tasks: state.tasks, profile: state.profile, dateIso: date,
@@ -57,7 +62,11 @@ export function horizonDays(fromIso, toIso, { state = getState(), now = new Date
     const plan = buildDayPlan({
       ...common, todayIso: clockNow.todayIso, nowMinutes: date === clockNow.todayIso ? clockNow.nowMinutes : null
     });
-    const capacity = dayCapacity(common);
+    const capacity = dayCapacity({
+      ...common, bufferRatio: brake.bufferRatio,
+      reservedMinutes: brake.reserves.get(date) || 0,
+      sleepShortfallMinutes: brake.sleepShortfalls.get(date) || 0
+    });
     return { date, freeSlots: plan.freeSlots, usableMinutes: capacity.usableMinutes };
   });
   return { days, calendar };
@@ -71,7 +80,11 @@ export function horizonDays(fromIso, toIso, { state = getState(), now = new Date
 export function previewDayReplan(interruption, { state = getState(), now = new Date() } = {}) {
   const { todayIso, nowMinutes } = clockOf(now);
   const { plan, inputs } = calendarDayPlan(state, todayIso, { todayIso, nowMinutes, offsetMinutesFn: deviceOffsetMinutes });
-  const days = interruption && interruption.kind === INTERRUPTION_KIND.DEFER_REMAINING
+  // Ohitus ja loppujen siirto siirtävät tehtäviä toisille päiville: kummankin
+  // kohdepäivän tila tarkistetaan (L0).
+  const moves = interruption && (interruption.kind === INTERRUPTION_KIND.DEFER_REMAINING
+    || interruption.kind === INTERRUPTION_KIND.SKIP_ITEM);
+  const days = moves
     ? horizonDays(shiftIso(todayIso, 1), shiftIso(todayIso, DEFAULT_HORIZON_DAYS), { state, now }).days
     : [];
   return replanDay({
@@ -87,7 +100,9 @@ export function previewDayReplan(interruption, { state = getState(), now = new D
     // lohkot: "olen 15 min myöhässä" kertoo myöhästyvän lähdön ja
     // perilläolon (dayReplan.js "lähtö ja kiinteät alut").
     departures: inputs && inputs.departures instanceof Map ? [...inputs.departures.values()] : [],
-    offsetMinutesFn: deviceOffsetMinutes
+    offsetMinutesFn: deviceOffsetMinutes,
+    // 0015: täysien päivien tehtävä saa jäädä "Myöhemmin" ilman päivää.
+    laterAllowed: datelessTasksAllowed()
   });
 }
 
@@ -136,6 +151,10 @@ export function taskPatch(change, task) {
     case REPLAN_CHANGE.SKIP:
       return { time: null, endTime: null };
     case REPLAN_CHANGE.DEFER:
+      // "Myöhemmin" (0015): ei päivää, horisontti LATER.
+      if (!change.to.date && change.to.horizon) {
+        return { date: null, time: null, endTime: null, horizon: change.to.horizon };
+      }
       return task.time ? { date: change.to.date, time: null, endTime: null } : { date: change.to.date };
     default:
       return null;
@@ -156,9 +175,13 @@ async function applyOne(change) {
     const task = findTask(change.taskId);
     const patch = task ? taskPatch(change, task) : null;
     if (!patch) return { ok: false };
+    // Peruutus palauttaa myös horisontin ja siirtolaskurin: peruttu siirto
+    // ei ole siirto (editTask ei kasvata laskuria, kun arvo annetaan).
     const previous = {
       date: task.date, time: task.time, endTime: task.endTime,
-      durationMinutes: task.durationMinutes, schedulingState: task.schedulingState
+      durationMinutes: task.durationMinutes, schedulingState: task.schedulingState,
+      horizon: task.horizon ?? null, rescheduleCount: task.rescheduleCount ?? 0,
+      originalDate: task.originalDate ?? null
     };
     const result = await editTask(change.taskId, patch);
     return result && result.ok ? { ok: true, undo: () => editTask(change.taskId, previous) } : { ok: false };

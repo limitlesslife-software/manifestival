@@ -55,9 +55,26 @@ export const TASK_COLUMNS_PLANNING = Object.freeze([
  */
 export const TASK_COLUMNS_LINKS = Object.freeze(['deadline', 'goal_id', 'project_id']);
 
+/**
+ * Mielen kuorman kentät (migraatio 0015, sarakeportti MENTAL_LOAD_FIELDS).
+ *
+ * EI AJETTU. Lisä jokaiseen tasoon kuten liitokset: horisontti, odotus,
+ * tarkistuspäivä, arkistointi ja siirtojen seuranta. Ks.
+ * docs/MENTAL-LOAD-CORE.md.
+ */
+export const TASK_COLUMNS_MENTAL_LOAD = Object.freeze([
+  'horizon', 'waiting_on', 'follow_up_date', 'archived_at', 'reschedule_count', 'original_date'
+]);
+
 /** Domain-kenttä -> kannan sarake. Yksi lähde molemmille sarakejoukoille. */
 function columnValues(task) {
   return {
+    horizon: task.horizon ?? null,
+    waiting_on: task.waitingOn ?? null,
+    follow_up_date: task.followUpDate ?? null,
+    archived_at: task.archivedAt ?? null,
+    reschedule_count: Number.isInteger(task.rescheduleCount) ? task.rescheduleCount : 0,
+    original_date: task.originalDate ?? null,
     id: task.id,
     date: task.date,
     time: task.time,
@@ -129,6 +146,14 @@ export function fromRow(row) {
     // oletukset.
     milestoneId: row.milestone_id ?? null,
     dependsOn: Array.isArray(row.depends_on) ? [...row.depends_on] : [],
+    // Mielen kuorman kentät (0015, MENTAL_LOAD_FIELDS). Ennen 0015:tä
+    // sarakkeita ei ole, jolloin arvot ovat normalizeTaskin oletukset.
+    horizon: row.horizon ?? null,
+    waitingOn: row.waiting_on ?? null,
+    followUpDate: row.follow_up_date ?? null,
+    archivedAt: row.archived_at ?? null,
+    rescheduleCount: Number.isInteger(row.reschedule_count) ? row.reschedule_count : 0,
+    originalDate: row.original_date ?? null,
     // Aikaleimat ovat kannan omaisuutta: created_at saa arvonsa
     // oletusarvosta ja updated_at liipaisimesta (migraatio 0002).
     // Client LUKEE ne mutta ei koskaan kirjoita — ne eivät ole

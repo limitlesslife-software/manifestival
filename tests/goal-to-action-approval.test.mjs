@@ -161,7 +161,9 @@ test('KRIITTINEN: ehdotusta ei tallenneta mihinkään pysyvään', () => {
   // hahmo pysyy voimassa, ja mika tahansa muu plan-niminen taulu
   // kaataa taman yha. `habit_plans` (0014) on samoin kayttajan oma
   // tapojen muutoksen suunnitelma, ei tekoalyn ehdotus.
-  const SALLITUT_PLAN_TAULUT = ['travel_plans', 'habit_plans'];
+  // `weekly_plans` (0015) on käyttäjän itse sulkema viikkosuunnitelma
+  // (sunnuntain nollaus: omat prioriteetit), ei tekoälyn ehdotus.
+  const SALLITUT_PLAN_TAULUT = ['travel_plans', 'habit_plans', 'weekly_plans'];
   const ehdotusRepot = ALL_REPOSITORIES
     .filter(repo => /plan/i.test(repo.table))
     .map(repo => repo.table)

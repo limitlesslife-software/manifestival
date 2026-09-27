@@ -42,6 +42,8 @@ import { normalizeSleepLog } from '../domain/sleepLog.js';
 import { normalizeHabitPlan, normalizeHabitEvent } from '../domain/habit.js';
 import { normalizeExerciseSession } from '../domain/exerciseSession.js';
 import { normalizeWellbeingCheckin } from '../domain/wellbeingCheckin.js';
+import { normalizeProtectedPeriod } from '../domain/protectedTime.js';
+import { normalizeWeeklyPlan } from '../domain/weeklyPlan.js';
 import { getDevicePreference, setDevicePreference } from '../data/preferences.js';
 
 function initialState() {
@@ -157,6 +159,14 @@ function initialState() {
     habitEvents: [],
     exerciseSessions: [],
     wellbeingCheckins: [],
+
+    /**
+     * Mielen kuorman keventäminen (0015). Ei säily ennen migraatiota 0015.
+     * Suojattu aika (oma aika, vapaa-ajan säännöt, loma) ja viikko-
+     * suunnitelmat (sunnuntain nollaus). Ks. docs/MENTAL-LOAD-CORE.md.
+     */
+    protectedPeriods: [],
+    weeklyPlans: [],
 
     /**
      * Kirjaus, jonka tulkintaa käyttäjä parhaillaan tarkistaa.
@@ -1689,6 +1699,45 @@ export function upsertWellbeingCheckinInState(checkin) {
 
 export function removeWellbeingCheckinFromState(id) {
   commit({ wellbeingCheckins: state.wellbeingCheckins.filter(c => c.id !== id) });
+}
+
+// ------------------------------------------- mielen kuorma (0015)
+
+export function setProtectedPeriods(periods) {
+  commit({ protectedPeriods: (periods || []).map(normalizeProtectedPeriod) });
+}
+
+export function upsertProtectedPeriodInState(period) {
+  const normalized = normalizeProtectedPeriod(period);
+  const exists = state.protectedPeriods.some(p => p.id === normalized.id);
+  commit({
+    protectedPeriods: exists
+      ? replaceById(state.protectedPeriods, normalized.id, normalized)
+      : [...state.protectedPeriods, normalized]
+  });
+}
+
+export function removeProtectedPeriodFromState(id) {
+  commit({ protectedPeriods: state.protectedPeriods.filter(p => p.id !== id) });
+}
+
+export function setWeeklyPlans(plans) {
+  commit({ weeklyPlans: (plans || []).map(normalizeWeeklyPlan) });
+}
+
+/** Yksi suunnitelma viikkoa kohti (kanta: weekly_plans_week_unique). */
+export function upsertWeeklyPlanInState(plan) {
+  const normalized = normalizeWeeklyPlan(plan);
+  commit({
+    weeklyPlans: [
+      ...state.weeklyPlans.filter(p => p.id !== normalized.id && p.weekStart !== normalized.weekStart),
+      normalized
+    ]
+  });
+}
+
+export function removeWeeklyPlanFromState(id) {
+  commit({ weeklyPlans: state.weeklyPlans.filter(p => p.id !== id) });
 }
 
 export function resetState() {

@@ -387,7 +387,12 @@ function signalsOf(analysis, kind, { includeInfo = false } = {}) {
  */
 export function proposeAdjustments(analysis, {
   areas = [], goals = [], tasks = [], nextWeekAnalysis = null, nextCapacity = null,
-  recentAnalyses = []
+  recentAnalyses = [],
+  // Kohdeviikon (ensi viikon jälkeinen) vapaa aika minuutteina (L0):
+  // siirto viikolla eteenpäin ei saa täyttää sitä viikkoa. null = ei tiedossa.
+  destinationRoomMinutes = null,
+  // 0015: mahtumaton tehtävä saa siirtyä "Myöhemmin" ilman päivää.
+  laterAllowed = false
 } = {}) {
   const proposals = new Map();
   const add = proposal => { if (!proposals.has(proposal.id)) proposals.set(proposal.id, proposal); };
@@ -483,22 +488,38 @@ export function proposeAdjustments(analysis, {
         || priorityWeight(b.task.priority) - priorityWeight(a.task.priority)
         || (b.item.date || '').localeCompare(a.item.date || '')
         || a.item.id.localeCompare(b.item.id));
+    // KOHDEVIIKON TILA (L0): siirto viikolla eteenpäin vain, jos tehtävä
+    // mahtuu sinne. Muuten "Myöhemmin" ilman päivää (0015), tai tehtävää ei
+    // ehdoteta siirrettäväksi lainkaan — täyttä viikkoa ei kasvateta.
     const chosen = [];
+    const later = [];
     let freed = 0;
+    let room = Number.isFinite(destinationRoomMinutes) ? Math.max(0, destinationRoomMinutes) : null;
     for (const entry of candidates) {
       if (freed >= excess) break;
-      chosen.push(entry.item.id);
-      freed += entry.item.minutes;
+      const minutes = entry.item.minutes;
+      if (room === null || minutes <= room) {
+        chosen.push(entry.item.id);
+        if (room !== null) room -= minutes;
+      } else if (laterAllowed) {
+        later.push(entry.item.id);
+      } else {
+        continue;
+      }
+      freed += minutes;
     }
-    if (chosen.length > 0) {
+    if (chosen.length + later.length > 0) {
+      const parts = [];
+      if (chosen.length) parts.push(`${countOf(chosen.length, 'tehtävä siirtyy', 'tehtävää siirtyy')} viikolla eteenpäin`);
+      if (later.length) parts.push(`${countOf(later.length, 'tehtävä siirtyy', 'tehtävää siirtyy')} tallessa olevaksi ilman päivää (Myöhemmin), koska seuraavalla viikolla ei ole tilaa`);
       add({
         id: `${ADJUSTMENT.POSTPONE_TASKS}:${next}`,
         type: ADJUSTMENT.POSTPONE_TASKS,
         reason: { kind: SIGNAL.OVERLOAD },
-        label: `Kevennä ensi viikkoa: siirrä ${countOf(chosen.length, 'tehtävä', 'tehtävää')} viikolla eteenpäin`,
+        label: `Kevennä ensi viikkoa: siirrä ${countOf(chosen.length + later.length, 'tehtävä', 'tehtävää')} pois ensi viikolta`,
         detail: `Ensi viikon suunnitelma ylittää kapasiteetin ${formatMinutes(excess)}. `
-          + 'Tehtävät säilyvät; ne siirtyvät samalle viikonpäivälle viikkoa myöhemmin.',
-        payload: { taskIds: chosen, freedMinutes: freed, days: 7 }
+          + `Tehtävät säilyvät: ${parts.join('; ')}.`,
+        payload: { taskIds: chosen, laterTaskIds: later, freedMinutes: freed, days: 7 }
       });
     }
   }

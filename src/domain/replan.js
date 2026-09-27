@@ -150,7 +150,10 @@ export function buildReplanProposal({
   bufferRatio = DEFAULT_BUFFER_RATIO,
   taskIds = null,
   events = null,
-  blocks = null
+  blocks = null,
+  projects = [],
+  reserves = null,
+  sleepShortfalls = null
 } = {}) {
   const level = normalizeAutomationLevel(automationLevel);
 
@@ -191,7 +194,10 @@ export function buildReplanProposal({
     automationLevel: level,
     bufferRatio,
     events,
-    blocks
+    blocks,
+    projects,
+    reserves,
+    sleepShortfalls
   });
 
   // MUUTOKSET = siirrot ja myöhässä olleiden uudet päivät.

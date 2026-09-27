@@ -291,7 +291,11 @@ function emptyHtml() {
 export function renderInbox() {
   const state = getState();
 
+  // Sama tarkistuskortti kummassakin näkymässä: kirjauspalkin alla
+  // (Tänään) ja Saapuvissa, josta "Käsittele" sen avaa (L0).
   renderPending(el('capturePending'), state.pendingCapture);
+  const inboxPending = maybe('inboxPending');
+  if (inboxPending) renderPending(inboxPending, state.pendingCapture);
 
   // Mikrofoni piilotetaan, jos selain ei tunne puhetta. Painike, joka ei
   // tee mitään, on huonompi kuin puuttuva painike.
@@ -361,6 +365,8 @@ export function initInbox() {
   // uudelleen jokaisella tilamuutoksella.
   const pending = maybe('capturePending');
   if (pending) pending.addEventListener('click', onPendingClick);
+  const inboxPending = maybe('inboxPending');
+  if (inboxPending) inboxPending.addEventListener('click', onPendingClick);
 
   const list = maybe('inboxListContainer');
   if (list) list.addEventListener('click', onListClick);
