@@ -690,7 +690,7 @@ function tomorrowCard(state, model, clockNow) {
   facts.push(['Nukkumaanmeno', clock(schedule.bedtime)]);
 
   const factHtml = facts.map(([term, value]) =>
-    `<div class="td-fact"><dt>${escapeHtml(term)}</dt><dd>${escapeHtml(value)}</dd></div>`).join('');
+    `<div class="td-fact"><dt>${escapeHtml(term)}</dt> <dd>${escapeHtml(value)}</dd></div>`).join(' ');
   const notes = [advice && advice.message, ...weekend].filter(Boolean)
     .map(text => `<p class="td-note">${escapeHtml(text)}</p>`).join('');
   return `
@@ -772,18 +772,24 @@ function morningCard(model, clockNow) {
   const steps = emptied ? '' : plan.steps.map(step => `
     <li><span class="td-step-time">${escapeHtml(`${clockText(step.start)}–${clockText(step.end)}`)}</span>
       ${escapeHtml(step.name)} <span class="td-tag">${escapeHtml(protectionLabel(step.protection))}</span></li>`).join('');
-  const shortfall = limited && !limited.fits
-    ? `<p class="td-note">${escapeHtml(awake
+  let status = '';
+  if (chosen) {
+    status = plan.fits || emptied
+      ? 'Valinnalla aamu mahtuu.'
+      : `Valinnalla aamu ei vielä mahdu: aikaa puuttuu ${durationText(plan.shortfallMinutes)}.`;
+  } else if (limited && !limited.fits) {
+    status = awake
       ? `Aamu ei enää mahdu: aikaa puuttuu ${durationText(limited.shortfallMinutes)}. Valitse, mitä jätät pois tai lyhennät.`
-      : limited.explanation)}</p>`
-    : '';
+      : limited.explanation;
+  }
+  const shortfall = status ? `<p class="td-note">${escapeHtml(status)}</p>` : '';
   const choiceHtml = choices.length > 0 ? `
     <div class="assist-actions td-choices" role="group" aria-label="Aamun valinnat">
       ${choices.map(choice => `<button type="button" class="assist-btn" data-td-action="morning-choice"
         data-choice="${escapeHtml(choice.id)}" aria-pressed="${chosen && chosen.id === choice.id ? 'true' : 'false'}">${escapeHtml(choice.label)}</button>`).join('')}
     </div>` : '';
   const chosenHtml = chosen ? `
-    <p class="td-note" role="status">Valintasi tälle aamulle: ${escapeHtml(chosen.label)} Asetuksesi eivät muutu.</p>
+    <p class="td-note" role="status">Valintasi tälle aamulle: ${escapeHtml(String(chosen.label).replace(/\.\s*$/u, ''))}. Asetuksesi eivät muutu.</p>
     ${emptied ? '<p class="hint">Aamurutiini jää tältä aamulta pois.</p>' : ''}
     <div class="assist-actions"><button type="button" class="assist-btn" data-td-action="morning-undo">Peru valinta</button></div>` : '';
   return `
