@@ -256,6 +256,7 @@ const SHELL = [
   '/src/domain/notificationPolicy.js',
   '/src/domain/spokenPhrases.js',
   '/src/app/dayReplanActions.js',
+  '/src/app/views/purchaseCheck.js',
   '/src/styles.css',
   '/src/ui/confirm.js',
   '/src/ui/dom.js',

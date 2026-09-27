@@ -1003,3 +1003,11 @@ a.cal-inline-btn { display:inline-flex; align-items:center; }
   .td-interrupt-actions .assist-btn { flex-basis:88px; }
 }
 /* ===== U3 — loppu ===== */
+
+/* ============ Ostos omana aikana (views/purchaseCheck.js) ============ */
+.purchase-check { margin-top:16px; }
+.purchase-check input[type="text"] { width:100%; max-width:220px; min-height:44px; }
+.purchase-check .pc-price { margin:8px 0 2px; font-weight:700; }
+.purchase-check .pc-work { margin:0 0 6px; color:var(--forest); font-weight:700; }
+.purchase-check .pc-goals { margin:4px 0 10px; padding-left:18px; }
+.purchase-check .pc-goals li { margin:2px 0; overflow-wrap:anywhere; }

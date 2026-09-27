@@ -79,7 +79,7 @@ PERSONAL_USE_P1 (ensimmäiset viikot), **P2** = PERSONAL_USE_P2, **CL** = COMMER
 | Hyvinvointi | Hyvinvointi Suunnan katsauksessa | P1 | COMPLETE_LOCAL | K | `domain/dailyLifeSignals.js`, katsauksen Arki-osio |
 | Terveys | Terveysdata ja puettavat (Health Connect) | P2 | ARCHITECTURE_ONLY | — | `domain/healthData.js` sopimus; ei palvelua |
 | Talous | Talous 2.0: tapahtumat, budjetti, laskut, kuitit, säästöt | P2 | COMPLETE_LOCAL | F (tuotannossa) | `docs/FINANCE-2.0.md` |
-| Talous | Rahan suunta ja ostos työtunteina | P2 | PARTIAL | K | `domain/moneyAlignment.js` + katsaus; ostoslaskuri ilman näkymää |
+| Talous | Rahan suunta ja ostos työtunteina | P2 | COMPLETE_LOCAL | K | Talous → Säästötavoitteet → Ostos omana aikana (`views/purchaseCheck.js`, oma tunnin arvo); katsauksen Arki-osio |
 | Talous | Sijoitukset (oma kirjanpito) | P2 | COMPLETE_LOCAL | F | `docs/INVESTMENTS-ARCHITECTURE.md` |
 | Talous | Automaattinen kurssiseuranta | P2 | BLOCKED_EXTERNAL_PROVIDER | — | `domain/marketData.js` palauttaa UNKNOWN |
 | Talous | Pankkiyhteys | CL | BLOCKED_EXTERNAL_PROVIDER | — | PSD2-palvelu ja sopimus puuttuvat |

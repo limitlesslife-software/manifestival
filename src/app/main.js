@@ -30,6 +30,7 @@ import { initSearch, closeSearch } from './search.js';
 import { initOnboarding, maybeShowOnboarding } from './onboarding.js';
 import { renderToday, initTodayNavigation } from './views/today.js';
 import { resetTodayDailyLife } from './views/todayDailyLife.js';
+import { initPurchaseCheck, resetPurchaseCheck } from './views/purchaseCheck.js';
 import { renderWeek, initWeekNavigation } from './views/week.js';
 import { initCalendar, renderCalendar, resetCalendarView } from './views/calendar.js';
 import { renderTasks, initTaskForm, closeForm } from './views/tasks.js';
@@ -529,6 +530,7 @@ function onSignedOut() {
   resetDailyLifeActions();
   // Tänään-korttien avoin valitsin, keskeytyksen esikatselu ja aamuvalinta.
   resetTodayDailyLife();
+  resetPurchaseCheck();
   closeAreaForm();
   closeTimeLogDialog();
   stopTimerCrossTabSync();
@@ -576,6 +578,7 @@ async function start() {
   initGoalForm();
   initProjectForm();
   initFinanceForms();
+  initPurchaseCheck();
   initTransactionForms();
   initInvestmentForms();
   initGoalDetail();
