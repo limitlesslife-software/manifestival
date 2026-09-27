@@ -127,6 +127,100 @@ public class AlarmMathTest {
         assertEquals(9, AlarmMath.DEFAULT_SNOOZE_MINUTES);
     }
 
+    /** 28.9.2026 klo 7.00 Helsingissa. */
+    private static final long T = 1790568000000L;
+
+    @Test
+    public void dueButUndeliveredAlarmIsArmedNowWithinTheLateLimit() {
+        // REGRESSIO (native-zero-grace-drop): epatarkka "lahde nyt" klo 8.15 on viela
+        // toimittamatta klo 8.16, kun sovellus avataan tai JS synkronoi. Aiemmin se
+        // poistettiin hiljaa (ei soittoa, ei "missed"); nyt se ajastetaan heti.
+        assertEquals(AlarmMath.Restore.ARM_NOW, AlarmMath.restorePlan(T, T + AlarmMath.MINUTE_MS, 0L, true));
+        assertEquals(AlarmMath.Restore.ARM_NOW, AlarmMath.restorePlan(T, T, 0L, true));
+        assertEquals(AlarmMath.Restore.ARM_NOW, AlarmMath.restorePlan(T, T + AlarmMath.MAX_LATE_MS, 0L, true));
+        // Yli rajan: "missed" (kaikilla poluilla, ei vain kaynnistyksessa).
+        assertEquals(AlarmMath.Restore.MISSED, AlarmMath.restorePlan(T, T + AlarmMath.MAX_LATE_MS + 1, 0L, true));
+        // Tuleva hetki: omaan hetkeensa.
+        assertEquals(AlarmMath.Restore.ARM, AlarmMath.restorePlan(T, T - 1, 0L, true));
+        // Uutta, jo mennytta esiintymaa (JS lahetti sen myohassa) ei soiteta jalkikateen.
+        assertEquals(AlarmMath.Restore.PAST, AlarmMath.restorePlan(T, T + AlarmMath.MINUTE_MS, 0L, false));
+        // Jo soinut esiintyma ei ole "missed" eika soi uudelleen.
+        assertEquals(AlarmMath.Restore.PAST, AlarmMath.restorePlan(T, T + AlarmMath.MINUTE_MS, T, true));
+    }
+
+    @Test
+    public void lateLimitIsTheSameAsWhenTheAlarmFires() {
+        // Laukeaminen (AlarmReceiver) soittaa enintaan 30 min myohassa; uudelleenajastus
+        // ja sovitus kayttavat samaa rajaa, joten polku ei ratkaise, soiko heratys.
+        assertEquals(30L * AlarmMath.MINUTE_MS, AlarmMath.MAX_LATE_MS);
+        assertFalse(AlarmMath.tooLate(T, T + AlarmMath.MAX_LATE_MS));
+        assertTrue(AlarmMath.tooLate(T, T + AlarmMath.MAX_LATE_MS + 1));
+        long[] lateness = { 0L, 1L, AlarmMath.MINUTE_MS, AlarmMath.MAX_LATE_MS, AlarmMath.MAX_LATE_MS + 1, 2L * AlarmMath.MAX_LATE_MS };
+        for (long late : lateness) {
+            boolean ringsWhenFired = !AlarmMath.tooLate(T, T + late);
+            boolean armedNowOnRestore = AlarmMath.restorePlan(T, T + late, 0L, true) == AlarmMath.Restore.ARM_NOW;
+            assertEquals("myohastys " + late + " ms", ringsWhenFired, armedNowOnRestore);
+        }
+    }
+
+    @Test
+    public void firedAlarmIsNotArmedAgainAfterClockOrZoneChange() {
+        // REGRESSIO (native-refire-after-clock-or-zone-change): puhuttu muistutus
+        // soi (firedAt kirjattu), mutta sita ei kuitattu. Aiemmin uudelleenajastus
+        // ja sovitus eivat katsoneet firedAtia, joten sama heratys soi toiseen kertaan.
+        long fired = T + 5_000L;
+        // a) Kello siirretaan tunti taaksepain: hetki on taas edessa -> ei toista soittoa.
+        assertEquals(AlarmMath.Restore.KEEP, AlarmMath.restorePlan(T, fired - 60L * AlarmMath.MINUTE_MS, fired, true));
+        // b) Tornio -> Haaparanta (vyohyke tunnin lanteen): sama seinakelloaika on tunnin myohemmin.
+        long stockholm = AlarmMath.wallClockToEpoch("2026-09-28", "07:00", TimeZone.getTimeZone("Europe/Stockholm"));
+        assertEquals(T + 60L * AlarmMath.MINUTE_MS, stockholm);
+        assertEquals(AlarmMath.Restore.KEEP, AlarmMath.restorePlan(stockholm, fired + AlarmMath.MINUTE_MS, fired, true));
+        assertEquals(AlarmMath.Restore.KEEP, AlarmMath.restorePlan(stockholm, fired + AlarmMath.MINUTE_MS, fired, false));
+        // Hetken mentya jo soinut poistuu hiljaa (se ei ole "missed").
+        assertEquals(AlarmMath.Restore.PAST, AlarmMath.restorePlan(stockholm, stockholm + 1, fired, true));
+        // Torku nollaa firedAtin: torkutettu heratys ajastetaan normaalisti.
+        assertEquals(AlarmMath.Restore.ARM, AlarmMath.restorePlan(T + 9L * AlarmMath.MINUTE_MS, fired, 0L, true));
+    }
+
+    @Test
+    public void sameOccurrenceNeverRingsTwice() {
+        assertEquals(AlarmMath.Fire.IGNORE, AlarmMath.fireDecision(T, T, T - 1_000L));
+        assertEquals(AlarmMath.Fire.IGNORE, AlarmMath.fireDecision(T, T + AlarmMath.MAX_LATE_MS + 1, T));
+        assertEquals(AlarmMath.Fire.RING, AlarmMath.fireDecision(T, T, 0L));
+        // Enintaan minuutin etuajassa soi; sita aiemmin ajastetaan oikeaan hetkeen.
+        assertEquals(AlarmMath.Fire.RING, AlarmMath.fireDecision(T, T - 59_000L, 0L));
+        assertEquals(AlarmMath.Fire.TOO_EARLY, AlarmMath.fireDecision(T, T - AlarmMath.MINUTE_MS - 1, 0L));
+        assertEquals(AlarmMath.Fire.RING, AlarmMath.fireDecision(T, T + AlarmMath.MAX_LATE_MS, 0L));
+        assertEquals(AlarmMath.Fire.MISSED, AlarmMath.fireDecision(T, T + AlarmMath.MAX_LATE_MS + 1, 0L));
+        assertEquals(AlarmMath.Fire.DROP, AlarmMath.fireDecision(-1L, T, 0L));
+    }
+
+    @Test
+    public void snoozeLengthIsOneRuleForSnoozeAndButtons() {
+        // REGRESSIO (native-fallback-snooze-label): herätyksen varailmoitus sanoi
+        // "Torku 5 min", mutta torkku kesti asetuksen mukaan (oletus 9 min).
+        assertEquals(5, AlarmMath.snoozeMinutes("spoken", AlarmMath.DEFAULT_SNOOZE_MINUTES));
+        assertEquals(5, AlarmMath.snoozeMinutes("spoken", 30));
+        assertEquals(9, AlarmMath.snoozeMinutes("wake", AlarmMath.DEFAULT_SNOOZE_MINUTES));
+        assertEquals(9, AlarmMath.snoozeMinutes("critical", 9));
+        assertEquals(30, AlarmMath.snoozeMinutes("wake", 45));
+        assertEquals(1, AlarmMath.snoozeMinutes("critical", 0));
+    }
+
+    @Test
+    public void onlyPersonalTextsStayInCredentialStorage() {
+        // REGRESSIO (native-no-direct-boot): laitesuojattu tallennus on luettavissa jo
+        // ennen ensimmaista lukituksen avausta. Sinne menee kaikki soittoon ja
+        // uudelleenajastukseen tarvittava, mutta ei henkilokohtaisia teksteja.
+        for (String key : new String[] { "title", "body", "speech", "routeDestination", "routeMode" }) {
+            assertTrue(key, AlarmMath.isPrivateField(key));
+        }
+        for (String key : new String[] { "id", "kind", "date", "time", "epoch", "mode", "escalation", "snoozeMinutes",
+            "maxSnoozes", "snoozeCount", "snoozeUntil", "autoSnoozed", "firedAt", "exact" }) {
+            assertFalse(key, AlarmMath.isPrivateField(key));
+        }
+    }
+
     @Test
     public void cleanTextStripsControlsAndBoundsLength() {
         assertEquals("Lahde nyt", AlarmMath.cleanText("Lahde\u0000 \t nyt\u0007", 50));

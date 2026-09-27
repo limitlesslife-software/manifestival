@@ -94,9 +94,32 @@ test('KRIITTINEN: jokainen JS:n kutsuma metodi on Javassa @PluginMethod, eikä k
   const unused = [...javaMethods].filter(n => !jsCalls.has(n));
   assert.deepEqual(unused, [], 'natiivimetodi ilman JS-kutsujaa');
   assert.deepEqual([...javaMethods].sort(), [
-    'cancel', 'cancelAll', 'consumeEvents', 'list', 'openExactAlarmSettings', 'openFullScreenSettings',
+    'ackEvents', 'cancel', 'cancelAll', 'consumeEvents', 'list', 'openExactAlarmSettings', 'openFullScreenSettings',
     'openNavigation', 'pickAlarmSound', 'schedule', 'speak', 'status', 'stopSpeaking'
   ]);
+});
+
+test('REGRESSIO: elävänä käsitelty tapahtuma kuitataan pois laitteen jonosta (ei toista kertaa uudessa istunnossa)', () => {
+  // native-events-redelivered-after-restart: recordEvent lisää jokaisen
+  // tapahtuman jonoon JA välittää sen elävänä. Jonosta se poistui vain
+  // consumeEventsillä, ja JS:n kaksoiskappaleiden suodatus (seenSeq) on
+  // muistissa: sovelluksen uudelleenkäynnistyksen jälkeen sama kuittaus tai
+  // "Lähdin" käsiteltiin toiseen kertaan. JS-puoli: tests/platform-alarms.test.mjs.
+  const store = javaCode('AlarmStore.java');
+  const record = methodBody(store, 'static JSONObject recordEvent(');
+  assert.ok(record.indexOf('kept.add(event)') < record.indexOf('AlarmPlugin.pushLive(event)'),
+    'tapahtuma jonoon ennen elävää välitystä (kuittaus ei saa ohittaa sitä)');
+  const ack = methodBody(store, 'static synchronized int ackEvents(');
+  assert.match(ack, /seqs\.contains\(event\.optLong\("seq", -1L\)\)\) continue;/);
+  assert.match(ack, /putString\(KEY_EVENTS, /);
+  const plugin = methodBody(javaCode('AlarmPlugin.java'), 'public void ackEvents(PluginCall call)');
+  assert.match(plugin, /Math\.min\(raw\.length\(\), AlarmStore\.MAX_EVENTS\)/, 'rajaton syöte');
+  assert.match(plugin, /AlarmStore\.ackEvents\(getContext\(\), seqs\)/);
+  // JS kuittaa kuuntelijan jälkeen, ei ennen sitä.
+  const js = readCode('src/platform/alarms.js');
+  const onEvent = js.slice(js.indexOf('export function onEvent('), js.indexOf('export function resetAlarmsForTests('));
+  assert.ok(onEvent.indexOf('callback(event)') > -1
+    && onEvent.indexOf('callback(event)') < onEvent.indexOf("callPlugin(plugin, 'ackEvents'"));
 });
 
 test('KRIITTINEN: herätyskoodi ratkaisee kutsut eikä koskaan hylkää niitä', () => {
@@ -193,10 +216,121 @@ test('KRIITTINEN: BootReceiver vain ajastaa uudelleen, ei koskaan käynnistä pa
     'android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED']) {
     assert.ok(receiver.includes(`<action android:name="${action}" />`), action);
   }
-  // Uudelleenlaskenta seinäkelloajasta nykyisessä vyöhykkeessä; menneet pois.
+  // Uudelleenlaskenta seinäkelloajasta nykyisessä vyöhykkeessä; menneet
+  // AlarmMath.restorePlanin mukaan (ks. seuraava testi).
   const reschedule = methodBody(javaCode('AlarmScheduler.java'), 'static synchronized int rescheduleAll(');
   assert.match(reschedule, /AlarmMath\.wallClockToEpoch\(entry\.optString\("date"\), entry\.optString\("time"\), zone\)/);
-  assert.match(reschedule, /if \(target <= now\)/);
+  assert.match(reschedule, /AlarmMath\.restorePlan\(/);
+});
+
+test('REGRESSIO: erääntynyt, toimittamaton herätys ei katoa avauksessa eikä synkronoinnissa (sama 30 min raja kuin laukeamisessa)', () => {
+  // native-zero-grace-drop: ilman tarkkojen herätysten oikeutta (Android 14+
+  // oletus) herätys on epätarkka ja voi tulla minuutteja myöhässä. Aiemmin
+  // sovelluksen avaus (rescheduleAll) ja JS:n synkronointi (reconcile)
+  // pudottivat sen heti hetken jälkeen (target <= now): ei soittoa eikä
+  // "missed"-tapahtumaa, vaikka laukeaminen olisi vielä soittanut sen.
+  const scheduler = javaCode('AlarmScheduler.java');
+  const reschedule = methodBody(scheduler, 'static synchronized int rescheduleAll(');
+  const reconcile = methodBody(scheduler, 'static synchronized Outcome reconcile(');
+  assert.equal(/target <= now/.test(reschedule + reconcile), false, 'nollan armonajan pudotus palasi');
+  assert.match(reschedule, /AlarmMath\.restorePlan\(target, now, entry\.optLong\("firedAt", 0L\), true\)/);
+  assert.match(reconcile, /AlarmMath\.restorePlan\(targetOf\(entry\), now, entry\.optLong\("firedAt", 0L\), sameOccurrence\)/);
+  // Rajan sisällä heti: AlarmManager laukaisee menneen hetken välittömästi.
+  assert.match(reschedule, /arm\(context, entry, Math\.max\(target, now\)\)/);
+  assert.match(reconcile, /arm\(context, entry, Math\.max\(targetOf\(entry\), now\)\)/);
+  // "missed" kirjataan jokaisella polulla, ei vain käynnistyksessä.
+  for (const body of [reschedule, reconcile]) {
+    assert.match(body, /if \(plan == AlarmMath\.Restore\.MISSED\) \{\s*AlarmStore\.recordEvent\(context, AlarmStore\.EVENT_MISSED/);
+  }
+  assert.equal(/reportMissed/.test(ALARM_FILES.map(javaCode).join('\n')), false);
+  // Yksi raja: laukeaminen ja uudelleenajastus kysyvät saman funktion.
+  assert.match(methodBody(javaCode('AlarmMath.java'), 'static boolean tooLate('), /return now - target > MAX_LATE_MS;/);
+  assert.match(methodBody(javaCode('AlarmMath.java'), 'static Restore restorePlan('), /tooLate\(target, now\)/);
+  assert.match(methodBody(javaCode('AlarmMath.java'), 'static Fire fireDecision('), /tooLate\(target, now\)/);
+  assert.equal(/MAX_LATE_MS/.test(javaCode('AlarmReceiver.java') + scheduler), false, 'raja kirjoitettu toiseen kertaan');
+});
+
+test('REGRESSIO: soinutta herätystä ei ajasteta uudelleen kellon taaksepäin siirrossa eikä vyöhykkeen vaihdossa', () => {
+  // native-refire-after-clock-or-zone-change: kuittaamaton, jo soinut
+  // muistutus (firedAt) ajastettiin uudelleen, kun kelloa siirrettiin
+  // taaksepäin (TIME_SET) tai vyöhyke vaihtui länteen (TIMEZONE_CHANGED tai
+  // JS:n sovitus), ja se soi toiseen kertaan. Hyväksyntä: "kellonajan käsin
+  // siirto ei tuota kahta soittoa".
+  const scheduler = javaCode('AlarmScheduler.java');
+  const math = javaCode('AlarmMath.java');
+  assert.match(methodBody(math, 'static Restore restorePlan('),
+    /if \(firedAt != 0L\) return target > now \? Restore\.KEEP : Restore\.PAST;/);
+  const reschedule = methodBody(scheduler, 'static synchronized int rescheduleAll(');
+  const keep = /if \(plan == AlarmMath\.Restore\.KEEP\) \{([^}]*)\}/.exec(reschedule);
+  assert.ok(keep, 'rescheduleAll: jo soinut (KEEP) puuttuu');
+  assert.match(keep[1], /disarm\(context, id\)/);
+  assert.match(keep[1], /next\.put\(id, entry\)/, 'laukeamistieto katoaisi tallesta');
+  assert.equal(/\barm\(/.test(keep[1]), false, 'jo soinut ajastettaisiin uudelleen');
+  const reconcile = methodBody(scheduler, 'static synchronized Outcome reconcile(');
+  assert.match(reconcile, /if \(kept\.contains\(id\)\) continue;/);
+  assert.match(reconcile, /if \(!next\.containsKey\(id\) \|\| kept\.contains\(id\)\) disarm\(context, id\);/);
+  // Laukeaminen: sama esiintymä ei soi kahdesti, ja päätös tehdään samassa
+  // lukossa kuin uudelleenajastus (ei yli kirjoitettua laukeamistietoa).
+  assert.match(methodBody(math, 'static Fire fireDecision('), /if \(firedAt != 0L\) return Fire\.IGNORE;/);
+  assert.match(methodBody(scheduler, 'static synchronized JSONObject claimFire('), /AlarmMath\.fireDecision\(target, now, entry\.optLong\("firedAt", 0L\)\)/);
+  const onFire = methodBody(javaCode('AlarmReceiver.java'), 'private static void onFire(');
+  assert.match(onFire, /AlarmScheduler\.claimFire\(context, id, System\.currentTimeMillis\(\)\)/);
+  assert.equal(/AlarmStore\.(putEntry|removeEntry|entry)\(/.test(onFire), false, 'onFire kirjoittaa talteen lukon ohi');
+});
+
+test('REGRESSIO: suora käynnistys: herätys palautuu ja soi, vaikka puhelinta ei avata uudelleenkäynnistyksen jälkeen', () => {
+  // native-no-direct-boot: BOOT_COMPLETED tulee vasta ensimmäisen lukituksen
+  // avauksen jälkeen, eikä käyttäjän salaamaa tallennusta voi lukea sitä
+  // ennen. Yöllinen uudelleenkäynnistys (automaattinen, kaatuminen, akku)
+  // ilman avausta = klo 7 herätys ei soinut, ja avauksen jälkeen se
+  // kirjattiin "missed". Laitteella todentamatta (ei ADB:tä).
+  for (const [tag, name] of [['receiver', 'AlarmReceiver'], ['receiver', 'BootReceiver'],
+    ['service', 'AlarmService'], ['activity', 'AlarmActivity']]) {
+    assert.match(component(tag, name), /android:directBootAware="true"/, name);
+  }
+  // Muu sovellus (WebView ja kaikki käyttäjän tiedot) ei käynnisty lukittuna.
+  assert.equal(/directBootAware/.test(component('activity', 'MainActivity')), false);
+  assert.equal([...manifest.matchAll(/android:directBootAware="true"/g)].length, 4);
+  const receiver = manifest.slice(manifest.indexOf('android:name=".BootReceiver"'),
+    manifest.indexOf('</receiver>', manifest.indexOf('android:name=".BootReceiver"')));
+  assert.ok(receiver.includes('<action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />'));
+  assert.ok(javaCode('BootReceiver.java').includes('Intent.ACTION_LOCKED_BOOT_COMPLETED'));
+
+  // Tila laitesuojatussa; tekstit vain käyttäjän salaamassa, joka luetaan vain avattuna.
+  const store = javaCode('AlarmStore.java');
+  assert.match(methodBody(store, 'private static SharedPreferences devicePrefs('),
+    /createDeviceProtectedStorageContext\(\)\.getSharedPreferences\(DEVICE_PREFS, /);
+  assert.match(methodBody(store, 'private static SharedPreferences prefs('), /return devicePrefs\(app\);/);
+  const textPrefs = methodBody(store, 'private static SharedPreferences textPrefs(');
+  assert.match(textPrefs, /if \(!UserManagerCompat\.isUserUnlocked\(app\)\) return null;/);
+  assert.equal([...store.matchAll(/getSharedPreferences\(PREFS,/g)].length, 1, 'käyttäjän salaama avataan ohi lukitustarkistuksen');
+  assert.match(textPrefs, /getSharedPreferences\(PREFS,/);
+  // Tallennus jakaa jokaisen merkinnän: tekstit (AlarmMath.isPrivateField) erikseen.
+  assert.match(methodBody(store, 'static synchronized void saveEntries('), /split\(item\.getValue\(\), rest, text\)/);
+  assert.match(methodBody(store, 'private static void split('), /\(AlarmMath\.isPrivateField\(key\) \? text : rest\)\.put\(/);
+  // Vanha tiedosto siirretään kerran avauksen jälkeen, keskeytyksen kestävässä järjestyksessä.
+  const migrate = methodBody(store, 'private static void migrate(');
+  assert.match(migrate, /if \(legacy == null\) return;/);
+  const textsSaved = migrate.indexOf('if (!legacy.edit().putString(KEY_TEXTS, texts.toString()).commit()) return;');
+  const marked = migrate.indexOf('.putBoolean(KEY_MIGRATED, true)');
+  const committed = migrate.indexOf('if (!edit.commit()) return;');
+  const cleaned = migrate.indexOf('.remove(KEY_ENTRIES)');
+  assert.ok(textsSaved > -1 && textsSaved < marked && marked < committed && committed < cleaned,
+    'siirron järjestys: tekstit talteen, laitesuojattu + merkintä, vasta sitten vanhat pois');
+});
+
+test('laitesuojattuun menee vain soittoon tarvittava: jokainen merkinnän kenttä on luokiteltu', () => {
+  const privateFields = [...methodBody(javaCode('AlarmMath.java'), 'static boolean isPrivateField(')
+    .matchAll(/"(\w+)"\.equals\(key\)/g)].map(m => m[1]).sort();
+  assert.deepEqual(privateFields, ['body', 'routeDestination', 'routeMode', 'speech', 'title']);
+  const parse = methodBody(javaCode('AlarmPlugin.java'), 'static JSONObject parseEntry(');
+  const fields = [...new Set([...parse.matchAll(/AlarmScheduler\.put\(entry, "(\w+)"/g)].map(m => m[1]))];
+  // Uusi kenttä luokitellaan tietoisesti: joko tähän (laitesuojattu) tai isPrivateFieldiin.
+  assert.deepEqual(fields.filter(f => !privateFields.includes(f)).sort(),
+    ['date', 'escalation', 'id', 'kind', 'maxSnoozes', 'mode', 'snoozeMinutes', 'time']);
+  // Lukittuna (ei tekstejä) puhuttu muistutus puhuu yleisnimen eikä jää hiljaiseksi.
+  assert.match(methodBody(javaCode('AlarmService.java'), 'private void startSpoken('),
+    /if \(text == null\) text = getString\(R\.string\.reminder_default_label\);/);
 });
 
 test('KRIITTINEN: tarkkojen herätysten ja koko näytön asetukset avataan vain omista metodeistaan', () => {
@@ -263,7 +397,8 @@ test('torkku on idempotentti ja rajattu; sammutus kuittaa ja pysäyttää', () =
   assert.match(snooze, /if \(!ringing && base\.optLong\("snoozeUntil", 0L\) > now\) return false;/,
     'toinen torkkupainallus ei saa ajastaa toista herätystä');
   assert.match(snooze, /if \(!auto && used >= maxSnoozes\) return false;/);
-  assert.match(snooze, /AlarmMath\.MAX_SNOOZE_MINUTES/);
+  assert.match(snooze, /AlarmMath\.snoozeMinutes\(kind, /);
+  assert.match(methodBody(javaCode('AlarmMath.java'), 'static int snoozeMinutes('), /clamp\(requested, 1, MAX_SNOOZE_MINUTES\)/);
   const finish = methodBody(receiver, 'private static void finish(');
   assert.match(finish, /AlarmStore\.markHandled/);
   assert.match(finish, /AlarmScheduler\.cancel\(/);
@@ -279,6 +414,47 @@ test('torkku on idempotentti ja rajattu; sammutus kuittaa ja pysäyttää', () =
   assert.equal(/targetOf\([^)]*,/.test(ALARM_FILES.map(javaCode).join('\n')), false, 'targetOf ei saa ottaa nykyhetkeä');
   // Näkymän Torku toimii, vaikka synkronointi olisi poistanut soivan herätyksen tallesta.
   assert.match(javaCode('AlarmActivity.java'), /AlarmService\.ringingEntryJson\(id\)/);
+});
+
+test('REGRESSIO: varailmoituksen Torku-painike kertoo saman keston kuin torkku (ei aina "Torku 5 min")', () => {
+  // native-fallback-snooze-label: kun etualapalvelua ei saa käynnistää
+  // (epätarkka herätys, valmistajan rajoitus), herätys ja kriittinen
+  // näytetään varailmoituksena reminderNotificationilla. Sen painike sanoi
+  // aina "Torku 5 min", vaikka torkku kesti asetuksen mukaan (oletus 9 min).
+  const service = javaCode('AlarmService.java');
+  const reminder = methodBody(service, 'static Notification reminderNotification(Context context, JSONObject entry, String channel)');
+  assert.equal(/R\.string\.reminder_snooze/.test(reminder), false, 'varailmoitus sanoisi aina "Torku 5 min"');
+  assert.match(reminder, /snoozeLabel\(context, entry\)/);
+  assert.match(methodBody(service, 'static Notification ringNotification('), /snoozeLabel\(context, entry\)/);
+  const label = methodBody(service, 'static String snoozeLabel(');
+  assert.match(label, /if \(AlarmMath\.KIND_SPOKEN\.equals\(kind\)\) return context\.getString\(R\.string\.reminder_snooze\);/);
+  assert.match(label, /AlarmMath\.snoozeMinutes\(kind, entry\.optInt\("snoozeMinutes", AlarmMath\.DEFAULT_SNOOZE_MINUTES\)\)/);
+  assert.match(label, /R\.string\.alarm_snooze_minutes, minutes/);
+  // Torkku itse ja lukitusnäkymä samasta säännöstä; kesto ei ole laskettu muualla.
+  assert.match(javaCode('AlarmActivity.java'), /AlarmMath\.snoozeMinutes\(entry\.optString\("kind"\), /);
+  for (const file of ['AlarmService.java', 'AlarmReceiver.java', 'AlarmActivity.java']) {
+    assert.equal(/SPOKEN_SNOOZE_MINUTES|MAX_SNOOZE_MINUTES/.test(javaCode(file)), false, `${file}: torkun kesto laskettu toisessa paikassa`);
+  }
+});
+
+test('Android 14+: pyyhkäisty soivan herätyksen ilmoitus palaa, eikä pyyhkäisy kuittaa', () => {
+  // native-ring-notification-swipe-no-stop (ei todennettavissa ilman
+  // laitetta): Android 14+ sallii ongoing-etualapalveluilmoituksen
+  // pyyhkäisyn puhelimen ollessa auki. Ilman poistoaikomusta soitto jatkui
+  // jopa 10 minuuttia ilman Sammuta- ja Torku-painikkeita.
+  const service = javaCode('AlarmService.java');
+  assert.match(methodBody(service, 'static Notification ringNotification('),
+    /\.setDeleteIntent\(broadcast\(context, AlarmReceiver\.ACTION_RING_SWIPED, entry\)\)/);
+  const handle = methodBody(javaCode('AlarmReceiver.java'), 'static void handleUserAction(');
+  const swiped = /if \(ACTION_RING_SWIPED\.equals\(action\)\) \{([^}]*)\}/.exec(handle);
+  assert.ok(swiped, 'pyyhkäisyn käsittely puuttuu');
+  assert.match(swiped[1], /AlarmService\.repostRing\(id\);\s*return;/);
+  // Pyyhkäisy ei ole kuittaus eikä torkku: ei tallennusta, ei tapahtumaa, soitto ei lopu.
+  assert.equal(/finish\(|recordEvent|snooze\(|stopRinging|markHandled|AlarmStore\./.test(swiped[1]), false);
+  const repost = methodBody(service, 'static void repostRing(');
+  assert.match(repost, /service\.ringing != null && id\.equals\(ringingId\)/, 'palautus vain, jos sama herätys soi yhä');
+  assert.match(repost, /service\.enterForeground\(ringNotification\(service, service\.ringing\)\)/);
+  assert.match(repost, /service\.main\.post\(/, 'tila luetaan vain pääsäikeessä');
 });
 
 test('herätyslukko on aikarajattu ja vapautetaan', () => {

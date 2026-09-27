@@ -329,6 +329,26 @@ public class AlarmPlugin extends Plugin {
         call.resolve(result);
     }
 
+    /**
+     * Elavana kasitellyt tapahtumat pois jonosta: {seqs:[n, ...]}. JS kutsuu
+     * tata onEvent-kuuntelijan jalkeen, jottei consumeEvents anna samaa
+     * tapahtumaa uudelleen sovelluksen seuraavassa kaynnistyksessa.
+     */
+    @PluginMethod
+    public void ackEvents(PluginCall call) {
+        JSArray raw = call.getArray("seqs");
+        Set<Long> seqs = new HashSet<>();
+        int count = raw == null ? 0 : Math.min(raw.length(), AlarmStore.MAX_EVENTS);
+        for (int index = 0; index < count; index++) {
+            long seq = raw.optLong(index, -1L);
+            if (seq > 0) seqs.add(seq);
+        }
+        JSObject result = new JSObject();
+        result.put("ok", true);
+        result.put("removed", AlarmStore.ackEvents(getContext(), seqs));
+        call.resolve(result);
+    }
+
     // ------------------------------------------------------------ asetukset (vain napautuksesta)
 
     /** "Heratykset ja muistutukset" -oikeus (Android 12+). VAIN kayttajan napautuksesta. */

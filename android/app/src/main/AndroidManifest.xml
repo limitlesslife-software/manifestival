@@ -59,16 +59,30 @@
             (exported="false"): muut sovellukset eivat voi laukaista,
             sammuttaa eika torkuttaa heratysta. Jarjestelma toimittaa silti
             suojatut lahetykset (kaynnistys, kellon ja vyohykkeen vaihto).
+
+            SUORA KAYNNISTYS (directBootAware="true"): puhelin voi kaynnistya
+            yolla uudelleen (automaattinen uudelleenkaynnistys, kaatuminen,
+            akku) ja jaada lukituksen taakse. Ennen ensimmaista avausta vain
+            nama nelja komponenttia toimivat: BootReceiver palauttaa
+            heratykset LOCKED_BOOT_COMPLETEDista, AlarmReceiver ja
+            AlarmService soittavat, AlarmActivity nakyy lukitulla naytolla.
+            Niiden tila on laitesuojatussa tallennuksessa ilman
+            henkilokohtaisia teksteja (AlarmStore.java). Muu sovellus
+            (MainActivity, WebView) ei ole directBootAware. Uutta lupaa ei
+            tarvita: LOCKED_BOOT_COMPLETED kuuluu samaan kaynnistyslupaan.
         -->
         <receiver
             android:name=".AlarmReceiver"
-            android:exported="false" />
+            android:exported="false"
+            android:directBootAware="true" />
 
         <!-- Vain uudelleenajastus: ei koskaan kaynnista palvelua (Android 15). -->
         <receiver
             android:name=".BootReceiver"
-            android:exported="false">
+            android:exported="false"
+            android:directBootAware="true">
             <intent-filter>
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
                 <action android:name="android.intent.action.TIME_SET" />
@@ -81,12 +95,14 @@
         <service
             android:name=".AlarmService"
             android:exported="false"
+            android:directBootAware="true"
             android:foregroundServiceType="mediaPlayback" />
 
         <!-- Pieni natiivi heratysnakyma lukitulle naytolle: ei WebViewta. -->
         <activity
             android:name=".AlarmActivity"
             android:exported="false"
+            android:directBootAware="true"
             android:showWhenLocked="true"
             android:turnScreenOn="true"
             android:excludeFromRecents="true"

@@ -141,6 +141,21 @@ public class AlarmService extends Service {
         service.main.post(() -> service.stopFor(id));
     }
 
+    /**
+     * Soivan heratyksen ilmoitus takaisin: kayttaja pyyhkaisi sen pois kesken
+     * soiton (Android 14+). Vain jos sama heratys soi yha; muuten ei mitaan.
+     * Mista tahansa saikeesta.
+     */
+    static void repostRing(String id) {
+        AlarmService service = running;
+        if (service == null || id == null) return;
+        service.main.post(() -> {
+            if (service.ringing != null && id.equals(ringingId)) {
+                service.enterForeground(ringNotification(service, service.ringing));
+            }
+        });
+    }
+
     /** Lopeta kaikki (cancelAll). */
     static void stopEverything() {
         AlarmService service = running;
@@ -466,11 +481,10 @@ public class AlarmService extends Service {
 
         String text = AlarmMath.cleanText(entry.optString("speech", ""), AlarmMath.MAX_SPEECH_LENGTH);
         if (text == null) text = AlarmMath.cleanText(entry.optString("title", ""), AlarmMath.MAX_TITLE_LENGTH);
+        // Ennen ensimmaista lukituksen avausta tekstit ovat kayttajan salaamassa
+        // tallessa (AlarmStore): muistutus puhutaan yleisnimella, ei jateta hiljaiseksi.
+        if (text == null) text = getString(R.string.reminder_default_label);
         initTts();
-        if (text == null) {
-            finishSpoken(id);
-            return;
-        }
         speak(text, entry, () -> finishSpoken(id));
         later(SPOKEN_MAX_MS, () -> finishSpoken(id));
     }
@@ -839,6 +853,18 @@ public class AlarmService extends Service {
         return Math.max(0, max - Math.max(0, entry.optInt("snoozeCount", 0)));
     }
 
+    /**
+     * Torku-painikkeen teksti samasta saannosta kuin itse torkku
+     * (AlarmMath.snoozeMinutes): puhuttu "Torku 5 min", heratys ja kriittinen
+     * oman torkkuasetuksensa mukaan.
+     */
+    static String snoozeLabel(Context context, JSONObject entry) {
+        String kind = entry.optString("kind");
+        if (AlarmMath.KIND_SPOKEN.equals(kind)) return context.getString(R.string.reminder_snooze);
+        int minutes = AlarmMath.snoozeMinutes(kind, entry.optInt("snoozeMinutes", AlarmMath.DEFAULT_SNOOZE_MINUTES));
+        return context.getString(R.string.alarm_snooze_minutes, minutes);
+    }
+
     /** Soivan heratyksen ilmoitus: ALARM, koko naytto (jos sallittu), Sammuta ja Torku. */
     static Notification ringNotification(Context context, JSONObject entry) {
         String body = AlarmMath.cleanText(entry.optString("body", ""), AlarmMath.MAX_BODY_LENGTH);
@@ -855,12 +881,13 @@ public class AlarmService extends Service {
             .setAutoCancel(false)
             .setOnlyAlertOnce(true)
             .setContentIntent(alarmScreen(context, entry))
+            // Android 14+: ongoing-ilmoituksen voi pyyhkaista pois, vaikka soitto
+            // jatkuu. Pyyhkaisy palauttaa ilmoituksen (AlarmReceiver.ACTION_RING_SWIPED).
+            .setDeleteIntent(broadcast(context, AlarmReceiver.ACTION_RING_SWIPED, entry))
             .addAction(0, context.getString(R.string.alarm_dismiss), broadcast(context, AlarmReceiver.ACTION_DISMISS, entry));
         int left = snoozesLeft(entry);
         if (left > 0) {
-            int minutes = AlarmMath.clamp(entry.optInt("snoozeMinutes", AlarmMath.DEFAULT_SNOOZE_MINUTES), 1, AlarmMath.MAX_SNOOZE_MINUTES);
-            builder.addAction(0, context.getString(R.string.alarm_snooze_minutes, minutes),
-                broadcast(context, AlarmReceiver.ACTION_SNOOZE, entry));
+            builder.addAction(0, snoozeLabel(context, entry), broadcast(context, AlarmReceiver.ACTION_SNOOZE, entry));
         }
         // Android 14+: koko nayton aikomus vain luvalla; muuten nouseva ilmoitus.
         if (fullScreenAllowed(context)) builder.setFullScreenIntent(alarmScreen(context, entry), true);
@@ -898,7 +925,9 @@ public class AlarmService extends Service {
             builder.addAction(0, context.getString(R.string.reminder_ack), broadcast(context, AlarmReceiver.ACTION_ACK, entry));
         }
         if (snoozesLeft(entry) > 0) {
-            builder.addAction(0, context.getString(R.string.reminder_snooze), broadcast(context, AlarmReceiver.ACTION_SNOOZE, entry));
+            // Varailmoitus kayttaa tata myos herataykselle ja kriittiselle: teksti
+            // lajin mukaan, ei aina "Torku 5 min".
+            builder.addAction(0, snoozeLabel(context, entry), broadcast(context, AlarmReceiver.ACTION_SNOOZE, entry));
         }
         if (route) {
             PendingIntent maps = routeIntent(context, entry);

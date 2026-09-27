@@ -37,11 +37,11 @@ public class AlarmReceiver extends BroadcastReceiver {
     static final String ACTION_ACK = "fi.limitlesslife.manifestival.alarm.ACK";
     static final String ACTION_DEPARTED = "fi.limitlesslife.manifestival.alarm.DEPARTED";
     static final String ACTION_DELETED = "fi.limitlesslife.manifestival.alarm.DELETED";
+    /** Soivan heratyksen ilmoitus pyyhkaistiin pois (Android 14+): ilmoitus palautetaan, soitto jatkuu. */
+    static final String ACTION_RING_SWIPED = "fi.limitlesslife.manifestival.alarm.RING_SWIPED";
 
     /** Ilmoituksen toimintoon upotettu merkinta (torkku toimii, vaikka sovitus olisi jo poistanut sen). */
     static final String EXTRA_ENTRY = "fi.limitlesslife.manifestival.alarm.ENTRY";
-    /** Puhutun muistutuksen torkku on aina 5 minuuttia. */
-    static final int SPOKEN_SNOOZE_MINUTES = 5;
 
     @Override
     public void onReceive(Context context, Intent intent) {
@@ -59,28 +59,10 @@ public class AlarmReceiver extends BroadcastReceiver {
     // ------------------------------------------------------------ laukeaminen
 
     private static void onFire(Context context, String id) {
-        JSONObject entry = AlarmStore.entry(context, id);
-        if (entry == null) return; // peruttu
-        long now = System.currentTimeMillis();
-        long target = AlarmScheduler.targetOf(entry);
-        if (target < 0) {
-            AlarmStore.removeEntry(context, id);
-            return;
-        }
-        if (now < target - AlarmMath.MINUTE_MS) {
-            // Liian aikaisin (kelloa siirretty): ajasta oikeaan hetkeen.
-            AlarmScheduler.arm(context, entry, target);
-            return;
-        }
+        // Peruttu, jo soinut, etuajassa tai liian myohassa: AlarmMath.fireDecision.
+        JSONObject entry = AlarmScheduler.claimFire(context, id, System.currentTimeMillis());
+        if (entry == null) return;
         String kind = entry.optString("kind");
-        if (now - target > AlarmMath.MAX_LATE_MS) {
-            // Puoli tuntia myohassa soiva heratys tai "lahde nyt" olisi harhaanjohtava.
-            AlarmStore.removeEntry(context, id);
-            AlarmStore.recordEvent(context, AlarmStore.EVENT_MISSED, id, kind, null);
-            return;
-        }
-        AlarmScheduler.put(entry, "firedAt", now);
-        AlarmStore.putEntry(context, entry);
 
         Intent start = new Intent(context, AlarmService.class)
             .setAction(AlarmService.ACTION_START)
@@ -104,6 +86,14 @@ public class AlarmReceiver extends BroadcastReceiver {
      */
     static void handleUserAction(Context context, String action, String id, String entryJson) {
         if (!AlarmMath.isValidId(id)) return;
+        if (ACTION_RING_SWIPED.equals(action)) {
+            // Android 14+ sallii etualapalvelun ilmoituksen pyyhkaisyn, kun puhelin
+            // on auki, eika ALARM-luokka ole poikkeus. Soitto jatkuu (enintaan
+            // 10 min), joten Sammuta ja Torku palautetaan heti nakyviin.
+            // Pyyhkaisy EI ole kuittaus: ei tallennusta eika tapahtumaa.
+            AlarmService.repostRing(id);
+            return;
+        }
         JSONObject entry = AlarmStore.entry(context, id);
         if (entry == null && entryJson != null) {
             try {
@@ -159,9 +149,8 @@ public class AlarmReceiver extends BroadcastReceiver {
         if (!ringing && base.optLong("snoozeUntil", 0L) > now) return false;
 
         boolean spoken = AlarmMath.KIND_SPOKEN.equals(kind);
-        int minutes = spoken
-            ? SPOKEN_SNOOZE_MINUTES
-            : AlarmMath.clamp(base.optInt("snoozeMinutes", AlarmMath.DEFAULT_SNOOZE_MINUTES), 1, AlarmMath.MAX_SNOOZE_MINUTES);
+        // Sama saanto kuin painikkeiden tekstissa (AlarmService, AlarmActivity).
+        int minutes = AlarmMath.snoozeMinutes(kind, base.optInt("snoozeMinutes", AlarmMath.DEFAULT_SNOOZE_MINUTES));
         int maxSnoozes = spoken
             ? AlarmMath.MAX_SNOOZES
             : AlarmMath.clamp(base.optInt("maxSnoozes", AlarmMath.MAX_SNOOZES), 0, AlarmMath.MAX_SNOOZES);
@@ -211,6 +200,6 @@ public class AlarmReceiver extends BroadcastReceiver {
 
     /** Uudelleenajastus nykyisessa vyohykkeessa (AlarmPlugin.load). */
     static void rescheduleFromApp(Context context) {
-        AlarmScheduler.rescheduleAll(context, System.currentTimeMillis(), TimeZone.getDefault(), false);
+        AlarmScheduler.rescheduleAll(context, System.currentTimeMillis(), TimeZone.getDefault());
     }
 }

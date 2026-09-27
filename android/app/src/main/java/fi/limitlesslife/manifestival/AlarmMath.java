@@ -188,12 +188,104 @@ final class AlarmMath {
         return b * MINUTE_MS;
     }
 
+    // ------------------------------------------------------------ myohastyminen ja uudelleenajastus
+
+    /**
+     * Onko laukeamishetki niin kaukana takana, ettei heratysta enaa soiteta
+     * ("missed"). YKSI saanto kaikille poluille: laukeaminen (AlarmReceiver),
+     * uudelleenajastus (kaynnistys, kello, vyohyke, sovelluksen avaus) ja
+     * JS:n sovitus. Muuten epatarkka, muutaman minuutin myohassa toimitettava
+     * heratys soisi laukeamisessa, mutta katoaisi, jos sovellus avattiin sita
+     * ennen.
+     */
+    static boolean tooLate(long target, long now) {
+        return now - target > MAX_LATE_MS;
+    }
+
+    /** Tallessa olevan heratyksen kohtalo uudelleenajastuksessa ja sovituksessa. */
+    enum Restore {
+        /** Tuleva hetki: ajastetaan siihen. */
+        ARM,
+        /**
+         * Hetki meni, mutta heratys oli ajastettu eika ole viela soinut, ja
+         * myohastys on rajan sisalla: ajastetaan heti (AlarmManager laukaisee
+         * menneen hetken valittomasti).
+         */
+        ARM_NOW,
+        /** Ajastettu, ei soinut ja yli rajan myohassa: pois, tapahtumana "missed". */
+        MISSED,
+        /** Mennyt hetki, jota ei ollut ajastettu tai joka jo soi: pois ilman tapahtumaa. */
+        PAST,
+        /**
+         * Jo soinut esiintyma, jonka hetki on kellon taaksepain siirron tai
+         * lanteen vaihtuneen vyohykkeen jalkeen taas edessa: pidetaan tallessa
+         * (laukeamistieto sailyy seuraavaankin sovitukseen), mutta EI ajasteta.
+         * Muuten sama heratys soisi toiseen kertaan.
+         */
+        KEEP
+    }
+
+    /**
+     * Mita tallessa olevalle (tai JS:n uudelleen lahettamalle) heratykselle
+     * tehdaan.
+     *
+     * @param target laukeamishetki (AlarmScheduler.targetOf)
+     * @param firedAt milloin tama esiintyma (tai sen torkku) laukesi; 0 = ei viela.
+     *     Torku nollaa sen, joten firedAt != 0 tarkoittaa: viimeisin ajastettu
+     *     hetki on jo soinut.
+     * @param wasScheduled oliko esiintyma jo ajastettuna talla laitteella (sama
+     *     tunniste, paiva ja aika). Uutta, jo mennytta esiintymaa ei soiteta
+     *     jalkikateen: se on JS:lle "past", kuten ennenkin.
+     */
+    static Restore restorePlan(long target, long now, long firedAt, boolean wasScheduled) {
+        if (firedAt != 0L) return target > now ? Restore.KEEP : Restore.PAST;
+        if (target > now) return Restore.ARM;
+        if (!wasScheduled) return Restore.PAST;
+        return tooLate(target, now) ? Restore.MISSED : Restore.ARM_NOW;
+    }
+
+    /** Mita AlarmManagerin laukaisema heratys tekee (AlarmScheduler.claimFire). */
+    enum Fire {
+        /** Tama esiintyma soi jo: sama heratys ei soi kahdesti. */
+        IGNORE,
+        /** Hetki ei ole kelvollinen: pois tallesta. */
+        DROP,
+        /** Yli minuutin etuajassa (kelloa siirretty): ajastetaan oikeaan hetkeen. */
+        TOO_EARLY,
+        /** Yli rajan myohassa: "missed" (puoli tuntia myohassa soiva heratys harhaanjohtaisi). */
+        MISSED,
+        /** Soitetaan nyt. */
+        RING
+    }
+
+    static Fire fireDecision(long target, long now, long firedAt) {
+        if (firedAt != 0L) return Fire.IGNORE;
+        if (target < 0) return Fire.DROP;
+        if (now < target - MINUTE_MS) return Fire.TOO_EARLY;
+        return tooLate(target, now) ? Fire.MISSED : Fire.RING;
+    }
+
     /** Hetki -> "HH:MM" annetussa vyohykkeessa (heratysnakyman kello). */
     static String clockText(long epochMs, TimeZone zone) {
         Calendar calendar = Calendar.getInstance(zone == null ? TimeZone.getDefault() : zone, Locale.ROOT);
         calendar.setTimeInMillis(epochMs);
         return String.format(Locale.ROOT, "%02d:%02d",
             calendar.get(Calendar.HOUR_OF_DAY), calendar.get(Calendar.MINUTE));
+    }
+
+    // ------------------------------------------------------------ tallennus
+
+    /**
+     * Henkilokohtaiset tekstit, jotka pysyvat kayttajan salaamassa
+     * tallennuksessa (AlarmStore). Laitesuojattuun tiedostoon, joka on
+     * luettavissa jo ennen ensimmaista lukituksen avausta, menee vain se,
+     * mita soittoon ja uudelleenajastukseen tarvitaan (tunniste, laji, aika,
+     * tapa, vaiheet, torkku- ja laukeamistieto). Ennen avausta heratys soi
+     * yleisnimella.
+     */
+    static boolean isPrivateField(String key) {
+        return "title".equals(key) || "body".equals(key) || "speech".equals(key)
+            || "routeDestination".equals(key) || "routeMode".equals(key);
     }
 
     // ------------------------------------------------------------ syotteet
@@ -226,6 +318,20 @@ final class AlarmMath {
 
     static int clamp(int value, int min, int max) {
         return Math.max(min, Math.min(max, value));
+    }
+
+    /** Puhutun muistutuksen torkku on aina 5 minuuttia ("Torku 5 min"). */
+    static final int SPOKEN_SNOOZE_MINUTES = 5;
+
+    /**
+     * Torkun pituus minuutteina. YKSI saanto seka torkulle
+     * (AlarmReceiver.snooze) etta jokaisen painikkeen tekstille: puhuttu
+     * muistutus aina 5, heratys ja kriittinen oman asetuksen mukaan (1-30).
+     * Ennen varailmoituksen painike sanoi "Torku 5 min", vaikka heratys
+     * torkkui asetuksen mukaan (oletus 9 min).
+     */
+    static int snoozeMinutes(String kind, int requested) {
+        return KIND_SPOKEN.equals(kind) ? SPOKEN_SNOOZE_MINUTES : clamp(requested, 1, MAX_SNOOZE_MINUTES);
     }
 
     /** Kieli BCP 47 -muodossa, muuten suomi. */

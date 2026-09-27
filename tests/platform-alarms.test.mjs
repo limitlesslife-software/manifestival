@@ -416,6 +416,68 @@ test('tapahtumat: tuntemattomat pois, järjestys seq, sama tapahtuma vain kerran
   assert.equal(live.length, 1, 'lopetuksen jälkeen ei tapahtumia');
 });
 
+/**
+ * Laitteen tapahtumajonon malli kuten AlarmStore.java: recordEvent lisää
+ * JOKAISEN tapahtuman jonoon ja välittää sen myös elävänä; consumeEvents
+ * tyhjentää jonon, ackEvents poistaa kuitatut.
+ */
+function queueingPlugin() {
+  const queue = [];
+  const plugin = fakePlugin();
+  plugin.calls.ackEvents = [];
+  plugin.consumeEvents = async () => ({ ok: true, events: queue.splice(0) });
+  plugin.ackEvents = async ({ seqs }) => {
+    plugin.calls.ackEvents.push([...seqs]);
+    const before = queue.length;
+    for (let index = queue.length - 1; index >= 0; index--) if (seqs.includes(queue[index].seq)) queue.splice(index, 1);
+    return { ok: true, removed: before - queue.length };
+  };
+  plugin.record = event => {
+    queue.push(event);
+    plugin.push(event);
+  };
+  return plugin;
+}
+
+const tick = () => new Promise(resolve => setTimeout(resolve, 0));
+
+test('REGRESSIO: elävänä käsitelty tapahtuma ei tule consumeEventsistä uudelleen seuraavassa istunnossa', async () => {
+  // native-events-redelivered-after-restart: seenSeq on muistissa, joten
+  // WebView'n uudelleenlatauksen tai kylmäkäynnistyksen jälkeen jonossa yhä
+  // ollut "Lähdin" käsiteltiin toiseen kertaan.
+  const plugin = queueingPlugin();
+  installShell(plugin);
+  const departed = { seq: 7, type: 'departed', id: 'departure|p1|2026-09-28|leave_now', kind: 'spoken', atMs: 1000 };
+
+  // Istunto 1: sovellus auki, kuuntelija käsittelee tapahtuman.
+  const live = [];
+  const off = alarms.onEvent(event => live.push([event.seq, event.type]));
+  await tick();
+  plugin.record(departed);
+  plugin.push(departed); // sama tapahtuma kahdesti: yksi käsittely
+  await tick();
+  assert.deepEqual(live, [[7, 'departed']]);
+  assert.deepEqual(plugin.calls.ackEvents[0], [7], 'käsitelty tapahtuma kuitataan laitteelle');
+  off();
+
+  // Istunto 2: muistissa oleva suodatus on tyhjä (uusi moduulin instanssi).
+  alarms.resetAlarmsForTests();
+  assert.deepEqual([...(await alarms.consumeEvents()).events], [], 'sama "Lähdin" tuli toiseen kertaan');
+});
+
+test('tapahtuma, jonka käsittely kaatui, jää laitteen jonoon seuraavaa käynnistystä varten', async () => {
+  const plugin = queueingPlugin();
+  installShell(plugin);
+  const off = alarms.onEvent(() => { throw new Error('sovelluksen käsittelijä kaatui'); });
+  await tick();
+  plugin.record({ seq: 8, type: 'acknowledged', id: 'wake:2026-09-28', kind: 'wake', atMs: 2000 });
+  await tick();
+  assert.deepEqual(plugin.calls.ackEvents, [], 'kaatunutta käsittelyä ei kuitata');
+  off();
+  alarms.resetAlarmsForTests();
+  assert.deepEqual((await alarms.consumeEvents()).events.map(e => [e.seq, e.type]), [[8, 'acknowledged']]);
+});
+
 test('tapahtumien lajit vastaavat kuittauslokin käsitteitä', () => {
   // src/domain/notificationAck.js ACK_EVENT: delivered, acknowledged, snoozed, dismissed (+ opened).
   for (const type of ['delivered', 'acknowledged', 'snoozed', 'dismissed']) {

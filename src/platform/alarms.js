@@ -810,6 +810,11 @@ export async function consumeEvents() {
 /**
  * Kuuntele tapahtumia sovelluksen ollessa auki. Palauttaa lopetusfunktion.
  * Selaimessa ei tapahtumia (lopetus ei tee mitään).
+ *
+ * Käsitelty tapahtuma kuitataan laitteelle (ackEvents): laite pitää jokaisen
+ * tapahtuman jonossa, eikä muistissa oleva seenSeq säily sovelluksen
+ * uudelleenkäynnistyksen yli. Ilman kuittausta consumeEvents antaisi saman
+ * kuittauksen tai "Lähdin"-tapahtuman seuraavassa istunnossa toiseen kertaan.
  */
 export function onEvent(callback) {
   const plugin = nativeAlarmPlugin();
@@ -818,12 +823,18 @@ export function onEvent(callback) {
   let removed = false;
   const listener = raw => {
     const event = normalizeAlarmEvent(raw);
-    if (!event || !remember(event.seq)) return;
-    try {
-      callback(event);
-    } catch {
-      // Kuuntelijan virhe ei saa katkaista muita tapahtumia.
+    if (!event) return;
+    if (remember(event.seq)) {
+      try {
+        callback(event);
+      } catch {
+        // Kuuntelijan virhe ei saa katkaista muita tapahtumia. Ei kuittausta:
+        // laitteen jono antaa tapahtuman seuraavassa käynnistyksessä.
+        return;
+      }
     }
+    // Käsitelty (tai jo nähty): pois laitteen jonosta. Ei odoteta, ei heitä.
+    callPlugin(plugin, 'ackEvents', { seqs: [event.seq] });
   };
   try {
     const registration = plugin.addListener(NATIVE_ALARM_EVENT, listener);
