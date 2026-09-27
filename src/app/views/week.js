@@ -8,6 +8,13 @@
 // Kaikki viikkologiikka (rajat, ryhmittely, otsikot) on domain-moduuleissa,
 // jotta rajatapaukset — sunnuntai, kuukauden vaihde, vuodenvaihde — voidaan
 // testata ilman selainta.
+//
+// FOKUS SÄILYY PIIRROSSA. Säiliöt piirretään renderHtml-funktiolla kuten
+// muu Kalenteri: identtistä merkintää ei kirjoiteta, ja muuttuneen jälkeen
+// fokus palaa samaan ohjaimeen. Aiemmin innerHTML korvasi listan jokaisella
+// tilamuutoksella, ja esimerkiksi "Merkitse tehdyksi" pudotti fokuksen
+// bodyyn. Kuuntelijat delegoidaan kerran (initWeekNavigation): säilyneisiin
+// painikkeisiin piirrossa kytketyt kuuntelijat kasaantuisivat.
 
 import { fmtISO, addDays, sameDay, todayMidnight, loadClass } from '../../lib/datetime.js';
 import { escapeHtml, WD_SHORT, formatTimeRange } from '../../lib/format.js';
@@ -19,11 +26,16 @@ import {
 } from '../../domain/week.js';
 import { expandRoutines } from '../../domain/routine.js';
 import { buildWeeklyReview, summarizeReview } from '../../domain/review.js';
-import { el, maybe } from '../../ui/dom.js';
+import { el, maybe, renderHtml } from '../../ui/dom.js';
 import { getState, setWeekStart, showCalendarDay } from '../state.js';
 import { toggleComplete } from '../actions.js';
 import { openEditForm } from './tasks.js';
 import { loadFailureHtml } from './loadNotice.js';
+
+/** Piirrä säiliö; poistuneen ohjaimen fokus siirtyy viikon otsikkoon. */
+function draw(container, html) {
+  renderHtml(container, html, { fallback: ['weekRangeLabel'] });
+}
 
 // ------------------------------------------------------------ viikkonauha
 
@@ -37,7 +49,7 @@ function renderStrip(container, state, routineOccurrences) {
     routinesByDay.set(occurrence.date, (routinesByDay.get(occurrence.date) || 0) + 1);
   }
 
-  container.innerHTML = summary.map(day => {
+  draw(container, summary.map(day => {
     const isToday = sameDay(day.date, today);
     const isViewed = sameDay(day.date, state.viewDate);
     const routineCount = routinesByDay.get(day.iso) || 0;
@@ -54,18 +66,33 @@ function renderStrip(container, state, routineOccurrences) {
       <span class="day-num">${day.date.getDate()}</span>
       ${dot}${flag}
     </button>`;
-  }).join('');
+  }).join(''));
+}
 
-  // Päivän napautus avaa kalenterin Päivä-osion samalle päivälle: ollaan
-  // jo Kalenteri-välilehdellä, joten päivän aikataulu näkyy tässä, samalla
-  // suunnitelmalla kuin Tänään-näkymässä.
-  container.querySelectorAll('.day-col').forEach(node => {
-    node.addEventListener('click', () => {
-      showCalendarDay(node.dataset.date);
-      const title = maybe('calTitle');
-      if (title && typeof title.focus === 'function') title.focus();
-    });
-  });
+/**
+ * Päivän napautus avaa kalenterin Päivä-osion samalle päivälle: ollaan
+ * jo Kalenteri-välilehdellä, joten päivän aikataulu näkyy tässä, samalla
+ * suunnitelmalla kuin Tänään-näkymässä.
+ */
+function onStripClick(event) {
+  const day = event.target && typeof event.target.closest === 'function' ? event.target.closest('.day-col') : null;
+  if (!day) return;
+  showCalendarDay(day.dataset.date);
+  const title = maybe('calTitle');
+  if (title && typeof title.focus === 'function') title.focus();
+}
+
+/** Tehtävän valmis-merkintä ja muokkaus (määräajat ja viikon lista). */
+function onTaskClick(event) {
+  const target = event.target && typeof event.target.closest === 'function' ? event.target : null;
+  if (!target) return;
+  const done = target.closest('[data-toggle]');
+  if (done) {
+    toggleComplete(done.dataset.toggle);
+    return;
+  }
+  const edit = target.closest('[data-edit]');
+  if (edit) openEditForm(edit.dataset.edit);
 }
 
 /** ISO-viikon numero maanantaista: viikko kuuluu vuodelle, jolla sen torstai on. */
@@ -88,7 +115,7 @@ function renderSummary(container, review) {
     { value: stats.overdue, label: 'myöhässä', tone: stats.overdue > 0 ? 'late' : '' }
   ];
 
-  container.innerHTML = `
+  draw(container, `
     <div class="week-stats">
       ${cards.map(card => `
         <div class="week-stat ${card.tone || ''}">
@@ -96,7 +123,7 @@ function renderSummary(container, review) {
           <span>${escapeHtml(card.label)}</span>
         </div>`).join('')}
     </div>
-    <div class="hint week-summary-text">${escapeHtml(summarizeReview(stats))}</div>`;
+    <div class="hint week-summary-text">${escapeHtml(summarizeReview(stats))}</div>`);
 }
 
 // ------------------------------------------------------------ määräajat
@@ -109,7 +136,7 @@ function renderDeadlines(container, state, todayIso) {
     .sort((a, b) => String(a.task.deadline).localeCompare(String(b.task.deadline)));
 
   if (withDeadlines.length === 0) {
-    container.innerHTML = '';
+    draw(container, '');
     return;
   }
 
@@ -125,16 +152,16 @@ function renderDeadlines(container, state, todayIso) {
     </div>`;
   }).join('');
 
-  container.innerHTML = `
+  draw(container, `
     <h2 class="section-title">Määräajat <span class="count-badge">${withDeadlines.length}</span></h2>
-    <div class="section-body">${rows}</div>`;
+    <div class="section-body">${rows}</div>`);
 }
 
 // ------------------------------------------------------------ tavoitteet
 
 function renderGoalProgress(container, review) {
   if (review.goalProgress.length === 0) {
-    container.innerHTML = '';
+    draw(container, '');
     return;
   }
 
@@ -150,9 +177,9 @@ function renderGoalProgress(container, review) {
       </div>
     </div>`).join('');
 
-  container.innerHTML = `
+  draw(container, `
     <h2 class="section-title">Tavoitteet <span class="count-badge">${review.goalProgress.length}</span></h2>
-    <div class="section-body">${rows}</div>`;
+    <div class="section-body">${rows}</div>`);
 }
 
 // ------------------------------------------------------------ viikon lista
@@ -165,14 +192,14 @@ function renderList(container, state, routineOccurrences) {
     // Epäonnistunut ensimmäinen lataus ei ole "tyhjä viikko".
     const notice = loadFailureHtml(state, ['tasks', 'routines', 'routineExceptions']);
     if (notice) {
-      container.innerHTML = notice;
+      draw(container, notice);
       return;
     }
-    container.innerHTML = `
+    draw(container, `
       <div class="empty-state">
         <div class="empty-title">Viikko on vielä tyhjä.</div>
         <p>Valitse päivä yltä ja lisää ensimmäinen asia.</p>
-      </div>`;
+      </div>`);
     return;
   }
 
@@ -234,14 +261,14 @@ function renderList(container, state, routineOccurrences) {
     }).join('');
   }
 
-  container.innerHTML = html;
+  draw(container, html);
 }
 
 // ------------------------------------------------------------ viikkokatsaus
 
 function renderReview(container, review) {
   if (review.stats.planned === 0 && review.nextWeekTop.length === 0) {
-    container.innerHTML = '';
+    draw(container, '');
     return;
   }
 
@@ -261,14 +288,14 @@ function renderReview(container, review) {
        <span class="muted">${escapeHtml(dayGroupLabel(review.stats.busiestDay))}</span></div>`
     : '';
 
-  container.innerHTML = `
+  draw(container, `
     <details class="review-block">
       <summary class="section-title">Viikkokatsaus</summary>
       <div class="section-body">
         ${busiest}
         ${next}
       </div>
-    </details>`;
+    </details>`);
 }
 
 // ------------------------------------------------------------ renderöinti
@@ -305,20 +332,15 @@ export function renderWeek() {
   renderGoalProgress(el('weekGoals'), review);
   renderList(el('weekListContainer'), state, routineOccurrences);
   renderReview(el('weekReview'), review);
-
-  // Kytkennät kerralla koko näkymälle — listat on juuri korvattu, joten
-  // kuuntelijat eivät kasaannu.
-  const screen = el('screen-week');
-  screen.querySelectorAll('[data-toggle]').forEach(node =>
-    node.addEventListener('click', () => toggleComplete(node.dataset.toggle)));
-  screen.querySelectorAll('[data-edit]').forEach(node =>
-    node.addEventListener('click', () => openEditForm(node.dataset.edit)));
 }
 
-/** Viikkonavigointi. */
+/** Viikkonavigointi ja viikkonäkymän kuuntelijat (kerran käynnistyksessä). */
 export function initWeekNavigation() {
   el('weekPrev').addEventListener('click', () =>
     setWeekStart(addDays(getState().weekStart, -7)));
   el('weekNext').addEventListener('click', () =>
     setWeekStart(addDays(getState().weekStart, 7)));
+  el('weekStripContainer').addEventListener('click', onStripClick);
+  el('weekDeadlines').addEventListener('click', onTaskClick);
+  el('weekListContainer').addEventListener('click', onTaskClick);
 }

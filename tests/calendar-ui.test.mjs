@@ -1140,3 +1140,35 @@ test('Poista → Peruuta (tai Esc) palauttaa fokuksen Poista-painikkeeseen; epä
   assert.equal(del.disabled, false, 'painike vapautui');
   assertSameNode(doc.activeElement, del);
 });
+
+test('Viikko: "Merkitse tehdyksi" ja muu uudelleenpiirto pitävät fokuksen samassa ohjaimessa', async (t) => {
+  freezeLocalDate(t, TUESDAY);
+  const { doc, byId, render } = mountCalendar({ before: () => seed({ events: [] }) });
+  byId('segmentCalWeek').click();
+  const toggleButton = () => doc.querySelector('#weekListContainer [data-toggle="t-raportti"]');
+  const before = toggleButton();
+  assert.equal(accessibleName(before), 'Merkitse tehdyksi: Raportti');
+  before.focus();
+  press(doc, 'Enter');
+  await flush();
+
+  assert.equal(getState().tasks.find(task => task.id === 't-raportti').completed, true, 'yksi painallus = yksi merkintä');
+  const after = toggleButton();
+  assert.equal(accessibleName(after), 'Merkitse keskeneräiseksi: Raportti');
+  assertSameNode(doc.activeElement, after, 'fokus pysyi saman tehtävän painikkeessa');
+
+  // Viikkonauhan päivä: muu tilamuutos (esim. synkronointi) ei pudota fokusta.
+  const day = doc.querySelector(`#weekStripContainer [data-date="${WEDNESDAY}"]`);
+  day.focus();
+  setTasks([...getState().tasks, normalizeTask({ id: 't-uusi', title: 'Uusi', date: WEDNESDAY })]);
+  const dayAfter = doc.querySelector(`#weekStripContainer [data-date="${WEDNESDAY}"]`);
+  assert.match(accessibleName(dayAfter), /1 tehtävää/);
+  assertSameNode(doc.activeElement, dayAfter, 'fokus pysyi samassa päivässä');
+
+  // Kuuntelijat eivät kasaannu piirroista: napautus avaa päivän kerran.
+  render();
+  render();
+  dayAfter.click();
+  assert.deepEqual([getState().calendarView, getState().calendarDate], ['day', WEDNESDAY]);
+  assertSameNode(doc.activeElement, byId('calTitle'));
+});
