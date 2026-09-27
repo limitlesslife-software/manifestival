@@ -28,7 +28,7 @@ import { setClient } from '../src/data/client.js';
 import { clearAllCollections, calendarEventsRepo, savedPlacesRepo } from '../src/data/collectionsRepo.js';
 import {
   getState, resetState, subscribe, setCalendarView, setCalendarDate, showCalendarDay, setWeekStart,
-  setSavedPlaces, setCalendarEvents, setTasks, setDomainLoadStatus, CALENDAR_VIEWS
+  setSavedPlaces, setCalendarEvents, setTasks, setDomainLoadStatus, setTasksSegment, CALENDAR_VIEWS
 } from '../src/app/state.js';
 import { clearLocalUserData } from '../src/app/actions.js';
 import { resetDailyLifeActions } from '../src/app/dailyLifeActions.js';
@@ -42,6 +42,8 @@ import {
   defaultEventDate
 } from '../src/app/views/calendarForm.js';
 import { renderWeek, initWeekNavigation, isoWeekNumber } from '../src/app/views/week.js';
+import { renderTasks } from '../src/app/views/tasks.js';
+import { setScreenRenderers, renderVisible, switchTab } from '../src/app/navigation.js';
 import { handlers } from '../src/app/aiCommandHandlers.js';
 import { INTENT } from '../src/ai/intentSchema.js';
 import { closeConfirmDialogs } from '../src/ui/confirm.js';
@@ -995,4 +997,50 @@ test('lomakkeen sarkainjärjestys kulkee kentästä toiseen ja Peruuta palauttaa
   assert.deepEqual(order.slice(-4), ['ceCategory', 'ceNotes', 'ceCancel', 'ceSave'], 'piilotetut Poista ja Ohita eivät ole järjestyksessä');
   byId('ceCancel').click();
   assertSameNode(doc.activeElement, opener);
+});
+
+// ================================================================ FOKUS: TEHTÄVÄ JA LOMAKKEEN SULKU
+
+/**
+ * Näytöt kuten main.js: tilamuutos piirtää avoimen näytön (renderVisible),
+ * ja switchTab piirtää likaisen näytön ennen näyttämistä. Tekeminen-näytöltä
+ * piirretään vain tehtävät (osiot), koska tehtävän muokkaus avautuu sinne.
+ */
+function withScreens(t, { render }) {
+  setScreenRenderers({ 'screen-week': render, 'screen-tasks': () => renderTasks() });
+  const stop = subscribe(() => renderVisible());
+  t.after(() => {
+    stop();
+    setScreenRenderers({});
+  });
+}
+
+test('tehtävän napautus Kalenterissa avaa näkyvän muokkauslomakkeen, vaikka Tekemisessä oli auki Rutiinit', (t) => {
+  freezeLocalDate(t, TUESDAY);
+  const { doc, byId, render } = mountCalendar({ before: () => seed({ events: [] }) });
+  withScreens(t, { render });
+  // Käyttäjä kävi aiemmin Tekeminen → Rutiinit ja palasi Kalenteriin.
+  switchTab('screen-tasks');
+  setTasksSegment('routines');
+  switchTab('screen-week');
+
+  const row = doc.querySelector('button[data-cal-task="t-raportti"]');
+  row.focus();
+  row.click();
+  assert.equal(getState().screen, 'screen-tasks');
+  assert.equal(getState().tasksSegment, 'tasks', 'muokattava tehtävä on Tehtävät-osiossa');
+  assert.equal(isRendered(byId('addForm')), true, 'lomake näkyy (ei piilotetun osion sisällä)');
+  assert.equal(byId('afTitle').value, 'Raportti');
+  assertSameNode(doc.activeElement, byId('afTitle'), 'fokus lomakkeen otsikkoon, ei piilotettuun kalenteriin');
+
+  // Sama polku Viikko-osion tehtävälistasta (week.js).
+  switchTab('screen-week');
+  setTasksSegment('inbox');
+  byId('segmentCalWeek').click();
+  const edit = doc.querySelector('#weekListContainer [data-edit="t-raportti"]');
+  assert.equal(isRendered(edit), true);
+  edit.click();
+  assert.deepEqual([getState().screen, getState().tasksSegment], ['screen-tasks', 'tasks']);
+  assert.equal(isRendered(byId('addForm')), true);
+  assertSameNode(doc.activeElement, byId('afTitle'));
 });

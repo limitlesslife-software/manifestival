@@ -388,6 +388,12 @@ export function openEditForm(id) {
   toggle('addForm', true, 'flex');
   toggle('addRowBtn', false, 'flex');
 
+  // Lomake on Tehtävät-osion (#tasksSection) sisällä. Jos Tekemisessä oli
+  // viimeksi auki muu osio (Rutiinit, Saapuvat, ...), lomake täyttyi
+  // piilotetun osion sisään: käyttäjä näki väärän listan, eikä fokus
+  // päässyt otsikkoon vaan jäi edellisen näytön painikkeeseen. Kalenteri,
+  // Viikko, Tänään ja Tavoitteet avaavat muokkauksen tätä kautta.
+  if (getState().tasksSegment !== 'tasks') setTasksSegment('tasks');
   switchTab('screen-tasks');
   el('addForm').scrollIntoView({ behavior: 'smooth', block: 'center' });
   focus('afTitle');
