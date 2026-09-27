@@ -24,6 +24,7 @@ import {
   REMINDER_TOPICS, reminderTopicLabel
 } from '../../domain/dailyLife.js';
 import { deliveryFor, DEFAULT_DIGEST_TIME } from '../../domain/lifeSettings.js';
+import { remindersOffHintHtml, openReminderSettings } from './notificationSettings.js';
 
 const CONTAINER = 'guidanceSettings';
 
@@ -161,11 +162,12 @@ function deliveryHtml(values) {
     <div class="form-row">${rows}</div>`;
 }
 
-function guidanceHtml(settings) {
+function guidanceHtml(settings, state) {
   const values = draft || savedValues(settings);
   const timeError = errors.digestTime;
   return `<h2 class="section-title" id="gsTitle">Ohjaus ja puhe</h2>
   ${noticeHtml()}
+  ${remindersOffHintHtml('guidance', state)}
   <div class="add-form" role="group" aria-labelledby="gsTitle" style="display:flex;">
     ${styleHtml(values)}
     <label class="checkbox-row" for="gsSpeech">
@@ -198,7 +200,8 @@ function guidanceHtml(settings) {
 export function renderGuidanceSettings() {
   const container = maybe(CONTAINER);
   if (!container) return;
-  renderHtml(container, guidanceHtml(currentLifeSettings(getState())), { fallback: ['gsTitle'] });
+  const state = getState();
+  renderHtml(container, guidanceHtml(currentLifeSettings(state), state), { fallback: ['gsTitle'] });
 }
 
 function firstErrorId() {
@@ -251,7 +254,9 @@ export function initGuidanceSettings() {
   root.addEventListener('change', capture);
   root.addEventListener('click', event => {
     const button = event.target && typeof event.target.closest === 'function' ? event.target.closest('button') : null;
-    if (button && button.id === 'gsSave' && !button.disabled) submitGuidance();
+    if (!button || button.disabled) return;
+    if (button.id === 'gsSave') submitGuidance();
+    else if (button.hasAttribute('data-open-reminders')) openReminderSettings();
   });
   root.addEventListener('keydown', event => {
     if (event.key !== 'Enter' || !event.target || event.target.id !== 'gsDigestTime') return;
