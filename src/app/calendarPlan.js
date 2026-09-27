@@ -28,8 +28,7 @@ import { deriveBlocks } from '../domain/calendarBlocks.js';
 import { planDeparture, selectTravelEstimate } from '../domain/departure.js';
 import { summarizeCommute } from '../domain/commuteLearning.js';
 import { sleepScheduleFor } from '../domain/sleepRhythm.js';
-import { planMorning } from '../domain/morningPlanner.js';
-import { firstCommitmentOf } from '../domain/alarmPlan.js';
+import { morningOfDay } from '../domain/alarmPlan.js';
 import { buildDayPlan } from '../domain/scheduler.js';
 import { isIsoDate, isTimeOfDay } from '../domain/task.js';
 import { currentLifeSettings } from './state.js';
@@ -104,7 +103,7 @@ export function departureBlockInput(plan) {
 }
 
 /**
- * Menot aamun sitoumuksiksi (alarmPlan.firstCommitmentOf, planMorning).
+ * Menot aamun sitoumuksiksi (alarmPlan.morningOfDay).
  * Meno ilman paikkaa ja matkaa alkaa siellä missä olet: lähtö = alku.
  * Paikallinen meno ilman matka-aikaa jättää lähdön tuntemattomaksi, jolloin
  * aamusuunnitelma käyttää profiilin matka-aikaa ja sanoo sen ääneen.
@@ -123,15 +122,20 @@ function commitmentsOn(occurrences, dateIso, departures) {
     } else if (!needsDeparture(occurrence)) {
       leaveTime = occurrence.time;
     }
-    list.push({ id: occurrence.id, title: occurrence.title, startTime: occurrence.time, leaveTime, prepareStart });
+    list.push({
+      id: occurrence.id, title: occurrence.title, startTime: occurrence.time, leaveTime, prepareStart,
+      category: occurrence.category
+    });
   }
   return list;
 }
 
 /**
- * Päivän aamun sitoumus (alarmPlan.firstCommitmentOf) ja sitä vastaava
- * aamusuunnitelma. Sama logiikka kuin unilohkoissa, jotta kalenteri,
- * Tänään, herätys ja illan ennakko ovat samaa mieltä.
+ * Päivän aamun sitoumus ja sitä vastaava aamusuunnitelma
+ * (alarmPlan.morningOfDay). Sama logiikka kuin unilohkoissa ja
+ * herätyksessä, jotta kalenteri, Tänään, herätys ja illan ennakko ovat
+ * samaa mieltä. Keskiyön jälkeinen meno, jonka aamu alkaisi jo edellisenä
+ * iltana, ei ole aamun sitoumus: valinta siirtyy seuraavaan menoon.
  *
  * Valinnaiset `wakeTimeLimit` (aikaisin sallittu herätys, esim. jo mennyt
  * hetki) ja `steps` (tämän aamun oma vaihejoukko) kulkevat suoraan
@@ -145,13 +149,12 @@ export function morningFor({
   offsetMinutesFn = deviceOffsetMinutes, wakeTimeLimit = null, steps = undefined
 } = {}) {
   if (!isIsoDate(wakeDate)) return { commitment: null, morning: null, requiredWake: null };
-  const commitment = firstCommitmentOf(commitmentsOn(listOf(occurrences), wakeDate, departures), profile);
-  const morning = planMorning({
-    dateIso: wakeDate, firstCommitment: commitment, profile, settings, offsetMinutesFn,
-    wakeTimeLimit, steps: Array.isArray(steps) ? steps : undefined
+  const { commitment, plan: morning } = morningOfDay({
+    dateIso: wakeDate, commitments: commitmentsOn(listOf(occurrences), wakeDate, departures), profile, settings,
+    offsetMinutesFn, wakeTimeLimit, steps: Array.isArray(steps) ? steps : undefined
   });
-  // Aamun herätys edellisen päivän puolella (meno heti keskiyön jälkeen)
-  // ei ole tämän yön herätys: silloin käytetään tavallista rytmiä.
+  // Varmistus: herätys edellisen päivän puolella ei ole tämän yön herätys
+  // (morningOfDay ohittaa jo sellaiset menot), joten silloin tavallinen rytmi.
   const requiredWake = morning && morning.wakeDate === wakeDate ? morning.wakeTime : null;
   return { commitment, morning, requiredWake };
 }

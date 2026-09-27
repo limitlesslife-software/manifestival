@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 
 import {
-  desiredAlarms, alarmSettingsOf, validateEscalation, normalizeEscalation, firstCommitmentOf,
+  desiredAlarms, alarmSettingsOf, validateEscalation, normalizeEscalation, firstCommitmentOf, morningOfDay,
   snoozeAlarm, dedupeAlarms, alarmEpoch, morningBrief, wallClockToEpoch, epochToWallClock,
   MAX_ALARM_DAYS, MAX_ESCALATION_STEPS, MAX_RING_SECONDS, DEFAULT_ESCALATION, DEFAULT_SNOOZE_MINUTES,
   ALARM_SOURCE, BRIEF_MAX_SENTENCES, MIN_RUN_MINUTES, MAX_BRIEF_TITLE_LENGTH
@@ -152,6 +152,31 @@ test('KRIITTINEN: myöhään nukkumaan mennyt ei menetä unta huomaamatta', () =
   // Toisen päivän kirjaus ei vaikuta.
   const other = alarms({ commitmentsByDate: { [MONDAY]: MEETING }, sleepLogs: [{ wakeDate: '2026-09-27', actualBedtime: '02:00' }] });
   assert.equal(other[0].time, '06:05');
+});
+
+test('KRIITTINEN: keskiyön jälkeinen meno ei ole aamun meno eikä tee herätystä edelliselle illalle', () => {
+  // Etäpuhelu klo 00.15 kotona: aamurutiini (75 min) alkaisi jo edellisenä iltana klo 23.00.
+  const midnight = { id: 'm', title: 'Etäpuhelu', startTime: '00:15', leaveTime: '00:15' };
+  const [alone] = alarms({ commitmentsByDate: { [MONDAY]: [midnight] } });
+  assert.deepEqual([alone.date, alone.time, alone.source], [MONDAY, '07:00', ALARM_SOURCE.RHYTHM],
+    'tavallinen herätys herätyspäivänä, ei edellisenä iltana');
+
+  // Aamun palaverin kanssa palaveri ratkaisee, kuten ilman keskiyön menoa.
+  const [both] = alarms({ commitmentsByDate: { [MONDAY]: [midnight, MEETING] } });
+  assert.deepEqual([both.date, both.time, both.leaveTime, both.source], [MONDAY, '06:05', '07:20', ALARM_SOURCE.PLAN]);
+  // Kirjattu nukkumaanmeno (aikaisin sallittu herätys) ei muuta valintaa.
+  const [logged] = alarms({
+    commitmentsByDate: { [MONDAY]: [midnight, MEETING] },
+    sleepLogs: [{ id: 's1', wakeDate: MONDAY, actualBedtime: '22:00' }]
+  });
+  assert.deepEqual([logged.date, logged.time, logged.fits], [MONDAY, '06:05', true]);
+
+  const chosen = morningOfDay({ dateIso: MONDAY, commitments: [midnight, MEETING], profile: PROFILE, settings: SETTINGS });
+  assert.equal(chosen.commitment.id, 'e1');
+  assert.deepEqual([chosen.plan.wakeDate, chosen.plan.wakeTime], [MONDAY, '06:05']);
+  const none = morningOfDay({ dateIso: MONDAY, commitments: [midnight], profile: PROFILE, settings: SETTINGS });
+  assert.equal(none.commitment, null);
+  assert.deepEqual([none.plan.wakeDate, none.plan.wakeTime], [MONDAY, '07:00']);
 });
 
 test('menot: Map, taulukko, koko päivän menot ja perityt avaimet', () => {

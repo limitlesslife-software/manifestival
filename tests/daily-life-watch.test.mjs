@@ -20,6 +20,7 @@ import {
 import {
   departuresOn, departuresLeavingOn, firstCommitmentOn, morningPlanOn, sleepScheduleOn
 } from '../src/app/dailyLifeModel.js';
+import { calendarInputs } from '../src/app/calendarPlan.js';
 import { readCode } from './helpers/sources.mjs';
 
 const at = (y, m, d, hh, mm) => new Date(y, m - 1, d, hh, mm);
@@ -183,6 +184,29 @@ test('illan ennakko: vain illalla ja vain kun huominen vaatii aiemman herätykse
   assert.equal(eveningBeforeNotice({ now: at(2026, 9, 29, 19, 0) }), null, 'tavallinen aamu: ei huomautusta');
 });
 
+test('KRIITTINEN: keskiyön jälkeinen meno ei korvaa aamun sitoumusta (herätys, uni, unilohko, illan ennakko)', () => {
+  setProfile({ sleepTargetHours: 8, defaultWakeTime: '07:00', routineMinutes: 45, commuteMinutes: 20 }, true);
+  setSavedPlaces([{ id: 'p2', name: 'Työ', usualTravelMinutes: 40, overheadMinutes: 0, preparationMinutes: 0 }]);
+  setLifeSettings([{ id: 's1', arrivalBufferMinutes: 0 }]);
+  const meeting = { id: 'w', title: 'Aamupalaveri', date: '2026-09-30', startTime: '07:30', durationMinutes: 60, placeId: 'p2' };
+  const now = at(2026, 9, 29, 19, 0);
+  const sleepEnds = () => calendarInputs(getState(), { from: TODAY, to: TODAY }).blocks
+    .filter(block => block.kind === 'sleep' && block.date === '2026-09-30').map(block => block.endTime);
+
+  setCalendarEvents([meeting]);
+  assert.equal(sleepScheduleOn('2026-09-30', { now }).wakeTime, '06:05', 'lähtö 6.50 - aamurutiini 45 min');
+  assert.deepEqual(sleepEnds(), ['06:05']);
+
+  // Kotona pidettävä etäpuhelu klo 00.15 samalle päivälle.
+  setCalendarEvents([meeting, { id: 'call', title: 'Etäpuhelu', date: '2026-09-30', startTime: '00:15', durationMinutes: 30 }]);
+  assert.equal(firstCommitmentOn('2026-09-30', { now }).title, 'Aamupalaveri');
+  const plan = morningPlanOn('2026-09-30', { now });
+  assert.deepEqual([plan.wakeDate, plan.wakeTime], ['2026-09-30', '06:05']);
+  assert.equal(sleepScheduleOn('2026-09-30', { now }).wakeTime, '06:05');
+  assert.deepEqual(sleepEnds(), ['06:05'], 'unilohko suojaa unen oikeaan herätykseen asti');
+  assert.ok(eveningBeforeNotice({ now }), 'illan ennakko säilyy');
+});
+
 test('myöhästely: ehdotus vain toistuvasta myöhästymisestä, eikä kun aikaistus on jo tehty', () => {
   const obs = ['2026-09-21', '2026-09-22', '2026-09-23', '2026-09-24'].map((d, i) => ({
     id: `o${i}`, placeId: 'p1', observedOn: d, weekday: i + 1, plannedDeparture: '06:05', actualDeparture: '06:13', travelMinutes: 35
@@ -259,7 +283,7 @@ test('KRIITTINEN: yksi laskentapolku — sovelluskerroksessa vain calendarPlan.j
   const relative = file => path.relative(process.cwd(), file).split(path.sep).join('/');
   const callers = files
     .map(relative)
-    .filter(file => /\b(deriveBlocks|planMorning|sleepSchedulesFor)\s*\(/.test(readCode(file)))
+    .filter(file => /\b(deriveBlocks|planMorning|morningOfDay|sleepSchedulesFor)\s*\(/.test(readCode(file)))
     .sort();
   assert.deepEqual(callers, ['src/app/calendarPlan.js']);
 });
