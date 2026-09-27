@@ -64,7 +64,8 @@ test('KRIITTINEN: kannan päivitys sisältää vain muuttuneet sarakkeet', () =>
   // Kantapolku rakentaa päivityksen muuttuneista sarakkeista (portit ovat
   // tällä haaralla kiinni, joten polkua ei voi ajaa).
   const code = readCode('src/data/collectionsRepo.js');
-  const update = code.slice(code.indexOf('async update('), code.indexOf('/** Poisto;'));
+  const update = code.slice(code.indexOf('async update('), code.indexOf('async remove(id)'));
+  assert.ok(update.length > 0 && update.length < 3000, 'update-metodia ei löytynyt');
   assert.match(update, /changedFrom \? changedColumns\(toRow\(normalize\(changedFrom\)\), fullRow\) : fullRow/);
   assert.match(update, /\.update\(stripLoweredColumns\(table, assertClientSafe\(row\)\)\)/);
 });
