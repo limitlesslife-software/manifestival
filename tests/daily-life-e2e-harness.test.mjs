@@ -80,7 +80,10 @@ test('K-porttitila: ilman K-ehdokasta portit tulevat junan määrittelystä, ja 
     && Object.entries(parseColumnGates(SCHEMA)).every(([gate, open]) => open === COLUMN_OPEN_IN_K(gate));
   if (branchAtK) assert.equal(resolved.source, SCHEMA, 'K-haaran lähdettä muutettiin');
   else assert.ok(changed.length > 0, 'K-tila ei avannut yhtään porttia');
-  assert.ok(changed.every(line => /:\s*true,?\s*$|^export const [A-Z_]+ = true;/.test(line.trim())), changed.join('\n'));
+  // Vain porttiliteraalit muuttuvat. Myöhemmän aallon haara (esim. L-ehdokas)
+  // K-tilaan korjattuna SULKEE K:n jälkeiset portit, joten suunta voi olla kumpi
+  // tahansa; oikeat arvot on todennettu yllä portti portilta.
+  assert.ok(changed.every(line => /:\s*(true|false),?\s*$|^export const [A-Z_]+ = (true|false);/.test(line.trim())), changed.join('\n'));
 });
 
 test('K-porttitila: oletusref on tyhjä (ei ehdokasta); E2E_K_GATES_REF ottaa ehdokkaan käyttöön; J:n oletus ennallaan', () => {
