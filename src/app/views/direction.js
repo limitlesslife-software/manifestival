@@ -47,7 +47,7 @@ import { POLICY_VERSIONS, ESTIMATE_PRESETS } from '../../domain/alignmentPolicy.
 import { energyDemandLabel } from '../../domain/alignmentItemSettings.js';
 import { addDaysIso } from '../../domain/fiTemporal.js';
 import { durationOf } from '../../domain/task.js';
-import { dailyLifeSignals } from '../../domain/dailyLifeSignals.js';
+import { dailyLifeSignals, evaluationText, DAILY_LIFE_SIGNAL } from '../../domain/dailyLifeSignals.js';
 import { deviceTimeZone } from '../deviceTime.js';
 import {
   analyzeCurrentWeek, currentProposals, currentWeekStart, alignmentPersistence,
@@ -1270,13 +1270,26 @@ function knownUnknownHtml(analysis, areas = []) {
  * Versio 3: alussa "Tiedossa / Ei tiedossa / Ei kirjattu", ja osittain
  * kirjatun viikon toteuma sanotaan kirjattuna, ei elettynä aikana.
  */
+/** Arjen katsauksen kysymykset arvion lajin mukaan (dailyLifeSignals). */
+const DAILY_LIFE_QUESTIONS = Object.freeze({
+  [DAILY_LIFE_SIGNAL.SLEEP_OPPORTUNITY_LOW]: 'Riittikö aika unelle?',
+  [DAILY_LIFE_SIGNAL.SLEEP_RHYTHM_DRIFT]: 'Pysyikö unirytmi omana?',
+  [DAILY_LIFE_SIGNAL.WELLBEING_STRAIN]: 'Näkyikö kuormitus voinnin merkinnöissä?'
+});
+
 /**
  * Arjen havainnot viikkokatsaukseen: uni (vuoteessa oloaika, ei mitattu
  * uni), rytmi ja vointi omien merkintöjen perusteella. Deterministinen ja
- * selitettävä; ei lähde tekoälylle eikä lokiin. Harva data ei ole nolla:
- * ilman riittäviä merkintöjä havaintoa ei tehdä.
+ * selitettävä; ei lähde tekoälylle eikä lokiin.
+ *
+ * Jokainen arvio saa oman rivinsä ja tilansa mukaisen tekstin
+ * (evaluationText): harva aineisto sanotaan tuntemattomaksi ("Liian vähän
+ * unikirjauksia arvioon (2 / 4 yötä), joten tätä ei tiedetä."), ei
+ * koskaan "ei huomioita" — tuntematon ei ole "kaikki hyvin".
+ *
+ * @returns {Array<[string, string]>|null} [kysymys, vastaus] -rivit
  */
-function dailyLifeRow(analysis, state = getState()) {
+function dailyLifeRows(analysis, state = getState()) {
   const settings = currentLifeSettings(state);
   const profile = state.profile || {};
   const today = fmtISO(todayMidnight());
@@ -1293,9 +1306,11 @@ function dailyLifeRow(analysis, state = getState()) {
     wellbeingCheckins: state.wellbeingCheckins || []
   });
   if (!result) return null;
-  const texts = result.signals.map(signal => signal.explanation).filter(Boolean);
-  return texts.length ? texts.join(' ')
-    : 'Unesta, rytmistä tai voinnista ei ole tällä viikolla huomioita omien merkintöjesi perusteella.';
+  const rows = result.evaluations
+    .filter(evaluation => Object.prototype.hasOwnProperty.call(DAILY_LIFE_QUESTIONS, evaluation.kind))
+    .map(evaluation => [DAILY_LIFE_QUESTIONS[evaluation.kind], evaluationText(evaluation)])
+    .filter(([, text]) => Boolean(text));
+  return rows.length ? rows : null;
 }
 
 function reviewHtml(analysis, areas) {
@@ -1340,7 +1355,7 @@ function reviewHtml(analysis, areas) {
       + (Number.isInteger(analysis.energy.budgetMinutes) ? `, oma raja ${hours(analysis.energy.budgetMinutes)}.` : '.')
     : null;
   const energySignals = signalsOfKind(analysis, SIGNAL.ENERGY_OVERLOAD, areas).join(' ');
-  const dailyLife = dailyLifeRow(analysis);
+  const dailyLife = dailyLifeRows(analysis);
   const sections = [
     { title: 'Suunta', lead: 'Mitä sanoin tärkeäksi?', rows: [[REVIEW_QUESTIONS[0], answers[0]]] },
     { title: 'Suunnitelma', lead: 'Mitä aioin?', rows: [[REVIEW_QUESTIONS[1], answers[1]]] },
@@ -1354,10 +1369,7 @@ function reviewHtml(analysis, areas) {
         [REVIEW_QUESTIONS[5], answers[5]]
       ]
     },
-    ...(dailyLife ? [{
-      title: 'Arki', lead: 'Miten arki kantoi?',
-      rows: [['Riittikö aika unelle ja pysyikö rytmi?', dailyLife]]
-    }] : [])
+    ...(dailyLife ? [{ title: 'Arki', lead: 'Miten arki kantoi?', rows: dailyLife }] : [])
   ];
   return knownUnknownHtml(analysis, areas) + sections.map(section => `
     <div class="dir-review-section">
