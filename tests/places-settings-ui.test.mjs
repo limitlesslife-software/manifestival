@@ -247,12 +247,16 @@ test('oppiminen: 6 matkan mediaani ehdotetaan, hyväksyntä ottaa käyttöön, a
   const view = mount(t);
   await seed(savedPlacesRepo, setSavedPlaces, [
     { id: 'p1', name: 'Työ', usualTravelMinutes: 30 },
-    { id: 'p2', name: 'Sali', usualTravelMinutes: 15 }
+    { id: 'p2', name: 'Sali', usualTravelMinutes: 15 },
+    { id: 'p3', name: 'Mökki', usualTravelMinutes: 90, useLearned: true }
   ]);
   await seed(commuteObservationsRepo, setCommuteObservations, [
     ...observations('p1', [34, 36, 38, 38, 40, 42]),
     ...observations('p2', [14, 16])
   ]);
+  assert.match(view.q('[data-place-row="p3"]').textContent.replace(/\s+/g, ' '),
+    /Kuitattuja matkoja 0\. Opittua kestoa käytetään, kun matkoja on vähintään 3\. Siihen asti käytetään omaa arviotasi\./,
+    'lupa ilman matkoja ei teeskentele opittua kestoa');
 
   const work = () => view.q('[data-place-row="p1"]').textContent.replace(/\s+/g, ' ');
   assert.match(work(), /Viimeisten 6 matkan mediaani oli 38 min — käytä tätä\?/);

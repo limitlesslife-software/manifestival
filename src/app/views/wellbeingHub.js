@@ -133,6 +133,11 @@ function numText(value) {
   return value === null || value === undefined ? '' : String(value);
 }
 
+/** "1 kerta", "3 kertaa" (myös "0 kertaa": nolla päivätavoitteena on arvo). */
+function timesText(n) {
+  return n === 1 ? '1 kerta' : `${n} kertaa`;
+}
+
 function attrValue(value) {
   return String(value).replace(/["\\]/g, '\\$&');
 }
@@ -402,7 +407,7 @@ function ruleText(step) {
   if (!step) return '';
   const parts = [];
   if (step.intervalMinutes !== null) parts.push(`väli vähintään ${durationText(step.intervalMinutes)}`);
-  if (step.dailyTarget !== null) parts.push(`päivätavoite ${step.dailyTarget} kertaa`);
+  if (step.dailyTarget !== null) parts.push(`päivätavoite ${timesText(step.dailyTarget)}`);
   return parts.length ? `Nyt voimassa: ${parts.join(' · ')}.` : 'Suunnitelmassa ei ole väliä eikä päivätavoitetta.';
 }
 
@@ -414,6 +419,10 @@ function nextStepText(plan, step) {
   if (next.intervalMinutes !== null) parts.push(`väli ${durationText(next.intervalMinutes)}`);
   if (next.dailyTarget !== null) parts.push(`päivätavoite ${next.dailyTarget}`);
   return `Seuraava askel ${dateLabel(next.from)}: ${parts.join(', ')}.`;
+}
+
+function todayUsesText(uses) {
+  return uses === 0 ? 'Tänään ei vielä kirjauksia.' : `Tänään kirjattu ${timesText(uses)}.`;
 }
 
 function habitRowHtml(plan, state, today, settings) {
@@ -437,7 +446,7 @@ function habitRowHtml(plan, state, today, settings) {
       <div class="assist-meta">${ruleText(step)}</div>
       ${next ? `<div class="assist-meta">${next}</div>` : ''}
       ${result ? `<div class="assist-reason">${escapeHtml(result.text)}</div>` : ''}
-      ${result ? `<div class="assist-meta">Tänään kirjattu ${result.today.uses} kertaa.</div>` : ''}
+      ${result ? `<div class="assist-meta">${todayUsesText(result.today.uses)}</div>` : ''}
       ${moneyHint}
       <div class="assist-meta">Muistutus: ${escapeHtml(deliveryLabel(plan.reminderDelivery))}</div>
       <div class="assist-actions">

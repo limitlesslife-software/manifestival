@@ -235,9 +235,13 @@ function learningHtml(place, state) {
         </div>
       </div>`;
   }
-  if (summary.count > 0) {
-    return `<p class="assist-reason">Kuitattuja matkoja ${summary.count}. Opittua kestoa ehdotetaan, kun matkoja on `
-      + `vähintään ${MIN_LEARNING_OBSERVATIONS}.</p>`;
+  if (summary.count > 0 || place.useLearned) {
+    // Lupa on annettu, mutta matkoja on vielä liian vähän: lähtö lasketaan
+    // omasta arviosta (forecastCommute), ja se kerrotaan suoraan.
+    const verb = place.useLearned ? 'käytetään' : 'ehdotetaan';
+    const meanwhile = place.useLearned ? ' Siihen asti käytetään omaa arviotasi.' : '';
+    return `<p class="assist-reason">Kuitattuja matkoja ${summary.count}. Opittua kestoa ${verb}, kun matkoja on `
+      + `vähintään ${MIN_LEARNING_OBSERVATIONS}.${meanwhile}</p>`;
   }
   return '';
 }

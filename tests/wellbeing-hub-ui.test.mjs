@@ -256,12 +256,13 @@ test('edistyminen ja säästö tulevat tapamoottorista; ilman lähtötasoa sää
   // Seuranta 21.–27.9. = 7 päivää, 5 käyttöä: (10 × 7 − 5) × 0,50 € = 32,50 €.
   assert.match(money, /Viimeiset 7 päivää: keskimäärin 0,7 kertaa päivässä, lähtötaso 10\./);
   assert.match(money, /32,50/);
-  assert.match(money, /Tänään kirjattu 1 kertaa\./);
+  assert.match(money, /Tänään kirjattu 1 kerta\./);
 
   const free = view.q('[data-habit-row="h-free"]').textContent.replace(/\s+/g, ' ');
   assert.match(free, /Säästöä ei lasketa ilman lähtötasoa ja yksikköhintaa\./);
   assert.doesNotMatch(free, /€/, 'tuntematonta säästöä ei näytetä summana');
   assert.match(free, /päivätavoite 2 kertaa/);
+  assert.match(free, /Tänään ei vielä kirjauksia\./, 'nolla kirjausta kerrotaan sanoin');
   const habits = view.q('[data-section="habits"]').textContent.toLowerCase();
   for (const word of ['retkahd', 'epäonnist', 'huono', 'lipsu']) {
     assert.doesNotMatch(habits, new RegExp(word), `neutraali kieli: ei "${word}"`);
