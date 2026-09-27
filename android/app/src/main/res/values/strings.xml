@@ -10,6 +10,8 @@
     <string name="alarm_channel_description">Soiva herätys ja ääneen luettavat muistutukset, kuten lähtöaika.</string>
     <string name="alarm_service_channel_name">Muistutusta luetaan</string>
     <string name="alarm_service_running">Muistutusta luetaan ääneen</string>
+    <string name="alarm_fallback_channel_name">Herätykset (varakanava)</string>
+    <string name="alarm_fallback_channel_description">Käytössä vain, jos herätys ei voi soida tavalliseen tapaan: ilmoitus soittaa herätysäänen kerran.</string>
     <string name="alarm_default_label">Herätys</string>
     <string name="reminder_default_label">Muistutus</string>
     <string name="alarm_dismiss">Sammuta</string>

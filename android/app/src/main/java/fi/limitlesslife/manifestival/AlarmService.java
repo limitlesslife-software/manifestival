@@ -72,6 +72,12 @@ public class AlarmService extends Service {
     static final String CHANNEL_ID = "manifestival-alarm";
     /** Puhumisen ajan nakyva hiljainen palveluilmoitus. */
     static final String SERVICE_CHANNEL_ID = "manifestival-alarm-service";
+    /**
+     * Varakanava, kun etualapalvelua ei saa kaynnistaa (epatarkka heratys ja
+     * taustakaynnistyksen rajoitus): ilmoitus soittaa jarjestelman
+     * heratysaanen kerran, jottei heratys jaa aanettomaksi.
+     */
+    static final String FALLBACK_CHANNEL_ID = "manifestival-alarm-fallback";
     /** Muistutusilmoitusten tunniste (id = AlarmMath.requestCode). Erottaa ne muistutusliitannaisen ilmoituksista. */
     static final String NOTIFICATION_TAG = "manifestival-alarm";
     static final int FOREGROUND_ID = 0x4d4c4152;
@@ -172,12 +178,23 @@ public class AlarmService extends Service {
         service.enableVibration(false);
         service.setShowBadge(false);
         manager.createNotificationChannel(service);
+
+        NotificationChannel fallback = new NotificationChannel(FALLBACK_CHANNEL_ID,
+            context.getString(R.string.alarm_fallback_channel_name), NotificationManager.IMPORTANCE_HIGH);
+        fallback.setDescription(context.getString(R.string.alarm_fallback_channel_description));
+        fallback.setSound(Settings.System.DEFAULT_ALARM_ALERT_URI, alarmAudio());
+        fallback.enableVibration(false);
+        fallback.setLockscreenVisibility(Notification.VISIBILITY_PRIVATE);
+        manager.createNotificationChannel(fallback);
     }
 
-    /** Kun etualapalvelua ei saa kaynnistaa: tavallinen ilmoitus painikkeineen. */
+    /**
+     * Kun etualapalvelua ei saa kaynnistaa: ilmoitus painikkeineen
+     * varakanavalla, joka soittaa heratysaanen kerran (ei soittoa eika puhetta).
+     */
     static void postFallbackNotification(Context context, JSONObject entry) {
         ensureChannels(context);
-        notifyTagged(context, entry.optString("id"), reminderNotification(context, entry));
+        notifyTagged(context, entry.optString("id"), reminderNotification(context, entry, FALLBACK_CHANNEL_ID));
     }
 
     // ------------------------------------------------------------ elinkaari
@@ -852,10 +869,14 @@ public class AlarmService extends Service {
 
     /** Puhutun muistutuksen ilmoitus: Kuittaa/Lahdin, Torku 5 min, Avaa reitti. */
     static Notification reminderNotification(Context context, JSONObject entry) {
+        return reminderNotification(context, entry, CHANNEL_ID);
+    }
+
+    static Notification reminderNotification(Context context, JSONObject entry, String channel) {
         String id = entry.optString("id");
         boolean route = AlarmMath.sanitizeDestination(entry.optString("routeDestination", null)) != null;
         String body = AlarmMath.cleanText(entry.optString("body", ""), AlarmMath.MAX_BODY_LENGTH);
-        NotificationCompat.Builder builder = new NotificationCompat.Builder(context, CHANNEL_ID)
+        NotificationCompat.Builder builder = new NotificationCompat.Builder(context, channel)
             .setSmallIcon(android.R.drawable.ic_popup_reminder)
             .setContentTitle(titleOf(context, entry, R.string.reminder_default_label))
             .setCategory(AlarmMath.KIND_SPOKEN.equals(entry.optString("kind"))
@@ -867,6 +888,10 @@ public class AlarmService extends Service {
             .setContentIntent(AlarmScheduler.openAppPendingIntent(context, id))
             .setDeleteIntent(broadcast(context, AlarmReceiver.ACTION_DELETED, entry));
         if (body != null) builder.setContentText(body);
+        if (FALLBACK_CHANNEL_ID.equals(channel)) {
+            // Android 7 (ei kanavia): aani ilmoitukselle suoraan. Uudemmissa kanava ratkaisee.
+            builder.setSound(Settings.System.DEFAULT_ALARM_ALERT_URI, android.media.AudioManager.STREAM_ALARM);
+        }
         if (route) {
             builder.addAction(0, context.getString(R.string.reminder_departed), broadcast(context, AlarmReceiver.ACTION_DEPARTED, entry));
         } else {
