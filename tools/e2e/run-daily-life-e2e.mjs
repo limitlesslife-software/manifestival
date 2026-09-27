@@ -44,7 +44,7 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { resolveGateMode, GATES_QUERY, harnessHtml } from './gates.mjs';
 import { CHROME_CANDIDATES, MIME, freePort, cdpReachable, Cdp, PAGE_HELPERS, pressKey } from './cdp.mjs';
@@ -84,10 +84,12 @@ export function auditRequests(requests, failures = []) {
  * Tulosrivin luokitus. PENDING_ON-merkitty epäonnistuminen on ODOTTAA (ei
  * kaada ajoa); merkitty onnistuminen on FAIL, jotta merkintä poistetaan.
  */
-export function classifyResult({ ok, pendingOn }) {
+export function classifyResult({ ok, pendingOn, warn = false }) {
   if (pendingOn && !ok) return 'ODOTTAA';
   if (pendingOn && ok) return 'FAIL';
-  return ok ? 'PASS' : 'FAIL';
+  if (!ok) return 'FAIL';
+  // Onnistunut, mutta varauksin (esim. profiilin poisto siirtyi irralliselle siivoajalle).
+  return warn ? 'HUOM' : 'PASS';
 }
 
 function startServer(port, { gatedSchemas }) {
@@ -986,15 +988,99 @@ export const GROUPS = Object.freeze([
 // AJO
 // =====================================================================
 
-async function removeProfile(profile) {
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    try {
-      fs.rmSync(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
-    } catch { /* Windows voi pitää tiedostoja hetken lukossa */ }
-    if (!fs.existsSync(profile)) return true;
-    await new Promise(r => setTimeout(r, 1000));
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+// SELAIMEN SULKEMINEN JA PROFIILIN POISTO
+//
+// Windowsissa kuormitetulla koneella lopetettu Chrome (ja sen lapset) voi
+// pitää profiilin tiedostoja auki vielä pitkään: TerminateProcess on
+// asynkroninen, ja lapsiprosessi voi käynnistyä uudelleen, jos se ehtii
+// kuolla ennen pääprosessia. Siksi:
+//   1. oma prosessipuu lopetetaan (taskkill /PID <oma pid> /T /F; muualla kill)
+//   2. odotetaan, kunnes yksikään OMA Chrome-prosessi ei ole enää käynnissä;
+//      jäljelle jääneet lopetetaan pid:llä. Oma = komentorivillä tämän ajon
+//      yksilöllinen profiilihakemisto (pid + aikaleima): vieraat Chromet eivät
+//      voi osua, eikä mitään lopeteta nimellä.
+//   3. profiili poistetaan uudelleenyrityksin
+//   4. jos lukko ei silti vapaudu ajon aikana, irrallinen siivoaja jatkaa
+//      TÄMÄN profiilihakemiston poistoa ajon jälkeen (enintään 15 min), ja
+//      tulosrivi on HUOM eikä PASS
+
+/** Tämän ajon käynnissä olevat Chrome-prosessit (Windows; muualla tyhjä). */
+function ownBrowserPids(profile) {
+  if (process.platform !== 'win32') return [];
+  const name = path.basename(profile).replace(/[^\w-]/g, '');
+  const query = `Get-CimInstance Win32_Process -Filter "Name = 'chrome.exe' OR Name = 'msedge.exe'" | `
+    + `Where-Object { $_.CommandLine -like '*${name}*' } | ForEach-Object { $_.ProcessId }`;
+  const out = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', query], { encoding: 'utf8', windowsHide: true });
+  return String(out.stdout || '').split(/\s+/).filter(Boolean).map(Number).filter(Number.isInteger);
+}
+
+/** Lopeta oma selain ja odota, että sen jokainen prosessi on todella poissa. */
+async function closeBrowser(browser, exited, profile) {
+  const notes = [];
+  if (browser.exitCode === null && Number.isInteger(browser.pid)) {
+    if (process.platform === 'win32') {
+      const tree = spawnSync('taskkill', ['/PID', String(browser.pid), '/T', '/F'], { encoding: 'utf8', windowsHide: true });
+      notes.push('taskkill /T ' + (tree.error ? tree.error.code : `status ${tree.status}`));
+    }
+    if (browser.exitCode === null) browser.kill();
   }
-  return !fs.existsSync(profile);
+  await Promise.race([exited, sleep(5000)]);
+  const stragglers = new Set();
+  const deadline = Date.now() + 90000;
+  let alive = ownBrowserPids(profile);
+  while (alive.length && Date.now() < deadline) {
+    for (const pid of alive) {
+      stragglers.add(pid);
+      spawnSync('taskkill', ['/PID', String(pid), '/F'], { stdio: 'ignore', windowsHide: true });
+    }
+    await sleep(2000);
+    alive = ownBrowserPids(profile);
+  }
+  if (stragglers.size) notes.push(`jälkeen jääneet omat prosessit lopetettu pid:llä (${stragglers.size})`);
+  if (alive.length) notes.push(`yhä sammumassa: ${alive.join(', ')}`);
+  return notes.join('; ') || 'sammui';
+}
+
+/** Poista profiili uudelleenyrityksin. */
+async function removeProfile(profile, { budgetMs = 60000 } = {}) {
+  let lastError = '';
+  const deadline = Date.now() + budgetMs;
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      fs.rmSync(profile, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
+    } catch (error) {
+      lastError = error.code || String(error.message);
+    }
+    if (!fs.existsSync(profile)) return { removed: true, attempts: attempt, lastError };
+    if (Date.now() > deadline) return { removed: false, attempts: attempt, lastError };
+    await sleep(500);
+  }
+}
+
+/**
+ * Irrallinen siivoaja: jatkaa YHDEN tämän ajon profiilihakemiston poistoa
+ * ajon jälkeen. Polku tarkistetaan (projektin tmp/, arjen E2E:n nimi), ja
+ * siivoaja lopettaa 15 minuutin jälkeen.
+ */
+export function deferredCleanupScript(profile) {
+  return `const fs = require('fs');
+const target = ${JSON.stringify(profile)};
+const end = Date.now() + 15 * 60 * 1000;
+const tick = () => {
+  try { fs.rmSync(target, { recursive: true, force: true }); } catch {}
+  if (fs.existsSync(target) && Date.now() < end) setTimeout(tick, 3000);
+};
+tick();`;
+}
+
+function scheduleDeferredCleanup(profile) {
+  const inside = path.dirname(profile) === path.join(ROOT, 'tmp') && /^e2e-daily-chrome-\d+-\d+$/.test(path.basename(profile));
+  if (!inside) return false;
+  const child = spawn(process.execPath, ['-e', deferredCleanupScript(profile)], { detached: true, stdio: 'ignore', windowsHide: true });
+  child.unref();
+  return true;
 }
 
 async function main() {
@@ -1136,12 +1222,21 @@ async function main() {
     }
   } finally {
     if (cdp) cdp.close();
-    browser.kill();
-    await Promise.race([exited, new Promise(r => setTimeout(r, 5000))]);
+    const closed = await closeBrowser(browser, exited, profile);
     server.close();
-    const removed = await removeProfile(profile);
-    results.push({ name: 'väliaikainen Chrome-profiili poistettu (tmp/)', ok: removed,
-      detail: removed ? path.relative(ROOT, profile) + ' poistettu' : 'EI POISTETTU: poista käsin ' + path.relative(ROOT, profile) });
+    const removal = await removeProfile(profile);
+    const relative = path.relative(ROOT, profile);
+    const how = `selain: ${closed}; poistoyrityksiä ${removal.attempts}`
+      + (removal.lastError ? `, viimeisin virhe ${removal.lastError}` : '');
+    if (removal.removed) {
+      results.push({ name: 'väliaikainen Chrome-profiili poistettu (tmp/)', ok: true, detail: `${relative} poistettu (${how})` });
+    } else {
+      const deferred = scheduleDeferredCleanup(profile);
+      results.push({ name: 'väliaikainen Chrome-profiili poistettu (tmp/)', ok: deferred, warn: true,
+        detail: deferred
+          ? `lukko ei vapautunut ajon aikana; irrallinen siivoaja poistaa ${relative} heti kun Windows vapauttaa sen (${how})`
+          : `EI POISTETTU: poista käsin ${relative} (${how})` });
+    }
   }
 
   const audit = auditRequests(requests, failures);
@@ -1156,6 +1251,7 @@ async function main() {
 
   let failed = 0;
   let pending = 0;
+  let warned = 0;
   for (const result of results) {
     const label = classifyResult(result);
     let detail = result.detail;
@@ -1166,10 +1262,12 @@ async function main() {
       detail = `${detail}\n      (onnistui: poista PENDING_ON-merkintä, vika on korjattu: ${result.pendingOn})`;
     }
     if (label === 'FAIL') failed += 1;
+    if (label === 'HUOM') warned += 1;
     console.log(`${label}  ${result.name}\n      ${detail}`);
   }
-  const passed = results.length - failed - pending;
-  console.log(`\nARJEN E2E: ${failed === 0 ? 'PASS' : 'FAIL'} (${passed}/${results.length}${pending ? `, odottaa ${pending}` : ''})`);
+  const passed = results.length - failed - pending - warned;
+  console.log(`\nARJEN E2E: ${failed === 0 ? 'PASS' : 'FAIL'} (${passed}/${results.length}`
+    + `${pending ? `, odottaa ${pending}` : ''}${warned ? `, huomioita ${warned}` : ''})`);
   process.exitCode = failed === 0 ? 0 : 1;
 }
 

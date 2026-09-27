@@ -16,7 +16,8 @@ import {
 import { parseGates } from '../tools/release/state.mjs';
 import { ALL_GATES, COLUMN_GATES, WAVES, expectedMatrix } from '../tools/release/waves.mjs';
 import {
-  DAILY_LIFE_TABLES, GROUPS, PENDING_ON, EXPECTED_CONSOLE_ERRORS, auditRequests, classifyResult, wednesdayTen, onPage
+  DAILY_LIFE_TABLES, GROUPS, PENDING_ON, EXPECTED_CONSOLE_ERRORS, auditRequests, classifyResult, wednesdayTen, onPage,
+  deferredCleanupScript
 } from '../tools/e2e/run-daily-life-e2e.mjs';
 import { pressKey, typeAndEnter, PAGE_HELPERS } from '../tools/e2e/cdp.mjs';
 import {
@@ -285,10 +286,28 @@ test('arjen E2E: debug-portti todennetaan vapaaksi; profiili tmp/:ssä ja sen po
   assert.match(RUNNER, /path\.join\(ROOT, 'tmp', `e2e-daily-chrome-/);
   assert.match(RUNNER, /fs\.rmSync\(profile/);
   assert.match(RUNNER, /väliaikainen Chrome-profiili poistettu/);
+  // Oma selain lapsiprosesseineen suljetaan (vain oma pid), jotta ne eivät lukitse profiilia.
+  assert.match(RUNNER, /spawnSync\('taskkill', \['\/PID', String\(browser\.pid\), '\/T', '\/F'\]/);
+  assert.equal(/taskkill[^\n]*\/IM/.test(RUNNER), false, 'ei koskaan nimellä (vieraat Chromet)');
+  // Jälkeen jääneet omat prosessit tunnistetaan ajon yksilöllisestä profiilihakemistosta.
+  assert.match(RUNNER, /const name = path\.basename\(profile\)/);
+  assert.match(RUNNER, /CommandLine -like '\*\$\{name\}\*'/);
+  // Irrallinen siivoaja koskee vain tämän ajon profiilia projektin tmp/:ssä.
+  assert.match(RUNNER, /path\.dirname\(profile\) === path\.join\(ROOT, 'tmp'\) && \/\^e2e-daily-chrome-\\d\+-\\d\+\$\/\.test/);
   assert.match(RUNNER, /browser\.exitCode !== null/, 'oma Chrome ei sammunut ennen yhteyttä');
   assert.match(RUNNER, /Page\.reload/);
   assert.match(RUNNER, /Input\.insertText/);
   assert.match(read('tools/e2e/cdp.mjs'), /Input\.dispatchKeyEvent/);
+});
+
+test('arjen E2E: irrallinen siivoaja poistaa vain annetun profiilin ja lopettaa 15 minuutin jälkeen', () => {
+  const target = 'C:\\repo\\tmp\\e2e-daily-chrome-1-2';
+  const script = deferredCleanupScript(target);
+  assert.match(script, /const target = "C:\\\\repo\\\\tmp\\\\e2e-daily-chrome-1-2";/);
+  assert.match(script, /fs\.rmSync\(target, \{ recursive: true, force: true \}\)/);
+  assert.match(script, /15 \* 60 \* 1000/);
+  assert.equal((script.match(/rmSync\(/g) || []).length, 1, 'yksi poistokohde');
+  assert.doesNotThrow(() => new Function('require', script), 'kelvollista JavaScriptiä');
 });
 
 test('arjen E2E: pyyntöjen tarkastus erottaa tuotannon, ulkoiset ja DNS-estetyt', () => {
@@ -309,6 +328,8 @@ test('arjen E2E: PENDING_ON — merkitty epäonnistuminen odottaa, merkitty onni
   assert.equal(classifyResult({ ok: false }), 'FAIL');
   assert.equal(classifyResult({ ok: false, pendingOn: 'vika' }), 'ODOTTAA');
   assert.equal(classifyResult({ ok: true, pendingOn: 'vika' }), 'FAIL');
+  assert.equal(classifyResult({ ok: true, warn: true }), 'HUOM', 'onnistunut varauksin ei kaada ajoa');
+  assert.equal(classifyResult({ ok: false, warn: true }), 'FAIL');
   assert.match(RUNNER, /poista PENDING_ON-merkintä/);
   const names = GROUPS.flatMap(group => group.scenarios.map(scenario => scenario.name));
   for (const [name, reason] of Object.entries(PENDING_ON)) {
