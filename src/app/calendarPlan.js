@@ -282,3 +282,48 @@ export function calendarDayPlan(state, dateIso, {
   });
   return { plan, inputs };
 }
+
+const EMPTY_PLANNING = Object.freeze({ events: EMPTY, blocks: EMPTY });
+
+/** Pisin suunnitteluhorisontti jaksoina (capacity.MAX_HORIZON_DAYS = 365). */
+const MAX_PLANNING_CHUNKS = Math.ceil(366 / MAX_BLOCK_RANGE_DAYS);
+
+/**
+ * Menot ja suojatut lohkot suunnittelulle (Tavoitteesta tekemiseen):
+ * tekoälysuunnitelman kapasiteetti, Suunnittelu-näkymän horisontti,
+ * myöhästyneiden ilmoitus ja "Ehdota muutoksia".
+ *
+ * Sama calendarInputs kuin Tänään, Kalenteri ja keskeytykset: kiinteät
+ * menot pysyvät kiinteinä, valmistautuminen ja matka ovat varattuja ja
+ * suojattu uni on suojattu. Pidempi väli kuin MAX_BLOCK_RANGE_DAYS lasketaan
+ * jaksoissa, jotta uni suojataan joka yöltä; jaksojen rajalla sama esiintymä
+ * tai lohko on mukana vain kerran (tunnisteet ovat päiväkohtaisia).
+ *
+ * @returns {{events: ReadonlyArray<object>, blocks: ReadonlyArray<object>}}
+ */
+export function calendarForPlanning(state, {
+  from, to, todayIso = null, nowMinutes = null, offsetMinutesFn = deviceOffsetMinutes
+} = {}) {
+  if (!state || !isIsoDate(from) || !isIsoDate(to) || to < from) return EMPTY_PLANNING;
+  const events = [];
+  const blocks = [];
+  const seen = new Set();
+  const keep = (list, target) => {
+    for (const item of list) {
+      const key = `${target === events ? 'e' : 'b'}|${item.id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      target.push(item);
+    }
+  };
+  let start = from;
+  for (let chunk = 0; start && start <= to && chunk < MAX_PLANNING_CHUNKS; chunk += 1) {
+    const last = addDaysToIso(start, MAX_BLOCK_RANGE_DAYS - 1);
+    const end = last && last < to ? last : to;
+    const inputs = calendarInputs(state, { from: start, to: end, todayIso, nowMinutes, offsetMinutesFn });
+    keep(inputs.occurrences, events);
+    keep(inputs.blocks, blocks);
+    start = addDaysToIso(end, 1);
+  }
+  return Object.freeze({ events: Object.freeze(events), blocks: Object.freeze(blocks) });
+}
