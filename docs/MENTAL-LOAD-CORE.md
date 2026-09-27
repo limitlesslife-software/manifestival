@@ -174,3 +174,45 @@ Säilyy: OVERLOAD, NEGLECT, MISALIGNMENT, TARGET_TENSION, ENERGY_OVERLOAD.
 Uudet deterministiset: BACKLOG_GROWTH, CAPACITY_BIAS, OWN_TIME_EROSION,
 FREE_TIME_EROSION, VACATION_INTRUSION, PLAN_CHURN. Ei syyllistävää kieltä;
 vastaus on seuraavan suunnitelman säätö.
+
+## Sunnuntain nollaus (toteutus)
+
+`src/app/views/sundayReset.js`, dialogi `#sundayResetDialog` (Tänään-osion
+ulkopuolella). Avataan Suunnan painikkeesta `#dirSundayResetBtn` tai
+Tänään-kortista (`renderSundayResetEntry`, painike `#sundayResetOpenBtn`).
+
+Kohdeviikko: seuraava ISO-viikko (ma–su) nollauspäivästä. Maanantaina ennen
+klo 12 suunnitellaan kuluva viikko (sunnuntain nollaus on voinut jäädä väliin).
+Kortti näkyy la/su ja maanantaiaamuna, kun kohdeviikon `weekly_plans`-riviä ei
+ole suljettu; muina päivinä ei (kortti ei saa olla pysyvä muistutus).
+
+- A `captureBrainDump`: monirivinen kirjaus saapuviin, ei päätöksiä.
+- B saapuvien luku ja enintään viisi riviä; "Järjestä saapuvat" vie
+  Tekeminen → Saapuvat (ei toista käsittelynäkymää), "Palaa nollaukseen"
+  (`#sundayResetResume`) tuo takaisin.
+- C `brakedHorizonCapacity` kohdeviikolle ilman sijoitettavia ehdokkaita
+  (sama luku kuin E:n sijoittelulla); erittely laskee yhteen (valveilla −
+  varattu − suojattu − puskuri − unen vaje − vähimmäisvapaa-aika − lyhyet
+  välit). Käyttäjän luku tallentuu `saveWeeklyCapacity`:llä; pienempi luku
+  rajaa uudet sijoitukset, suurempi ei ylitä laskettua päiväkapasiteettia.
+- D enintään kolme prioriteettia rajatuista ehdokkaista (kohdeviikolla
+  erääntyvät/päivätyt, aktiiviset tavoitteet, alueet; 3 / ryhmä) tai oma
+  teksti; `saveWeeklyPlan`.
+- E ehdokkaat: kohdeviikolle päivätyt, päivättömät "tällä viikolla",
+  prioriteetteihin liittyvät ja viikon loppuun mennessä erääntyvät (ei koko
+  jonoa). Jo päivätty pysyy päivällään, jos tilaa on; sitten prioriteetit ja
+  määräajat, sitten loput (`planHorizon` kahdessa erässä, jälkimmäinen saa vain
+  jäännöksen). Mikä ei mahdu, ei muutu. "Hyväksy" = `editTask` vain päivälle
+  (siirtojen seuranta tulee editTaskista).
+- F kohdeviikon suojattu aika (`describePeriod` + minuutit), lomapäivät,
+  vähimmäisvapaa-ajan tila ja kiinteät menot (enintään 5); pikatoiminnot
+  "Lisää vapaa ilta" (`saveFreeTimeRules`, olemassa olevat säännöt säilyvät) ja
+  "Lisää oma aika" (OWN_TIME weekly kohdeviikosta alkaen, 1 h).
+- G `closeWeek(weekStart, { priorities, plannedMinutes })`, jossa
+  `plannedMinutes` = kohdeviikon keskeneräisten, näkyvien tehtävien kestot
+  sulkemishetkellä. Loppuviesti täsmälleen: "Ensi viikko on suunniteltu." /
+  "Sinun ei tarvitse miettiä sitä enää tänään." ja yksi "Valmis".
+
+Jokainen vaihe (A–F) on ohitettavissa; Escape sulkee ja eteneminen säilyy
+muistissa. Kun `weekly_plans` tai `protected_periods` ei ole pysyvä (portti
+kiinni), dialogi kertoo kerran, että ne säilyvät vain istunnon ajan.

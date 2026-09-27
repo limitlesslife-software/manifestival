@@ -100,6 +100,7 @@ const SHELL = [
   '/src/app/views/travel.js',
   '/src/app/views/direction.js',
   '/src/app/views/directionSetup.js',
+  '/src/app/views/sundayReset.js',
   '/src/app/views/timeLog.js',
   '/src/app/views/week.js',
   '/src/app/views/loadNotice.js',

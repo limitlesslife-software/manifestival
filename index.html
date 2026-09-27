@@ -229,6 +229,7 @@
         <button class="assist-btn" id="dirQuickLog" type="button">Kirjaa aikaa</button>
         <button class="assist-btn" id="dirOpenEstimate" type="button">Arvioi tehtäviä</button>
         <button class="assist-btn" id="dirOpenUnassigned" type="button">Kohdista luokittelemattomat</button>
+        <button class="assist-btn" id="dirSundayResetBtn" type="button">Sulje viikko (sunnuntain nollaus)</button>
       </div>
 
       <!-- Havainnot -->
@@ -1900,6 +1901,23 @@
     <button class="tab-btn" type="button" role="tab" aria-selected="false" tabindex="-1" data-screen="screen-finance"><svg class="icon" aria-hidden="true"><use href="#i-wallet"/></svg>Talous</button>
     <button class="tab-btn" type="button" role="tab" aria-selected="false" tabindex="-1" data-screen="screen-profile"><svg class="icon" aria-hidden="true"><use href="#i-user"/></svg>Profiili</button>
   </nav>
+
+  <!-- ============ SUNNUNTAIN NOLLAUS ============
+       Viikon sulkeminen vaihe kerrallaan (src/app/views/sundayReset.js).
+       Kortti piirretään uudelleen; otsikko (#sundayResetTitle) ja vaihe
+       (#sundayResetStepLabel) nimeävät dialogin. Escape sulkee, eteneminen
+       säilyy muistissa. -->
+  <dialog class="confirm-dialog sunday-reset-dialog" id="sundayResetDialog" aria-labelledby="sundayResetTitle" aria-describedby="sundayResetStepLabel">
+    <div class="confirm-body sunday-reset-sheet">
+      <div class="sunday-reset-head">
+        <p class="dir-setup-step" id="sundayResetStepLabel"></p>
+        <button class="sunday-reset-close" id="sundayResetClose" type="button" aria-label="Sulje nollaus (eteneminen säilyy)"><svg class="icon" style="width:20px;height:20px;" aria-hidden="true"><use href="#i-x"/></svg></button>
+      </div>
+      <div id="sundayResetCard"></div>
+      <p class="visually-hidden" id="sundayResetStatus" role="status" aria-live="polite"></p>
+    </div>
+  </dialog>
+  <button class="assist-btn primary sunday-reset-resume" id="sundayResetResume" type="button" hidden>Palaa nollaukseen</button>
 
   <!-- ============ HAKU ============ -->
   <div class="voice-overlay" id="searchOverlay" role="dialog" aria-modal="true" aria-label="Hae" aria-hidden="true">
