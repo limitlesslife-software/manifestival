@@ -845,3 +845,25 @@ body.is-offline .offline-banner { display:block; }
   .lh-chip { min-width:56px; }
 }
 /* ===== U4 — loppu ===== */
+
+/* ===== U2: Profiilin osiot, Arki ja Ohjaus — alku ===== */
+/* Aamurutiinin vaiheet ja ateriat: yksi rivi = yksi kortti. Kentät
+ * pinotaan, jotta 360 px leveä puhelin ei vuoda sivusuunnassa. */
+.ds-list { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:10px; }
+.ds-row { display:flex; flex-direction:column; gap:8px; min-width:0; padding:10px; border:1px solid var(--border);
+  border-radius:12px; background:var(--cream); }
+.ds-row-title { font-size:12px; font-weight:700; color:var(--text-2); }
+.ds-row-actions { display:flex; flex-wrap:wrap; gap:6px; }
+.ds-row-actions .form-btn { flex:1 1 70px; }
+.ds-total { font-size:12px; font-weight:700; color:var(--text-2); }
+/* Herätyksen tila: teksti kertoo tilan (kyllä / ei / ei tiedossa), ei väri. */
+.ds-status-row { display:flex; flex-wrap:wrap; align-items:baseline; gap:2px 6px; font-size:12.5px; color:var(--text-2);
+  line-height:1.5; overflow-wrap:anywhere; }
+.ds-status-row strong { color:var(--forest); }
+.ds-fieldset { border:none; margin:0; padding:0; min-width:0; display:flex; flex-direction:column; gap:2px; }
+.ds-fieldset legend { padding:0; }
+@media (max-width:380px) {
+  .ds-row { padding:8px; }
+  .ds-row-actions .form-btn { flex-basis:60px; }
+}
+/* ===== U2 — loppu ===== */

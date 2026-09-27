@@ -189,6 +189,8 @@ function initialState() {
     weekStart: startOfWeek(today),
     profile: { ...DEFAULT_PROFILE },
     profileExists: false,
+    /** Profiilinäkymän osio. Ks. PROFILE_SEGMENTS alla. */
+    profileSegment: 'daily',
     editingId: null,
     /** Muokattavan rutiinin tai tavoitteen tunniste. */
     editingRoutineId: null,
@@ -1103,6 +1105,26 @@ export function viewDateIso() {
 
 export function setProfile(profile, exists = true) {
   commit({ profile: { ...DEFAULT_PROFILE, ...profile }, profileExists: exists });
+}
+
+/**
+ * Profiilinäkymän osiot. Arki on ensimmäinen, koska sitä säädetään
+ * useimmin (uni, herätys, aamu); tilin asetukset ovat harvoin tarvittuja.
+ */
+export const PROFILE_SEGMENTS = Object.freeze([
+  { key: 'daily', label: 'Arki' },
+  { key: 'wellbeing', label: 'Hyvinvointi' },
+  { key: 'places', label: 'Paikat' },
+  { key: 'settings', label: 'Asetukset' }
+]);
+
+const PROFILE_SEGMENT_KEYS = Object.freeze(PROFILE_SEGMENTS.map(s => s.key));
+
+/** Profiilinäkymän osio. Tuntematon arvo palautuu Arkeen. */
+export function setProfileSegment(segment) {
+  commit({
+    profileSegment: PROFILE_SEGMENT_KEYS.includes(segment) ? segment : 'daily'
+  });
 }
 
 // -------------------------------------------------------------- lataustila
