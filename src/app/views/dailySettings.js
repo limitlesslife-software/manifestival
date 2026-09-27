@@ -23,8 +23,8 @@
 // LUPIA EI PYYDETÄ PIIRROSSA
 //
 // Android-herätyksen tila luetaan (status), mutta järjestelmäasetusten avaus
-// (täsmälliset herätykset, koko näytön herätys) ja herätysäänen valinta
-// tehdään VAIN käyttäjän napautuksesta. Selaimessa kerrotaan suoraan, ettei
+// (täsmälliset herätykset, koko näytön herätys), herätysäänen valinta ja
+// oman herätysmusiikin valinta tehdään VAIN käyttäjän napautuksesta. Selaimessa kerrotaan suoraan, ettei
 // herätys soi: lupausta ei anneta yli sen, mitä alusta oikeasti tekee.
 //
 // PUHE ON KÄYTTÄJÄN VALINTA: voimistuvan herätyksen puhevaiheet tulevat
@@ -91,6 +91,8 @@ const INITIAL_STATUS = Object.freeze({ state: 'idle', value: null, checkedAt: 0 
 /** Android-herätyksen viimeisin tila (ei käyttäjän dataa, mutta nollataan silti uloskirjautuessa). */
 let alarmStatus = INITIAL_STATUS;
 let statusInFlight = false;
+/** Epäonnistuneen musiikin valinnan selitys (null = ei viestiä). */
+let musicNotice = null;
 /** Tila luetaan uudelleen piirrossa, kun edellisestä on kulunut näin kauan (sovellukseen palatessa). */
 const STATUS_MAX_AGE_MS = 15000;
 
@@ -103,6 +105,7 @@ export function resetDailySettings() {
   sectionErrors = { sleep: {}, routine: {}, alarm: {}, meals: {} };
   alarmStatus = INITIAL_STATUS;
   statusInFlight = false;
+  musicNotice = null;
   // Kirjoitettu arvo elää kentän DOM-solmussa. Jos merkintä ei muutu,
   // renderHtml ei kirjoita solmua uudelleen, ja edellisen käyttäjän
   // tallentamaton syöte jäisi näkyviin. Tyhjä säiliö piirretään aina alusta.
@@ -118,6 +121,7 @@ export function setAlarmPlatformForTests(override) {
   platformOverride = override && typeof override === 'object' ? override : null;
   alarmStatus = INITIAL_STATUS;
   statusInFlight = false;
+  musicNotice = null;
 }
 
 // ------------------------------------------------------------ apurit
@@ -640,6 +644,23 @@ const SPEECH_STEPS = new Set([SPEECH, REPEAT_SPEECH]);
 
 const modeSpeaks = mode => mode === ALARM_MODE.SPEECH || mode === ALARM_MODE.COMBINATION;
 
+/**
+ * Tavan selitys sen mukaan, mitä laite oikeasti soittaa: oma musiikki soi
+ * tavoilla "Oma musiikki" ja "Ääni ja puhe", kun se on valittu ja
+ * luettavissa; muuten herätysääni (AlarmMath.soundSources). null = ei
+ * erillistä selitystä.
+ */
+export function alarmModeHint(mode) {
+  if (mode === ALARM_MODE.MUSIC) {
+    return 'Oma musiikki soi Android-sovelluksessa: valitse kappale kohdasta "Valitse musiikki". '
+      + 'Jos musiikkia ei ole valittu tai sitä ei voi soittaa, soi herätysääni.';
+  }
+  if (mode === ALARM_MODE.COMBINATION) {
+    return 'Ääni on valitsemasi oma musiikki, jos olet valinnut sen, muuten herätysääni.';
+  }
+  return null;
+}
+
 /** Tason vaiheet herätyksen tavalle (uusi taulukko; kutsuja saa muokata). */
 export function escalationFor(presetKey, mode) {
   const preset = ESCALATION_PRESETS.find(item => item.key === presetKey) || ESCALATION_PRESETS[1];
@@ -750,6 +771,10 @@ function alarmHtml(state, settings) {
     : 'Voimistus on asetettu muualla. Valitse taso, jos haluat vaihtaa sen.';
   const fixed = values.timing === 'fixed';
   const wake = (state.profile && state.profile.defaultWakeTime) || '07:00';
+  const modeHint = alarmModeHint(values.mode);
+  const modeAttrs = errors.mode
+    ? invalidAttrs(ALARM_IDS.mode, errors.mode)
+    : (modeHint ? ' aria-describedby="dsAlarmModeHint"' : '');
   return `<div class="add-form" role="group" aria-labelledby="dailyAlarmTitle" style="display:flex;">
     <label class="checkbox-row" for="dsAlarmEnabled">
       <input type="checkbox" id="dsAlarmEnabled"${values.enabled ? ' checked' : ''}>
@@ -758,7 +783,7 @@ function alarmHtml(state, settings) {
     <div class="form-row">
       <div>
         <label class="field-label" for="${ALARM_IDS.mode}">Herätyksen tapa</label>
-        <select id="${ALARM_IDS.mode}"${invalidAttrs(ALARM_IDS.mode, errors.mode)}>${modeOptions}</select>
+        <select id="${ALARM_IDS.mode}"${modeAttrs}>${modeOptions}</select>
         ${errorHtml(ALARM_IDS.mode, errors.mode)}
       </div>
       <div>
@@ -767,6 +792,7 @@ function alarmHtml(state, settings) {
         ${errorHtml(ALARM_IDS.preset, errors.preset)}
       </div>
     </div>
+    ${modeHint ? `<div class="hint" id="dsAlarmModeHint">${escapeHtml(modeHint)}</div>` : ''}
     <div class="hint" id="dsAlarmEscalationHint">${escapeHtml(presetHint)} Herätys soi enintään ${MAX_ALARM_RING_MINUTES} minuuttia.</div>
     <div class="form-row">
       ${numberField({ id: ALARM_IDS.snooze, label: 'Torkun pituus (min)', value: values.snooze, min: 1, max: MAX_SNOOZE_MINUTES, error: errors.snooze })}
@@ -944,8 +970,50 @@ export function readAlarmStatus(raw) {
     soundName: text('soundName', 'alarmSoundName', 'soundTitle'),
     // Natiivi liitännäinen kertoo vain, onko oma ääni valittu (ei nimeä).
     soundPicked: flag('soundPicked'),
+    // Oma herätysmusiikki: valittu (pysyvä lukuoikeus voimassa), tiedoston
+    // nimi ja menetetty valinta (tiedosto tai oikeus poistunut).
+    musicPicked: flag('musicPicked'),
+    musicName: text('musicName'),
+    musicLost: flag('musicLost'),
     reason: text('reason')
   });
+}
+
+/** Oman herätysmusiikin tila tekstinä: vain se, minkä laite kertoi. */
+function musicStatusText(status) {
+  if (status.musicPicked === true) return status.musicName || 'valittu kappale';
+  if (status.musicLost === true) return 'ei enää käytettävissä';
+  if (status.musicPicked === false) return 'ei valittu';
+  return 'ei tiedossa';
+}
+
+function musicStatusHint(status) {
+  if (status.musicPicked === true) {
+    return 'Soi tavoilla Oma musiikki ja Ääni ja puhe. Jos tiedostoa ei voi soittaa (se on poistettu, tai puhelin '
+      + 'on käynnistetty uudelleen eikä sitä ole vielä avattu), soi herätysääni.';
+  }
+  if (status.musicLost === true) {
+    return 'Valittu musiikki ei ole enää käytettävissä, joten herätys soi herätysäänellä. Valitse musiikki uudelleen.';
+  }
+  return 'Ilman valittua musiikkia tapa Oma musiikki soi herätysäänellä.';
+}
+
+/**
+ * Musiikin valinnan tulos käyttäjälle. null = ei viestiä (valinta onnistui,
+ * tai käyttäjä itse sulki valitsimen). Aiempi valinta säilyy aina, jos uusi
+ * ei onnistunut.
+ */
+export function musicPickNotice(result) {
+  const value = result && typeof result === 'object' ? result : {};
+  if (value.ok === true || value.code === 'cancelled') return null;
+  if (value.code === 'not-persistable') {
+    return 'Tätä tiedostoa ei voi käyttää herätyksenä, koska puhelin ei anna sovellukselle pysyvää lupaa lukea sitä. '
+      + 'Valitse kappale puhelimen omasta muistista. Aiempi valinta on ennallaan.';
+  }
+  if (value.code === 'unsupported') {
+    return 'Tätä tiedostoa ei voi käyttää herätyksenä. Valitse kappale puhelimen omasta muistista. Aiempi valinta on ennallaan.';
+  }
+  return 'Musiikin valinta ei onnistunut. Aiempi valinta on ennallaan.';
 }
 
 async function refreshAlarmStatus() {
@@ -1011,14 +1079,25 @@ function alarmStatusHtml() {
   if (typeof facade.pickAlarmSound === 'function') {
     buttons.push('<button class="form-btn secondary" id="dsAlarmSoundBtn" type="button">Valitse herätysääni</button>');
   }
+  // Oma musiikki: järjestelmän tiedostovalitsin, ei tallennustilan lupaa.
+  const music = typeof facade.pickAlarmMusic === 'function';
+  if (music) {
+    buttons.push('<button class="form-btn secondary" id="dsAlarmMusicBtn" type="button" aria-describedby="dsAlarmMusicHint">Valitse musiikki</button>');
+  }
   buttons.push(refresh);
   const warning = status.exact === false
     ? '<div class="hint">Ilman täsmällisiä herätyksiä puhelin voi myöhästyttää herätystä. Salli ne, jotta herätys soi ajallaan.</div>'
+    : '';
+  const musicHtml = music
+    ? `${statusRow('Oma herätysmusiikki', musicStatusText(status))}
+    <div class="hint" id="dsAlarmMusicHint">${escapeHtml(musicStatusHint(status))}</div>
+    ${musicNotice ? `<div class="notice tone-gold" id="dsAlarmMusicNotice" role="status">${escapeHtml(musicNotice)}</div>` : ''}`
     : '';
   return `<div class="add-form" role="group" aria-label="Herätyksen tila puhelimessa" style="display:flex;">
     ${statusRow('Täsmälliset herätykset sallittu', yesNo(status.exact))}
     ${statusRow('Koko näytön herätys lukitulla näytöllä', yesNo(status.fullScreen))}
     ${statusRow('Herätysääni', status.soundName || (status.soundPicked === true ? 'oma valittu ääni' : 'puhelimen oletusääni'))}
+    ${musicHtml}
     ${warning}
     <div class="form-actions">${buttons.join('')}</div>
   </div>`;
@@ -1028,31 +1107,45 @@ function renderAlarmStatus() {
   render('status', alarmStatusHtml());
 }
 
-/** Järjestelmäasetuksen avaus tai äänen valinta: VAIN napautuksesta. */
-const runAlarmAction = singleFlight(async (method, button) => {
+/**
+ * Järjestelmäasetuksen avaus, äänen tai musiikin valinta: VAIN napautuksesta.
+ * onResult saa alustan vastauksen (null, jos kutsu heitti) ennen kuin tila
+ * luetaan uudelleen; tila kertoo sen jälkeen, mitä laitteelle oikeasti jäi.
+ */
+const runAlarmAction = singleFlight(async (method, button, onResult = null) => {
   const facade = alarmsFacade();
   if (!facade || typeof facade[method] !== 'function') return;
   setBusy(button, true);
+  let outcome = null;
   try {
-    await facade[method]();
+    outcome = await facade[method]();
   } catch {
     /* liitännäinen ratkaisee aina; varmuuden vuoksi näkymä ei kaadu */
+    outcome = null;
   } finally {
     setBusy(button, false);
   }
+  if (onResult) onResult(outcome);
   await refreshAlarmStatus();
 });
+
+/** Musiikin valinnan tulos: epäonnistuminen selitetään, onnistuminen näkyy tilasta. */
+function showMusicResult(outcome) {
+  musicNotice = musicPickNotice(outcome);
+  if (outcome && outcome.ok === true && outcome.picked === true) success('Herätysmusiikki valittu.');
+}
 
 // ================================================================ aamukatsaus
 
 function briefHtml(settings) {
   return `<div class="add-form" role="group" aria-labelledby="dailyBriefTitle" style="display:flex;">
     <label class="checkbox-row" for="dsMorningBrief">
-      <input type="checkbox" id="dsMorningBrief"${settings.morningBriefEnabled ? ' checked' : ''}>
+      <input type="checkbox" id="dsMorningBrief" aria-describedby="dsMorningBriefHint"${settings.morningBriefEnabled ? ' checked' : ''}>
       Aamukatsaus puheena
     </label>
-    <div class="hint">Kun sammutat herätyksen, kuulet lyhyen katsauksen: kellonaika, lähtöaika ja päivän ensimmäinen meno.
-      Katsaus kootaan puhelimessa ilman tekoälyä. Toimii Android-sovelluksessa.</div>
+    <div class="hint" id="dsMorningBriefHint">Kun sammutat herätyksen Sammuta-painikkeella, puhelin lukee kerran lyhyen katsauksen
+      herätyksen tavasta riippumatta, myös pelkällä herätysäänellä: tervehdys, kellonaika, lähtöaika ja päivän ensimmäinen meno.
+      Torkku ei lue katsausta. Katsaus kootaan puhelimessa ilman tekoälyä. Toimii Android-sovelluksessa, kun puhelimessa on suomenkielinen puhe.</div>
   </div>`;
 }
 
@@ -1397,6 +1490,7 @@ function onClick(event) {
   else if (id === 'dsAlarmExactBtn') runAlarmAction('openExactAlarmSettings', button);
   else if (id === 'dsAlarmFullScreenBtn') runAlarmAction('openFullScreenSettings', button);
   else if (id === 'dsAlarmSoundBtn') runAlarmAction('pickAlarmSound', button);
+  else if (id === 'dsAlarmMusicBtn') runAlarmAction('pickAlarmMusic', button, showMusicResult);
   else if (id === 'dsAlarmStatusRefresh') refreshAlarmStatus();
   else if (id === 'dsMealAdd') addMeal();
   else if (button.hasAttribute('data-meal-remove')) removeMeal(dataIndex(button, 'data-meal-remove'));
