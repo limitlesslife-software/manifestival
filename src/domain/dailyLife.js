@@ -146,6 +146,47 @@ export function reminderTopicLabel(value) {
   return TOPIC_LABELS[value] || value;
 }
 
+/**
+ * Hyvinvoinnin valinnaiset muistutusaiheet, jotka käyttäjä voi kytkeä
+ * KOKONAAN pois (aalto L: hyvinvointi on valinnaista tukea, ei tehtävälista).
+ *
+ * Pois kytkentä tallentuu samaan life_settings.delivery-olioon arvolla
+ * DELIVERY_OFF ('off'): ateriat ja tavat ovat myös toimitustavan aiheita
+ * (REMINDER_TOPIC), joten 'off' korvaa niiden tavan; vesi, lisäravinteet,
+ * liikunta ja hyvinvoinnin kirjauskehotteet ovat vain päälle/pois
+ * (puuttuva avain = päällä, toimitustapa tulee yläaiheesta).
+ *
+ * Jokainen aihe on oma: veden kytkeminen pois ei vie aterioita, eikä
+ * aterioiden kytkeminen pois vie vettä tai lisäravinteita.
+ * Lähtö, herätys, nukkumaanmeno, määräajat ja laskut EIVÄT ole tällä
+ * listalla: niitä ei voi kytkeä pois tästä (turva ja sitoumukset).
+ */
+export const DELIVERY_OFF = 'off';
+
+export const OPTIONAL_TOPIC = Object.freeze({
+  MEAL: 'meal',
+  WATER: 'water',
+  SUPPLEMENT: 'supplement',
+  HABIT: 'habit',
+  EXERCISE: 'exercise',
+  CHECKIN: 'checkin'
+});
+
+export const OPTIONAL_TOPICS = Object.freeze(Object.values(OPTIONAL_TOPIC));
+
+const OPTIONAL_TOPIC_LABELS = Object.freeze({
+  [OPTIONAL_TOPIC.MEAL]: 'Ateriat ja ruokailun iltaraja',
+  [OPTIONAL_TOPIC.WATER]: 'Vesitauot',
+  [OPTIONAL_TOPIC.SUPPLEMENT]: 'Lisäravinteet',
+  [OPTIONAL_TOPIC.HABIT]: 'Tapojen muutos (myös nikotiini)',
+  [OPTIONAL_TOPIC.EXERCISE]: 'Liikunta',
+  [OPTIONAL_TOPIC.CHECKIN]: 'Hyvinvoinnin kirjauskehotteet'
+});
+
+export function optionalTopicLabel(value) {
+  return OPTIONAL_TOPIC_LABELS[value] || value;
+}
+
 /** Oletustoimitustapa aiheittain. Puhe on aina käyttäjän oma valinta: oletus ei puhu. */
 export const DEFAULT_DELIVERY = Object.freeze({
   [REMINDER_TOPIC.DEPARTURE]: DELIVERY.SOUND,

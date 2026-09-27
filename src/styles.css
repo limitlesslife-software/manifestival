@@ -981,6 +981,9 @@ a.cal-inline-btn { display:inline-flex; align-items:center; }
 .td-lines { list-style:none; margin:8px 0 0; padding:0; }
 .td-lines li { font-size:12.5px; color:var(--text-2); line-height:1.55; padding:2px 0; overflow-wrap:anywhere; }
 .td-list { list-style:none; margin:0; padding:0; }
+/* Aalto L: rajattu hyvinvointikortti, loput avattavissa. */
+.td-more summary { cursor:pointer; font-weight:700; color:var(--forest); font-size:13px; min-height:44px; display:flex; align-items:center; }
+.td-more summary:focus-visible { outline:2px solid var(--gold); outline-offset:2px; border-radius:6px; }
 .td-note { font-size:12.5px; color:var(--text-1); line-height:1.55; background:var(--sage-soft); border-radius:12px;
   padding:9px 12px; margin:8px 0; overflow-wrap:anywhere; }
 .td-subtitle { font-size:12px; font-weight:800; color:var(--text-2); margin:10px 0 4px; overflow-wrap:anywhere; }

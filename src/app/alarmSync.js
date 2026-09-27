@@ -73,13 +73,21 @@ import { currentAckLog, rememberScheduledTargets } from './alarmEvents.js';
 import { desiredAlarms, DEFAULT_ESCALATION } from '../domain/alarmPlan.js';
 import { planDepartureChain, planDailyLifeReminders, DAILY_REMINDER_KIND, firstLeaveOn } from '../domain/dailyReminders.js';
 import { eveningBeforeAdvice } from './dailyLifeNotices.js';
-import { applyNotificationPolicy, resolveGuidanceStyle, scaleLeadMinutes } from '../domain/notificationPolicy.js';
+import {
+  applyNotificationPolicy, resolveGuidanceStyle, scaleLeadMinutes, reminderLoadLevel, LOAD_LEVEL
+} from '../domain/notificationPolicy.js';
+import { entryForDate } from '../domain/wellbeing.js';
+import { capacityForWeek, weekStartOf } from '../domain/weeklyCapacity.js';
+import { analyzeWeek, SIGNAL, SEVERITY } from '../domain/alignment.js';
+import { analyzeCurrentWeek } from './alignment.js';
 import { normalizePreferences, DEPARTURE_CHAIN_TYPES, DEFAULT_PREFERENCES, planRange } from '../domain/notification.js';
 import { expandRoutines } from '../domain/routine.js';
 import { ackIndex, entryHandled } from '../domain/notificationAck.js';
 import { dailyMealItems, MEAL_ITEM_KIND } from '../domain/mealRhythm.js';
 import { status as habitStatus, HABIT_STATE } from '../domain/habitEngine.js';
-import { DELIVERY, DELIVERIES, deliverySpeaks, ESCALATION_STEP, REMINDER_TOPIC } from '../domain/dailyLife.js';
+import {
+  DELIVERY, DELIVERIES, deliverySpeaks, ESCALATION_STEP, REMINDER_TOPIC, DELIVERY_OFF
+} from '../domain/dailyLife.js';
 import { wallClockToEpoch, epochToWallClock } from '../domain/wallClock.js';
 import { isTimeOfDay } from '../domain/task.js';
 import { logEvent } from '../lib/logger.js';
@@ -126,7 +134,10 @@ const SPOKEN_CRITICAL_ESCALATION = Object.freeze([
 export const ALARM_RELEVANT_KEYS = Object.freeze([
   'calendarEvents', 'savedPlaces', 'lifeSettings', 'habitPlans', 'habitEvents', 'profile',
   'commuteObservations', 'tasks', 'sleepLogs', 'notificationPreferences',
-  'routines', 'routineExceptions', 'travelPlans'
+  'routines', 'routineExceptions', 'travelPlans',
+  // Aalto L: päivän kuorma (hyvinvointimerkintä, viikon kapasiteetti) keventää
+  // valinnaisia kehotteita, joten niiden muutos laskee muistutukset uudelleen.
+  'wellbeing', 'weeklyCapacities'
 ]);
 
 const EMPTY = Object.freeze([]);
@@ -423,7 +434,8 @@ function habitEntries(state, now, dates) {
 function policySettings(settings, habitDelivery) {
   if (!habitDelivery) return settings;
   const delivery = settings && settings.delivery && typeof settings.delivery === 'object' ? settings.delivery : {};
-  if (DELIVERIES.includes(delivery.habit)) return settings;
+  // Aalto L: "Tapojen muutos" kokonaan pois voittaa suunnitelman oman tavan.
+  if (DELIVERIES.includes(delivery.habit) || delivery.habit === DELIVERY_OFF) return settings;
   return { ...settings, delivery: { ...delivery, habit: habitDelivery } };
 }
 
@@ -497,6 +509,64 @@ function safeLegacyIntents(options) {
   }
 }
 
+/** Onko viikolla aikakuormitus (Suunnan OVERLOAD, ei tiedoksi-tasoa)? Vain kun viikon kapasiteetti on ilmoitettu. */
+function weekOverloaded(state, now, monday) {
+  if (!capacityForWeek(listOf(state.weeklyCapacities), monday)) return false;
+  const clock = clockOf(now);
+  try {
+    // Sama välimuistitettu analyysi kuin Suunnassa, kun tila on sovelluksen tila.
+    const analysis = state === getState()
+      ? analyzeCurrentWeek(monday, clock)
+      : analyzeWeek({
+        weekStart: monday, todayIso: clock.todayIso, nowMinutes: clock.nowMinutes,
+        areas: listOf(state.lifeAreas), goals: listOf(state.goals), projects: listOf(state.projects),
+        tasks: listOf(state.tasks), routines: listOf(state.routines), exceptions: listOf(state.routineExceptions),
+        timeEntries: listOf(state.timeEntries), capacity: capacityForWeek(listOf(state.weeklyCapacities), monday),
+        itemSettings: listOf(state.alignmentItemSettings)
+      });
+    return analysis.signals.some(signal => signal.kind === SIGNAL.OVERLOAD && signal.severity !== SEVERITY.INFO);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Muistutusten kuorma (aalto L). Korkea kuorma keventää valinnaisia
+ * kehotteita (vesi, lisäravinteet, tavat, liikunta, kirjauskehotteet):
+ * ne siirtyvät koosteeseen tai jäävät pois. Välttämättömiin ei kosketa
+ * (notificationPolicy.isOptionalPrompt).
+ *
+ *   päivän hyvinvointimerkintä (stressi >= 4 tai energia <= 2)  -> tämä päivä
+ *   kapasiteetin ylivuoto (kutsujan lippu)                     -> tämä päivä
+ *   viikon aikakuormitus (OVERLOAD)                            -> viikon päivät
+ *
+ * @returns {{level:string, dates:Array<string>, reasons:Array<string>}}
+ */
+export function reminderLoad({ state = getState(), now = new Date(), dates = EMPTY, capacityOverflow = false } = {}) {
+  const { todayIso } = clockOf(now);
+  const reasons = [];
+  const loadDates = new Set();
+  const entry = entryForDate(listOf(state && state.wellbeing), todayIso);
+  if (reminderLoadLevel({ wellbeingEntry: entry }) === LOAD_LEVEL.HIGH) {
+    reasons.push('wellbeing');
+    loadDates.add(todayIso);
+  }
+  if (capacityOverflow === true) {
+    reasons.push('capacity_overflow');
+    loadDates.add(todayIso);
+  }
+  const monday = weekStartOf(todayIso);
+  if (state && monday && weekOverloaded(state, now, monday)) {
+    reasons.push('week_overload');
+    for (const date of [todayIso, ...listOf(dates)]) if (weekStartOf(date) === monday) loadDates.add(date);
+  }
+  return {
+    level: reasons.length > 0 ? LOAD_LEVEL.HIGH : LOAD_LEVEL.NORMAL,
+    dates: [...loadDates].sort(),
+    reasons
+  };
+}
+
 /**
  * KAIKKI muistutusaikomukset toimituspolitiikan jälkeen: arjen muistutukset
  * ja perinteiset (legacyReminderIntents) YHDESSÄ politiikan kutsussa, joten
@@ -510,10 +580,13 @@ function safeLegacyIntents(options) {
  * @param {boolean} [options.includePast] esikatselu (notifications.planUpcoming):
  *        myös tämän päivän jo menneet mukaan. Ajastus ei koskaan anna tätä.
  * @param {string} [options.fromIso] horisontin ensimmäinen päivä (oletus tänään)
- * @returns {{intents:ReadonlyArray<object>, routes:Map<string,object>}}
+ * @param {object} [options.load] aalto L: { level, dates } ohittaa lasketun kuorman (reminderLoad)
+ * @param {boolean} [options.capacityOverflow] aalto L: tämän päivän kapasiteetti ylittyy
+ * @returns {{intents:ReadonlyArray<object>, routes:Map<string,object>, load:object}}
  */
 export function dailyLifeReminderPlan({
-  state = getState(), now = new Date(), ackLog = currentAckLog(), includePast = false, fromIso = null
+  state = getState(), now = new Date(), ackLog = currentAckLog(), includePast = false, fromIso = null,
+  load = null, capacityOverflow = false
 } = {}) {
   const preferences = normalizePreferences(state.notificationPreferences || {});
   if (!preferences.enabled) return { intents: EMPTY, routes: new Map() };
@@ -552,10 +625,23 @@ export function dailyLifeReminderPlan({
   const snoozed = snoozedKeys(ackLog, nowMs);
   const candidates = [...legacy, ...everyday].filter(intent =>
     includePast || isFuture(intent, nowMs) || snoozed.has(intent.ackKey || intent.id));
-  const policy = applyNotificationPolicy(candidates, { settings: effective, preferences, ackLog, nowMs });
+  // Korkea kuorma keventää valinnaiset kehotteet (koosteeseen tai pois).
+  let currentLoad = load && typeof load === 'object' ? load : null;
+  if (!currentLoad) {
+    try {
+      currentLoad = reminderLoad({ state, now, dates, capacityOverflow });
+    } catch {
+      currentLoad = { level: LOAD_LEVEL.NORMAL, dates: [], reasons: [] };
+    }
+  }
+  const policy = applyNotificationPolicy(candidates, {
+    settings: effective, preferences, ackLog, nowMs,
+    loadLevel: currentLoad.level, loadDates: Array.isArray(currentLoad.dates) ? currentLoad.dates : null
+  });
   return {
     intents: Object.freeze(includePast ? [...policy] : policy.filter(intent => isFuture(intent, nowMs))),
-    routes
+    routes,
+    load: currentLoad
   };
 }
 
