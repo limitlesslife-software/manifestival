@@ -331,7 +331,8 @@ export const DAILY_REMINDER_KIND = Object.freeze({
   HABIT: NOTIFICATION_TYPE.HABIT,
   EVENING_BEFORE: NOTIFICATION_TYPE.EVENING_BEFORE,
   MORNING_BRIEF: NOTIFICATION_TYPE.MORNING_BRIEF,
-  EVENT_START: NOTIFICATION_TYPE.EVENT_START
+  EVENT_START: NOTIFICATION_TYPE.EVENT_START,
+  MORNING_STEP: NOTIFICATION_TYPE.MORNING_STEP
 });
 
 /** Menon alun ennakon yläraja (minuuttia), sama kuin tehtävän ennakolla. */
@@ -346,7 +347,8 @@ const DISPLAY_TOPIC = Object.freeze({
   [DAILY_REMINDER_KIND.HABIT]: REMINDER_TOPIC.HABIT,
   [DAILY_REMINDER_KIND.EVENING_BEFORE]: REMINDER_TOPIC.MORNING,
   [DAILY_REMINDER_KIND.MORNING_BRIEF]: REMINDER_TOPIC.MORNING,
-  [DAILY_REMINDER_KIND.EVENT_START]: REMINDER_TOPIC.PREPARATION
+  [DAILY_REMINDER_KIND.EVENT_START]: REMINDER_TOPIC.PREPARATION,
+  [DAILY_REMINDER_KIND.MORNING_STEP]: REMINDER_TOPIC.MORNING
 });
 
 /** Rakenna yhden merkinnän aikomus, tai null. */
@@ -486,6 +488,21 @@ function dailyIntent(entry, { settings, style, today }) {
       extra.eventDate = startAt.date;
       break;
     }
+    case DAILY_REMINDER_KIND.MORNING_STEP: {
+      // Aamurutiinin vaihe aamusuunnitelmasta. Vaiheen nimi on käyttäjän oma
+      // aamurutiini ("Suihku"), ei arkaluonteinen menon otsikko.
+      const stepId = cleanId(source.id);
+      if (!stepId) return null;
+      const name = cleanText(source.name, 80) || 'Aamun vaihe';
+      const next = cleanText(source.nextName, 80);
+      title = 'Aamurutiini';
+      body = next ? `${name} nyt. Seuraavaksi: ${next}.` : `${name} nyt.`;
+      reason = 'Oma aamurutiinisi: vaiheen alku aamusuunnitelmassa.';
+      targetId = stepId;
+      phraseContext = { style, name };
+      extra.stepName = name;
+      break;
+    }
     case DAILY_REMINDER_KIND.MORNING_BRIEF: {
       if (safeObject(settings)?.morningBriefEnabled !== true) return null;
       const firstLeave = isTimeOfDay(source.firstLeave) ? source.firstLeave : null;
@@ -538,6 +555,7 @@ function dailyIntent(entry, { settings, style, today }) {
  *   morning_brief   { date, time, firstLeave? } — vain jos
  *                   settings.morningBriefEnabled === true
  *   event_start     { id (esiintymä), date, time (menon alku), leadMinutes, title?, needsTravel? }
+ *   morning_step    { id (vaihe), date, time (vaiheen alku), name, nextName? }
  *                   -> muistutus klo time − leadMinutes ("alkaa klo")
  *
  * Kaikki ovat tasoa Muistutus. Toimitustapa tulee aiheen asetuksesta, ja

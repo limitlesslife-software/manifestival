@@ -72,7 +72,12 @@ export const NOTIFICATION_TYPE = Object.freeze({
    * olevaa matka-aikaa): muistutus ennakolla ennen alkua. Ei lähtöaikaa eikä
    * arvattua matkaa, vain "alkaa klo". (dailyReminders.js)
    */
-  EVENT_START: 'event_start'
+  EVENT_START: 'event_start',
+  /**
+   * Aamurutiinin vaiheen alku aamusuunnitelmasta ("Suihku nyt"). Vain kun
+   * käyttäjä on valinnut Aamurutiinille muun kuin hiljaisen tavan.
+   */
+  MORNING_STEP: 'morning_step'
 });
 
 export const NOTIFICATION_TYPES = Object.freeze(Object.values(NOTIFICATION_TYPE));

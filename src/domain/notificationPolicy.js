@@ -118,7 +118,9 @@ const TOPIC_BY_TYPE = Object.freeze({
   [NOTIFICATION_TYPE.MORNING_BRIEF]: REMINDER_TOPIC.MORNING,
   [NOTIFICATION_TYPE.DIGEST]: null,
   // Menon alku ilman lähtöketjua: valmistaudu menoon (Valmistautuminen-valinta).
-  [NOTIFICATION_TYPE.EVENT_START]: REMINDER_TOPIC.PREPARATION
+  [NOTIFICATION_TYPE.EVENT_START]: REMINDER_TOPIC.PREPARATION,
+  // Aamurutiinin vaihe: Aamurutiini-valinta ohjaa sen toimitusta.
+  [NOTIFICATION_TYPE.MORNING_STEP]: REMINDER_TOPIC.MORNING
 });
 
 /** Ilmoitustyypin aihe (REMINDER_TOPIC) tai null. */
@@ -181,7 +183,9 @@ export const QUIET_PASS_TYPES = Object.freeze([
   NOTIFICATION_TYPE.DEPARTURE_REMINDER,
   ...DEPARTURE_CHAIN_TYPES,
   NOTIFICATION_TYPE.MORNING_BRIEF,
-  NOTIFICATION_TYPE.EVENT_START
+  NOTIFICATION_TYPE.EVENT_START,
+  // Oma aamu herätyksen jälkeen: käyttäjä on hereillä ja on itse valinnut vaiheet.
+  NOTIFICATION_TYPE.MORNING_STEP
 ]);
 
 /**
@@ -456,6 +460,7 @@ export const DIGEST_BYPASS_TYPES = Object.freeze([
   // Illan ennakko on hyödytön iltarauhoittumisen jälkeen: ei koosteeseen.
   NOTIFICATION_TYPE.EVENING_BEFORE,
   NOTIFICATION_TYPE.EVENT_START,
+  NOTIFICATION_TYPE.MORNING_STEP,
   NOTIFICATION_TYPE.DIGEST
 ]);
 

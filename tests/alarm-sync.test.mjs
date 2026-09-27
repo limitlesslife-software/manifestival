@@ -235,6 +235,31 @@ test('nukkumaanmenosta muistutetaan vain, kun käyttäjä on kertonut rytminsä 
   assert.equal(types().includes('wind_down'), false);
 });
 
+test('aamurutiinin vaiheet muistutuksina vain omalla valinnalla; oletuksena (hiljainen) ei yhtään (uusintakatselmointi)', () => {
+  const ROUTINE = [
+    { id: 'r1', name: 'Suihku', minutes: 15, protection: 'mandatory' },
+    { id: 'r2', name: 'Aamiainen', minutes: 20, protection: 'important_flexible' }
+  ];
+  signIn();
+  seedDay({ settings: { morningRoutine: ROUTINE } });
+  const tomorrow = '2026-09-30';
+  const steps = () => dailyLifeReminderPlan({ now: NOON }).intents
+    .filter(intent => intent.type === 'morning_step' && intent.date === tomorrow);
+  assert.deepEqual(steps(), [], 'oletus: Aamurutiini hiljainen, ei vaihemuistutuksia');
+
+  seedDay({ settings: { morningRoutine: ROUTINE, delivery: { departure: 'speech', morning: 'sound' } } });
+  const list = steps();
+  assert.equal(list.length, 2);
+  assert.deepEqual(list.map(intent => intent.title), ['Aamurutiini', 'Aamurutiini']);
+  assert.match(list[0].body, /^Suihku nyt\. Seuraavaksi: Aamiainen\.$/);
+  assert.match(list[1].body, /^Aamiainen nyt\.$/);
+  // Vaiheet peräkkäin: toinen alkaa, kun ensimmäinen päättyy (15 min).
+  const minutes = time => Number(time.slice(0, 2)) * 60 + Number(time.slice(3));
+  assert.equal(minutes(list[1].time) - minutes(list[0].time), 15);
+  // Oma aamu herätyksen jälkeen läpäisee rauhoitusajan (oletus 22.00–6.30).
+  assert.ok(list.every(intent => intent.delivery === 'sound'));
+});
+
 test('ateriarytmin lisäravinne, vesitauko ja iltaraja omina muistutuksinaan oikealla sanamuodolla', () => {
   signIn();
   seedDay({ settings: { mealRhythm: {
