@@ -170,6 +170,11 @@ export function validateProtectedPeriod(period) {
   } else if (p.targetMinutes !== null && p.targetMinutes !== undefined) {
     errors.targetMinutes = 'Vähimmäismäärä kuuluu vain viikon vapaa-ajan tavoitteeseen.';
   }
+  // Kannan protected_periods_dates_check koskee jokaista toistuvuutta,
+  // myös viikon vähimmäisaikaa (tests/mental-load-migration.test.mjs).
+  if (!errors.endDate && p.startDate && p.endDate && p.endDate < p.startDate) {
+    errors.endDate = 'Loppupäivä ei voi olla ennen alkupäivää.';
+  }
   if (p.kind === PROTECTED_KIND.VACATION) {
     if (p.recurrence !== PERIOD_RECURRENCE.ONCE) errors.recurrence = 'Loma on päiväväli.';
     if (p.startTime || p.endTime) errors.startTime = 'Loma koskee kokonaisia päiviä.';

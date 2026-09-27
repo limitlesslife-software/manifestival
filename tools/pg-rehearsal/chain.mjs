@@ -1,7 +1,7 @@
-// Migraatioketju 0001 -> 0014 tuotannon muotoisesta lähtötilasta.
+// Migraatioketju 0001 -> 0015 tuotannon muotoisesta lähtötilasta.
 //
 // Jokaisen migraation jälkeen ajetaan sen oma supabase/verify/verify_XXXX.sql,
-// ja FAIL-rivit raportoidaan. Ennen migraatioita 0009–0014 ajetaan
+// ja FAIL-rivit raportoidaan. Ennen migraatioita 0009–0015 ajetaan
 // supabase/preflight/preflight_XXXX.sql, jos sellainen on.
 
 import { existsSync } from 'node:fs';
@@ -16,7 +16,7 @@ export const MIGRATIONS = Object.freeze([
   '0004_goals_projects', '0005_notification_preferences', '0006_wellbeing',
   '0007_finance', '0008_ai_audit', '0009_finance_2', '0010_goal_to_action',
   '0011_personal_assistant', '0012_life_alignment', '0013_alignment_reality',
-  '0014_daily_life'
+  '0014_daily_life', '0015_mental_load'
 ]);
 
 export const numberOf = name => name.slice(0, 4);
