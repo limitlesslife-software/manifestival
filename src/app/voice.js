@@ -343,6 +343,37 @@ export function startVoiceFlow() {
 }
 
 /**
+ * Nollaa puhepaneeli uloskirjautuessa ja tilinvaihdossa (main.js onSignedOut).
+ *
+ * TARKISTUSVAIHE SÄILYY PIILOTUKSEN YLI, UUSI KÄYTTÄJÄ EI. Tunnistettu teksti
+ * (TRANSCRIPT_READY) ja kirjoitettu varateksti (TYPE_FALLBACK) jäävät
+ * tarkoituksella paikalleen, kun sivu piilotetaan. Paneeli on kuitenkin
+ * #appin sisällä: kirjautumisportti vain piilottaa sen, ja seuraavan
+ * käyttäjän kirjautuminen paljastaisi edellisen sanelun avoimessa
+ * paneelissa — ja "Jatka" lähettäisi sen uuden käyttäjän tunnuksilla.
+ *
+ * Fokusta ei palauteta avaajaan: se kuului päättyneelle istunnolle, ja
+ * kirjautumisportti ottaa fokuksen itse.
+ */
+export function resetVoice() {
+  stopRecognition();
+  flow = initialVoiceState();
+  lastErrorCode = '';
+  opener = null;
+  for (const id of ['vfTranscriptText', 'vfFallbackInput']) {
+    const input = maybe(id);
+    if (input) input.value = '';
+  }
+  const interim = maybe('voiceTranscript');
+  if (interim) interim.textContent = '';
+  const overlay = maybe('voiceOverlay');
+  if (overlay) {
+    overlay.classList.remove('open');
+    overlay.setAttribute('aria-hidden', 'true');
+  }
+}
+
+/**
  * Kytke puheohjauksen tapahtumat. Kutsutaan kerran käynnistyksessä.
  *
  * EI KYSY MIKROFONILUPAA. Lupa kysytään vasta kun käyttäjä napauttaa
