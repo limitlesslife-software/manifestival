@@ -713,8 +713,10 @@ test('arjen muistutusputki: rauhoitusaika, kuittaus, päiväraja ja puheen lupa 
     for (const intent of result) {
       assert.equal(handled.has(intent.ackKey), false, 'kuitattu tai hylätty palasi');
       if (isQuietTime(intent.time, quietHours)) {
+        // Oman yön alku (iltarauhoittuminen, nukkumaanmeno) läpäisee
+        // valitulla tavalla; muu nukkumaanmenon aiheen muistutus äänettömänä.
         const passes = intent.level === LEVEL.CRITICAL || QUIET_PASS_TYPES.includes(intent.type)
-          || intent.topic === REMINDER_TOPIC.DEPARTURE;
+          || intent.topic === REMINDER_TOPIC.DEPARTURE || ['wind_down', 'bedtime'].includes(intent.type);
         const silentBedtime = intent.topic === REMINDER_TOPIC.BEDTIME && intent.delivery === DELIVERY.SILENT
           && intent.speech === null;
         assert.ok(passes || silentBedtime, `${intent.type} taso ${intent.level} klo ${intent.time} rauhoitusaikana`);

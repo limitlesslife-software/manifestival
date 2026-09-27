@@ -134,8 +134,10 @@ export function renderNotificationSettings() {
 
         <div class="add-form-title" style="margin-top:6px;">Rauhoitusaika</div>
         <div class="hint">
-          Rauhoitusaikana ei tule muistutuksia. Vain kriittiset läpäisevät sen.
-          Väli saa ylittää keskiyön.
+          Rauhoitusaikana tulevat vain kriittiset, lähtöön ja herätykseen liittyvät
+          muistutukset sekä oma iltarauhoittumisesi ja nukkumaanmenosi (ne aloittavat
+          yösi). Muut jäävät tulematta, tai kooste kokoaa ne, jos se on päällä. Väli saa
+          ylittää keskiyön.
         </div>
         <div class="form-row">
           <div>

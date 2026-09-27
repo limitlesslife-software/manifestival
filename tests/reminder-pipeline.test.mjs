@@ -196,3 +196,89 @@ test('esikatselu (planUpcoming) näyttää saman suunnitelman: toimitustapa ja a
     assert.ok(typeof intent.delivery === 'string', `${intent.type}: toimitustapa päätetty`);
   }
 });
+
+// ------------------------------------------------------------ päiväraja: arvo ennen aikaa
+
+/** Täysi arkipäivä: vesi tunnin välein, kolme ateriaa, lisäravinne, kaksi lähtöä, uni. */
+function seedFullDay({ preferences = {}, settings = {} } = {}) {
+  seed({
+    preferences: { maxPerDay: 12, ...preferences },
+    settings: {
+      arrivalBufferMinutes: 10,
+      mealRhythm: {
+        meals: [
+          { id: 'aamu', name: 'Aamupala', time: '07:00', prepMinutes: 25 },
+          { id: 'lounas', name: 'Lounas', time: '11:30', prepMinutes: 20 },
+          { id: 'paiv', name: 'Päivällinen', time: '17:30', prepMinutes: 30 }
+        ],
+        waterEveryMinutes: 60, waterFrom: '08:00', waterTo: '20:00',
+        supplements: [{ id: 'dvit', name: 'D-vitamiini', time: '07:00' }]
+      },
+      ...settings
+    }
+  });
+  setSavedPlaces([
+    { id: 'tyo', name: 'Työ', address: 'Työkatu 1', travelMode: 'driving', usualTravelMinutes: 30, preparationMinutes: 15 },
+    { id: 'hl', name: 'Hammaslääkäri', address: 'Hammaskatu 2', travelMode: 'driving', usualTravelMinutes: 30, preparationMinutes: 15 }
+  ]);
+  setCalendarEvents([
+    { id: 'aamu', title: 'Työ', date: TOMORROW, startTime: '08:00', durationMinutes: 480, placeId: 'tyo' },
+    { id: 'ilta', title: 'Hammaslääkäri', date: TOMORROW, startTime: '16:00', durationMinutes: 45, placeId: 'hl' }
+  ]);
+}
+
+test('päiväraja (oletus 12) säilyttää lähtöketjut, iltarauhoittumisen ja nukkumaanmenon; vesitauot karsitaan ensin', () => {
+  signIn();
+  seedFullDay();
+  const tomorrow = dailyLifeReminderPlan({ now: NOON }).intents.filter(intent => intent.date === TOMORROW);
+  const types = tomorrow.map(intent => intent.type);
+  assert.ok(types.includes('wind_down'), 'iltarauhoittuminen säilyy');
+  assert.ok(types.includes('bedtime'), 'nukkumaanmeno säilyy');
+  const prepares = tomorrow.filter(intent => intent.type === 'departure_prepare').map(intent => intent.departureId);
+  assert.ok(prepares.includes(`event:ilta:${TOMORROW}`), 'iltapäivän lähdön valmistautuminen säilyy');
+  assert.ok(prepares.includes(`event:aamu:${TOMORROW}`));
+  const nonCritical = tomorrow.filter(intent => intent.level !== 4);
+  assert.ok(nonCritical.length <= 12, `${nonCritical.length} ei-kriittistä`);
+  const water = tomorrow.filter(intent => intent.mealKind === 'water');
+  assert.ok(water.length < 13, 'vesitaukoja karsittiin ensin');
+  // Vesitauko ei säily, jos jokin arvokkaampi karsittiin.
+  const kept = new Set(tomorrow.map(intent => intent.id));
+  if (water.length > 0) {
+    for (const meal of ['aamu', 'lounas', 'paiv']) assert.ok(kept.has(`meal:${meal}:${TOMORROW}`), meal);
+  }
+});
+
+test('valittu puhuttu nukkumaanmeno kuuluu, vaikka oletusrauhoitusaika (22.00) alkaa ennen sitä', () => {
+  signIn();
+  seedFullDay({ settings: { speechEnabled: true, delivery: { bedtime: DELIVERY.SPEECH } } });
+  const { entries } = desiredNativeEntries({ now: NOON, nativeSupported: true });
+  const night = entries.filter(entry => /^(bedtime|wind_down):/.test(entry.id));
+  assert.ok(night.length >= 2, 'iltarauhoittuminen ja nukkumaanmeno laitteelle');
+  for (const entry of night) {
+    assert.equal(entry.kind, 'spoken', entry.id);
+    assert.equal(entry.mode, 'speech', entry.id);
+    assert.ok(entry.speech, entry.id);
+  }
+  assert.ok(night.some(entry => entry.time >= '22:00'), 'rauhoitusajan sisällä');
+});
+
+test('päivärajan arvo: suojatut ennen tavallisia, vähäiset (vesi, suunnitelma, Tieto) viimeisenä', async () => {
+  const { capValue, capPerDay, CAP_VALUE } = await import('../src/domain/notificationPolicy.js');
+  const { createIntent } = await import('../src/domain/notification.js');
+  const make = (type, time, extra = {}, level = 2) => createIntent({
+    type, level, date: TOMORROW, time, title: type, targetId: `${type}-${time}`, extra
+  });
+  assert.equal(capValue(make('bedtime', '22:30')), CAP_VALUE.PROTECTED);
+  assert.equal(capValue(make('wind_down', '22:00')), CAP_VALUE.PROTECTED);
+  assert.equal(capValue(make('departure_prepare', '15:05')), CAP_VALUE.PROTECTED);
+  assert.equal(capValue(make('deadline_warning', '07:30')), CAP_VALUE.PROTECTED);
+  assert.equal(capValue(make('meal', '11:10')), CAP_VALUE.NORMAL);
+  assert.equal(capValue(make('meal', '09:00', { mealKind: 'water' })), CAP_VALUE.LOW);
+  assert.equal(capValue(make('daily_plan', '07:30', {}, 1)), CAP_VALUE.LOW);
+  const list = [
+    make('meal', '08:00', { mealKind: 'water' }), make('meal', '09:00', { mealKind: 'water' }),
+    make('task_reminder', '10:00'), make('wind_down', '22:00'), make('bedtime', '22:30')
+  ];
+  const kept = capPerDay(list, 3).map(intent => intent.type);
+  assert.deepEqual(kept, ['task_reminder', 'wind_down', 'bedtime'], 'aamun vesitauot eivät vie illan paikkoja');
+});

@@ -369,7 +369,10 @@ test('illan ja aamun kooste; aamun kooste vain luvalla', () => {
   assert.equal(on[0].topic, REMINDER_TOPIC.MORNING);
 });
 
-test('aamun kooste läpäisee rauhoitusajan (herätys), iltarauhoittuminen näkyy äänettömästi', () => {
+test('aamun kooste (herätys) ja oman yön alku (iltarauhoittuminen) läpäisevät rauhoitusajan; muu odottaa', () => {
+  // Sääntö (notificationPolicy.NIGHT_START_TYPES): iltarauhoittuminen ja
+  // nukkumaanmeno aloittavat käyttäjän oman yön, joten valittu puhe ei
+  // hiljene, vaikka rauhoitusaika (22.00) alkaisi ennen niitä.
   const intents = daily([
     { kind: 'morning_brief', date: DAY, time: '06:05', firstLeave: '07:00' },
     { kind: 'wind_down', date: DAY, time: '22:30' },
@@ -380,9 +383,9 @@ test('aamun kooste läpäisee rauhoitusajan (herätys), iltarauhoittuminen näky
   });
   assert.deepEqual(result.map(i => [i.type, i.delivery]), [
     [T.MORNING_BRIEF, DELIVERY.SPEECH],
-    [T.WIND_DOWN, DELIVERY.SILENT]
+    [T.WIND_DOWN, DELIVERY.SPEECH]
   ]);
-  assert.equal(result[1].speech, null, 'rauhoitusaikana ei puhuta');
+  assert.ok(result[1].speech, 'valittu puhe kuuluu myös rauhoitusaikana');
 });
 
 test('arjen merkinnät: roska ohitetaan, ei heitä, ei muuta syötettä', () => {

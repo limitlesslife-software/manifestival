@@ -10,7 +10,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  resolveDelivery, topicForType, quietDecision, QUIET_DECISION, QUIET_PASS_TYPES,
+  resolveDelivery, topicForType, quietDecision, QUIET_DECISION, QUIET_PASS_TYPES, NIGHT_START_TYPES,
   GUIDANCE_EFFECTS, guidanceEffects, resolveGuidanceStyle, scaleLeadMinutes,
   mergeDigest, isDigestible, digestSlot, DIGEST_BYPASS_TYPES, DIGEST_MAX_TITLES,
   applyAcks, capPerDay, applyNotificationPolicy, DELIVERY_RANK,
@@ -168,18 +168,31 @@ test('rauhoitusaika: vain kriittinen, lähtö ja aamun kooste läpäisevät', ()
   assert.equal(outside.quiet, false);
 });
 
-test('rauhoitusaika: nukkumaanmeno näytetään, mutta äänettömästi ja puhumatta', () => {
+test('rauhoitusaika: oman yön alku (iltarauhoittuminen, nukkumaanmeno) tulee valitulla tavalla, myös puheena', () => {
+  // SÄÄNTÖ (NIGHT_START_TYPES): rauhoitusaika suojaa käyttäjän yötä, ja nämä
+  // kaksi aloittavat sen. Oletus 22.00–06.30 ja nukkumaan 22.30: valittu
+  // "Puhe" ei saa hiljentyä.
   const settings = { speechEnabled: true, delivery: { bedtime: DELIVERY.SOUND_AND_SPEECH } };
   for (const type of [T.WIND_DOWN, T.BEDTIME]) {
     const inside = resolveDelivery({ type, level: LEVEL.REMINDER, time: '22:30', quietHours: QUIET, settings });
     assert.equal(inside.allowed, true, type);
-    assert.equal(inside.delivery, DELIVERY.SILENT);
-    assert.equal(inside.speak, false);
+    assert.equal(inside.quiet, true);
+    assert.equal(inside.delivery, DELIVERY.SOUND_AND_SPEECH);
+    assert.equal(inside.speak, true);
+    assert.match(inside.reason, /oman yösi/);
     const before = resolveDelivery({ type, level: LEVEL.REMINDER, time: '21:30', quietHours: QUIET, settings });
     assert.equal(before.delivery, DELIVERY.SOUND_AND_SPEECH);
     assert.equal(before.speak, true);
+    assert.equal(quietDecision({ type, topic: REMINDER_TOPIC.BEDTIME, level: 2, time: '23:00' }, QUIET),
+      QUIET_DECISION.PASS);
   }
-  assert.equal(quietDecision({ type: T.BEDTIME, topic: REMINDER_TOPIC.BEDTIME, level: 2, time: '23:00' }, QUIET),
+  assert.deepEqual([...NIGHT_START_TYPES], [T.WIND_DOWN, T.BEDTIME]);
+  // Puhe edelleen vain luvalla: ilman lupaa ääni, ei puhetta.
+  const noSpeech = resolveDelivery({ type: T.BEDTIME, level: LEVEL.REMINDER, time: '22:30', quietHours: QUIET,
+    settings: { speechEnabled: false, delivery: { bedtime: DELIVERY.SPEECH } } });
+  assert.equal(noSpeech.speak, false);
+  // Muu nukkumaanmenon aiheen muistutus näkyy rauhoitusaikana äänettömästi.
+  assert.equal(quietDecision({ type: 'jokin', topic: REMINDER_TOPIC.BEDTIME, level: 2, time: '23:00' }, QUIET),
     QUIET_DECISION.SILENT);
 });
 
@@ -589,7 +602,10 @@ test('OMINAISUUS: putken takuut satunnaisilla syötteillä', () => {
         const passes = item.level === LEVEL.CRITICAL || QUIET_PASS_TYPES.includes(item.type)
           || item.topic === REMINDER_TOPIC.DEPARTURE || item.topic === REMINDER_TOPIC.BEDTIME;
         assert.ok(passes, `${item.type}/${item.level} klo ${item.time} rauhoitusaikana`);
-        if (item.topic === REMINDER_TOPIC.BEDTIME && item.level !== LEVEL.CRITICAL) {
+        // Oman yön alku (NIGHT_START_TYPES) tulee valitulla tavalla; muu
+        // nukkumaanmenon aiheen muistutus äänettömänä.
+        if (item.topic === REMINDER_TOPIC.BEDTIME && item.level !== LEVEL.CRITICAL
+          && !NIGHT_START_TYPES.includes(item.type)) {
           assert.equal(item.delivery, DELIVERY.SILENT, 'nukkumaanmeno rauhoitusaikana on äänetön');
         }
         assert.notEqual(item.type, T.DIGEST, 'kooste rauhoitusaikana');
