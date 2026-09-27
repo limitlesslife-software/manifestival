@@ -16,7 +16,8 @@
 
 import {
   savedPlacesRepo, placeAliasesRepo, calendarEventsRepo, commuteObservationsRepo, lifeSettingsRepo,
-  sleepLogsRepo, habitPlansRepo, habitEventsRepo, exerciseSessionsRepo, wellbeingCheckinsRepo
+  sleepLogsRepo, habitPlansRepo, habitEventsRepo, exerciseSessionsRepo, wellbeingCheckinsRepo,
+  changedColumns
 } from '../data/collectionsRepo.js';
 import { sessionSnapshot, isSameSession } from '../data/session.js';
 import { newTaskId } from '../lib/rows.js';
@@ -37,7 +38,7 @@ import { normalizeSavedPlace, validateSavedPlace, normalizePlaceAlias, validateP
   from '../domain/savedPlace.js';
 import { normalizeCalendarEvent, validateCalendarEvent, withSkipDate } from '../domain/calendarEvent.js';
 import { normalizeCommuteObservation, validateCommuteObservation } from '../domain/commuteObservation.js';
-import { mergeLifeSettings, validateLifeSettings } from '../domain/lifeSettings.js';
+import { mergeLifeSettings, validateLifeSettings, normalizeLifeSettings } from '../domain/lifeSettings.js';
 import { normalizeSleepLog, validateSleepLog } from '../domain/sleepLog.js';
 import { normalizeHabitPlan, validateHabitPlan, normalizeHabitEvent, validateHabitEvent } from '../domain/habit.js';
 import { normalizeExerciseSession, validateExerciseSession } from '../domain/exerciseSession.js';
@@ -333,7 +334,21 @@ async function pruneObservations(placeId, startedIn) {
 
 // ------------------------------------------------------------ asetukset
 
-/** Päivitä arjen asetukset (yksi rivi käyttäjää kohti; luodaan tarvittaessa). */
+/** Rivin kentät, jotka eivät ole käyttäjän asetuksia. */
+const SETTINGS_META = Object.freeze(['id', 'createdAt', 'updatedAt']);
+const sameValue = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+/**
+ * Päivitä arjen asetukset (yksi rivi käyttäjää kohti; luodaan tarvittaessa).
+ *
+ * RIVIÄ KIRJOITTAA MONTA LOMAKETTA JA LAITETTA. Siksi:
+ *   - kantaan lähtevät vain tämän kutsun muuttamat sarakkeet (update
+ *     changedFrom): vanhentunut laite ei kumoa toisen laitteen herätystä
+ *     vaihtaessaan ohjaustyyliä
+ *   - epäonnistuminen palauttaa vain omat kenttänsä, ja vain jos uudempi
+ *     tallennus ei ole ehtinyt muuttaa niitä: koko rivin tilannekuva pyyhki
+ *     rinnakkain onnistuneen tallennuksen tilasta, vaikka se oli kannassa
+ */
 export async function saveLifeSettings(changes = {}) {
   const rows = getState().lifeSettings || [];
   const current = rows[0] || null;
@@ -342,13 +357,32 @@ export async function saveLifeSettings(changes = {}) {
   if (!valid) return { ok: false, errors };
 
   const startedIn = sessionSnapshot();
+  const fields = Object.keys(changedColumns(current && normalizeLifeSettings(current), next, SETTINGS_META));
   upsertLifeSettingsInState(next);
   warnIfVolatile(lifeSettingsRepo, 'Arjen asetukset');
   const result = await persist(
-    () => (current ? lifeSettingsRepo.update(next) : lifeSettingsRepo.insert(next)),
-    () => setLifeSettings(current ? [current] : []),
+    () => (current ? lifeSettingsRepo.update(next, { changedFrom: current }) : lifeSettingsRepo.insert(next)),
+    () => revertLifeSettings(current, next, fields),
     startedIn);
   return result.ok ? { ok: true, settings: next } : result;
+}
+
+/** Epäonnistuneen tallennuksen peruutus kentittäin (ks. saveLifeSettings). */
+function revertLifeSettings(current, next, fields) {
+  const row = (getState().lifeSettings || [])[0] || null;
+  // Rivi on jo toinen (lataus tai uloskirjautuminen): ei kosketa.
+  if (!row || row.id !== next.id) return;
+  // Luonti epäonnistui: riviä ei ole kannassa.
+  if (!current) {
+    setLifeSettings([]);
+    return;
+  }
+  const reverted = { ...row };
+  for (const field of fields) {
+    // Uudempi tallennus muutti saman kentän: sen arvo jää voimaan.
+    if (sameValue(row[field], next[field])) reverted[field] = current[field];
+  }
+  upsertLifeSettingsInState(reverted);
 }
 
 // ------------------------------------------------------------ uni

@@ -122,6 +122,31 @@ export async function selectOwnedRows(table, orderColumn,
   return { data: null, error: null, overflow: true };
 }
 
+// ------------------------------------------------ muuttuneet sarakkeet
+
+/** Domain-olion kentät, jotka eivät ole käyttäjän muutoksia. */
+const DOMAIN_META_FIELDS = Object.freeze(['id', 'createdAt', 'updatedAt']);
+
+/**
+ * Sarakkeet (tai domain-kentät), joiden arvo eroaa. Tunniste ei ole muutos.
+ * jsonb-sarake verrataan kokonaisena: sisäkkäinen olio lähtee koko
+ * sarakkeena, kuten kanta sen tallentaa.
+ *
+ * @param {object|null} before rivi, johon muutos yhdistettiin
+ * @param {object} after
+ * @param {string[]} [ignore]
+ * @returns {object} vain muuttuneet avaimet
+ */
+export function changedColumns(before, after, ignore = ['id']) {
+  const patch = {};
+  for (const [key, value] of Object.entries(after || {})) {
+    if (ignore.includes(key)) continue;
+    const previous = before ? before[key] : undefined;
+    if (JSON.stringify(previous) !== JSON.stringify(value)) patch[key] = value;
+  }
+  return patch;
+}
+
 // ------------------------------------------ poistosäännöt muistipolulla
 //
 // Kanta hoitaa poiston seuraukset itse (0014: ON DELETE SET NULL ja
@@ -297,21 +322,35 @@ export function createRepository({
      * poistettu toisella laitteella tai RLS suodatti sen) onnistuneeksi:
      * näkymä väitti tallentaneensa, ja seuraava lataus pudotti muutoksen
      * sanomatta mitään. Nyt nolla riviä on NOT_FOUND, ja kutsuja peruu.
+     *
+     * `changedFrom` = rivi, johon kutsuja yhdisti muutoksensa. Silloin
+     * lähetetään VAIN muuttuneet sarakkeet (changedColumns), ei koko riviä
+     * laitteen välimuistista: muuten vanhentunut laite kumosi hiljaa toisella
+     * laitteella tehdyt muutokset saman rivin muihin sarakkeisiin.
      */
-    async update(entity) {
+    async update(entity, { changedFrom = null } = {}) {
       const normalized = normalize(entity);
-      if (!usesDatabase()) return memory.update(normalized);
+      if (!usesDatabase()) {
+        if (!changedFrom) return memory.update(normalized);
+        // Muistissa sama sääntö: vain muuttuneet kentät yhdistetään riviin.
+        return memory.patch(normalized.id,
+          changedColumns(normalize(changedFrom), normalized, DOMAIN_META_FIELDS));
+      }
       const refused = refusal(normalized);
       if (refused) return refused;
+      const fullRow = toRow(normalized);
+      const row = changedFrom ? changedColumns(toRow(normalize(changedFrom)), fullRow) : fullRow;
+      // Mikään ei muuttunut: ei tyhjää UPDATEa (PostgREST hylkäisi sen).
+      if (Object.keys(row).length === 0) return ok(normalized);
       try {
         const { data, error } = await getClient()
           .from(table)
-          .update(stripLoweredColumns(table, assertClientSafe(toRow(normalized))))
+          .update(stripLoweredColumns(table, assertClientSafe(row)))
           .eq('user_id', requireUserId())
           .eq('id', normalized.id)
           .select('id');
         if (error) {
-          noteSchemaError(table, error, Object.keys(toRow(normalized)));
+          noteSchemaError(table, error, Object.keys(row));
           return failFromCause(error, { op: 'save', fallback: 'Muutoksen tallennus ei onnistunut.', code: table + '.update' });
         }
         if (!Array.isArray(data) || data.length === 0) {
