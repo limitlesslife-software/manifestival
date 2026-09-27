@@ -123,8 +123,18 @@ const SOURCE_LABEL = Object.freeze({
 const INTERRUPTION_LABEL = Object.freeze({
   [INTERRUPTION_KIND.RUNNING_LATE]: 'Olen myöhässä',
   [INTERRUPTION_KIND.EXTEND_CURRENT]: 'Tämä kestää pidempään',
+  [INTERRUPTION_KIND.SKIP_ITEM]: 'Jätä väliin',
   [INTERRUPTION_KIND.DEFER_REMAINING]: 'Siirrä loput'
 });
+
+/** Kortin painikkeet §43:n järjestyksessä: myöhässä, jatka, ohita, siirrä. */
+const INTERRUPTION_ORDER = Object.freeze([
+  INTERRUPTION_KIND.RUNNING_LATE, INTERRUPTION_KIND.EXTEND_CURRENT,
+  INTERRUPTION_KIND.SKIP_ITEM, INTERRUPTION_KIND.DEFER_REMAINING
+]);
+
+/** Keskeytykset, joilla on määrävalitsin (muut näyttävät ehdotuksen heti). */
+const NEEDS_MINUTES = new Set([INTERRUPTION_KIND.RUNNING_LATE, INTERRUPTION_KIND.EXTEND_CURRENT]);
 
 // ------------------------------------------------------------ apurit
 
@@ -1168,9 +1178,12 @@ function hasDayContent(plan) {
 }
 
 
-/** Keskeytyksen ehdotus nykyisestä päivästä (sama polku kuin komentopalkilla). Ei muuta mitään. */
-export function interruptionPreview(kind, minutes = null, { state = getState(), now = new Date() } = {}) {
-  return previewDayReplan({ kind, minutes }, { state, now });
+/**
+ * Keskeytyksen ehdotus nykyisestä päivästä (sama polku kuin komentopalkilla). Ei muuta mitään.
+ * targetId = ohitettavaksi valittu kohde (edellisen ehdotuksen candidates[].id).
+ */
+export function interruptionPreview(kind, minutes = null, { state = getState(), now = new Date(), targetId = null } = {}) {
+  return previewDayReplan(targetId ? { kind, minutes, targetId } : { kind, minutes }, { state, now });
 }
 
 function slotText(slot) {
@@ -1188,6 +1201,26 @@ function changeLine(change, todayIso) {
   return `${change.title}: ${from} → ${to}`;
 }
 
+/**
+ * Ehdotuksen kysymys. Ohituksessa ei arvata: kun ohitettavaa ei voi
+ * päätellä (ei käynnissä olevaa eikä seuraavaa joustavaa), vaihtoehdot ovat
+ * painikkeita, ja valinta kulkee tunnisteena (data-target-id) takaisin
+ * samaan esikatseluun. Kiinteitä kohteita dayReplan ei tarjoa.
+ */
+function questionHtml(pending) {
+  const { result } = pending;
+  const candidates = Array.isArray(result.candidates) ? result.candidates : EMPTY;
+  if (pending.kind !== INTERRUPTION_KIND.SKIP_ITEM) return `<p class="td-note">${escapeHtml(result.question)}</p>`;
+  if (candidates.length === 0) {
+    return '<p class="td-note">Tänään ei ole joustavaa kohdetta, jonka voisi jättää väliin. Kiinteät menot muutetaan kalenterista.</p>';
+  }
+  const buttons = candidates.map(candidate => `<button type="button" class="assist-btn" data-td-action="skip-target"
+    data-target-id="${escapeHtml(candidate.id)}">${escapeHtml(candidate.title)}</button>`).join('');
+  return `
+      <p class="td-subtitle" id="tdSkipChoiceTitle">${escapeHtml(result.question)}</p>
+      <div class="assist-actions" role="group" aria-labelledby="tdSkipChoiceTitle">${buttons}</div>`;
+}
+
 function previewHtml(pending, state, todayIso) {
   const { result } = pending;
   const { applicable, informational } = splitReplanChanges(result.changes, state);
@@ -1196,7 +1229,7 @@ function previewHtml(pending, state, todayIso) {
   const info = informational.map(change => `
     <li>${escapeHtml(changeLine(change, todayIso))}<span class="td-reason">Rutiinin tallennettu aika ei muutu; siirrä tämä kerta itse, jos haluat.</span></li>`).join('');
   const warnings = result.warnings.map(text => `<p class="td-note">${escapeHtml(text)}</p>`).join('');
-  const question = result.question ? `<p class="td-note">${escapeHtml(result.question)}</p>` : '';
+  const question = result.question ? questionHtml(pending) : '';
   return `
     <div class="td-proposal" role="group" aria-labelledby="tdReplanTitle">
       <h3 class="td-subtitle" id="tdReplanTitle" tabindex="-1">Ehdotus: ${escapeHtml(INTERRUPTION_LABEL[pending.kind] || '')}${pending.minutes ? ` ${escapeHtml(durationText(pending.minutes))}` : ''}</h3>
@@ -1217,7 +1250,7 @@ function interruptionCard(state, clockNow, plan) {
   if (!hasDayContent(plan) && !current.replan) return '';
   const picker = current.picker;
   const kindButton = kind => `<button type="button" class="assist-btn" data-td-action="interrupt" data-kind="${kind}"
-    ${kind === INTERRUPTION_KIND.DEFER_REMAINING ? '' : `aria-expanded="${picker === kind ? 'true' : 'false'}"`}>${escapeHtml(INTERRUPTION_LABEL[kind])}</button>`;
+    ${NEEDS_MINUTES.has(kind) ? `aria-expanded="${picker === kind ? 'true' : 'false'}"` : ''}>${escapeHtml(INTERRUPTION_LABEL[kind])}</button>`;
   const choices = picker === INTERRUPTION_KIND.RUNNING_LATE ? LATE_MINUTE_CHOICES : EXTEND_MINUTE_CHOICES;
   const pickerHtml = picker ? `
     <div class="td-picker" role="group" aria-labelledby="tdPickerTitle">
@@ -1230,7 +1263,7 @@ function interruptionCard(state, clockNow, plan) {
     <section class="td-card" aria-labelledby="tdInterruptTitle">
       <h2 class="section-title" id="tdInterruptTitle" tabindex="-1">Jos päivä muuttuu</h2>
       <div class="assist-actions td-interrupt-actions">
-        ${kindButton(INTERRUPTION_KIND.RUNNING_LATE)}${kindButton(INTERRUPTION_KIND.EXTEND_CURRENT)}${kindButton(INTERRUPTION_KIND.DEFER_REMAINING)}
+        ${INTERRUPTION_ORDER.map(kindButton).join('')}
       </div>
       ${pickerHtml}
       ${current.replan ? previewHtml(current.replan, state, clockNow.todayIso) : ''}
@@ -1238,10 +1271,10 @@ function interruptionCard(state, clockNow, plan) {
     </section>`;
 }
 
-function showPreview(kind, minutes) {
+function showPreview(kind, minutes, targetId = null) {
   const current = uiState();
   const now = new Date();
-  const result = safe(() => interruptionPreview(kind, minutes, { state: getState(), now }), null);
+  const result = safe(() => interruptionPreview(kind, minutes, { state: getState(), now, targetId }), null);
   current.picker = null;
   if (!result) {
     current.replan = null;
@@ -1249,7 +1282,7 @@ function showPreview(kind, minutes) {
     rerender();
     return;
   }
-  current.replan = { kind, minutes, todayIso: clockOf(now).todayIso, result };
+  current.replan = { kind, minutes, targetId, todayIso: clockOf(now).todayIso, result };
   rerender();
   focusById('tdReplanTitle');
 }
@@ -1257,14 +1290,24 @@ function showPreview(kind, minutes) {
 function startInterruption(button) {
   const kind = button.dataset.kind;
   const current = uiState();
-  if (kind === INTERRUPTION_KIND.DEFER_REMAINING) {
+  if (!INTERRUPTION_ORDER.includes(kind)) return;
+  if (!NEEDS_MINUTES.has(kind)) {
+    // "Jätä väliin" ja "Siirrä loput": ehdotus heti, ohitettava kysytään tarvittaessa.
     showPreview(kind, null);
     return;
   }
-  if (kind !== INTERRUPTION_KIND.RUNNING_LATE && kind !== INTERRUPTION_KIND.EXTEND_CURRENT) return;
   current.picker = current.picker === kind ? null : kind;
   current.replan = null;
   rerender();
+}
+
+/** "Mikä jää väliin?" -valinta: sama esikatselu valitun kohteen tunnisteella. */
+function chooseSkipTarget(button) {
+  const pending = uiState().replan;
+  const targetId = button.dataset.targetId;
+  if (!pending || pending.kind !== INTERRUPTION_KIND.SKIP_ITEM || !targetId) return;
+  if (!pending.result.candidates.some(candidate => candidate.id === targetId)) return;
+  showPreview(INTERRUPTION_KIND.SKIP_ITEM, null, targetId);
 }
 
 function chooseMinutes(button) {
@@ -1299,7 +1342,7 @@ export async function applyReplanPreview({ confirm = confirmAction, button = nul
   if (current !== uiState() || current.replan !== pending) return { ok: false, discarded: true };
   if (applicable.some(change => isStaleChange(change, getState()))) {
     notify('Päivän suunnitelma muuttui välillä. Katso ehdotus uudelleen ennen muutoksia.');
-    showPreview(pending.kind, pending.minutes);
+    showPreview(pending.kind, pending.minutes, pending.targetId);
     return { ok: false, stale: true };
   }
   setBusy(button, true, 'Tallennetaan…');
@@ -1443,6 +1486,7 @@ const ACTIONS = Object.freeze({
   'morning-start-undo': undoMorningStart,
   interrupt: startInterruption,
   minutes: chooseMinutes,
+  'skip-target': chooseSkipTarget,
   'replan-apply': button => applyReplanClick(button),
   'replan-cancel': cancelReplan,
   'errand-propose': proposeErrand,

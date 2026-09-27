@@ -107,6 +107,12 @@ function endLabel(dateIso) {
   return shortDateLabel(dateIso).replace(/\.$/u, '');
 }
 
+/** Kohteen tunniste samassa muodossa kuin describe() sen antaa (merkkijono). null = ei tunnistetta. */
+function cleanId(value) {
+  if (typeof value === 'string') return value.trim() ? value : null;
+  return Number.isFinite(value) ? String(value) : null;
+}
+
 function validMinutes(value) {
   return Number.isInteger(value) && value > 0 && value <= MAX_REPLAN_MINUTES ? value : null;
 }
@@ -365,6 +371,149 @@ function rippleReason(item, start, jumped) {
   return `Siirtyy klo ${clockOf(start)}, jotta edellinen ehtii loppuun.${around}`;
 }
 
+// ------------------------------------------------------------ lähtö ja kiinteät alut
+//
+// MYÖHÄSTYMINEN EI OLE VAIN JOUSTAVIEN SIIRTOA. Kun keskeytys osuu menon
+// lähtöketjuun (valmistautuminen, matka, pysäköinti, perilläolon etuaika)
+// tai kiinteän kohteen alkuun, väljyys ei riitä, vaikka joustavaa
+// siirrettävää ei olisi. Menoa, matkaa tai valmistautumista ei silti
+// koskaan siirretä: tulos kertoo rehellisesti, milloin lähdet ja ehditkö.
+//
+// SÄÄNTÖ lähtömoottorin luvuilla (departure.js planDeparture: valmistautumisen
+// alku, lähtö, perilläolotavoite, alku):
+//
+//   valmis        = nyt + myöhästyminen          (todellisina minuutteina)
+//   lähdön siirto = myöhästyminen, jos valmistautuminen on jo alkanut;
+//                   muuten max(0, valmis - valmistautumisen alku)
+//                   (vapaa aika ennen valmistautumista imee loput)
+//   uusi lähtö    = lähtö + siirto
+//   uusi perillä  = perilläolotavoite + siirto   (matka ja kävely eivät lyhene)
+//   myöhästyt     = uusi perillä - alku, jos > 0; muuten ehdit (alku - uusi perillä) ennen alkua
+//
+// Venymisessä ("tämä kestää vielä 30 min") olet varattu hetkeen `valmis`
+// asti: ennen valmistautumista siirto on max(0, valmis - valmistautumisen
+// alku), valmistautumisen aikana max(0, valmis - lähtö). Matkalla venymistä
+// ei arvioida (lause ei silloin kerro, mikä venyy).
+//
+// Kiinteä kohde ilman tunnettua lähtöä (meno ilman paikkaa, itse ajastettu
+// tehtävä, kiinteä rutiini), joka alkaa ennen hetkeä `valmis`: myöhästyt
+// siitä (valmis - alku) minuuttia.
+
+/** Päivän alusta laskettu seinäkellominuutti lähtömoottorin pisteelle {date, time}. */
+function relMinutes(point, dateIso) {
+  if (!isObject(point) || !isIsoDate(point.date) || !isTimeOfDay(point.time)) return null;
+  const days = dayNumberOf(point.date) - dayNumberOf(dateIso);
+  return Number.isInteger(days) && Math.abs(days) <= 1 ? days * MINUTES_PER_DAY + toMinutes(point.time) : null;
+}
+
+/** Lähtösuunnitelma (planDeparture) luvuiksi. null = tuntematon tai epäjohdonmukainen. */
+function readDeparture(raw, dateIso) {
+  return safe(() => {
+    if (!isObject(raw) || raw.known !== true) return null;
+    const prepare = relMinutes(raw.prepareStart, dateIso);
+    const leave = relMinutes(raw.leave, dateIso);
+    const arrival = relMinutes(raw.arrivalTarget, dateIso);
+    const start = relMinutes(raw.eventStart, dateIso);
+    if ([prepare, leave, arrival, start].some(value => value === null)) return null;
+    if (!(prepare <= leave && leave <= arrival && arrival <= start)) return null;
+    const id = typeof raw.occurrenceId === 'string' && raw.occurrenceId ? raw.occurrenceId : null;
+    return { id, prepare, leave, arrival, start };
+  }, null);
+}
+
+/** Todellinen minuuttiero kahden saman päivän seinäkelloajan välillä (kesäaikaturvallinen). */
+function realBetween(dateIso, from, to, offsetMinutesFn) {
+  if (typeof offsetMinutesFn === 'function' && from >= 0 && from < MINUTES_PER_DAY && to >= 0 && to < MINUTES_PER_DAY) {
+    const a = safe(() => wallClockToEpoch(dateIso, fromMinutes(from), offsetMinutesFn), null);
+    const b = safe(() => wallClockToEpoch(dateIso, fromMinutes(to), offsetMinutesFn), null);
+    if (a && b) return Math.round((b.epochMs - a.epochMs) / MS_PER_MINUTE);
+  }
+  return to - from;
+}
+
+function impactText({ kind, title, start, plannedLeave, leave, arrival, shift, diff, leaveAhead }) {
+  const head = `${title} klo ${clockOf(start)}:`;
+  const late = diff > 0;
+  if (kind === 'start') {
+    return `${head} ehdit vasta noin klo ${clockOf(arrival)}, eli myöhästyt noin ${durationText(diff)}.`;
+  }
+  const outcome = late
+    ? `eli myöhästyt noin ${durationText(diff)}.`
+    : (diff === 0 ? 'juuri alkuun.' : `${durationText(-diff)} ennen alkua.`);
+  if (leaveAhead) {
+    const verb = late ? 'myöhästyy' : 'siirtyy';
+    return `${head} lähtö ${verb} ${durationText(shift)}, lähdet noin klo ${clockOf(leave)} (suunniteltu klo ${clockOf(plannedLeave)}). `
+      + (late
+        ? `Ehdit perille noin klo ${clockOf(arrival)}, ${outcome} Lähde heti kun pääset, ja kerro tarvittaessa myöhästymisestä.`
+        : `Ehdit silti perille noin klo ${clockOf(arrival)}, ${outcome}`);
+  }
+  return late
+    ? `${head} olet perillä noin klo ${clockOf(arrival)}, ${outcome} Kerro tarvittaessa myöhästymisestä.`
+    : `${head} olet silti perillä noin klo ${clockOf(arrival)}, ${outcome}`;
+}
+
+function impactOf(fields, now) {
+  const leaveAhead = fields.leave !== null && fields.leave > now;
+  return {
+    data: Object.freeze({
+      kind: fields.kind,
+      id: fields.id,
+      title: fields.title,
+      startTime: fromMinutes(fields.start),
+      plannedLeaveTime: fields.plannedLeave === null ? null : fromMinutes(fields.plannedLeave),
+      leaveTime: fields.leave === null ? null : fromMinutes(fields.leave),
+      arrivalTargetTime: fields.arrivalTarget === null ? null : fromMinutes(fields.arrivalTarget),
+      arrivalTime: fromMinutes(fields.arrival),
+      delayMinutes: fields.shift,
+      late: fields.diff > 0,
+      lateMinutes: Math.max(0, fields.diff),
+      marginMinutes: Math.max(0, -fields.diff)
+    }),
+    text: impactText({ ...fields, leaveAhead })
+  };
+}
+
+/**
+ * Keskeytyksen vaikutus menojen lähtöihin ja kiinteiden kohteiden alkuihin.
+ *
+ * @param {object} ctx replanDay-konteksti (departures, items, now, dateIso, offsetMinutesFn, impacts)
+ * @param {number} readyAt hetki, jolloin olet taas vapaa (päivän minuutteina)
+ * @param {Function} shiftFor lähtö -> lähdön siirto minuutteina (0 = ei vaikutusta)
+ * @param {Array} hits kiinteät kohteet, joiden alku osuu keskeytykseen (fixedStartingWithin)
+ */
+function recordImpacts(ctx, readyAt, shiftFor, hits) {
+  const { departures, items, now, dateIso, offsetMinutesFn: tz, impacts } = ctx;
+  const titles = new Map(items.filter(item => item.kind === 'event').map(item => [item.id, item.title]));
+  const covered = new Set();
+  const found = [];
+  for (const raw of departures) {
+    const departure = readDeparture(raw, dateIso);
+    if (!departure || departure.start <= now) continue;
+    const shift = safe(() => shiftFor(departure), 0);
+    if (!Number.isInteger(shift) || shift <= 0) continue;
+    const leave = addRealMinutes(dateIso, departure.leave, shift, tz).minutes;
+    const arrival = addRealMinutes(dateIso, departure.arrival, shift, tz).minutes;
+    if (departure.id) covered.add(departure.id);
+    found.push(impactOf({
+      kind: 'departure', id: departure.id, title: titles.get(departure.id) || 'Meno', start: departure.start,
+      plannedLeave: departure.leave, leave, arrivalTarget: departure.arrival, arrival, shift,
+      diff: realBetween(dateIso, departure.start, arrival, tz)
+    }, now));
+  }
+  for (const item of hits) {
+    // Herätys ei ole kohde, josta "myöhästytään".
+    if (covered.has(item.id) || (item.source && item.source.isWake === true)) continue;
+    const diff = realBetween(dateIso, item.start, readyAt, tz);
+    if (diff <= 0) continue;
+    found.push(impactOf({
+      kind: 'start', id: item.id, title: item.title, start: item.start,
+      plannedLeave: null, leave: null, arrivalTarget: null, arrival: readyAt, shift: diff, diff
+    }, now));
+  }
+  found.sort((a, b) => compareIds(a.data.startTime, b.data.startTime) || compareIds(a.data.id, b.data.id));
+  for (const entry of found) impacts.push(entry);
+}
+
 // ------------------------------------------------------------ keskeytykset
 
 function runningLate(ctx) {
@@ -409,7 +558,14 @@ function runningLate(ctx) {
   });
 
   const readyAt = addRealMinutes(dateIso, now, minutes, offsetMinutesFn).minutes;
-  for (const item of fixedStartingWithin(items, now, readyAt)) warnings.push(warningForFixed(item));
+  const hits = fixedStartingWithin(items, now, readyAt);
+  for (const item of hits) warnings.push(warningForFixed(item));
+  // Lähtö ja kiinteät alut: ks. "lähtö ja kiinteät alut" yllä. Alkanut
+  // valmistautuminen siirtää lähtöä koko myöhästymisen verran; muuten vain
+  // se osa, jota vapaa aika ennen valmistautumista ei ime.
+  recordImpacts(ctx, readyAt, departure => (now >= departure.prepare
+    ? minutes
+    : Math.min(minutes, Math.max(0, realBetween(dateIso, departure.prepare, readyAt, offsetMinutesFn)))), hits);
   for (const item of items) if (inProgress(item, now) && item !== anchor) preserved.add(item.id);
   return {};
 }
@@ -434,6 +590,8 @@ function extendCurrent(ctx) {
   const obstacles = mergeIntervals(items.filter(item => !moving.has(item.id) && !item.completed && !(item.kind === 'virtual' && item.sleep)));
   const place = makePlacer(obstacles);
 
+  // Kiinteät kohteet, joiden alkuun venyminen osuu (samat kuin varoituksissa).
+  let hits = EMPTY;
   if (current && current.flexible) {
     if (newEnd.minutes > current.end) {
       const end = Math.min(newEnd.minutes, dayEnd);
@@ -442,7 +600,8 @@ function extendCurrent(ctx) {
         `Kestää vielä ${durationText(minutes)}: loppuu klo ${clockOf(end)}.${newEnd.dstAdjusted ? ' Kellojen siirto on otettu huomioon.' : ''}`,
         { dstAdjusted: newEnd.dstAdjusted }));
       if (newEnd.minutes > dayEnd) warnings.push(`${current.title} venyy lepoon asti.`);
-      for (const item of fixedStartingWithin(items, current.end, newEnd.minutes)) warnings.push(warningForFixed(item));
+      hits = fixedStartingWithin(items, current.end, newEnd.minutes);
+      for (const item of hits) warnings.push(warningForFixed(item));
     } else {
       // Varattu aika riittää jo: mitään ei tarvitse siirtää.
       warnings.push(`${current.title} on varattu klo ${clockOf(current.end)} asti, joten aikaa on jo tarpeeksi.`);
@@ -452,8 +611,18 @@ function extendCurrent(ctx) {
   } else if (current) {
     preserved.add(current.id);
     warnings.push(`${current.title} on kiinteä, eikä sen aikaa muuteta. Seuraavat joustavat kohteet siirtyvät tarvittaessa.`);
-    for (const item of fixedStartingWithin(items, now, newEnd.minutes)) if (item !== current) warnings.push(warningForFixed(item));
+    hits = fixedStartingWithin(items, now, newEnd.minutes).filter(item => item !== current);
+    for (const item of hits) warnings.push(warningForFixed(item));
   }
+  // Lähtö: olet varattu hetkeen newEnd asti. Ennen valmistautumista lähtö
+  // siirtyy sen verran kuin varaus ylittää valmistautumisen alun,
+  // valmistautumisen aikana sen verran kuin se ylittää lähdön. Matkalla
+  // venymistä ei arvioida.
+  recordImpacts(ctx, newEnd.minutes, departure => {
+    if (now >= departure.leave) return 0;
+    const from = now < departure.prepare ? departure.prepare : departure.leave;
+    return Math.max(0, realBetween(dateIso, from, newEnd.minutes, offsetMinutesFn));
+  }, hits);
 
   const busyUntil = clockOf(newEnd.minutes);
   ripple({
@@ -473,7 +642,18 @@ function skipItem(ctx) {
   }
   const open = items.filter(item => !item.completed && item.kind !== 'virtual' && item.kind !== 'block');
   let matches;
-  if (interruption.targetText) {
+  if (interruption.targetId) {
+    // Valinta (kortin painike tai puheen valintadialogi) kulkee tunnisteena:
+    // kaksi samaan sanaan osuvaa kohdetta ei jää kiertämään kysymystä.
+    matches = open.filter(item => item.id === interruption.targetId);
+    if (matches.length === 0) {
+      return {
+        question: 'Mikä jää väliin?',
+        candidates: open.filter(item => item.flexible).slice(0, 5),
+        summary: 'Valittua kohdetta ei enää löytynyt tämän päivän suunnitelmasta. Päivän suunnitelma pysyy ennallaan.'
+      };
+    }
+  } else if (interruption.targetText) {
     const stems = targetStems(interruption.targetText);
     matches = stems.length > 0 ? open.filter(item => matchesTarget(item, stems)) : [];
     if (matches.length === 0) {
@@ -589,10 +769,12 @@ function deferRemaining(ctx) {
 
 // ------------------------------------------------------------ yhteenveto
 
-function summaryFor(kind, changes, minutes) {
+function summaryFor(kind, changes, minutes, impacts = EMPTY) {
   const counts = { shift: 0, extend: 0, skip: 0, defer: 0 };
   for (const entry of changes) counts[entry.kind] += 1;
-  const parts = [];
+  // Lähdön ja kiinteän alun myöhästyminen ensin: se on vastauksen tärkein
+  // tieto, eikä "väljyys riittää" saa koskaan peittää sitä.
+  const parts = impacts.map(entry => entry.text);
   if (counts.extend > 0) parts.push(`Nykyinen kohde jatkuu ${durationText(minutes)}.`);
   if (counts.shift > 0) parts.push(`${counts.shift} ${counts.shift === 1 ? 'joustava kohde siirtyy' : 'joustavaa kohdetta siirtyy'} myöhemmäksi.`);
   if (counts.skip > 0) parts.push(`${counts.skip} ${counts.skip === 1 ? 'kohde jää' : 'kohdetta jää'} tältä päivältä väliin.`);
@@ -605,11 +787,14 @@ function summaryFor(kind, changes, minutes) {
       ? 'Mitään ei tarvitse siirtää: väljyys riittää.'
       : 'Päivän suunnitelma pysyy ennallaan.');
   }
-  parts.push('Kiinteät menot, matkat, suojattu lepo ja tehdyt asiat pysyvät ennallaan.');
+  // Myöhästyvä lähtö ei "pysy ennallaan": menoa, matkaa ja lepoa ei silti siirretä.
+  parts.push(impacts.length > 0
+    ? 'Menoja ei siirretä: kiinteät menot, suojattu lepo ja tehdyt asiat pysyvät ennallaan.'
+    : 'Kiinteät menot, matkat, suojattu lepo ja tehdyt asiat pysyvät ennallaan.');
   return parts.join(' ');
 }
 
-function finalize({ kind, changes, untouched, preserved, warnings, question = null, candidates = EMPTY, summary }) {
+function finalize({ kind, changes, untouched, preserved, warnings, question = null, candidates = EMPTY, summary, impacts = EMPTY }) {
   const sortedChanges = [...changes].sort((a, b) =>
     compareIds(a.from.time ?? '99:99', b.from.time ?? '99:99')
     || compareIds(a.taskId ?? a.routineOccurrenceId, b.taskId ?? b.routineOccurrenceId));
@@ -627,6 +812,8 @@ function finalize({ kind, changes, untouched, preserved, warnings, question = nu
       routineOccurrenceId: item.kind === 'routine' ? item.id : null
     }))),
     summary,
+    /** Myöhästyvät lähdöt ja kiinteät alut (ks. "lähtö ja kiinteät alut"). Tieto, ei muutos. */
+    impacts: Object.freeze(impacts.map(entry => entry.data)),
     requiresConfirmation: true
   });
 }
@@ -642,7 +829,8 @@ function emptyResult(kind, summary, question = null) {
  *
  * @param {object} input
  * @param {object} input.plan          buildDayPlan-tulos (timeline, unscheduled, flexibleRoutines, range, dateIso ...)
- * @param {object} input.interruption  parseInterruption-tulos {kind, minutes, targetText, toDate?, onDate?}
+ * @param {object} input.interruption  parseInterruption-tulos {kind, minutes, targetText, targetId?, toDate?, onDate?}
+ *                                     (targetId = aiemman tuloksen candidates[].id; ohitus käyttää sitä tekstin sijaan)
  * @param {number} input.nowMinutes    nykyhetki minuutteina keskiyöstä (seinäkello)
  * @param {string} input.todayIso      tämä päivä
  * @param {Array}  [input.tasks]       kaikki tehtävät (täydentää suunnitelmaa)
@@ -676,6 +864,8 @@ export function replanDay(input = {}) {
     kind,
     minutes: validMinutes(interruption.minutes),
     targetText: typeof interruption.targetText === 'string' && interruption.targetText.trim() ? interruption.targetText.trim() : null,
+    // Valitun kohteen tunniste (ks. candidates). Ohituksessa se voittaa tekstin.
+    targetId: cleanId(interruption.targetId),
     toDate: isIsoDate(interruption.toDate) ? interruption.toDate : null,
     onDate: isIsoDate(interruption.onDate) ? interruption.onDate : null
   };
@@ -693,10 +883,13 @@ export function replanDay(input = {}) {
   const preserved = new Set(items.filter(item => item.completed).map(item => item.id));
   const changes = [];
   const warnings = [];
+  const impacts = [];
   const ctx = {
     interruption: cleanInterruption, now, items, dateIso, todayIso, dayEnd, days: args.days,
     offsetMinutesFn: typeof args.offsetMinutesFn === 'function' ? args.offsetMinutesFn : null,
-    changes, warnings, preserved
+    // Lähtömoottorin suunnitelmat (planDeparture); ilman niitä lähtöä ei arvioida.
+    departures: Array.isArray(args.departures) ? args.departures : EMPTY,
+    changes, warnings, preserved, impacts
   };
 
   const handlers = {
@@ -719,8 +912,9 @@ export function replanDay(input = {}) {
     warnings,
     question: outcome.question ?? null,
     candidates: outcome.candidates ?? EMPTY,
+    impacts,
     summary: outcome.summary ?? (outcome.question && changes.length === 0
       ? `${outcome.question} Päivän suunnitelma pysyy ennallaan, kunnes kerrot.`
-      : summaryFor(kind, changes, cleanInterruption.minutes))
+      : summaryFor(kind, changes, cleanInterruption.minutes, impacts))
   });
 }

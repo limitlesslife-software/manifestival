@@ -54,6 +54,8 @@ import {
   markReached, markOpen, markSkipped
 } from '../domain/milestone.js';
 import { buildReplanProposal } from '../domain/replan.js';
+import { horizonEnd } from '../domain/capacity.js';
+import { calendarForPlanning } from './calendarPlan.js';
 import {
   EXTRACTION_SUBJECT, validateExtraction, approveExtraction,
   toTransaction as extractionToTransaction, toBill as extractionToBill
@@ -1842,6 +1844,16 @@ export async function deleteMilestone(id) {
  */
 export function proposeReplan(trigger = 'manual', options = {}) {
   const state = getState();
+  const todayIso = fmtISO(todayMidnight());
+
+  // KALENTERI MUKAAN (§42): menot pysyvät kiinteinä, valmistautuminen ja
+  // matka ovat varattuja ja suojattu uni on suojattu. Ilman niitä
+  // myöhästyneet siirtyivät täyteen buukatulle päivälle. Sama kalenteri
+  // kuin Suunnittelu-näkymässä ja myöhästyneiden ilmoituksessa.
+  const horizonDays = Number.isInteger(options.horizonDays) && options.horizonDays > 0 ? options.horizonDays : 14;
+  const calendar = calendarForPlanning(state, {
+    from: todayIso, to: horizonEnd(todayIso, horizonDays), todayIso
+  });
 
   const proposal = buildReplanProposal({
     trigger,
@@ -1850,8 +1862,10 @@ export function proposeReplan(trigger = 'manual', options = {}) {
     routines: state.routines,
     exceptions: state.routineExceptions,
     profile: state.profile,
-    todayIso: fmtISO(todayMidnight()),
+    todayIso,
     automationLevel: state.automationLevel,
+    events: calendar.events,
+    blocks: calendar.blocks,
     ...options
   });
 

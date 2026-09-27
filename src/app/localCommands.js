@@ -337,13 +337,18 @@ async function runLocalInterruption(parsed, ui, { state, now }) {
   if (result.question && result.candidates.length > 0) {
     const chosen = await ask(ui, result.candidates.map(item => ({ id: item.id, label: item.title })), result.question);
     if (!chosen) return { ok: false, status: 'cancelled', reason: 'Peruttu.', local: true, kind: 'interruption' };
-    interruption = { ...interruption, targetText: chosen.label };
+    // Valinta kulkee tunnisteena (sama kuin Tänään-kortin valintapainikkeissa):
+    // nimellä kaksi samaan sanaan osuvaa kohdetta kysyisi saman kysymyksen uudelleen.
+    interruption = { ...interruption, targetId: chosen.id };
     result = previewInterruption(interruption, { state: getState(), now });
   }
 
   const changes = splitReplanChanges(result.changes).applicable;
   if (changes.length === 0) {
-    notify(result.question || result.summary);
+    // Varoitukset (kiinteä kohde, johon keskeytys osuu) näkyvät myös, kun
+    // muutettavaa ei ole: sama tieto kuin Tänään-kortin ehdotuksessa.
+    const warnings = Array.isArray(result.warnings) ? result.warnings : [];
+    notify(result.question || [result.summary, ...warnings].join(' '));
     return { ok: true, status: 'no_change', reason: result.summary, local: true, kind: 'interruption' };
   }
 

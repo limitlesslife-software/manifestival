@@ -56,6 +56,8 @@ import {
   applyEstimate, manualEstimate, departureState, DEPARTURE_STATE
 } from '../domain/travel.js';
 import { buildReplanProposal, REPLAN_TRIGGER } from '../domain/replan.js';
+import { horizonEnd } from '../domain/capacity.js';
+import { calendarForPlanning } from './calendarPlan.js';
 import { NOTICE_KIND, NOTICE_LEVEL } from '../domain/notificationCenter.js';
 import {
   getState, findTask,
@@ -680,6 +682,9 @@ export async function runDepartureSweep({ now = new Date() } = {}) {
 /** Montako siirtoa tarvitaan, ennen kuin siitä kannattaa ilmoittaa. */
 export const REPLAN_NOTICE_THRESHOLD = 2;
 
+/** Sama horisontti kuin "Ehdota muutoksia" (buildReplanProposal-oletus). */
+const REPLAN_HORIZON_DAYS = 14;
+
 /**
  * Tarkista, kannattaisiko suunnitelmaa mukauttaa.
  *
@@ -701,6 +706,14 @@ export async function runReplanCheck({ now = new Date() } = {}) {
     return { proposed: false, changes: 0 };
   }
 
+  // KALENTERI MUKAAN (§42): ilmoitus ei lupaa siirtää tehtäviä päiville,
+  // jotka menot, matkat tai suojattu uni jo täyttävät. Sama kalenteri ja
+  // sama horisontti kuin "Ehdota muutoksia" (actions.proposeReplan), jotta
+  // ilmoituksen luku ja avautuva ehdotus ovat samaa mieltä.
+  const calendar = calendarForPlanning(state, {
+    from: today, to: horizonEnd(today, REPLAN_HORIZON_DAYS), todayIso: today
+  });
+
   const proposal = buildReplanProposal({
     trigger: REPLAN_TRIGGER.MISSED_TASK,
     tasks: state.tasks,
@@ -709,7 +722,10 @@ export async function runReplanCheck({ now = new Date() } = {}) {
     exceptions: state.routineExceptions,
     profile: state.profile,
     todayIso: today,
-    automationLevel: state.automationLevel
+    horizonDays: REPLAN_HORIZON_DAYS,
+    automationLevel: state.automationLevel,
+    events: calendar.events,
+    blocks: calendar.blocks
   });
 
   const changes = (proposal && proposal.changes) ? proposal.changes.length : 0;

@@ -54,6 +54,7 @@ import { normalizeTask } from '../domain/task.js';
 import { normalizeRoutine } from '../domain/routine.js';
 import { normalizeMilestone } from '../domain/milestone.js';
 import { horizonCapacity, horizonEnd } from '../domain/capacity.js';
+import { calendarForPlanning } from './calendarPlan.js';
 import {
   goalsRepo, projectsRepo, milestonesRepo, routinesRepo
 } from '../data/collectionsRepo.js';
@@ -138,13 +139,22 @@ export async function requestPlan({ goalText, goalId = null, fetchImpl } = {}) {
   //
   // Käyttäjän tehtävälista, muistiinpanot ja hyvinvointimerkinnät eivät
   // lähde ulos. Ks. `buildPlanningContext`.
+  //
+  // KALENTERI MUKAAN (§42). Menot, valmistautuminen, matka ja suojattu uni
+  // eivät ole vapaata aikaa: ilman niitä toistuva 9-16 meno näytti viikossa
+  // noin 26 h liikaa suunniteltavaa. Kalenteri samasta paikasta kuin muualla
+  // (calendarPlan.calendarForPlanning). Mallille lähtee edelleen vain luku.
+  const toIso = horizonEnd(todayIso, 28);
+  const calendar = calendarForPlanning(state, { from: todayIso, to: toIso, todayIso });
   const capacity = horizonCapacity({
     tasks: state.tasks,
     profile: state.profile,
     fromIso: todayIso,
-    toIso: horizonEnd(todayIso, 28),
+    toIso,
     routines: state.routines,
-    exceptions: state.routineExceptions
+    exceptions: state.routineExceptions,
+    events: calendar.events,
+    blocks: calendar.blocks
   });
 
   // SUUNNAN PALAUTE. Jos käyttäjä on itse sanonut ehtivänsä viikossa

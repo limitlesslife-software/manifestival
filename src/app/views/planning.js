@@ -38,6 +38,7 @@ import { detectReplanTriggers, describeChange, triggerLabel } from '../../domain
 import { horizonCapacity, horizonEnd, remainingWork } from '../../domain/capacity.js';
 import { summarizeHorizon, planHorizon } from '../../domain/planScheduler.js';
 import { fmtISO, todayMidnight } from '../../lib/datetime.js';
+import { calendarForPlanning } from '../calendarPlan.js';
 import { showError, success } from '../../ui/toast.js';
 import { currentPlanningFeedback, validatePlanAgainstAlignment } from '../alignment.js';
 
@@ -337,13 +338,21 @@ function renderPlanStatus(container, state) {
   const todayIso = fmtISO(todayMidnight());
   const toIso = horizonEnd(todayIso, 14);
 
+  // KALENTERI MUKAAN (§42): menot, valmistautuminen, matka ja suojattu uni
+  // eivät ole suunniteltavaa aikaa. Sama kalenteri kapasiteetille ja
+  // horisontille (calendarPlan.calendarForPlanning), kuten "Ehdota
+  // muutoksia" -ehdotuksessa.
+  const calendar = calendarForPlanning(state, { from: todayIso, to: toIso, todayIso });
+
   const capacity = horizonCapacity({
     tasks: state.tasks,
     profile: state.profile,
     fromIso: todayIso,
     toIso,
     routines: state.routines,
-    exceptions: state.routineExceptions
+    exceptions: state.routineExceptions,
+    events: calendar.events,
+    blocks: calendar.blocks
   });
 
   const remaining = remainingWork(
@@ -357,10 +366,15 @@ function renderPlanStatus(container, state) {
     toIso,
     routines: state.routines,
     exceptions: state.routineExceptions,
-    automationLevel: state.automationLevel
+    automationLevel: state.automationLevel,
+    events: calendar.events,
+    blocks: calendar.blocks
   });
 
   const kuorma = summarizeHorizon(horizon);
+  // Laukaisimet ilman kalenteria tarkoituksella: kalenterin CONFLICT-laukaisin
+  // lupaa uuden kellonajan (proposeSchedule reflow), jota "Ehdota muutoksia"
+  // (päivätason siirto) ei tee. Lupausta ei näytetä ennen kuin se pidetään.
   const triggers = detectReplanTriggers({
     tasks: state.tasks,
     routines: state.routines,
@@ -384,8 +398,9 @@ function renderPlanStatus(container, state) {
       </div>
       <p class="hint">
         Vuorokaudessa ei ole 24 suunniteltavaa tuntia. Luku on
-        valveillaoloaika miinus kiinteät sitoumukset miinus puskuri —
-        eikä puskuri ole hukkaa vaan se, mikä pitää suunnitelman
+        valveillaoloaika miinus kiinteät sitoumukset (kalenterin menot,
+        matkat ja valmistautuminen, suojattu uni ja rauhoittuminen) miinus
+        puskuri — eikä puskuri ole hukkaa vaan se, mikä pitää suunnitelman
         mahdollisena.
       </p>
     </div>
