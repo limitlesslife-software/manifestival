@@ -693,6 +693,19 @@ test('aamukatsaus tallentuu heti; epäonnistuminen palauttaa ruudun tallennettuu
 
 // ================================================================ Arki: ateriat
 
+test('ateriat: lukematon numerosyöte (valmistelu, veden väli) on virhe, ei hiljaa tyhjä', async () => {
+  const { $ } = mount();
+  $('dsMealAdd').click();
+  fill($('dsMealName-0'), 'Lounas');
+  fill($('dsMealTime-0'), '11:30');
+  const prep = $('dsMealPrep-0');
+  prep.validity = { badInput: true };
+  fill(prep, '');
+  $('dsMealSave').click();
+  await flush();
+  assert.deepEqual(currentLifeSettings(getState()).mealRhythm.meals, [], 'ei tallennettu tuntemattomalla valmistelulla');
+});
+
 test('ateriat: ateria, vesi ja lisäravinne tallentuvat; väärä väli on virhe', async () => {
   const { $ } = mount();
   $('dsMealAdd').click();

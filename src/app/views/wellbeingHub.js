@@ -1101,6 +1101,18 @@ function onClick(container, event) {
 
 const STEP_PARTS = Object.freeze({ 'step-from': 'from', 'step-interval': 'interval', 'step-target': 'target' });
 
+/**
+ * Selaimen lukematon numerosyöte (esim. "10-15"): type=number antaa arvoksi
+ * '' ja validity.badInput = true. Ilman merkintää '' olisi hiljaa "ei asetettu".
+ * Merkintä ei ole luku, joten jäsennys antaa kentän virheen; näkyvä kenttä
+ * tyhjenee (numerokenttä hylkää ei-numeerisen arvon).
+ */
+const UNREADABLE_INPUT = 'lukukelvoton';
+
+function fieldText(target) {
+  return target.validity && target.validity.badInput ? UNREADABLE_INPUT : String(target.value ?? '');
+}
+
 /** Näppäily päivittää luonnoksen, ei piirrä: kirjoitus ei katkea. */
 function onFieldInput(event) {
   const target = event.target;
@@ -1109,7 +1121,7 @@ function onFieldInput(event) {
   const draft = form ? drafts[form] : null;
   const field = target.getAttribute('data-field');
   if (!draft || !field) return;
-  const value = target.type === 'checkbox' ? Boolean(target.checked) : String(target.value ?? '');
+  const value = target.type === 'checkbox' ? Boolean(target.checked) : fieldText(target);
   if (STEP_PARTS[field]) {
     const step = draft.steps[Number(target.getAttribute('data-index'))];
     if (step) step[STEP_PARTS[field]] = value;

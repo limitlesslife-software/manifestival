@@ -150,6 +150,20 @@ test('paikan luonti: luvut tallentuvat, tyhjä on null eikä nolla, puuttuva mat
   assert.match(view.q(`[data-place-row="${barber.id}"]`).textContent, /Matka-aika puuttuu — lisää oma arvio/);
 });
 
+test('lukematon numerosyöte ("10-15") on kentän virhe, ei hiljaa tyhjä', async t => {
+  // type=number antaa arvoksi '' ja validity.badInput = true (bugijahti ui-9).
+  const view = mount(t);
+  action(view, 'place-add').click();
+  type(view.byId('plcName'), 'Työ');
+  const travel = view.byId('plcTravel');
+  travel.validity = { badInput: true };
+  type(travel, '');
+  action(view, 'place-save').click();
+  await flush();
+  assert.equal(getState().savedPlaces.length, 0, 'ei tallennettu ilman matka-aikaa');
+  assert.match(view.byId('plcTravelError').textContent, /1–1440/);
+});
+
 test('paikan virheet: nimi pakollinen, rajat, sama nimi toisella paikalla', async t => {
   const view = mount(t);
   await seed(savedPlacesRepo, setSavedPlaces, [{ id: 'p-work', name: 'Työ' }]);

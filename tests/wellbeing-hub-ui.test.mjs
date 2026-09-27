@@ -201,6 +201,19 @@ test('tapasuunnitelma: luonti lomakkeella, vähennysaskel tallentuu, tyhjä kent
     'fokus tallennetun suunnitelman riville');
 });
 
+test('lukematon numerosyöte ("10-15") on kentän virhe, ei hiljaa "ei asetettu"', async t => {
+  const view = mount(t);
+  clickAction(view, 'habit-add');
+  type(view.byId('wbhHabitName'), 'Nikotiinipussit');
+  const interval = view.byId('wbhHabitInterval');
+  interval.validity = { badInput: true };
+  type(interval, '');
+  clickAction(view, 'habit-save');
+  await flush();
+  assert.deepEqual(getState().habitPlans, [], 'ei tallennettu');
+  assert.match(view.byId('wbhHabitIntervalError').textContent, /1–1440/);
+});
+
 test('tapasuunnitelma: virheet kentän alla (role=alert), fokus ensimmäiseen virheeseen, mitään ei tallennu', async t => {
   const view = mount(t);
   clickAction(view, 'habit-add');

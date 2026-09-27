@@ -688,6 +688,18 @@ function onClick(container, event) {
   }
 }
 
+/**
+ * Selaimen lukematon numerosyöte (esim. "10-15"): type=number antaa arvoksi
+ * '' ja validity.badInput = true. Ilman merkintää '' olisi hiljaa "ei asetettu".
+ * Merkintä ei ole luku, joten jäsennys antaa kentän virheen; näkyvä kenttä
+ * tyhjenee (numerokenttä hylkää ei-numeerisen arvon).
+ */
+const UNREADABLE_INPUT = 'lukukelvoton';
+
+function fieldText(target) {
+  return target.validity && target.validity.badInput ? UNREADABLE_INPUT : String(target.value ?? '');
+}
+
 /** Näppäily päivittää luonnoksen, ei piirrä: kirjoitus ei katkea. */
 function onFieldInput(event) {
   const target = event.target;
@@ -696,7 +708,7 @@ function onFieldInput(event) {
   const field = target.getAttribute('data-field');
   const draft = form ? drafts[form] : null;
   if (!draft || !field) return;
-  draft[field] = target.type === 'checkbox' ? Boolean(target.checked) : String(target.value ?? '');
+  draft[field] = target.type === 'checkbox' ? Boolean(target.checked) : fieldText(target);
 }
 
 /** Enter tekstikentässä tallentaa, Escape sulkee lomakkeen. */

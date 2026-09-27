@@ -140,7 +140,12 @@ const timeOf = value => (TIME.test(textOf(value)) ? textOf(value) : null);
 
 function valueIn(root, selector) {
   const node = root && typeof root.querySelector === 'function' ? root.querySelector(selector) : null;
-  return node ? String(node.value ?? '') : '';
+  if (!node) return '';
+  // Selaimen lukematon syöte (esim. "10-15" numerokentässä): '' olisi
+  // hiljaa "ei arvoa". Merkintä ei ole kelvollinen arvo, joten kentän
+  // tarkistus antaa virheen.
+  if (node.validity && node.validity.badInput) return 'lukukelvoton';
+  return String(node.value ?? '');
 }
 
 function checkedIn(root, selector) {
