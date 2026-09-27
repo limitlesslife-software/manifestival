@@ -28,6 +28,7 @@ import {
   setLifeSettings, setHabitPlans, setWellbeingCheckins, setViewDate, setSleepLogs
 } from '../src/app/state.js';
 import { resetDailyLifeActions } from '../src/app/dailyLifeActions.js';
+import { activateAlarmEvents, resetAlarmEvents, handleAlarmEvents } from '../src/app/alarmEvents.js';
 import { departuresOn, morningPlanOn } from '../src/app/dailyLifeModel.js';
 import { renderToday, initTodayNavigation, resolveNowState } from '../src/app/views/today.js';
 import {
@@ -695,13 +696,56 @@ test('aamu ennen ensimmäistä lähtöä: vaiheet ajoitettuna, ei korttia lähd�
   assert.equal(view.byId('todayMorning').innerHTML.trim(), '', 'lähtövalmistelu alkoi: aamukortti poistuu');
 });
 
-test('aamu ei enää mahdu: valinnat ovat painikkeita, mikään ei muutu itsestään eikä asetuksiin', async t => {
+/** Hammaslääkäri klo 8.30: valmistautuminen 7.35, aamurutiini (60 min) 6.35–7.35, herätys 6.35 (25 min tavallista aiemmin). */
+function seedEarlyDentist() {
+  seedDentist({ event: { ...DENTIST_EVENT, startTime: '08:30', endTime: '09:15' } });
+  setLifeSettings([{ id: 'ls1', morningRoutine: ROUTINE }]);
+}
+
+const SHORTFALL = /ei mahdu|puuttuu/;
+
+test('KRIITTINEN: ennen herätystä aamukortti on samaa mieltä herätyksen kanssa eikä väitä vajetta', t => {
+  const view = mount(t, { time: '06:20' });
+  seedEarlyDentist();
+  const text = view.text('todayMorning');
+  assert.match(text, /herätys klo 6\.35/);
+  assert.doesNotMatch(text, SHORTFALL, 'aamu mahtuu herätykseen 6.35: ei "ei mahdu herätyksen 7.00 ..."');
+  assert.match(text, /Herätys on 25 min tavallista aiemmin\./);
+  assert.equal(view.qa('todayMorning', '[data-td-action="morning-choice"]').length, 0, 'mahtuvassa aamussa ei valintoja');
+  assert.equal(view.qa('todayMorning', '[data-td-action="morning-start"]').length, 0, 'ennen herätystä ei "aloitan vasta nyt"');
+});
+
+test('KRIITTINEN: hereillä ja aikataulussa — kortti kertoo, missä vaiheessa ollaan, eikä laske aamua uudelleen tästä hetkestä', t => {
+  const view = mount(t, { time: '06:40' });
+  seedEarlyDentist();
+  const at = (time, step) => {
+    view.at(time);
+    const text = view.text('todayMorning');
+    assert.doesNotMatch(text, SHORTFALL, `${time}: aikataulussa oleva ei ole myöhässä`);
+    assert.ok(text.includes(`Nyt suunnitelman mukaan: ${step}.`), `${time}: ${text}`);
+    assert.equal(view.qa('todayMorning', '[data-td-action="morning-choice"]').length, 0, `${time}: ei valintoja`);
+    const current = view.qa('todayMorning', '.td-steps li[aria-current="step"]');
+    assert.equal(current.length, 1, `${time}: nykyinen vaihe merkitty`);
+  };
+  at('06:40', 'Suihku (6.35–6.50)');
+  at('07:00', 'Aamiainen (6.50–7.10)');
+  at('07:34', 'Lehti (7.10–7.35)');
+  view.at('06:36');
+  assert.equal(view.q('todayMorning', '[data-td-action="morning-start"]').textContent.trim(), 'Aloitan aamun vasta nyt');
+});
+
+test('aamu ei enää mahdu, kun aloitit myöhässä: valinnat ovat painikkeita, mikään ei muutu itsestään eikä asetuksiin', async t => {
   const view = mount(t, { time: '07:30' });
   seedDentist();
   setLifeSettings([{ id: 'ls1', morningRoutine: ROUTINE }]);
   const settingsBefore = JSON.stringify(getState().lifeSettings);
+  // 7.30 on suunnitelman mukaan aamiaisen aikaa: pelkkä kellonaika ei kerro myöhästymistä.
+  assert.doesNotMatch(view.text('todayMorning'), SHORTFALL);
+  assert.match(view.text('todayMorning'), /Nyt suunnitelman mukaan: Aamiainen \(7\.20–7\.40\)\./);
+  view.q('todayMorning', '[data-td-action="morning-start"]').click();
+  await flush();
   const text = view.text('todayMorning');
-  assert.match(text, /Aamu ei enää mahdu: aikaa puuttuu 25 min/);
+  assert.match(text, /Aloitit aamun klo 7\.30: aikaa puuttuu 25 min\. Valitse, mitä jätät pois tai lyhennät\./);
   const choices = view.qa('todayMorning', '[data-td-action="morning-choice"]');
   const labels = choices.map(button => button.textContent.trim());
   assert.ok(labels.includes('Jätä pois: Lehti (25 min)'), labels.join(' | '));
@@ -721,6 +765,41 @@ test('aamu ei enää mahdu: valinnat ovat painikkeita, mikään ei muutu itsest�
   view.q('todayMorning', '[data-td-action="morning-undo"]').click();
   await flush();
   assert.ok(view.q('todayMorning', '[data-td-action="morning-choice"]'), 'valinta peruttu: vaihtoehdot palaavat');
+
+  view.q('todayMorning', '[data-td-action="morning-start-undo"]').click();
+  await flush();
+  assert.doesNotMatch(view.text('todayMorning'), SHORTFALL, 'aloitus peruttu: takaisin suunnitelmaan');
+  assert.equal(view.qa('todayMorning', '[data-td-action="morning-choice"]').length, 0);
+  assert.equal(JSON.stringify(getState().lifeSettings), settingsBefore, 'asetukset eivät muutu');
+});
+
+test('herätyksen kuittaus tai kirjattu herätys kertoo myöhäisen alun; ajoissa kuitattu ei ole vaje', async t => {
+  const view = mount(t, { time: '06:55' });
+  seedEarlyDentist();
+  activateAlarmEvents(USER.id);
+  t.after(() => resetAlarmEvents());
+  assert.doesNotMatch(view.text('todayMorning'), SHORTFALL, 'ilman tietoa heräämisestä ei arvata');
+
+  // Herätys kuitattiin ennen aamurutiinin alkua (6.35): aikataulussa.
+  await handleAlarmEvents([{ type: 'dismissed', id: `wake:${MON}`, atMs: localMs(MON, '06:30') }]);
+  view.at('06:55');
+  assert.doesNotMatch(view.text('todayMorning'), SHORTFALL);
+
+  // Unikirjauksen herätys 6.50 (käyttäjän oma tieto) voittaa: 15 min myöhässä.
+  setSleepLogs([{ id: 'sl1', wakeDate: MON, actualBedtime: '22:30', actualWake: '06:50' }]);
+  view.at('06:55');
+  const logged = view.text('todayMorning');
+  assert.match(logged, /Heräsit klo 6\.50: aikaa puuttuu 15 min\. Valitse, mitä jätät pois tai lyhennät\./);
+  assert.ok(view.qa('todayMorning', '[data-td-action="morning-choice"]').length > 0);
+  assert.ok(view.qa('todayMorning', '[data-td-action="morning-choice"]').every(button => !/Herää/.test(button.textContent)));
+  setSleepLogs([]);
+
+  // Herätys kuitattiin vasta 6.50 (torkut): sama vaje.
+  resetAlarmEvents();
+  activateAlarmEvents(USER.id);
+  await handleAlarmEvents([{ type: 'acknowledged', id: `wake:${MON}`, atMs: localMs(MON, '06:50') }]);
+  view.at('06:56');
+  assert.match(view.text('todayMorning'), /Herätys kuitattiin klo 6\.50: aikaa puuttuu 15 min\./);
 });
 
 test('aamukortti puuttuu, kun aamussa ei ole menoa', t => {

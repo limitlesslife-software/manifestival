@@ -190,6 +190,37 @@ test('KRIITTINEN: kiinteä 6.30 ja aamu vaatisi 6.20 — kaikki kertovat 6.30 ja
   assert.match(tomorrow, /Iltarauhoittuminen klo 22\.00/);
   assert.match(tomorrow, /Nukkumaanmeno klo 22\.30/);
   assert.ok(tomorrow.includes(note), tomorrow);
+
+  // Keskiviikkoaamu ennen herätystä: aamukortti kertoo saman herätyksen ja varoituksen.
+  view.at('06:10', WED);
+  const morning = view.text('todayMorning');
+  assert.match(morning, /herätys klo 6\.30/);
+  assert.ok(morning.includes(note), morning);
+  assert.match(morning, /aikaista herätystä asetuksista \(Profiili → Arki\)/);
+  const labels = view.qa('todayMorning', '[data-td-action="morning-choice"]').map(button => button.textContent.trim());
+  assert.ok(labels.includes('Lyhennä: Aamiainen 30 min → 20 min'), labels.join(' | '));
+  assert.ok(labels.every(label => !/Herää/.test(label)), 'kiinteää herätystä ei "aikaisteta" näkymän napilla');
+
+  // Valinta mahduttaa aamun kiinteään herätykseen; herätys ei muutu.
+  view.qa('todayMorning', '[data-td-action="morning-choice"]').find(button => button.textContent.includes('Lyhennä')).click();
+  await flush();
+  const chosen = view.text('todayMorning');
+  assert.match(chosen, /Valinnalla aamu mahtuu\./);
+  assert.match(chosen, /herätys klo 6\.30/);
+  assert.equal(wakeAlarm(localDate(WED, '06:10')).time, '06:30', 'näkymän valinta ei siirrä laitteen herätystä');
+});
+
+test('KRIITTINEN: kiinteä herätys, aamu mahtuu — aamukortti ei väitä vajetta ennen herätystä eikä hereillä', t => {
+  const view = mount(t, WED, '05:50');
+  seed({ enabled: true, followPlan: false, weekdayTime: '06:00' });
+  for (const time of ['05:50', '06:05', '06:45', '07:00']) {
+    view.at(time, WED);
+    const text = view.text('todayMorning');
+    assert.match(text, /herätys klo 6\.00/, time);
+    assert.doesNotMatch(text, /ei mahdu|puuttuu|vaatisi/, `${time}: ${text}`);
+  }
+  view.at('06:05', WED);
+  assert.match(view.text('todayMorning'), /Aamurutiini alkaa klo 6\.20\./, 'väljyys ennen rutiinia kerrotaan');
 });
 
 // ================================================================ kiinteä herätys aiempana kuin aamu vaatii

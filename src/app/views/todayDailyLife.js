@@ -69,7 +69,9 @@ import { REPLAN_CHANGE } from '../../domain/dayReplan.js';
 import { INTERRUPTION_KIND } from '../../domain/interruptions.js';
 import { buildNavigationTarget, googleMapsUrl, isAllowedNavigationUrl } from '../../domain/navigationLink.js';
 import { foldPlaceText, MIN_ALIAS_CONFIRMATIONS } from '../../domain/places.js';
-import { isoWeekday, clockText, durationText } from '../../domain/wallClock.js';
+import { isoWeekday, clockText, durationText, epochToWallClock } from '../../domain/wallClock.js';
+import { ackIndex } from '../../domain/notificationAck.js';
+import { currentAckLog } from '../alarmEvents.js';
 import { toMinutes, fromMinutes, isTimeOfDay, durationOf } from '../../domain/task.js';
 import { escapeHtml } from '../../lib/format.js';
 import { logEvent } from '../../lib/logger.js';
@@ -701,68 +703,187 @@ function stepsWithChoice(steps, choice) {
   return null;
 }
 
+/** Mistä tiedetään, milloin tämä aamu alkoi (morningStartOf). */
+export const MORNING_START = Object.freeze({
+  /** Käyttäjä painoi "Aloitan aamun vasta nyt". */
+  SELF: 'self',
+  /** Unikirjauksen herätysaika (actualWake) tälle päivälle. */
+  LOG: 'log',
+  /** Laitteen herätys kuitattiin tai hylättiin (kuittausmuisti, wake:<päivä>). */
+  ALARM: 'alarm'
+});
+
+/** Laitteen herätyksen kuittaus- tai hylkäyshetki tänään (minuutit keskiyöstä) tai null. */
+function alarmStopMinutes(todayIso) {
+  const entry = safe(() => ackIndex(currentAckLog()).get(`wake:${todayIso}`) || null, null);
+  if (!entry) return null;
+  const times = [entry.acknowledgedAt, entry.dismissedAt].filter(value => Number.isFinite(value));
+  if (times.length === 0) return null;
+  const wall = safe(() => epochToWallClock(Math.min(...times), deviceOffsetMinutes), null);
+  return wall && wall.date === todayIso ? toMinutes(wall.time) : null;
+}
+
+/** Tämän päivän uusin unikirjaus, jossa on herätysaika. */
+function wakeLogOf(state, todayIso) {
+  let best = null;
+  for (const log of Array.isArray(state && state.sleepLogs) ? state.sleepLogs : EMPTY) {
+    if (!log || log.wakeDate !== todayIso || !isTimeOfDay(log.actualWake)) continue;
+    if (!best || String(log.updatedAt || '') > String(best.updatedAt || '')) best = log;
+  }
+  return best;
+}
+
+/**
+ * Tämän aamun TIEDETTY alku {minutes, source} tai null.
+ *
+ * Järjestys: käyttäjän oma "Aloitan aamun vasta nyt", unikirjauksen
+ * herätysaika, laitteen herätyksen kuittaus. Tulevaisuuden hetki ei ole
+ * alku. Pelkkä kellonaika EI ole alku: hereillä oleva voi olla
+ * aikataulussa, joten kortti ei laske aamua uudelleen nykyhetkestä.
+ * Unitietoa käytetään vain tässä näkymässä, ei lokiin.
+ *
+ * @param {object} state
+ * @param {{todayIso:string, nowMinutes:number}} clockNow
+ * @param {{todayIso:string, time:string}|null} [statement] näkymän luonnos
+ */
+export function morningStartOf(state, clockNow, statement = null) {
+  const today = clockNow.todayIso;
+  const past = minutes => Number.isInteger(minutes) && minutes >= 0 && minutes <= clockNow.nowMinutes;
+  if (statement && statement.todayIso === today && isTimeOfDay(statement.time) && past(toMinutes(statement.time))) {
+    return { minutes: toMinutes(statement.time), source: MORNING_START.SELF };
+  }
+  const log = wakeLogOf(state, today);
+  if (log && past(toMinutes(log.actualWake))) return { minutes: toMinutes(log.actualWake), source: MORNING_START.LOG };
+  const stopped = alarmStopMinutes(today);
+  if (past(stopped)) return { minutes: stopped, source: MORNING_START.ALARM };
+  return null;
+}
+
+const START_LEAD = Object.freeze({
+  [MORNING_START.SELF]: 'Aloitit aamun',
+  [MORNING_START.LOG]: 'Heräsit',
+  [MORNING_START.ALARM]: 'Herätys kuitattiin'
+});
+
+/** Suunnitelman vaihe, joka on menossa nyt (tai null), ja rutiinin alku. */
+function stepNow(plan, clockNow) {
+  const today = clockNow.todayIso;
+  const minutesOf = (date, time) => (date === today ? toMinutes(time) : (date < today ? -1 : Infinity));
+  const steps = plan && Array.isArray(plan.steps) ? plan.steps : EMPTY;
+  for (const step of steps) {
+    const start = minutesOf(step.startDate, step.start);
+    const end = minutesOf(step.endDate, step.end);
+    if (start <= clockNow.nowMinutes && clockNow.nowMinutes < end) return { step, before: false };
+  }
+  const first = steps[0];
+  return first && minutesOf(first.startDate, first.start) > clockNow.nowMinutes ? { step: first, before: true } : null;
+}
+
 /**
  * Aamun suunnitelma ja valinnat.
  *
- * Jos suunniteltu herätys on jo mennyt, aikaisin mahdollinen herätys on
- * nyt: silloin näytetään, mahtuuko aamu vielä, ja valinnoista puuttuu
- * "herää aiemmin". Jos aamu vaatii tavallista aiemman herätyksen,
- * valinnat kertovat, mitä voisi jättää pois sen sijaan.
+ * EI VÄÄRÄÄ VAJETTA. Aamu "ei mahdu" vain, kun se todella ei mahdu:
+ *   - herätys ei riitä aamulle: "Kiinteä aika" tai kirjatun nukkumaanmenon
+ *     suojaama uni (sama suunnitelma kuin laitteen herätyksellä,
+ *     calendarPlan.morningFor), tai
+ *   - aamu alkoi tiedetysti myöhässä (morningStartOf: "Aloitan aamun vasta
+ *     nyt", unikirjauksen herätys tai herätyksen kuittaus rutiinin
+ *     suunnitellun alun jälkeen).
+ * Hereillä olevalle kortti kertoo, missä vaiheessa suunnitelman mukaan
+ * ollaan; se EI laske koko rutiinia uudelleen tästä minuutista (se väitti
+ * vajetta aikataulussa olevalle). Ennen herätystä kortti on samaa mieltä
+ * herätyksen kanssa: tavallista aiemmin alkava aamu ei ole vaje.
+ *
+ * Valinnat (jätä pois, lyhennä) koskevat vain tätä aamua. "Herää aiemmin"
+ * ei ole näkymän painike: näkymä ei siirrä herätystä, joten se kerrotaan
+ * sanoin (kiinteä herätys -> asetukset).
+ *
+ * @param {object} model modelFor
+ * @param {{todayIso:string, nowMinutes:number}} clockNow
+ * @param {string|null} [choiceId] valittu valinta
+ * @param {{minutes:number, source:string}|null} [start] morningStartOf
  */
-export function morningView(model, clockNow, choiceId = null) {
-  const base = model.morning(clockNow.todayIso);
+export function morningView(model, clockNow, choiceId = null, start = null) {
+  const today = clockNow.todayIso;
+  const base = model.morning(today);
   if (!base || !base.commitment || !isTimeOfDay(base.anchorTime)) return null;
   const anchorMinutes = toMinutes(base.anchorTime);
   if (anchorMinutes >= MORNING_CARD_BEFORE_MINUTES || clockNow.nowMinutes >= anchorMinutes) return null;
 
-  const awake = base.wakeDate === clockNow.todayIso && clockNow.nowMinutes > toMinutes(base.wakeTime);
-  let limit = null;
-  if (awake) limit = fromMinutes(clockNow.nowMinutes);
-  else if (base.earlierThanUsualMinutes > 0) limit = base.usualWakeTime;
-  const limited = limit ? model.morning(clockNow.todayIso, { wakeTimeLimit: limit }) : null;
-  const choices = limited && !limited.fits
-    ? limited.choices.filter(choice => !(awake && choice.kind === CHOICE_KIND.WAKE_EARLIER))
-    : [];
+  const known = start && Number.isInteger(start.minutes) && start.minutes <= clockNow.nowMinutes ? start : null;
+  const awake = Boolean(known) || (base.wakeDate === today && clockNow.nowMinutes > toMinutes(base.wakeTime));
+  // Tiedetty alku rajaa aamun: sama polku kuin herätyksellä, alku korvaa
+  // herätyksen rajan (calendarPlan.morningFor).
+  const limit = known ? fromMinutes(known.minutes) : null;
+  const limited = limit ? model.morning(today, { wakeTimeLimit: limit }) : null;
+  const current = limited || base;
+  const choices = current.fits ? [] : current.choices.filter(choice => choice.kind !== CHOICE_KIND.WAKE_EARLIER);
   const chosen = choiceId ? choices.find(choice => choice.id === choiceId) || null : null;
 
-  // Näytettävä suunnitelma: hereillä ollessa rajattu (mahtuuko vielä),
-  // muuten perussuunnitelma; valinta lasketaan samalla rajalla uudelleen.
-  let plan = awake && limited ? limited : base;
+  let plan = current;
   let emptied = false;
   if (chosen) {
     const steps = stepsWithChoice(routineStepsOf(model.state), chosen);
     if (steps && steps.length === 0) emptied = true;
-    else if (steps) plan = model.morning(clockNow.todayIso, { wakeTimeLimit: limit, steps }) || plan;
-    else plan = base;
+    else if (steps) plan = model.morning(today, { wakeTimeLimit: limit, steps }) || plan;
   }
-  // Hereillä oleva on jo herännyt: herätykseksi ei näytetä nykyhetkeä.
-  const wakeTime = awake ? base.wakeTime : plan.wakeTime;
-  return { base, limited, plan, choices, chosen, awake, emptied, wakeTime };
+  // Herätys on suunniteltu (laitteen) herätys, ei nykyhetki eikä valinta.
+  const wakeTime = base.wakeTime;
+  const position = awake && !emptied && plan.fits ? stepNow(plan, clockNow) : null;
+  // Kiinteän herätyksen varoitus samasta laskennasta kuin Huominen-kortissa
+  // ja illan ennakossa (vain kun perusaamu ei mahdu herätykseen).
+  const sleepPlan = !known && !current.fits && typeof model.sleepPlan === 'function' ? model.sleepPlan(today) : null;
+  const alarmNote = sleepPlan ? sleepPlan.alarmNote : null;
+  return { base, limited, current, plan, choices, chosen, awake, emptied, wakeTime, known, position, alarmNote };
+}
+
+/** Kortin tilarivi: vaje vain, kun se on todellinen (ks. morningView). */
+function morningStatus(view) {
+  const { plan, current, chosen, emptied, known, choices, alarmNote } = view;
+  if (chosen) {
+    return plan.fits || emptied
+      ? 'Valinnalla aamu mahtuu.'
+      : `Valinnalla aamu ei vielä mahdu: aikaa puuttuu ${durationText(plan.shortfallMinutes)}.`;
+  }
+  const pick = choices.length > 0
+    ? 'Valitse, mitä jätät pois tai lyhennät.'
+    : 'Kaikki aamun vaiheet ovat pakollisia tai suojattuja, joten niitä ei ehdoteta pois.';
+  if (!current.fits && known) {
+    return `${START_LEAD[known.source] || 'Aloitit aamun'} ${clock(fromMinutes(known.minutes))}:`
+      + ` aikaa puuttuu ${durationText(current.shortfallMinutes)}. ${pick}`;
+  }
+  if (!current.fits && alarmNote) {
+    return choices.length > 0
+      ? `${alarmNote} Valitse, mitä jätät pois tai lyhennät, tai aikaista herätystä asetuksista (Profiili → Arki).`
+      : `${alarmNote} Voit aikaistaa herätystä asetuksista (Profiili → Arki).`;
+  }
+  if (!current.fits) return current.explanation || '';
+  if (known && known.source === MORNING_START.SELF) {
+    return `Aloitit aamun ${clock(fromMinutes(known.minutes))}: aamu mahtuu vielä.`;
+  }
+  return '';
 }
 
 function morningCard(model, clockNow) {
   const current = uiState();
   const choiceId = current.morningChoice && current.morningChoice.todayIso === clockNow.todayIso
     ? current.morningChoice.choiceId : null;
-  const view = morningView(model, clockNow, choiceId);
+  const start = morningStartOf(model.state, clockNow, current.morningStart);
+  const view = morningView(model, clockNow, choiceId, start);
   if (!view) return '';
-  const { plan, choices, chosen, awake, emptied, limited, wakeTime } = view;
+  const { plan, choices, chosen, awake, emptied, wakeTime, known, position } = view;
   const commitment = plan.commitment || view.base.commitment;
   const leave = plan.leaveTime ? ` · lähtö ${clock(plan.leaveTime)}` : '';
+  const nowStep = position && !position.before ? position.step : null;
   const steps = emptied ? '' : plan.steps.map(step => `
-    <li><span class="td-step-time">${escapeHtml(`${clockText(step.start)}–${clockText(step.end)}`)}</span>
+    <li${step === nowStep ? ' aria-current="step"' : ''}><span class="td-step-time">${escapeHtml(`${clockText(step.start)}–${clockText(step.end)}`)}</span>
       ${escapeHtml(step.name)} <span class="td-tag">${escapeHtml(protectionLabel(step.protection))}</span></li>`).join('');
-  let status = '';
-  if (chosen) {
-    status = plan.fits || emptied
-      ? 'Valinnalla aamu mahtuu.'
-      : `Valinnalla aamu ei vielä mahdu: aikaa puuttuu ${durationText(plan.shortfallMinutes)}.`;
-  } else if (limited && !limited.fits) {
-    status = awake
-      ? `Aamu ei enää mahdu: aikaa puuttuu ${durationText(limited.shortfallMinutes)}. Valitse, mitä jätät pois tai lyhennät.`
-      : limited.explanation;
-  }
+  const status = morningStatus(view);
   const shortfall = status ? `<p class="td-note">${escapeHtml(status)}</p>` : '';
+  let where = '';
+  if (position && position.before) where = `Aamurutiini alkaa ${clock(position.step.start)}.`;
+  else if (position) where = `Nyt suunnitelman mukaan: ${position.step.name} (${clockText(position.step.start)}–${clockText(position.step.end)}).`;
+  const whereHtml = where ? `<p class="td-note">${escapeHtml(where)}</p>` : '';
   const choiceHtml = choices.length > 0 ? `
     <div class="assist-actions td-choices" role="group" aria-label="Aamun valinnat">
       ${choices.map(choice => `<button type="button" class="assist-btn" data-td-action="morning-choice"
@@ -772,6 +893,14 @@ function morningCard(model, clockNow) {
     <p class="td-note" role="status">Valintasi tälle aamulle: ${escapeHtml(String(chosen.label).replace(/\.\s*$/u, ''))}. Asetuksesi eivät muutu.</p>
     ${emptied ? '<p class="hint">Aamurutiini jää tältä aamulta pois.</p>' : ''}
     <div class="assist-actions"><button type="button" class="assist-btn" data-td-action="morning-undo">Peru valinta</button></div>` : '';
+  // Myöhäinen alku on käyttäjän oma tieto: vain hereillä, ja sen voi perua.
+  const selfStart = known && known.source === MORNING_START.SELF;
+  let startHtml = '';
+  if (selfStart && !chosen) {
+    startHtml = '<div class="assist-actions"><button type="button" class="assist-btn" data-td-action="morning-start-undo">Peru: aloitin ajallaan</button></div>';
+  } else if (awake && !selfStart && !chosen) {
+    startHtml = '<div class="assist-actions"><button type="button" class="assist-btn" data-td-action="morning-start">Aloitan aamun vasta nyt</button></div>';
+  }
   return `
     <section class="td-card" aria-labelledby="tdMorningTitle">
       <h2 class="section-title" id="tdMorningTitle" tabindex="-1">Aamu</h2>
@@ -779,8 +908,10 @@ function morningCard(model, clockNow) {
         <div class="assist-title">${escapeHtml(commitment ? commitment.title || 'Meno' : 'Meno')}</div>
         <div class="assist-meta">alkaa ${escapeHtml(clock(commitment ? commitment.startTime : null))}${escapeHtml(leave)} · herätys ${escapeHtml(clock(wakeTime))}</div>
         ${steps ? `<ol class="td-steps">${steps}</ol>` : ''}
+        ${whereHtml}
         ${shortfall || `<p class="hint">${escapeHtml(plan.explanation || '')}</p>`}
         ${chosen ? chosenHtml : choiceHtml}
+        ${startHtml}
       </div>
     </section>`;
 }
@@ -1265,6 +1396,29 @@ function undoMorning() {
   focusById('tdMorningTitle');
 }
 
+/**
+ * "Aloitan aamun vasta nyt": aamu lasketaan tästä hetkestä, valinnat näkyvät,
+ * jos se ei mahdu. Luonnos `ui.morningStart` {todayIso, time} on vain tämän
+ * aamun näkymätieto (ei tilaa, ei asetuksia); freshUi ei sitä tunne, joten
+ * istunnon vaihtuessa se unohtuu muiden luonnosten mukana.
+ */
+function startMorningNow() {
+  const current = uiState();
+  const clockNow = clockOf(new Date());
+  current.morningStart = { todayIso: clockNow.todayIso, time: fromMinutes(clockNow.nowMinutes) };
+  current.morningChoice = null;
+  rerender();
+  focusById('tdMorningTitle');
+}
+
+function undoMorningStart() {
+  const current = uiState();
+  current.morningStart = null;
+  current.morningChoice = null;
+  rerender();
+  focusById('tdMorningTitle');
+}
+
 const ACTIONS = Object.freeze({
   departed: button => recordDeparted(button),
   arrived: button => recordArrived(button),
@@ -1272,6 +1426,8 @@ const ACTIONS = Object.freeze({
   habit: button => recordHabit(button),
   'morning-choice': chooseMorning,
   'morning-undo': undoMorning,
+  'morning-start': startMorningNow,
+  'morning-start-undo': undoMorningStart,
   interrupt: startInterruption,
   minutes: chooseMinutes,
   'replan-apply': button => applyReplanClick(button),
