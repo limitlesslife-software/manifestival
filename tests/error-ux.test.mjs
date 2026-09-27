@@ -566,6 +566,25 @@ test('ERR-18: istunnon takia pysähtynyt jono pyytää kirjautumaan', () => {
   assert.doesNotMatch(plain.text, /Kirjaudu/);
 });
 
+test('arjen lähtökori näkyy samalla rivillä: odottava ei ole vahvistettu, hylätty ei vaikene', () => {
+  const empty = { total: 0, pending: 0, syncing: 0, failed: 0, conflict: 0, needsReview: 0, persistent: true, replaying: false };
+  const daily = (pending, failed, active = true) => ({ pending, failed, total: pending + failed, persistent: true, active });
+  assert.equal(describeSyncLine(empty, [], { online: true, dailyLife: daily(0, 0) }).text, '');
+  assert.deepEqual(describeSyncLine(empty, [], { online: false, dailyLife: daily(2, 0) }),
+    { text: 'Offline · 2 arjen muutosta laitteella', tone: 'warn', needsReview: false });
+  assert.equal(describeSyncLine(empty, [], { online: true, dailyLife: daily(1, 0) }).text, '1 arjen muutos odottaa lähetystä');
+  const failed = describeSyncLine(empty, [], { online: true, dailyLife: daily(0, 1) });
+  assert.equal(failed.tone, 'error');
+  assert.match(failed.text, /ei lähtenyt palvelimelle/);
+  // Uloskirjautuneen kori ei näy seuraavalle.
+  assert.equal(describeSyncLine(empty, [], { online: true, dailyLife: daily(3, 0, false) }).text, '');
+  // Tehtäväjonon kanssa: molemmat samalla rivillä, vakavampi sävy voittaa.
+  const tasks = { ...empty, total: 1, pending: 1 };
+  const both = describeSyncLine(tasks, [], { online: true, dailyLife: daily(0, 1) });
+  assert.match(both.text, / · 1 arjen muutos ei lähtenyt palvelimelle$/);
+  assert.equal(both.tone, 'error');
+});
+
 // =========================================================== ERR-19
 
 function writerWith({ outbox = [], persistent = true }) {

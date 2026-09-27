@@ -14,6 +14,7 @@ import { showError } from '../ui/toast.js';
 import { describeQueueStatus, OP_STATUS } from '../domain/offlineQueue.js';
 import { offline, subscribeSyncStatus, isOnlineNow } from './offline.js';
 import { SCHEMA_PENDING_CODE, SCHEMA_PENDING_NOTE } from './offlineSync.js';
+import { dailyLifeOutboxStatus, subscribeDailyLifeOutbox } from './dailyLifeOutbox.js';
 
 const FIELD_LABELS = Object.freeze({
   title: 'otsikko', date: 'päivä', time: 'kellonaika', endTime: 'päättymisaika', category: 'elämänalue',
@@ -82,7 +83,35 @@ export function failedReason(code) {
  * @param {Array<{status:string,lastErrorCode:string|null}>} items offline.list()
  * @param {{online:boolean}} context
  */
-export function describeSyncLine(status, items = [], { online = true } = {}) {
+export function describeSyncLine(status, items = [], { online = true, dailyLife = null } = {}) {
+  return withDailyLife(taskQueueLine(status, items, { online }), dailyLife, online);
+}
+
+const muutosta = count => (count === 1 ? '1 arjen muutos' : `${count} arjen muutosta`);
+
+/**
+ * Arjen lähtökori (menot ja tapakirjaukset, dailyLifeOutbox.js) samalle
+ * riville. Odottava muutos ei ole palvelimen vahvistama, ja rivi sanoo sen;
+ * hylätty jää laitteelle, eikä sitä vaieta.
+ */
+function withDailyLife(view, dailyLife, online) {
+  if (!dailyLife || dailyLife.active !== true) return view;
+  let text = '';
+  let tone = 'none';
+  if (dailyLife.failed > 0) {
+    text = `${muutosta(dailyLife.failed)} ei lähtenyt palvelimelle`;
+    tone = 'error';
+  } else if (dailyLife.pending > 0) {
+    text = online ? `${muutosta(dailyLife.pending)} odottaa lähetystä` : `Offline · ${muutosta(dailyLife.pending)} laitteella`;
+    tone = online ? 'info' : 'warn';
+  }
+  if (!text) return view;
+  if (!view.text) return { ...view, text, tone };
+  const rank = { none: 0, info: 1, warn: 2, error: 3 };
+  return { ...view, text: `${view.text} · ${text}`, tone: (rank[tone] || 0) > (rank[view.tone] || 0) ? tone : view.tone };
+}
+
+function taskQueueLine(status, items, { online }) {
   const view = describeQueueStatus(status, { online, replaying: status.replaying });
   const pending = code => (items || []).some(item =>
     item.status === OP_STATUS.PENDING && item.lastErrorCode === code);
@@ -100,7 +129,9 @@ function render(status) {
 
   let items = [];
   try { items = offline.list(); } catch { /* tilarivi ei kaada jonoa */ }
-  const view = describeSyncLine(status, items, { online: isOnlineNow() });
+  let dailyLife = null;
+  try { dailyLife = dailyLifeOutboxStatus(); } catch { /* tilarivi ei kaada jonoa */ }
+  const view = describeSyncLine(status, items, { online: isOnlineNow(), dailyLife });
   const key = `${view.text}|${view.tone}|${view.needsReview}`;
   if (key === lastText) return;
   lastText = key;
@@ -186,6 +217,8 @@ async function reviewProblems() {
 /** Kytke tilarivi. Kutsutaan kerran käynnistyksessä. */
 export function initOfflineStatus() {
   subscribeSyncStatus(render);
+  // Arjen korin muutos (tallennus jäi laitteelle, lähti tai hylättiin).
+  subscribeDailyLifeOutbox(() => refreshSyncStatus());
   const node = maybe('syncStatus');
   if (node) node.addEventListener('click', reviewProblems);
 }

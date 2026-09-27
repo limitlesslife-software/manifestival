@@ -38,11 +38,30 @@ let outbox = emptyOutbox(null);
 let persistent = true;
 let replaying = null;
 let queuedNoticeAt = 0;
+const listeners = new Set();
+
+/**
+ * Kuuntele korin muutoksia (synkronoinnin tilarivi, offlineStatus.js).
+ * Palauttaa peruutusfunktion. Kuuntelijan virhe ei kaada koria.
+ */
+export function subscribeDailyLifeOutbox(fn) {
+  if (typeof fn !== 'function') return () => {};
+  listeners.add(fn);
+  return () => { listeners.delete(fn); };
+}
+
+function changed() {
+  const status = dailyLifeOutboxStatus();
+  for (const fn of listeners) {
+    try { fn(status); } catch { /* tilarivi ei kaada koria */ }
+  }
+}
 
 function save() {
   if (!activeUserId) return;
   const result = saveOutboxText(activeUserId, serializeOutbox(outbox));
   persistent = result.persistent;
+  changed();
 }
 
 /** Kirjautuminen: käyttäjän oma kori laitteelta muistiin. */
@@ -50,6 +69,7 @@ export function activateDailyLifeOutbox(userId) {
   activeUserId = typeof userId === 'string' && userId ? userId : null;
   const { outbox: loaded } = parseOutbox(activeUserId ? loadOutboxText(activeUserId) : null, { userId: activeUserId });
   outbox = loaded;
+  changed();
 }
 
 /**
@@ -60,6 +80,7 @@ export function deactivateDailyLifeOutbox() {
   activeUserId = null;
   outbox = emptyOutbox(null);
   replaying = null;
+  changed();
 }
 
 export function dailyLifeOutboxStatus() {
