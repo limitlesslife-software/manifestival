@@ -8,8 +8,8 @@ mikä on valmis, mikä odottaa ja miksi. Korvaa vanhan `docs/ROADMAP.md`:n
 tilataulukon (1.9.2026).
 
 **Tuotanto:** aalto F (2c8e230, välimuisti v19), kanta 0001–0009. Kaikki alla
-oleva, mikä on migraatioiden 0010–0014 takana, on paikallisesti valmista mutta
-tulee käyttöön vasta, kun omistaja aktivoi aallot G → H → I → J → K järjestyksessä
+oleva, mikä on migraatioiden 0010–0015 takana, on paikallisesti valmista mutta
+tulee käyttöön vasta, kun omistaja aktivoi aallot G → H → I → J → K → L järjestyksessä
 (ks. `docs/SUUNTA-FAST-ACTIVATION.md` ja `docs/acceptance/WAVE-K.md`).
 "COMPLETE_LOCAL" ei siis tarkoita "tuotannossa".
 
@@ -101,4 +101,14 @@ PERSONAL_USE_P1 (ensimmäiset viikot), **P2** = PERSONAL_USE_P2, **CL** = COMMER
 | Kaupallinen | Yrittäjätila | CL | FUTURE_COMMERCIAL | — | — |
 | Kaupallinen | Maksulliset oikeudet | CL | FUTURE_COMMERCIAL | — | — |
 | Kaupallinen | Sovelluskauppavalmius | CL | BLOCKED_PRODUCT_DECISION | — | julkaisutili ja tietosuojaseloste |
+| Mielen kuorma | Yksi prioriteetti- ja kuormamoottori (NOW ≤ 3, tällä viikolla, myöhemmin, ei vielä, odottaa, arkisto) | P0 | COMPLETE_LOCAL | L | `domain/lifeLoad.js`, `app/lifeLoadModel.js`; Tänään, Tallessa, avustaja, suunnittelija ja muistutusten kuorma käyttävät samaa tulosta (`tests/mental-load-core.test.mjs`) |
+| Mielen kuorma | Rauhallinen tänään: fokus ≤ 3, "Kaikki muu on tallessa (N)", kiinteät ja suojattu aika erikseen | P0 | COMPLETE_LOCAL | L | `views/today.js`; E2E `npm run e2e:mental-load` |
+| Mielen kuorma | Brain Dump: monirivinen kirjaus, erä-käsittely, puhe ja komentopalkki saapuviin | P0 | COMPLETE_LOCAL | L | `domain/triage.js`, `app/capture.js`, `views/inbox.js` (`tests/brain-dump.test.mjs`) |
+| Mielen kuorma | Päivätön tehtävä, odottaa jotakuta, arkisto (Tallessa-näkymä) | P0 | COMPLETE_LOCAL | L | 0015 tasks-sarakkeet; `views/stored.js`; ennen 0015:tä päivätöntä ei tallenneta (selkeä syy, ei keksittyä päivää) |
+| Mielen kuorma | Kapasiteettijarru (uni, menot, matka, suojattu aika, loma, puskuri, unen vaje, vähimmäisvapaa-aika) | P0 | COMPLETE_LOCAL | L | `app/capacityBrake.js`; siirrot tarkistavat kohteen tilan (`tests/mental-load-l0.test.mjs`) |
+| Mielen kuorma | Suojattu oma aika, vapaa-ajan säännöt ja loma | P0 | COMPLETE_LOCAL | L | `domain/protectedTime.js`, Profiili → Suojattu aika (`views/protectedTimeSettings.js`) |
+| Mielen kuorma | Sunnuntain nollaus (A–G, enintään 3 viikon prioriteettia) | P1 | COMPLETE_LOCAL | L | `views/sundayReset.js` (`tests/sunday-reset.test.mjs`) |
+| Mielen kuorma | Todellisuus / ajautuminen v2 (jonon kasvu, kapasiteettiharha, oman ja vapaa-ajan kuluminen, loman tunkeutuminen, suunnitelman vaihtelu) | P1 | COMPLETE_LOCAL | L | `domain/driftSignals.js` (`tests/drift-v2.test.mjs`) |
+| Mielen kuorma | Hyvinvoinnin kuorman kevennys (aiheen poiskytkentä, kooste, korkea kuorma, rajattu kortti) | P1 | COMPLETE_LOCAL | L | `domain/notificationPolicy.js`, `app/alarmSync.js` (`tests/wellbeing-load.test.mjs`) |
+| Mielen kuorma | Migraatio 0015 ja aalto L (v25) | P0 | COMPLETE_LOCAL | L | PG17-harjoitus 0 virhettä (`docs/activation/REHEARSAL-REPORT.md`); EI AJETTU tuotantoon |
 <!-- STATUS-TABLE-END -->
