@@ -306,6 +306,61 @@ const L_SCENARIOS = [
     }) }
 ];
 
+L_SCENARIOS.push(
+  { name: 'sunnuntain nollaus A–G ja kolme viikon prioriteettia: neljäs torjutaan, viikko suljetaan, loppuviesti on rauhoittava',
+    run: ({ page }) => page(async () => {
+      const today = H.today();
+      window.__e2e.setTasks([
+        { id: 'g1t', title: 'Juoksulenkki', date: H.addDays(today, 6), durationMinutes: 45 },
+        { id: 'g2t', title: 'Kirjoita raportti', date: H.addDays(today, 7), durationMinutes: 90, deadline: H.addDays(today, 9) },
+        { id: 'g3t', title: 'Siivoa varasto', horizon: 'THIS_WEEK', durationMinutes: 60 },
+        { id: 'g4t', title: 'Soita isälle', date: H.addDays(today, 8), durationMinutes: 20 }
+      ]);
+      const reset = await import('/src/app/views/sundayReset.js');
+      const opened = reset.openSundayReset({ fresh: true });
+      if (!opened) throw new Error('nollaus ei avautunut');
+      await H.waitFor(() => H.el('#sundayResetDialog').open, 'nollausikkuna auki');
+      const primary = () => document.querySelector('#sundayResetCard [data-focus="primary"]');
+      const step = () => reset.sundayResetSession().step;
+      // A: brain dump ilman päätöksiä.
+      await H.waitFor(() => H.el('#sundayResetDump'), 'vaihe A');
+      H.fill('#sundayResetDump', 'Hanki lahja\nVaraa kampaaja');
+      primary().click();
+      await H.waitFor(() => step() !== 'dump', 'A -> B');
+      // B ja C eteenpäin (saapuvat jäävät tallessa; kapasiteetti lasketaan jarrusta).
+      for (const expected of ['sort', 'capacity']) {
+        await H.waitFor(() => step() === expected, 'vaihe ' + expected);
+        primary().click();
+      }
+      // D: enintään kolme prioriteettia.
+      await H.waitFor(() => step() === 'priorities', 'vaihe D');
+      const chips = [...document.querySelectorAll('[data-reset-priority]')];
+      if (chips.length < 4) throw new Error('ehdokkaita vain ' + chips.length);
+      for (const chip of chips.slice(0, 4)) { chip.click(); await H.sleep(30); }
+      const chosen = reset.sundayResetSession().selected.length;
+      if (chosen !== 3) throw new Error('valittu ' + chosen);
+      const limit = H.squash(H.text('#sundayResetCard'));
+      if (!limit.includes('Valitse enintään kolme')) throw new Error('rajan viesti puuttuu: ' + limit.slice(0, 120));
+      primary().click();
+      // E, F eteenpäin, G sulkee viikon.
+      for (const expected of ['place', 'protect', 'close']) {
+        await H.waitFor(() => step() === expected, 'vaihe ' + expected);
+        primary().click();
+      }
+      const finalText = await H.waitFor(() => {
+        const text = H.squash(H.text('#sundayResetCard'));
+        return text.includes('Ensi viikko on suunniteltu.') ? text : null;
+      }, 'loppuviesti');
+      if (!finalText.includes('Sinun ei tarvitse miettiä sitä enää tänään.')) throw new Error('loppuviesti: ' + finalText);
+      const plan = await H.waitFor(() => H.db('weekly_plans').find(r => r.closed_at), 'suljettu viikko kannassa');
+      if ((plan.priorities || []).length !== 3) throw new Error('prioriteetteja kannassa ' + (plan.priorities || []).length);
+      const dumped = H.db('inbox_items').filter(r => ['Hanki lahja', 'Varaa kampaaja'].includes(r.text)).length;
+      document.querySelector('#sundayResetCard [data-reset="finish"]').click();
+      return 'viikko ' + plan.week_start + ' suljettu (planned ' + plan.planned_minutes + ' min), 3 prioriteettia, '
+        + 'neljäs torjuttu, brain dump ' + dumped + ' riviä, loppuviesti täsmälleen';
+    }) }
+);
+
 export const GROUPS = Object.freeze([
   { key: 'closed', label: 'suljetut portit', query: { gates: 'closed', seed: 'empty', clock: wednesdayTen(), onboarding: 'skip' },
     scenarios: CLOSED_SCENARIOS },

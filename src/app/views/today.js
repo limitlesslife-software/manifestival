@@ -57,6 +57,7 @@ import { setTasksSegment } from '../state.js';
 import { switchTab } from '../navigation.js';
 import { setStoredTab } from './stored.js';
 import { formatMinutes as minutesText } from '../../domain/lifeArea.js';
+import { renderSundayResetEntry } from './sundayReset.js';
 
 const ROW_HEIGHT = 66;
 
@@ -917,6 +918,12 @@ export function renderToday() {
   if (load) renderSlipped(el('todayOverdue'), load);
   else renderOverdue(el('todayOverdue'), plan);
   renderProtected(maybe('todayProtected'), state, dateIso, plan);
+  // Sunnuntain nollaus: pieni kortti la–su ja maanantaiaamuna, kunnes viikko on suljettu.
+  const weekReset = maybe('todayWeekReset');
+  if (weekReset) {
+    if (isToday) renderSundayResetEntry(weekReset, { state, now });
+    else weekReset.innerHTML = '';
+  }
   renderTimeline(el('todayTimelineContainer'), plan.timeline, nowState, todayIso);
   renderUnscheduled(el('todayUnscheduled'), plan, focusIds);
   renderFreeSlots(el('todayFreeSlots'), plan);
