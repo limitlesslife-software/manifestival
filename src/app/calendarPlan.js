@@ -65,7 +65,10 @@ export function needsDeparture(occurrence) {
  */
 export function departureForOccurrence(occurrence, {
   placesById = new Map(), observations = EMPTY, settings = null,
-  todayIso = null, nowMinutes = null, offsetMinutesFn = deviceOffsetMinutes
+  todayIso = null, nowMinutes = null, offsetMinutesFn = deviceOffsetMinutes,
+  // Liikennetieto (routing.js), jos sellainen joskus on: käytetään vain
+  // tuoreena ja tarkistettuna (selectTravelEstimate). Oletuksena ei ole.
+  providerResult = null, nowMs = null
 } = {}) {
   const place = occurrence && occurrence.placeId ? placesById.get(occurrence.placeId) || null : null;
   const learned = place && place.useLearned === true
@@ -74,7 +77,9 @@ export function departureForOccurrence(occurrence, {
   const estimate = selectTravelEstimate({
     event: { travelMinutes: occurrence ? occurrence.travelMinutes : null },
     place,
-    learned
+    learned,
+    providerResult,
+    nowMs
   });
   return planDeparture({ occurrence, place, settings, estimate, todayIso, nowMinutes, offsetMinutesFn });
 }
@@ -124,6 +129,26 @@ function commitmentsOn(occurrences, dateIso, departures) {
 }
 
 /**
+ * Päivän aamun sitoumus (alarmPlan.firstCommitmentOf) ja sitä vastaava
+ * aamusuunnitelma. Sama logiikka kuin unilohkoissa, jotta kalenteri,
+ * Tänään, herätys ja illan ennakko ovat samaa mieltä.
+ *
+ * @returns {{commitment:object|null, morning:object|null, requiredWake:string|null}}
+ */
+export function morningFor({
+  wakeDate, occurrences = EMPTY, departures = new Map(), profile = null, settings = null,
+  offsetMinutesFn = deviceOffsetMinutes
+} = {}) {
+  if (!isIsoDate(wakeDate)) return { commitment: null, morning: null, requiredWake: null };
+  const commitment = firstCommitmentOf(commitmentsOn(listOf(occurrences), wakeDate, departures), profile);
+  const morning = planMorning({ dateIso: wakeDate, firstCommitment: commitment, profile, settings, offsetMinutesFn });
+  // Aamun herätys edellisen päivän puolella (meno heti keskiyön jälkeen)
+  // ei ole tämän yön herätys: silloin käytetään tavallista rytmiä.
+  const requiredWake = morning && morning.wakeDate === wakeDate ? morning.wakeTime : null;
+  return { commitment, morning, requiredWake };
+}
+
+/**
  * Unen ja iltarauhoittumisen aikataulut herätyspäiville (calendarBlocks.sleepBlocks).
  *
  * Jokainen herätyspäivä tuottaa yön, joka alkaa EDELLISENÄ iltana. Herätys
@@ -137,11 +162,7 @@ export function sleepSchedulesFor({
   const schedules = [];
   for (const wakeDate of listOf(wakeDates)) {
     if (!isIsoDate(wakeDate)) continue;
-    const commitment = firstCommitmentOf(commitmentsOn(listOf(occurrences), wakeDate, departures), profile);
-    const morning = planMorning({ dateIso: wakeDate, firstCommitment: commitment, profile, settings, offsetMinutesFn });
-    // Aamun herätys edellisen päivän puolella (meno heti keskiyön jälkeen)
-    // ei ole tämän yön herätys: silloin käytetään tavallista rytmiä.
-    const requiredWake = morning && morning.wakeDate === wakeDate ? morning.wakeTime : null;
+    const { requiredWake } = morningFor({ wakeDate, occurrences, departures, profile, settings, offsetMinutesFn });
     const schedule = sleepScheduleFor({ dateIso: wakeDate, profile, settings, requiredWake, offsetMinutesFn });
     const evening = addDaysToIso(wakeDate, -1);
     if (!schedule || !evening) continue;

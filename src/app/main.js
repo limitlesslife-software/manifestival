@@ -31,6 +31,7 @@ import { initSearch, closeSearch } from './search.js';
 import { initOnboarding, maybeShowOnboarding } from './onboarding.js';
 import { renderToday, initTodayNavigation } from './views/today.js';
 import { renderWeek, initWeekNavigation } from './views/week.js';
+import { initCalendar, renderCalendar, resetCalendarView } from './views/calendar.js';
 import { renderTasks, initTaskForm, closeForm } from './views/tasks.js';
 import { initRoutineForm, closeRoutineForm } from './views/routines.js';
 import { renderGoals, initGoalForm, closeGoalForm, refreshGoalPicker } from './views/goals.js';
@@ -209,7 +210,7 @@ function registerServiceWorker() {
 const SCREEN_RENDERERS = Object.freeze({
   'screen-today': () => { renderToday(); renderInbox(); renderNotices(); },
   'screen-direction': () => { renderDirection(); },
-  'screen-week': () => { renderWeek(); },
+  'screen-week': () => { renderWeek(); renderCalendar(); },
   'screen-tasks': () => { renderTasks(); refreshGoalPicker(); },
   'screen-goals': () => { renderGoals(); renderProjects(); },
   'screen-finance': () => { renderFinance(); },
@@ -454,6 +455,7 @@ function onSignedOut() {
   // jäänyt pyyntö pidättele seuraavan käyttäjän kirjoituksia.
   resetTimerSync();
   resetDirectionView();
+  resetCalendarView();
   resetAppliedAdjustments();
   resetAlignmentSession();
   clearIdempotencyKeys();
@@ -477,6 +479,7 @@ async function start() {
   initNavigation();
   initTodayNavigation();
   initWeekNavigation();
+  initCalendar();
   initTaskForm();
   initRoutineForm();
   initGoalForm();
