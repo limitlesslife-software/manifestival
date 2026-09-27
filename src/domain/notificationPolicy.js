@@ -116,7 +116,9 @@ const TOPIC_BY_TYPE = Object.freeze({
   // Illan katsaus huomiseen kuuluu aamun valmisteluun: oletuksena hiljainen.
   [NOTIFICATION_TYPE.EVENING_BEFORE]: REMINDER_TOPIC.MORNING,
   [NOTIFICATION_TYPE.MORNING_BRIEF]: REMINDER_TOPIC.MORNING,
-  [NOTIFICATION_TYPE.DIGEST]: null
+  [NOTIFICATION_TYPE.DIGEST]: null,
+  // Menon alku ilman lähtöketjua: valmistaudu menoon (Valmistautuminen-valinta).
+  [NOTIFICATION_TYPE.EVENT_START]: REMINDER_TOPIC.PREPARATION
 });
 
 /** Ilmoitustyypin aihe (REMINDER_TOPIC) tai null. */
@@ -170,11 +172,16 @@ function overrideFor(settings, topic) {
   return DELIVERIES.includes(value) ? value : null;
 }
 
-/** Tyypit, jotka läpäisevät rauhoitusajan: herätykseen ja lähtöön sidotut. */
+/**
+ * Tyypit, jotka läpäisevät rauhoitusajan: herätykseen ja lähtöön sidotut
+ * sekä käyttäjän itse kalenteriin kirjaaman menon alku (kuten lähtöketju:
+ * sovittu aika, jolloin käyttäjä on hereillä).
+ */
 export const QUIET_PASS_TYPES = Object.freeze([
   NOTIFICATION_TYPE.DEPARTURE_REMINDER,
   ...DEPARTURE_CHAIN_TYPES,
-  NOTIFICATION_TYPE.MORNING_BRIEF
+  NOTIFICATION_TYPE.MORNING_BRIEF,
+  NOTIFICATION_TYPE.EVENT_START
 ]);
 
 /**
@@ -274,6 +281,8 @@ export function resolveDelivery(input) {
       if (lvl === LEVEL.CRITICAL) reason = 'Kriittinen muistutus tulee myös rauhoitusaikana.';
       else if (NIGHT_START_TYPES.includes(type)) {
         reason = 'Iltarauhoittuminen ja nukkumaanmeno aloittavat oman yösi: ne tulevat valitsemallasi tavalla myös rauhoitusaikana.';
+      } else if (type === NOTIFICATION_TYPE.EVENT_START) {
+        reason = 'Kalenteriin kirjaamasi menon alku tulee myös rauhoitusaikana.';
       } else reason = 'Lähtöön tai herätykseen liittyvä muistutus tulee myös rauhoitusaikana.';
     } else if (decision === QUIET_DECISION.SILENT) {
       delivery = DELIVERY.SILENT;
@@ -446,6 +455,7 @@ export const DIGEST_BYPASS_TYPES = Object.freeze([
   NOTIFICATION_TYPE.MORNING_BRIEF,
   // Illan ennakko on hyödytön iltarauhoittumisen jälkeen: ei koosteeseen.
   NOTIFICATION_TYPE.EVENING_BEFORE,
+  NOTIFICATION_TYPE.EVENT_START,
   NOTIFICATION_TYPE.DIGEST
 ]);
 
@@ -679,7 +689,8 @@ const PROTECTED_TYPES = Object.freeze([
   NOTIFICATION_TYPE.BEDTIME,
   NOTIFICATION_TYPE.DEADLINE_WARNING,
   NOTIFICATION_TYPE.EVENING_BEFORE,
-  NOTIFICATION_TYPE.MORNING_BRIEF
+  NOTIFICATION_TYPE.MORNING_BRIEF,
+  NOTIFICATION_TYPE.EVENT_START
 ]);
 
 const LOW_VALUE_TYPES = Object.freeze([

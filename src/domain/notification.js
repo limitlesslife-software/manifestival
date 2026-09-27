@@ -66,7 +66,13 @@ export const NOTIFICATION_TYPE = Object.freeze({
   /** Aamun lyhyt kooste herätyksen jälkeen (vain jos käyttäjä on kytkenyt sen). */
   MORNING_BRIEF: 'morning_brief',
   /** Päivän kooste, johon vähäiset muistutukset on yhdistetty (notificationPolicy.mergeDigest). */
-  DIGEST: 'digest'
+  DIGEST: 'digest',
+  /**
+   * Kalenterin menon alku, kun lähtöketjua ei ole (ei paikkaa tai tiedossa
+   * olevaa matka-aikaa): muistutus ennakolla ennen alkua. Ei lähtöaikaa eikä
+   * arvattua matkaa, vain "alkaa klo". (dailyReminders.js)
+   */
+  EVENT_START: 'event_start'
 });
 
 export const NOTIFICATION_TYPES = Object.freeze(Object.values(NOTIFICATION_TYPE));

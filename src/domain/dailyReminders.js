@@ -330,8 +330,12 @@ export const DAILY_REMINDER_KIND = Object.freeze({
   MEAL: NOTIFICATION_TYPE.MEAL,
   HABIT: NOTIFICATION_TYPE.HABIT,
   EVENING_BEFORE: NOTIFICATION_TYPE.EVENING_BEFORE,
-  MORNING_BRIEF: NOTIFICATION_TYPE.MORNING_BRIEF
+  MORNING_BRIEF: NOTIFICATION_TYPE.MORNING_BRIEF,
+  EVENT_START: NOTIFICATION_TYPE.EVENT_START
 });
+
+/** Menon alun ennakon yläraja (minuuttia), sama kuin tehtävän ennakolla. */
+export const MAX_EVENT_LEAD_MINUTES = 240;
 
 export const DAILY_REMINDER_KINDS = Object.freeze(Object.values(DAILY_REMINDER_KIND));
 
@@ -341,7 +345,8 @@ const DISPLAY_TOPIC = Object.freeze({
   [DAILY_REMINDER_KIND.MEAL]: REMINDER_TOPIC.MEAL,
   [DAILY_REMINDER_KIND.HABIT]: REMINDER_TOPIC.HABIT,
   [DAILY_REMINDER_KIND.EVENING_BEFORE]: REMINDER_TOPIC.MORNING,
-  [DAILY_REMINDER_KIND.MORNING_BRIEF]: REMINDER_TOPIC.MORNING
+  [DAILY_REMINDER_KIND.MORNING_BRIEF]: REMINDER_TOPIC.MORNING,
+  [DAILY_REMINDER_KIND.EVENT_START]: REMINDER_TOPIC.PREPARATION
 });
 
 /** Rakenna yhden merkinnän aikomus, tai null. */
@@ -458,6 +463,29 @@ function dailyIntent(entry, { settings, style, today }) {
       }
       break;
     }
+    case DAILY_REMINDER_KIND.EVENT_START: {
+      // Kalenterin meno, jolle ei ole lähtöketjua: ei paikkaa tai
+      // tiedossa olevaa matka-aikaa. Muistutus alku − ennakko; lähtöaikaa ei
+      // arvata eikä alkua kutsuta lähdöksi.
+      const occurrenceId = cleanId(source.id);
+      if (!occurrenceId) return null;
+      const lead = Number.isInteger(source.leadMinutes) && source.leadMinutes >= 0
+        && source.leadMinutes <= MAX_EVENT_LEAD_MINUTES ? source.leadMinutes : 0;
+      const startAt = at;
+      at = atAbs(startAt.abs - lead);
+      if (!at) return null;
+      title = cleanText(source.title, MAX_TITLE_LENGTH) || 'Meno';
+      body = source.needsTravel === true
+        ? `Alkaa klo ${startAt.time}. Matka-aikaa ei ole tiedossa, joten lähtöaikaa ei laskettu.`
+        : `Alkaa klo ${startAt.time}.`;
+      reason = lead > 0 ? `${lead} min ennen alkua.` : 'Alkamisaika.';
+      targetId = occurrenceId;
+      phraseContext = { style, time: startAt.time };
+      extra.occurrenceId = occurrenceId;
+      extra.eventStart = startAt.time;
+      extra.eventDate = startAt.date;
+      break;
+    }
     case DAILY_REMINDER_KIND.MORNING_BRIEF: {
       if (safeObject(settings)?.morningBriefEnabled !== true) return null;
       const firstLeave = isTimeOfDay(source.firstLeave) ? source.firstLeave : null;
@@ -509,6 +537,8 @@ function dailyIntent(entry, { settings, style, today }) {
  *                   message = illan ennakon neuvo (sleepRhythm.eveningBefore)
  *   morning_brief   { date, time, firstLeave? } — vain jos
  *                   settings.morningBriefEnabled === true
+ *   event_start     { id (esiintymä), date, time (menon alku), leadMinutes, title?, needsTravel? }
+ *                   -> muistutus klo time − leadMinutes ("alkaa klo")
  *
  * Kaikki ovat tasoa Muistutus. Toimitustapa tulee aiheen asetuksesta, ja
  * puhe vain luvalla. Kelvoton merkintä ohitetaan hiljaa.
