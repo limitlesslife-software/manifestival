@@ -198,6 +198,7 @@ const SHELL = [
   '/src/lib/logger.js',
   '/src/lib/result.js',
   '/src/lib/rows.js',
+  '/src/platform/alarms.js',
   '/src/platform/capabilities.js',
   '/src/platform/geolocation.js',
   '/src/platform/index.js',
