@@ -36,9 +36,9 @@ const COLUMN_OPEN_IN_K = gate => waveIndex('K') >= waveIndex(COLUMN_GATES[gate])
 
 // ------------------------------------------------------------ K-porttitila
 
-test('K-porttitila: GATE_MODES = closed, J, K; tuntematon tila hylätään', () => {
-  assert.deepEqual([...GATE_MODES], ['closed', 'J', 'K']);
-  assert.throws(() => resolveGateMode('L', { schemaSource: SCHEMA }), /Tuntematon porttitila: L/);
+test('porttitilat: GATE_MODES = closed, J, K, L (aalto L); tuntematon tila hylätään', () => {
+  assert.deepEqual([...GATE_MODES], ['closed', 'J', 'K', 'L']);
+  assert.throws(() => resolveGateMode('M', { schemaSource: SCHEMA }), /Tuntematon porttitila: M/);
 });
 
 test('K-porttitila: junan määrittely avaa aallon K kymmenen porttia ja kaikki aiemmat, K:hon mennessä avautuvat sarakeportit', () => {
@@ -139,7 +139,7 @@ test('harnessHtml: J-tila tavu tavulta ennallaan; suljettu ja tuntematon tila sa
   const legacyJ = PAGE.replace('<script type="module"',
     '<script type="importmap">{"imports":{"/src/data/schema.js":"/src/data/schema.js?e2e-gates=J"}}</script>\n<script type="module"');
   assert.equal(harnessHtml(PAGE, 'J'), legacyJ);
-  for (const mode of ['closed', null, undefined, '', 'L', 'k']) assert.equal(harnessHtml(PAGE, mode), PAGE, String(mode));
+  for (const mode of ['closed', null, undefined, '', 'M', 'k']) assert.equal(harnessHtml(PAGE, mode), PAGE, String(mode));
 });
 
 test('valjas todentaa K-porttien voimaantulon; ajaja tarjoilee vain ratkaistut porttitilat', () => {
@@ -430,4 +430,15 @@ test('cdp.mjs: Suunta E2E käyttää samoja apureita (siirretty sellaisenaan) ja
   // Yhteinen ajo (runE2E): PAGE_HELPERS aina, sitten ajon omat apurit (oletus DAILY_HELPERS).
   assert.match(RUNNER, /await evaluate\(PAGE_HELPERS\);\s*for \(const helper of helpers\) await evaluate\(helper\);/);
   assert.match(RUNNER, /helpers = \[DAILY_HELPERS\]/);
+});
+
+test('L-porttitila: junan määrittely avaa kaikki portit ja sarakeportin MENTAL_LOAD_FIELDS', () => {
+  const matrix = trainMatrix('L');
+  assert.ok(Object.values(matrix.tables).every(Boolean), 'kaikki tauluportit auki');
+  assert.equal(matrix.columns.MENTAL_LOAD_FIELDS, true);
+  assert.equal(trainMatrix('K').columns.MENTAL_LOAD_FIELDS, false, 'K ei avaa 0015:n sarakeporttia');
+  assert.equal(trainMatrix('K').tables.protectedPeriods, false);
+  const resolved = resolveGateMode('L', { cwd: process.cwd(), schemaSource: SCHEMA, ref: null });
+  assert.equal(resolved.fromTrain, true);
+  assert.match(resolved.source, /export const MENTAL_LOAD_FIELDS = true;/);
 });

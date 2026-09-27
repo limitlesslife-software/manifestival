@@ -110,7 +110,7 @@ tasks (tuotannossa auki):
 - `reschedule_count integer not null default 0` CHECK ≥ 0 ja ≤ 10000
 - `original_date date` NULL (ensimmäinen suunniteltu päivä ennen siirtoja)
 - `date` DROP NOT NULL (idempotentti; päivätön tehtävä)
-- CHECK: `horizon = 'WAITING'` tai `waiting_on is null`
+- CHECK (NULL-turvallinen, harjoittelun löydös): `waiting_on is null or (horizon is not null and horizon = 'WAITING')`
 
 protected_periods (uusi):
 - id text pk, user_id uuid default auth.uid() → auth.users on delete cascade

@@ -184,9 +184,9 @@ test('KRIITTINEN: RLS neljällä politiikalla per taulu, to authenticated, ei an
   for (const table of ['protected_periods', 'weekly_plans']) {
     assert.match(SQL, new RegExp(`alter table public\\.${table} enable row level security;`));
     for (const cmd of ['select', 'insert', 'update', 'delete']) {
-      assert.match(SQL, new RegExp(`create policy ${table}_${cmd}_own on public\\.${table}\\n\\s+for ${cmd} to authenticated`), `${table} ${cmd}`);
+      assert.match(SQL, new RegExp(`create policy ${table}_${cmd}_own on public\\.${table}\\r?\\n\\s+for ${cmd} to authenticated`), `${table} ${cmd}`);
     }
-    assert.match(SQL, new RegExp(`for update to authenticated using \\(auth\\.uid\\(\\) = user_id\\)\\n\\s+with check \\(auth\\.uid\\(\\) = user_id\\);`));
+    assert.match(SQL, new RegExp(`for update to authenticated using \\(auth\\.uid\\(\\) = user_id\\)\\r?\\n\\s+with check \\(auth\\.uid\\(\\) = user_id\\);`));
     assert.match(SQL, new RegExp(`revoke all on public\\.${table} from anon;`));
     assert.match(SQL, new RegExp(`grant select, insert, update, delete on public\\.${table} to authenticated;`));
     assert.match(SQL, new RegExp(`add constraint ${table}_owner_row_key unique \\(user_id, id\\);`));
