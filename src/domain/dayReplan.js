@@ -241,7 +241,7 @@ function makePlacer(obstacles) {
     let index = pointer;
     while (index < obstacles.length && obstacles[index].start < start + duration) {
       if (obstacles[index].end > start) {
-        jumped.push(...obstacles[index].items);
+        for (const item of obstacles[index].items) jumped.push(item);
         start = obstacles[index].end;
       }
       index += 1;

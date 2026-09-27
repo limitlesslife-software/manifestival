@@ -612,8 +612,10 @@ export function parseCreateEvent(text, options = {}) {
     }
   }
 
-  // Sanottu paikka ei ole otsikkoa, jos otsikkoon jää muuta.
-  if (placeTokens.length > 0) {
+  // Varmasti tunnistettu paikka ei ole otsikkoa, jos otsikkoon jää muuta.
+  // Tunnistamaton sija jää myös otsikkoon: "Liisalle" voi olla henkilö, ja
+  // sanan pudottaminen otsikosta hukkaisi sen.
+  if (placeTokens.length > 0 && rankMatch(placeMatch) === 3) {
     const rest = titleTokens.filter(token => !placeTokens.includes(token));
     if (rest.length > 0) titleTokens = rest;
     else if (placeMatch && rankMatch(placeMatch) === 3 && placeMatch.placeName) titleTokens = [];

@@ -333,14 +333,22 @@ test('paikka, jota ei ole tallennettu: teksti talteen, ei kysymystä eikä arvau
   assert.equal(result.placeId, null);
   assert.equal(result.placeMatch.status, 'none', 'alueen perusteella ei ehdoteta toista paikkaa');
   assert.deepEqual([...result.ambiguities], []);
-  assert.equal(result.title, 'Palaveri');
+  assert.equal(result.title, 'Palaveri Kampissa', 'tunnistamaton sija jää otsikkoon');
 });
 
-test('ilman tunnistinta: sanottu paikka talteen, placeMatch null', () => {
+test('ilman tunnistinta: sanottu paikka talteen, placeMatch null, otsikko ehjä', () => {
   const result = parse('Palaveri Kampissa huomenna klo 10');
   assert.equal(result.placeText, 'Kampissa');
   assert.equal(result.placeMatch, null);
   assert.equal(result.placeId, null);
+  assert.equal(result.title, 'Palaveri Kampissa');
+});
+
+test('henkilön nimi sijamuodossa ei katoa otsikosta ("Liisalle")', () => {
+  const result = withPlaces('Lisää Liisalle synttärilahja huomenna klo 17');
+  assert.equal(result.title, 'Liisalle synttärilahja');
+  assert.equal(result.placeId, null);
+  assert.deepEqual([...result.ambiguities], []);
 });
 
 test('tunnistin saa paikat ja opitut nimet; heittävä tai outo tunnistin ei kaada', () => {
