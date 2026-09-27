@@ -120,8 +120,16 @@ const NONE_KEY = '__none__';
 export function buildAttributionIndex({ areas = [], goals = [], projects = [], routines = [] } = {}) {
   const areaById = new Map();
   const categoryArea = new Map();
-  for (const area of areas || []) {
-    if (!area || !area.id) continue;
+  // Migraation 0015 jälkeen useampi alue voi jakaa kategorian. Perivä alue
+  // valitaan deterministisesti (lifeArea.categoryOwnerArea): aktiivinen,
+  // pienin järjestysnumero, nimi, tunniste. Ennen 0015:tä kategoria on
+  // uniikki, joten järjestys ei muuta mitään.
+  const ordered = (areas || []).filter(area => area && area.id).sort((a, b) =>
+    Number(a.active === false) - Number(b.active === false)
+    || (Number(a.sortOrder) || 0) - (Number(b.sortOrder) || 0)
+    || String(a.name ?? '').localeCompare(String(b.name ?? ''), 'fi')
+    || String(a.id).localeCompare(String(b.id)));
+  for (const area of ordered) {
     areaById.set(area.id, area);
     if (area.categoryKey && !categoryArea.has(area.categoryKey)) {
       categoryArea.set(area.categoryKey, area.id);

@@ -49,3 +49,6 @@ android/capacitor-cordova-android-plugins/
 *.aab
 *.keystore
 *.jks
+
+# Aallon L paikalliset testitulosteet (ei versionhallintaan)
+.claude/wave-l/

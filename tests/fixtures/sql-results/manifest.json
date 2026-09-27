@@ -1,6 +1,6 @@
 {
   "generatedBy": "node tools/pg-rehearsal/sql-result-fixtures.mjs",
-  "generatedAt": "2026-09-27T08:50:50.080Z",
+  "generatedAt": "2026-09-27T18:13:41.667Z",
   "server": {
     "version": "PostgreSQL 17.10 on x86_64-windows, compiled by msvc-19.44.35226, 64-bit",
     "versionNum": 170010
@@ -305,6 +305,53 @@
         "2 FAIL: 20 Kaikki 88 uutta rajoitetta ovat olemassa; 24 Yksi motivaatio- ja hallintakirjaus paivaa kohti (user_id, date)",
         "poikkeavia_yhteensa = 2, odotus 0"
       ]
+    },
+    "preflight_0015-pass.tsv": {
+      "sql": "supabase/preflight/preflight_0015.sql",
+      "state": "0014",
+      "outcome": "pass",
+      "rows": 21,
+      "fail": 0,
+      "poikkeavia": 0,
+      "decision": "GO",
+      "reasons": []
+    },
+    "preflight_0015-fail.tsv": {
+      "sql": "supabase/preflight/preflight_0015.sql",
+      "state": "0015",
+      "outcome": "fail",
+      "rows": 21,
+      "fail": 2,
+      "poikkeavia": 2,
+      "decision": "STOP",
+      "reasons": [
+        "2 FAIL: 07 life_areas_category_unique on olemassa (0015 poistaa sen); 13 Migraation 0015 objekteja ei vielä ole (0/47)",
+        "poikkeavia_yhteensa = 2, odotus 0"
+      ]
+    },
+    "verify_0015-pass.tsv": {
+      "sql": "supabase/verify/verify_0015.sql",
+      "state": "0015",
+      "outcome": "pass",
+      "rows": 40,
+      "fail": 0,
+      "poikkeavia": 0,
+      "decision": "GO",
+      "reasons": []
+    },
+    "verify_0015-fail.tsv": {
+      "sql": "supabase/verify/verify_0015.sql",
+      "state": "0015",
+      "outcome": "fail",
+      "sabotage": "alter table public.tasks drop column date cascade",
+      "rows": 40,
+      "fail": 1,
+      "poikkeavia": 1,
+      "decision": "STOP",
+      "reasons": [
+        "1 FAIL: 08 tasks.date on nullable (paivaton tehtava)",
+        "poikkeavia_yhteensa = 1, odotus 0"
+      ]
     }
   },
   "runs": [
@@ -350,6 +397,27 @@
       },
       "numbers": [
         "0014"
+      ]
+    },
+    {
+      "generatedAt": "2026-09-27T18:13:41.667Z",
+      "server": {
+        "version": "PostgreSQL 17.10 on x86_64-windows, compiled by msvc-19.44.35226, 64-bit",
+        "versionNum": 170010
+      },
+      "git": {
+        "head": "6bd7467980c190a10f4fab4205578dcebaa3099a",
+        "branch": "wave-l/db-train",
+        "uncommittedReadFiles": [
+          "M supabase/verify/verify_0015.sql"
+        ],
+        "sqlBlobs": {
+          "supabase/preflight/preflight_0015.sql": "6b06b2a5b25ca79f0809c0cdfe4d8f84b1465df4",
+          "supabase/verify/verify_0015.sql": "6bcde496a7a20f3aebf7d92174e8e4fb9e423e23"
+        }
+      },
+      "numbers": [
+        "0015"
       ]
     }
   ]

@@ -12,8 +12,8 @@
 //
 // Omistajan hyväksyntä vaaditaan edelleen VAIN näille:
 //
-//   - jokainen tuotantomigraatio 0009–0013 (0010 erikseen + varmuuskopio)
-//   - jokainen tuotantodeploy D–J
+//   - jokainen tuotantomigraatio 0009–0014 (0010 erikseen + varmuuskopio)
+//   - jokainen tuotantodeploy D–K
 //   - valinnainen T-2-varmuuskopion kuivaharjoitus tuotannossa
 //   - AI-selityksen käyttöönotto
 //   - Androidin versionCode-politiikka
@@ -163,6 +163,14 @@ export const LIVE_USE_VALIDATION = Object.freeze({
       'ajastin jatkuu F5:n yli; toinen laite ei käynnistä toista; kaksoisnapautus ei tuota kahta riviä',
       'kuormittavuus ja energiaraja säilyvät; "Selitä tekoälyllä" -painiketta ei ole',
       'Day 1 puhelimella (docs/SUUNTA-DAY1-ACCEPTANCE.md) — APK vasta kun verify_0013 = 0 ja J on tuotannossa'
+    ])
+  }),
+  K: Object.freeze({
+    doc: 'docs/acceptance/WAVE-K.md',
+    items: Object.freeze([
+      'meno (kerran ja viikoittain toistuva) ja esiintymän ohitus säilyvät F5:n yli',
+      'paikka ja vahvistettu nimitys säilyvät; kaksi samannimistä paikkaa ei synny',
+      'arjen asetukset säilyvät (puuttuva asetus = oletus); uni-, tapa-, liikunta- ja motivaatiokirjaukset säilyvät, tyhjä ei muutu nollaksi'
     ])
   })
 });

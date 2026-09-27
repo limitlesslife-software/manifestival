@@ -497,6 +497,8 @@ export function planNotifications({
   if (prefs.deadlineWarningsEnabled) {
     for (const task of tasks) {
       if (task.completed || !task.deadline) continue;
+      // Odottava, "ei vielä" ja arkistoitu (0015) eivät muistuta: ne ovat tallessa.
+      if (task.archivedAt || task.horizon === 'WAITING' || task.horizon === 'NOT_YET') continue;
 
       const level = escalationForDeadline(task, reference);
       if (level === null) continue;

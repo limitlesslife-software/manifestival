@@ -36,6 +36,7 @@ import { sleepScheduleFor } from '../domain/sleepRhythm.js';
 import { morningOfDay, alarmWakeOf, alarmPlanningLimits, fixedAlarmNote } from '../domain/alarmPlan.js';
 import { buildDayPlan } from '../domain/scheduler.js';
 import { isIsoDate, isTimeOfDay } from '../domain/task.js';
+import { periodBlocks } from '../domain/protectedTime.js';
 import { currentLifeSettings } from './state.js';
 import { deviceOffsetMinutes } from './deviceTime.js';
 
@@ -307,12 +308,37 @@ export function calendarInputs(state, {
     wakeDates, occurrences, departures, profile: state.profile, settings,
     sleepLogs: listOf(state.sleepLogs), offsetMinutesFn // herätyksen suojatun unen raja
   });
-  const blocks = deriveBlocks({
+  const derived = deriveBlocks({
     occurrences,
     departureFor: occurrence => departureBlockInput(departures.get(occurrence.id), offsetMinutesFn),
     sleepSchedules
   });
+  // SUOJATTU AIKA (0015): oma aika, vapaa-aika ja loma ovat varattua aikaa
+  // samalla tavalla kuin matka ja uni. Vapaa ilta päättyy rauhoittumisen
+  // alkuun: uni on jo suojattu omana lohkonaan.
+  const protectedBlocks = periodBlocks({
+    periods: listOf(state.protectedPeriods), from, to,
+    restStartFor: restStartResolver(sleepSchedules)
+  });
+  const blocks = protectedBlocks.length > 0 ? Object.freeze([...derived, ...protectedBlocks]) : derived;
   return Object.freeze({ occurrences, departures, blocks, sleepSchedules });
+}
+
+/**
+ * Illan levon alku (rauhoittumisen alku) minuutteina päivälle, jonka iltaan
+ * uni alkaa. Nukkumaanmeno keskiyön jälkeen -> keskiyö.
+ */
+export function restStartResolver(sleepSchedules = EMPTY) {
+  const byEvening = new Map();
+  for (const schedule of listOf(sleepSchedules)) {
+    if (!schedule || !isIsoDate(schedule.date) || !isTimeOfDay(schedule.bedtime)) continue;
+    const [h, m] = schedule.bedtime.split(':').map(Number);
+    const bed = h * 60 + m;
+    if (bed < 12 * 60) { byEvening.set(schedule.date, 1440); continue; }
+    const windDown = Number.isInteger(schedule.windDownMinutes) ? schedule.windDownMinutes : 0;
+    byEvening.set(schedule.date, Math.max(12 * 60, bed - windDown));
+  }
+  return dateIso => (byEvening.has(dateIso) ? byEvening.get(dateIso) : null);
 }
 
 /**

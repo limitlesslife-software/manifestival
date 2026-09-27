@@ -69,10 +69,16 @@ export function previewAdjustments({ inputs, proposals = [], overrides = {} }) {
         break;
       case ADJUSTMENT.POSTPONE_TASKS: {
         const ids = new Set(payload.taskIds || []);
+        const laterIds = new Set(payload.laterTaskIds || []);
         const days = Number.isInteger(payload.days) ? payload.days : 7;
         let moved = 0;
         tasks = tasks.map(task => {
-          if (!ids.has(task.id) || task.completed || !task.date) return task;
+          if (task.completed || !task.date) return task;
+          if (laterIds.has(task.id)) {
+            moved += 1;
+            return { ...task, date: null, horizon: 'LATER' };
+          }
+          if (!ids.has(task.id)) return task;
           moved += 1;
           return { ...task, date: addDaysIso(task.date, days) };
         });

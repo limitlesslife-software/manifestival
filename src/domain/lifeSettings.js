@@ -22,6 +22,7 @@
 
 import {
   PROTECTION, PROTECTIONS, GUIDANCE_STYLE, GUIDANCE_STYLES, DELIVERIES, REMINDER_TOPICS,
+  DELIVERY_OFF, OPTIONAL_TOPICS,
   DEFAULT_DELIVERY, ALARM_MODE, ALARM_MODES, ESCALATION_STEP, ESCALATION_STEPS,
   MAX_ALARM_RING_MINUTES, MAX_SNOOZE_MINUTES, MAX_SNOOZES,
   DEFAULT_ARRIVAL_BUFFER_MINUTES, MAX_ARRIVAL_BUFFER_MINUTES,
@@ -266,8 +267,28 @@ export function normalizeDelivery(value) {
   const out = {};
   for (const topic of REMINDER_TOPICS) {
     if (DELIVERIES.includes(source[topic])) out[topic] = source[topic];
+    // Aalto L: hyvinvoinnin valinnainen aihe (ateriat, tavat) kokonaan pois.
+    else if (source[topic] === DELIVERY_OFF && OPTIONAL_TOPICS.includes(topic)) out[topic] = DELIVERY_OFF;
+  }
+  // Vain päälle/pois -aiheet (vesi, lisäravinteet, liikunta, kirjauskehotteet):
+  // tallentuu vain 'off'. Mikä tahansa muu arvo (esim. 'on') = päällä, eli
+  // avain poistuu — näin kentittäinen yhdistäminen voi kytkeä aiheen takaisin.
+  for (const topic of OPTIONAL_TOPICS) {
+    if (REMINDER_TOPICS.includes(topic)) continue;
+    if (source[topic] === DELIVERY_OFF) out[topic] = DELIVERY_OFF;
   }
   return out;
+}
+
+/** Onko hyvinvoinnin valinnainen aihe kytketty kokonaan pois? */
+export function topicOff(settings, topic) {
+  return OPTIONAL_TOPICS.includes(topic) && Boolean(settings) && isPlainObject(settings.delivery)
+    && settings.delivery[topic] === DELIVERY_OFF;
+}
+
+/** Pois kytketyt valinnaiset aiheet joukkona. */
+export function offTopics(settings) {
+  return new Set(OPTIONAL_TOPICS.filter(topic => topicOff(settings, topic)));
 }
 
 /** Aiheen voimassa oleva toimitustapa: käyttäjän valinta tai oletus. */

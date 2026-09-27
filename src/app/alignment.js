@@ -55,6 +55,13 @@ import { dailyObservations } from '../domain/dailyAlignment.js';
 import { weekSummary, compareWeeks, alignmentTrends, FIRST_WEEK_NOTE } from '../domain/reviewComparison.js';
 import { TREND_RULES, POLICY_VERSION } from '../domain/alignmentPolicy.js';
 import { explainWithFallback, aiExplainEnabled } from '../ai/alignmentExplainClient.js';
+import { brakedHorizonCapacity, brakeInputs } from './capacityBrake.js';
+import { datelessTasksAllowed } from '../data/schema.js';
+import { driftSignals, capacityBiasSignal, DRIFT_SIGNAL } from '../domain/driftSignals.js';
+import { horizonCapacity } from '../domain/capacity.js';
+import { isMovable } from '../domain/planScheduler.js';
+import { isSchedulable, schedulingContext } from '../domain/lifeLoad.js';
+import { durationOf } from '../domain/task.js';
 
 /** Suunnan muutokset eivät mene offline-jonoon: ne vaativat vahvistuksen ja verkon. */
 const NO_QUEUE = Object.freeze({ queueOffline: false });
@@ -214,8 +221,150 @@ export function currentProposals(analysis, clock = clockNow()) {
     tasks: state.tasks,
     nextWeekAnalysis: nextAnalysis,
     nextCapacity: capacityForWeek(state.weeklyCapacities, next),
-    recentAnalyses
+    recentAnalyses,
+    destinationRoomMinutes: weekRoomMinutes(state, addDaysIso(next, 7), clock),
+    laterAllowed: datelessTasksAllowed(),
+    // Ajautuminen v2: toistuva suunnitelma > toteuma syöttää kapasiteettiehdotuksen.
+    capacityBias: currentCapacityBias(analysis.weekStart, clock, state)
   });
+}
+
+// ------------------------------------------------ ajautuminen v2 (aalto L)
+
+/**
+ * CAPACITY_BIAS tilasta (suljetut viikkosuunnitelmat vs. toteuma) tai null.
+ * Halpa: ei kalenteria eikä analyysia.
+ */
+export function currentCapacityBias(weekStart = null, clock = clockNow(), state = getState()) {
+  if (!clock || !clock.todayIso) return null;
+  try {
+    return capacityBiasSignal({
+      weeklyPlans: state.weeklyPlans, timeEntries: state.timeEntries, tasks: state.tasks,
+      todayIso: clock.todayIso, weekStart: weekStart || clock.todayIso
+    });
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Viikon joustava työ, joka ei mahdu kapasiteettijarrun jäännökseen
+ * (tästä päivästä viikon loppuun). Mahtumaton työ vie viikon
+ * vähimmäisvapaa-ajan varauksen (FREE_TIME_EROSION).
+ */
+function weekOverflowMinutes(state, inputs, { monday, sunday, todayIso }) {
+  const from = todayIso && todayIso > monday ? todayIso : monday;
+  if (!from || from > sunday) return 0;
+  // Ylivuoto kuluttaa vain viikon vähimmäisvapaa-ajan varausta: ilman
+  // tavoitetta sitä ei tarvita (säästää kapasiteettilaskennan piirrossa).
+  if (!(state.protectedPeriods || []).some(period => period && period.active !== false && period.recurrence === 'weekly_target')) return 0;
+  const context = schedulingContext({ goals: state.goals, projects: state.projects, todayIso });
+  const flexible = task => Boolean(task) && !task.completed && isMovable(task) && isSchedulable(task, context);
+  let flexibleMinutes = 0;
+  for (const task of state.tasks || []) {
+    if (!flexible(task) || !task.date || task.date < from || task.date > sunday) continue;
+    const known = durationOf(task);
+    flexibleMinutes += Number.isFinite(known) && known > 0 ? known : 30;
+  }
+  if (flexibleMinutes === 0) return 0;
+  const capacity = horizonCapacity({
+    tasks: (state.tasks || []).filter(task => !flexible(task)), profile: state.profile,
+    fromIso: from, toIso: sunday, routines: state.routines || [], exceptions: state.routineExceptions || [],
+    bufferRatio: inputs.bufferRatio, events: inputs.events, blocks: inputs.blocks,
+    reserves: inputs.reserves, sleepShortfalls: inputs.sleepShortfalls
+  });
+  return Math.max(0, flexibleMinutes - capacity.totalUsableMinutes);
+}
+
+/** Ajautumisen lähdekokoelmat: sama viittausperiaate kuin analyysin välimuistissa. */
+function driftSources(state) {
+  return [
+    state.tasks, state.timeEntries, state.weeklyPlans, state.protectedPeriods, state.calendarEvents,
+    state.lifeAreas, state.goals, state.projects, state.profile, state.routines, state.routineExceptions,
+    state.sleepLogs, state.lifeSettings, state.savedPlaces
+  ];
+}
+
+let driftCache = null;
+
+/** Vain testeille: tyhjennä ajautumisen välimuisti. */
+export function resetDriftCacheForTests() {
+  driftCache = null;
+}
+
+/**
+ * Todellisuus / ajautuminen v2 viikolle (src/domain/driftSignals.js).
+ *
+ * Syötteet tilasta: suojatut lohkot ja menot samasta kapasiteettijarrun
+ * polusta kuin Tänään ja suunnittelija (brakeInputs -> periodBlocks),
+ * suljetut viikkosuunnitelmat, kirjaukset ja tehtävät. Ei tallenna mitään.
+ * Jos jokin analyysin syöte jäi lataamatta, palauttaa tyhjän: vajaista
+ * luvuista ei päätellä ajautumista.
+ *
+ * @param {string} [weekStart] mikä tahansa viikon päivä (oletus: tämä viikko)
+ * @param {{todayIso?: string, nowMinutes?: number}} [clock]
+ * @returns {ReadonlyArray<object>} havainnot vahvimmasta alkaen
+ */
+export function currentDriftSignals(weekStart = null, clock = clockNow(), { state = getState() } = {}) {
+  if (!clock || !clock.todayIso) return Object.freeze([]);
+  if (analysisLoadProblems(state).length > 0) return Object.freeze([]);
+  const monday = weekStartOf(weekStart || clock.todayIso);
+  if (!monday) return Object.freeze([]);
+  const sources = driftSources(state);
+  if (driftCache && driftCache.monday === monday && driftCache.todayIso === clock.todayIso
+    && driftCache.sources.every((source, index) => source === sources[index])) {
+    return driftCache.signals;
+  }
+  const sunday = addDaysIso(monday, 6);
+  let signals;
+  try {
+    const inputs = brakeInputs(state, { from: monday, to: sunday, todayIso: clock.todayIso });
+    signals = driftSignals({
+      weekStart: monday,
+      todayIso: clock.todayIso,
+      tasks: state.tasks,
+      timeEntries: state.timeEntries,
+      weeklyPlans: state.weeklyPlans,
+      periods: state.protectedPeriods,
+      blocks: inputs.blocks,
+      events: inputs.events,
+      goals: state.goals,
+      projects: state.projects,
+      lifeAreas: state.lifeAreas,
+      overflowMinutes: weekOverflowMinutes(state, inputs, { monday, sunday, todayIso: clock.todayIso }),
+      dateOf: localDateOf
+    });
+  } catch {
+    logEvent('alignment.drift_failed', { code: 'compute' });
+    signals = Object.freeze([]);
+  }
+  driftCache = { monday, todayIso: clock.todayIso, sources, signals };
+  return signals;
+}
+
+export { DRIFT_SIGNAL };
+
+/**
+ * Viikon vapaa aika minuutteina siirtojen kohdeviikolle (L0): pienempi
+ * käyttäjän ilmoittaman kapasiteetin jäännöksestä ja kapasiteettijarrun
+ * laskemasta joustavasta ajasta, josta on vähennetty viikolle jo päivätyt
+ * ajattomat tehtävät.
+ */
+export function weekRoomMinutes(state, weekStart, clock = clockNow()) {
+  const monday = weekStartOf(weekStart);
+  if (!monday) return null;
+  const sunday = addDaysIso(monday, 6);
+  const { capacity } = brakedHorizonCapacity(state, { from: monday, to: sunday, todayIso: clock.todayIso });
+  const untimed = (state.tasks || []).filter(task => task && !task.completed && !task.time && task.date
+    && task.date >= monday && task.date <= sunday);
+  const untimedMinutes = untimed.reduce((sum, task) => sum + (Number.isInteger(task.durationMinutes) ? task.durationMinutes : 30), 0);
+  let room = Math.max(0, capacity.totalUsableMinutes - untimedMinutes);
+  const declared = capacityForWeek(state.weeklyCapacities, monday);
+  if (declared && Number.isInteger(declared.availableMinutes)) {
+    const planned = analyzeCurrentWeek(monday, clock).planned.knownMinutes;
+    room = Math.min(room, Math.max(0, declared.availableMinutes - planned));
+  }
+  return room;
 }
 
 /** analyzeWeek()-syötteet tilasta annetulle viikolle (esikatselu ja tarkistus). */
@@ -391,7 +540,7 @@ export async function createLifeArea(input) {
   // korvaa tämän seuraavassa latauksessa): alueen seurantajakso alkaa
   // luontipäivästä, ei viikon maanantaista.
   const area = normalizeLifeArea({ sortOrder: nextOrder, ...input, id: newTaskId(), createdAt: new Date().toISOString() });
-  const { valid, errors } = validateLifeArea(area, state.lifeAreas);
+  const { valid, errors } = validateLifeArea(area, state.lifeAreas, { allowSharedCategory: datelessTasksAllowed() });
   if (!valid) return { ok: false, errors };
 
   addLifeAreaToState(area);
@@ -409,7 +558,7 @@ export async function editLifeArea(id, changes) {
   const previous = findLifeArea(id);
   if (!previous) return { ok: false };
   const updated = normalizeLifeArea({ ...previous, ...changes, id });
-  const { valid, errors } = validateLifeArea(updated, getState().lifeAreas);
+  const { valid, errors } = validateLifeArea(updated, getState().lifeAreas, { allowSharedCategory: datelessTasksAllowed() });
   if (!valid) return { ok: false, errors };
 
   replaceLifeAreaInState(id, updated);
@@ -1215,6 +1364,13 @@ export async function applyAdjustment(proposal, {
         // Kadonnut tai jo valmis tehtävä ohitetaan: ehdotus on voinut vanhentua.
         if (!current || current.completed || !current.date) continue;
         const one = await editTask(taskId, { date: addDaysIso(current.date, days) }, NO_QUEUE);
+        all = all && one.ok;
+      }
+      // Kohdeviikolle mahtumattomat: "Myöhemmin" ilman päivää (0015).
+      for (const taskId of payload.laterTaskIds || []) {
+        const current = findTask(taskId);
+        if (!current || current.completed || !current.date) continue;
+        const one = await editTask(taskId, { date: null, time: null, endTime: null, horizon: 'LATER' }, NO_QUEUE);
         all = all && one.ok;
       }
       result = { ok: all };

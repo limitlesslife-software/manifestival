@@ -5,10 +5,12 @@
 -- GENEROITU: node tools/activation/build-snapshots.mjs. ÄLÄ MUOKKAA
 -- KÄSIN — testi vertaa tiedostoa generaattoriin.
 --
--- TÄMÄ TIEDOSTO ON TILALLE 0014: migraatiot 0001–0014 ajettu.
--- MILLOIN: ennen mitä tahansa peruutusta tai palautusta tilassa 0014
---          (migraatiot 0001–0014 ajettu), esim. ennen aallon K
---          revertiä tai migraation 0014 ROLLBACK-osiota.
+-- TÄMÄ TIEDOSTO ON TILALLE 0014: migraatiot 0001–0014 ajettu, 0015 ei.
+-- MILLOIN: juuri ENNEN migraatiota 0015 (PAKOLLINEN, aalto L),
+--          sovellus suljettuna: preflight_0015.sql -> 0 FAIL -> TÄMÄ
+--          -> check -> 0015. Samoin ennen mitä tahansa peruutusta tai
+--          palautusta tilassa 0014 (esim. aallon K revertti tai 0014:n
+--          ROLLBACK-osio).
 --
 -- Ohje: docs/activation/0010-BACKUP-AND-RECOVERY.md
 --

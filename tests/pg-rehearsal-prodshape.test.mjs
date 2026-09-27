@@ -103,8 +103,8 @@ test('checkRemovals: vain sallitut poistot, kukin kerran', () => {
   assert.equal(checkRemovals('0013', ['con:time_entries:time_entries_source_check:x', 'col:tasks.title:text']).length, 1);
 });
 
-test('KRIITTINEN: kultaiset skeemaerot 0009–0014 ovat olemassa ja poistavat vain sallitun', () => {
-  for (const n of ['0009', '0010', '0011', '0012', '0013', '0014']) {
+test('KRIITTINEN: kultaiset skeemaerot 0009–0015 ovat olemassa ja poistavat vain sallitun', () => {
+  for (const n of ['0009', '0010', '0011', '0012', '0013', '0014', '0015']) {
     const text = read(goldenFile(n)).replace(/\r\n/g, '\n');
     const lines = text.split('\n').filter(Boolean);
     assert.ok(lines.length > 20, `${n}: kultainen ero on tyhjä`);
@@ -122,7 +122,7 @@ test('KRIITTINEN: kultaiset skeemaerot 0009–0014 ovat olemassa ja poistavat va
     for (const pol of lines.filter(l => l.startsWith('+ pol:'))) assert.match(pol, /:authenticated$/, pol);
   }
   // Neljä politiikkaa jokaiselle uudelle taululle.
-  for (const n of ['0009', '0010', '0011', '0012', '0013', '0014']) {
+  for (const n of ['0009', '0010', '0011', '0012', '0013', '0014', '0015']) {
     const lines = read(goldenFile(n)).replace(/\r\n/g, '\n').split('\n');
     const tables = lines.filter(l => /^\+ rel:\w+:r:/.test(l)).length;
     assert.equal(lines.filter(l => l.startsWith('+ pol:')).length, 4 * tables, `${n}: politiikkoja ≠ 4 × uudet taulut`);
@@ -166,12 +166,54 @@ test('KRIITTINEN: 0014:n kultainen ero koskee vain sen kymmentä uutta taulua', 
   assert.equal(lines.some(l => /commute_observations.*FOREIGN KEY \(user_id, event_id\)/.test(l)), false);
 });
 
-test('KRIITTINEN: oikean kannan inventaario tilassa 0014: GO, ei seuraavaa migraatiota; keskeneräinen 0014 -> STOP', () => {
+test('KRIITTINEN: 0015:n kultainen ero: kaksi uutta taulua, seitsemän saraketta, poistuu vain kategorian uniikkius', () => {
+  const lines = read(goldenFile('0015')).replace(/\r\n/g, '\n').split('\n').filter(Boolean);
+  const removed = lines.filter(l => l.startsWith('- '));
+  assert.equal(removed.length, 3, removed.join(' | '));
+  for (const prefix of ['- con:life_areas:life_areas_category_unique:', '- idx:life_areas_category_unique:', '- rel:life_areas_category_unique:']) {
+    assert.equal(removed.filter(l => l.startsWith(prefix)).length, 1, prefix);
+  }
+  const cols = lines.filter(l => /^\+ col:(tasks|life_areas)\./.test(l)).map(l => l.split(':')[1]).sort();
+  assert.deepEqual(cols, ['life_areas.kind', 'tasks.archived_at', 'tasks.follow_up_date', 'tasks.horizon', 'tasks.original_date',
+    'tasks.reschedule_count', 'tasks.waiting_on']);
+  assert.ok(lines.includes("+ col:tasks.reschedule_count:integer:notnull=true:default=0:identity=:generated=:acl="));
+  assert.equal(lines.filter(l => /^\+ rel:\w+:r:/.test(l)).length, 2);
+  assert.ok(lines.some(l => l.startsWith('+ idx:life_areas_user_category_idx:CREATE INDEX ')), 'ei-uniikki kategoriaindeksi');
+  // Olemassa oleviin tauluihin vain sarakkeet, rajoitteet ja indeksi — ei politiikkoja, liipaisimia eikä funktioita.
+  for (const l of lines.filter(x => /^\+ (pol|trg):(tasks|life_areas):/.test(x))) assert.fail(`0015 muuttaa vanhan taulun: ${l}`);
+  assert.equal(lines.filter(l => /^\+ fn:/.test(l)).length, 0, '0015 ei luo funktioita');
+  for (const t of ['protected_periods', 'weekly_plans']) {
+    assert.ok(lines.includes(`+ con:${t}:${t}_user_id_fkey:FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE:validated=true`), t);
+  }
+  assert.ok(lines.some(l => /^\+ con:tasks:tasks_waiting_on_horizon_check:CHECK \(\(\(waiting_on IS NULL\) OR \(\(horizon IS NOT NULL\)/.test(l)),
+    'odotuksen CHECK on NULL-turvallinen');
+});
+
+test('KRIITTINEN: oikean kannan inventaario tilassa 0015: GO, ei seuraavaa migraatiota; 0012 = 56 on ajettu; keskeneräinen 0015 -> STOP', () => {
+  const dir = path.join(ROOT, 'tests/fixtures/activation-inventory');
+  const done = parseInventory(fs.readFileSync(path.join(dir, 'state-0015.json'), 'utf8'));
+  const scored = scoreInventory(done);
+  assert.equal(scored.decision, 'GO', scored.stops.join('; '));
+  assert.equal(scored.nextMigration, null);
+  assert.equal(done['24'], '47');
+  assert.equal(done['21'], '56', '0015 poisti 0012:n rajoitteen');
+  assert.equal(scored.facts.migrations['0012'], 'run');
+  assert.equal(scored.facts.migrations['0015'], 'run');
+  // Rivit 31–33: suojatut jaksot (4 per käyttäjä), viikkosuunnitelmat ja päivättömät tehtävät.
+  assert.deepEqual([done['31'], done['32'], done['33']], ['8', '2', '2']);
+  const partial = scoreInventory(parseInventory(fs.readFileSync(path.join(dir, 'state-0014-partial-0015.json'), 'utf8')));
+  assert.equal(partial.decision, 'STOP');
+  assert.equal(partial.facts.migrations['0015'], 'partial');
+  assert.ok(partial.stops.some(s => /0015 on KESKEN/.test(s)), partial.stops.join('; '));
+});
+
+test('KRIITTINEN: oikean kannan inventaario tilassa 0014: GO, seuraava 0015; keskeneräinen 0014 -> STOP', () => {
   const dir = path.join(ROOT, 'tests/fixtures/activation-inventory');
   const done = parseInventory(fs.readFileSync(path.join(dir, 'state-0014.json'), 'utf8'));
   const scored = scoreInventory(done);
   assert.equal(scored.decision, 'GO', scored.stops.join('; '));
-  assert.equal(scored.nextMigration, null);
+  // Inventaarioversio ennen 0015:tä: rivi 24 puuttuu (valinnainen) -> 0015 ajamaton.
+  assert.equal(scored.nextMigration, '0015');
   assert.equal(scored.facts.migrations['0014'], 'run');
   assert.equal(scored.facts.migrations['0013'], 'run');
   // Rivit 90–99: uusien taulujen rivimäärät. Harjoittelu siemensi jokaiseen
@@ -183,7 +225,7 @@ test('KRIITTINEN: oikean kannan inventaario tilassa 0014: GO, ei seuraavaa migra
   assert.ok(partial.stops.some(s => /0014/.test(s)), partial.stops.join('; '));
 });
 
-test('KRIITTINEN: SCHEMA-DIFFS-0009-0014.md on johdettu kultaisista tiedostoista', () => {
+test('KRIITTINEN: SCHEMA-DIFFS-0009-0015.md on johdettu kultaisista tiedostoista', () => {
   assert.equal(read(SUMMARY_DOC).replace(/\r\n/g, '\n'), summaryMarkdown(),
     'aja: node tools/pg-rehearsal/schema-diff-summary.mjs');
   assert.deepEqual(parseGolden('- a:b\n+ c:d\n\n'), { added: ['c:d'], removed: ['a:b'] });

@@ -13,16 +13,23 @@
 //     (user_id = auth.uid(); profile ja notification_preferences:
 //     id = auth.uid()). Lisäys asettaa user_id:n kuten sarakkeen oletus
 //     auth.uid(); toisen käyttäjän user_id hylätään (42501).
-//   - uniikki- ja viiteavaimet migraatioista 0004–0014 (23505, 23503),
+//   - uniikki- ja viiteavaimet migraatioista 0004–0015 (23505, 23503),
 //     ja poiston `on delete set null / cascade`
-//   - migraation 0014 time-sarakkeet palautuvat muodossa HH:MM:SS
-//     (TIME_COLUMNS), kuten PostgreSQL ne tulostaa
+//   - migraatioiden 0014 ja 0015 time-sarakkeet palautuvat muodossa
+//     HH:MM:SS (TIME_COLUMNS), kuten PostgreSQL ne tulostaa
+//   - migraation 0015 CHECK-säännöt (CHECK_CONSTRAINTS, 23514): odotus vain
+//     WAITING-horisontilla, viikko maanantaista, enintään viisi
+//     prioriteettia, suojatun ajan rakennesäännöt
+//   - kannan tila: `createFakeDatabase({ through: '0014' })` mallintaa
+//     kannan ennen 0015:tä (life_areas_category_unique voimassa);
+//     oletus on koko ketju (0015: kategoria saa olla jaettu)
 //   - created_at ja updated_at kannan omaisuutena
 //   - offline: jokainen kysely palauttaa supabase-js:n verkkovirheen
 //     muodon (status 0, "TypeError: Failed to fetch"), eikä mitään kirjoiteta
 //
 // MITÄ EI MALLINNETA: sarakkeiden olemassaoloa (skeematarkistus saa aina
-// "kunnossa"), CHECK-rajoitteita, liipaisimia, realtimea eikä rpc:tä.
+// "kunnossa"), muita kuin 0015:n CHECK-rajoitteita, liipaisimia, realtimea
+// eikä rpc:tä.
 // Tuntematon kyselymetodi ei hiljaa onnistu: se palauttaa virheen ja
 // kirjautuu `unsupported`-listaan, jonka valjas raportoi.
 
@@ -47,7 +54,58 @@ export const UNIQUE_CONSTRAINTS = Object.freeze({
   place_aliases: [['place_aliases_alias_unique', ['user_id', 'alias', 'place_id']]],
   life_settings: [['life_settings_one_per_user', ['user_id']]],
   sleep_logs: [['sleep_logs_wake_date_unique', ['user_id', 'wake_date']]],
-  wellbeing_checkins: [['wellbeing_checkins_date_unique', ['user_id', 'date']]]
+  wellbeing_checkins: [['wellbeing_checkins_date_unique', ['user_id', 'date']]],
+  // Migraatio 0015 (aalto L): yksi suunnitelma viikkoa kohti.
+  weekly_plans: [['weekly_plans_week_unique', ['user_id', 'week_start']]]
+});
+
+/**
+ * Rajoitteet, jotka myöhempi migraatio poistaa: migraatio -> [taulu, nimi].
+ * 0015 poistaa life_areas_category_unique (omistajan päätös 1: useampi
+ * alue saa jakaa kategorian). `through` ennen migraatiota = rajoite voimassa.
+ */
+export const DROPPED_CONSTRAINTS = Object.freeze({
+  '0015': Object.freeze([['life_areas', 'life_areas_category_unique']])
+});
+
+const hhmm = value => (typeof value === 'string' ? Number(value.slice(0, 2)) * 60 + Number(value.slice(3, 5)) : null);
+const isoDow = value => { const d = new Date(`${value}T00:00:00Z`).getUTCDay(); return d === 0 ? 7 : d; };
+const nil = value => value === null || value === undefined;
+
+/**
+ * Migraation 0015 CHECK-rajoitteet predikaatteina (sama käännös kuin
+ * tests/mental-load-migration.test.mjs). Rikkomus -> 23514. Puuttuva
+ * sarake = NULL, kuten PostgreSQL:ssä.
+ */
+export const CHECK_CONSTRAINTS = Object.freeze({
+  tasks: [
+    ['tasks_horizon_check', r => nil(r.horizon) || ['NOW', 'THIS_WEEK', 'LATER', 'NOT_YET', 'WAITING'].includes(r.horizon)],
+    ['tasks_waiting_on_check', r => nil(r.waiting_on) || (String(r.waiting_on).trim().length > 0 && String(r.waiting_on).length <= 200)],
+    ['tasks_reschedule_count_check', r => nil(r.reschedule_count) || (r.reschedule_count >= 0 && r.reschedule_count <= 10000)],
+    ['tasks_waiting_on_horizon_check', r => nil(r.waiting_on) || r.horizon === 'WAITING']
+  ],
+  life_areas: [
+    ['life_areas_kind_check', r => nil(r.kind) || ['STANDARD', 'WELLBEING', 'ENJOYMENT', 'OWN_TIME', 'FREE_TIME', 'VACATION'].includes(r.kind)]
+  ],
+  protected_periods: [
+    ['protected_periods_kind_check', r => ['OWN_TIME', 'FREE_TIME', 'VACATION'].includes(r.kind)],
+    ['protected_periods_recurrence_check', r => ['once', 'weekly', 'weekly_target'].includes(r.recurrence)],
+    ['protected_periods_weekdays_check', r => nil(r.weekdays) || (Array.isArray(r.weekdays) && r.weekdays.length >= 1
+      && r.weekdays.length <= 7 && r.weekdays.every(d => Number.isInteger(d) && d >= 1 && d <= 7))],
+    ['protected_periods_dates_check', r => nil(r.start_date) || nil(r.end_date) || r.end_date >= r.start_date],
+    ['protected_periods_times_check', r => (nil(r.end_time) || !nil(r.start_time))
+      && (nil(r.start_time) || nil(r.end_time) || hhmm(r.start_time) < hhmm(r.end_time))],
+    ['protected_periods_once_check', r => r.recurrence !== 'once' || (!nil(r.start_date) && nil(r.weekdays))],
+    ['protected_periods_weekly_check', r => r.recurrence !== 'weekly' || (Array.isArray(r.weekdays) && r.weekdays.length >= 1)],
+    ['protected_periods_weekly_target_check', r => (r.recurrence === 'weekly_target' && r.kind === 'FREE_TIME'
+      && !nil(r.target_minutes) && nil(r.start_time) && nil(r.end_time) && nil(r.weekdays))
+      || (r.recurrence !== 'weekly_target' && nil(r.target_minutes))],
+    ['protected_periods_vacation_check', r => r.kind !== 'VACATION' || (r.recurrence === 'once' && nil(r.start_time) && nil(r.end_time))]
+  ],
+  weekly_plans: [
+    ['weekly_plans_week_start_check', r => typeof r.week_start === 'string' && isoDow(r.week_start) === 1],
+    ['weekly_plans_priorities_check', r => Array.isArray(r.priorities ?? []) && (r.priorities ?? []).length <= 5]
+  ]
 });
 
 /**
@@ -60,7 +118,9 @@ export const TIME_COLUMNS = Object.freeze({
   calendar_events: ['start_time', 'end_time'],
   commute_observations: ['planned_departure', 'actual_departure', 'arrival_at'],
   life_settings: ['bedtime_target', 'digest_time'],
-  sleep_logs: ['planned_bedtime', 'actual_bedtime', 'planned_wake', 'actual_wake']
+  sleep_logs: ['planned_bedtime', 'actual_bedtime', 'planned_wake', 'actual_wake'],
+  // Migraatio 0015 (aalto L).
+  protected_periods: ['start_time', 'end_time']
 });
 
 const SET_NULL = 'set null';
@@ -159,7 +219,10 @@ const OPERATORS = Object.freeze({
  * Tietokanta muistissa. `tables` on { taulu: [rivi, ...] } (kannan
  * sarakenimet); annettu olio kopioidaan.
  */
-export function createFakeDatabase({ tables = {}, now = () => new Date().toISOString() } = {}) {
+export function createFakeDatabase({ tables = {}, now = () => new Date().toISOString(), through = '0015' } = {}) {
+  // Rajoitteet, jotka `through`-tilassa on jo poistettu (myöhempi migraatio).
+  const dropped = new Set(Object.entries(DROPPED_CONSTRAINTS)
+    .filter(([migration]) => migration <= through).flatMap(([, list]) => list.map(([, name]) => name)));
   const data = {};
   for (const [table, rows] of Object.entries(tables || {})) data[table] = clone(rows || []);
   const writes = [];
@@ -176,12 +239,24 @@ export function createFakeDatabase({ tables = {}, now = () => new Date().toISOSt
         `Key (id)=(${candidate.id}) already exists.`);
     }
     for (const [name, columns] of UNIQUE_CONSTRAINTS[table] || []) {
+      if (dropped.has(name)) continue;
       if (columns.some(column => keyValue(candidate, column) === null || keyValue(candidate, column) === undefined)) continue;
       const other = rowsOf(table).find(row => !ignore.has(row)
         && columns.every(column => String(keyValue(row, column)) === String(keyValue(candidate, column))));
       if (other) {
         return pgError('23505', `duplicate key value violates unique constraint "${name}"`,
           `Key (${columns.join(', ')}) already exists.`);
+      }
+    }
+    return null;
+  }
+
+  /** 0015:n CHECK-rajoitteet (vain kun 0015 on kannassa). */
+  function checkViolation(table, row) {
+    if (through < '0015') return null;
+    for (const [name, predicate] of CHECK_CONSTRAINTS[table] || []) {
+      if (!predicate(row)) {
+        return pgError('23514', `new row for relation "${table}" violates check constraint "${name}"`);
       }
     }
     return null;
@@ -258,6 +333,8 @@ export function createFakeDatabase({ tables = {}, now = () => new Date().toISOSt
     }
     const ignore = new Set(replaced.map(([old]) => old));
     for (const row of [...staged, ...replaced.map(([, next]) => next)]) {
+      const check = checkViolation(table, row);
+      if (check) return { error: check, status: 400 };
       const error = uniqueViolation(table, row, ignore) || foreignKeyViolation(table, row);
       if (error) return { error, status: 409 };
       ignore.add(row);
@@ -284,6 +361,8 @@ export function createFakeDatabase({ tables = {}, now = () => new Date().toISOSt
     const next = targets.map(row => ({ ...row, ...clean, updated_at: stamp }));
     const ignore = new Set(targets);
     for (const row of next) {
+      const check = checkViolation(table, row);
+      if (check) return { error: check, status: 400 };
       const error = uniqueViolation(table, row, ignore) || foreignKeyViolation(table, row);
       if (error) return { error, status: 409 };
     }

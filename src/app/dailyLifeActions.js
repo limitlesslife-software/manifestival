@@ -713,3 +713,11 @@ export async function saveWellbeingCheckin(input = {}) {
     startedIn, { key: `wellbeingCheckins:${checkin.id}`, reapply: () => upsertWellbeingCheckinInState(checkin) });
   return result.ok ? { ok: true, checkin } : result;
 }
+
+// ------------------------------------------------ jaettu kirjoituspolku
+//
+// Mielen kuorman toiminnot (src/app/mentalLoadActions.js, migraatio 0015)
+// kulkevat SAMAN kirjoituspolun läpi: sama latauksen ja tallennuksen
+// limityksen suoja (keepDailyLifeWritesSince) ja sama istuntovarmistus.
+// Kaksi rinnakkaista mekanismia erkanisi.
+export { persist as persistTrackedWrite, warnIfVolatile as warnIfVolatileRepo };

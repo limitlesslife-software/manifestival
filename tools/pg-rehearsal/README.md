@@ -16,7 +16,7 @@ moduulien importti ei avaa yhteyttä eikä aja skenaarioita.
 
 ## Mitä tämä todistaa
 
-`rehearse.mjs` ajaa migraatiot **0001 → 0014 järjestyksessä** tuotannon
+`rehearse.mjs` ajaa migraatiot **0001 → 0015 järjestyksessä** tuotannon
 muotoisesta lähtötilasta (ennen 0001:tä: `tasks` 36 riviä ilman
 `user_id`:tä, `profile` yksi rivi `id = 'me'`, "salli kaikki" -politiikat)
 ja jokaisen jälkeen sen oman `supabase/verify/verify_XXXX.sql`:n.
@@ -24,23 +24,23 @@ ja jokaisen jälkeen sen oman `supabase/verify/verify_XXXX.sql`:n.
 | Skenaario | Sisältö |
 |---|---|
 | `upgrade:text` / `upgrade:typed` | Ketju kahdella lähtötilalla: `tasks.date/time` tekstinä tai omina tyyppeinään. Sovellusdata siemennetään kahdelle käyttäjälle **roolina `authenticated`** heti kunkin taulun synnyttyä. 0003:sta alkaen jokaisen migraation ympärillä: jokaisen vanhan rivin arvot vanhoissa sarakkeissa (md5), rivin `xmin` (ei UPDATEa) ja taulun `relfilenode` (ei uudelleenkirjoitusta) täsmälleen ennallaan; alkuperäiset 36 tehtävää säilyvät; 0012 ei liitä yhtään tavoitetta alueeseen. |
-| `rls` | Jokaiselle 36 taululle (0014:n kymmenen mukaan lukien): A ei voi lukea, päivittää, poistaa, lisätä B:n nimissä, siirtää omaa riviään B:lle eikä viitata B:n riviin yhdistelmävierasavaimella; `anon` ei pääse mihinkään; `authenticated` ilman `sub`-väitettä ei näe mitään; PUBLIC/anon-oikeuksia ei ole. |
-| `lifecycle` | Poistosäännöt, yksi ajastin per käyttäjä, `operation_id`-idempotenssi, rajat ja tilin poiston cascade kaikkiin tauluihin; 0014: tavoitteen ja paikan poisto nollaa vain oman viitesarakkeensa (meno ja liikuntakerta jäävät omistajalleen), lisänimet/havainnot/tapojen kirjaukset kaskadoituvat, yksi asetusrivi käyttäjää kohti, 16 CHECK-rajaa; vanhojen aaltojen käsin kirjoitetut rivimuodot koko ketjun jälkeen. |
-| `preflight` | Jokainen `preflight_0009…0014.sql` jokaisessa tilassa 0007–0014: PASS vain juuri ennen omaa migraatiotaan (48 tapausta). |
-| `inventory` | `activation_readonly_inventory.sql` jokaisessa junan tilassa 0008–0014 READ ONLY -transaktiossa + `score-inventory.mjs`:n päätös; keskeneräinen 0012 ja 0014 → STOP. `--fixtures=DIR` kirjoittaa tulokset yksikkötesteille, `--fixture-states=0014,0013-partial-0014` rajaa kirjoitettavat. |
-| `rollback` | Jokaiselle 0009–0014: ajo → oma ROLLBACK-osio → **katalogirivit** (`lib.catalogItems`) täsmälleen samat → ajo uudelleen. |
-| `failure` | Uudelleenajo ("JO AJETTU"), puuttuva esiehto (0014 ilman 0013:a), osittainen tila (0014: taulu, indeksin tai rajoitteen nimi), lukon aikakatkaisu (0014: goals-/auth.users-kirjoitus estää, lukukysely ei), myöhäinen esiehto ja 0014:n myöhäinen virhe vaiheessa 11 — katalogi ennallaan jokaisen epäonnistumisen jälkeen. |
+| `rls` | Jokaiselle 38 taululle (0014:n kymmenen ja 0015:n kaksi mukaan lukien, 449 tarkistusta): A ei voi lukea, päivittää, poistaa, lisätä B:n nimissä, siirtää omaa riviään B:lle eikä viitata B:n riviin yhdistelmävierasavaimella; `anon` ei pääse mihinkään; `authenticated` ilman `sub`-väitettä ei näe mitään; PUBLIC/anon-oikeuksia ei ole. |
+| `lifecycle` | Poistosäännöt, yksi ajastin per käyttäjä, `operation_id`-idempotenssi, rajat ja tilin poiston cascade kaikkiin tauluihin; 0014: tavoitteen ja paikan poisto nollaa vain oman viitesarakkeensa (meno ja liikuntakerta jäävät omistajalleen), lisänimet/havainnot/tapojen kirjaukset kaskadoituvat, yksi asetusrivi käyttäjää kohti, 16 CHECK-rajaa; 0015: odotus vain WAITING-horisontilla (myös NULL-horisontti hylätään), päivätön tehtävä, jaettu kategoria, suojatun ajan ja viikkosuunnitelman CHECKit, domainin validointi = kannan hyväksyntä (`domainRowsAgainstDatabase`); vanhojen aaltojen käsin kirjoitetut rivimuodot koko ketjun jälkeen. |
+| `preflight` | Jokainen `preflight_0009…0015.sql` jokaisessa tilassa 0007–0015: PASS vain juuri ennen omaa migraatiotaan (63 tapausta). |
+| `inventory` | `activation_readonly_inventory.sql` jokaisessa junan tilassa 0008–0015 READ ONLY -transaktiossa + `score-inventory.mjs`:n päätös; keskeneräinen 0012, 0014 ja 0015 → STOP; tilassa 0015 0012:n 56 objektia = ajettu (`SUPERSEDED_OBJECTS`). `--fixtures=DIR` kirjoittaa tulokset yksikkötesteille, `--fixture-states=0015,0014-partial-0015` rajaa kirjoitettavat. |
+| `rollback` | Jokaiselle 0009–0015: ajo → oma ROLLBACK-osio → **katalogirivit** (`lib.catalogItems`) täsmälleen samat → ajo uudelleen. |
+| `failure` | Uudelleenajo ("JO AJETTU"), puuttuva esiehto (0014 ilman 0013:a), osittainen tila (0014: taulu, indeksin tai rajoitteen nimi), lukon aikakatkaisu (0014: goals-/auth.users-kirjoitus estää, lukukysely ei), myöhäinen esiehto ja 0014:n myöhäinen virhe vaiheessa 11; 0015: puuttuva 0014, osittainen tila (taulu, sarake, indeksin tai rajoitteen nimi, käsin poistettu `life_areas_category_unique`), tasks-/life_areas-lukukysely ja auth.users-kirjoitus estävät, myöhäinen virhe vaiheessa 5, `tasks.date` NOT NULL -lähtötila — katalogi ennallaan jokaisen epäonnistumisen jälkeen. |
 | `prodshape:fixture` | Tuotannon tila 0008 (`prodshape.mjs`) = omistajan inventaario 2026-09-26 (`expected/production-inventory-0008.json`): omistajan antamat rivit verrataan, johdetut merkitty `derived`, antamattomat `absent`. 5 tavoitteen tilaa × projekti kytketty/irti. |
 | `values:0010` | 0010 tuotannon muotoiseen kantaan (10 muunnelmaa): yksikään vanha arvo ei muutu, yhtään riviä ei kirjoiteta uudelleen (`xmin`), yhtään taulua ei kirjoiteta uudelleen (`relfilenode`); uudet sarakkeet vanhoilla riveillä: `depends_on = '{}'`, muut null, `automation_level = 1`, `planning_buffer_ratio = 0.25`. |
-| `prodshape:chain` | 0009–0014 tuotannon datalla (0014 ajetaan täsmälleen J:n skeemaan): tiivisteet jokaisen migraation ympärillä + skeemaero = kultainen tiedosto `expected/schema-diff-00NN.txt`; poistoja vain sallitut (`ALLOWED_REMOVALS`: 0010 goals_status_check, 0013 time_entries_source_check; 0014 ei poista mitään). |
+| `prodshape:chain` | 0009–0015 tuotannon datalla (0014 ajetaan täsmälleen J:n skeemaan, 0015 K:n): tiivisteet jokaisen migraation ympärillä + skeemaero = kultainen tiedosto `expected/schema-diff-00NN.txt`; poistoja vain sallitut (`ALLOWED_REMOVALS`: 0010 goals_status_check, 0013 time_entries_source_check; 0014 ei poista mitään; 0015 life_areas_category_unique). |
 | `prodshape:pause` | Junan taukopisteet (`waves.mjs`): elävän ja seuraavan aallon kirjoitukset sovelluksen **omilla rivimuunnoksilla** (`repo.mapping.toRow`, `rows.js toRow`, `profileToRow`, `preferencesToRow`) aallon sarakeporteilla PostgREST-muodossa (insert/update/upsert/delete roolina authenticated), verify uudelleen, seuraava preflight, peruutuksen kuiva-ajo (estääkö data peruutuksen). |
 | `failure:0010-locks` | Estäjämatriisi goals/tasks/projects/profile/auth.users × ACCESS SHARE / ROW EXCLUSIVE (+ 0009 bills, 0011 tasks): odotus 4,5–7 s, katalogi, rivit ja tilarajoite ennallaan, ei jääneitä lukkoja, uudelleenajo läpi. Myöhäinen virhe tilarajoitteen vaihdon jälkeen (event trigger skeemassa `rehearsal_inject`), sovelluksen jumin mittaus, lukkiutuminen (40P01), keskeytynyt istunto, uudelleenajo `goals`-lukon aikana ("JO AJETTU" heti, ei lukon odotusta). Vertailu 0010:aan ennen lukitusjärjestystä ja ennen katalogitarkistusten siirtoa lukituksen eteen (git). |
 | `verify:null` | Rikottu objekti → NULL-tulos on FAIL ja lasketaan `poikkeavia_yhteensa`-lukuun. |
-| `preflight:blockers` | Uusi esteet-rivi (lukitut taulut, `pg_locks`) ja politiikkamäärärivit havaitsevat esteen ennen migraatiota. Tilin poiston oletukset (F13): vieras public-taulu ei-CASCADE-avaimella pysäyttää `preflight_0009`:n ennen junaa, mutta ei kaada `verify_0013`:a (rivit 26–27 rajattu migraatioiden 26 tauluun, rivi 28 INFO) eikä `verify_0014`:ää (rivit 34–35 rajattu 36 tauluun, rivi 36 INFO); migraation taulun ei-CASCADE- tai puuttuva avain kaatuu riveille 26 ja 27 (0014: 33–35). |
-| `rollback:data` | 0010 (ylläpitotila → selkeä kieltäytyminen, korjauksen jälkeen läpi), 0012 (liitetty tavoite + kirjattu aika), 0013 (minuutit säilyvät, kohdistuksen menetys ennakkokyselystä), 0014 (aallon K rivit kaikissa kymmenessä taulussa → pudotus, verify_0013 0 FAIL, uusi ajo läpi) — vanhat rivit ja katalogi täsmälleen ennallaan. |
-| `rollback:reverse-chain` | 0008 → 0014 datan kanssa → peruutukset 0014…0009 → katalogi = tuotannon 0008; 0012 ennen 0013:a kaatuu vartijaan. Tiedoksi omassa kloonissaan: 0013:n peruutuksella ei ole 0014-vartijaa (0013 lukittu), ja inventaario pysäyttää sellaisen tilan. |
+| `preflight:blockers` | Uusi esteet-rivi (lukitut taulut, `pg_locks`) ja politiikkamäärärivit havaitsevat esteen ennen migraatiota. Tilin poiston oletukset (F13): vieras public-taulu ei-CASCADE-avaimella pysäyttää `preflight_0009`:n ennen junaa, mutta ei kaada `verify_0013`:a (rivit 26–27 rajattu migraatioiden 26 tauluun, rivi 28 INFO) eikä `verify_0014`:ää (rivit 34–35 rajattu 36 tauluun, rivi 36 INFO) eikä `verify_0015`:ttä (rivit 31–32 rajattu 38 tauluun, rivi 33 INFO); migraation taulun ei-CASCADE- tai puuttuva avain kaatuu riveille 26 ja 27 (0014: 33–35, 0015: 30–32). |
+| `rollback:data` | 0010 (ylläpitotila → selkeä kieltäytyminen, korjauksen jälkeen läpi), 0012 (liitetty tavoite + kirjattu aika), 0013 (minuutit säilyvät, kohdistuksen menetys ennakkokyselystä), 0014 (aallon K rivit kaikissa kymmenessä taulussa → pudotus, verify_0013 0 FAIL, uusi ajo läpi), 0015 (jaettu kategoria → vartija kieltäytyy, korjauksen jälkeen pudotus, verify_0014 0 FAIL, päivätön tehtävä säilyy) — vanhat rivit ja katalogi täsmälleen ennallaan. |
+| `rollback:reverse-chain` | 0008 → 0015 datan kanssa → peruutukset 0015…0009 → katalogi = tuotannon 0008; 0012 ennen 0013:a kaatuu vartijaan. Tiedoksi omassa kloonissaan: 0013:n peruutuksella ei ole 0014-vartijaa (0013 lukittu), ja inventaario pysäyttää sellaisen tilan. |
 | `role:nonsuper` | Migraatiot NOSUPERUSER-omistajaroolina; preflightin esteet-rivit `pg_read_all_stats`-oikeuden kanssa ja ilman. |
-| `backup` (vain `--only=backup`) | Looginen tilannekuva ja palautus B1–B15 (`backup-scenario.mjs`, ks. `docs/activation/0010-BACKUP-AND-RECOVERY.md` §10) jokaiselle 0009–0014 molemmilla lähtötiloilla; B15: RLS:n suodattama kuva hylätään. Ei kuulu oletusajoon. Sama ajo erikseen: `rehearse-backup.mjs`. |
+| `backup` (vain `--only=backup`) | Looginen tilannekuva ja palautus B1–B15 (`backup-scenario.mjs`, ks. `docs/activation/0010-BACKUP-AND-RECOVERY.md` §10) jokaiselle 0009–0015 molemmilla lähtötiloilla; B15: RLS:n suodattama kuva hylätään. Ei kuulu oletusajoon. Sama ajo erikseen: `rehearse-backup.mjs`. |
 
 ## Mitä tämä EI todista (tunnetut erot Supabaseen)
 
@@ -95,12 +95,12 @@ node tools/pg-rehearsal/rehearse.mjs --json=raportti.json
 node tools/pg-rehearsal/chain.mjs text                  # pelkkä ketju + verify
 node tools/pg-rehearsal/bundle-hashes.mjs               # MIGRATION-BUNDLES.md:n blob-taulukko
 node tools/pg-rehearsal/sql-result-fixtures.mjs         # oikean kannan preflight/verify-tulokset -> tests/fixtures/sql-results
-node tools/pg-rehearsal/sql-result-fixtures.mjs --numbers=0014   # vain 0014, yhdistetään manifestiin
+node tools/pg-rehearsal/sql-result-fixtures.mjs --numbers=0015   # vain 0015, yhdistetään manifestiin
 ```
 
-`sql-result-fixtures.mjs` ajaa jokaisen `preflight_0009…0014`:n PASS-tilassa
+`sql-result-fixtures.mjs` ajaa jokaisen `preflight_0009…0015`:n PASS-tilassa
 (juuri ennen migraatiota) ja FAIL-tilassa (migraatio jo ajettu) sekä jokaisen
-`verify_0009…0014`:n puhtaana ja rikottuna (`NULL_SABOTAGE`) tuotannon
+`verify_0009…0015`:n puhtaana ja rikottuna (`NULL_SABOTAGE`) tuotannon
 muotoisessa synteettisessä kannassa, kirjoittaa tulokset sarkainerotettuina
 ja pisteyttää ne (`score-sql-result.mjs`, SQL-tiedoston omat
 tarkistusnumerot); `manifest.json` sisältää alkuperän.
@@ -150,7 +150,7 @@ data-hakemisto sekä jokaisen luetun SQL-tiedoston git-blob-tiivisteen.
 | `*-scenarios.mjs` | uudet skenaariot (tuotannon muoto, virheet ja lukot, peruutukset) |
 | `backup-scenario.mjs`, `rehearse-backup.mjs` | looginen tilannekuva ja palautus B1–B15 (`--only=backup` tai erillinen ajo) |
 | `sql-result-fixtures.mjs` | oikean kannan preflight- ja verify-tulokset pisteytyksen yksikkötesteille (`tests/fixtures/sql-results`) |
-| `expected/` | omistajan inventaario 0008 ja kultaiset skeemaerot 0009–0014 |
+| `expected/` | omistajan inventaario 0008 ja kultaiset skeemaerot 0009–0015 |
 
 ## Löydökset, jotka tämä on jo tehnyt
 
@@ -194,3 +194,9 @@ data-hakemisto sekä jokaisen luetun SQL-tiedoston git-blob-tiivisteen.
     (`auth.users`-kirjoitus) jumissa 4 981 ms. Nyt `goals` lukitaan ennen
     ensimmäistä DDL:ää: 0 DDL, kirjautuminen 5 ms (`failure:0010-locks`,
     `authStall0014`).
+12. 0015 (2026-09-27): odotuksen CHECK `horizon = 'WAITING' or waiting_on is
+    null` hyväksyi rivin, jonka horisontti on NULL ja odotus asetettu
+    (CHECK hyväksyy NULLin). JavaScript-predikaatti oli oikein, joten vain
+    oikea kanta näki eron. Nyt `waiting_on is null or (horizon is not null
+    and horizon = 'WAITING')`; `verify_0015` rivi 24 vaatii NULL-turvallisen
+    muodon (`lifecycle`, `0015_rejects_null_horizon_with_waiting_on`).

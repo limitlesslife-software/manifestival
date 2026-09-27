@@ -154,8 +154,12 @@
            verkkokatko ei saa syoda kayttajan ajatusta. -->
       <div class="capture-bar" id="captureBar">
         <label class="visually-hidden" for="captureInput">Kirjaa jotain</label>
-        <input type="text" id="captureInput" autocomplete="off"
-               maxlength="1000" placeholder="Kirjaa jotain — järjestä myöhemmin">
+        <!-- Brain dump (aalto L): monta asiaa kerralla, yksi per rivi. Enter
+             kirjaa, Shift+Enter tekee uuden rivin. Kirjaus ei kysy mitään. -->
+        <textarea id="captureInput" rows="1" autocomplete="off" maxlength="8000"
+                  aria-describedby="captureHint"
+                  placeholder="Kirjaa jotain — järjestä myöhemmin"></textarea>
+        <span class="visually-hidden" id="captureHint">Enter kirjaa. Shift ja Enter tekee uuden rivin. Jokaisesta rivistä tulee oma asia Saapuviin.</span>
         <button class="capture-mic" id="captureMicBtn" type="button" aria-label="Sanele">
           <svg class="icon" aria-hidden="true"><use href="#i-mic"/></svg>
         </button>
@@ -166,19 +170,26 @@
       <div id="capturePending"></div>
 
       <div id="noticeCenterContainer"></div>
+
+      <!-- RAUHALLINEN TÄNÄÄN (aalto L, docs/MENTAL-LOAD-CORE.md):
+           fokus (enintään kolme) ylhäällä ja "Kaikki muu on tallessa (N)".
+           Sen jälkeen aikakriittinen, suojattu aika ja kiinteät menot omina
+           osioinaan. Tänään ei ole koko jono. -->
+      <div id="todayFocus"></div>
+      <div id="todayNowNext"></div>
       <!-- Arjen kortit (src/app/views/todayDailyLife.js): piirretään vain,
            kun niillä on sanottavaa tänään. -->
       <div id="todayDeparture"></div>
+      <div id="todayProtected"></div>
+      <div id="todayWeekReset"></div>
       <div id="todayMorning"></div>
-      <div id="todayNowNext"></div>
       <div id="todayDirection"></div>
-      <div id="todayHabits"></div>
 
-      <div id="todayFocus"></div>
       <div id="todayOverdue"></div>
       <div id="todayInterruptions"></div>
       <div id="todayTimelineContainer"></div>
       <div id="todayUnscheduled"></div>
+      <div id="todayHabits"></div>
       <div id="todayOpenEnded"></div>
       <div id="todayFreeSlots"></div>
       <div id="todayCompleted"></div>
@@ -218,6 +229,7 @@
         <button class="assist-btn" id="dirQuickLog" type="button">Kirjaa aikaa</button>
         <button class="assist-btn" id="dirOpenEstimate" type="button">Arvioi tehtäviä</button>
         <button class="assist-btn" id="dirOpenUnassigned" type="button">Kohdista luokittelemattomat</button>
+        <button class="assist-btn" id="dirSundayResetBtn" type="button">Sulje viikko (sunnuntain nollaus)</button>
       </div>
 
       <!-- Havainnot -->
@@ -312,6 +324,21 @@
             <input type="number" id="dirAreaTarget" min="0" max="168" step="0.5" inputmode="decimal" placeholder="esim. 10">
             <div class="field-error" id="dirAreaTargetError" role="alert"></div>
             <p class="hint">Tyhjä = ei tavoitetta. 0 = en halua käyttää tähän aikaa nyt.</p>
+          </div>
+          <!-- Alueen laji (aalto L, omistajan päätös 1): tavallinen, hyvinvointi,
+               ilo, oma aika, vapaa-aika tai loma. Asian luonne johdetaan erikseen. -->
+          <div>
+            <label class="field-label" for="dirAreaKind">Millainen alue tämä on?</label>
+            <select id="dirAreaKind">
+              <option value="STANDARD">Tavallinen</option>
+              <option value="WELLBEING">Hyvinvointi</option>
+              <option value="ENJOYMENT">Ilo</option>
+              <option value="OWN_TIME">Oma aika</option>
+              <option value="FREE_TIME">Vapaa-aika</option>
+              <option value="VACATION">Loma</option>
+            </select>
+            <div class="field-error" id="dirAreaKindError" role="alert"></div>
+            <p class="hint">Hyvinvoinnin, ilon ja vapaa-ajan asiat eivät vie päivän fokuspaikkaa, ellet valitse niitä itse.</p>
           </div>
           <div>
             <label class="field-label" for="dirAreaCategory">Laske tähän kategorian tehtävät (valinnainen)</label>
@@ -615,6 +642,7 @@
 
       <div class="segment segment-scroll" role="tablist" aria-label="Tekemisen osiot">
         <button class="segment-btn active" id="segmentTasks" type="button" role="tab" aria-selected="true">Tehtävät</button>
+        <button class="segment-btn" id="segmentStored" type="button" role="tab" aria-selected="false">Tallessa</button>
         <button class="segment-btn" id="segmentRoutines" type="button" role="tab" aria-selected="false">Rutiinit</button>
         <button class="segment-btn" id="segmentInbox" type="button" role="tab" aria-selected="false">Saapuvat</button>
         <button class="segment-btn" id="segmentReminders" type="button" role="tab" aria-selected="false">Muistutukset</button>
@@ -656,6 +684,33 @@
             <div>
               <label class="field-label" for="afPriority">Prioriteetti</label>
               <select id="afPriority"></select>
+            </div>
+          </div>
+
+          <!-- Horisontti (aalto L, 0015): päivätön tehtävä on sallittu, kun
+               käyttäjä valitsee horisontin. Keksittyä päivää ei pakoteta. -->
+          <div class="form-row">
+            <div>
+              <label class="field-label" for="afHorizon">Milloin</label>
+              <select id="afHorizon" aria-describedby="afHorizonHint">
+                <option value="">Päivän mukaan</option>
+                <option value="THIS_WEEK">Tällä viikolla</option>
+                <option value="LATER">Myöhemmin</option>
+                <option value="NOT_YET">Ei vielä</option>
+                <option value="WAITING">Odottaa jotakuta</option>
+              </select>
+              <div class="hint" id="afHorizonHint">Jätä päivä tyhjäksi, jos asialla ei ole päivää.</div>
+              <div class="field-error" id="afHorizonError"></div>
+            </div>
+            <div id="afWaitingRow" style="display:none;">
+              <label class="field-label" for="afWaitingOn">Kenen tai minkä varassa?</label>
+              <input type="text" id="afWaitingOn" maxlength="200" autocomplete="off" placeholder="esim. Anna, taloyhtiö">
+              <div class="field-error" id="afWaitingOnError"></div>
+            </div>
+            <div id="afFollowUpRow" style="display:none;">
+              <label class="field-label" for="afFollowUp">Tarkista tilanne (valinnainen)</label>
+              <input type="date" id="afFollowUp">
+              <div class="field-error" id="afFollowUpError"></div>
             </div>
           </div>
 
@@ -823,12 +878,25 @@
         <div id="routinesListContainer"></div>
       </div>
 
+      <!-- ---- Tallessa (aalto L) ----
+           Kaikki, mitä ei tarvitse hoitaa tänään: tällä viikolla, myöhemmin,
+           ei vielä, odottaa ja arkisto. Sama lähde kuin Tänään-näkymässä. -->
+      <div id="storedSection" style="display:none;">
+        <div id="storedListContainer"></div>
+      </div>
+
       <!-- ---- Saapuvat ---- -->
       <div id="inboxSection" style="display:none;">
         <p class="hint" id="inboxIntro">
-          Kirjaa asiat sitä mukaa kuin ne tulevat mieleen. Tulkinta on
-          <strong>ehdotus</strong>: mitään ei synny ennen kuin hyväksyt sen.
+          Kirjaa asiat sitä mukaa kuin ne tulevat mieleen — vaikka monta
+          kerralla. Kaikki on tallessa täällä. Kun ehdit, valitse rivit ja
+          päätä niistä kerralla. Jokaisella rivillä on <strong>ehdotus</strong>:
+          mitään ei synny ennen kuin valitset.
         </p>
+        <div id="inboxStatus" role="status" class="capture-status"></div>
+        <!-- Tarkistuskortti myös täällä (L0): "Käsittele" Saapuvissa avasi
+             kortin vain Tänään-näkymään, jossa sitä ei nähnyt. -->
+        <div id="inboxPending"></div>
         <div id="inboxListContainer"></div>
       </div>
 
@@ -1707,6 +1775,7 @@
            Näkyvä osio tulee tilasta (profileSegment), ks. views/profileSegments.js. -->
       <div class="segment segment-scroll" role="tablist" aria-label="Profiilin osiot">
         <button class="segment-btn active" id="segmentProfileDaily" type="button" role="tab" aria-selected="true" aria-controls="profileDailySection">Arki</button>
+        <button class="segment-btn" id="segmentProfileProtected" type="button" role="tab" aria-selected="false" tabindex="-1" aria-controls="profileProtectedSection">Suojattu aika</button>
         <button class="segment-btn" id="segmentProfileWellbeing" type="button" role="tab" aria-selected="false" tabindex="-1" aria-controls="profileWellbeingSection">Hyvinvointi</button>
         <button class="segment-btn" id="segmentProfilePlaces" type="button" role="tab" aria-selected="false" tabindex="-1" aria-controls="profilePlacesSection">Paikat</button>
         <button class="segment-btn" id="segmentProfileSettings" type="button" role="tab" aria-selected="false" tabindex="-1" aria-controls="profileSettingsSection">Asetukset</button>
@@ -1727,6 +1796,12 @@
         <div id="dailyBriefSettings"></div>
         <h2 class="section-title" id="dailyMealTitle">Ateriat</h2>
         <div id="dailyMealSettings"></div>
+      </div>
+
+      <!-- Suojattu aika (aalto L): oma aika, vapaa-aika, loma ja väljyys
+           (views/protectedTimeSettings.js). Kapasiteettijarrun varaukset. -->
+      <div id="profileProtectedSection" role="tabpanel" aria-labelledby="segmentProfileProtected" style="display:none;">
+        <div id="protectedTimeContainer"></div>
       </div>
 
       <!-- Hyvinvointi ja Paikat piirtävät omat näkymänsä näihin säiliöihin. -->
@@ -1826,6 +1901,23 @@
     <button class="tab-btn" type="button" role="tab" aria-selected="false" tabindex="-1" data-screen="screen-finance"><svg class="icon" aria-hidden="true"><use href="#i-wallet"/></svg>Talous</button>
     <button class="tab-btn" type="button" role="tab" aria-selected="false" tabindex="-1" data-screen="screen-profile"><svg class="icon" aria-hidden="true"><use href="#i-user"/></svg>Profiili</button>
   </nav>
+
+  <!-- ============ SUNNUNTAIN NOLLAUS ============
+       Viikon sulkeminen vaihe kerrallaan (src/app/views/sundayReset.js).
+       Kortti piirretään uudelleen; otsikko (#sundayResetTitle) ja vaihe
+       (#sundayResetStepLabel) nimeävät dialogin. Escape sulkee, eteneminen
+       säilyy muistissa. -->
+  <dialog class="confirm-dialog sunday-reset-dialog" id="sundayResetDialog" aria-labelledby="sundayResetTitle" aria-describedby="sundayResetStepLabel">
+    <div class="confirm-body sunday-reset-sheet">
+      <div class="sunday-reset-head">
+        <p class="dir-setup-step" id="sundayResetStepLabel"></p>
+        <button class="sunday-reset-close" id="sundayResetClose" type="button" aria-label="Sulje nollaus (eteneminen säilyy)"><svg class="icon" style="width:20px;height:20px;" aria-hidden="true"><use href="#i-x"/></svg></button>
+      </div>
+      <div id="sundayResetCard"></div>
+      <p class="visually-hidden" id="sundayResetStatus" role="status" aria-live="polite"></p>
+    </div>
+  </dialog>
+  <button class="assist-btn primary sunday-reset-resume" id="sundayResetResume" type="button" hidden>Palaa nollaukseen</button>
 
   <!-- ============ HAKU ============ -->
   <div class="voice-overlay" id="searchOverlay" role="dialog" aria-modal="true" aria-label="Hae" aria-hidden="true">

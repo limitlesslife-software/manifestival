@@ -250,7 +250,10 @@ const BLOCK_LABELS = Object.freeze({
   [BLOCK_KIND.OVERHEAD]: 'Pysäköinti ja kävely',
   [BLOCK_KIND.ARRIVAL_BUFFER]: 'Ajoissa perillä',
   [BLOCK_KIND.WIND_DOWN]: 'Rauhoittuminen',
-  [BLOCK_KIND.SLEEP]: 'Uni'
+  [BLOCK_KIND.SLEEP]: 'Uni',
+  [BLOCK_KIND.OWN_TIME]: 'Oma aika',
+  [BLOCK_KIND.FREE_TIME]: 'Vapaa-aika',
+  [BLOCK_KIND.VACATION]: 'Loma'
 });
 
 /** Lohkon laji suomeksi. */

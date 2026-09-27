@@ -295,6 +295,14 @@ function slot(dateIso, start, end) {
   });
 }
 
+/**
+ * "Myöhemmin" (0015): ei keksittyä päivää. Tehtävä jää tallessa olevaksi
+ * ilman päivää, kun seuraavilla päivillä ei ole tilaa.
+ */
+function laterSlot() {
+  return Object.freeze({ date: null, time: null, endTime: null, horizon: 'LATER' });
+}
+
 function change(kind, item, from, to, reason, extra = {}) {
   return Object.freeze({
     kind,
@@ -694,11 +702,65 @@ function skipItem(ctx) {
     changes.push(change(REPLAN_CHANGE.SKIP, item, from, slot(dateIso, null, null),
       'Aika vapautuu. Tehtävä jää tämän päivän listalle ilman kellonaikaa.'));
   } else {
-    const next = addDaysIso(dateIso, 1);
-    changes.push(change(REPLAN_CHANGE.DEFER, item, from, slot(next, null, null),
-      `Ei tälle päivälle. Siirtyy päivälle ${endLabel(next)}.`));
+    // L0: kohdepäivän tila tarkistetaan (sama valitsin kuin loppujen siirrossa).
+    deferWithCapacity(ctx, item, from, 'Ei tälle päivälle.', capacityMapOf(ctx));
   }
   return {};
+}
+
+/**
+ * Tulevien päivien vapaa aika (päivä -> minuutit tai null = ei tiedossa).
+ * Kutsuja antaa päivät (dayReplanActions.horizonDays); ilman niitä tila on
+ * tuntematon.
+ */
+function capacityMapOf(ctx) {
+  const capacity = new Map();
+  const dayList = (Array.isArray(ctx.days) ? ctx.days : EMPTY)
+    .filter(day => isObject(day) && safe(() => isIsoDate(day.date) && day.date > ctx.todayIso, false))
+    .sort((a, b) => compareIds(a.date, b.date));
+  for (const day of dayList) if (!capacity.has(day.date)) capacity.set(day.date, capacityOf(day));
+  return capacity;
+}
+
+/**
+ * Siirrä joustava tehtävä ensimmäiselle päivälle, jolle se MAHTUU
+ * (kapasiteettijarru, L0/L5). Jos yksikään päivä ei riitä:
+ *   - päivätön "Myöhemmin" sallittu (0015) -> tehtävä jää tallessa ilman päivää
+ *   - muuten tehtävää EI siirretä täydelle päivälle; varoitus kertoo sen
+ * Täyttä päivää ei koskaan kasvateta hiljaa.
+ */
+function deferWithCapacity(ctx, item, from, lead, capacity) {
+  const { changes, warnings, todayIso } = ctx;
+  const need = item.duration ?? DEFAULT_TASK_MINUTES;
+  const deadlineNote = date => (item.deadline && item.deadline < date
+    ? ` Huom: määräaika on ${endLabel(item.deadline)}.` : '');
+  if (capacity.size === 0) {
+    // Tila ei ole tiedossa (kutsuja ei antanut päiviä): seuraava päivä kuten ennen.
+    const next = addDaysIso(todayIso, 1);
+    changes.push(change(REPLAN_CHANGE.DEFER, item, from, slot(next, null, null),
+      `${lead} Siirtyy päivälle ${endLabel(next)}.${deadlineNote(next)}`.trim()));
+    return;
+  }
+  let chosen = null;
+  let unknownCapacity = false;
+  for (const [date, free] of capacity) {
+    if (item.deadline && date > item.deadline) break;
+    if (free === null) { chosen = date; unknownCapacity = true; break; }
+    if (free >= need) { chosen = date; break; }
+  }
+  if (chosen) {
+    const free = capacity.get(chosen);
+    if (free !== null) capacity.set(chosen, free - need);
+    changes.push(change(REPLAN_CHANGE.DEFER, item, from, slot(chosen, null, null),
+      `${lead} Siirtyy päivälle ${unknownCapacity ? endLabel(chosen) : `${shortDateLabel(chosen)}, jolle ${durationText(need)} vielä mahtuu`}.`.trim()));
+    return;
+  }
+  if (ctx.laterAllowed) {
+    changes.push(change(REPLAN_CHANGE.DEFER, item, from, laterSlot(),
+      `${lead} Seuraavina päivinä ei ole tilaa, joten se siirtyy tallessa olevaksi ilman päivää (Myöhemmin).`.trim()));
+    return;
+  }
+  warnings.push(`${item.title}: seuraavina päivinä ei ole tilaa ${durationText(need)} tehtävälle, joten sitä ei siirretty täydelle päivälle. Valitse itse, mikä jää pois.`);
 }
 
 function capacityOf(day) {
@@ -710,7 +772,7 @@ function capacityOf(day) {
 }
 
 function deferRemaining(ctx) {
-  const { interruption, now, items, dateIso, todayIso, days, changes, warnings, preserved } = ctx;
+  const { interruption, now, items, dateIso, todayIso, changes, warnings, preserved } = ctx;
   const known = Number.isInteger(now);
   const remaining = items.filter(item => item.kind === 'task' && item.flexible && !item.completed
     && (!item.timed || !known || item.start >= now));
@@ -725,15 +787,9 @@ function deferRemaining(ctx) {
     || compareIds(a.id, b.id));
 
   const explicit = isIsoDate(interruption.toDate) && interruption.toDate > todayIso ? interruption.toDate : null;
-  const capacity = new Map();
-  const dayList = (Array.isArray(days) ? days : EMPTY)
-    .filter(day => isObject(day) && safe(() => isIsoDate(day.date) && day.date > todayIso, false))
-    .sort((a, b) => compareIds(a.date, b.date));
-  for (const day of dayList) if (!capacity.has(day.date)) capacity.set(day.date, capacityOf(day));
-  const nextDay = addDaysIso(todayIso, 1);
+  const capacity = capacityMapOf(ctx);
 
   for (const item of ordered) {
-    const need = item.duration ?? DEFAULT_TASK_MINUTES;
     const from = slot(dateIso, item.start, item.end);
     const deadlineNote = date => (item.deadline && item.deadline < date
       ? ` Huom: määräaika on ${endLabel(item.deadline)}.` : '');
@@ -746,23 +802,8 @@ function deferRemaining(ctx) {
       warnings.push(`${item.title}: määräaika on ${item.deadline === todayIso ? 'tänään' : 'jo mennyt'}, joten sitä ei siirretty.`);
       continue;
     }
-    let chosen = null;
-    let unknownCapacity = false;
-    for (const [date, free] of capacity) {
-      if (item.deadline && date > item.deadline) break;
-      if (free === null) { chosen = date; unknownCapacity = true; break; }
-      if (free >= need) { chosen = date; break; }
-    }
-    if (chosen) {
-      const free = capacity.get(chosen);
-      if (free !== null) capacity.set(chosen, free - need);
-      changes.push(change(REPLAN_CHANGE.DEFER, item, from, slot(chosen, null, null),
-        `Siirtyy päivälle ${unknownCapacity ? endLabel(chosen) : `${shortDateLabel(chosen)}, jolle ${durationText(need)} vielä mahtuu`}.`));
-    } else {
-      const note = capacity.size > 0 ? ' Seuraavina päivinä ei näy vapaata tilaa; katso kuorma ennen vahvistusta.' : '';
-      changes.push(change(REPLAN_CHANGE.DEFER, item, from, slot(nextDay, null, null),
-        `Siirtyy päivälle ${endLabel(nextDay)}.${note}${deadlineNote(nextDay)}`));
-    }
+    // L0: kohdepäivän tila tarkistetaan; täyttä päivää ei kasvateta.
+    deferWithCapacity(ctx, item, from, '', capacity);
   }
   return {};
 }
@@ -886,6 +927,8 @@ export function replanDay(input = {}) {
   const impacts = [];
   const ctx = {
     interruption: cleanInterruption, now, items, dateIso, todayIso, dayEnd, days: args.days,
+    // 0015: saako täysien päivien tehtävän siirtää "Myöhemmin" ilman päivää.
+    laterAllowed: args.laterAllowed === true,
     offsetMinutesFn: typeof args.offsetMinutesFn === 'function' ? args.offsetMinutesFn : null,
     // Lähtömoottorin suunnitelmat (planDeparture); ilman niitä lähtöä ei arvioida.
     departures: Array.isArray(args.departures) ? args.departures : EMPTY,

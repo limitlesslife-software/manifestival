@@ -1,5 +1,5 @@
 -- =====================================================================
--- Manifestival — aktivoinnin inventaario 0001–0014 (VAIN LUKU)
+-- Manifestival — aktivoinnin inventaario 0001–0015 (VAIN LUKU)
 -- =====================================================================
 --
 -- GENEROITU: node tools/activation/build-inventory.mjs. ÄLÄ MUOKKAA
@@ -19,9 +19,10 @@
 -- Migraatioiden tunnistuslistat on poimittu migraatioiden omista
 -- esitarkistuksista, joten luku tarkoittaa samaa kuin migraation oma
 -- viesti: 0 = ajamaton, täysi = ajettu, muu = kesken.
--- Täydet luvut: 0002=12 0003=25 0004=36|37 0005=9 0006=10 0007=39 0008=11 0009=39 0010=38 0011=72 0012=58 0013=46 0014=153
+-- Täydet luvut: 0002=12 0003=25 0004=36|37 0005=9 0006=10 0007=39 0008=11 0009=39 0010=38 0011=72 0012=58 0013=46 0014=153 0015=47
 --   (0004: 37 jos routines on olemassa. 0012: 57 kun 0013 on ajettu,
---    koska 0013 korvaa rajoitteen time_entries_source_check.)
+--    koska 0013 korvaa rajoitteen time_entries_source_check, ja 56 kun
+--    myös 0015 on ajettu, koska 0015 poistaa life_areas_category_unique.)
 
 with rivit as (
   select '01'::text as nro, 'kanta'::text as osio, 'PostgreSQL server_version_num'::text as tarkistus,
@@ -544,10 +545,55 @@ with rivit as (
         'wellbeing_checkins')
       ) kaikki)::text as arvo
   union all
+  select '24'::text as nro, 'migraatio'::text as osio, '0015 objekteja'::text as tarkistus,
+         (select count(*) from (
+        select 1 from pg_tables
+        where schemaname = 'public'
+        and tablename in ('protected_periods', 'weekly_plans')
+        union all
+        select 1 from information_schema.columns
+        where table_schema = 'public' and table_name = 'tasks'
+        and column_name in ('horizon', 'waiting_on', 'follow_up_date', 'archived_at',
+        'reschedule_count', 'original_date')
+        union all
+        select 1 from information_schema.columns
+        where table_schema = 'public' and table_name = 'life_areas'
+        and column_name in ('kind')
+        union all
+        select 1 from pg_constraint
+        where conname in (
+        'life_areas_kind_check',
+        'tasks_horizon_check', 'tasks_waiting_on_check', 'tasks_reschedule_count_check',
+        'tasks_waiting_on_horizon_check',
+        'protected_periods_kind_check', 'protected_periods_recurrence_check',
+        'protected_periods_title_check', 'protected_periods_note_check',
+        'protected_periods_weekdays_check', 'protected_periods_target_check',
+        'protected_periods_strength_check', 'protected_periods_dates_check',
+        'protected_periods_times_check', 'protected_periods_once_check',
+        'protected_periods_weekly_check', 'protected_periods_weekly_target_check',
+        'protected_periods_vacation_check', 'protected_periods_span_check',
+        'protected_periods_owner_row_key',
+        'weekly_plans_week_start_check', 'weekly_plans_priorities_check',
+        'weekly_plans_planned_minutes_check', 'weekly_plans_note_check',
+        'weekly_plans_week_unique', 'weekly_plans_owner_row_key')
+        union all
+        select 1 from pg_indexes
+        where schemaname = 'public'
+        and indexname in ('life_areas_user_category_idx', 'protected_periods_user_active_idx')
+        union all
+        select 1 from pg_trigger
+        where not tgisinternal
+        and tgname in ('protected_periods_touch_updated_at', 'weekly_plans_touch_updated_at')
+        union all
+        select 1 from pg_policies
+        where schemaname = 'public'
+        and tablename in ('protected_periods', 'weekly_plans')
+      ) kaikki)::text as arvo
+  union all
   select '30'::text as nro, 'migraatio'::text as osio, '0013 korvaava lähderajoite (time_entries_source_v2_check)'::text as tarkistus,
          ((select count(*) from pg_constraint where conname = 'time_entries_source_v2_check'))::text as arvo
   union all
-  select '40'::text as nro, 'esiehto'::text as osio, 'Hyväksytty omistaja auth.users-taulussa (0010–0014 vaativat)'::text as tarkistus,
+  select '40'::text as nro, 'esiehto'::text as osio, 'Hyväksytty omistaja auth.users-taulussa (0010–0015 vaativat)'::text as tarkistus,
          ((select count(*) from auth.users where id = '2cc00622-f927-4604-a518-361a4328481b'::uuid))::text as arvo
   union all
   select '41'::text as nro, 'esiehto'::text as osio, 'Auth-käyttäjiä (lukumäärä)'::text as tarkistus,
@@ -742,6 +788,18 @@ with rivit as (
   select '99'::text as nro, 'data'::text as osio, 'rivejä: wellbeing_checkins'::text as tarkistus,
          (case when to_regclass('public.wellbeing_checkins') is null then 'puuttuu'
               else (xpath('/row/c/text()', query_to_xml('select count(*) as c from public.wellbeing_checkins', false, true, '')))[1]::text end)::text as arvo
+  union all
+  select '31'::text as nro, 'data'::text as osio, 'rivejä: protected_periods'::text as tarkistus,
+         (case when to_regclass('public.protected_periods') is null then 'puuttuu'
+              else (xpath('/row/c/text()', query_to_xml('select count(*) as c from public.protected_periods', false, true, '')))[1]::text end)::text as arvo
+  union all
+  select '32'::text as nro, 'data'::text as osio, 'rivejä: weekly_plans'::text as tarkistus,
+         (case when to_regclass('public.weekly_plans') is null then 'puuttuu'
+              else (xpath('/row/c/text()', query_to_xml('select count(*) as c from public.weekly_plans', false, true, '')))[1]::text end)::text as arvo
+  union all
+  select '33'::text as nro, 'data'::text as osio, 'Päivättömiä tehtäviä (tasks.date is null, mahdollinen 0015:n jälkeen)'::text as tarkistus,
+         (case when to_regclass('public.tasks') is null then 'puuttuu'
+              else (xpath('/row/c/text()', query_to_xml('select count(*) as c from public.tasks where date is null', false, true, '')))[1]::text end)::text as arvo
 )
 select '00' as nro, 'tiiviste' as osio, 'KOPIOI TÄMÄ SOLU CLAUDELLE' as tarkistus,
        json_build_object('inventory', 'mv-activation-v1',

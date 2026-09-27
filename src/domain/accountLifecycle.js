@@ -79,7 +79,9 @@ export const ACCOUNT_DATA_MAP = Object.freeze({
   habitPlans: { table: 'habit_plans', ownerColumn: 'user_id' },
   habitEvents: { table: 'habit_events', ownerColumn: 'user_id' },
   exerciseSessions: { table: 'exercise_sessions', ownerColumn: 'user_id' },
-  wellbeingCheckins: { table: 'wellbeing_checkins', ownerColumn: 'user_id' }
+  wellbeingCheckins: { table: 'wellbeing_checkins', ownerColumn: 'user_id' },
+  protectedPeriods: { table: 'protected_periods', ownerColumn: 'user_id' },
+  weeklyPlans: { table: 'weekly_plans', ownerColumn: 'user_id' }
 });
 
 /**
@@ -123,7 +125,9 @@ export const ACCOUNT_DOMAIN_LABELS = Object.freeze({
   habitPlans: 'Tapojen muutossuunnitelmat',
   habitEvents: 'Tapojen kirjaukset',
   exerciseSessions: 'Liikuntakerrat',
-  wellbeingCheckins: 'Motivaatio ja hallinnan tunne'
+  wellbeingCheckins: 'Motivaatio ja hallinnan tunne',
+  protectedPeriods: 'Suojattu aika ja loma',
+  weeklyPlans: 'Viikkosuunnitelmat'
 });
 
 /** Kokoelman käyttäjälle näytettävä nimi. Tuntematon nimi näytetään sellaisenaan. */

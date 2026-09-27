@@ -115,7 +115,7 @@ test('KRIITTINEN: trailer tunnistetaan jokaiselle aallolle synteettisestä viest
     assert.equal(waveOfCommitBody(`feat(release): aalto\n\nRelease-Wave: ${id}\n`), id, id);
   }
   assert.equal(waveOfCommitBody('feat: ei traileria'), null);
-  assert.equal(waveOfCommitBody('Release-Wave: L'), null);
+  assert.equal(waveOfCommitBody('Release-Wave: M'), null);
 });
 
 test('KRIITTINEN: oikeat F- ja J-aaltocommitit tunnistetaan, J:n kärki ei kanna traileria', t => {

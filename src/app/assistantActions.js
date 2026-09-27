@@ -57,7 +57,7 @@ import {
 } from '../domain/travel.js';
 import { buildReplanProposal, REPLAN_TRIGGER } from '../domain/replan.js';
 import { horizonEnd } from '../domain/capacity.js';
-import { calendarForPlanning } from './calendarPlan.js';
+import { brakeInputs } from './capacityBrake.js';
 import { NOTICE_KIND, NOTICE_LEVEL } from '../domain/notificationCenter.js';
 import {
   getState, findTask,
@@ -710,7 +710,7 @@ export async function runReplanCheck({ now = new Date() } = {}) {
   // jotka menot, matkat tai suojattu uni jo täyttävät. Sama kalenteri ja
   // sama horisontti kuin "Ehdota muutoksia" (actions.proposeReplan), jotta
   // ilmoituksen luku ja avautuva ehdotus ovat samaa mieltä.
-  const calendar = calendarForPlanning(state, {
+  const calendar = brakeInputs(state, {
     from: today, to: horizonEnd(today, REPLAN_HORIZON_DAYS), todayIso: today
   });
 
@@ -725,7 +725,11 @@ export async function runReplanCheck({ now = new Date() } = {}) {
     horizonDays: REPLAN_HORIZON_DAYS,
     automationLevel: state.automationLevel,
     events: calendar.events,
-    blocks: calendar.blocks
+    blocks: calendar.blocks,
+    projects: state.projects,
+    bufferRatio: calendar.bufferRatio,
+    reserves: calendar.reserves,
+    sleepShortfalls: calendar.sleepShortfalls
   });
 
   const changes = (proposal && proposal.changes) ? proposal.changes.length : 0;

@@ -20,6 +20,8 @@ const FLAT = HTML.replace(/\r\n/g, '\n');
 
 const TABS = Object.freeze([
   ['daily', 'segmentProfileDaily', 'profileDailySection', 'Arki'],
+  // Aalto L: suojattu aika (oma aika, vapaa-aika, loma, väljyys).
+  ['protected', 'segmentProfileProtected', 'profileProtectedSection', 'Suojattu aika'],
   ['wellbeing', 'segmentProfileWellbeing', 'profileWellbeingSection', 'Hyvinvointi'],
   ['places', 'segmentProfilePlaces', 'profilePlacesSection', 'Paikat'],
   ['settings', 'segmentProfileSettings', 'profileSettingsSection', 'Asetukset']
@@ -66,11 +68,11 @@ const visibleSections = () => TABS.filter(([, , section]) => isRendered($(sectio
 
 // ================================================================ runko
 
-test('profiilissa on osioiden tab-lista: neljä välilehteä, nimet ja kohdesäiliöt', () => {
+test('profiilissa on osioiden tab-lista: viisi välilehteä, nimet ja kohdesäiliöt', () => {
   const section = profileSection();
   assert.match(section, /<div class="segment segment-scroll" role="tablist" aria-label="Profiilin osiot">/);
   const ids = [...section.matchAll(/<button class="segment-btn[^"]*" id="(segmentProfile\w+)"/g)].map(m => m[1]);
-  assert.deepEqual(ids, TABS.map(([, tab]) => tab), 'järjestys Arki, Hyvinvointi, Paikat, Asetukset');
+  assert.deepEqual(ids, TABS.map(([, tab]) => tab), 'järjestys Arki, Suojattu aika, Hyvinvointi, Paikat, Asetukset');
   for (const [, tabId, sectionId, label] of TABS) {
     const tab = $(tabId);
     assert.equal(tab.getAttribute('role'), 'tab');
@@ -156,9 +158,9 @@ test('napautus vaihtaa osion tilan kautta; muut osiot piiloutuvat', () => {
 test('nuolinäppäimet, Home ja End liikkuvat välilehtien välillä ja kiertävät reunoilta', () => {
   $('segmentProfileDaily').focus();
   press(doc, 'ArrowRight');
-  assert.equal(getState().profileSegment, 'wellbeing');
-  assert.equal(doc.activeElement.id, 'segmentProfileWellbeing');
-  assert.deepEqual(visibleSections(), ['wellbeing']);
+  assert.equal(getState().profileSegment, 'protected');
+  assert.equal(doc.activeElement.id, 'segmentProfileProtected');
+  assert.deepEqual(visibleSections(), ['protected']);
 
   press(doc, 'End');
   assert.equal(getState().profileSegment, 'settings');

@@ -1,11 +1,16 @@
 // Tynkähistoria aktivoinnin työkalujen testeille: git-kerros, tiedostojärjestelmä
 // ja tuotannon fetch ilman oikeaa gitiä, levyä tai verkkoa.
 //
-// Juna C–J rakennetaan synteettisistä SHA:ista (aalto i -> '0i' * 20).
+// Juna C–K rakennetaan synteettisistä SHA:ista (aalto i -> '0i' * 20).
 // Jokaisella aallolla on oma sw.js (välimuisti), schema.js (portit ja
-// sarakeportit), index.html ja yksi moduuli. Aallon J commit on lukon
-// SQL-lähde: siinä on migraatiot, esitarkistukset ja varmistukset 0009–0013.
-// Tuotehaaran HEAD sisältää samat SQL-tiedostot.
+// sarakeportit), index.html ja yksi moduuli. Lukon SQL-lähdeaallon
+// (SQL_SOURCE_WAVE = K) commitissa ovat migraatiot, esitarkistukset ja
+// varmistukset 0009–0014; aallon J commitissa vain 0009–0013 (kuten
+// oikeassa historiassa). Tuotehaaran HEAD sisältää samat SQL-tiedostot
+// kuin lähde.
+//
+// Aallot luetaan junasta (TRAIN), joten uusi lukittu aalto tulee tynkään
+// ilman käsin ylläpidettyä listaa.
 //
 // Git-tynkä kirjaa jokaisen kutsun (`calls`), joten testit voivat todistaa,
 // ettei push- tai update-ref-kutsua tehty.
@@ -16,11 +21,13 @@ import {
   ALL_GATES, COLUMN_GATES, WAVES, cacheVersionOf, expectedMatrix, preflightPathOf,
   verifyPathOf, waveIndex
 } from '../../tools/release/waves.mjs';
-import { TRAIN, buildTrainMap } from '../../tools/activation/train-map.mjs';
+import { SQL_SOURCE_WAVE, TRAIN, buildTrainMap } from '../../tools/activation/train-map.mjs';
 import { SECURITY_HEADERS } from '../../tools/release/live-assets.mjs';
 import { BASE_FILES } from '../../tools/release/preflight-checks.mjs';
 
-export const TRAIN_WAVES = ['C', 'D', 'E', 'F', 'G', 'H', 'I', 'J'];
+export const TRAIN_WAVES = Object.freeze(TRAIN.map(entry => entry.wave));
+/** Junan viimeinen (uusin lukittu) aalto. */
+export const LAST_WAVE = TRAIN_WAVES[TRAIN_WAVES.length - 1];
 export const shaOf = wave => (TRAIN_WAVES.indexOf(wave) + 1).toString(16).padStart(2, '0').repeat(20);
 export const HEAD_SHA = 'ab'.repeat(20);
 
@@ -83,9 +90,10 @@ function filesFor(wave, { cache } = {}) {
   return files;
 }
 
-function sqlFiles() {
+/** SQL-tiedostot aaltoon `upTo` asti (oletus: kaikki junan migraatiot). */
+function sqlFiles(upTo = null) {
   const files = {};
-  for (const w of WAVES.filter(x => x.migration)) {
+  for (const w of WAVES.filter(x => x.migration && (upTo === null || waveIndex(x.id) <= waveIndex(upTo)))) {
     files[w.migrationFile] = `-- migraatio ${w.migration}\n`;
     files[preflightPathOf(w.migration)] = checkSql(PREFLIGHT_CHECKS, `preflight ${w.migration}`);
     files[verifyPathOf(w.migration)] = checkSql(VERIFY_CHECKS, `verify ${w.migration}`);
@@ -104,7 +112,7 @@ function sqlFiles() {
  * @param {object} [options.missingPatches] muut korjaukset: 7 merkin SHA -> aallot, joilta se puuttuu
  * @param {string|null} [options.remoteMain] ls-remote-vastaus (oletus: tuotanto)
  * @param {object} [options.extraCommits] sha -> tiedostot (esim. peruutus)
- * @param {object} [options.sqlOverrides] polku -> SQL lukon SQL-lähteessä (J) ja HEADissa
+ * @param {object} [options.sqlOverrides] polku -> SQL lukon SQL-lähteessä (SQL_SOURCE_WAVE) ja HEADissa
  * @param {boolean} [options.pushOk]
  */
 export function stubGit({
@@ -114,7 +122,9 @@ export function stubGit({
   const calls = [];
   const commits = {};
   for (const w of TRAIN_WAVES) commits[shaOf(w)] = filesFor(w);
-  Object.assign(commits[shaOf('J')], sqlFiles(), sqlOverrides);
+  // J:n kärjessä 0009–0013 (ei 0014); lähdeaallossa kaikki ja ohitukset.
+  Object.assign(commits[shaOf('J')], sqlFiles('J'));
+  Object.assign(commits[shaOf(SQL_SOURCE_WAVE)], sqlFiles(), sqlOverrides);
   commits[HEAD_SHA] = { ...sqlFiles(), ...sqlOverrides, 'sw.js': swFor('BASE', 'v13') };
   for (const [sha, files] of Object.entries(extraCommits)) commits[sha] = files;
 

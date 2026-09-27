@@ -229,6 +229,33 @@ export function planningLoadSuggestion({ entry = null, plan = null } = {}) {
   };
 }
 
+// ------------------------------------------------ rajatut hyvinvointikortit
+
+/**
+ * Tänään-näkymän hyvinvointirivejä (tavat, ateriat, vesi, lisäravinteet)
+ * näkyy enintään näin monta; loput ovat "Näytä loput (N)" -osion takana.
+ * Hyvinvointi on valinnaista tukea, ei rajaton tarkistuslista (aalto L).
+ */
+export const WELLNESS_CARD_LIMIT = 2;
+
+/**
+ * Jaa rivit näkyviin ja piilotettuihin. Ajankohtaiset (`due: true`, esim.
+ * "nyt on suunniteltu aika") ensin, muuten järjestys säilyy. Tyhjät pois.
+ *
+ * @template T
+ * @param {Array<{due?: boolean}&T>} rows
+ * @param {number} [limit]
+ * @returns {{visible: T[], hidden: T[], hiddenCount: number}}
+ */
+export function boundWellnessRows(rows, limit = WELLNESS_CARD_LIMIT) {
+  const list = (Array.isArray(rows) ? rows : []).filter(Boolean);
+  const max = Number.isInteger(limit) && limit >= 0 ? limit : WELLNESS_CARD_LIMIT;
+  const ordered = [...list.filter(row => row.due === true), ...list.filter(row => row.due !== true)];
+  const visible = ordered.slice(0, max);
+  const hidden = ordered.slice(max);
+  return { visible, hidden, hiddenCount: hidden.length };
+}
+
 /** Kuormitustilan teksti käyttöliittymälle. */
 export function loadStateLabel(state) {
   switch (state) {

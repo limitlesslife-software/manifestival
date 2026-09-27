@@ -153,8 +153,17 @@ async function boot() {
     throw new Error('J-portit eivät tulleet voimaan (import map)');
   }
   // Aalto K avaa kaikki portit: jokainen taulu- ja sarakeportti auki.
-  if (gates.mode === 'K' && !(Object.values(gates.tables).every(Boolean) && Object.values(gates.columns).every(Boolean))) {
+  // Aalto K avaa kaikki K:hon asti kuuluvat portit; aallon L portit (0015)
+  // pysyvät kiinni. Aalto L avaa kaikki.
+  const AFTER_K = { tables: ['protectedPeriods', 'weeklyPlans'], columns: ['MENTAL_LOAD_FIELDS'] };
+  const openExcept = (except = { tables: [], columns: [] }) =>
+    Object.entries(gates.tables).every(([gate, open]) => open === !except.tables.includes(gate))
+    && Object.entries(gates.columns).every(([gate, open]) => open === !except.columns.includes(gate));
+  if (gates.mode === 'K' && !openExcept(AFTER_K)) {
     throw new Error('K-portit eivät tulleet voimaan (import map)');
+  }
+  if (gates.mode === 'L' && !openExcept()) {
+    throw new Error('L-portit eivät tulleet voimaan (import map)');
   }
 
   // OIKEA KÄYNNISTYS.
@@ -211,7 +220,9 @@ async function boot() {
      */
     setTasks: list => {
       const normalized = list.map(t => task.normalizeTask(t));
-      const columns = [...rows.TASK_COLUMNS_PLANNING, ...rows.TASK_COLUMNS_LINKS];
+      // Porttien mukainen sarakejoukko (0015:n kentät vain L-porteilla).
+      const columns = [...new Set([...rows.TASK_COLUMNS_PLANNING, ...rows.TASK_COLUMNS_LINKS,
+        ...(schema.columnGateOpen('MENTAL_LOAD_FIELDS') ? rows.TASK_COLUMNS_MENTAL_LOAD : [])])];
       const others = database.rows('tasks').filter(row => String(row.user_id) !== String(userId()));
       database.setRows('tasks', [...others, ...normalized.map(t => ({ ...rows.toRow(t, columns), user_id: userId() }))]);
       persistDb();

@@ -38,7 +38,9 @@ function uiSource() {
                  'notificationSettings', 'planning', 'profile', 'reminders',
                  'routines', 'tasks', 'today', 'travel', 'week',
                  // Arjen käyttöjärjestelmä (aalto K).
-                 'calendar', 'dailySettings', 'placesSettings', 'wellbeingHub'];
+                 'calendar', 'dailySettings', 'placesSettings', 'wellbeingHub',
+                 // Mielen kuorman keventäminen (aalto L).
+                 'protectedTimeSettings', 'sundayReset', 'stored'];
   return [read('index.html'), ...views.map(v => read(`src/app/views/${v}.js`))]
     .join(NEWLINE);
 }

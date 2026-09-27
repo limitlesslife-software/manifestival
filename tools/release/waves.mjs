@@ -48,7 +48,8 @@ export const ALL_GATES = Object.freeze([
   'lifeAreas', 'weeklyCapacities', 'timeEntries', 'alignmentReviews',
   'runningTimers', 'alignmentItemSettings',
   'savedPlaces', 'placeAliases', 'calendarEvents', 'commuteObservations', 'lifeSettings',
-  'sleepLogs', 'habitPlans', 'habitEvents', 'exerciseSessions', 'wellbeingCheckins'
+  'sleepLogs', 'habitPlans', 'habitEvents', 'exerciseSessions', 'wellbeingCheckins',
+  'protectedPeriods', 'weeklyPlans'
 ]);
 
 /**
@@ -228,9 +229,7 @@ export const WAVES = Object.freeze([
     // Deployattavuus on siksi molempien ehtojen konjunktio. Ks.
     // `isDeployable()`.
     readiness: 'READY',
-    // Este poistettu aaltocommitissa: 0009_finance_2.sql on tämän commitin
-    // EDELLYTYS. Deploy vasta kun verify_0009.sql = 0 poikkeavaa.
-    blockedBy: null,
+    blockedBy: 'supabase/migrations/0009_finance_2.sql — EI AJETTU',
     gates: Object.freeze(['transactions', 'investments']),
     title: 'Talous 2.0: tapahtumat ja sijoitukset',
     rationale:
@@ -253,9 +252,7 @@ export const WAVES = Object.freeze([
 
     // READY koskee käyttöliittymää, `blockedBy` kantaa. Ks. aalto F.
     readiness: 'READY',
-    // Este poistettu aaltocommitissa: 0010_goal_to_action.sql on tämän commitin
-    // EDELLYTYS. Deploy vasta kun verify_0010.sql = 0 poikkeavaa.
-    blockedBy: null,
+    blockedBy: 'supabase/migrations/0010_goal_to_action.sql — EI AJETTU',
     gates: Object.freeze(['milestones']),
     title: 'Tavoitteesta tekemiseksi: välitavoitteet',
     rationale:
@@ -288,9 +285,7 @@ export const WAVES = Object.freeze([
     //
     // `blockedBy` on yhä voimassa: käyttöliittymä on olemassa, kantaa ei.
     readiness: 'READY',
-    // Este poistettu aaltocommitissa: 0011_personal_assistant.sql on tämän commitin
-    // EDELLYTYS. Deploy vasta kun verify_0011.sql = 0 poikkeavaa.
-    blockedBy: null,
+    blockedBy: 'supabase/migrations/0011_personal_assistant.sql — EI AJETTU',
     gates: Object.freeze(['inboxItems', 'reminders', 'notices',
                           'travelPlans', 'locationRules']),
     title: 'Henkilökohtainen avustaja: kirjaus, muistutukset ja matka',
@@ -319,9 +314,7 @@ export const WAVES = Object.freeze([
 
     // READY koskee käyttöliittymää, `blockedBy` kantaa. Ks. aalto F.
     readiness: 'READY',
-    // Este poistettu aaltocommitissa: 0012_life_alignment.sql on tämän commitin
-    // EDELLYTYS. Deploy vasta kun verify_0012.sql = 0 poikkeavaa.
-    blockedBy: null,
+    blockedBy: 'supabase/migrations/0012_life_alignment.sql — EI AJETTU',
     gates: Object.freeze(['lifeAreas', 'weeklyCapacities', 'timeEntries', 'alignmentReviews']),
     title: 'Suunta: elämänalueet, kapasiteetti, toteuma ja viikkokatsaus',
     rationale:
@@ -346,9 +339,7 @@ export const WAVES = Object.freeze([
 
     // READY koskee käyttöliittymää, `blockedBy` kantaa. Ks. aalto F.
     readiness: 'READY',
-    // Este poistettu aaltocommitissa: 0013_alignment_reality.sql on tämän commitin
-    // EDELLYTYS. Deploy vasta kun verify_0013.sql = 0 poikkeavaa.
-    blockedBy: null,
+    blockedBy: 'supabase/migrations/0013_alignment_reality.sql — EI AJETTU',
     gates: Object.freeze(['runningTimers', 'alignmentItemSettings']),
     title: 'Suunta 2: ajastin, kuormittavuus ja toteuman lähteet',
     rationale:
@@ -381,9 +372,7 @@ export const WAVES = Object.freeze([
     // takia: migraatiota 0014 ei ole ajettu. Valmiustila JOHDETAAN
     // tavoitettavuudesta (tests/ui-reachability.test.mjs).
     readiness: 'READY',
-    // Este poistettu aaltocommitissa: 0014_daily_life.sql on tämän commitin
-    // EDELLYTYS. Deploy vasta kun verify_0014.sql = 0 poikkeavaa.
-    blockedBy: null,
+    blockedBy: 'supabase/migrations/0014_daily_life.sql — EI AJETTU',
     gates: Object.freeze(['savedPlaces', 'placeAliases', 'calendarEvents', 'commuteObservations',
                           'lifeSettings', 'sleepLogs', 'habitPlans', 'habitEvents',
                           'exerciseSessions', 'wellbeingCheckins']),
@@ -399,6 +388,37 @@ export const WAVES = Object.freeze([
     tables: Object.freeze(['saved_places', 'place_aliases', 'calendar_events', 'commute_observations',
                            'life_settings', 'sleep_logs', 'habit_plans', 'habit_events',
                            'exercise_sessions', 'wellbeing_checkins'])
+  }),
+  Object.freeze({
+    id: 'L',
+    cacheVersion: 'v25',
+    // Aktivoinnin metatiedot (ACT-12): ks. "AKTIVOINNIN METATIEDOT" alla.
+    migration: '0015',
+    migrationFile: 'supabase/migrations/0015_mental_load.sql',
+    // KESKI: 0015 muuttaa tuotannossa auki olevaa tasks-taulua (ALTER
+    // TABLE, ACCESS EXCLUSIVE -lukko, uudet CHECK-rajoitteet) ja poistaa
+    // life_areas-taulun kategorian uniikkiuden. Ei uudelleenkirjoitusta.
+    risk: 'medium',
+    ownerGates: Object.freeze(['OWNER_PRODUCTION_MIGRATION_APPROVAL_REQUIRED', 'OWNER_DEPLOY_APPROVAL_REQUIRED']),
+    // PAKOLLINEN varmuuskopio: tasks on käyttäjän dataa, ja peruutus
+    // pudottaa sarakkeita (docs/MIGRATION-0015-RECOVERY.md).
+    backupRequired: true,
+    verifyPrerequisite: '0014',
+
+    // READY koskee käyttöliittymää, `blockedBy` kantaa. Ks. aalto F.
+    readiness: 'READY',
+    blockedBy: 'supabase/migrations/0015_mental_load.sql — EI AJETTU',
+    gates: Object.freeze(['protectedPeriods', 'weeklyPlans']),
+    title: 'Mielen kuorman keventäminen: horisontit, odotus, suojattu aika ja sunnuntain nollaus',
+    rationale:
+      'Kaksi uutta taulua (protected_periods, weekly_plans) ja sarakeportti '
+      + 'MENTAL_LOAD_FIELDS: tasks-taulun horisontti, odotus, arkistointi ja '
+      + 'siirtojen seuranta sekä life_areas.kind. Uudet taulut eivät viittaa '
+      + 'yhteenkään sovellustauluun. Viimeisenä, koska 0015 edellyttää 0014:n '
+      + '(verify_0014 = 0 poikkeavaa): juna etenee järjestyksessä. Riski on '
+      + 'keski — tasks on tuotannossa auki — joten tuore varmuuskopio on '
+      + 'pakollinen.',
+    tables: Object.freeze(['protected_periods', 'weekly_plans'])
   })
 ]);
 
@@ -422,7 +442,14 @@ export const COLUMN_GATES = Object.freeze({
   /** goals.life_area_id (migraatio 0012). */
   GOAL_LIFE_AREA_FIELD: 'I',
   /** 0012:n taulujen uudet sarakkeet (migraatio 0013). */
-  ALIGNMENT_REALITY_FIELDS: 'J'
+  ALIGNMENT_REALITY_FIELDS: 'J',
+  /**
+   * tasks-taulun horisontti, odotus, arkisto ja siirrot sekä
+   * life_areas.kind (migraatio 0015). Lukitut C–K-tietueet eivät tunne
+   * tätä porttia: train-map vertaa vain tietueessa olevat portit ja
+   * vaatii puuttuvan olevan kiinni (docs/MENTAL-LOAD-CORE.md).
+   */
+  MENTAL_LOAD_FIELDS: 'L'
 });
 
 /**
@@ -591,7 +618,7 @@ export function releasePlan() {
 // GO/NO-GO-taulukkoa näihin kenttiin.
 
 /**
- * Junan C–J ensimmäinen aalto: tuotannossa jo oleva lattia. Kanta 0008
+ * Junan C–K ensimmäinen aalto: tuotannossa jo oleva lattia. Kanta 0008
  * tukee aaltoja A–E, mutta tuotanto ei voi palata C:tä vanhempaan
  * (välimuistiversio ei saa laskea), joten sallitut koodiaallot alkavat
  * tästä.
@@ -604,7 +631,7 @@ export const TRAIN_FLOOR_WAVE = 'C';
  */
 export const DB_FLOOR = Object.freeze({ migration: '0008', wave: 'E' });
 
-/** Junan migraatiot järjestyksessä ('0009' … '0014'). */
+/** Junan migraatiot järjestyksessä ('0009' … '0015'). */
 export const TRAIN_MIGRATIONS = Object.freeze(
   WAVES.filter(w => w.migration).map(w => w.migration));
 
@@ -615,7 +642,7 @@ export const MIGRATION_WAVE = Object.freeze(Object.fromEntries(
 /** Riskiluokan suomenkielinen nimi (GO/NO-GO-taulukon sanasto). */
 export const RISK_LABEL_FI = Object.freeze({ low: 'matala', medium: 'keski', high: 'KORKEA' });
 
-/** Seuraava aalto, tai null (K on viimeinen). BASE -> A. */
+/** Seuraava aalto, tai null (L on viimeinen). BASE -> A. */
 export function nextWaveId(id) {
   const index = waveIndex(id);
   if (index === null) return null;
@@ -631,7 +658,7 @@ export function previousWaveId(id) {
 
 /**
  * Minkä aallon koodia kanta tukee, kun `lastMigration` on viimeisin
- * täysin ajettu migraatio? 0008 -> E, 0009 -> F … 0014 -> K.
+ * täysin ajettu migraatio? 0008 -> E, 0009 -> F … 0015 -> L.
  */
 export function schemaWaveOfMigration(lastMigration) {
   if (lastMigration === DB_FLOOR.migration) return DB_FLOOR.wave;

@@ -319,6 +319,9 @@ test('tunnistegeneraattori pysyy sovelluskerroksessa', () => {
     // havainnoille, asetuksille ja kirjauksille. Domain (calendarEvent.js,
     // savedPlace.js ...) ei tuota niitä.
     'src/app/dailyLifeActions.js',
+    // Mielen kuorma (aalto L) luo tunnisteet suojatuille jaksoille ja
+    // viikkosuunnitelmille. Domain (protectedTime.js, weeklyPlan.js) ei.
+    'src/app/mentalLoadActions.js',
     // Lähtöjen seuranta ja arjen huomautukset luovat ilmoituskeskuksen
     // merkintöjen tunnisteet (kuten assistantActions).
     'src/app/departureWatch.js', 'src/app/dailyLifeNotices.js',

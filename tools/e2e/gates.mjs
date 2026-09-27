@@ -34,15 +34,17 @@ import { execFileSync } from 'node:child_process';
 import { parseGates } from '../release/state.mjs';
 import { ALL_GATES, COLUMN_GATES, expectedMatrix, waveIndex } from '../release/waves.mjs';
 
-export const GATE_MODES = Object.freeze(['closed', 'J', 'K']);
+export const GATE_MODES = Object.freeze(['closed', 'J', 'K', 'L']);
 export const DEFAULT_GATES_REF = 'rehearsal/wave-j-v2';
 /** K-ehdokkaan ref (ympäristömuuttuja). Oletuksena ei refiä: junan määrittely. */
 export const K_GATES_REF_ENV = 'E2E_K_GATES_REF';
+/** L-ehdokkaan ref (ympäristömuuttuja). */
+export const L_GATES_REF_ENV = 'E2E_L_GATES_REF';
 /** Kyselyparametri, jolla selain pyytää korvatun schema.js:n. */
 export const GATES_QUERY = 'e2e-gates';
 
 /** Porttitilat, joissa selain saa korvatun schema.js:n (import map). */
-const PATCHED_MODES = Object.freeze(['J', 'K']);
+const PATCHED_MODES = Object.freeze(['J', 'K', 'L']);
 
 /**
  * Valjassivu porttitilalle. J- ja K-tilassa sivulle lisätään import map,
@@ -130,6 +132,8 @@ function gitSha(ref, cwd) {
  */
 export function defaultGatesRef(mode, env = process.env) {
   if (mode === 'K') return env[K_GATES_REF_ENV] || null;
+  // Aalto L: ehdokas vain ympäristömuuttujasta; muuten junan määrittely.
+  if (mode === 'L') return env[L_GATES_REF_ENV] || null;
   return env.E2E_GATES_REF || DEFAULT_GATES_REF;
 }
 

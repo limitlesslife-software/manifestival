@@ -36,22 +36,28 @@ export const PAUSES = Object.freeze([
   Object.freeze({ after: '0012', live: 'H', next: 'I' }),
   Object.freeze({ after: '0013', live: 'I', next: 'J' }),
   // 0014 ajetaan aallon J ollessa tuotannossa; sen jälkeen deployataan K.
-  Object.freeze({ after: '0014', live: 'J', next: 'K' })
+  Object.freeze({ after: '0014', live: 'J', next: 'K' }),
+  // 0015 ajetaan aallon K ollessa tuotannossa; sen jälkeen deployataan L.
+  Object.freeze({ after: '0015', live: 'K', next: 'L' })
 ]);
 
 /**
  * Junan aallot: avoimet taulut (TABLES-avaimet) ja auki olevat sarakeportit.
  *
- * Lukitut aallot (C–J) luetaan lukkotiedostosta sellaisenaan. Aalto, jota
- * lukko ei vielä tunne (K: aaltocommit rakennetaan J v2:n päälle vasta
- * myöhemmin, eikä lukkoa kirjoiteta ilman sitä), JOHDETAAN
+ * Lukitut aallot (C–K) luetaan lukkotiedostosta sellaisenaan. Aalto, jota
+ * lukko ei vielä tunne (julkaisuaalto, jonka ehdokasta ei ole leikattu —
+ * K oli sellainen ennen K v1:n lukitsemista), JOHDETAAN
  * tools/release/waves.mjs:stä: kumulatiiviset tauluportit ja sarakeportit,
  * jotka ovat auenneet viimeistään tässä aallossa. `locked: false` kertoo
  * raportissa, ettei aaltoa ole vielä lukittu.
  */
 export function trainWaves(file = TRAIN_FILE) {
-  const raw = JSON.parse(readFileSync(join(ROOT, file), 'utf8'));
-  const waves = Array.isArray(raw.waves) ? raw.waves : null;
+  return trainWavesFrom(JSON.parse(readFileSync(join(ROOT, file), 'utf8')), file);
+}
+
+/** Sama kuin trainWaves(), jäsennetystä lukosta (testit: lukko ilman uusinta aaltoa). */
+export function trainWavesFrom(raw, file = TRAIN_FILE) {
+  const waves = raw && Array.isArray(raw.waves) ? raw.waves : null;
   if (!waves) throw new Error(`${file}: waves-lista puuttuu`);
   const out = {};
   for (const w of waves) {
@@ -112,7 +118,7 @@ export async function loadAppModules(gates) {
 }
 
 /** Päivämäärä aallon järjestysnumerosta (uniikit päivät/viikot per aalto). */
-export const WAVE_INDEX = Object.freeze({ C: 0, D: 1, E: 2, F: 3, G: 4, H: 5, I: 6, J: 7, K: 8 });
+export const WAVE_INDEX = Object.freeze({ C: 0, D: 1, E: 2, F: 3, G: 4, H: 5, I: 6, J: 7, K: 8, L: 9 });
 function isoDay(base, days) {
   const d = new Date(`${base}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + days);
@@ -128,7 +134,8 @@ function isoDay(base, days) {
  * `upsertOwnRows` profile/notification_preferences upsert (sovellus tekee
  *                 sen AINA omaan riviinsä — muuttaa tuotannon riviä)
  */
-export async function waveWrites(waveName, { prefix, legacyTaskId = 'seed1', upsertOwnRows = true, train = trainWaves(), slot = null } = {}) {
+export async function waveWrites(waveName, { prefix, legacyTaskId = 'seed1', upsertOwnRows = true, train = trainWaves(), slot = null,
+  insertSingletons = true } = {}) {
   const wave = train[waveName];
   if (!wave) throw new Error(`Tuntematon aalto ${waveName}`);
   const mods = await loadAppModules(wave.gates);
@@ -288,7 +295,14 @@ export async function waveWrites(waveName, { prefix, legacyTaskId = 'seed1', ups
     plannedDeparture: '16:30', actualDeparture: '16:34', arrivalAt: '16:52', travelMinutes: 18,
     arrivalResult: 'on_time', source: 'departure_ack'
   }, { arrivalResult: 'late' });
-  add('lifeSettings', 'life_settings', {
+  // YKSI ASETUSRIVI KÄYTTÄJÄÄ KOHTI (life_settings_one_per_user): sovellus
+  // lisää rivin vain, jos sitä ei ole, ja muuten päivittää sen
+  // (dailyLifeActions). Siksi rivin lisää vain aalto, joka avaa portin (K);
+  // myöhemmät aallot (L) eivät lisää toista riviä samalle käyttäjälle.
+  // `insertSingletons: false`: sama kanta on jo saanut rivin aiemmalta
+  // kirjoitussarjalta (taukopisteissä K kirjoittaa sekä seuraavana että
+  // elävänä aaltona).
+  if (insertSingletons && WAVES.find(w => w.gates.includes('lifeSettings'))?.id === waveName) add('lifeSettings', 'life_settings', {
     id: `${P}-life`, bedtimeTarget: '22:30', windDownMinutes: 45, speechEnabled: true, hourlyValueMinor: 2500,
     alarm: { enabled: true, weekdayTime: '06:30', weekendTime: '08:00' },
     morningRoutine: [{ id: 'r1', name: 'Aamupala', minutes: 15, protection: 'protected' },
@@ -310,6 +324,39 @@ export async function waveWrites(waveName, { prefix, legacyTaskId = 'seed1', ups
     id: `${P}-ex`, date: day, kind: 'juoksu', plannedMinutes: 30, intensity: 3, recoveryDemand: 2, goalId: ids.goal
   }, { actualMinutes: 35 });
   add('wellbeingCheckins', 'wellbeing_checkins', { id: `${P}-wbc`, date: day, motivation: 4, control: 3 }, { control: 4 });
+
+  // Aalto L (0015): suojattu aika (sunnuntai pääosin vapaa, loma, viikon
+  // vähimmäisvapaa-aika), viikkosuunnitelma ja tasks-taulun uudet sarakkeet
+  // sovelluksen omilla rivimuunnoksilla: päivätön "myöhemmin"-tehtävä,
+  // odottava tehtävä ja arkistointi. Viikon prioriteetti viittaa tämän
+  // sarjan tehtävään (viittaus, ei vierasavain).
+  add('protectedPeriods', 'protected_periods',
+    { id: `${P}-pp`, kind: 'FREE_TIME', recurrence: 'weekly', weekdays: [7], strength: 'soft', title: `Sunnuntai ${P}` },
+    { strength: 'firm' });
+  add('protectedPeriods', 'protected_periods',
+    { id: `${P}-own`, kind: 'OWN_TIME', recurrence: 'weekly', weekdays: [2, 4], startTime: '19:00', endTime: '21:00' },
+    null, { remove: true });
+  add('protectedPeriods', 'protected_periods',
+    { id: `${P}-vac`, kind: 'VACATION', recurrence: 'once', startDate: isoDay(day, 60), endDate: isoDay(day, 74), title: 'Loma' },
+    { endDate: isoDay(day, 75) });
+  add('protectedPeriods', 'protected_periods',
+    { id: `${P}-target`, kind: 'FREE_TIME', recurrence: 'weekly_target', targetMinutes: 900 }, { targetMinutes: 600 });
+  add('weeklyPlans', 'weekly_plans', {
+    id: `${P}-wp`, weekStart: monday, priorities: [{ ref: `task:${ids.task}`, title: `Tehtävä ${P}` }, { title: 'Liikunta' }],
+    plannedMinutes: 600
+  }, { closedAt: `${day}T18:00:00.000Z` });
+  if (gate('MENTAL_LOAD_FIELDS')) {
+    const later = { id: `${P}-later`, date: null, title: `Myöhemmin ${P}`, category: 'koti', horizon: 'LATER' };
+    add(null, 'tasks', taskRow(later));
+    ops.push({ table: 'tasks', method: 'update', payload: taskRow({ ...later, horizon: 'NOT_YET' }),
+               match: { user_id: OWNER, id: later.id }, label: `${waveName}:tasks:update` });
+    const waiting = { id: `${P}-wait`, date: day, title: `Odottaa ${P}`, category: 'tyo', horizon: 'WAITING',
+                      waitingOn: 'Matti', followUpDate: isoDay(day, 5) };
+    add(null, 'tasks', taskRow(waiting));
+    ops.push({ table: 'tasks', method: 'update',
+               payload: taskRow({ ...waiting, archivedAt: `${day}T12:00:00.000Z`, rescheduleCount: 1, originalDate: day }),
+               match: { user_id: OWNER, id: waiting.id }, label: `${waveName}:tasks:update` });
+  }
 
   if (upsertOwnRows) {
     // Sovellus tallentaa profiilin ja muistutusasetukset AINA upsertilla

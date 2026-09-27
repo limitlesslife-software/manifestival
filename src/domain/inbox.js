@@ -90,6 +90,12 @@ export const CAPTURE_SOURCES = Object.freeze(Object.values(CAPTURE_SOURCE));
 /** Rivin enimmäispituus. Pidempi ei ole muistiinpano vaan dokumentti. */
 export const MAX_TEXT_LENGTH = 1000;
 
+/**
+ * Kirjauskentän enimmäispituus brain dumpissa (monta riviä kerralla).
+ * Jokainen pilkottu rivi on silti enintään MAX_TEXT_LENGTH.
+ */
+export const MAX_DUMP_LENGTH = 8000;
+
 /** Montako riviä yksi käyttäjä saa pitää avoimena. */
 export const MAX_OPEN_ITEMS = 200;
 
@@ -365,4 +371,51 @@ export function itemsForDate(items = [], dateIso) {
   if (!isIsoDate(dateIso)) return [];
   return items.filter(item =>
     item && String(item.capturedAt || '').slice(0, 10) === dateIso);
+}
+
+// =====================================================================
+// BRAIN DUMP: YKSI KIRJAUS, MONTA RIVIÄ (aalto L)
+// =====================================================================
+//
+// Mielen tyhjentäminen tapahtuu yhdellä kertaa: käyttäjä liittää tai
+// sanelee listan asioita, eikä yhdestäkään tarvitse päättää mitään
+// kirjaushetkellä. Jokaisesta rivistä tulee oma saapuva rivi. Luokittelu
+// (alue, luonne, horisontti) on erillinen, myöhempi teko.
+//
+// Pilkonta on deterministinen eikä käytä tekoälyä:
+//   - rivinvaihto erottaa aina
+//   - luettelomerkit (-, *, •, 1., 1)) poistetaan rivin alusta
+//   - yhdellä rivillä puolipiste erottaa ("maito; soita Annalle")
+//   - tyhjät ja pelkät välimerkit pudotetaan, kaksoiskappaleet yhdistetään
+// Pilkku EI erota: "osta maito, leipä ja voi" on yksi asia.
+
+/** Yhden brain dumpin enimmäisrivimäärä (saapuvien katto on erikseen). */
+export const MAX_BRAIN_DUMP_ITEMS = 50;
+
+const BULLET = /^\s*(?:[-*•·–—]+|\d{1,3}[.)]|\[[ xX]?\])\s*/;
+
+/**
+ * Pilko vapaa teksti erillisiksi asioiksi.
+ * @returns {string[]} enintään MAX_BRAIN_DUMP_ITEMS riviä, kukin ≤ MAX_TEXT_LENGTH
+ */
+export function splitBrainDump(text) {
+  if (text == null) return [];
+  const out = [];
+  const seen = new Set();
+  const lines = String(text).replace(/\r\n?/g, '\n').split('\n');
+  for (const line of lines) {
+    for (const part of line.split(';')) {
+      let stripped = part;
+      for (let round = 0; round < 3; round += 1) stripped = stripped.replace(BULLET, '');
+      const cleaned = stripped.replace(/\s+/g, ' ').trim();
+      if (!cleaned || !/[\p{L}\p{N}]/u.test(cleaned)) continue;
+      const clipped = cleaned.slice(0, MAX_TEXT_LENGTH);
+      const key = clipped.toLocaleLowerCase('fi');
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(clipped);
+      if (out.length >= MAX_BRAIN_DUMP_ITEMS) return out;
+    }
+  }
+  return out;
 }

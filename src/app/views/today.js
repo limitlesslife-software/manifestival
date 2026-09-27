@@ -1,14 +1,21 @@
-// Päivänäkymä.
+// Päivänäkymä: RAUHALLINEN TÄNÄÄN (aalto L).
 //
-// Käyttäjän pitää ymmärtää päivä nopeasti. Näkymä vastaa järjestyksessä:
+// Näkymän tehtävä on VÄHENTÄÄ sitä, mitä käyttäjän pitää pitää mielessä
+// (docs/MENTAL-LOAD-CORE.md). Se vastaa järjestyksessä:
 //
-//   1. Mihin keskityn?          fokus, enintään kolme asiaa
-//   2. Mikä on myöhässä?        rästit näkyviin, ei piiloon
-//   3. Mitä tänään tapahtuu?    aikajana, jossa NYT-hetki näkyy
-//   4. Mikä odottaa aikaa?      aikatauluttamattomat + ehdotukset
-//   5. Mihin mahtuisi vielä?    vapaat välit
-//   6. Mikä on tehty?           valmiit, koottuna pois tieltä
-//   7. Miten menee?             hyvinvointi ja illan katsaus
+//   1. Mihin keskityn?          enintään kolme fokusta (lifeLoad NOW) ja
+//                               "Kaikki muu on tallessa (N)."
+//   2. Mikä ei odota?           aikakriittinen: lähtö, erääntynyt muistutus
+//   3. Mikä on suojattua?       loma, oma aika, vapaa-aika
+//   4. Mitä tänään tapahtuu?    kiinteät menot aikajanalla, NYT-hetki näkyy
+//   5. Mikä jäi aiemmilta?      yksi rauhallinen rivi, ei punainen lista
+//   6. Rutiinit ja vapaat välit
+//   7. Mikä on tehty?           valmiit, koottuna pois tieltä
+//   8. Miten menee?             hyvinvointi ja illan katsaus
+//
+// Fokus ja "tallessa" tulevat samasta moottorista kuin Tallessa-näkymä
+// (src/app/lifeLoadModel.js): sama asia ei näy kahdesti, eikä myöhässä
+// oleva nouse fokukseen automaattisesti.
 //
 // Aikajanan polku on tuotteen tunnusmerkki: logon joki-muoto, jossa jokainen
 // tapahtuma on solmu ja nykyhetki hehkuu.
@@ -41,6 +48,18 @@ import {
   dayPlanFor, calendarRange, modelFor, renderTodayDailyLife, initTodayDailyLife, timelineKindLabel
 } from './todayDailyLife.js';
 import { deviceOffsetMinutes } from '../deviceTime.js';
+import { lifeLoadFor, focusTaskIds } from '../lifeLoadModel.js';
+import { storedMessage, slippedItems, LOAD_HORIZON } from '../../domain/lifeLoad.js';
+import { protectedDaySummary, isProtectedTimeBlock } from '../../domain/protectedTime.js';
+import { deferFromToday, moveToDayWithRoom } from '../mentalLoadActions.js';
+import { payBillWithTransaction } from '../actions.js';
+import { setTasksSegment } from '../state.js';
+import { switchTab } from '../navigation.js';
+import { setStoredTab } from './stored.js';
+import { formatMinutes as minutesText } from '../../domain/lifeArea.js';
+import { renderSundayResetEntry } from './sundayReset.js';
+import { weeklyPlanFor } from '../../domain/weeklyPlan.js';
+import { weekStartOf } from '../../domain/weeklyCapacity.js';
 
 const ROW_HEIGHT = 66;
 
@@ -107,6 +126,11 @@ export function resolveNowState(items, currentMinutes) {
   return { index: -1, status: 'running' };
 }
 
+/** Aikajanan rivit ilman suojatun ajan lohkoja (ne ovat omassa osiossaan). */
+export function timelineItems(items) {
+  return (items || []).filter(item => !isProtectedTimeBlock(item));
+}
+
 function timelinePath(count) {
   const xs = [28, 18, 38];
   const points = Array.from({ length: count }, (_, i) => ({
@@ -139,7 +163,11 @@ function deadlineTag(task, todayIso) {
 /** Aikajanan lähteet: tyhjä aikajana ei ole "avoin päivä", jos jokin näistä ei latautunut. */
 const TIMELINE_DOMAINS = Object.freeze(['tasks', 'routines', 'routineExceptions']);
 
-function renderTimeline(container, items, nowState, todayIso) {
+function renderTimeline(container, allItems, nowState, todayIso) {
+  // Suojattu aika (oma aika, vapaa-aika, loma) näkyy omassa osiossaan
+  // (renderProtected): sama asia ei näy kahdesti. NYT-tila on laskettu
+  // samasta suodatetusta listasta (timelineItems), joten indeksi osuu.
+  const items = timelineItems(allItems);
   // Epäonnistunut lataus: pelkät automaattiset rivit (herätys, aamutoimet,
   // uni) näyttäisivät päivän tyhjältä, vaikka tehtävät ovat tallessa.
   // Suojatut lohkot (uni, rauhoittuminen) ovat samanlaisia johdettuja
@@ -289,7 +317,118 @@ function routineLogButton(routineId, dateIso, title) {
 
 // ---------------------------------------------------------------- fokus
 
-function renderFocus(container, state, dateIso, todayIso) {
+/** Rauhallinen fokus: enintään kolme ja "Kaikki muu on tallessa (N)". */
+function renderCalmFocus(container, load, weeklyPlan = null) {
+  const stored = storedMessage(load.storedCount);
+  const rows = load.now.map(entry => (entry.kind === 'bill' ? calmBillRow(entry) : calmTaskRow(entry))).join('');
+  const empty = load.now.length === 0
+    ? `<p class="calm-empty">${escapeHtml(load.vacation
+      ? 'Olet lomalla. Joustava työ odottaa loman jälkeen.'
+      : load.dayRoomMinutes === 0
+        ? 'Tänään ei ole tilaa joustavalle työlle, ja se on hyvä niin.'
+        : 'Tänään ei ole mitään pakollista.')}</p>`
+    : '';
+  const energy = load.lowEnergy
+    ? '<p class="hint">Energiasi on tänään matalalla, joten päivään on varattu tavallista vähemmän.</p>' : '';
+  const room = Number.isFinite(load.dayRoomMinutes) && load.now.length > 0
+    ? `<p class="hint calm-room">Fokus vie noin ${escapeHtml(minutesText(load.nowMinutes))}; joustavaa aikaa on ${escapeHtml(minutesText(load.dayRoomMinutes))}.</p>`
+    : '';
+  // Sunnuntain nollauksessa valitut viikon prioriteetit (enintään kolme):
+  // muistutus siitä, mikä on tärkeää, ei uusi lista tehtävää.
+  const priorities = weeklyPlan && Array.isArray(weeklyPlan.priorities) && weeklyPlan.priorities.length
+    ? `<p class="hint calm-week">Tämän viikon tärkeimmät: ${weeklyPlan.priorities.slice(0, 3).map(p => escapeHtml(p.title)).join(' · ')}</p>`
+    : '';
+  container.innerHTML = `
+    <section class="focus-block calm-focus" aria-labelledby="calmFocusTitle">
+      <h2 class="section-title" id="calmFocusTitle">Tänään keskityn <span class="count-badge">${load.now.length}/3</span></h2>
+      ${priorities}${energy}
+      ${rows}${empty}${room}
+      <div class="calm-stored" role="note">
+        <p class="calm-stored-title">${escapeHtml(stored.title)}</p>
+        <p class="calm-stored-text">${escapeHtml(stored.text)}</p>
+        ${load.storedCount > 0
+          ? '<button type="button" class="ghost-btn small" data-open-stored="THIS_WEEK">Näytä tallessa olevat</button>'
+          : ''}
+      </div>
+    </section>`;
+}
+
+function calmTaskRow(entry) {
+  const task = entry.item;
+  const reasons = entry.reasons.filter(reason => reason && reason !== 'Myöhässä').slice(0, 3).join(' · ');
+  return `
+    <div class="focus-row">
+      <button class="chk" data-toggle="${escapeHtml(task.id)}"
+              aria-label="Merkitse tehdyksi: ${escapeHtml(task.title)}">
+        <svg aria-hidden="true"><use href="#i-check"/></svg>
+      </button>
+      <button class="t-open focus-body" data-edit="${escapeHtml(task.id)}"
+              aria-label="Muokkaa: ${escapeHtml(task.title)}">
+        <div class="focus-title">${escapeHtml(task.title)}</div>
+        <div class="focus-reason">${escapeHtml(reasons)}</div>
+      </button>
+      <button type="button" class="skip-btn" data-defer-today="${escapeHtml(task.id)}"
+              aria-label="Ei tänään: ${escapeHtml(task.title)}">Ei tänään</button>
+    </div>`;
+}
+
+function calmBillRow(entry) {
+  return `
+    <div class="focus-row">
+      <span class="routine-dot" aria-hidden="true"></span>
+      <div class="focus-body">
+        <div class="focus-title">${escapeHtml(entry.title)}</div>
+        <div class="focus-reason">${escapeHtml(entry.reasons.join(' · '))}</div>
+      </div>
+      <button type="button" class="skip-btn" data-bill-paid="${escapeHtml(entry.id)}"
+              aria-label="Merkitse maksetuksi: ${escapeHtml(entry.title)}">Maksettu</button>
+    </div>`;
+}
+
+/** Aiemmilta päiviltä jääneet: yksi rauhallinen rivi (ei punaista listaa). */
+function renderSlipped(container, load) {
+  const slipped = slippedItems(load);
+  if (slipped.length === 0) {
+    container.innerHTML = '';
+    return;
+  }
+  const count = slipped.length;
+  container.innerHTML = `
+    <section class="calm-slipped" aria-label="Aiemmilta päiviltä">
+      <p>${escapeHtml(count === 1 ? 'Yksi asia jäi aiemmilta päiviltä.' : `${count} asiaa jäi aiemmilta päiviltä.`)}
+        Ne ovat tallessa — valitse niille aika, kun ehdit.</p>
+      <button type="button" class="ghost-btn small" data-open-stored="THIS_WEEK">Valitse aika</button>
+    </section>`;
+}
+
+/** Suojattu aika tänään: loma, oma aika ja vapaa-aika omana osionaan. */
+function renderProtected(container, state, dateIso, plan) {
+  if (!container) return;
+  const summary = protectedDaySummary({ periods: state.protectedPeriods || [], blocks: plan.blocks || [], dateIso });
+  const parts = [];
+  if (summary.vacation) {
+    parts.push(`<p class="calm-vacation"><strong>Lomalla.</strong> Joustava työ ja jono odottavat loman jälkeen. Kiinteät menot näkyvät aikajanalla.</p>`);
+  }
+  const line = block => `<li>${escapeHtml(block.title)} ${escapeHtml(formatTimeRange(block.time, block.endTime) || '')}</li>`;
+  if (summary.ownTime.length) {
+    parts.push(`<div class="calm-protected-group"><div class="review-label">Oma aika (${escapeHtml(minutesText(summary.ownMinutes))})</div><ul>${summary.ownTime.map(line).join('')}</ul></div>`);
+  }
+  if (summary.freeTime.length) {
+    parts.push(`<div class="calm-protected-group"><div class="review-label">Vapaa-aika (${escapeHtml(minutesText(summary.freeMinutes))})</div><ul>${summary.freeTime.map(line).join('')}</ul></div>`);
+  }
+  container.innerHTML = parts.length === 0 ? '' : `
+    <section class="focus-block calm-protected" aria-labelledby="calmProtectedTitle">
+      <h2 class="section-title" id="calmProtectedTitle">Suojattu aika</h2>
+      ${parts.join('')}
+      <p class="hint">Tähän ei sijoiteta tehtäviä.</p>
+    </section>`;
+}
+
+function renderFocus(container, state, dateIso, todayIso, load = null) {
+  if (load) {
+    renderCalmFocus(container, load, weeklyPlanFor(state.weeklyPlans || [], weekStartOf(todayIso)));
+    return;
+  }
   const entries = todayFocus({ tasks: state.tasks, dateIso, todayIso, limit: 3 });
 
   if (entries.length === 0) {
@@ -353,7 +492,12 @@ function renderOverdue(container, plan) {
 
 // --------------------------------------------- aikatauluttamattomat
 
-function renderUnscheduled(container, plan) {
+function renderUnscheduled(container, sourcePlan, focusIds = null) {
+  // Tänään: aikatauluttamattomista näytetään vain fokuksen asiat (ne ovat
+  // jo fokuksessa, joten tässä vain rutiinit). Muut ovat tallessa.
+  const plan = focusIds
+    ? { ...sourcePlan, unscheduled: [] }
+    : sourcePlan;
   if (plan.unscheduled.length === 0 && plan.flexibleRoutines.length === 0) {
     container.innerHTML = '';
     return;
@@ -615,10 +759,26 @@ function attachHandlers(root, dateIso) {
       saveWellbeingCheckin({ date: dateIso, [node.dataset.wbCheckin]: Number(node.dataset.wbValue) });
     }));
 
+  // Rauhallinen tänään: "Ei tänään" (kapasiteettijarrun mukaan), laskun
+  // maksu ja siirtymä Tallessa-näkymään.
+  root.querySelectorAll('[data-defer-today]').forEach(node =>
+    node.addEventListener('click', () =>
+      deferFromToday(node.dataset.deferToday, { todayIso: fmtISO(todayMidnight()) })));
+  root.querySelectorAll('[data-bill-paid]').forEach(node =>
+    node.addEventListener('click', () => payBillWithTransaction(node.dataset.billPaid)));
+  root.querySelectorAll('[data-open-stored]').forEach(node =>
+    node.addEventListener('click', () => {
+      setStoredTab(node.dataset.openStored || LOAD_HORIZON.THIS_WEEK);
+      setTasksSegment('stored');
+      switchTab('screen-tasks');
+    }));
+
+  // Siirto huomiselle tarkistaa kohdepäivän tilan (kapasiteettijarru):
+  // täydelle päivälle ei siirretä, vaan seuraavalle, jolla on tilaa.
   root.querySelectorAll('[data-move-task]').forEach(node =>
     node.addEventListener('click', () => {
       const tomorrow = fmtISO(addDays(getState().viewDate, 1));
-      editTask(node.dataset.moveTask, { date: tomorrow });
+      moveToDayWithRoom(node.dataset.moveTask, { preferIso: tomorrow });
     }));
 }
 
@@ -655,7 +815,11 @@ function renderNowNext(container, state, plan, dateIso, todayIso, isToday) {
   }
 
   const minutes = nowMinutes();
+  // Sama fokus kuin Rauhallinen tänään -lohkossa (lifeLoad): myöhässä oleva
+  // tai joustava työ nousee "Nyt"-kortille vain, jos se on päivän fokuksessa.
+  const load = lifeLoadFor(state, { todayIso, nowMinutes: minutes });
   const result = nowNext({
+    focusTaskIds: load ? focusTaskIds(load) : null,
     tasks: state.tasks,
     reminders: state.reminders,
     travelPlans: state.travelPlans,
@@ -749,13 +913,26 @@ export function renderToday() {
     completionChip.style.display = 'none';
   }
 
-  const nowState = resolveNowState(plan.timeline, plan.nowMinutes);
+  const nowState = resolveNowState(timelineItems(plan.timeline), plan.nowMinutes);
+
+  // Rauhallinen tänään: yksi kuormamoottori (lifeLoad) vain kuluvalle
+  // päivälle. Muina päivinä näkymä on suunnitelma kyseiselle päivälle.
+  const load = isToday ? lifeLoadFor(state, { todayIso, nowMinutes: plan.nowMinutes }) : null;
+  const focusIds = load ? focusTaskIds(load) : null;
 
   renderNowNext(maybe('todayNowNext'), state, plan, dateIso, todayIso, isToday);
-  renderFocus(el('todayFocus'), state, dateIso, todayIso);
-  renderOverdue(el('todayOverdue'), plan);
+  renderFocus(el('todayFocus'), state, dateIso, todayIso, load);
+  if (load) renderSlipped(el('todayOverdue'), load);
+  else renderOverdue(el('todayOverdue'), plan);
+  renderProtected(maybe('todayProtected'), state, dateIso, plan);
+  // Sunnuntain nollaus: pieni kortti la–su ja maanantaiaamuna, kunnes viikko on suljettu.
+  const weekReset = maybe('todayWeekReset');
+  if (weekReset) {
+    if (isToday) renderSundayResetEntry(weekReset, { state, now });
+    else weekReset.innerHTML = '';
+  }
   renderTimeline(el('todayTimelineContainer'), plan.timeline, nowState, todayIso);
-  renderUnscheduled(el('todayUnscheduled'), plan);
+  renderUnscheduled(el('todayUnscheduled'), plan, focusIds);
   renderFreeSlots(el('todayFreeSlots'), plan);
   renderCompleted(el('todayCompleted'), plan);
   renderWellbeing(el('todayWellbeing'), state, dateIso, plan);
@@ -763,7 +940,7 @@ export function renderToday() {
 
   // Arjen kortit: seuraava lähtö, aamu, tavat, keskeytykset, avoimet asiat
   // ja huominen. Omat säiliöt ja kerran kytketyt kuuntelijat.
-  renderTodayDailyLife({ state, now, isToday, plan: isToday ? plan : null, model });
+  renderTodayDailyLife({ state, now, isToday, plan: isToday ? plan : null, model, focusIds });
 
   attachHandlers(el('screen-today'), dateIso);
 
@@ -773,8 +950,14 @@ export function renderToday() {
       const current = getState();
       // Ehdotus kiertää menot, matkat ja suojatun levon kuten aikajana.
       const calendar = calendarRange(dateIso, dateIso, { state: current });
+      // Tänään ehdotetaan aikoja vain fokuksen asioille: muut ovat tallessa
+      // eivätkä saa kellonaikaa huomaamatta.
+      const todayLoad = dateIso === todayIso ? lifeLoadFor(current, { todayIso }) : null;
+      const allowed = todayLoad ? focusTaskIds(todayLoad) : null;
       const result = proposeSchedule({
-        tasks: current.tasks,
+        tasks: allowed
+          ? current.tasks.filter(task => task.date !== dateIso || task.time || allowed.has(task.id))
+          : current.tasks,
         profile: current.profile,
         dateIso,
         routines: current.routines,

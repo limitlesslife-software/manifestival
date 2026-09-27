@@ -65,6 +65,7 @@ import { eveningBefore, driftReport, mondayReadiness } from '../../domain/sleepR
 import { CHOICE_KIND } from '../../domain/morningPlanner.js';
 import { status as habitStatus, habitActionText, HABIT_STATE } from '../../domain/habitEngine.js';
 import { MAX_HABIT_EVENT_NOTE_LENGTH } from '../../domain/habit.js';
+import { boundWellnessRows } from '../../domain/wellbeing.js';
 import { proposeOpenEndedSlot, groupErrands, DEFAULT_HORIZON_DAYS } from '../../domain/errands.js';
 import { REPLAN_CHANGE } from '../../domain/dayReplan.js';
 import { INTERRUPTION_KIND } from '../../domain/interruptions.js';
@@ -967,7 +968,7 @@ function habitCards(state, now) {
   const note = habitNoteState();
   const rows = plans.map(plan => {
     const current = habitStatus({ plan, events: state.habitEvents || [], nowMs, timeZone: timeZone() });
-    if (!current) return '';
+    if (!current) return null;
     const headline = current.state === HABIT_STATE.OK_NOW ? 'Nyt on suunniteltu aika.' : current.text;
     const count = Number.isInteger(current.usesToday)
       ? `Tänään ${current.usesToday} ${current.usesToday === 1 ? 'kerta' : 'kertaa'}`
@@ -987,7 +988,7 @@ function habitCards(state, now) {
             data-td-input="habit-note" data-plan="${id}" aria-describedby="${HABIT_NOTE_INPUT_ID}Hint">
           <p class="hint" id="${HABIT_NOTE_INPUT_ID}Hint">Valinnainen, esimerkiksi mikä sai tarttumaan tapaan. Tallentuu seuraavan kirjauksen mukana vain sinulle.</p>
         </div>` : '';
-    return `
+    const html = `
       <li class="assist-row">
         <div class="assist-title">${escapeHtml(name)}</div>
         <p class="td-phase">${escapeHtml(headline || '')}</p>
@@ -996,12 +997,22 @@ function habitCards(state, now) {
           ${button(HABIT_ACTION.USE, 'Kirjaa nyt')}${button(HABIT_ACTION.DELAY, 'Siirrä 15 min')}${button(HABIT_ACTION.SKIP, 'Ohita')}${noteToggle}
         </div>${noteField}
       </li>`;
-  }).join('');
+    return { html, due: current.state === HABIT_STATE.OK_NOW, noteOpen };
+  });
+  // Aalto L: rajattu kortti (enintään WELLNESS_CARD_LIMIT riviä näkyvissä),
+  // ajankohtaiset ensin. Loput ovat avattavissa, eivät tarkistuslistana.
+  const { visible, hidden, hiddenCount } = boundWellnessRows(rows);
+  if (visible.length === 0) return '';
+  const rest = hiddenCount > 0 ? `
+      <details class="td-more"${hidden.some(row => row.noteOpen) ? ' open' : ''}>
+        <summary>Näytä loput (${hiddenCount})</summary>
+        <ul class="td-list">${hidden.map(row => row.html).join('')}</ul>
+      </details>` : '';
   return `
     <section class="td-card" aria-labelledby="tdHabitsTitle">
       <h2 class="section-title" id="tdHabitsTitle" tabindex="-1">Tapojen muutos</h2>
-      <ul class="td-list">${rows}</ul>
-      <p class="hint">Kirjaus on tieto sinulle, ei arvosana.</p>
+      <ul class="td-list">${visible.map(row => row.html).join('')}</ul>${rest}
+      <p class="hint">Valinnaista tukea, ei tehtävälista. Kirjaus on tieto sinulle, ei arvosana.</p>
     </section>`;
 }
 
@@ -1084,6 +1095,8 @@ function syncHabitNoteInput() {
  */
 function isOpenEnded(task) {
   if (!task || task.completed || !task.deadline) return false;
+  // Odottava, "ei vielä" ja arkistoitu eivät ole avoimia asioita tänään (0015).
+  if (task.archivedAt || task.horizon === 'WAITING' || task.horizon === 'NOT_YET') return false;
   return !task.date || (task.date === task.deadline && !task.time);
 }
 
@@ -1174,9 +1187,10 @@ function errandProposalHtml(pending) {
     </div>`;
 }
 
-function openEndedCard(state, clockNow) {
+function openEndedCard(state, clockNow, focusIds = null) {
   const current = uiState();
-  const tasks = openEndedTasks(state, clockNow.todayIso);
+  // Rauhallinen tänään: fokuksen asia ei näy toista kertaa täällä.
+  const tasks = openEndedTasks(state, clockNow.todayIso).filter(task => !(focusIds && focusIds.has(task.id)));
   const groups = safe(() => errandGroups(state, clockNow.todayIso), EMPTY);
   if (tasks.length === 0 && groups.length === 0) return '';
   const places = new Map((state.savedPlaces || []).map(place => [place.id, place]));
@@ -1492,9 +1506,9 @@ function card(id, build) {
  * @param {object} [context.model] saman piirron malli (modelFor samalla tilalla ja kellolla)
  */
 export function renderTodayDailyLife({
-  state = getState(), now = new Date(), isToday = true, plan = null, model: given = null
+  state = getState(), now = new Date(), isToday = true, plan = null, model: given = null, focusIds = null
 } = {}) {
-  lastContext = { isToday };
+  lastContext = { isToday, focusIds };
   const clockNow = clockOf(now);
   const model = given && given.state === state && given.now === now ? given : modelFor(state, now);
   const dayPlan = plan || (isToday
@@ -1505,7 +1519,7 @@ export function renderTodayDailyLife({
     todayMorning: () => morningCard(model, clockNow),
     todayHabits: () => habitCards(state, now),
     todayInterruptions: () => interruptionCard(state, clockNow, dayPlan),
-    todayOpenEnded: () => openEndedCard(state, clockNow),
+    todayOpenEnded: () => openEndedCard(state, clockNow, focusIds),
     todayTomorrow: () => tomorrowCard(state, model, clockNow)
   };
   for (const [id, heading] of Object.entries(CONTAINERS)) {
@@ -1521,7 +1535,7 @@ export function renderTodayDailyLife({
 /** Näkymän oma muutos (esikatselu, valinta): piirretään nykyisellä tilalla. */
 function rerender() {
   if (!lastContext) return;
-  renderTodayDailyLife({ state: getState(), now: new Date(), isToday: lastContext.isToday });
+  renderTodayDailyLife({ state: getState(), now: new Date(), isToday: lastContext.isToday, focusIds: lastContext.focusIds });
 }
 
 // ------------------------------------------------------------ kytkennät

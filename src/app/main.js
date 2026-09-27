@@ -35,7 +35,8 @@ import { renderSetupChecklist, initSetupChecklist } from './views/setupChecklist
 import { initDiscretionaryLimit, resetDiscretionaryLimit } from './views/discretionaryLimit.js';
 import { renderWeek, initWeekNavigation } from './views/week.js';
 import { initCalendar, renderCalendar, resetCalendarView } from './views/calendar.js';
-import { renderTasks, initTaskForm, closeForm } from './views/tasks.js';
+import { renderTasks, initTaskForm, closeForm, setStoredRenderer, openEditForm } from './views/tasks.js';
+import { renderStored, initStored } from './views/stored.js';
 import { initRoutineForm, closeRoutineForm } from './views/routines.js';
 import { renderGoals, initGoalForm, closeGoalForm, refreshGoalPicker } from './views/goals.js';
 import { renderProjects, initProjectForm, closeProjectForm } from './views/projects.js';
@@ -55,6 +56,7 @@ import { renderNotificationSettings } from './views/notificationSettings.js';
 // Arjen käyttöjärjestelmä (aalto K): profiilin osiot ja niiden näkymät.
 import { renderProfileSegments, initProfileSegments } from './views/profileSegments.js';
 import { renderDailySettings, initDailySettings, resetDailySettings } from './views/dailySettings.js';
+import { renderProtectedTimeSettings, initProtectedTimeSettings } from './views/protectedTimeSettings.js';
 import { renderGuidanceSettings, initGuidanceSettings, resetGuidanceSettings } from './views/guidanceSettings.js';
 import { renderWellbeingHub, initWellbeingHub, resetWellbeingHub } from './views/wellbeingHub.js';
 import { renderPlacesSettings, initPlacesSettings, resetPlacesSettings } from './views/placesSettings.js';
@@ -78,7 +80,7 @@ import { initTravelForms, closeTravelForm, closeLocationRuleForm }
   from './views/travel.js';
 import { renderNotices, initNotices, closeNoticeCenter } from './views/notices.js';
 import {
-  renderDirection, renderTodayDirection, initDirection, closeAreaForm, resetDirectionView
+  renderDirection, renderTodayDirection, initDirection, closeAreaForm, resetDirectionView, setDriftTaskOpener
 } from './views/direction.js';
 import { resetAppliedAdjustments } from './alignment.js';
 import {
@@ -233,7 +235,7 @@ const SCREEN_RENDERERS = Object.freeze({
   'screen-finance': () => { renderFinance(); },
   'screen-profile': () => {
     renderSetupChecklist(); renderProfileSegments(); renderProfile(); renderNotificationSettings();
-    renderDailySettings(); renderGuidanceSettings();
+    renderDailySettings(); renderGuidanceSettings(); renderProtectedTimeSettings();
     renderWellbeingHub(maybe('profileWellbeingSection')); renderPlacesSettings(maybe('profilePlacesSection'));
   }
 });
@@ -577,6 +579,8 @@ async function start() {
   initWeekNavigation();
   initCalendar();
   initTaskForm();
+  setStoredRenderer(renderStored);
+  initStored();
   initRoutineForm();
   initGoalForm();
   initProjectForm();
@@ -591,6 +595,7 @@ async function start() {
   initProfileSegments();
   initSetupChecklist();
   initDailySettings();
+  initProtectedTimeSettings();
   initGuidanceSettings();
   initWellbeingHub(maybe('profileWellbeingSection'));
   initPlacesSettings(maybe('profilePlacesSection'));
@@ -599,6 +604,8 @@ async function start() {
   initTravelForms();
   initNotices();
   initDirection();
+  // Ajautumisen "Avaa" avaa tehtävän muokkauksen (ei tuontia direction.js -> tasks.js: sykli).
+  setDriftTaskOpener(openEditForm);
   initTimeLog();
   initVoice();
   initSearch();

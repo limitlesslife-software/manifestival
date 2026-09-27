@@ -40,7 +40,11 @@ const CONTEXT_LIMITS = Object.freeze({
   unestimatedCount: 10000,
   heavyRemainingHours: 168,
   protectedHours: 168,
-  neglectedImportantAreaCount: 40
+  neglectedImportantAreaCount: 40,
+  // Suojattu aika (migraatio 0015): oma aika ja vapaa-aika viikossa sekä
+  // lomapäivät suunnitteluhorisontissa. Vain lukuja.
+  protectedPersonalHoursPerWeek: 168,
+  vacationDays: 366
 });
 
 /**

@@ -97,6 +97,13 @@ function buildPrompt({ goalText, today, mode, context }) {
     rajat.push(`Käyttäjälle tärkeille elämänalueille (${context.neglectedImportantAreaCount || 0} kpl) on varattava `
       + `noin ${context.protectedHours} h viikossa; älä suunnittele tätä aikaa muuhun.`);
   }
+  if (context.protectedPersonalHoursPerWeek) {
+    rajat.push(`Käyttäjä on suojannut omaa aikaa ja vapaa-aikaa noin ${context.protectedPersonalHoursPerWeek} h viikossa; `
+      + 'se ei ole vapaata aikaa suunnitelmalle.');
+  }
+  if (context.vacationDays) {
+    rajat.push(`Seuraavien viikkojen aikana on ${context.vacationDays} lomapäivää; älä sijoita niille tehtäviä.`);
+  }
   if (context.heavyRemainingHours !== null && context.heavyRemainingHours !== undefined) {
     rajat.push(`Kuormittavaa tekemistä mahtuu viikkoon enää noin ${context.heavyRemainingHours} h.`);
   }

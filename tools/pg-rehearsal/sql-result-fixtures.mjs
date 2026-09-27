@@ -38,7 +38,7 @@ import { cloneProdShape, dropTemplates } from './prodshape.mjs';
 import { NULL_SABOTAGE } from './failure-scenarios.mjs';
 import { checkNumbersInSql, decide, parseCheckTable } from '../activation/score-sql-result.mjs';
 
-export const NUMBERS = Object.freeze(['0009', '0010', '0011', '0012', '0013', '0014']);
+export const NUMBERS = Object.freeze(['0009', '0010', '0011', '0012', '0013', '0014', '0015']);
 export const DEFAULT_OUT = 'tests/fixtures/sql-results';
 export const COLUMNS = Object.freeze(['check_no', 'section', 'check_name', 'status', 'details', 'poikkeavia_yhteensa']);
 

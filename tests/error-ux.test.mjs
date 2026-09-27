@@ -361,6 +361,8 @@ test('ERR-09: jokaisella lomakkeessa muokattavalla domainin virhekentällä on p
     assert.ok(GOAL_FIELDS[key], `validateGoal: ${key} ilman kenttää`);
     assert.ok(read('index.html').includes(`id="${GOAL_FIELDS[key]}Error"`), `${GOAL_FIELDS[key]}Error puuttuu`);
   }
+  // Horisontti, odotus ja tarkistuspäivä (0015) ovat tehtävälomakkeella
+  // (afHorizon, afWaitingOn, afFollowUp), joten jokaisella on paikka.
   for (const key of keys('src/domain/task.js')) {
     assert.ok(TASK_FIELDS[key], `validateTask: ${key} ilman kenttää`);
   }

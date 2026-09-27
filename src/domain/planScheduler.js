@@ -42,6 +42,7 @@ import {
 import { clockText } from './wallClock.js';
 import { horizonCapacity, DEFAULT_BUFFER_RATIO } from './capacity.js';
 import { AUTOMATION_LEVEL, normalizeAutomationLevel, canMoveTo } from './automation.js';
+import { isSchedulable, schedulingContext } from './lifeLoad.js';
 
 /**
  * Sijoituksen tulos yhdelle tehtävälle.
@@ -152,7 +153,10 @@ export function planHorizon({
   automationLevel = AUTOMATION_LEVEL.SUGGEST_ONLY,
   bufferRatio = DEFAULT_BUFFER_RATIO,
   events = null,
-  blocks = null
+  blocks = null,
+  projects = [],
+  reserves = null,
+  sleepShortfalls = null
 } = {}) {
   const level = normalizeAutomationLevel(automationLevel);
 
@@ -160,10 +164,23 @@ export function planHorizon({
     return { placements: [], unplaced: [], days: [], moves: [] };
   }
 
+  // SIJOITETTAVAT (src/domain/lifeLoad.js isSchedulable): odottava, "ei
+  // vielä", arkistoitu, tauolla olevan tavoitteen tehtävä ja tarkoituksella
+  // päivätön eivät kuulu automaattiseen suunnitteluun (L0: tauolla olevan
+  // tavoitteen tehtävät vuotivat suunnitteluun).
+  const schedCtx = schedulingContext({ goals, projects, todayIso: fromIso });
+  const isCandidate = task => task && !task.completed && isMovable(task) && isSchedulable(task, schedCtx);
+
   // Tapahtumat ja suojatut lohkot (valinnaiset) pienentävät päivien
   // kapasiteettia; ks. capacity.js dayCapacity.
+  //
+  // EHDOKKAAT EIVÄT KULUTA KAPASITEETTIA KAHDESTI (L0). Automaatin ajastama
+  // tehtävä oli sekä varattua aikaa kapasiteetissa että ehdokas, joka
+  // vähennettiin uudelleen sijoituksessa. Kapasiteetti lasketaan siksi
+  // ilman ehdokkaita: ne kuluttavat päivän ajan vasta sijoittuessaan.
   const capacity = horizonCapacity({
-    tasks, profile, fromIso, toIso, routines, exceptions, bufferRatio, events, blocks
+    tasks: tasks.filter(task => !isCandidate(task)),
+    profile, fromIso, toIso, routines, exceptions, bufferRatio, events, blocks, reserves, sleepShortfalls
   });
 
   // Kulutettava kopio. Alkuperäistä ei muteta.
@@ -184,7 +201,7 @@ export function planHorizon({
   // Kiinteä työ on jo laskettu kapasiteettiin varattuna aikana. Se ei
   // ole ehdokas — se on maasto, jonka läpi muu työ kiertää.
   const candidates = tasks
-    .filter(task => task && !task.completed && isMovable(task))
+    .filter(isCandidate)
     .map(task => ({
       task,
       level: levels.get(task.id) ?? 0,
@@ -228,7 +245,10 @@ export function planHorizon({
     //
     // Määräpäivän jälkeen sijoittaminen olisi ehdotus, joka rikkoo sen
     // mitä käyttäjä pyysi. Ennemmin `unplaced` ja näkyvä ristiriita.
-    const latest = task.date && task.date <= toIso ? task.date : toIso;
+    // Päivätön "tällä viikolla" (0015) pysyy tällä viikolla.
+    const weekLatest = !task.date && task.horizon === 'THIS_WEEK' && schedCtx.weekEndIso
+      && schedCtx.weekEndIso < toIso ? schedCtx.weekEndIso : toIso;
+    const latest = task.date && task.date <= toIso ? task.date : weekLatest;
 
     // Päivät, joille aika riittäisi mutta kellonaika osuisi kalenteriin.
     let timeBlocked = 0;

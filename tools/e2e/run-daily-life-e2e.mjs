@@ -1075,19 +1075,35 @@ tick();`;
 }
 
 function scheduleDeferredCleanup(profile) {
-  const inside = path.dirname(profile) === path.join(ROOT, 'tmp') && /^e2e-daily-chrome-\d+-\d+$/.test(path.basename(profile));
+  const inside = path.dirname(profile) === path.join(ROOT, 'tmp') && /^e2e-[a-z-]+-chrome-\d+-\d+$/.test(path.basename(profile));
   if (!inside) return false;
   const child = spawn(process.execPath, ['-e', deferredCleanupScript(profile)], { detached: true, stdio: 'ignore', windowsHide: true });
   child.unref();
   return true;
 }
 
-async function main() {
+/**
+ * Yhteinen selainajo (arjen E2E ja mielen kuorman E2E, aalto L): samat
+ * turvakaiteet — vapaaksi todennettu debug-portti, tuotanto DNS-tasolla
+ * estetty, jokainen pyyntö tarkastettu, profiili poistetaan.
+ *
+ * @param {object} options
+ * @param {string} options.title  tulosrivin otsikko ("ARJEN E2E")
+ * @param {Array}  options.allGroups  ryhmät (E2E_GROUPS rajaa)
+ * @param {string[]} [options.helpers]  sivulle ajettavat apurit (PAGE_HELPERS lisätään aina)
+ * @param {object} [options.pendingOn]
+ * @param {object} [options.expectedConsole]
+ * @param {string} [options.profileTag]  profiilihakemiston nimen osa (e2e-<tag>-chrome-…)
+ */
+export async function runE2E({
+  title, allGroups, helpers = [DAILY_HELPERS], pendingOn = PENDING_ON,
+  expectedConsole = EXPECTED_CONSOLE_ERRORS, profileTag = 'daily'
+}) {
   const chrome = CHROME_CANDIDATES.find(candidate => fs.existsSync(candidate));
   if (!chrome) throw new Error('Chromea ei löytynyt; aseta CHROME_PATH');
 
   const wanted = (process.env.E2E_GROUPS || '').split(',').map(s => s.trim()).filter(Boolean);
-  const groups = GROUPS.filter(group => wanted.length === 0 || wanted.includes(group.key));
+  const groups = allGroups.filter(group => wanted.length === 0 || wanted.includes(group.key));
   const schemaSource = fs.readFileSync(path.join(ROOT, 'src/data/schema.js'), 'utf8');
   const gatedSchemas = {};
   for (const mode of new Set(groups.map(group => group.query.gates))) {
@@ -1103,7 +1119,7 @@ async function main() {
   console.log(`debug-portti ${debugPort} vapaa (ei CDP-vastausta ennen käynnistystä), palvelin 127.0.0.1:${httpPort}`);
 
   const server = await startServer(httpPort, { gatedSchemas });
-  const profile = path.join(ROOT, 'tmp', `e2e-daily-chrome-${process.pid}-${Date.now()}`);
+  const profile = path.join(ROOT, 'tmp', `e2e-${profileTag}-chrome-${process.pid}-${Date.now()}`);
   fs.mkdirSync(profile, { recursive: true });
   const browser = spawn(chrome, [
     '--headless=new', `--remote-debugging-port=${debugPort}`, `--user-data-dir=${profile}`,
@@ -1177,7 +1193,7 @@ async function main() {
       if (bootErrors.length) throw new Error(`${label}: käynnistysvirhe: ${bootErrors.join('; ')}`);
       if (!(await evaluate('Boolean(window.__e2e && window.__e2e.ready)').catch(() => false))) throw new Error(`${label}: valjas ei käynnistynyt`);
       await evaluate(PAGE_HELPERS);
-      await evaluate(DAILY_HELPERS);
+      for (const helper of helpers) await evaluate(helper);
     };
     const leavePage = () => evaluate('window.__e2eUnloading = true; window.__e2eErrors = []; true').catch(() => false);
     const reload = async () => {
@@ -1203,12 +1219,12 @@ async function main() {
 
       for (const scenario of group.scenarios) {
         const name = `[${group.label}] ${scenario.name}`;
-        allowConsole = EXPECTED_CONSOLE_ERRORS[scenario.name] || null;
+        allowConsole = expectedConsole[scenario.name] || null;
         try {
           const detail = await scenario.run({ evaluate, page, cdp, reload });
-          results.push({ name, ok: true, detail, pendingOn: PENDING_ON[scenario.name] });
+          results.push({ name, ok: true, detail, pendingOn: pendingOn[scenario.name] });
         } catch (error) {
-          results.push({ name, ok: false, detail: error.message.split('\n')[0], pendingOn: PENDING_ON[scenario.name] });
+          results.push({ name, ok: false, detail: error.message.split('\n')[0], pendingOn: pendingOn[scenario.name] });
           // Epäonnistunut skenaario voi jättää lomakkeen tai dialogin auki: seuraava alkaa siististä näkymästä.
           await evaluate(`(() => { const d = document.querySelector('dialog[open]'); if (d) d.close('cancel'); return true; })()`).catch(() => {});
         } finally {
@@ -1265,9 +1281,14 @@ async function main() {
     console.log(`${label}  ${result.name}\n      ${detail}`);
   }
   const passed = results.length - failed - pending - warned;
-  console.log(`\nARJEN E2E: ${failed === 0 ? 'PASS' : 'FAIL'} (${passed}/${results.length}`
+  console.log(`\n${title}: ${failed === 0 ? 'PASS' : 'FAIL'} (${passed}/${results.length}`
     + `${pending ? `, odottaa ${pending}` : ''}${warned ? `, huomioita ${warned}` : ''})`);
   process.exitCode = failed === 0 ? 0 : 1;
+  return { failed, passed, pending, warned, total: results.length };
+}
+
+async function main() {
+  return runE2E({ title: 'ARJEN E2E', allGroups: GROUPS });
 }
 
 // Ajetaan vain suoraan käynnistettynä: testit importoivat puhtaat osat.

@@ -114,6 +114,8 @@ h1.title { font-family:'Fraunces',serif; font-weight:500; font-size:24px; line-h
 .search-command-btn { display:block; width:100%; text-align:left; appearance:none; -webkit-appearance:none; background:var(--sage-soft); border:1px solid var(--sage); border-radius:12px; padding:11px 13px; margin-top:10px; font-family:'Manrope',sans-serif; font-size:13px; font-weight:700; color:var(--forest); cursor:pointer; }
 .search-command-btn:hover, .search-command-btn:focus-visible { border-color:var(--gold); }
 .search-command-btn:disabled { opacity:.6; cursor:default; }
+.search-command-btn[hidden] { display:none; }
+#searchInboxBtn { background:var(--cream-card); border-color:var(--border); color:var(--text-1); }
 
 .tab-bar { position:absolute; left:0; right:0; bottom:0; background:rgba(253,251,246,.92); backdrop-filter:blur(10px); border-top:1px solid var(--border); display:flex; align-items:center; justify-content:space-around; padding:10px 0 calc(10px + env(safe-area-inset-bottom)); z-index:25; }
 .tab-btn { background:none; border:none; display:flex; flex-direction:column; align-items:center; gap:4px; color:var(--text-3); font-family:'Manrope',sans-serif; font-size:10.5px; font-weight:700; cursor:pointer; padding:6px 14px; border-radius:12px; }
@@ -522,14 +524,19 @@ body.is-offline .offline-banner { display:block; }
 
 /* Kirjauspalkki. Ensimmäinen asia päivänäkymässä, koska kirjaus on
    se teko joka tapahtuu useimmin ja jonka pitää onnistua nopeimmin. */
-.capture-bar { display:flex; gap:8px; align-items:center; margin:4px 0 6px; }
-.capture-bar input {
+.capture-bar { display:flex; gap:8px; align-items:flex-end; margin:4px 0 6px; }
+.capture-bar input, .capture-bar textarea {
   flex:1; min-width:0; appearance:none; -webkit-appearance:none;
   background:var(--cream-card); border:1.5px solid var(--border);
   border-radius:14px; padding:12px 14px; font-family:'Manrope',sans-serif;
   font-size:14px; color:var(--text-1);
 }
-.capture-bar input:focus-visible { outline:2px solid var(--gold); outline-offset:1px; }
+.capture-bar input:focus-visible, .capture-bar textarea:focus-visible { outline:2px solid var(--gold); outline-offset:1px; }
+/* Brain dump: kenttä kasvaa sisällön mukaan noin kuuteen riviin asti (views/inbox.js autoGrow). */
+.capture-bar textarea {
+  resize:none; line-height:1.45; min-height:46px; max-height:calc(1.45em * 6 + 24px);
+  overflow-y:auto; display:block;
+}
 .capture-mic, .capture-send {
   appearance:none; -webkit-appearance:none; border:none; cursor:pointer;
   font-family:'Manrope',sans-serif; font-weight:700; font-size:13px;
@@ -598,6 +605,38 @@ body.is-offline .offline-banner { display:block; }
 .assist-tag.tone-late { background:var(--clay-soft); color:var(--clay-ink); }
 .assist-unknown { color:var(--text-3); font-style:italic; }
 
+/* Saapuvien erä-käsittely: valinta, ehdotus, alue ja yhteiset päätökset. */
+.triage-bar {
+  background:var(--cream-card); border:1.5px solid var(--border); border-radius:14px;
+  padding:10px 12px; margin-bottom:12px;
+}
+.triage-bar-head { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+.triage-all { display:flex; align-items:center; gap:8px; min-height:44px; font-size:13px; font-weight:700; color:var(--text-1); cursor:pointer; }
+.triage-all input, .triage-row-head input { width:20px; height:20px; flex-shrink:0; margin:0; }
+.triage-count { font-size:12px; color:var(--text-2); }
+.triage-actions { margin-top:6px; }
+.triage-actions .assist-btn[disabled] { opacity:.45; cursor:not-allowed; }
+.triage-prompt {
+  background:var(--cream-card); border:1.5px solid var(--gold); border-radius:14px;
+  padding:10px 12px; margin-bottom:12px; font-size:13px; color:var(--text-1);
+}
+.triage-prompt input {
+  display:block; width:100%; box-sizing:border-box; margin-top:6px; min-height:44px;
+  border:1.5px solid var(--border); border-radius:10px; padding:8px 10px;
+  font-family:'Manrope',sans-serif; font-size:14px; background:var(--cream); color:var(--text-1);
+}
+.triage-row-head { display:flex; gap:10px; align-items:flex-start; }
+.triage-row-head label { cursor:pointer; flex:1; min-width:0; padding-top:1px; }
+.triage-proposal { color:var(--text-2); }
+.triage-area { display:flex; align-items:center; gap:8px; margin-top:6px; font-size:12px; color:var(--text-2); }
+.triage-area select {
+  min-height:36px; max-width:100%; border:1px solid var(--border); border-radius:8px;
+  background:var(--cream); color:var(--text-1); font-family:'Manrope',sans-serif; font-size:12px; padding:4px 8px;
+}
+.triage-area select:focus-visible, .triage-prompt input:focus-visible, .triage-all input:focus-visible, .triage-row-head input:focus-visible {
+  outline:2px solid var(--gold); outline-offset:2px;
+}
+
 /* Tyhjä lista on vastaus, ei virhe. */
 .assist-empty {
   font-size:13px; color:var(--text-2); line-height:1.6; text-align:center;
@@ -663,6 +702,11 @@ body.is-offline .offline-banner { display:block; }
 .dir-why summary { cursor:pointer; font-weight:700; color:var(--forest); min-height:44px; display:flex; align-items:center; }
 .dir-why summary:focus-visible { outline:2px solid var(--gold); outline-offset:2px; border-radius:6px; }
 .dir-rule { font-size:11.5px; color:var(--text-3); word-break:break-word; }
+/* Ajautuminen v2: säädettävät asiat havainnon alla. */
+.dir-drift-section { margin-top:14px; }
+.dir-drift-items { list-style:none; padding:0; margin:8px 0 0; }
+.dir-drift-item { display:flex; flex-wrap:wrap; align-items:center; gap:6px; padding:6px 0; border-top:1px solid var(--border); font-size:13px; color:var(--text-1); }
+.dir-drift-item > span { flex:1 1 160px; min-width:0; overflow-wrap:anywhere; }
 .dir-bar { height:10px; background:var(--sage-soft); border-radius:6px; overflow:hidden; margin:8px 0 4px; }
 .dir-bar-fill { height:100%; background:var(--sage); border-radius:6px; }
 .dir-bar.is-over .dir-bar-fill { background:var(--clay); }
@@ -976,6 +1020,9 @@ a.cal-inline-btn { display:inline-flex; align-items:center; }
 .td-lines { list-style:none; margin:8px 0 0; padding:0; }
 .td-lines li { font-size:12.5px; color:var(--text-2); line-height:1.55; padding:2px 0; overflow-wrap:anywhere; }
 .td-list { list-style:none; margin:0; padding:0; }
+/* Aalto L: rajattu hyvinvointikortti, loput avattavissa. */
+.td-more summary { cursor:pointer; font-weight:700; color:var(--forest); font-size:13px; min-height:44px; display:flex; align-items:center; }
+.td-more summary:focus-visible { outline:2px solid var(--gold); outline-offset:2px; border-radius:6px; }
 .td-note { font-size:12.5px; color:var(--text-1); line-height:1.55; background:var(--sage-soft); border-radius:12px;
   padding:9px 12px; margin:8px 0; overflow-wrap:anywhere; }
 .td-subtitle { font-size:12px; font-weight:800; color:var(--text-2); margin:10px 0 4px; overflow-wrap:anywhere; }
@@ -1041,3 +1088,52 @@ a.cal-inline-btn { display:inline-flex; align-items:center; }
 .discretionary-limit { margin-top:16px; }
 .discretionary-limit input[type="text"] { width:100%; max-width:220px; min-height:44px; }
 .discretionary-limit .dl-status { margin:8px 0 10px; overflow-wrap:anywhere; }
+
+/* ============ Rauhallinen tänään ja Tallessa (aalto L, docs/MENTAL-LOAD-CORE.md) ============ */
+.calm-focus .focus-row { align-items:center; }
+.calm-focus .skip-btn { min-height:44px; }
+.calm-empty { margin:6px 0 10px; color:var(--forest-muted); }
+.calm-room { margin-top:6px; }
+.calm-stored { margin-top:12px; padding:12px 14px; border-radius:14px; background:var(--sage-soft); color:var(--forest); }
+.calm-stored-title { font-weight:700; margin:0; }
+.calm-stored-text { margin:2px 0 8px; }
+.calm-slipped { margin:10px 0; padding:10px 14px; border-radius:14px; border:1px solid var(--border); background:var(--cream-card); }
+.calm-slipped p { margin:0 0 6px; }
+.calm-vacation { margin:0 0 8px; }
+.calm-protected ul { margin:4px 0 8px; padding-left:18px; }
+.calm-protected-group { margin-top:6px; }
+.calm-stored-lead { margin:4px 0 10px; }
+.stored-list { list-style:none; padding:0; margin:10px 0; }
+.stored-row.is-overflow { border-left:3px solid var(--sage); }
+.stored-open { background:none; border:0; padding:0; text-align:left; cursor:pointer; min-height:44px; width:100%; }
+.stored-wait-form { display:grid; gap:6px; margin-top:8px; }
+.stored-wait-form input { min-height:44px; }
+
+/* ============================================================
+   SUNNUNTAIN NOLLAUS (views/sundayReset.js).
+   Lyhyt vaihe kerrallaan; valinta näkyy merkkinä (✓/+), ei vain värinä.
+   Kaikki kohteet vähintään 44 px; kapealla näytöllä rivitys.
+   ============================================================ */
+.sunday-reset-dialog { max-width:min(520px, calc(100vw - 24px)); width:100%; box-sizing:border-box; max-height:calc(100vh - 32px); overflow-y:auto; }
+.sunday-reset-head { display:flex; align-items:flex-start; justify-content:space-between; gap:8px; }
+.sunday-reset-head .dir-setup-step { flex:1 1 auto; min-width:0; overflow-wrap:anywhere; margin-top:12px; }
+.sunday-reset-close { appearance:none; -webkit-appearance:none; background:none; border:none; color:var(--text-3); cursor:pointer;
+  min-width:44px; min-height:44px; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+.sunday-reset-close:focus-visible { outline:2px solid var(--gold); outline-offset:2px; border-radius:8px; }
+.sunday-reset-dump { width:100%; box-sizing:border-box; min-height:132px; font-family:'Manrope',sans-serif; font-size:14px;
+  border:1px solid var(--border); border-radius:10px; padding:9px 11px; resize:vertical; }
+.sunday-reset-dialog input[type="text"], .sunday-reset-dialog input[type="number"], .sunday-reset-dialog input[type="time"], .sunday-reset-dialog select {
+  font-family:'Manrope',sans-serif; font-size:13.5px; border:1px solid var(--border); border-radius:10px; padding:9px 11px;
+  min-height:44px; box-sizing:border-box; max-width:100%; }
+.sunday-reset-dialog .dir-setup-inline select, .sunday-reset-dialog .dir-setup-inline input { flex:1 1 120px; min-width:0; }
+.sunday-reset-number { font-size:15px; color:var(--forest); margin:6px 0 10px; }
+.sunday-reset-list { margin:4px 0 8px; }
+.sunday-reset-list li, .sunday-reset-breakdown li { overflow-wrap:anywhere; }
+.sunday-reset-reason { font-weight:600; color:var(--text-3); }
+.sunday-reset-limit { font-weight:700; color:var(--forest); }
+.sunday-reset-final-title { font-size:22px; }
+.sunday-reset-final { font-size:15px; line-height:1.5; color:var(--text-1); margin:4px 0 8px; }
+.sunday-reset-resume { position:fixed; left:50%; transform:translateX(-50%); bottom:calc(88px + env(safe-area-inset-bottom, 0px));
+  z-index:60; box-shadow:0 10px 30px -12px rgba(0,0,0,.45); }
+.sunday-reset-resume[hidden] { display:none; }
+.sunday-reset-entry .assist-btn { min-height:44px; }

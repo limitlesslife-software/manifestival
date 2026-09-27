@@ -48,6 +48,13 @@ export const DEVICE_DEFAULTS = Object.freeze({
   automationLevel: 1,
 
   /**
+   * Suunnittelun puskuri: osuus vapaasta ajasta, jota ei suunnitella
+   * (kapasiteettijarru, docs/MENTAL-LOAD-CORE.md). Tilikohtainen koti on
+   * profile.planning_buffer_ratio (migraatio 0010); ennen sitä laitteella.
+   */
+  planningBufferRatio: 0.25,
+
+  /**
    * Kysytäänkö tehtävän valmistuessa "Kirjataanko käytetty aika?".
    * Laitekohtainen: käyttäjä voi mykistää kysymyksen dialogista.
    */

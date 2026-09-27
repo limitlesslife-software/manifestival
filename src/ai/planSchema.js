@@ -199,7 +199,8 @@ export function buildPlanningContext({
   todayIso = null,
   existingGoal = null,
   alignmentCapHours = null,
-  alignmentConstraints = null
+  alignmentConstraints = null,
+  protectedTime = null
 } = {}) {
   const active = goals.filter(goal => goal && goal.status === 'active');
 
@@ -234,6 +235,12 @@ export function buildPlanningContext({
     heavyRemainingHours: alignmentConstraints ? alignmentConstraints.heavyRemainingHours : null,
     protectedHours: alignmentConstraints ? alignmentConstraints.protectedHours : null,
     neglectedImportantAreaCount: alignmentConstraints ? alignmentConstraints.neglectedImportantAreaCount : null,
+    /**
+     * Suojattu aika (0015): oma aika ja vapaa-aika viikossa tunteina sekä
+     * lomapäivät suunnitteluhorisontissa. Pelkkiä lukuja; ei jaksojen nimiä.
+     */
+    protectedPersonalHoursPerWeek: protectedTime ? protectedTime.personalHoursPerWeek : null,
+    vacationDays: protectedTime ? protectedTime.vacationDays : null,
     /** Kun kyse on olemassa olevan tavoitteen uudelleensuunnittelusta. */
     existingGoalTitle: existingGoal ? existingGoal.title : null,
     existingTargetDate: existingGoal ? existingGoal.targetDate : null

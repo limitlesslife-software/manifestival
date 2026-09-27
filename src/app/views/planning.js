@@ -35,10 +35,11 @@ import {
 } from '../planning.js';
 import { proposeReplan, applyReplan, rejectReplan } from '../actions.js';
 import { detectReplanTriggers, describeChange, triggerLabel } from '../../domain/replan.js';
-import { horizonCapacity, horizonEnd, remainingWork } from '../../domain/capacity.js';
+import { horizonEnd, remainingWork } from '../../domain/capacity.js';
 import { summarizeHorizon, planHorizon } from '../../domain/planScheduler.js';
 import { fmtISO, todayMidnight } from '../../lib/datetime.js';
-import { calendarForPlanning } from '../calendarPlan.js';
+import { brakedHorizonCapacity } from '../capacityBrake.js';
+import { isSchedulable, schedulingContext } from '../../domain/lifeLoad.js';
 import { showError, success } from '../../ui/toast.js';
 import { currentPlanningFeedback, validatePlanAgainstAlignment } from '../alignment.js';
 
@@ -342,33 +343,32 @@ function renderPlanStatus(container, state) {
   // eivät ole suunniteltavaa aikaa. Sama kalenteri kapasiteetille ja
   // horisontille (calendarPlan.calendarForPlanning), kuten "Ehdota
   // muutoksia" -ehdotuksessa.
-  const calendar = calendarForPlanning(state, { from: todayIso, to: toIso, todayIso });
+  //
+  // KAPASITEETTIJARRU (L0/L5): puskuri, suojattu aika, loma, viikon
+  // vähimmäisvapaa-aika ja unen vaje (src/app/capacityBrake.js).
+  const { capacity, inputs: brake } = brakedHorizonCapacity(state, { from: todayIso, to: toIso, todayIso });
 
-  const capacity = horizonCapacity({
-    tasks: state.tasks,
-    profile: state.profile,
-    fromIso: todayIso,
-    toIso,
-    routines: state.routines,
-    exceptions: state.routineExceptions,
-    events: calendar.events,
-    blocks: calendar.blocks
-  });
-
+  // L0: tauolla olevan tavoitteen, odottavat ja "ei vielä" -tehtävät eivät
+  // ole jäljellä olevaa työtä (sama sääntö kuin sijoituksessa).
+  const schedCtx = schedulingContext({ goals: state.goals, projects: state.projects, todayIso });
   const remaining = remainingWork(
-    state.tasks.filter(task => !task.completed && task.date && task.date <= toIso));
+    state.tasks.filter(task => !task.completed && task.date && task.date <= toIso && isSchedulable(task, schedCtx)));
 
   const horizon = planHorizon({
     tasks: state.tasks,
     goals: state.goals,
+    projects: state.projects,
     profile: state.profile,
     fromIso: todayIso,
     toIso,
     routines: state.routines,
     exceptions: state.routineExceptions,
     automationLevel: state.automationLevel,
-    events: calendar.events,
-    blocks: calendar.blocks
+    events: brake.events,
+    blocks: brake.blocks,
+    bufferRatio: brake.bufferRatio,
+    reserves: brake.reserves,
+    sleepShortfalls: brake.sleepShortfalls
   });
 
   const kuorma = summarizeHorizon(horizon);
@@ -399,9 +399,11 @@ function renderPlanStatus(container, state) {
       <p class="hint">
         Vuorokaudessa ei ole 24 suunniteltavaa tuntia. Luku on
         valveillaoloaika miinus kiinteät sitoumukset (kalenterin menot,
-        matkat ja valmistautuminen, suojattu uni ja rauhoittuminen) miinus
-        puskuri — eikä puskuri ole hukkaa vaan se, mikä pitää suunnitelman
-        mahdollisena.
+        matkat ja valmistautuminen, suojattu uni ja rauhoittuminen), suojattu
+        oma aika ja vapaa-aika, loma ja viikon vähimmäisvapaa-aika, miinus
+        oma väljyytesi (${Math.round(brake.bufferRatio * 100)} %) — eikä väljyys
+        ole hukkaa vaan se, mikä pitää suunnitelman mahdollisena. Ylimenevä työ pysyy
+        muuttumatta tallessa eikä kasvata yhtäkään päivää.
       </p>
     </div>
 

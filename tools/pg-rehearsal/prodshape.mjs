@@ -14,7 +14,7 @@
 //
 // Aliskenaariot kloonataan siitä: `create database X template
 // mv_rehearsal_prodshape_0008` — ne alkavat aidosti tilasta 0008 eivätkä
-// toista ketjua 0001:stä. Myöhemmät mallit (0009..0014) syntyvät
+// toista ketjua 0001:stä. Myöhemmät mallit (0009..0015) syntyvät
 // kloonaamalla edellinen ja ajamalla yksi migraatio.
 //
 // Tuotannon tavoitteen tila ja projektin kytkentä eivät ole tiedossa
@@ -105,7 +105,7 @@ export async function buildProdShape0008() {
   return db;
 }
 
-/** Varmista malli tilassa n (0008..0014); rakentaa puuttuvat edeltäjät. */
+/** Varmista malli tilassa n (0008..0015); rakentaa puuttuvat edeltäjät. */
 export async function ensureTemplate(n) {
   if (built.has(n)) return templateAt(n);
   if (n === '0008') return buildProdShape0008();
@@ -274,7 +274,16 @@ export const ALLOWED_REMOVALS = Object.freeze({
   '0012': Object.freeze([]),
   '0013': Object.freeze(['con:time_entries:time_entries_source_check:']),
   // 0014 luo vain uusia tauluja: yhtäkään olemassa olevaa objektia ei poisteta.
-  '0014': Object.freeze([])
+  '0014': Object.freeze([]),
+  // 0015 poistaa life_areas_category_unique -rajoitteen (omistajan päätös 1)
+  // ja sen mukana indeksin (pg_class-rivi + pg_index-rivi). Muu ei poistu:
+  // tasks- ja life_areas-sarakkeet vain lisätään, tasks.date on
+  // lähtötilassa jo nullable.
+  '0015': Object.freeze([
+    'con:life_areas:life_areas_category_unique:',
+    'idx:life_areas_category_unique:',
+    'rel:life_areas_category_unique:'
+  ])
 });
 
 /** Puhdas: ovatko poistot täsmälleen sallitut (kukin sallittu etuliite kerran)? */

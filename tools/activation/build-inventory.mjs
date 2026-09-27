@@ -6,7 +6,7 @@
 // MIKSI GENEROIDAAN
 //
 // Inventaario kertoo, missä tilassa tuotannon kanta on migraatioiden
-// 0002–0014 suhteen: ajamaton (0 objektia), ajettu (täysi luku) vai kesken
+// 0002–0015 suhteen: ajamaton (0 objektia), ajettu (täysi luku) vai kesken
 // (muu luku). Luku on luotettava vain, jos inventaario laskee TÄSMÄLLEEN
 // samat objektit kuin migraatio itse laskee ennen ajoa. Siksi
 // tunnistuslistoja ei kopioida käsin: ne poimitaan jokaisen migraation
@@ -33,7 +33,7 @@ const OWNER = '2cc00622-f927-4604-a518-361a4328481b';
 /** Täysi objektimäärä jokaiselle migraatiolle. 0004: 36, tai 37 jos routines on olemassa. */
 export const EXPECTED = Object.freeze({
   '0002': 12, '0003': 25, '0004': '36|37', '0005': 9, '0006': 10, '0007': 39,
-  '0008': 11, '0009': 39, '0010': 38, '0011': 72, '0012': 58, '0013': 46, '0014': 153
+  '0008': 11, '0009': 39, '0010': 38, '0011': 72, '0012': 58, '0013': 46, '0014': 153, '0015': 47
 });
 
 /**
@@ -46,6 +46,16 @@ export const DAILY_LIFE_TABLES = Object.freeze([
   'sleep_logs', 'habit_plans', 'habit_events', 'exercise_sessions', 'wellbeing_checkins'
 ]);
 export const DAILY_LIFE_FIRST_ROW = 90;
+
+/**
+ * Migraation 0015 uudet taulut: rivimäärät riveille 31–32, ja rivi 33
+ * päivättömille tehtäville. Rivit 90–99 ovat täynnä, eikä kolminumeroinen
+ * rivi kelpaa: taulukkomuotoinen liitos (score-inventory parseInventory)
+ * ja lajittelu (order by 1, tekstinä) tuntevat vain kaksinumeroiset.
+ * 31–39 ovat vapaita; vanhoja rivejä ei numeroida uudelleen.
+ */
+export const MENTAL_LOAD_TABLES = Object.freeze(['protected_periods', 'weekly_plans']);
+export const MENTAL_LOAD_FIRST_ROW = 31;
 
 function detectionBlock(file) {
   const src = fs.readFileSync(path.join(ROOT, 'supabase/migrations', file), 'utf8').replace(/\r\n/g, '\n');
@@ -90,7 +100,7 @@ export function buildInventorySql() {
   rows.push(row('30', 'migraatio', '0013 korvaava lähderajoite (time_entries_source_v2_check)',
     "(select count(*) from pg_constraint where conname = 'time_entries_source_v2_check')"));
 
-  rows.push(row('40', 'esiehto', 'Hyväksytty omistaja auth.users-taulussa (0010–0014 vaativat)',
+  rows.push(row('40', 'esiehto', 'Hyväksytty omistaja auth.users-taulussa (0010–0015 vaativat)',
     `(select count(*) from auth.users where id = '${OWNER}'::uuid)`));
   rows.push(row('41', 'esiehto', 'Auth-käyttäjiä (lukumäärä)', '(select count(*) from auth.users)'));
   rows.push(row('42', 'esiehto', 'Omistajan rivin avaimet (goals, projects, tasks, routines, recurring_expenses)',
@@ -156,11 +166,23 @@ export function buildInventorySql() {
     rows.push(row(String(kn++), 'data', `rivejä: ${table}`, countIfExists(table)));
   }
 
+  // RIVIT 31–33: migraation 0015 taulut ja päivättömät tehtävät.
+  // Pisteytys ei vaadi niitä. Päivätön tehtävä on mahdollinen vasta 0015:n
+  // jälkeen; ennen sitä sarake voi olla NOT NULL, joten luku on silloinkin
+  // turvallinen (0).
+  let ln = MENTAL_LOAD_FIRST_ROW;
+  for (const table of MENTAL_LOAD_TABLES) {
+    rows.push(row(String(ln++), 'data', `rivejä: ${table}`, countIfExists(table)));
+  }
+  rows.push(row(String(ln++), 'data', 'Päivättömiä tehtäviä (tasks.date is null, mahdollinen 0015:n jälkeen)',
+    `case when to_regclass('public.tasks') is null then 'puuttuu'
+              else (xpath('/row/c/text()', query_to_xml('select count(*) as c from public.tasks where date is null', false, true, '')))[1]::text end`));
+
   const union = rows.join('\n  union all\n');
   const expected = Object.entries(EXPECTED).map(([k, v]) => `${k}=${v}`).join(' ');
 
   return `-- =====================================================================
--- Manifestival — aktivoinnin inventaario 0001–0014 (VAIN LUKU)
+-- Manifestival — aktivoinnin inventaario 0001–0015 (VAIN LUKU)
 -- =====================================================================
 --
 -- GENEROITU: node tools/activation/build-inventory.mjs. ÄLÄ MUOKKAA
@@ -182,7 +204,8 @@ export function buildInventorySql() {
 -- viesti: 0 = ajamaton, täysi = ajettu, muu = kesken.
 -- Täydet luvut: ${expected}
 --   (0004: 37 jos routines on olemassa. 0012: 57 kun 0013 on ajettu,
---    koska 0013 korvaa rajoitteen time_entries_source_check.)
+--    koska 0013 korvaa rajoitteen time_entries_source_check, ja 56 kun
+--    myös 0015 on ajettu, koska 0015 poistaa life_areas_category_unique.)
 
 with rivit as (
 ${union}

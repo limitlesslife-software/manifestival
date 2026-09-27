@@ -1,4 +1,4 @@
-// Aktivoinnin orkestroija: junan C–J seuraava turvallinen askel (ACT-01).
+// Aktivoinnin orkestroija: junan C–K seuraava turvallinen askel (ACT-01).
 //
 // MITÄ TÄMÄ ON
 //
@@ -95,6 +95,8 @@ import {
 import { fingerprintOf, readLiveState, verifyLive } from '../release/live-assets.mjs';
 
 export const JOURNAL_PATH = '.claude/activation/journal.jsonl';
+/** Junan aallot tekstinä ("C–K"): lattiasta viimeiseen julkaisuaaltoon. */
+export const TRAIN_SPAN = `${TRAIN_FLOOR_WAVE}–${WAVE_IDS[WAVE_IDS.length - 1]}`;
 export const FIXTURE_DIR = 'tests/fixtures/activation-inventory';
 export const INVENTORY_DOC_DIR = 'docs/activation';
 /** Migraation edellyttämän inventaarion enimmäisikä. */
@@ -778,7 +780,14 @@ export function acceptancePack(wave, record) {
   if (live) for (const item of live.items) lines.push(`  - ${item}`);
   lines.push(`Tuotehaara: päivitä docs/RELEASE-SEQUENCING.md: LINEAGE-CHECK: origin/main sha=${record.deployTarget} cache=${cacheVersionOf(wave)}`
     + ' (jäljessä oleva rivi ei kaada testejä, mutta kertoo väärän nykytilan)');
-  if (nextWaveId(wave) === null) lines.push('J:n jälkeen: APK (docs/activation/ANDROID-ACCEPTANCE-BUILD.md; vasta kun verify_0013 = 0 ja J on tuotannossa)');
+  // Puhelinhyväksyntä (APK) on sidottu aaltoon, jonka omistajan porteissa
+  // se on (waves.mjs: J), ei junan viimeiseen aaltoon: kun K lisättiin,
+  // "viimeisen aallon jälkeen" olisi siirtänyt APK:n hiljaa K:n taakse.
+  if ((meta.ownerGates || []).includes('PHONE_ACCEPTANCE_REQUIRED')) {
+    const verify = path.posix.basename(verifyPathOf(meta.migration) || '', '.sql') || 'verify';
+    lines.push(`${wave}:n jälkeen: APK (docs/activation/ANDROID-ACCEPTANCE-BUILD.md; vasta kun ${verify} = 0 ja ${wave} on tuotannossa)`);
+  }
+  if (nextWaveId(wave) === null) lines.push(`${wave} on junan viimeinen aalto: dry-run antaa GO: DONE, kun kanta ja tuotanto ovat aallossa ${wave}`);
   return lines;
 }
 
@@ -964,7 +973,7 @@ export async function technicalAcceptance(deps, { wave, sha, verifyResult = null
   const checks = {};
   const fail = message => ({ ok: false, problems: [message], checks, entry: null });
 
-  if (!waveById(wave) || wave === 'BASE' || waveIndex(wave) < waveIndex(TRAIN_FLOOR_WAVE)) return fail(`aalto ${wave} ei ole junan C–J aalto`);
+  if (!waveById(wave) || wave === 'BASE' || waveIndex(wave) < waveIndex(TRAIN_FLOOR_WAVE)) return fail(`aalto ${wave} ei ole junan ${TRAIN_SPAN} aalto`);
   if (!SHA40.test(String(sha))) return fail(`--sha vaatii 40-merkkisen SHA:n (annettiin ${sha || '-'})`);
 
   const journal = readJournal({ fs, root, journalPath });
@@ -1099,12 +1108,12 @@ export async function recordTechnicalAcceptance(deps, options) {
 }
 
 /**
- * Ehdokaskirjauksen kohde: junan C–J aalto, 40-merkkinen SHA, joka on
+ * Ehdokaskirjauksen kohde: junan C–K aalto, 40-merkkinen SHA, joka on
  * aallon lukittu deployTarget ja löytyy paikallisesti. null = kelpaa,
  * muuten syy.
  */
 function candidateTargetProblem({ git, fs, root }, wave, sha) {
-  if (!waveById(wave) || wave === 'BASE' || waveIndex(wave) < waveIndex(TRAIN_FLOOR_WAVE)) return `aalto ${wave} ei ole junan C–J aalto`;
+  if (!waveById(wave) || wave === 'BASE' || waveIndex(wave) < waveIndex(TRAIN_FLOOR_WAVE)) return `aalto ${wave} ei ole junan ${TRAIN_SPAN} aalto`;
   if (!SHA40.test(String(sha))) return `--sha vaatii 40-merkkisen SHA:n (annettiin ${sha || '-'})`;
   const lockProblems = [];
   const lock = readLockState({ fs, root, git }, lockProblems).data;

@@ -26,10 +26,16 @@
 //   - Kuitattua, torkutettua tai hylättyä ei toisteta.
 //   - Päiväraja karsii ensin vähäisimmät (capValue: vesitauko ennen
 //     nukkumaanmenoa). Kriittistä ei karsita koskaan.
+//   - Aalto L: hyvinvoinnin valinnaisen aiheen (ateriat, vesi, lisäravinteet,
+//     tavat, liikunta, kirjauskehotteet) voi kytkeä kokonaan pois
+//     (life_settings.delivery[aihe] = 'off'). Vesi ja lisäravinteet ovat
+//     koosteeseen kelpaavia (eivät ohita koostetta). Kun kuorma on korkea
+//     (loadLevel), valinnaiset kehotteet siirtyvät koosteeseen tai jäävät
+//     pois; välttämättömät (lähtö, herätys, määräaika, lasku) eivät muutu.
 
 import {
   REMINDER_TOPIC, REMINDER_TOPICS, DELIVERY, DELIVERIES, DEFAULT_DELIVERY,
-  GUIDANCE_STYLE, GUIDANCE_STYLES, deliverySpeaks
+  GUIDANCE_STYLE, GUIDANCE_STYLES, deliverySpeaks, OPTIONAL_TOPIC, OPTIONAL_TOPICS, DELIVERY_OFF
 } from './dailyLife.js';
 import {
   NOTIFICATION_TYPE, NOTIFICATION_TYPES, LEVEL, DEPARTURE_CHAIN_TYPES, DEFAULT_PREFERENCES,
@@ -440,6 +446,109 @@ function finish(list) {
 }
 
 // =====================================================================
+// HYVINVOINNIN VALINNAISET AIHEET JA KUORMA (aalto L)
+// =====================================================================
+//
+// Hyvinvointi on valinnaista tukea, ei tehtävälista. Kolme sääntöä:
+//
+//   1. AIHE POIS. Käyttäjä voi kytkeä valinnaisen aiheen kokonaan pois
+//      (life_settings.delivery[aihe] = 'off'). Vain se aihe poistuu:
+//      vesi pois ei vie aterioita, ateriat pois ei vie vettä.
+//   2. VESI JA LISÄRAVINTEET KOOSTEESEEN. Ne ovat vähäisiä muistutuksia ja
+//      kelpaavat koosteeseen (isDigestible), kun kooste on päällä. Ne eivät
+//      koskaan ohita koostetta. Ateria ja ruokailun iltaraja pysyvät
+//      hetkeen sidottuina.
+//   3. KORKEA KUORMA KEVENTÄÄ. Kun kuorma on korkea (reminderLoadLevel:
+//      päivän stressi >= 4 tai energia <= 2, viikon aikakuormitus tai
+//      kapasiteetin ylivuoto), valinnaiset kehotteet (vesi, lisäravinteet,
+//      tavat, liikunta, kirjauskehotteet) siirtyvät koosteeseen, jos se on
+//      päällä, ja muuten jäävät tältä päivältä pois. Välttämättömät (lähtö,
+//      herätys, nukkumaanmeno, määräajat ja laskut, menot, tehtävät) ja
+//      aikomus, jolla on `essential: true` (esim. välttämätön lääke, jos
+//      sellainen käsite myöhemmin tulee), eivät muutu.
+
+export const LOAD_LEVEL = Object.freeze({ NORMAL: 'normal', HIGH: 'high' });
+
+/** Korkean kuorman kynnykset (päivän hyvinvointimerkintä, asteikko 1–5). */
+export const LOAD_RULES = Object.freeze({
+  /** Stressi vähintään tämä = korkea kuorma. */
+  HIGH_STRESS_MIN: 4,
+  /** Energia enintään tämä = korkea kuorma. */
+  LOW_ENERGY_MAX: 2
+});
+
+/** Aiheet, joita korkea kuorma keventää (ateriat eivät kuulu: syöminen on perustarve). */
+export const LOAD_SUPPRESSIBLE_TOPICS = Object.freeze([
+  OPTIONAL_TOPIC.WATER, OPTIONAL_TOPIC.SUPPLEMENT, OPTIONAL_TOPIC.HABIT,
+  OPTIONAL_TOPIC.EXERCISE, OPTIONAL_TOPIC.CHECKIN
+]);
+
+/**
+ * Aikomuksen hyvinvoinnin valinnainen aihe tai null (ei valinnainen).
+ * Järjestys: aikomuksen oma `optionalTopic` (tulevat tuottajat: liikunta,
+ * kirjauskehotteet), ateriarytmin alalaji (vesi, lisäravinne), ateria,
+ * tapojen muutos.
+ */
+export function optionalTopicOf(intent) {
+  const source = safeObject(intent);
+  if (!source) return null;
+  if (OPTIONAL_TOPICS.includes(source.optionalTopic)) return source.optionalTopic;
+  if (source.type === NOTIFICATION_TYPE.MEAL) {
+    if (source.mealKind === MEAL_ITEM_KIND.WATER) return OPTIONAL_TOPIC.WATER;
+    if (source.mealKind === MEAL_ITEM_KIND.SUPPLEMENT) return OPTIONAL_TOPIC.SUPPLEMENT;
+    return OPTIONAL_TOPIC.MEAL;
+  }
+  if (source.type === NOTIFICATION_TYPE.HABIT) return OPTIONAL_TOPIC.HABIT;
+  return null;
+}
+
+/** Vähäinen hyvinvoinnin muistutus: vesi tai lisäravinne (kelpaa koosteeseen). */
+export function isLowValueWellbeing(intent) {
+  const topic = optionalTopicOf(intent);
+  return topic === OPTIONAL_TOPIC.WATER || topic === OPTIONAL_TOPIC.SUPPLEMENT;
+}
+
+/** Valinnainen kehote, jota korkea kuorma saa keventää. Kriittistä tai välttämätöntä ei koskaan. */
+export function isOptionalPrompt(intent) {
+  const source = safeObject(intent);
+  if (!source || source.essential === true || source.level === LEVEL.CRITICAL) return false;
+  return LOAD_SUPPRESSIBLE_TOPICS.includes(optionalTopicOf(source));
+}
+
+/** Käyttäjän pois kytkemät valinnaiset aiheet (life_settings.delivery[aihe] = 'off'). */
+export function offTopicsOf(settings) {
+  const map = safeObject(safeObject(settings)?.delivery);
+  const off = new Set();
+  if (!map) return off;
+  for (const topic of OPTIONAL_TOPICS) if (map[topic] === DELIVERY_OFF) off.add(topic);
+  return off;
+}
+
+/** Poista pois kytkettyjen aiheiden aikomukset. Muut aiheet säilyvät sellaisinaan. */
+export function applyTopicOff(intents, settings) {
+  const list = Array.isArray(intents) ? intents : [];
+  const off = offTopicsOf(settings);
+  if (off.size === 0) return list;
+  return list.filter(intent => !off.has(optionalTopicOf(intent)));
+}
+
+/**
+ * Muistutusten kuormataso. Korkea, kun jokin näistä:
+ *   - päivän hyvinvointimerkinnän stressi >= HIGH_STRESS_MIN tai energia <= LOW_ENERGY_MAX
+ *   - viikon aikakuormitus (Suunnan OVERLOAD, ei tiedoksi-tasoa)
+ *   - kapasiteetin ylivuoto (sovelluskerroksen lippu)
+ * Tuntematon ei ole korkea: ilman tietoa muistutukset pysyvät ennallaan.
+ */
+export function reminderLoadLevel({ wellbeingEntry = null, weekOverloaded = false, capacityOverflow = false } = {}) {
+  const entry = safeObject(wellbeingEntry);
+  const stress = entry && Number.isFinite(entry.stress) ? entry.stress : null;
+  const energy = entry && Number.isFinite(entry.energy) ? entry.energy : null;
+  const strained = (stress !== null && stress >= LOAD_RULES.HIGH_STRESS_MIN)
+    || (energy !== null && energy <= LOAD_RULES.LOW_ENERGY_MAX);
+  return strained || weekOverloaded === true || capacityOverflow === true ? LOAD_LEVEL.HIGH : LOAD_LEVEL.NORMAL;
+}
+
+// =====================================================================
 // KOOSTE
 // =====================================================================
 
@@ -469,14 +578,24 @@ export const DEFAULT_DIGEST_TIME = '18:00';
 export const DIGEST_MAX_TITLES = 5;
 const DIGEST_TITLE_LENGTH = 40;
 
-/** Meneekö aikomus koosteeseen: vähäinen (≤ Muistutus) eikä hetkeen sidottu. */
+/**
+ * Meneekö aikomus koosteeseen: vähäinen (≤ Muistutus) eikä hetkeen sidottu.
+ * Aalto L: vesi ja lisäravinne ovat ateriatyyppiä, mutta vähäisiä, joten ne
+ * kelpaavat koosteeseen (eivät ohita sitä kuten ateria-aika).
+ */
 export function isDigestible(intent) {
   return isIntentLike(intent)
     && intent.level <= LEVEL.REMINDER
     && NOTIFICATION_TYPES.includes(intent.type)
-    && !DIGEST_BYPASS_TYPES.includes(intent.type)
+    && (!DIGEST_BYPASS_TYPES.includes(intent.type) || isLowValueWellbeing(intent))
     && intent.topic !== REMINDER_TOPIC.DEPARTURE
     && intent.snoozed !== true;
+}
+
+/** Koosteeseen kelpaava, kun korkea kuorma taittaa valinnaisen kehotteen koosteeseen. */
+function foldable(intent) {
+  return isIntentLike(intent) && intent.level <= LEVEL.REMINDER && intent.snoozed !== true
+    && intent.topic !== REMINDER_TOPIC.DEPARTURE;
 }
 
 /**
@@ -533,20 +652,24 @@ function digestBody(members) {
  * @param {string}  [options.digestTime]   'HH:MM', oletus 18:00
  * @param {object}  [options.quietHours]   { from, to } — kooste ei koskaan osu tänne
  * @param {string}  [options.guidanceStyle] puhutun koosteen sävy
+ * @param {Iterable<string>} [options.foldIds] aalto L: valinnaiset kehotteet,
+ *        jotka korkea kuorma taittaa koosteeseen (vaikka tyyppi muuten ohittaisi sen)
  * @returns {ReadonlyArray<object>}
  */
 export function mergeDigest(intents, options) {
   const {
-    digestEnabled = false, digestTime = DEFAULT_DIGEST_TIME, quietHours = null, guidanceStyle = null
+    digestEnabled = false, digestTime = DEFAULT_DIGEST_TIME, quietHours = null, guidanceStyle = null, foldIds = null
   } = safeObject(options) || {};
   const list = validIntents(intents);
   if (digestEnabled !== true) return finish(list.map(frozenCopy));
 
+  const folded = new Set(foldIds && typeof foldIds[Symbol.iterator] === 'function' ? foldIds : []);
   const time = digestSlot(digestTime, quietHours);
   const kept = [];
   const byDate = new Map();
   for (const intent of list) {
-    if (!isDigestible(intent)) { kept.push(frozenCopy(intent)); continue; }
+    const digestible = isDigestible(intent) || (folded.has(intent.id) && foldable(intent));
+    if (!digestible) { kept.push(frozenCopy(intent)); continue; }
     if (!byDate.has(intent.date)) byDate.set(intent.date, []);
     byDate.get(intent.date).push(intent);
   }
@@ -792,34 +915,52 @@ function decorate(intent, { settings, quietHours, style }) {
  * @param {object} [options.ackLog]       kuittausloki
  * @param {number} [options.nowMs]        nykyhetki (torkkujen tulkintaan)
  * @param {string} [options.guidanceStyle] ohittaa settings.guidanceStyle
+ * @param {string} [options.loadLevel]    aalto L: LOAD_LEVEL.HIGH keventää valinnaiset
+ *        kehotteet (koosteeseen, jos se on päällä; muuten pois). Oletus normaali.
+ * @param {Array<string>} [options.loadDates] päivät, joita korkea kuorma koskee
+ *        (esim. vain tämä päivä); null = kaikki päivät
  * @returns {ReadonlyArray<object>} jäädytetyt aikomukset aikajärjestyksessä
  */
 export function applyNotificationPolicy(intents, options) {
   const {
-    settings = null, preferences = null, ackLog = null, nowMs = null, guidanceStyle = null
+    settings = null, preferences = null, ackLog = null, nowMs = null, guidanceStyle = null,
+    loadLevel = LOAD_LEVEL.NORMAL, loadDates = null
   } = safeObject(options) || {};
   const prefs = normalizePreferences(safeObject(preferences) || {});
   const style = resolveGuidanceStyle(guidanceStyle, settings);
   const quietHours = prefs.quietHours;
 
-  const decorated = dedupeById(validIntents(intents))
+  // Aalto L: käyttäjän pois kytkemät valinnaiset aiheet eivät tule lainkaan.
+  const decorated = applyTopicOff(dedupeById(validIntents(intents)), settings)
     .map(intent => decorate(intent, { settings, quietHours, style }).intent);
 
   const acked = applyAcks(decorated, ackLog, { nowMs });
 
-  // Torkun korvaaja voi olla uusi aikomus: sekin koristellaan.
-  const redecorated = acked.map(intent => decorate(intent, { settings, quietHours, style }));
-
   const digestEnabled = safeObject(settings)?.digestEnabled === true;
   const digestTime = isTimeOfDay(safeObject(settings)?.digestTime) ? settings.digestTime : DEFAULT_DIGEST_TIME;
+
+  // Torkun korvaaja voi olla uusi aikomus: sekin koristellaan.
+  // Korkea kuorma: valinnaiset kehotteet koosteeseen (jos päällä) tai pois.
+  const highLoad = loadLevel === LOAD_LEVEL.HIGH;
+  const loadDays = Array.isArray(loadDates) ? new Set(loadDates.filter(isIsoDate)) : null;
+  const foldIds = new Set();
+  const redecorated = [];
+  for (const intent of acked) {
+    if (highLoad && (!loadDays || loadDays.has(intent.date)) && isOptionalPrompt(intent)) {
+      if (!digestEnabled || !foldable(intent)) continue;
+      foldIds.add(intent.id);
+    }
+    redecorated.push(decorate(intent, { settings, quietHours, style }));
+  }
+  const canDigest = intent => isDigestible(intent) || (foldIds.has(intent.id) && foldable(intent));
 
   // Koosteeseen menevät vähäiset myös silloin, kun rauhoitusaika pidättäisi
   // ne. Muut rauhoitusajan pidättämät pudotetaan vasta koosteen jälkeen.
   const candidates = redecorated
-    .filter(({ intent, decision }) => decision !== QUIET_DECISION.DROP || (digestEnabled && isDigestible(intent)))
+    .filter(({ intent, decision }) => decision !== QUIET_DECISION.DROP || (digestEnabled && canDigest(intent)))
     .map(({ intent }) => intent);
 
-  const merged = mergeDigest(candidates, { digestEnabled, digestTime, quietHours, guidanceStyle: style });
+  const merged = mergeDigest(candidates, { digestEnabled, digestTime, quietHours, guidanceStyle: style, foldIds });
 
   // Kooste syntyy vasta tässä, joten sen oma kuittaus ja torkku
   // tarkistetaan uudelleen. Muille toinen kierros ei muuta mitään.

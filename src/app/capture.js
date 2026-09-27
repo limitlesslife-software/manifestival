@@ -35,7 +35,7 @@
 // sanoi, ei välivaihe matkalla johonkin muuhun.
 
 import { inboxRepo } from '../data/collectionsRepo.js';
-import { isTableAvailable } from '../data/schema.js';
+import { isTableAvailable, datelessTasksAllowed } from '../data/schema.js';
 import { newTaskId } from '../lib/rows.js';
 import { fmtISO, todayMidnight } from '../lib/datetime.js';
 import { logError } from '../lib/result.js';
@@ -46,13 +46,15 @@ import { currentAccessToken } from './auth.js';
 import {
   normalizeInboxItem, validateInboxItem, attachProposal, acceptItem,
   markConverted, dismissItem, restoreItem, atCapacity,
-  INBOX_STATUS, CAPTURE_SOURCE
+  INBOX_STATUS, CAPTURE_SOURCE, splitBrainDump, MAX_OPEN_ITEMS, isOpenItem
 } from '../domain/inbox.js';
 import {
   routeOf, describeRoute, payloadFor, normalizeInterpretation,
   CAPTURE_KIND
 } from '../domain/capture.js';
 import { validateCaptureResponse, buildCaptureContext } from '../ai/captureSchema.js';
+import { proposeTriage, planTriageDecision, TRIAGE_DECISIONS } from '../domain/triage.js';
+import { isIsoDate } from '../domain/task.js';
 import {
   getState, addInboxItemToState, replaceInboxItemInState,
   removeInboxItemFromState, findInboxItem, setPendingCapture
@@ -62,6 +64,7 @@ import {
   createTransaction, createBill, createSavingsGoal
 } from './actions.js';
 import { createTravelPlan } from './assistantActions.js';
+import { saveCalendarEvent } from './dailyLifeActions.js';
 import { showError, success, notify } from '../ui/toast.js';
 import { confirmAction } from '../ui/confirm.js';
 
@@ -167,6 +170,79 @@ export async function captureText(text, { source = CAPTURE_SOURCE.TEXT } = {}) {
   }
 
   return { ok: true, item };
+}
+
+/**
+ * BRAIN DUMP: kirjaa monirivinen teksti saapuviin, yksi rivi per asia.
+ *
+ * EI TULKINTAA KIRJAUSHETKELLÄ. Mielen tyhjentäminen ei saa vaatia
+ * päätöksiä: luokittelu tehdään myöhemmin erässä (Saapuvat, sunnuntain
+ * nollaus). Rivit syntyvät yksi kerrallaan samaa polkua kuin yksittäinen
+ * kirjaus, joten epäonnistunut rivi ei vie muita mukanaan.
+ *
+ * JO SAAPUVISSA OLEVA ASIA EI TUPLAANNU. Sama lista liitettynä kahdesti
+ * (tai sama asia saneltuna uudelleen) ei kasvata kasaa: avoimen rivin
+ * kanssa samanlainen rivi ohitetaan ja lasketaan `duplicates`-lukuun.
+ * Se on silti tallessa — juuri sitä käyttäjä halusi varmistaa.
+ *
+ * @param {string} text
+ * @param {{source?: string}} options
+ * @returns {Promise<{ok:boolean, items:object[], failed:number, skipped:number, duplicates:number,
+ *   rest:string[], errors?:object}>}  `rest` = rivit, jotka EIVÄT tallentuneet (kenttään takaisin)
+ */
+export async function captureBrainDump(text, { source = CAPTURE_SOURCE.TEXT } = {}) {
+  const parts = splitBrainDump(text);
+  if (parts.length === 0) {
+    return { ok: false, items: [], failed: 0, skipped: 0, duplicates: 0, rest: [], errors: { text: 'Kirjoita jotain ensin.' } };
+  }
+  const open = getState().inboxItems.filter(isOpenItem);
+  const known = new Set(open.map(item => String(item.text || '').toLocaleLowerCase('fi')));
+  const fresh = parts.filter(part => !known.has(part.toLocaleLowerCase('fi')));
+  const duplicates = parts.length - fresh.length;
+  if (fresh.length === 0) return { ok: true, items: [], failed: 0, skipped: 0, duplicates, rest: [] };
+
+  const room = Math.max(0, MAX_OPEN_ITEMS - open.length);
+  const accepted = fresh.slice(0, room);
+  const items = [];
+  const rest = [];
+  let failed = 0;
+  for (const part of accepted) {
+    const result = await captureText(part, { source });
+    if (result.ok) items.push(result.item);
+    else {
+      failed += 1;
+      rest.push(part);
+    }
+  }
+  const skipped = fresh.length - accepted.length;
+  rest.push(...fresh.slice(accepted.length));
+  if (items.length === 0) {
+    return { ok: false, items, failed, skipped, duplicates, rest,
+      errors: { text: skipped > 0 ? 'Saapuvat on täynnä. Käsittele muutama rivi ensin.' : 'Kirjaus ei onnistunut.' } };
+  }
+  return { ok: true, items, failed, skipped, duplicates, rest };
+}
+
+/**
+ * Kirjauksen lopputulos yhtenä rauhallisena lauseena tilariville.
+ * Ei päätöksiä, ei syyllistämistä: "Kaikki muu on tallessa."
+ */
+export function captureDumpMessage(result) {
+  if (!result) return '';
+  const saved = Array.isArray(result.items) ? result.items.length : 0;
+  const parts = [];
+  if (saved === 1) parts.push('Kirjattu saapuviin.');
+  else if (saved > 1) parts.push(`Kirjattu ${saved} asiaa saapuviin. Järjestä ne, kun ehdit.`);
+  if (result.duplicates > 0) {
+    parts.push(result.duplicates === 1 ? 'Yksi asia oli jo tallessa Saapuvissa.' : `${result.duplicates} asiaa oli jo tallessa Saapuvissa.`);
+  }
+  if (result.skipped > 0 && saved > 0) {
+    parts.push('Saapuvat tuli täyteen: loput jäivät kenttään. Käsittele muutama rivi ensin.');
+  }
+  if (result.failed > 0 && saved > 0) {
+    parts.push(result.failed === 1 ? 'Yksi rivi ei tallentunut: se jäi kenttään.' : `${result.failed} riviä ei tallentunut: ne jäivät kenttään.`);
+  }
+  return parts.join(' ');
 }
 
 /**
@@ -446,6 +522,135 @@ function createdIdOf(created) {
     if (created[key] && created[key].id) return created[key].id;
   }
   return null;
+}
+
+// =====================================================================
+// ERÄ-KÄSITTELY (BRAIN DUMP, aalto L)
+// =====================================================================
+//
+// Saapuvien rivit luokitellaan erässä: käyttäjä valitsee rivit ja yhden
+// päätöksen (Tänään, Tällä viikolla, Myöhemmin, Ei vielä, Odottaa…,
+// Menoksi, Hylkää). Ehdotus (src/domain/triage.js) on deterministinen eikä
+// muuta mitään; tämä funktio on ainoa paikka, jossa päätös muuttuu
+// kutsuksi, ja sitä kutsutaan vain käyttäjän napautuksesta.
+//
+// SAMAT TAKUUT KUIN approveItem:ssä:
+//   - jo muunnettu tai hylätty rivi ei muunnu uudelleen (tarkistus ENNEN
+//     kirjoitusta ja uudelleen luonnin jälkeen)
+//   - hyväksyntä ensin, muunnos sitten (domainin järjestys)
+//   - luotua riviä EI peruta, jos vain saapuvan merkintä epäonnistuu
+//   - rivi kerrallaan: epäonnistunut rivi ei vie muita mukanaan
+// PÄIVÄTÖN SÄÄNTÖ: ilman migraatiota 0015 päivätön päätös jättää rivin
+// Saapuviin (ei keksittyä päivää), ja lopputulos kertoo sen.
+
+/** Rivit, joiden erä on kesken: tuplanapautus ei luo kahta riviä. */
+const triageInFlight = new Set();
+
+/**
+ * Ehdotus saapuvalle riville tämän hetken alueilla, tavoitteilla ja päivällä.
+ * Ei kirjoita mitään.
+ */
+export function triageProposalOf(item, { todayIso: today = todayIso() } = {}) {
+  if (!item) return null;
+  const state = getState();
+  return proposeTriage(item.text, { areas: state.lifeAreas, todayIso: today, goals: state.goals });
+}
+
+/**
+ * Käsittele valitut saapuvat rivit yhdellä päätöksellä.
+ *
+ * @param {string[]} ids
+ * @param {string} decision  TRIAGE_DECISION
+ * @param {object} [options]
+ * @param {Object<string,string|null>} [options.areaChoices] rivikohtainen alueen valinta (id -> alue tai null)
+ * @param {string|null} [options.waitingOn] "Odottaa…": kenen tai minkä varassa (tyhjä = ehdotus)
+ * @param {string} [options.todayIso] testejä varten
+ * @returns {Promise<{ok:boolean, decision:string, converted:Array<{id,kind,createdId,markFailed?}>,
+ *   kept:Array<{id,reason}>, failed:Array<{id,errors?}>, dismissed:number, skipped:Array<{id,reason}>}>}
+ */
+export async function triageInboxItems(ids, decision, { areaChoices = {}, waitingOn = null, todayIso: today } = {}) {
+  const outcome = { ok: true, decision, converted: [], kept: [], failed: [], dismissed: 0, skipped: [] };
+  if (!TRIAGE_DECISIONS.includes(decision)) return { ...outcome, ok: false };
+  const day = isIsoDate(today) ? today : todayIso();
+  const allowDateless = datelessTasksAllowed();
+  const choices = areaChoices && typeof areaChoices === 'object' ? areaChoices : {};
+
+  for (const id of [...new Set((Array.isArray(ids) ? ids : []).map(String))]) {
+    const item = findInboxItem(id);
+    // JO MUUNNETTU TAI HYLÄTTY EI MUUNNU UUDELLEEN.
+    if (!item || item.status === INBOX_STATUS.CONVERTED || !isOpenItem(item) || triageInFlight.has(id)) {
+      outcome.skipped.push({ id, reason: item ? 'closed' : 'missing' });
+      continue;
+    }
+    const state = getState();
+    const proposal = proposeTriage(item.text, { areas: state.lifeAreas, todayIso: day, goals: state.goals });
+    const areaId = Object.prototype.hasOwnProperty.call(choices, id) ? (choices[id] || null) : undefined;
+    const plan = planTriageDecision(item.text, decision, {
+      proposal, areaId, areas: state.lifeAreas, todayIso: day, allowDateless, waitingOn
+    });
+
+    if (plan.action === 'keep') {
+      outcome.kept.push({ id, reason: plan.reason });
+      continue;
+    }
+    triageInFlight.add(id);
+    try {
+      if (plan.action === 'dismiss') {
+        const dismissed = await dismissItemById(id);
+        if (dismissed.ok) outcome.dismissed += 1;
+        else outcome.failed.push({ id });
+        continue;
+      }
+      await convertOne(id, plan, outcome);
+    } finally {
+      triageInFlight.delete(id);
+    }
+  }
+
+  outcome.ok = outcome.failed.length === 0;
+  return outcome;
+}
+
+/** Luo domain-rivi ja merkitse saapuva muunnetuksi (approveItem-järjestys). */
+async function convertOne(id, plan, outcome) {
+  const event = plan.action === 'event';
+  const created = event ? await saveCalendarEvent(plan.payload) : await createTask(plan.payload);
+  if (!created || created.ok === false) {
+    outcome.failed.push({ id, errors: created && created.errors });
+    return;
+  }
+  const kind = event ? 'event' : 'task';
+  const createdId = event ? (created.event && created.event.id) || null : (created.task && created.task.id) || null;
+
+  // Luonti on odotus, ja rivi on voinut muuttua sen aikana (toinen laite,
+  // yksittäinen "Käsittele"). Luotua riviä ei peruta: se on käyttäjän dataa.
+  const current = findInboxItem(id);
+  if (!current || current.status === INBOX_STATUS.CONVERTED || !isOpenItem(current)) {
+    outcome.converted.push({ id, kind, createdId, markFailed: true });
+    return;
+  }
+
+  // HYVÄKSYNTÄ ENSIN, MUUNNOS SITTEN. Jo hyväksytty rivi ei hyväksy uudelleen.
+  const accepted = current.status === INBOX_STATUS.ACCEPTED ? current : acceptItem(current);
+  const converted = accepted && markConverted(accepted, kind, createdId);
+  if (!converted) {
+    notify('Rivi luotiin, mutta saapuvaa ei voitu merkitä käsitellyksi.', 7000);
+    outcome.converted.push({ id, kind, createdId, markFailed: true });
+    return;
+  }
+
+  replaceInboxItemInState(id, converted);
+  const pending = getState().pendingCapture;
+  if (pending && pending.itemId === id) setPendingCapture(null);
+
+  const saved = await inboxRepo.update(converted);
+  if (!saved.ok) {
+    replaceInboxItemInState(id, current);
+    showError(saved.error);
+    outcome.converted.push({ id, kind, createdId, markFailed: true });
+    return;
+  }
+  outcome.converted.push({ id, kind, createdId });
 }
 
 // =====================================================================

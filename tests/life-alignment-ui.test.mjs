@@ -10,6 +10,7 @@
 
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { MENTAL_LOAD_FIELDS } from '../src/data/schema.js';
 
 import { read } from './helpers/sources.mjs';
 import { freezeLocalDate } from './helpers/clock.mjs';
@@ -174,8 +175,15 @@ test('elämänalueen virheet: tyhjä nimi, kaksoiskappale, kategoria toisella al
   assert.equal((await createLifeArea({ name: '', importance: 3 })).errors.name !== undefined, true);
   await createLifeArea({ name: 'Työ', importance: 3, categoryKey: 'tyo' });
   assert.ok((await createLifeArea({ name: 'työ', importance: 3 })).errors.name);
-  assert.ok((await createLifeArea({ name: 'Ura', importance: 3, categoryKey: 'tyo' })).errors.categoryKey);
-  assert.equal(getState().lifeAreas.length, 1);
+  // Jaettu kategoria sallitaan vasta migraation 0015 jälkeen (porttitietoinen).
+  const shared = await createLifeArea({ name: 'Ura', importance: 3, categoryKey: 'tyo' });
+  if (MENTAL_LOAD_FIELDS) {
+    assert.equal(shared.ok, true);
+    assert.equal(getState().lifeAreas.length, 2);
+  } else {
+    assert.ok(shared.errors.categoryKey);
+    assert.equal(getState().lifeAreas.length, 1);
+  }
 });
 
 test('F7: uuden alueen tärkeyttä ei valita puolesta — puuttuva tärkeys hylätään, luettu rivi saa oletuksen', async () => {

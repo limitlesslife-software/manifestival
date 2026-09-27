@@ -29,7 +29,7 @@
 // Versio pitää nostaa aina kun sovelluskuori muuttuu. Vanhat välimuistit
 // siivotaan activate-vaiheessa, joten nosto on turvallinen tapa pakottaa
 // päivitys. Ks. docs/DEPLOYMENT.md.
-const CACHE_VERSION = 'v24';
+const CACHE_VERSION = 'v13';
 const CACHE_NAME = `manifestival-shell-${CACHE_VERSION}`;
 
 /**
@@ -100,6 +100,7 @@ const SHELL = [
   '/src/app/views/travel.js',
   '/src/app/views/direction.js',
   '/src/app/views/directionSetup.js',
+  '/src/app/views/sundayReset.js',
   '/src/app/views/timeLog.js',
   '/src/app/views/week.js',
   '/src/app/views/loadNotice.js',
@@ -162,6 +163,7 @@ const SHELL = [
   '/src/domain/task.js',
   '/src/domain/transactions.js',
   '/src/domain/travel.js',
+  '/src/domain/triage.js',
   '/src/domain/wallClock.js',
   '/src/domain/utteranceRoute.js',
   '/src/domain/voiceFlow.js',
@@ -193,6 +195,17 @@ const SHELL = [
   '/src/domain/habit.js',
   '/src/domain/exerciseSession.js',
   '/src/domain/wellbeingCheckin.js',
+  // Mielen kuorman keventäminen (aalto L, 0015).
+  '/src/domain/itemNature.js',
+  '/src/domain/lifeLoad.js',
+  '/src/domain/protectedTime.js',
+  '/src/domain/weeklyPlan.js',
+  '/src/domain/driftSignals.js',
+  '/src/app/capacityBrake.js',
+  '/src/app/lifeLoadModel.js',
+  '/src/app/mentalLoadActions.js',
+  '/src/app/views/stored.js',
+  '/src/app/views/protectedTimeSettings.js',
   '/src/lib/datetime.js',
   '/src/lib/errorMessages.js',
   '/src/lib/format.js',

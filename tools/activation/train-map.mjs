@@ -1,8 +1,10 @@
-// Julkaisujunan C–J LUKKO gitistä: node tools/activation/train-map.mjs [--write] [--sync-docs] [--json]
+// Julkaisujunan C–K LUKKO gitistä: node tools/activation/train-map.mjs [--write] [--sync-docs] [--json]
 //
 // MITÄ TÄMÄ ON (ACT-04)
 //
-// docs/activation/release-train-c-j.json on junan LUKKO: jokainen aalto
+// docs/activation/release-train-c-j.json on junan LUKKO (tiedostonimi on
+// historiallinen: juna jatkui aallolla K, ja nimeen viittaa moni työkalu,
+// testi ja dokumentti, joten sitä ei vaihdettu): jokainen aalto
 // on kiinnitetty täyteen 40-merkkiseen SHA:han (`deployTarget`). Se on
 // ainoa totuus siitä, mikä commit pushataan tuotantoon. Aliakset
 // (`ref`, alla TRAIN) ovat vain muistiapu, jolla lukko KIRJOITETAAN.
@@ -18,8 +20,9 @@
 //                   tilaan ja SQL-lähteen viitteet lukon sqlSourceen
 //                   (docs/SUUNTA-ACTIVATION-GO-NOGO.md,
 //                   docs/SUUNTA-FAST-ACTIVATION.md ja
-//                   docs/acceptance/WAVE-D..J.md). Käytä --write:n jälkeen,
-//                   kun H/I/J on leikattu uudelleen.
+//                   docs/acceptance/WAVE-D..K.md: jokainen lukon aalto
+//                   C:n jälkeen). Käytä --write:n jälkeen, kun aalto on
+//                   leikattu uudelleen tai uusi aalto lukittu.
 //
 // MIKSI EI `origin/main`
 //
@@ -58,9 +61,10 @@ export const LOCK_PATH = 'docs/activation/release-train-c-j.json';
 /**
  * Aallot ja niiden ALIAKSET. Alias ratkaistaan vain --write:ssa; lukossa
  * on SHA. C:n alias on sen oma SHA (tuotannossa oleva lattia), D:n
- * samoin (jäädytetty aaltocommit). F-J on leikattu uudelleen (F v4, G v5,
- * H v5, I v3, J v2): uusi leikkaus = päivitä aliakset uusiin haaroihin ja
- * aja --write — SHA:ita EI kirjoiteta tänne.
+ * samoin (jäädytetty aaltocommit). F–J on leikattu uudelleen (F v4, G v5,
+ * H v5, I v3, J v2), ja K v1 on leikattu J v2:n päälle: uusi leikkaus =
+ * päivitä aliakset uusiin haaroihin ja aja --write — SHA:ita EI kirjoiteta
+ * tänne.
  */
 export const TRAIN = Object.freeze([
   Object.freeze({ wave: 'C', ref: 'cf259d0ef755f7e875cc9cd9c15405eba632e408', acceptance: 'docs/acceptance/WAVE-C-OWNER-ACCEPTANCE.md' }),
@@ -70,7 +74,8 @@ export const TRAIN = Object.freeze([
   Object.freeze({ wave: 'G', ref: 'rehearsal/wave-g-v5', acceptance: 'docs/acceptance/WAVE-G.md' }),
   Object.freeze({ wave: 'H', ref: 'rehearsal/wave-h-v5', acceptance: 'docs/acceptance/WAVE-H.md' }),
   Object.freeze({ wave: 'I', ref: 'rehearsal/wave-i-v3', acceptance: 'docs/acceptance/WAVE-I.md' }),
-  Object.freeze({ wave: 'J', ref: 'rehearsal/wave-j-v2', acceptance: 'docs/acceptance/WAVE-J.md' })
+  Object.freeze({ wave: 'J', ref: 'rehearsal/wave-j-v2', acceptance: 'docs/acceptance/WAVE-J.md' }),
+  Object.freeze({ wave: 'K', ref: 'rehearsal/wave-k-v1', acceptance: 'docs/acceptance/WAVE-K.md' })
 ]);
 
 /**
@@ -97,10 +102,51 @@ export const REQUIRED_PATCHES = Object.freeze([
   })
 ]);
 
-/** SQL-tiedostot haetaan AINA tästä aallosta: vain sen kärjessä on kaikki 0009–0013 -tiedostot. */
-export const SQL_SOURCE_WAVE = 'J';
+/**
+ * SQL-tiedostot haetaan AINA tästä aallosta: vain sen kärjessä on kaikki
+ * 0009–0014 -tiedostot. K:n kärjen (d11d8b4) 0009–0013 -tiedostot ovat
+ * tavu tavulta samat kuin J:n (cba9463) — sama git-blob — joten niiden
+ * sha256 lukossa ei muuttunut, kun lähde siirtyi J:stä K:hon.
+ */
+export const SQL_SOURCE_WAVE = 'K';
 
 const sha256 = text => createHash('sha256').update(text).digest('hex');
+
+/**
+ * Sarakeportit, jotka olivat olemassa, kun lukko v2 (C–K) kirjoitettiin.
+ * Jokainen C–K-tietue sisältää TÄSMÄLLEEN nämä viisi — myös ne, joita sen
+ * oma schema.js ei vielä tuntenut (puuttuva literaali = kiinni).
+ *
+ * MYÖHEMMIN LISÄTTY PORTTI (MENTAL_LOAD_FIELDS, aalto L) tulee tietueeseen
+ * vasta siitä aallosta alkaen, jossa se avautuu. Näin --write tuottaa
+ * C–K-tietueet tavu tavulta ennallaan, ja vain uudet tietueet (L) kantavat
+ * uuden avaimen. Tietueesta puuttuvan portin on silti oltava ehdokkaassa
+ * kiinni (actual = expected = false): se tarkistetaan johdonmukaisuudessa
+ * ja lukon tarkistuksessa (checkTrainMap), ei jätetä huomiotta.
+ */
+export const LOCK_V2_COLUMN_GATES = Object.freeze([
+  'BILL_PAYMENT_FIELDS', 'GOAL_PLANNING_FIELDS', 'GOAL_MAINTENANCE_MODE', 'GOAL_LIFE_AREA_FIELD',
+  'ALIGNMENT_REALITY_FIELDS'
+]);
+
+/**
+ * Kaikki sarakeportit ehdokkaan schema.js:stä: { gate: {actual, expected} }.
+ * Puuttuva literaali = kiinni; auki täsmälleen siitä aallosta alkaen, jolle
+ * COLUMN_GATES sen antaa.
+ */
+export function allColumnGates(schema, wave) {
+  const out = {};
+  for (const [gate, openFrom] of Object.entries(COLUMN_GATES)) {
+    const m = new RegExp(`export const ${gate} = (true|false);`).exec(schema || '');
+    out[gate] = { actual: m ? m[1] === 'true' : false, expected: waveIndex(wave) >= waveIndex(openFrom) };
+  }
+  return out;
+}
+
+/** Kuuluuko sarakeportti aallon tietueeseen (ks. LOCK_V2_COLUMN_GATES)? */
+export function recordHasColumnGate(gate, wave) {
+  return LOCK_V2_COLUMN_GATES.includes(gate) || waveIndex(wave) >= waveIndex(COLUMN_GATES[gate]);
+}
 
 function waveCommitIn(git, fromSha, toSha, wave) {
   const commits = git.log(fromSha, toSha);
@@ -137,10 +183,13 @@ export function buildRecord(entry, tip, previous, git) {
     columnGates: {}
   };
   // Sarakeportit eivät kuulu taulumatriisiin: auki täsmälleen siitä
-  // aallosta alkaen, jolle COLUMN_GATES ne antaa.
-  for (const [gate, openFrom] of Object.entries(COLUMN_GATES)) {
-    const m = new RegExp(`export const ${gate} = (true|false);`).exec(schema || '');
-    record.columnGates[gate] = { actual: m ? m[1] === 'true' : false, expected: waveIndex(entry.wave) >= waveIndex(openFrom) };
+  // aallosta alkaen, jolle COLUMN_GATES ne antaa. Tietueeseen kirjataan
+  // vain sen aallon tuntemat portit (recordHasColumnGate), mutta
+  // johdonmukaisuus vaatii KAIKKI portit: myöhemmin avautuva portti, joka
+  // on ehdokkaassa auki, tekee tietueesta epäjohdonmukaisen.
+  const allGates = allColumnGates(schema, entry.wave);
+  for (const [gate, value] of Object.entries(allGates)) {
+    if (recordHasColumnGate(gate, entry.wave)) record.columnGates[gate] = value;
   }
   record.missingPatches = REQUIRED_PATCHES
     .filter(p => waveIndex(entry.wave) >= waveIndex(p.fromWave))
@@ -149,7 +198,7 @@ export function buildRecord(entry, tip, previous, git) {
   record.consistent = record.cacheVersion === record.expectedCacheVersion
     && record.gateMatrixResolvesTo === entry.wave
     && record.descendsFromParent !== false
-    && Object.values(record.columnGates).every(g => g.actual === g.expected)
+    && Object.values(allGates).every(g => g.actual === g.expected)
     && (!record.migration || isFullSha(record.waveCommit));
   record.problem = record.consistent ? null : 'tietue ei ole johdonmukainen';
   return record;
@@ -167,10 +216,12 @@ function missingRecord(entry, previous) {
  * SQL-lähteen tiedostot ja niiden sha256 (lukittu SHA).
  *
  * VAIN SQL-LÄHDEAALTOON ASTI. Lähdeaallon kärjessä on sen omat ja kaikkien
- * aiempien aaltojen tiedostot, ei myöhempien: aallon K migraatio 0014 ei
- * ole J:n kärjessä (cba9463), eikä sen puuttuminen sieltä ole virhe. Kun
- * K leikataan ja SQL_SOURCE_WAVE siirtyy K:hon, 0014:n tiedostot tulevat
- * lukkoon samalla --write-ajolla.
+ * aiempien aaltojen tiedostot, ei myöhempien. Lähde siirtyi J:stä
+ * (cba9463, 0009–0013) K:hon (d11d8b4, 0009–0014), kun K leikattiin:
+ * 0014:n tiedostot tulivat lukkoon samalla --write-ajolla, ja 0009–0013:n
+ * tiivisteet pysyivät samoina. Jos junaan lisätään myöhempi aalto ennen
+ * kuin sen SQL on lähteessä, sen tiedostojen puuttuminen täältä ei ole
+ * virhe — lähdeaalto siirretään, kun aalto leikataan.
  */
 export function sqlSourceFiles(git, sha, sourceWave = SQL_SOURCE_WAVE) {
   const last = waveIndex(sourceWave);
@@ -252,7 +303,9 @@ export function checkTrainMap(lock, { git = createGit(), train = TRAIN } = {}) {
             waveProblems.push(`${field}: lukossa ${JSON.stringify(locked[field])}, gitissä ${JSON.stringify(fresh[field])}`);
           }
         }
-        if (JSON.stringify(fresh.columnGates) !== JSON.stringify(locked.columnGates)) waveProblems.push('columnGates eroaa lukosta');
+        for (const p of columnGateProblems(locked, git.show(locked.deployTarget, 'src/data/schema.js'), entry.wave)) {
+          waveProblems.push(p);
+        }
         if (!fresh.consistent) waveProblems.push('tietue ei ole johdonmukainen');
       }
     }
@@ -271,6 +324,40 @@ export function checkTrainMap(lock, { git = createGit(), train = TRAIN } = {}) {
     }
   }
   return { ok: problems.length === 0, problems, waves, production: originMainStateFrom(git) };
+}
+
+/**
+ * Lukitun tietueen sarakeportit vs. ehdokkaan schema.js.
+ *
+ * VERTAA VAIN TIETUEESSA OLEVAT PORTIT: lukitut C–K-tietueet eivät tunne
+ * myöhemmin lisättyä MENTAL_LOAD_FIELDS-porttia, eikä niitä kirjoiteta
+ * uudelleen sen takia. Tietueesta puuttuvan portin on oltava ehdokkaassa
+ * KIINNI ja aallossa kiinni odotettu (actual = expected = false) — muuten
+ * lukko ei todista sitä, mitä ehdokas tekee. Tietueen ylimääräinen tai
+ * eri järjestyksessä oleva avain on yhä virhe (kuten ennenkin: tietue on
+ * rakennettava samalla säännöllä kuin buildRecord).
+ *
+ * @returns {string[]} ongelmat (tyhjä = kunnossa)
+ */
+export function columnGateProblems(locked, schema, wave) {
+  const problems = [];
+  const all = allColumnGates(schema, wave);
+  const lockedGates = locked && locked.columnGates && typeof locked.columnGates === 'object' ? locked.columnGates : {};
+  const expectedKeys = Object.keys(all).filter(gate => recordHasColumnGate(gate, wave));
+  const lockedKeys = Object.keys(lockedGates);
+  const projected = {};
+  for (const gate of lockedKeys) if (all[gate]) projected[gate] = all[gate];
+  if (lockedKeys.some(gate => !all[gate])) problems.push('columnGates eroaa lukosta (tuntematon portti)');
+  else if (JSON.stringify(projected) !== JSON.stringify(lockedGates)) problems.push('columnGates eroaa lukosta');
+  // Aallon tuntema portti puuttuu tietueesta (esim. L-tietue ilman MENTAL_LOAD_FIELDSiä).
+  const missing = expectedKeys.filter(gate => !lockedKeys.includes(gate));
+  if (missing.length) problems.push(`columnGates puuttuu lukosta: ${missing.join(', ')}`);
+  for (const gate of Object.keys(all).filter(g => !lockedKeys.includes(g))) {
+    if (all[gate].actual !== false || all[gate].expected !== false) {
+      problems.push(`sarakeportti ${gate} puuttuu lukitusta tietueesta, mutta ehdokkaassa ${all[gate].actual ? 'auki' : 'kiinni'} (odotus aallossa ${wave}: ${all[gate].expected ? 'auki' : 'kiinni'})`);
+    }
+  }
+  return problems;
 }
 
 /** Lukko levyltä, tai null. */

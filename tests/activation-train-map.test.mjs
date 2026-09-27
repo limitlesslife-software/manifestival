@@ -1,4 +1,5 @@
-// Julkaisujunan C–J kartta (docs/activation/release-train-c-j.json).
+// Julkaisujunan C–K kartta (docs/activation/release-train-c-j.json; nimi on
+// historiallinen, lukko kattaa aallot C–K).
 //
 // Kartta generoidaan gitistä (tools/activation/train-map.mjs), joka lukee
 // jokaisen aallon oman sw.js:n ja schema.js:n. Tämä testi ei tarvitse
@@ -7,13 +8,19 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 
 import { ROOT, read } from './helpers/sources.mjs';
-import { cacheVersionOf, cumulativeGates, WAVE_IDS } from '../tools/release/waves.mjs';
+import { COLUMN_GATES, cacheVersionOf, cumulativeGates, waveById, WAVE_IDS } from '../tools/release/waves.mjs';
+import { candidateChecks } from '../tools/activation/orchestrate.mjs';
+import { parseColumnGates } from '../tools/release/live-assets.mjs';
 import { versionNumber } from '../tools/release/lineage.mjs';
 import { createGit } from '../tools/release/git-layer.mjs';
 import {
-  REQUIRED_PATCHES, TRAIN, buildTrainMap, checkTrainMap, pushLineDocs, syncDoc
+  LOCK_V2_COLUMN_GATES, REQUIRED_PATCHES, SQL_SOURCE_WAVE, TRAIN, buildTrainMap, checkTrainMap, columnGateProblems,
+  pushLineDocs, recordHasColumnGate, sqlSourceFiles, syncDoc
 } from '../tools/activation/train-map.mjs';
 import {
   deployLinesIn, goNoGoTableRows, pushLineProblems, pushLinesIn, sqlSourceProblems, stopLinesIn, syncPushLines,
@@ -26,9 +33,18 @@ const SHA40 = /^[0-9a-f]{40}$/;
 const realGit = createGit({ cwd: ROOT });
 const refsPresent = () => TRAIN.every(e => realGit.revParse(e.ref));
 
-test('kartta kattaa aallot C–J järjestyksessä', () => {
-  assert.deepEqual(map.waves.map(w => w.wave), ['C', 'D', 'E', 'F', 'G', 'H', 'I', 'J']);
+test('kartta kattaa aallot C–K järjestyksessä; K on viimeinen lukittu', () => {
+  assert.deepEqual(map.waves.map(w => w.wave), ['C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K']);
   for (const w of map.waves) assert.ok(WAVE_IDS.includes(w.wave));
+  // Lukon jälkeiset julkaisuaallot ovat vain ne, joiden ehdokasta ei ole
+  // vielä leikattu (L: migraatio 0015 EI AJETTU, pääkehittäjä leikkaa
+  // ehdokkaan). Yhtäkään leikattua aaltoa ei ole jätetty lukitsematta.
+  const after = WAVE_IDS.slice(WAVE_IDS.indexOf(map.waves.at(-1).wave) + 1);
+  assert.deepEqual(after, ['L']);
+  for (const id of after) {
+    assert.ok(waveById(id).blockedBy, `${id}: leikkaamaton aalto on yhä kannan estämä`);
+    assert.equal(TRAIN.some(e => e.wave === id), false, `${id}: alias lisätään vasta leikkauksessa`);
+  }
 });
 
 test('KRIITTINEN: välimuistiversio nousee joka aallossa eikä törmää', () => {
@@ -69,7 +85,7 @@ test('migraatioaalloilla on esitarkistus, varmistus ja aaltocommit', () => {
     assert.match(w.waveCommit || '', /^[0-9a-f]{40}$/, `${w.wave}: aaltocommit puuttuu`);
   }
   assert.deepEqual(map.waves.filter(x => x.migration).map(w => w.migration.slice(0, 4)),
-    ['0009', '0010', '0011', '0012', '0013']);
+    ['0009', '0010', '0011', '0012', '0013', '0014']);
 });
 
 test('kaikki kartan aallot on merkitty johdonmukaisiksi generoitaessa', () => {
@@ -102,13 +118,61 @@ test('KRIITTINEN: TRAIN ei kiinnitä yhtäkään aaltoa liikkuvaan origin/mainii
   for (const entry of TRAIN) assert.equal(map.waves.find(w => w.wave === entry.wave).ref, entry.ref, entry.wave);
 });
 
-test('SQL-lähde on lukittu: J:n deployTarget ja jokaisen tiedoston sha256', () => {
-  const j = map.waves.find(w => w.wave === 'J');
-  assert.equal(map.sqlSource.sha, j.deployTarget);
-  assert.equal(Object.keys(map.sqlSource.files).length, 15);
+test('SQL-lähde on lukittu: K:n deployTarget ja jokaisen tiedoston sha256 (0009–0014)', () => {
+  const k = map.waves.find(w => w.wave === 'K');
+  assert.equal(SQL_SOURCE_WAVE, 'K');
+  assert.equal(map.sqlSource.wave, 'K');
+  assert.equal(map.sqlSource.ref, k.ref);
+  assert.equal(map.sqlSource.sha, k.deployTarget);
+  assert.equal(Object.keys(map.sqlSource.files).length, 18);
+  for (const n of ['0009', '0010', '0011', '0012', '0013', '0014']) {
+    for (const file of [`supabase/preflight/preflight_${n}.sql`, `supabase/verify/verify_${n}.sql`]) {
+      assert.ok(file in map.sqlSource.files, `${file} puuttuu lukon SQL-lähteestä`);
+    }
+  }
   for (const [file, digest] of Object.entries(map.sqlSource.files)) {
     assert.match(digest, /^[0-9a-f]{64}$/, file);
     assert.ok(read(file), `${file} puuttuu tuotehaarasta`);
+  }
+});
+
+/**
+ * 0009–0013:n tiivisteet lukossa ENNEN kuin lähde siirtyi J:stä K:hon
+ * (lukko 2026-09-26, lähde J v2 cba9463). Lähteen siirto ei saa muuttaa
+ * jo harjoiteltujen ja osin tuotantoon ajettujen (0009) tiedostojen tavuja.
+ */
+const SQL_0009_0013_AT_J = Object.freeze({
+  'supabase/migrations/0009_finance_2.sql': '7a7d605de64616711ac0f63676c1822821dadfe9a10f6ebd31196cac0c61bd8c',
+  'supabase/preflight/preflight_0009.sql': 'be1eb6092a43690bd707f315f88f052ea432087733430bab4709a935444c214c',
+  'supabase/verify/verify_0009.sql': '6dfbffab31b9f7b0b905c5dbe54087b7c7caf2daea4df7069b1a05dc05909163',
+  'supabase/migrations/0010_goal_to_action.sql': 'a718bfe2c172dddf5bce8671a29d24262588b8cb90d63209cdaea740a652b7af',
+  'supabase/preflight/preflight_0010.sql': '859a10fdc5799d3f3dcb9fcea0cf242901504082e5b40f4890931b939743e984',
+  'supabase/verify/verify_0010.sql': 'dd097adccb7696dff1d34b876989b7faaf86d6b54c9d4e2c1e15478c760a31a6',
+  'supabase/migrations/0011_personal_assistant.sql': 'a7c88ba6c133bb9608a48b79341be61f4608e1d154f911d852040d154449821a',
+  'supabase/preflight/preflight_0011.sql': 'd3fa310fd24cff1dda486fda72da9fe50df4fd65d6b0ad3ba93db8622f19744d',
+  'supabase/verify/verify_0011.sql': 'c9ff53d779ab15452268663a22920496e64d4abd609685eaf7a2ba36c2eca9c6',
+  'supabase/migrations/0012_life_alignment.sql': 'eb9848024784b4ec20e4149677be06289ca1607f7045708ad2570768c7de91d7',
+  'supabase/preflight/preflight_0012.sql': '1ecad5739b5a11baa01f4829837cf1ef82d139c003b58f5d7e024c9db9ada85e',
+  'supabase/verify/verify_0012.sql': '5859fedb6dbddb284e4e541264dc889352837f596d6d5b761f1213a161a3d514',
+  'supabase/migrations/0013_alignment_reality.sql': 'b6d1a14468b096baf779c39248c6e24d2d12d3990f443f56e3b17710f38d802a',
+  'supabase/preflight/preflight_0013.sql': '3624909f1b6b2ea0fee6fab9aac925849f1afd55805da9f00c11385b59ec3eda',
+  'supabase/verify/verify_0013.sql': 'd4716ef31fe44fde78b1fb65ee8e6e4a64018b1a4b9bc78763963a8ddb1887bc'
+});
+
+test('KRIITTINEN: SQL-lähteen siirto J -> K ei muuttanut 0009–0013:n tavuja', () => {
+  for (const [file, digest] of Object.entries(SQL_0009_0013_AT_J)) {
+    assert.equal(map.sqlSource.files[file], digest, `${file}: lukon tiiviste muuttui lähteen siirrossa`);
+  }
+});
+
+test('oikea historia (ehdollinen): J:n ja K:n kärjissä 0009–0013 ovat samat tavut', t => {
+  const j = map.waves.find(w => w.wave === 'J').deployTarget;
+  const k = map.waves.find(w => w.wave === 'K').deployTarget;
+  if (!realGit.revParse(j) || !realGit.revParse(k)) { t.skip('ehdokashistoria ei ole paikallisesti saatavilla'); return; }
+  const fromJ = sqlSourceFiles(realGit, j, 'J');
+  assert.deepEqual(Object.keys(fromJ).sort(), Object.keys(SQL_0009_0013_AT_J).sort(), 'J:n lähdetiedostot ovat 0009–0013');
+  for (const [file, digest] of Object.entries(fromJ)) {
+    assert.equal(digest, map.sqlSource.files[file], `${file}: J ${String(digest).slice(0, 12)} != K ${String(map.sqlSource.files[file]).slice(0, 12)}`);
   }
 });
 
@@ -144,9 +208,9 @@ test('KRIITTINEN: tynkä: siirtynyt viite on tarkistuksessa VIRHE', () => {
 });
 
 test('tynkä: puuttuva pakollinen korjaus kirjataan H:sta alkaen, ei aiemmille', () => {
-  const lock = buildTrainMap({ git: stubGit({ missingPatchWaves: ['G', 'H', 'I', 'J'] }) });
+  const lock = buildTrainMap({ git: stubGit({ missingPatchWaves: ['G', 'H', 'I', 'J', 'K'] }) });
   assert.deepEqual(lock.waves.find(w => w.wave === 'G').missingPatches, [], 'G ei tarvitse korjausta');
-  for (const wave of ['H', 'I', 'J']) {
+  for (const wave of ['H', 'I', 'J', 'K']) {
     assert.deepEqual(lock.waves.find(w => w.wave === wave).missingPatches, [REQUIRED_PATCHES[0].commit], wave);
     assert.equal(lock.waves.find(w => w.wave === wave).consistent, true, 'korjauksen puute ei tee tietueesta epäjohdonmukaista');
   }
@@ -157,13 +221,14 @@ test('tynkä: talouskorjaus vaaditaan F:stä ja tietosuojakorjaus I:stä alkaen,
   const privacy = REQUIRED_PATCHES.find(p => p.commit.startsWith('aaefa4d'));
   assert.equal(finance.fromWave, 'F');
   assert.equal(privacy.fromWave, 'I');
-  const lock = buildTrainMap({ git: stubGit({ missingPatches: { '5ceb371': ['E', 'F', 'J'], aaefa4d: ['H', 'I'] } }) });
+  const lock = buildTrainMap({ git: stubGit({ missingPatches: { '5ceb371': ['E', 'F', 'J'], aaefa4d: ['H', 'I', 'K'] } }) });
   const of = wave => lock.waves.find(w => w.wave === wave).missingPatches;
   assert.deepEqual(of('E'), [], 'E ei tarvitse talouskorjausta');
   assert.deepEqual(of('F'), [finance.commit]);
   assert.deepEqual(of('J'), [finance.commit]);
   assert.deepEqual(of('H'), [], 'H ei tarvitse tietosuojakorjausta');
   assert.deepEqual(of('I'), [privacy.commit]);
+  assert.deepEqual(of('K'), [privacy.commit], 'myös junan viimeinen aalto vaatii korjaukset');
 });
 
 test('oikea historia (ehdollinen): lukko vastaa gitiä ja aliakset osoittavat lukittuihin SHA:ihin', t => {
@@ -193,7 +258,7 @@ const PRE_RECUT_DEPLOY_TARGETS = new Set([
   '5df40b20cee4f35279a79888959d49c9af88bcc7'
 ]);
 
-for (const wave of ['H', 'I', 'J']) {
+for (const wave of ['H', 'I', 'J', 'K']) {
   test(`ACT-02 (uudelleenleikkauksen jälkeen): aallon ${wave} deployTarget sisältää korjauksen 5aa0d53`, t => {
     const record = map.waves.find(w => w.wave === wave);
     const patch = REQUIRED_PATCHES.find(p => p.commit.startsWith('5aa0d53'));
@@ -267,7 +332,7 @@ test('KRIITTINEN: jokainen push- ja deploy-rivi käyttää lukon 40-merkkistä d
   assert.ok(lines >= 30, `push-, deploy- ja STOP-rivejä löytyi vain ${lines}`);
 });
 
-test('KRIITTINEN: ensisijainen deploy-askel on orkestroija: jokaisessa WAVE-D..J.md:n kohdassa 2 orkestroijan komento tai STOP-huomautus', () => {
+test('KRIITTINEN: ensisijainen deploy-askel on orkestroija: jokaisessa WAVE-D..K.md:n kohdassa 2 orkestroijan komento tai STOP-huomautus', () => {
   for (const w of map.waves.slice(1)) {
     const doc = read(`docs/acceptance/WAVE-${w.wave}.md`).replace(/\r\n/g, '\n');
     const start = doc.indexOf('\n## 2. Deploy');
@@ -314,13 +379,13 @@ test('KRIITTINEN: raaka push- tai deploy-rivi aallolle, jonka lukossa on missing
 
 test('KRIITTINEN: uudelleenleikkaus palauttaa STOP-rivit komennoiksi uusilla SHA:illa ja säilyttää liput', () => {
   const recut = JSON.parse(JSON.stringify(map));
-  const fresh = { H: '1'.repeat(40), I: '2'.repeat(40), J: '3'.repeat(40) };
+  const fresh = { H: '1'.repeat(40), I: '2'.repeat(40), J: '3'.repeat(40), K: '4'.repeat(40) };
   for (const [wave, sha] of Object.entries(fresh)) {
     const record = recut.waves.find(w => w.wave === wave);
     record.deployTarget = sha;
     record.missingPatches = [];
   }
-  recut.sqlSource = { ...recut.sqlSource, sha: fresh.J, ref: 'rehearsal/wave-j-v2' };
+  recut.sqlSource = { ...recut.sqlSource, sha: fresh.K, ref: 'rehearsal/wave-k-v2' };
   const stale = map.waves.filter(w => fresh[w.wave]).map(w => w.deployTarget);
   for (const { file, wave, table } of pushLineDocs(map)) {
     const text = read(file).replace(/\r\n/g, '\n');
@@ -333,8 +398,15 @@ test('KRIITTINEN: uudelleenleikkaus palauttaa STOP-rivit komennoiksi uusilla SHA
   }
   const fast = syncDoc(read('docs/SUUNTA-FAST-ACTIVATION.md').replace(/\r\n/g, '\n'), { lock: recut });
   assert.match(fast, new RegExp(`--approved-sha=${fresh.H} --inventory=<uusi-inventaario> --verify-result=<verify_0011-tulos> {3}# H v21`));
-  assert.match(fast, new RegExp(`git show ${fresh.J}:supabase/migrations/0013_alignment_reality\\.sql`));
-  assert.match(fast, /SQL-lähde \(lukon sqlSource\): `rehearsal\/wave-j-v2` @ `3{40}`/);
+  assert.match(fast, new RegExp(`--approved-sha=${fresh.K} --inventory=<uusi-inventaario> --verify-result=<verify_0014-tulos> {3}# K v24`));
+  assert.match(fast, new RegExp(`git show ${fresh.K}:supabase/migrations/0013_alignment_reality\\.sql`));
+  assert.match(fast, new RegExp(`git show ${fresh.K}:supabase/migrations/0014_daily_life\\.sql`));
+  assert.match(fast, new RegExp(`--record-boot-smoke=K --sha=${fresh.K} `));
+  assert.match(fast, /SQL-lähde \(lukon sqlSource\): `rehearsal\/wave-k-v2` @ `4{40}`/);
+  const waveK = syncDoc(read('docs/acceptance/WAVE-K.md').replace(/\r\n/g, '\n'), { lock: recut, wave: 'K' });
+  assert.match(waveK, new RegExp(`--approved-sha=${fresh.K} --verify-result=<verify_0014-tulos>`));
+  assert.match(waveK, new RegExp(`--record-candidate-tests=K --sha=${fresh.K} `));
+  assert.match(waveK, new RegExp(`--label K --expect-sha ${fresh.K} `));
 });
 
 test('käynnistyssavun rivit (--label X --expect-sha, --record-boot-smoke=X --sha=) seuraavat lukkoa', () => {
@@ -413,11 +485,172 @@ test('ACT-09: manifesti kirjaa lukon deployTargetin, ja todennus vertaa sitä lu
   assert.ok(validateManifest(wrong, { checkGit: false, lock: map }).some(p => /J\.deployTarget ei ole 40 merkin SHA/.test(p)));
 });
 
-test('WAVE-D..J.md kertovat, että push-kohde on lukon deployTarget eikä manifestin commitSha', () => {
+test('WAVE-D..K.md kertovat, että push-kohde on lukon deployTarget eikä manifestin commitSha', () => {
   for (const w of map.waves.slice(1)) {
     const doc = read(`docs/acceptance/WAVE-${w.wave}.md`);
     assert.match(doc, /\*\*Push-kohde \(deployTarget\):\*\* junan lukon `docs\/activation\/release-train-c-j\.json`/, w.wave);
     assert.match(doc, /EI push-kohde/, w.wave);
     assert.equal(/Aallon commit-SHA: ks\./.test(doc), false, `${w.wave}: vanha manifestiviittaus push-kohteena`);
   }
+});
+
+test('KRIITTINEN: WAVE-K.md: lukon SHA, ei "ei vielä leikattu" -tilaa, ja testiajon ja käynnistyssavun kirjaus testiajon vieressä', () => {
+  const k = map.waves.find(w => w.wave === 'K');
+  const doc = read('docs/acceptance/WAVE-K.md').replace(/\r\n/g, '\n');
+  assert.equal(/ei ole vielä\s+leikattu|lukossa ei vielä ole/.test(doc), false, 'WAVE-K.md väittää yhä, ettei K:ta ole lukittu');
+  assert.equal(/^npm run activation:orchestrate -- --execute-deploy --approved-sha=</m.test(doc), false,
+    'deploy-rivillä on yhä paikkamerkki lukon SHA:n sijasta');
+  const s1 = doc.slice(doc.indexOf('\n## 1. Ennen deployta'), doc.indexOf('\n## 2. Deploy'));
+  const tests = `npm run activation:orchestrate -- --record-candidate-tests=K --sha=${k.deployTarget} --tests-result=.claude/activation/tests-K.txt`;
+  const smoke = `npm run e2e:boot-smoke -- --root .claude/worktrees/rc-K-smoke --label K --expect-sha ${k.deployTarget} > .claude/activation/smoke-K.txt`;
+  const record = `npm run activation:orchestrate -- --record-boot-smoke=K --sha=${k.deployTarget} --smoke-result=.claude/activation/smoke-K.txt`;
+  assert.ok(s1.includes('npm test && npm run check'), 'kohdan 1 testiajo puuttuu');
+  assert.ok(s1.includes(`${tests}\n${smoke}\n${record}\n`), 'testiajon ja käynnistyssavun kirjaus puuttuu kohdasta 1');
+  assert.ok(doc.includes(`git push origin ${k.deployTarget}:refs/heads/main`), 'viitteellinen push-rivi lukon SHA:han puuttuu');
+});
+
+// =====================================================================
+// AALTO L: MYÖHEMMIN LISÄTTY SARAKEPORTTI (MENTAL_LOAD_FIELDS) EI
+// KIRJOITA LUKITTUJA C–K-TIETUEITA UUDELLEEN
+// =====================================================================
+
+/** LF-normalisoidun C–K-lukon sha256 (f784530, K v1 d11d8b4). */
+const LOCK_C_K_SHA256 = '83756e293c9b0f7fc121eab1ce29edc0fa00fbdf5f6eb9a08b85a24c6356b089';
+
+test('KRIITTINEN: C–K-lukko on tavu tavulta ennallaan (aalto L ei kirjoita sitä)', () => {
+  const text = readFileSync(join(ROOT, 'docs/activation/release-train-c-j.json'), 'utf8').replace(/\r\n/g, '\n');
+  assert.equal(createHash('sha256').update(text).digest('hex'), LOCK_C_K_SHA256,
+    'lukko muuttui: C–K-tietueet on pidettävä ennallaan, vain uusi aalto (L) saa uuden avaimen');
+  for (const w of map.waves) {
+    assert.deepEqual(Object.keys(w.columnGates), [...LOCK_V2_COLUMN_GATES], `${w.wave}: sarakeporttien avaimet`);
+    assert.equal('MENTAL_LOAD_FIELDS' in w.columnGates, false, w.wave);
+  }
+});
+
+test('KRIITTINEN: MENTAL_LOAD_FIELDS on aallon L sarakeportti, eikä se kuulu C–K-tietueisiin', () => {
+  assert.equal(COLUMN_GATES.MENTAL_LOAD_FIELDS, 'L');
+  for (const wave of ['C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K']) {
+    assert.equal(recordHasColumnGate('MENTAL_LOAD_FIELDS', wave), false, wave);
+    for (const gate of LOCK_V2_COLUMN_GATES) assert.equal(recordHasColumnGate(gate, wave), true, `${wave} ${gate}`);
+  }
+  assert.equal(recordHasColumnGate('MENTAL_LOAD_FIELDS', 'L'), true);
+});
+
+test('KRIITTINEN: lukittu C–K-tietue todentuu ilman MENTAL_LOAD_FIELDSiä, kun portti on ehdokkaassa kiinni', () => {
+  const closedSchema = 'export const MENTAL_LOAD_FIELDS = false;\n';
+  for (const w of map.waves) {
+    const schema = Object.entries(w.columnGates).map(([g, v]) => `export const ${g} = ${v.actual};`).join('\n');
+    // Literaali puuttuu (C–K:n oma schema.js) tai on false: molemmat = kiinni.
+    assert.deepEqual(columnGateProblems(w, schema, w.wave), [], `${w.wave}: literaali puuttuu`);
+    assert.deepEqual(columnGateProblems(w, schema + '\n' + closedSchema, w.wave), [], `${w.wave}: literaali false`);
+  }
+});
+
+test('KRIITTINEN: tynkä: --write tuottaa C–K-tietueet ilman uutta avainta ja lukko todentuu', () => {
+  const git = stubGit();
+  const lock = buildTrainMap({ git });
+  for (const w of lock.waves) {
+    assert.deepEqual(Object.keys(w.columnGates), [...LOCK_V2_COLUMN_GATES], w.wave);
+    assert.equal(w.consistent, true, w.wave);
+  }
+  assert.deepEqual(checkTrainMap(lock, { git }).problems, []);
+});
+
+/** Tynkä, jossa K:n schema.js väittää MENTAL_LOAD_FIELDS = true. */
+function gitWithKSchema(transform) {
+  const git = stubGit();
+  const show = git.show.bind(git);
+  git.show = (sha, file) => {
+    const text = show(sha, file);
+    return file === 'src/data/schema.js' && sha === shaOf('K') && text !== null ? transform(text) : text;
+  };
+  return git;
+}
+
+test('KRIITTINEN: K-ehdokas, jossa MENTAL_LOAD_FIELDS = true, on epäjohdonmukainen ja lukon tarkistus kaatuu', () => {
+  const lock = buildTrainMap({ git: stubGit() });
+  const open = text => text.replace('export const MENTAL_LOAD_FIELDS = false;', 'export const MENTAL_LOAD_FIELDS = true;');
+  const git = gitWithKSchema(open);
+  assert.match(git.show(shaOf('K'), 'src/data/schema.js'), /MENTAL_LOAD_FIELDS = true/);
+  const rebuilt = buildTrainMap({ git });
+  const k = rebuilt.waves.find(w => w.wave === 'K');
+  assert.equal(k.consistent, false, 'K ei saa olla johdonmukainen, kun aallon L portti on auki');
+  assert.equal('MENTAL_LOAD_FIELDS' in k.columnGates, false, 'tietue ei silti saa uutta avainta');
+  const check = checkTrainMap(lock, { git });
+  assert.equal(check.ok, false);
+  assert.ok(check.problems.some(p => /^K: sarakeportti MENTAL_LOAD_FIELDS puuttuu lukitusta tietueesta, mutta ehdokkaassa auki/.test(p)),
+    check.problems.join('; '));
+});
+
+test('KRIITTINEN: lukittu K-tietue, joka väittää MENTAL_LOAD_FIELDS auki, kaatuu', () => {
+  const git = stubGit();
+  const lock = JSON.parse(JSON.stringify(buildTrainMap({ git })));
+  lock.waves.find(w => w.wave === 'K').columnGates.MENTAL_LOAD_FIELDS = { actual: true, expected: true };
+  const check = checkTrainMap(lock, { git });
+  assert.equal(check.ok, false);
+  assert.ok(check.problems.includes('K: columnGates eroaa lukosta'), check.problems.join('; '));
+  // Tuntematon tai puuttuva vanha portti on yhä virhe.
+  const unknown = JSON.parse(JSON.stringify(buildTrainMap({ git })));
+  unknown.waves.find(w => w.wave === 'J').columnGates.MADE_UP_FIELDS = { actual: false, expected: false };
+  assert.ok(checkTrainMap(unknown, { git }).problems.some(p => /^J: columnGates eroaa lukosta/.test(p)));
+  const dropped = JSON.parse(JSON.stringify(buildTrainMap({ git })));
+  delete dropped.waves.find(w => w.wave === 'F').columnGates.BILL_PAYMENT_FIELDS;
+  assert.ok(checkTrainMap(dropped, { git }).problems.some(p => /^F: columnGates puuttuu lukosta: BILL_PAYMENT_FIELDS/.test(p)));
+});
+
+test('KRIITTINEN: tynkä: train-map voi myöhemmin lisätä L-tietueen, joka kantaa MENTAL_LOAD_FIELDSin', () => {
+  const base = stubGit();
+  const lSha = 'ee'.repeat(20);
+  const lRef = 'rehearsal/wave-l-v1';
+  const kSchema = base.show(shaOf('K'), 'src/data/schema.js');
+  const lSchema = kSchema
+    .replace('  protectedPeriods: false,', '  protectedPeriods: true,')
+    .replace('  weeklyPlans: false,', '  weeklyPlans: true,')
+    .replace('export const MENTAL_LOAD_FIELDS = false;', 'export const MENTAL_LOAD_FIELDS = true;');
+  const git = {
+    ...base,
+    revParse: ref => (ref === lRef || ref === lSha ? lSha : base.revParse(ref)),
+    show: (sha, file) => {
+      if (sha !== lSha) return base.show(sha, file);
+      if (file === 'src/data/schema.js') return lSchema;
+      if (file === 'sw.js') return `const CACHE_VERSION = '${cacheVersionOf('L')}';\n`;
+      return base.show(shaOf('K'), file);
+    },
+    isAncestor: (a, b) => (b === lSha ? true : base.isAncestor(a, b)),
+    log: (from, to) => (to === lSha ? [{ sha: lSha, body: 'aalto\n\nRelease-Wave: L\n' }] : base.log(from, to)),
+    containsPatch: (target, commit) => (target === lSha ? true : base.containsPatch(target, commit))
+  };
+  const train = [...TRAIN, Object.freeze({ wave: 'L', ref: lRef, acceptance: 'docs/acceptance/WAVE-L.md' })];
+  const built = buildTrainMap({ git, train });
+  const l = built.waves.find(w => w.wave === 'L');
+  assert.equal(l.consistent, true, JSON.stringify(l));
+  assert.equal(l.cacheVersion, 'v25');
+  assert.equal(l.gateMatrixResolvesTo, 'L');
+  assert.equal(l.migration, '0015_mental_load.sql');
+  assert.equal(l.backupRequired, true);
+  assert.equal(l.risk, 'medium');
+  assert.deepEqual(l.columnGates.MENTAL_LOAD_FIELDS, { actual: true, expected: true });
+  assert.deepEqual(Object.keys(l.columnGates), [...LOCK_V2_COLUMN_GATES, 'MENTAL_LOAD_FIELDS']);
+  // C–K-tietueet ovat samat kuin ilman L:ää.
+  const withoutL = buildTrainMap({ git: stubGit() });
+  assert.deepEqual(built.waves.slice(0, -1), withoutL.waves);
+  assert.deepEqual(checkTrainMap(built, { git, train }).problems, []);
+  // L-tietue ilman uutta avainta ei todennu.
+  const stale = JSON.parse(JSON.stringify(built));
+  delete stale.waves.find(w => w.wave === 'L').columnGates.MENTAL_LOAD_FIELDS;
+  assert.ok(checkTrainMap(stale, { git, train }).problems.some(p => /^L: columnGates puuttuu lukosta: MENTAL_LOAD_FIELDS/.test(p)));
+});
+
+test('muut porttitarkistukset (orkestroija, esitarkistus, live-tarkistus) pitävät puuttuvaa MENTAL_LOAD_FIELDSiä kiinni-tilana', () => {
+  const git = stubGit();
+  const kSchema = git.show(shaOf('K'), 'src/data/schema.js').replace(/^export const MENTAL_LOAD_FIELDS = false;\n/m, '');
+  assert.equal(/MENTAL_LOAD_FIELDS/.test(kSchema), false);
+  const noLiteral = { ...git, show: (sha, file) => (file === 'src/data/schema.js' && sha === shaOf('K') ? kSchema : git.show(sha, file)) };
+  const checks = candidateChecks(noLiteral, 'K', shaOf('K'));
+  assert.equal(checks.columnGates.ok, true, checks.columnGates.differences.join(', '));
+  assert.equal(checks.columnGates.expected.MENTAL_LOAD_FIELDS, false);
+  assert.equal(parseColumnGates(kSchema).MENTAL_LOAD_FIELDS, false);
+  const opened = git.show(shaOf('K'), 'src/data/schema.js').replace('MENTAL_LOAD_FIELDS = false', 'MENTAL_LOAD_FIELDS = true');
+  const bad = candidateChecks({ ...git, show: (sha, file) => (file === 'src/data/schema.js' ? opened : git.show(sha, file)) }, 'K', shaOf('K'));
+  assert.deepEqual(bad.columnGates.differences, ['MENTAL_LOAD_FIELDS']);
 });

@@ -9,7 +9,6 @@ import { ROOT, read } from './helpers/sources.mjs';
 import { shaOf, stubGit } from './helpers/activation-history.mjs';
 import { BROWSER_PATHSPEC, blockingFailures, preflightVerdict, repoChecks } from '../tools/release/preflight-checks.mjs';
 import { createGit } from '../tools/release/git-layer.mjs';
-import { SQL_SOURCE_WAVE } from '../tools/activation/train-map.mjs';
 
 const lock = JSON.parse(read('docs/activation/release-train-c-j.json'));
 const realGit = createGit({ cwd: ROOT });
@@ -92,8 +91,9 @@ test('KRIITTINEN: loppupäätös kertoo, jos testejä tai koontia EI ajettu', ()
   assert.equal(/ESITARKISTUS \(\$\{ODOTETTU_AALTO\}\): PASS/.test(cli), false, 'CLI:ssä on yhä oma PASS-teksti');
 });
 
-test('oikea historia (ehdollinen): lukitut F..J läpäisevät esitarkistuksen ilman checkoutia', t => {
-  const targets = lock.waves.filter(w => ['F', 'G', 'H', 'I', 'J'].includes(w.wave));
+test('oikea historia (ehdollinen): lukitut F..K läpäisevät esitarkistuksen ilman checkoutia', t => {
+  const targets = lock.waves.filter(w => ['F', 'G', 'H', 'I', 'J', 'K'].includes(w.wave));
+  assert.equal(targets.length, 6, 'lukosta puuttuu migraatioaalto');
   if (!targets.every(w => realGit.revParse(w.deployTarget)) || !realGit.revParse(lock.sqlSource.sha)) {
     t.skip('ehdokashistoria ei ole paikallisesti saatavilla'); return;
   }
@@ -103,15 +103,9 @@ test('oikea historia (ehdollinen): lukitut F..J läpäisevät esitarkistuksen il
   }
 });
 
-test('oikea historia: HEAD (aalto K) ja salaisuushaku läpäisevät', t => {
+test('oikea historia: HEAD (perustila) ja salaisuushaku läpäisevät', t => {
   if (!realGit.revParse('HEAD')) { t.skip('git ei käytettävissä'); return; }
-  // Aaltocommit K: HEAD ei ole perustila vaan aallon K deploykohde. Sen
-  // porttimatriisin, välimuistin ja sarakeporttien on vastattava aaltoa K.
-  // Tämän haaran lukko kattaa aallot C–J (SQL-lähde J), eikä siinä ole
-  // 0014:ää: K:n SQL (0014 sekä sen esitarkistus ja varmistus) luetaan
-  // HEADista. Lukko kirjoitetaan K:lla tuotehaaralle ehdokkaan jälkeen.
-  assert.ok(['J', 'K'].includes(SQL_SOURCE_WAVE), SQL_SOURCE_WAVE);
-  const failures = blockingFailures(repoChecks({ ref: 'HEAD', wave: 'K', gitShow: realGit.show, gitGrep: realGit.grep, sqlRef: 'HEAD' }));
+  const failures = blockingFailures(repoChecks({ ref: 'HEAD', wave: 'BASE', gitShow: realGit.show, gitGrep: realGit.grep, sqlRef: lock.sqlSource.sha }));
   assert.deepEqual(failures.map(r => `${r.name}: ${r.detail}`), []);
 });
 

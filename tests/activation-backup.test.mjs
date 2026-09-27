@@ -70,8 +70,8 @@ function migrationTables(state) {
 // 1. Generoidut tilannekuvatiedostot
 // ---------------------------------------------------------------------
 
-test('KRIITTINEN: tilannekuvatiedostot 0008–0014 ovat ajan tasalla generaattorin kanssa', () => {
-  assert.deepEqual([...SNAPSHOT_STATES], ['0008', '0009', '0010', '0011', '0012', '0013', '0014']);
+test('KRIITTINEN: tilannekuvatiedostot 0008–0015 ovat ajan tasalla generaattorin kanssa', () => {
+  assert.deepEqual([...SNAPSHOT_STATES], ['0008', '0009', '0010', '0011', '0012', '0013', '0014', '0015']);
   for (const state of SNAPSHOT_STATES) {
     assert.equal(lf(read(snapshotPath(state))), buildSnapshotFile(state),
       `${snapshotPath(state)}: aja node tools/activation/build-snapshots.mjs`);
@@ -107,6 +107,9 @@ test('KRIITTINEN: taululista = tasks, profile + migraatioiden <= NN create table
   assert.match(read(snapshotPath('0010')), /from public\.milestones x/);
   assert.equal(migrationTables('0013').length, 26);
   assert.equal(migrationTables('0014').length, 36);
+  assert.equal(migrationTables('0015').length, 38);
+  assert.equal(/public\.protected_periods/.test(read(snapshotPath('0014'))), false, '0014 ei saa lukea 0015:n taulua');
+  assert.match(read(snapshotPath('0015')), /from public\.weekly_plans x/);
   assert.deepEqual(tablesAtState('0009', [{ name: '0010_x', sql: 'create table public.later (id text);' },
     { name: '0003_y', sql: 'create table public.early (id text);' }]), ['tasks', 'profile', 'early']);
 });

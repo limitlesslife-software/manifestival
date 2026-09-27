@@ -206,7 +206,14 @@ const FIXTUURIT = Object.freeze({
   habitPlans: { id: 'w-habit-1', kind: 'nicotine', name: 'Nikotiini', minIntervalMinutes: 120 },
   habitEvents: { id: 'w-hev-1', planId: 'w-habit-1', occurredAt: '2026-09-28T08:00:00.000Z', action: 'use' },
   exerciseSessions: { id: 'w-ex-1', date: '2026-09-28', kind: 'Juoksu', actualMinutes: 30, intensity: 3 },
-  wellbeingCheckins: { id: 'w-wc-1', date: '2026-09-28', motivation: 4, control: 3 }
+  wellbeingCheckins: { id: 'w-wc-1', date: '2026-09-28', motivation: 4, control: 3 },
+  // Migraatio 0015 (aalto L): mielen kuorman keventäminen.
+  protectedPeriods: {
+    id: 'w-pp-1', kind: 'OWN_TIME', recurrence: 'weekly', weekdays: [2], startTime: '18:00', endTime: '20:00'
+  },
+  weeklyPlans: {
+    id: 'w-wp-1', weekStart: '2026-09-28', priorities: [{ ref: 'text', title: 'Liikunta' }], plannedMinutes: 600
+  }
 });
 
 /** Repositorio porttiavaimella. */

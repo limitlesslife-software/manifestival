@@ -72,6 +72,49 @@ function clampRatio(value, fallback) {
   return Math.max(0, Math.min(0.9, n));
 }
 
+/** Käyttäjän puskuri (profile.planning_buffer_ratio, 0–0,9) tai oletus. */
+export function normalizeBufferRatio(value) {
+  return clampRatio(value, DEFAULT_BUFFER_RATIO);
+}
+
+/**
+ * Unen vaje keventää päivää (life_settings.sleep_affects_capacity).
+ *
+ * 10 % jokaista vajaata tuntia kohti, enintään 30 %. Vaje on minuutteja
+ * tavoitteesta; nolla tai tuntematon ei muuta mitään.
+ */
+export const SLEEP_ADJUST_PER_HOUR = 0.1;
+export const SLEEP_ADJUST_MAX = 0.3;
+
+export function sleepAdjustRatio(shortfallMinutes) {
+  const n = Number(shortfallMinutes);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.min(SLEEP_ADJUST_MAX, Math.round((n / 60) * SLEEP_ADJUST_PER_HOUR * 100) / 100);
+}
+
+/**
+ * Kapasiteettijarrun jälkimmäinen puoli: puskurin jälkeen vähennetään unen
+ * vaje ja viikon vähimmäisvapaa-ajan päiväosuus. Palauttaa erittelyn.
+ */
+function applyBrake(rawFreeMinutes, ratio, { sleepShortfallMinutes = 0, reservedMinutes = 0 } = {}) {
+  const bufferMinutes = Math.round(rawFreeMinutes * ratio);
+  const afterBuffer = Math.max(0, rawFreeMinutes - bufferMinutes);
+  const sleepAdjustMinutes = Math.round(afterBuffer * sleepAdjustRatio(sleepShortfallMinutes));
+  const afterSleep = Math.max(0, afterBuffer - sleepAdjustMinutes);
+  const reserved = Math.max(0, Math.min(afterSleep, Math.round(Number(reservedMinutes) || 0)));
+  const usable = Math.max(0, afterSleep - reserved);
+  return {
+    bufferMinutes,
+    sleepAdjustMinutes,
+    reservedFreeMinutes: reserved,
+    usableMinutes: usable >= MIN_USABLE_MINUTES ? usable : 0
+  };
+}
+
+function protectedBlockMinutes(dayBlocks, range, kind) {
+  return unionMinutesWithin(dayBlocks.filter(block => (block.blockKind ?? block.kind) === kind), range);
+}
+
 /**
  * Yhden päivän kapasiteetti.
  *
@@ -103,13 +146,17 @@ export function dayCapacity({
   exceptions = [],
   bufferRatio = DEFAULT_BUFFER_RATIO,
   events = null,
-  blocks = null
+  blocks = null,
+  sleepShortfallMinutes = 0,
+  reservedMinutes = 0
 } = {}) {
+  const brake = { sleepShortfallMinutes, reservedMinutes };
   if (Array.isArray(events) || Array.isArray(blocks)) {
     return calendarDayCapacity({
       tasks, profile, dateIso, routines, exceptions, bufferRatio,
       events: Array.isArray(events) ? events : [],
-      blocks: Array.isArray(blocks) ? blocks : []
+      blocks: Array.isArray(blocks) ? blocks : [],
+      brake
     });
   }
 
@@ -145,8 +192,7 @@ export function dayCapacity({
   // Puskuri lasketaan VAPAASTA ajasta, ei valveillaoloajasta. Muuten
   // täysi päivä kuluttaisi puskurin kahdesti: kerran sitoumuksina ja
   // kerran puskurina.
-  const bufferMinutes = Math.round(rawFreeMinutes * ratio);
-  const usableMinutes = Math.max(0, rawFreeMinutes - bufferMinutes);
+  const applied = applyBrake(rawFreeMinutes, ratio, brake);
 
   return {
     dateIso,
@@ -157,9 +203,15 @@ export function dayCapacity({
     committedMinutes,
     /** Vapaa aika ennen puskuria. */
     rawFreeMinutes,
-    bufferMinutes,
+    bufferMinutes: applied.bufferMinutes,
+    /** Unen vajeen kevennys (vain kun asetus on päällä ja vaje tiedossa). */
+    sleepAdjustMinutes: applied.sleepAdjustMinutes,
+    /** Viikon vähimmäisvapaa-ajan päiväosuus (protectedTime.weeklyFreeTimeReserve). */
+    reservedFreeMinutes: applied.reservedFreeMinutes,
     /** SE LUKU, JOTA SUUNNITTELIJA SAA KÄYTTÄÄ. */
-    usableMinutes: usableMinutes >= MIN_USABLE_MINUTES ? usableMinutes : 0,
+    usableMinutes: applied.usableMinutes,
+    protectedTimeMinutes: 0,
+    vacation: false,
     /** Tapahtumia ja lohkoja ei annettu: niiden minuutteja ei laskettu (ei nolla). */
     calendarAware: false,
     eventMinutes: null,
@@ -186,7 +238,7 @@ export function dayCapacity({
  * (huomisen työ määrää tämän illan nukkumaanmenon), ja suojattu uni
  * kaventaa sitä samalla tavalla kuin buildDayPlan.
  */
-function calendarDayCapacity({ tasks, profile, dateIso, routines, exceptions, bufferRatio, events, blocks }) {
+function calendarDayCapacity({ tasks, profile, dateIso, routines, exceptions, bufferRatio, events, blocks, brake = {} }) {
   const ratio = clampRatio(bufferRatio, DEFAULT_BUFFER_RATIO);
   const all = Array.isArray(tasks) ? tasks.filter(Boolean) : [];
   const dayTasks = all.filter(task => task.date === dateIso && !task.completed);
@@ -212,8 +264,10 @@ function calendarDayCapacity({ tasks, profile, dateIso, routines, exceptions, bu
   const committedMinutes = timedCommitted + untimedRoutineMinutes;
   const rawFreeMinutes = Math.max(0, awakeMinutes - committedMinutes);
 
-  const bufferMinutes = Math.round(rawFreeMinutes * ratio);
-  const usableMinutes = Math.max(0, rawFreeMinutes - bufferMinutes);
+  const applied = applyBrake(rawFreeMinutes, ratio, brake);
+  const ownTimeMinutes = protectedBlockMinutes(dayBlocks, range, 'own_time');
+  const freeTimeMinutes = protectedBlockMinutes(dayBlocks, range, 'free_time');
+  const vacation = dayBlocks.some(block => (block.blockKind ?? block.kind) === 'vacation');
 
   return {
     dateIso,
@@ -226,8 +280,17 @@ function calendarDayCapacity({ tasks, profile, dateIso, routines, exceptions, bu
       .reduce((total, o) => total + (o.durationMinutes || DEFAULT_ROUTINE_MINUTES), 0),
     committedMinutes,
     rawFreeMinutes,
-    bufferMinutes,
-    usableMinutes: usableMinutes >= MIN_USABLE_MINUTES ? usableMinutes : 0,
+    bufferMinutes: applied.bufferMinutes,
+    sleepAdjustMinutes: applied.sleepAdjustMinutes,
+    reservedFreeMinutes: applied.reservedFreeMinutes,
+    usableMinutes: applied.usableMinutes,
+    /** Suojattu oma aika ja vapaa-aika valveillaoloikkunassa (lohkojen unioni, sisältyy blockMinutes-lukuun). */
+    ownTimeMinutes,
+    freeTimeMinutes,
+    protectedTimeMinutes: unionMinutesWithin(dayBlocks.filter(block =>
+      ['own_time', 'free_time', 'vacation'].includes(block.blockKind ?? block.kind)), range),
+    /** Loma: joustavalle työlle ei ole aikaa. Kiinteät menot on laskettu yllä. */
+    vacation,
     calendarAware: true,
     /** Tapahtumien varaama aika valveillaoloikkunassa (unioni). */
     eventMinutes: unionMinutesWithin(eventItems, range),
@@ -277,7 +340,10 @@ export function horizonCapacity({
   exceptions = [],
   bufferRatio = DEFAULT_BUFFER_RATIO,
   events = null,
-  blocks = null
+  blocks = null,
+  // Kapasiteettijarru (src/app/capacityBrake.js): päivä -> minuutit.
+  reserves = null,
+  sleepShortfalls = null
 } = {}) {
   const days = [];
 
@@ -288,6 +354,7 @@ export function horizonCapacity({
   // Päiväindeksit rakennetaan kerran koko horisontille, ei joka päivälle.
   const eventList = calendarInputOnce(events, indexEventOccurrences);
   const blockList = calendarInputOnce(blocks, indexCalendarBlocks);
+  const perDay = (map, dateIso) => (map instanceof Map && Number.isFinite(map.get(dateIso)) ? map.get(dateIso) : 0);
 
   let cursor = parseISO(fromIso);
   const end = parseISO(toIso);
@@ -297,7 +364,9 @@ export function horizonCapacity({
     const dateIso = fmtISO(cursor);
     days.push(dayCapacity({
       tasks, profile, dateIso, routines, exceptions, bufferRatio,
-      events: eventList, blocks: blockList
+      events: eventList, blocks: blockList,
+      reservedMinutes: perDay(reserves, dateIso),
+      sleepShortfallMinutes: perDay(sleepShortfalls, dateIso)
     }));
     cursor = addDays(cursor, 1);
     guard += 1;
@@ -340,14 +409,16 @@ export function capacityUntil({
   exceptions = [],
   bufferRatio = DEFAULT_BUFFER_RATIO,
   events = null,
-  blocks = null
+  blocks = null,
+  reserves = null,
+  sleepShortfalls = null
 } = {}) {
   if (!isIsoDate(todayIso) || !isIsoDate(deadlineIso)) return null;
   if (deadlineIso < todayIso) return null;
 
   return horizonCapacity({
     tasks, profile, fromIso: todayIso, toIso: deadlineIso,
-    routines, exceptions, bufferRatio, events, blocks
+    routines, exceptions, bufferRatio, events, blocks, reserves, sleepShortfalls
   });
 }
 

@@ -2,7 +2,7 @@
 //
 // Käyttö:
 //   node tools/pg-rehearsal/rehearse.mjs [--json=raportti.json] [--only=upgrade,rls,failure]
-//                                        [--write-golden] [--fixtures=DIR] [--fixture-states=0014,...]
+//                                        [--write-golden] [--fixtures=DIR] [--fixture-states=0015,...]
 //
 // Vaatii paikallisen PostgreSQL 17 -klusterin osoitteessa 127.0.0.1
 // (portti PG_REHEARSAL_PORT, oletus 54349), jonka data-hakemisto on
@@ -10,24 +10,24 @@
 // ja pg-ajurin, ks. README.md.
 //
 // Skenaariot (--only hyväksyy nimen tai etuliitteen, esim. prodshape):
-//   upgrade:text   lähtötila (date/time tekstinä) -> 0001..0014, siemennys joka välissä;
+//   upgrade:text   lähtötila (date/time tekstinä) -> 0001..0015, siemennys joka välissä;
 //                  vanhat rivit (vanhat sarakkeet, xmin, relfilenode) ennallaan 0003:sta alkaen
 //   upgrade:typed  sama, date/time omina tyyppeinään
 //   rls            eristysmatriisi kaikille tauluille lopputilassa
 //   lifecycle      poistosäännöt: alue/tavoite/tehtävä/käyttäjä
 //   failure        uudelleenajo, puuttuva esiehto, osittainen tila, lukon aikakatkaisu
 //   rollback       jokaisen ROLLBACK-osion ajo tyhjillä uusilla objekteilla
-//   preflight      jokainen preflight jokaisessa tilassa 0007..0014
+//   preflight      jokainen preflight jokaisessa tilassa 0007..0015
 //   inventory      aktivoinnin inventaario + pisteytys jokaisessa tilassa
 //   prodshape:fixture      tuotannon 0008-tila = omistajan inventaario (prodshape.mjs)
 //   values:0010            0010 säilyttää jokaisen vanhan arvon (5 tilaa × projekti)
-//   prodshape:chain        0009..0014 tuotannon datalla + kultaiset skeemaerot
+//   prodshape:chain        0009..0015 tuotannon datalla + kultaiset skeemaerot
 //   prodshape:pause        taukopisteet: aaltojen oikeat kirjoitukset, verify, preflight
-//   failure:0010-locks     estäjämatriisi, myöhäinen virhe, jumi, lukkiutuminen (+0009, 0011, 0014)
+//   failure:0010-locks     estäjämatriisi, myöhäinen virhe, jumi, lukkiutuminen (+0009, 0011, 0014, 0015)
 //   verify:null            poikkeavia_yhteensa = FAIL-rivit myös NULL-tuloksilla
 //   preflight:blockers     lukitut taulut ja politiikkamäärät havaitaan etukäteen
-//   rollback:data          peruutukset datan kanssa (0010, 0012, 0013, 0014)
-//   rollback:reverse-chain 0014..0009 käänteisessä järjestyksessä -> tuotannon 0008
+//   rollback:data          peruutukset datan kanssa (0010, 0012, 0013, 0014, 0015)
+//   rollback:reverse-chain 0015..0009 käänteisessä järjestyksessä -> tuotannon 0008
 //   role:nonsuper          migraatiot NOSUPERUSER-omistajana, preflightin näkyvyys
 //
 // Vain nimenomaisesti (--only=backup; ei kuulu oletusajoon, OPT_IN_SCENARIOS):
@@ -154,6 +154,21 @@ async function upgradeScenario(variant) {
       `select count(*) from public.goals where life_area_id is not null`);
     steps.push({ goalsWithLifeAreaAfterMigration: Number(goalsWithArea) });
     if (Number(goalsWithArea) !== 0) fail(scenario, '0012 liitti tavoitteita alueisiin (tuhoava täyttö)');
+    // 0015: päivätön tehtävä molemmilla lähtötiloilla (date tekstinä tai
+    // date-tyyppinä): siemenet a-later/b-later ja yksi lisäys omistajana.
+    // Alkuperäisillä riveillä horisontti on NULL ja siirtolaskuri 0.
+    const dateless = await tryAs(client, OWNER,
+      `insert into public.tasks (id, date, title, horizon) values ('a-dateless-${variant}', null, 'Päivätön', 'LATER')`);
+    const datelessRows = Number(await scalar(client, `select count(*) from public.tasks where date is null`));
+    const legacyDefaults = (await client.query(
+      `select count(*) filter (where horizon is null and waiting_on is null and archived_at is null and reschedule_count = 0) as ok,
+              count(*) as total from public.tasks where id like 'seed%' or id like 'm%'`)).rows[0];
+    steps.push({ dateless0015: { insert: dateless.ok, rows: datelessRows, legacyDefaults } });
+    if (!dateless.ok) fail(scenario, `päivätön tehtävä 0015:n jälkeen: ${dateless.message}`);
+    if (datelessRows < 3) fail(scenario, `päivättömiä tehtäviä ${datelessRows}, odotettiin vähintään 3`);
+    if (Number(legacyDefaults.ok) !== Number(legacyDefaults.total)) {
+      fail(scenario, `0015 muutti alkuperäisten tehtävien uusia sarakkeita: ${JSON.stringify(legacyDefaults)}`);
+    }
 
     if (variant === 'text' && want('rls')) {
       report.scenarios.rls = await rlsScenario(client);
@@ -391,12 +406,14 @@ async function lifecycleScenario(client) {
 
   // 0014 (aalto K): poistosäännöt ja rajat oikealla kannalla.
   await lifecycle0014(client, check);
+  // 0015 (aalto L): rajat, eristys ja domainin yhtäpitävyys kannan kanssa.
+  await lifecycle0015(client, check);
 
   // Taaksepäin yhteensopivuus: migraatio ajetaan aina SILLOIN kun
   // edellisen aallon koodi on tuotannossa (0010 ajetaan aallon F aikana
   // jne.). Vanhan koodin rivimuoto — ilman yhtäkään myöhemmän
   // migraation saraketta — on siis voitava kirjoittaa ja päivittää
-  // koko ketjun (0014) jälkeenkin. Muodot vastaavat src/lib/rows.js:n ja
+  // koko ketjun (0015) jälkeenkin. Muodot vastaavat src/lib/rows.js:n ja
   // collectionsRepo.js:n sarakejoukkoja kunkin aallon aikaan.
   const legacyShapes = [
     ['tasks (aalto C, 0002-sarakkeet)', `insert into public.tasks (id, date, time, end_time, title, category, note, completed, is_wake, description, duration_minutes, priority, scheduling_state)
@@ -409,11 +426,16 @@ async function lifecycleScenario(client) {
     ['routines (aalto C)', `insert into public.routines (id, title, duration_minutes, recurrence_type, goal_id) values ('a-old-rout', 'Vanha rutiini', 20, 'daily', 'a-old-goal')`],
     ['bills (aalto D, 0007-sarakkeet)', `insert into public.bills (id, name, amount_minor, currency, due_date, status, paid_date, category, task_id, recurring_expense_id, note)
        values ('a-old-bill', 'Vanha lasku', 500, 'EUR', '2026-10-10', 'open', null, 'talous', null, null, null)`],
-    ['profile upsert vanhoilla sarakkeilla', `update public.profile set age = 41, sleep_target_hours = 7.5 where id = '${OWNER}'`]
+    ['profile upsert vanhoilla sarakkeilla', `update public.profile set age = 41, sleep_target_hours = 7.5 where id = '${OWNER}'`],
+    // Aallon K koodi 0015:n jälkeen: tehtävä ja alue ilman 0015:n sarakkeita.
+    ['tasks (aalto K, ilman 0015-sarakkeita)', `insert into public.tasks (id, date, time, end_time, title, category, note, completed, is_wake, description, duration_minutes, priority, scheduling_state, deadline, goal_id, project_id, milestone_id, depends_on)
+       values ('a-k-task', '2026-09-24', '11:00', null, 'Aallon K muoto', 'tyo', null, false, false, null, 30, 'normaali', 'manual', null, null, null, null, '{}')`],
+    ['life_areas (aalto K, ilman kind-saraketta)', `insert into public.life_areas (id, name, description, importance, target_minutes_per_week, category_key, active, sort_order)
+       values ('a-k-area', 'Aallon K alue', null, 3, null, 'koti', true, 5)`]
   ];
   for (const [label, sql] of legacyShapes) {
     const r = await tryAs(client, OWNER, sql);
-    check(`legacy_shape_after_0014: ${label}`, r.ok && r.rowCount === 1, JSON.stringify(r));
+    check(`legacy_shape_after_0015: ${label}`, r.ok && r.rowCount === 1, JSON.stringify(r));
   }
 
   // Tilin poisto: kaikki B:n rivit kaikista tauluista katoavat (cascade).
@@ -537,6 +559,273 @@ async function lifecycle0014(client, check) {
     JSON.stringify(unknown));
 }
 
+/**
+ * 0015:n rajat, eristys ja domainin ja kannan yhtäpitävyys oikealla
+ * kannalla. Ajetaan lifecycleScenarion sisällä 0014:n jälkeen (A:n
+ * tehtävä 'a-task' on jo poistettu). Siemenet: odottava, päivätön ja
+ * arkistoitu tehtävä, suojatut jaksot, viikkosuunnitelma ja kaksi aluetta
+ * samalla kategorialla molemmille käyttäjille.
+ */
+async function lifecycle0015(client, check) {
+  const code = r => (r.ok ? 'ok' : r.code);
+  const count = async (sql, params = []) => Number(await scalar(client, sql, params));
+
+  // --- tasks: odotus, horisontti, arkisto, siirrot, päivätön ------------
+  const seeded = await count(`select count(*) from public.tasks where id in ('a-wait','b-wait','a-later','b-later','a-arch','b-arch')`);
+  check('0015_seeded_waiting_dateless_archived_both_users', seeded === 6, seeded);
+  const wait2 = await tryAs(client, OWNER, `insert into public.tasks (id, date, title, horizon, waiting_on) values ('a-wait-2', null, 'x', 'WAITING', 'Vakuutusyhtiö')`);
+  check('0015_waiting_with_waiting_on_accepted', wait2.ok, JSON.stringify(wait2));
+  const waitNoName = await tryAs(client, OWNER, `insert into public.tasks (id, date, title, horizon) values ('a-wait-3', '2026-09-30', 'x', 'WAITING')`);
+  check('0015_waiting_without_name_accepted', waitNoName.ok, JSON.stringify(waitNoName));
+  const dateless = await tryAs(client, OWNER, `insert into public.tasks (id, date, title, horizon) values ('a-later-2', null, 'x', 'THIS_WEEK')`);
+  check('0015_dateless_task_accepted', dateless.ok, JSON.stringify(dateless));
+  const archive = await tryAs(client, OWNER, `update public.tasks set archived_at = now(), horizon = 'NOT_YET' where id = 'a-later'`);
+  check('0015_archive_accepted', archive.ok && archive.rowCount === 1, JSON.stringify(archive));
+  const taskLimits = [
+    ['non_waiting_with_waiting_on', `insert into public.tasks (id, date, title, horizon, waiting_on) values ('a-t-x1', null, 'x', 'LATER', 'Matti')`],
+    ['null_horizon_with_waiting_on', `insert into public.tasks (id, date, title, waiting_on) values ('a-t-x2', '2026-09-30', 'x', 'Matti')`],
+    ['horizon_archived', `insert into public.tasks (id, date, title, horizon) values ('a-t-x3', null, 'x', 'ARCHIVED')`],
+    ['waiting_on_blank', `insert into public.tasks (id, date, title, horizon, waiting_on) values ('a-t-x4', null, 'x', 'WAITING', '   ')`],
+    ['waiting_on_201', `insert into public.tasks (id, date, title, horizon, waiting_on) values ('a-t-x5', null, 'x', 'WAITING', repeat('w', 201))`],
+    ['reschedule_negative', `insert into public.tasks (id, date, title, reschedule_count) values ('a-t-x6', null, 'x', -1)`],
+    ['reschedule_over_10000', `insert into public.tasks (id, date, title, reschedule_count) values ('a-t-x7', null, 'x', 10001)`],
+    ['waiting_on_after_horizon_change', `update public.tasks set horizon = 'LATER' where id = 'a-wait'`]
+  ];
+  for (const [label, sql] of taskLimits) {
+    const r = await tryAs(client, OWNER, sql);
+    check(`0015_rejects_${label}`, code(r) === '23514', JSON.stringify(r));
+  }
+  const nullCount = await tryAs(client, OWNER, `insert into public.tasks (id, date, title, reschedule_count) values ('a-t-x8', null, 'x', null)`);
+  check('0015_reschedule_count_not_null', code(nullCount) === '23502', JSON.stringify(nullCount));
+
+  // Uudet sarakkeet kuuluvat rivin omistajalle: A ei näe eikä muuta B:n
+  // odotusta, horisonttia eikä arkistointia.
+  const seeB = await tryAs(client, OWNER, `select waiting_on from public.tasks where id in ('b-wait', 'b-later', 'b-arch')`);
+  check('0015_A_cannot_see_B_waiting_dateless_archived', seeB.ok && seeB.rowCount === 0, JSON.stringify(seeB));
+  const touchB = await tryAs(client, OWNER, `update public.tasks set horizon = 'NOT_YET', waiting_on = null, archived_at = now() where id in ('b-wait', 'b-later')`);
+  const bWait = (await client.query(`select horizon, waiting_on, archived_at from public.tasks where id = 'b-wait'`)).rows[0];
+  check('0015_A_cannot_change_B_horizon_or_waiting', touchB.ok && touchB.rowCount === 0
+    && bWait.horizon === 'WAITING' && bWait.waiting_on === 'Matti' && bWait.archived_at === null, JSON.stringify({ touchB, bWait }));
+  const seeBArea = await tryAs(client, OWNER, `select kind from public.life_areas where id in ('b-la-own', 'b-la-music')`);
+  check('0015_A_cannot_see_B_area_kind', seeBArea.ok && seeBArea.rowCount === 0, JSON.stringify(seeBArea));
+
+  // --- life_areas: laji ja jaettu kategoria -------------------------------
+  const shared = await count(`select count(*) from public.life_areas where user_id = $1 and category_key = 'harrastus'`, [OWNER]);
+  check('0015_two_areas_share_category', shared === 2, shared);
+  const third = await tryAs(client, OWNER, `insert into public.life_areas (id, name, category_key, kind) values ('a-la-c3', 'Kuoro', 'harrastus', 'WELLBEING')`);
+  check('0015_third_area_same_category_accepted', third.ok, JSON.stringify(third));
+  const defaultKind = await tryAs(client, OWNER, `insert into public.life_areas (id, name) values ('a-la-std', 'Vanha muoto') returning kind`);
+  check('0015_area_kind_defaults_to_standard', defaultKind.ok && defaultKind.rows[0]?.kind === 'STANDARD', JSON.stringify(defaultKind));
+  const badKind = await tryAs(client, OWNER, `insert into public.life_areas (id, name, kind) values ('a-la-x1', 'x1', 'SPORT')`);
+  check('0015_rejects_area_kind_unknown', code(badKind) === '23514', JSON.stringify(badKind));
+  const nullKind = await tryAs(client, OWNER, `insert into public.life_areas (id, name, kind) values ('a-la-x2', 'x2', null)`);
+  check('0015_area_kind_not_null', code(nullKind) === '23502', JSON.stringify(nullKind));
+
+  // --- protected_periods: säännöt ------------------------------------------
+  const periodOk = [
+    ['once_own_time_with_times', `insert into public.protected_periods (id, kind, recurrence, start_date, start_time, end_time) values ('a-pp-v1', 'OWN_TIME', 'once', '2026-10-03', '10:00', '12:00')`],
+    ['weekly_evening_until_bedtime', `insert into public.protected_periods (id, kind, recurrence, weekdays, start_time) values ('a-pp-v2', 'FREE_TIME', 'weekly', '{1,2,3,4,5}', '17:00')`],
+    ['weekly_with_date_range', `insert into public.protected_periods (id, kind, recurrence, weekdays, start_date, end_date) values ('a-pp-v3', 'OWN_TIME', 'weekly', '{6}', '2026-10-01', '2026-12-31')`],
+    ['vacation_two_weeks', `insert into public.protected_periods (id, kind, recurrence, start_date, end_date) values ('a-pp-v4', 'VACATION', 'once', '2027-07-01', '2027-07-14')`],
+    ['vacation_single_day', `insert into public.protected_periods (id, kind, recurrence, start_date) values ('a-pp-v5', 'VACATION', 'once', '2027-05-01')`],
+    ['weekly_target_zero', `insert into public.protected_periods (id, kind, recurrence, target_minutes) values ('a-pp-v6', 'FREE_TIME', 'weekly_target', 0)`],
+    ['weekly_target_full_week', `insert into public.protected_periods (id, kind, recurrence, target_minutes) values ('a-pp-v7', 'FREE_TIME', 'weekly_target', 10080)`],
+    ['once_365_days', `insert into public.protected_periods (id, kind, recurrence, start_date, end_date) values ('a-pp-v8', 'OWN_TIME', 'once', '2026-01-01', '2027-01-01')`]
+  ];
+  for (const [label, sql] of periodOk) {
+    const r = await tryAs(client, OWNER, sql);
+    check(`0015_accepts_period_${label}`, r.ok, JSON.stringify(r));
+  }
+  const periodBad = [
+    ['once_without_start_date', `insert into public.protected_periods (id, kind, recurrence) values ('a-pp-x1', 'OWN_TIME', 'once')`],
+    ['once_with_weekdays', `insert into public.protected_periods (id, kind, recurrence, start_date, weekdays) values ('a-pp-x2', 'OWN_TIME', 'once', '2026-10-01', '{1}')`],
+    ['end_before_start', `insert into public.protected_periods (id, kind, recurrence, start_date, end_date) values ('a-pp-x3', 'OWN_TIME', 'once', '2026-10-02', '2026-10-01')`],
+    ['weekly_without_weekdays', `insert into public.protected_periods (id, kind, recurrence) values ('a-pp-x4', 'FREE_TIME', 'weekly')`],
+    ['weekly_empty_weekdays', `insert into public.protected_periods (id, kind, recurrence, weekdays) values ('a-pp-x5', 'FREE_TIME', 'weekly', '{}')`],
+    ['weekday_8', `insert into public.protected_periods (id, kind, recurrence, weekdays) values ('a-pp-x6', 'FREE_TIME', 'weekly', '{1,8}')`],
+    ['weekday_null_element', `insert into public.protected_periods (id, kind, recurrence, weekdays) values ('a-pp-x7', 'FREE_TIME', 'weekly', '{1,NULL}')`],
+    ['weekly_target_own_time', `insert into public.protected_periods (id, kind, recurrence, target_minutes) values ('a-pp-x8', 'OWN_TIME', 'weekly_target', 600)`],
+    ['weekly_target_without_minutes', `insert into public.protected_periods (id, kind, recurrence) values ('a-pp-x9', 'FREE_TIME', 'weekly_target')`],
+    ['weekly_target_with_time', `insert into public.protected_periods (id, kind, recurrence, target_minutes, start_time) values ('a-pp-x10', 'FREE_TIME', 'weekly_target', 600, '17:00')`],
+    ['weekly_target_with_weekdays', `insert into public.protected_periods (id, kind, recurrence, target_minutes, weekdays) values ('a-pp-x11', 'FREE_TIME', 'weekly_target', 600, '{7}')`],
+    ['weekly_target_over_week', `insert into public.protected_periods (id, kind, recurrence, target_minutes) values ('a-pp-x12', 'FREE_TIME', 'weekly_target', 10081)`],
+    ['minutes_without_target', `insert into public.protected_periods (id, kind, recurrence, weekdays, target_minutes) values ('a-pp-x13', 'FREE_TIME', 'weekly', '{7}', 60)`],
+    ['vacation_weekly', `insert into public.protected_periods (id, kind, recurrence, weekdays) values ('a-pp-x14', 'VACATION', 'weekly', '{6}')`],
+    ['vacation_with_time', `insert into public.protected_periods (id, kind, recurrence, start_date, start_time) values ('a-pp-x15', 'VACATION', 'once', '2026-12-20', '08:00')`],
+    ['start_not_before_end', `insert into public.protected_periods (id, kind, recurrence, weekdays, start_time, end_time) values ('a-pp-x16', 'OWN_TIME', 'weekly', '{2}', '19:00', '18:00')`],
+    ['end_time_without_start', `insert into public.protected_periods (id, kind, recurrence, weekdays, end_time) values ('a-pp-x17', 'OWN_TIME', 'weekly', '{2}', '18:00')`],
+    ['once_over_a_year', `insert into public.protected_periods (id, kind, recurrence, start_date, end_date) values ('a-pp-x18', 'VACATION', 'once', '2026-01-01', '2027-01-02')`],
+    ['kind_unknown', `insert into public.protected_periods (id, kind, recurrence, weekdays) values ('a-pp-x19', 'SLEEP', 'weekly', '{1}')`],
+    ['recurrence_unknown', `insert into public.protected_periods (id, kind, recurrence, weekdays) values ('a-pp-x20', 'OWN_TIME', 'daily', '{1}')`],
+    ['strength_unknown', `insert into public.protected_periods (id, kind, recurrence, weekdays, strength) values ('a-pp-x21', 'OWN_TIME', 'weekly', '{1}', 'hard')`],
+    ['title_over_60', `insert into public.protected_periods (id, kind, recurrence, weekdays, title) values ('a-pp-x22', 'OWN_TIME', 'weekly', '{1}', repeat('t', 61))`],
+    ['title_blank', `insert into public.protected_periods (id, kind, recurrence, weekdays, title) values ('a-pp-x23', 'OWN_TIME', 'weekly', '{1}', '  ')`],
+    ['note_over_500', `insert into public.protected_periods (id, kind, recurrence, weekdays, note) values ('a-pp-x24', 'OWN_TIME', 'weekly', '{1}', repeat('n', 501))`]
+  ];
+  for (const [label, sql] of periodBad) {
+    const r = await tryAs(client, OWNER, sql);
+    check(`0015_rejects_period_${label}`, code(r) === '23514', JSON.stringify(r));
+  }
+  const before = await scalar(client, `select updated_at::text from public.protected_periods where id = 'a-pp'`);
+  await asUser(client, OWNER, () => client.query(`update public.protected_periods set title = 'Sunnuntai vapaa' where id = 'a-pp'`));
+  const after = await scalar(client, `select updated_at::text from public.protected_periods where id = 'a-pp'`);
+  check('0015_period_touch_updated_at', before !== after, `${before} -> ${after}`);
+
+  // --- weekly_plans: viikko, maanantai, enintään viisi -----------------------
+  const dupWeek = await tryAs(client, OWNER, `insert into public.weekly_plans (id, week_start) values ('a-wp-2', '2026-09-28')`);
+  check('0015_one_plan_per_week', code(dupWeek) === '23505', JSON.stringify(dupWeek));
+  const bSameWeek = await count(`select count(*) from public.weekly_plans where week_start = '2026-09-28'`);
+  check('0015_week_unique_is_per_user', bSameWeek === 2, bSameWeek);
+  const five = await tryAs(client, OWNER, `insert into public.weekly_plans (id, week_start, priorities) values ('a-wp-5', '2026-10-05',
+    '[{"ref":"text","title":"1"},{"ref":"text","title":"2"},{"ref":"text","title":"3"},{"ref":"text","title":"4"},{"ref":"text","title":"5"}]')`);
+  check('0015_five_priorities_accepted', five.ok, JSON.stringify(five));
+  const planBad = [
+    ['tuesday', `insert into public.weekly_plans (id, week_start) values ('a-wp-x1', '2026-09-29')`],
+    ['sunday', `insert into public.weekly_plans (id, week_start) values ('a-wp-x2', '2026-10-04')`],
+    ['six_priorities', `insert into public.weekly_plans (id, week_start, priorities) values ('a-wp-x3', '2026-10-12',
+      '[{"ref":"text","title":"1"},{"ref":"text","title":"2"},{"ref":"text","title":"3"},{"ref":"text","title":"4"},{"ref":"text","title":"5"},{"ref":"text","title":"6"}]')`],
+    ['priorities_object', `insert into public.weekly_plans (id, week_start, priorities) values ('a-wp-x4', '2026-10-19', '{"ref":"text"}')`],
+    ['planned_over_week', `insert into public.weekly_plans (id, week_start, planned_minutes) values ('a-wp-x5', '2026-10-26', 10081)`],
+    ['note_over_1000', `insert into public.weekly_plans (id, week_start, note) values ('a-wp-x6', '2026-11-02', repeat('n', 1001))`]
+  ];
+  for (const [label, sql] of planBad) {
+    const r = await tryAs(client, OWNER, sql);
+    check(`0015_rejects_plan_${label}`, code(r) === '23514', JSON.stringify(r));
+  }
+  const nullPriorities = await tryAs(client, OWNER, `insert into public.weekly_plans (id, week_start, priorities) values ('a-wp-x7', '2026-11-09', null)`);
+  check('0015_priorities_not_null', code(nullPriorities) === '23502', JSON.stringify(nullPriorities));
+
+  // Viittaus ei vuoda: A:n suunnitelma voi sisältää B:n tehtävän tunnisteen
+  // (pelkkä merkkijono), mutta RLS ei päästä A:ta B:n riviin liitoksenkaan
+  // kautta. B näkee oman viittauksensa.
+  const leakRef = await tryAs(client, OWNER,
+    `update public.weekly_plans set priorities = '[{"ref":"task:b-task","title":"Vieras"},{"ref":"task:b-wait","title":"Vieras 2"}]' where id = 'a-wp'`);
+  check('0015_foreign_ref_is_only_text', leakRef.ok && leakRef.rowCount === 1, JSON.stringify(leakRef));
+  const joinSql = `select t.id, t.user_id::text as owner from public.weekly_plans w
+      cross join lateral jsonb_array_elements(w.priorities) p
+      join public.tasks t on 'task:' || t.id = p->>'ref'`;
+  const aJoin = await tryAs(client, OWNER, joinSql);
+  check('0015_priority_ref_cannot_leak_other_users_rows', aJoin.ok && aJoin.rowCount === 0, JSON.stringify(aJoin));
+  const bJoin = await tryAs(client, USER_B, joinSql);
+  check('0015_priority_ref_resolves_own_rows', bJoin.ok && bJoin.rows.length === 1 && bJoin.rows[0].owner === USER_B,
+    JSON.stringify(bJoin));
+
+  // --- omistajuus ja anon -------------------------------------------------
+  for (const t of ['protected_periods', 'weekly_plans']) {
+    const own = t === 'protected_periods' ? 'a-pp' : 'a-wp';
+    const move = await tryAs(client, OWNER, `update public.${t} set user_id = $1 where id = $2`, [USER_B, own]);
+    check(`0015_${t}_ownership_transfer_denied`, code(move) === '42501', JSON.stringify(move));
+    const stays = await scalar(client, `select user_id::text from public.${t} where id = $1`, [own]);
+    check(`0015_${t}_owner_unchanged`, stays === OWNER, stays);
+    for (const [op, sql] of [['select', `select 1 from public.${t}`], ['insert', `insert into public.${t} (id) values ('anon-x')`],
+      ['update', `update public.${t} set id = id`], ['delete', `delete from public.${t}`]]) {
+      const r = await tryAs(client, null, sql, [], { role: 'anon' });
+      check(`0015_${t}_anon_${op}_denied`, code(r) === '42501', JSON.stringify(r));
+    }
+  }
+  for (const [op, sql] of [['update', `update public.tasks set horizon = 'LATER'`], ['delete', `delete from public.tasks`]]) {
+    const r = await tryAs(client, null, sql, [], { role: 'anon' });
+    check(`0015_tasks_anon_${op}_denied`, code(r) === '42501', JSON.stringify(r));
+  }
+
+  await domainRowsAgainstDatabase(client, check);
+}
+
+/**
+ * Domainin validoimat oliot kannassa: jokainen validoitu suojattu jakso,
+ * viikkosuunnitelma ja tehtävän 0015-sarakkeet menee kantaan, ja
+ * jokainen validoinnin hylkäämä (kun laji ja toistuvuus ovat kelvollisia)
+ * suojattu jakso hylätään kannassa (23514). Sama generaattori kuin
+ * tests/mental-load-migration.test.mjs:ssä, mutta oikea PostgreSQL.
+ */
+async function domainRowsAgainstDatabase(client, check) {
+  const { protectedPeriodsRepo, weeklyPlansRepo } = await import('../../src/data/collectionsRepo.js');
+  const { validateProtectedPeriod } = await import('../../src/domain/protectedTime.js');
+  const { validateWeeklyPlan, WEEKLY_PRIORITY_DB_LIMIT } = await import('../../src/domain/weeklyPlan.js');
+  const { normalizeTask, validateTask, TASK_HORIZONS } = await import('../../src/domain/task.js');
+  const { toRow: taskToRow, TASK_COLUMNS_MENTAL_LOAD } = await import('../../src/lib/rows.js');
+  let seed = 20260927;
+  const rand = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+  const pick = list => list[Math.floor(rand() * list.length)];
+  // Toistuvuuden kannalta olennaiset kentät saavat useimmiten arvon,
+  // muut harvoin (sama periaate kuin yksikkötestissä): muuten lähes
+  // jokainen syöte rikkoisi jonkin rakennesäännön.
+  const V = {
+    kind: ['OWN_TIME', 'FREE_TIME', 'VACATION'], recurrence: ['once', 'weekly', 'weekly_target'],
+    startDate: ['2026-09-28', '2026-12-20', '2028-02-29'], endDate: ['2026-09-28', '2027-01-06', '2027-12-31', '2026-09-01'],
+    weekdays: [[7], [1, 2, 3, 4, 5], [6, 7]], startTime: ['07:00', '17:00', '21:30'],
+    endTime: ['08:00', '19:00', '23:59', '06:00'], targetMinutes: [0, 600, 10080, 20000],
+    strength: ['firm', 'soft'], title: ['Oma ilta', 'x'.repeat(70)], note: ['Lepoa']
+  };
+  const RELEVANT = { once: ['startDate', 'endDate', 'startTime', 'endTime'],
+    weekly: ['weekdays', 'startTime', 'endTime', 'startDate', 'endDate'], weekly_target: ['targetMinutes'] };
+  const periodCols = ['id', 'kind', 'recurrence', 'title', 'start_date', 'end_date', 'weekdays', 'start_time', 'end_time',
+    'target_minutes', 'strength', 'active', 'note'];
+  let valid = 0; let rejectedInvalid = 0; const mismatches = [];
+  for (let i = 0; i < 240; i += 1) {
+    const input = { id: `a-gen-pp-${i}`, kind: pick(V.kind), recurrence: pick(V.recurrence), strength: pick(V.strength) };
+    for (const [field, values] of Object.entries(V)) {
+      if (['kind', 'recurrence', 'strength'].includes(field)) continue;
+      const likely = field === 'title' || RELEVANT[input.recurrence].includes(field);
+      if (rand() < (likely ? 0.7 : 0.1)) input[field] = pick(values);
+    }
+    const normalized = protectedPeriodsRepo.mapping.normalize(input);
+    const verdict = validateProtectedPeriod(normalized);
+    const row = protectedPeriodsRepo.mapping.toRow(normalized);
+    const r = await tryAs(client, OWNER,
+      `insert into public.protected_periods (${periodCols.join(', ')}) values (${periodCols.map((_, k) => `$${k + 1}`).join(', ')})`,
+      periodCols.map(c => row[c]));
+    if (verdict.valid) {
+      valid += 1;
+      if (!r.ok) mismatches.push(`domain hyväksyi, kanta hylkäsi (${r.code}): ${JSON.stringify(row)}`);
+    } else if (r.ok) {
+      mismatches.push(`domain hylkäsi, kanta hyväksyi: ${JSON.stringify(row)} ${JSON.stringify(verdict.errors)}`);
+    } else if (r.code === '23514') rejectedInvalid += 1;
+    else mismatches.push(`odottamaton virhe ${r.code}: ${r.message}`);
+  }
+  check('0015_domain_valid_periods_accepted_invalid_rejected', mismatches.length === 0 && valid >= 20 && rejectedInvalid >= 20,
+    `${valid} validia, ${rejectedInvalid} hylättyä; ${mismatches.slice(0, 3).join(' | ')}`);
+
+  let plans = 0; const planProblems = [];
+  for (let i = 0; i < 40; i += 1) {
+    const monday = new Date(Date.UTC(2030, 0, 7 + 7 * i)).toISOString().slice(0, 10);
+    const n = Math.floor(rand() * 7);
+    const input = {
+      id: `a-gen-wp-${i}`, weekStart: i % 5 === 4 ? '2030-01-08' : monday, plannedMinutes: pick([null, 0, 600, 20000]),
+      priorities: Array.from({ length: n }, (_, k) => ({ ref: pick(['text', `task:t${k}`, 'bogus']), title: `P${k}` })),
+      note: pick([null, 'Hyvä viikko'])
+    };
+    const normalized = weeklyPlansRepo.mapping.normalize(input);
+    const verdict = validateWeeklyPlan(normalized, { limit: WEEKLY_PRIORITY_DB_LIMIT });
+    const row = weeklyPlansRepo.mapping.toRow(normalized);
+    const r = await tryAs(client, OWNER,
+      `insert into public.weekly_plans (id, week_start, priorities, planned_minutes, closed_at, note) values ($1, $2, $3, $4, $5, $6)`,
+      [row.id, row.week_start, JSON.stringify(row.priorities), row.planned_minutes, row.closed_at, row.note]);
+    if (verdict.valid) { plans += 1; if (!r.ok) planProblems.push(`${r.code} ${JSON.stringify(row)}`); }
+    else if (r.ok) planProblems.push(`domain hylkäsi, kanta hyväksyi: ${JSON.stringify(row)}`);
+  }
+  check('0015_domain_valid_plans_accepted', planProblems.length === 0 && plans >= 20, `${plans} validia; ${planProblems.slice(0, 3).join(' | ')}`);
+
+  let tasks = 0; const taskProblems = [];
+  for (let i = 0; i < 80; i += 1) {
+    const input = {
+      id: `a-gen-t-${i}`, title: 'Generoitu', date: pick(['2026-09-28', null]), horizon: pick([...TASK_HORIZONS, null, 'x']),
+      waitingOn: pick([null, 'Matti', '  ', 'w'.repeat(250)]), followUpDate: pick([null, '2026-10-01']),
+      archivedAt: pick([null, '2026-09-27T10:00:00.000Z']), rescheduleCount: pick([0, 3, 20000, -2]),
+      originalDate: pick([null, '2026-09-20'])
+    };
+    const normalized = normalizeTask(input);
+    if (!validateTask(normalized, { allowDateless: true }).valid) continue;
+    tasks += 1;
+    const ml = taskToRow(normalized, TASK_COLUMNS_MENTAL_LOAD);
+    const cols = ['id', 'date', 'title', ...TASK_COLUMNS_MENTAL_LOAD];
+    const values = [normalized.id, normalized.date ?? null, normalized.title, ...TASK_COLUMNS_MENTAL_LOAD.map(c => ml[c])];
+    const r = await tryAs(client, OWNER, `insert into public.tasks (${cols.join(', ')}) values (${cols.map((_, k) => `$${k + 1}`).join(', ')})`, values);
+    if (!r.ok) taskProblems.push(`${r.code} ${JSON.stringify(ml)}`);
+  }
+  check('0015_domain_valid_task_columns_accepted', taskProblems.length === 0 && tasks >= 20, `${tasks} validia; ${taskProblems.slice(0, 3).join(' | ')}`);
+}
+
 // ---------------------------------------------------------------------
 // Virhetilanteet: jokaisen migraation on kaaduttava kiinni
 // ---------------------------------------------------------------------
@@ -588,11 +877,19 @@ async function failureScenario() {
   }
   {
     const db = 'mv_rehearsal_fail_rerun';
-    // Koko ketju (nyt 0014 asti): jokainen 0009+ uudelleen sanoo "JO AJETTU".
+    // Koko ketju (nyt 0015 asti): jokainen 0009+ uudelleen sanoo "JO AJETTU".
     const client = await freshAt(db, numberOf(MIGRATIONS.at(-1)));
     try {
       for (const name of MIGRATIONS.filter(m => numberOf(m) >= '0009')) {
-        results.push(await expectClosedFailure(client, `toinen ajo koko ketjun jälkeen ${numberOf(name)}`, name, /JO AJETTU/));
+        // 0015 poistaa 0012:n rajoitteen life_areas_category_unique: 0012:n
+        // oma tunnistus laskee koko ketjun jälkeen 56/58 ja sanoo "kesken".
+        // Se kaatuu yhä kiinni muuttamatta mitään (tarkistettu alla), ja
+        // inventaario tuntee luvun (score-inventory SUPERSEDED_OBJECTS:
+        // 0012 = 56 on ajettu, kun 0013 ja 0015 on ajettu). 0012 on
+        // lukittu, joten sen viestiä ei muuteta.
+        const expect = numberOf(name) === '0012' && numberOf(MIGRATIONS.at(-1)) >= '0015'
+          ? /JO AJETTU|Migraatio 0012 on kesken: 56 objektia 58:sta/ : /JO AJETTU/;
+        results.push(await expectClosedFailure(client, `toinen ajo koko ketjun jälkeen ${numberOf(name)}`, name, expect));
       }
     } finally { await client.end(); await dropDatabase(db); }
   }
@@ -613,6 +910,11 @@ async function failureScenario() {
       // omat taulut eivät viittaa 0013:n objekteihin.
       results.push(await expectClosedFailure(c12, '0014 ilman 0013:a', '0014_daily_life', /Migraatio 0013 pitaa ajaa ensin/));
     } finally { await c12.end(); await dropDatabase(db12); }
+    const db13 = 'mv_rehearsal_fail_prereq13';
+    const c13 = await freshAt(db13, '0013');
+    try {
+      results.push(await expectClosedFailure(c13, '0015 ilman 0014:ää', '0015_mental_load', /Migraatio 0014 pitaa ajaa ensin/));
+    } finally { await c13.end(); await dropDatabase(db13); }
     const db2 = 'mv_rehearsal_fail_prereq6';
     const c2 = await freshAt(db2, '0006');
     try {
@@ -655,15 +957,25 @@ async function failureScenario() {
       // toisessa taulussa — tunnistus laskee nimet, ei vain tauluja.
       ['0013', '0014_daily_life', 'create table public.saved_places (id text primary key)'],
       ['0013', '0014_daily_life', 'create index calendar_events_user_date_idx on public.tasks (user_id)'],
-      ['0013', '0014_daily_life', 'alter table public.tasks add constraint life_settings_one_per_user unique (id)']
+      ['0013', '0014_daily_life', 'alter table public.tasks add constraint life_settings_one_per_user unique (id)'],
+      // 0015: taulu, sarake olemassa olevassa taulussa, indeksin nimi
+      // toisessa taulussa, rajoitteen nimi ja käsin poistettu
+      // life_areas_category_unique (0/47, mutta kanta ei ole tila 0014).
+      ['0014', '0015_mental_load', 'create table public.weekly_plans (id text primary key)'],
+      ['0014', '0015_mental_load', 'alter table public.tasks add column horizon text'],
+      ['0014', '0015_mental_load', 'alter table public.life_areas add column kind text'],
+      ['0014', '0015_mental_load', 'create index protected_periods_user_active_idx on public.tasks (user_id)'],
+      ['0014', '0015_mental_load', "alter table public.tasks add constraint tasks_horizon_check check (id <> '')"],
+      ['0014', '0015_mental_load', 'alter table public.life_areas drop constraint life_areas_category_unique',
+        /life_areas_category_unique puuttuu, vaikka 0015:n objekteja on 0\/47/]
     ];
     let i = 0;
-    for (const [at, name, sql] of cases) {
+    for (const [at, name, sql, expect = /kesken|objekti|jo|already|olemassa/i] of cases) {
       const db = `mv_rehearsal_fail_partial_${i++}`;
       const client = await freshAt(db, at);
       try {
         await client.query(sql);
-        results.push(await expectClosedFailure(client, `osittainen tila ennen ${numberOf(name)}: ${sql}`, name, /kesken|objekti|jo|already|olemassa/i));
+        results.push(await expectClosedFailure(client, `osittainen tila ennen ${numberOf(name)}: ${sql}`, name, expect));
       } finally { await client.end(); await dropDatabase(db); }
     }
   }
@@ -680,7 +992,13 @@ async function failureScenario() {
     ['0011', '0012_life_alignment', 'public.goals', 'access share'],
     ['0012', '0013_alignment_reality', 'public.time_entries', 'access share'],
     ['0013', '0014_daily_life', 'public.goals', 'row exclusive'],
-    ['0013', '0014_daily_life', 'auth.users', 'row exclusive']
+    ['0013', '0014_daily_life', 'auth.users', 'row exclusive'],
+    // 0015 MUUTTAA tasks- ja life_areas-tauluja (ACCESS EXCLUSIVE): jo
+    // sovelluksen lukukysely estää, ja migraatio luovuttaa ennen yhtäkään
+    // muutosta. auth.users: vain kirjoitus estää (uusien taulujen FK).
+    ['0014', '0015_mental_load', 'public.tasks', 'access share'],
+    ['0014', '0015_mental_load', 'public.life_areas', 'access share'],
+    ['0014', '0015_mental_load', 'auth.users', 'row exclusive']
   ];
   for (const [at, name, table, mode] of LOCK_CASES) {
     const db = `mv_rehearsal_fail_lock_${numberOf(name)}_${table.replace(/\W/g, '_')}`;
@@ -757,6 +1075,51 @@ async function failureScenario() {
     } finally { await client.end(); await dropDatabase(db); }
   }
 
+  // I. 0015: myöhäinen virhe VAIHEESSA 5 — tasks ja life_areas on jo
+  //    muutettu (sarakkeet, rajoitteet, kategorian uniikkius pudotettu) ja
+  //    uudet taulut luotu, kun ylimääräinen politiikka tasks-taulussa
+  //    kaataa ajon. Koko transaktio perutaan: tasks-taululla ei ole
+  //    0015:n sarakkeita ja life_areas_category_unique on yhä olemassa.
+  {
+    const db = 'mv_rehearsal_fail_late_0015';
+    const client = await freshAt(db, '0014');
+    try {
+      await client.query('create policy mv_rehearsal_extra on public.tasks for select to authenticated using (false)');
+      const r = await expectClosedFailure(client, '0015 kun tasks-taulun politiikkamäärä on muuttunut (vaihe 5)', '0015_mental_load',
+        /politiikat muuttuivat: 81/);
+      const cols = Number(await scalar(client, `select count(*) from information_schema.columns
+        where table_schema = 'public' and table_name = 'tasks' and column_name in ('horizon', 'waiting_on', 'reschedule_count')`));
+      const uniq = Number(await scalar(client, `select count(*) from pg_constraint where conname = 'life_areas_category_unique'`));
+      const notNullDate = await scalar(client, `select is_nullable from information_schema.columns
+        where table_schema = 'public' and table_name = 'tasks' and column_name = 'date'`);
+      r.tasksColumnsAfter = cols; r.categoryUniqueAfter = uniq; r.dateNullableAfter = notNullDate;
+      if (cols !== 0 || uniq !== 1) { r.pass = false; fail('failure', `0015 myöhäinen virhe jätti muutoksia: sarakkeita ${cols}, uniikki ${uniq}`); }
+      results.push(r);
+    } finally { await client.end(); await dropDatabase(db); }
+  }
+
+  // J. 0015 tasks.date NOT NULL -tuotannossa: jos lähtötilan date-sarake on
+  //    NOT NULL (tuotannon tila ei ole tiedossa), 0015 pudottaa ehdon, ja
+  //    peruutus EI palauta sitä (recovery-dokumentti, §4) — esitarkistus
+  //    kirjaa alkuperäisen tilan.
+  for (const variant of ['text', 'typed']) {
+    const db = `mv_rehearsal_fail_notnull_${variant}`;
+    const client = await freshAt(db, '0014', variant);
+    try {
+      await client.query('alter table public.tasks alter column date set not null');
+      const pre = await runVerify(client, 'supabase/preflight/preflight_0015.sql');
+      const recorded = pre.ok ? pre.rows.find(x => /NOT NULL ennen 0015/.test(x.check_name))?.details : null;
+      const out = await runSql(client, readSql('supabase/migrations/0015_mental_load.sql'));
+      const nullable = await scalar(client, `select is_nullable from information_schema.columns
+        where table_schema = 'public' and table_name = 'tasks' and column_name = 'date'`);
+      const ins = await tryAs(client, OWNER, `insert into public.tasks (id, date, title, horizon) values ('nn-${variant}', null, 'x', 'LATER')`);
+      const pass = pre.ok && pre.failed.length === 0 && recorded === 'kyllä' && out.ok && nullable === 'YES' && ins.ok;
+      results.push({ label: `0015 kun tasks.date on NOT NULL (${variant}): esitarkistus kirjaa "kyllä", ehto poistuu, päivätön kelpaa`,
+        pass, recorded, nullable, error: out.error?.message || ins.message || null });
+      if (!pass) fail('failure', `0015 NOT NULL -lähtötila (${variant}): ${JSON.stringify({ recorded, ok: out.ok, nullable, ins })}`);
+    } finally { await client.end(); await dropDatabase(db); }
+  }
+
   return results;
 }
 
@@ -786,7 +1149,7 @@ async function inventoryScenario(fixtureDir, fixtureStates = null) {
   };
   const cases = [
     ['0008', 'GO', '0009'], ['0009', 'GO', '0010'], ['0010', 'GO', '0011'],
-    ['0011', 'GO', '0012'], ['0012', 'GO', '0013'], ['0013', 'GO', '0014'], ['0014', 'GO', null]
+    ['0011', 'GO', '0012'], ['0012', 'GO', '0013'], ['0013', 'GO', '0014'], ['0014', 'GO', '0015'], ['0015', 'GO', null]
   ];
   for (const variant of ['text', 'typed']) {
     for (const [state, decision, next] of cases) {
@@ -805,6 +1168,11 @@ async function inventoryScenario(fixtureDir, fixtureStates = null) {
         check(`${variant}@${state}: taulukkosyöte = tiivistesyöte`,
           fromTable.decision === scored.decision && fromTable.nextMigration === scored.nextMigration,
           JSON.stringify(fromTable.stops));
+        // 0015 poistaa 0012:n life_areas_category_unique: 0012 = 56 on silti ajettu.
+        if (state === '0015') {
+          check(`${variant}@0015: 0012 (56 objektia) tunnistetaan ajetuksi`, scored.facts.migrations['0012'] === 'run'
+            && scored.facts.migrations['0015'] === 'run', JSON.stringify(scored.facts.migrations));
+        }
         if (variant === 'text') writeFixture(state, `state-${state}.json`, inv.cell + '\n');
       } finally { await client.end(); await dropDatabase(db); }
     }
@@ -833,6 +1201,19 @@ async function inventoryScenario(fixtureDir, fixtureStates = null) {
       check('keskeneräinen 0014: STOP', scored.decision === 'STOP' && scored.facts.migrations['0014'] === 'partial',
         JSON.stringify({ decision: scored.decision, m: scored.facts.migrations, stops: scored.stops }));
       writeFixture('0013-partial-0014', 'state-0013-partial-0014.json', inv.cell + '\n');
+    } finally { await client.end(); await dropDatabase(db); }
+  }
+  // Keskeneräinen 0015 (yksi taulu käsin) -> STOP: rivi 24 = partial.
+  {
+    const db = 'mv_rehearsal_inv_partial15';
+    const client = await freshAt(db, '0014');
+    try {
+      await client.query('create table public.protected_periods (id text primary key)');
+      const inv = await runInventory(client);
+      const scored = scoreInventory(parseInventory(inv.cell));
+      check('keskeneräinen 0015: STOP', scored.decision === 'STOP' && scored.facts.migrations['0015'] === 'partial',
+        JSON.stringify({ decision: scored.decision, m: scored.facts.migrations, stops: scored.stops }));
+      writeFixture('0014-partial-0015', 'state-0014-partial-0015.json', inv.cell + '\n');
     } finally { await client.end(); await dropDatabase(db); }
   }
   // Omistaja puuttuu (väärä projekti) -> STOP.
@@ -897,8 +1278,8 @@ async function rollbackScenario() {
 
 async function preflightScenario() {
   const results = [];
-  const numbers = ['0009', '0010', '0011', '0012', '0013', '0014'];
-  for (const state of ['0007', '0008', '0009', '0010', '0011', '0012', '0013', '0014']) {
+  const numbers = ['0009', '0010', '0011', '0012', '0013', '0014', '0015'];
+  for (const state of ['0007', '0008', '0009', '0010', '0011', '0012', '0013', '0014', '0015']) {
     const db = `mv_rehearsal_pre_${state}`;
     const client = await freshAt(db, state);
     try {
@@ -949,11 +1330,11 @@ function summarize(name, value) {
     case 'verify:null': return `verify:null: ${passCount(value)}`;
     case 'preflight:blockers': return `preflight:blockers: ${passCount(value)}`;
     case 'rollback:data': return `rollback:data: ${passCount(value)}`;
-    case 'rollback:reverse-chain': return `rollback:reverse-chain: ${value.pass ? 'PASS' : 'FAIL'} (0014..0009 -> katalogi = tuotannon 0008)`;
+    case 'rollback:reverse-chain': return `rollback:reverse-chain: ${value.pass ? 'PASS' : 'FAIL'} (0015..0009 -> katalogi = tuotannon 0008)`;
     case 'failure:0010-locks': {
       const m = value.matrix || [];
       const parts = [value.late, ...(value.stall || []), ...(value.deadlock || []), value.aborted, value.rerunBlocked,
-        value.rerunBlocked0014, value.authStall0014].filter(Boolean);
+        value.rerunBlocked0014, value.authStall0014, value.rerunBlocked0015].filter(Boolean);
       return `failure:0010-locks: estäjämatriisi ${passCount(m)}, muut ${passCount(parts)}`;
     }
     case 'role:nonsuper': return `role:nonsuper: ${passCount(value.migrations || [])} migraatiota NOSUPERUSER-roolina`;

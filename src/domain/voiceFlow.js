@@ -19,7 +19,9 @@
 //     (micActive). Jokainen muu tila, myös piilotettu sivu (HIDDEN),
 //     tarkoittaa että tunnistus sammutetaan. Ei taustamikrofonia.
 //   - Litterointi ei koskaan mene suoraan tallennukseen: TRANSCRIPT_READY ->
-//     CLASSIFYING vaatii käyttäjän SUBMIT:n.
+//     CLASSIFYING vaatii käyttäjän SUBMIT:n. Saapuviin tallennus
+//     (SAVE_TO_INBOX) on sallittu vain tiloista, joissa käyttäjä näkee
+//     tekstin; se ei tulkitse eikä suorita mitään.
 //   - Peruutus (CANCEL/CLOSE) on mahdollinen joka tilasta ja palauttaa IDLE.
 //   - Pysyvä virhe (lupa estetty, tunnistin puuttuu) on oma tilansa
 //     MIC_DENIED, josta RETRY ei käynnistä uutta kuuntelua: sama pyyntö
@@ -61,6 +63,11 @@ export const VOICE_EVENT = Object.freeze({
   DONE_ERROR: 'done_error',
   RETRY: 'retry',
   TYPE_INSTEAD: 'type_instead',
+  /**
+   * Käyttäjä tallensi tekstin Saapuviin päättämättä mitään (aalto L).
+   * Vain tekstistä, jonka käyttäjä näkee: tarkistus, kirjoitus tai virhe.
+   */
+  SAVE_TO_INBOX: 'save_to_inbox',
   CANCEL: 'cancel',
   HIDDEN: 'hidden'
 });
@@ -144,6 +151,13 @@ export function nextVoiceState(state, event, { micSupported = true } = {}) {
       return current === VOICE.ERROR || current === VOICE.MIC_DENIED
         || current === VOICE.TRANSCRIPT_READY || micActive(current)
         ? VOICE.TYPE_FALLBACK
+        : current;
+
+    case VOICE_EVENT.SAVE_TO_INBOX:
+      // Litterointi Saapuviin, ei tulkintaa eikä suoritusta. Ei kuuntelusta
+      // (tekstiä ei ole vielä nähty) eikä käsittelyn aikana.
+      return current === VOICE.TRANSCRIPT_READY || current === VOICE.TYPE_FALLBACK || current === VOICE.ERROR
+        ? VOICE.IDLE
         : current;
 
     case VOICE_EVENT.CANCEL:

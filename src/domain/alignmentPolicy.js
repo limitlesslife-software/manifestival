@@ -202,6 +202,82 @@ export const TIMER_RULES = Object.freeze({
   QUICK_MINUTES: Object.freeze([15, 30, 60])
 });
 
+/**
+ * Todellisuus / ajautuminen v2 (aalto L, src/domain/driftSignals.js).
+ *
+ * Kuusi determinististä havaintoa, jotka vertaavat SUUNNITELMAA siihen,
+ * mitä arjessa oikeasti tapahtui. Ne EIVÄT ole osa viikon analyysia
+ * (analyzeWeek) eivätkä tallennu katsauksen tilannekuvaan, joten
+ * POLICY_VERSION ei muutu: vanhat katsaukset pysyvät tavu tavulta samoina.
+ *
+ * Jokainen havainto johtaa SEURAAVAN suunnitelman säätöön (ei syyllistä):
+ *
+ *   BACKLOG_GROWTH      tallessa olevien avointen määrä kasvaa
+ *   CAPACITY_BIAS       suljettujen viikkojen suunnitelma > toteuma toistuvasti
+ *   OWN_TIME_EROSION    suojattuun omaan aikaan on sijoittunut muuta
+ *   FREE_TIME_EROSION   vapaa-ajan vähimmäismäärä ei toteudu tai velvoitteita vapaa-aikaan
+ *   VACATION_INTRUSION  joustavia asioita päivätty lomalle (kiinteät eivät ole tunkeutumista)
+ *   PLAN_CHURN          samaa asiaa siirretään yhä uudelleen
+ */
+export const DRIFT_RULES = Object.freeze({
+  /** Tarkastelujakso päivinä (tämä päivä mukaan lukien). */
+  BACKLOG_WINDOW_DAYS: 7,
+  /** Uusia miinus ratkenneita (valmis tai arkistoitu) jaksolla vähintään. */
+  BACKLOG_MIN_NET_GROWTH: 5,
+  /** ... ja tallessa avoimia vähintään (pieni lista ei ole kuorma). */
+  BACKLOG_MIN_OPEN: 15,
+  /** Huomio-tason kasvu. */
+  BACKLOG_ATTENTION_NET_GROWTH: 10,
+  /** Montako vanhinta asiaa ehdotetaan läpikäytäväksi. */
+  BACKLOG_REVIEW_CANDIDATES: 5,
+
+  /** Montako viimeisintä suljettua viikkoa (toteuma tiedossa) enintään verrataan. */
+  CAPACITY_BIAS_MAX_WEEKS: 4,
+  /** Vähintään näin monta vertailukelpoista viikkoa. */
+  CAPACITY_BIAS_MIN_WEEKS: 3,
+  /** Suunnitelma / toteuma vähintään (1,25 = suunnitelma 25 % toteumaa suurempi). */
+  CAPACITY_BIAS_RATIO: 1.25,
+  /** ... ja vähintään näin monella viikolla sekä koko jaksolla yhteensä. */
+  CAPACITY_BIAS_MIN_OVER_WEEKS: 3,
+  /** ... ja ero viikossa keskimäärin vähintään (pieniä lukuja ei sanoiteta). */
+  CAPACITY_BIAS_MIN_GAP_MINUTES: 120,
+  /** Huomio-taso, kun suunnitelma on keskimäärin vähintään 1,5-kertainen. */
+  CAPACITY_BIAS_ATTENTION_RATIO: 1.5,
+  /** Ehdotettu kapasiteetti pyöristetään tähän (min) ja on vähintään MIN. */
+  CAPACITY_BIAS_ROUND_MINUTES: 30,
+  CAPACITY_BIAS_MIN_SUGGESTION_MINUTES: 60,
+
+  /** Omaan aikaan sijoittunutta muuta vähintään (min) ennen kuin siitä kerrotaan. */
+  OWN_TIME_MIN_INTRUSION_MINUTES: 30,
+  /** Huomio, kun vähintään tämä osuus viikon omasta ajasta on mennyt muuhun. */
+  OWN_TIME_ATTENTION_SHARE: 0.25,
+
+  /** Vapaa-aikaan sijoittuneita velvoitteita vähintään (min). */
+  FREE_TIME_MIN_INTRUSION_MINUTES: 30,
+  /** Huomio, kun vähintään tämä osuus suojatusta vapaa-ajasta on mennyt velvoitteisiin. */
+  FREE_TIME_ATTENTION_SHARE: 0.25,
+  /** Viikon vähimmäisvapaa-ajan vajetta vähintään (min) ennen kuin siitä kerrotaan. */
+  FREE_TIME_MIN_SHORTFALL_MINUTES: 30,
+
+  /** Lomatarkastelu: viikon alusta näin monta päivää eteenpäin (vain tästä päivästä alkaen). */
+  VACATION_LOOKAHEAD_DAYS: 28,
+  /** Yksikin joustava asia lomalla kerrotaan (tiedoksi). */
+  VACATION_MIN_ITEMS: 1,
+  /** Huomio-taso. */
+  VACATION_ATTENTION_ITEMS: 3,
+
+  /** Asia on siirretty vähintään näin monta kertaa. */
+  PLAN_CHURN_MIN_RESCHEDULES: 3,
+  /** Huomio, kun jotain on siirretty vähintään näin monta kertaa ... */
+  PLAN_CHURN_ATTENTION_RESCHEDULES: 5,
+  /** ... tai toistuvasti siirrettyjä on vähintään näin monta. */
+  PLAN_CHURN_ATTENTION_ITEMS: 3,
+  /** Tällä viikolla siirrettyjä (päivitetty viikolla, siirretty ainakin kerran) vähintään. */
+  PLAN_CHURN_WEEK_MOVES: 5,
+  /** Montako asiaa ehdotetaan päätettäväksi kerralla. */
+  PLAN_CHURN_MAX_ITEMS: 5
+});
+
 /** Arvioinnin pikavalinnat minuutteina. */
 export const ESTIMATE_PRESETS = Object.freeze([10, 30, 60, 120]);
 
@@ -214,7 +290,8 @@ export const ALIGNMENT_POLICY = Object.freeze({
   quality: QUALITY_RULES,
   review: REVIEW_RULES,
   trend: TREND_RULES,
-  timer: TIMER_RULES
+  timer: TIMER_RULES,
+  drift: DRIFT_RULES
 });
 
 /**

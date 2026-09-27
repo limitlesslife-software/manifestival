@@ -27,10 +27,11 @@ import {
 } from '../src/domain/task.js';
 import {
   toRow, fromRow, assertClientSafe,
-  TASK_COLUMNS_CORE, TASK_COLUMNS_EXTENDED, TASK_COLUMNS_PLANNING, TASK_COLUMNS_LINKS, SERVER_OWNED_FIELDS
+  TASK_COLUMNS_CORE, TASK_COLUMNS_EXTENDED, TASK_COLUMNS_PLANNING, TASK_COLUMNS_LINKS, SERVER_OWNED_FIELDS,
+  TASK_COLUMNS_MENTAL_LOAD
 } from '../src/lib/rows.js';
 import {
-  TASK_EXTENDED_FIELDS, GOAL_PLANNING_FIELDS, taskColumns, volatileFields, isPersisted, hasTable
+  TASK_EXTENDED_FIELDS, GOAL_PLANNING_FIELDS, MENTAL_LOAD_FIELDS, taskColumns, volatileFields, isPersisted, hasTable
 } from '../src/data/schema.js';
 import { isColumnGateLowered, resetSchemaRuntimeForTests } from '../src/data/schemaRuntime.js';
 import { PRIORITY_KEYS, DEFAULT_PRIORITY } from '../src/domain/priority.js';
@@ -60,7 +61,9 @@ const NOT_NULL_COLUMNS = ['priority', 'scheduling_state'];
 const LINKS_OPEN = hasTable('goals') && hasTable('projects');
 const EXTENDED_WITH_LINKS = Object.freeze([
   ...(GOAL_PLANNING_FIELDS ? TASK_COLUMNS_PLANNING : TASK_COLUMNS_EXTENDED),
-  ...(LINKS_OPEN ? TASK_COLUMNS_LINKS : [])
+  ...(LINKS_OPEN ? TASK_COLUMNS_LINKS : []),
+  // Mielen kuorman kentät (0015) oman porttinsa mukaan (aalto L).
+  ...(MENTAL_LOAD_FIELDS ? TASK_COLUMNS_MENTAL_LOAD : [])
 ]);
 
 // ---------------------------------------------------------------------
