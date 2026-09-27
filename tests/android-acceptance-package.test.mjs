@@ -359,6 +359,14 @@ test('esitarkistus: lähdemanifesti tarkistetaan ennen Gradlea (manifest.source)
   assert.deepEqual(noPlugin.failedIds, ['manifest.source']);
   assert.match(noPlugin.checks.find(c => c.id === 'manifest.source').detail, /SpeechPlugin/);
 
+  // Herätysliitännäinen kuuluu samaan vaatimukseen: ilman sitä herätys puuttuisi APK:sta hiljaa.
+  const noAlarm = REPO_MAIN_ACTIVITY.replace('registerPlugin(AlarmPlugin.class);', '');
+  assert.notEqual(noAlarm, REPO_MAIN_ACTIVITY);
+  const noAlarmResult = preflight({}, { mainActivity: noAlarm });
+  assert.deepEqual(noAlarmResult.failedIds, ['manifest.source']);
+  assert.match(noAlarmResult.checks.find(c => c.id === 'manifest.source').detail, /AlarmPlugin/);
+  assert.match(ok.checks.find(c => c.id === 'manifest.source').detail, /AlarmPluginin/);
+
   assert.deepEqual(preflight({}, { manifest: null }).failedIds, ['manifest.source']);
 });
 

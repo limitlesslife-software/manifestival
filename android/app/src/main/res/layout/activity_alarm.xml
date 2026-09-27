@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Heratysnakyma lukitulla naytolla (AlarmActivity). Ei WebViewta.
+    Painikkeet ovat isoja (vahintaan 48dp, Sammuta 96dp), jotta ne osuvat
+    unisenakin, ja jokaisella on saavutettava kuvaus.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#FF101418"
+    android:gravity="center"
+    android:orientation="vertical"
+    android:padding="24dp">
+
+    <TextView
+        android:id="@+id/alarmTime"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:importantForAccessibility="yes"
+        android:textColor="#FFFFFFFF"
+        android:textSize="72sp" />
+
+    <TextView
+        android:id="@+id/alarmLabel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:layout_marginBottom="48dp"
+        android:gravity="center"
+        android:maxLines="3"
+        android:textColor="#FFE8EAED"
+        android:textSize="24sp" />
+
+    <Button
+        android:id="@+id/alarmDismiss"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:minHeight="96dp"
+        android:contentDescription="@string/alarm_dismiss_description"
+        android:text="@string/alarm_dismiss"
+        android:textSize="28sp" />
+
+    <Button
+        android:id="@+id/alarmSnooze"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:minHeight="72dp"
+        android:contentDescription="@string/alarm_snooze"
+        android:text="@string/alarm_snooze"
+        android:textSize="22sp" />
+</LinearLayout>

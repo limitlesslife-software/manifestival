@@ -73,7 +73,7 @@ kirjaimilla. verify-apk lukee sen silti.
 | Capacitor | android 8.5.0, core 8.5.1, cli 8.5.1; app 8.1.1, geolocation 8.2.2, local-notifications 8.3.1 |
 | Sovellus | `fi.limitlesslife.manifestival`, minSdk 24, targetSdk 36 |
 
-- **Ehdokkaassa on oltava puhe- ja sijaintimuutokset sekä versiointicommit.**
+- **Ehdokkaassa on oltava puhe-, herätys- ja sijaintimuutokset sekä versiointicommit.**
   Ennen koontia ehdokashaaralle cherry-pickataan (jos eivät jo ole mukana):
 
   | Commit | Mitä | Esitarkistus kaatuu ilman sitä kohtaan |
@@ -81,6 +81,10 @@ kirjaimilla. verify-apk lukee sen silti.
   | `f0fcfc9` | sijaintiluvat pois lähdemanifestista | `manifest.source` |
   | `bbce1cd` | `RECORD_AUDIO`, `<queries>` (`android.speech.RecognitionService`), SpeechPlugin ja sen rekisteröinti MainActivityssä | `manifest.source` |
   | `e5604e2` | versiointi: `android/app/build.gradle` lukee ominaisuudet `manifestival.versionCode` ja `manifestival.versionName` | `gradle.versionPlumbing` |
+  | herätysliitännäisen commitit (`feat(android): ManifestivalAlarm-liitännäinen…`) | herätysluvat, `<queries>` (`android.intent.action.TTS_SERVICE`), AlarmPlugin ja sen rekisteröinti MainActivityssä | `manifest.source` |
+
+  Aaltoja C–J vastaavat vanhemmat ehdokkaat eivät sisällä herätystä: niiden
+  APK ei läpäise nykyistä verify-apk-joukkoa ilman näitä committeja.
 
   Ilman versiointicommitia Gradle ohittaa `-P`-arvot hiljaa, ja APK saa arvot
   1 / `1.0`. Ilman manifestimuutoksia APK kaatuisi vasta verify-apk:ssa
@@ -122,8 +126,9 @@ eikä kirjoiteta. Esitarkistus vaatii seuraavat:
   `CACHE_VERSION` vastaavat toisiaan
 - HEAD on lukittu ehdokas, ja versioputkitus on paikallaan
 - lähdemanifestin luvat kuuluvat sallittuun joukkoon, `RECORD_AUDIO` ja
-  `<queries>`-kohdan `android.speech.RecognitionService` ovat mukana,
-  sijaintilupia ei ole, ja MainActivity rekisteröi SpeechPluginin ennen
+  `<queries>`-kohdan `android.speech.RecognitionService` ja
+  `android.intent.action.TTS_SERVICE` ovat mukana, sijaintilupia ei ole, ja
+  MainActivity rekisteröi SpeechPluginin ja AlarmPluginin ennen
   `super.onCreate`a (`manifest.source`)
 - `node_modules` ratkeaa ja vastaa työpuun `package-lock.json`ia
 - JDK 21 ja build-tools 36.0.0 löytyvät
@@ -339,9 +344,9 @@ näkee siis localStoragen, myös Supabasen refresh tokenin.
 
 ## Luvat (yhdistetty APK-manifesti)
 
-Lähdemanifesti julistaa vain `INTERNET`in ja `RECORD_AUDIO`n. Loput tulevat
-kirjastoista yhdistämisessä. Sallittu joukko on vakio
-`APK_PERMISSION_ALLOWLIST` (`tools/android/apk.mjs`). verify-apk vaatii
+Lähdemanifesti julistaa `INTERNET`in, `RECORD_AUDIO`n ja herätyksen luvat
+(AlarmPlugin). Loput tulevat kirjastoista yhdistämisessä. Sallittu joukko on
+vakio `APK_PERMISSION_ALLOWLIST` (`tools/android/apk.mjs`). verify-apk vaatii
 täsmälleen sen, ja testit vaativat, että tämä taulukko mainitsee jokaisen.
 
 | Lupa | Lähde | Tarvitaanko Day 1:nä | Huom |
@@ -349,18 +354,35 @@ täsmälleen sen, ja testit vaativat, että tämä taulukko mainitsee jokaisen.
 | `INTERNET` | oma manifesti | Kyllä | Supabase |
 | `RECORD_AUDIO` | oma manifesti (repon SpeechPlugin) | Ei | Ajonaikainen lupa pyydetään vasta, kun käyttäjä napauttaa mikrofonia. Ilman lupaa puhekomento ei käynnisty, mutta muu sovellus toimii |
 | `ACCESS_NETWORK_STATE` | `io.ionic.libs:iongeolocation-android` (tulee `@capacitor/geolocation`-riippuvuuden mukana; todennettu manifestiyhdistäjän raportista) | Ei | Ei ajonaikainen lupa; sovellus ei käytä sitä itse |
-| `POST_NOTIFICATIONS`, `SCHEDULE_EXACT_ALARM`, `RECEIVE_BOOT_COMPLETED`, `WAKE_LOCK` | `@capacitor/local-notifications` | Vain muistutuksiin | Kysytään käyttäjän eleestä; Suunta toimii ilman |
+| `POST_NOTIFICATIONS`, `SCHEDULE_EXACT_ALARM`, `RECEIVE_BOOT_COMPLETED`, `WAKE_LOCK` | oma manifesti (AlarmPlugin) ja `@capacitor/local-notifications` | Vain muistutuksiin ja herätykseen | Ilmoituslupa kysytään käyttäjän eleestä. Tarkkojen herätysten oikeus ("Herätykset ja muistutukset") on erikoisoikeus, jota Android 14+ ei anna oletuksena: sovellus avaa asetuksen vain napautuksesta (`openExactAlarmSettings`), ja ilman sitä herätys ajastetaan epätarkkana ja se kerrotaan. Herätyslukko on aikarajattu. Suunta toimii ilman |
+| `USE_FULL_SCREEN_INTENT` | oma manifesti (AlarmService) | Vain herätykseen | Herätysnäkymä lukitulle näytölle. Android 14+ myöntää sen vain herätys- ja puhelusovelluksille (Play-ilmoitus); ilman sitä herätys näkyy nousevana ilmoituksena (`canUseFullScreenIntent`) |
+| `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_MEDIA_PLAYBACK` | oma manifesti (AlarmService) | Vain herätykseen | Soiva herätys ja ääneen luettu muistutus: etualapalvelun tyyppi on vain `mediaPlayback` (toisto). Ei mikrofonia, ei sijaintia. Kova raja 10 min |
 | `fi.limitlesslife.manifestival.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION` | androidx.core | – | Signature-tasoinen, sovelluksen oma lupa; ei näy käyttäjälle |
 
 **Sijaintilupia ei ole.** `@capacitor/geolocation` on yhä liitännäislistassa,
 mutta koska APK ei julista sijaintilupia, natiivi sijaintihaku ei ole
 käytettävissä. Seuraavat luvat kaatavat tarkastuksen: `ACCESS_BACKGROUND_LOCATION`,
-`ACCESS_COARSE_LOCATION`, `ACCESS_FINE_LOCATION`, `FOREGROUND_SERVICE*`,
-`CAMERA`, `MODIFY_AUDIO_SETTINGS`, `READ_EXTERNAL_STORAGE`, `READ_CONTACTS`.
+`ACCESS_COARSE_LOCATION`, `ACCESS_FINE_LOCATION`, `USE_EXACT_ALARM`,
+`CAMERA`, `MODIFY_AUDIO_SETTINGS`, `READ_EXTERNAL_STORAGE`, `READ_CONTACTS`
+sekä jokainen muu etualapalvelun tyyppi kuin toisto: `FOREGROUND_SERVICE_MICROPHONE`,
+`FOREGROUND_SERVICE_LOCATION`, `FOREGROUND_SERVICE_CAMERA`,
+`FOREGROUND_SERVICE_DATA_SYNC`, `FOREGROUND_SERVICE_SPECIAL_USE`,
+`FOREGROUND_SERVICE_MEDIA_PROJECTION`, `FOREGROUND_SERVICE_PHONE_CALL`,
+`FOREGROUND_SERVICE_CONNECTED_DEVICE`, `FOREGROUND_SERVICE_HEALTH`,
+`FOREGROUND_SERVICE_REMOTE_MESSAGING`, `FOREGROUND_SERVICE_SYSTEM_EXEMPTED`
+(aiempi etuliitesääntö `FOREGROUND_SERVICE*` korvattiin tällä nimetyllä
+listalla). `USE_EXACT_ALARM` on automaattisesti myönnetty herätyslupa, jonka
+Play sallii vain sovelluksille, joiden päätehtävä on herätyskello tai
+kalenteri; tarkat herätykset kulkevat käyttäjän myöntämällä
+`SCHEDULE_EXACT_ALARM`illa.
 
 **Pakettien näkyvyys:** manifestissa on
-`<queries><intent><action android:name="android.speech.RecognitionService"/></intent></queries>`.
-Ilman sitä Android 11+ piilottaa puheentunnistuspalvelun sovellukselta.
+`<queries><intent><action android:name="android.speech.RecognitionService"/></intent></queries>`
+ja `<intent><action android:name="android.intent.action.TTS_SERVICE"/></intent>`.
+Ilman niitä Android 11+ piilottaa puheentunnistuspalvelun ja puhemoottorin
+sovellukselta. Lisäksi `<package android:name="com.google.android.apps.maps"/>`:
+"Avaa reitti" -painike tarkistaa, onko Google Maps asennettu (muuten
+https-reittiohje).
 
 **Laitteisto:** `RECORD_AUDIO` synnyttäisi Play-kaupassa implisiittisen
 pakollisen `android.hardware.microphone`-ominaisuuden, joka suodattaisi pois
@@ -373,12 +395,14 @@ verify-apk ei tarkista uses-feature-rivejä; lähdemanifestin rivin vartioi
 
 **Liitännäiset** (`assets/capacitor.plugins.json`) ovat täsmälleen
 `@capacitor/app`, `@capacitor/geolocation` ja `@capacitor/local-notifications`.
-Repon oma SpeechPlugin rekisteröidään käsin MainActivityssä, eikä se siksi
-näy listassa.
+Repon omat SpeechPlugin ja AlarmPlugin (`ManifestivalAlarm`) rekisteröidään
+käsin MainActivityssä, eivätkä ne siksi näy listassa.
 
 **Avoimet komponentit:** vain MainActivity (käynnistin) ja androidx:n
 ProfileInstallReceiver, joka on suojattu luvalla `android.permission.DUMP`
-(vain adb/järjestelmä).
+(vain adb/järjestelmä). Herätyksen AlarmReceiver, BootReceiver, AlarmService
+ja AlarmActivity ovat suljettuja (`exported="false"`); järjestelmä toimittaa
+silti käynnistyksen, kellon ja aikavyöhykkeen vaihdon lähetykset.
 
 ## JDK-kiinnitys
 

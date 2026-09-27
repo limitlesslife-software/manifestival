@@ -21,7 +21,9 @@ export const CAPABILITY = Object.freeze({
   LOCATION: 'location',
   BACKGROUND: 'background',
   NETWORK: 'network',
-  STORAGE: 'storage'
+  STORAGE: 'storage',
+  /** Herätys ja puhutut muistutukset sovelluksen ollessa kiinni (vain Android-sovellus). */
+  ALARMS: 'alarms'
 });
 
 export const CAPABILITIES = Object.freeze(Object.values(CAPABILITY));
@@ -267,6 +269,68 @@ function speechPermission() {
   return speechPermissionState;
 }
 
+// ------------------------------------------------------------ herätykset
+
+/**
+ * Android-sovelluksen herätysliitännäinen (android/app/src/main/java/
+ * fi/limitlesslife/manifestival/AlarmPlugin.java, @CapacitorPlugin-nimi).
+ * Nimi on täällä samasta syystä kuin puheliitännäisen: alarms.js tuo tämän
+ * moduulin. tests/android-alarm.test.mjs vertaa nimeä Java-annotaatioon.
+ */
+export const NATIVE_ALARM_PLUGIN = 'ManifestivalAlarm';
+
+/**
+ * Selaimen ja PWA:n rehellinen vastaus: herätys, joka soi sovelluksen
+ * ollessa kiinni, ei ole selaimessa mahdollinen. Ei ajastinta avoimeen
+ * välilehteen, joka lupaisi herätyksen ja jättäisi soimatta.
+ */
+export const ALARMS_WEB_REASON = 'Herätys ja puhutut muistutukset toimivat vain Android-sovelluksessa.';
+
+/** Herätysliitännäinen natiivikuoresta, tai null. Ei kutsu liitännäistä. */
+export function nativeAlarmPlugin() {
+  if (!isNativeShell()) return null;
+  const plugins = globalThis.Capacitor.Plugins;
+  const plugin = plugins && plugins[NATIVE_ALARM_PLUGIN];
+  return plugin && typeof plugin.schedule === 'function' ? plugin : null;
+}
+
+/**
+ * Herätysten "lupa" = tarkat herätykset sallittu JA ilmoitukset päällä.
+ * Luetaan laitteelta vain status()-kutsulla (src/platform/alarms.js), joka
+ * työntää tuloksen tänne. Alkuarvo PROMPT, ei koskaan GRANTED: väärä
+ * "kunnossa" saisi käyttäjän luottamaan herätykseen, joka ei soi ajallaan.
+ */
+let alarmAccessState = PERMISSION.PROMPT;
+
+/** Päivitä herätysten tila. Kutsuu vain alarms.js. */
+export function setAlarmAccessState(state) {
+  const allowed = [PERMISSION.PROMPT, PERMISSION.GRANTED, PERMISSION.DENIED];
+  alarmAccessState = allowed.includes(state) ? state : PERMISSION.PROMPT;
+}
+
+/** Nollaa herätysten tila. Uloskirjautuminen ja testit. */
+export function resetAlarmAccessState() {
+  alarmAccessState = PERMISSION.PROMPT;
+}
+
+function alarmsSupport() {
+  if (isNativeShell()) {
+    const plugin = nativeAlarmPlugin();
+    return {
+      supported: true,
+      reason: plugin ? '' : 'Herätys ei ole käytettävissä tässä Android-sovelluksen versiossa.',
+      implemented: Boolean(plugin)
+    };
+  }
+  return { supported: false, reason: ALARMS_WEB_REASON, implemented: false };
+}
+
+function alarmsPermission() {
+  const support = alarmsSupport();
+  if (!support.supported || !support.implemented) return PERMISSION.UNSUPPORTED;
+  return alarmAccessState;
+}
+
 function networkSupport() {
   return { supported: true, reason: '', implemented: true };
 }
@@ -336,6 +400,12 @@ const REGISTRY = Object.freeze({
     label: 'Laitetallennus',
     support: storageSupport,
     permission: () => PERMISSION.NOT_REQUIRED
+  },
+  [CAPABILITY.ALARMS]: {
+    label: 'Herätys ja puhutut muistutukset',
+    support: alarmsSupport,
+    permission: alarmsPermission,
+    plannedNote: 'Toimii vain Android-sovelluksessa'
   }
 });
 
