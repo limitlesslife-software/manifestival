@@ -660,7 +660,11 @@ const K_SCENARIOS = [
       const saved = await page(async () => {
         await H.profile('daily');
         await H.waitFor(() => document.querySelector('#dsSleepTarget'), 'Uni ja rytmi');
-        if (H.squash(H.text('#dailyLifeNotice'))) throw new Error('huomautus K-porteilla: ' + H.text('#dailyLifeNotice'));
+        // K-porteilla ei tallennusrajan varoitusta. Muistutusten pois päältä
+        // -vihje saa näkyä (oletuksena muistutukset ovat pois päältä).
+        const notice = H.squash(H.text('#dailyLifeNotice'));
+        if (/säilyvät toistaiseksi vain tämän istunnon ajan/.test(notice)) throw new Error('tallennusraja K-porteilla: ' + notice);
+        if (notice && !/Arjen muistutukset ovat pois päältä/.test(notice)) throw new Error('odottamaton huomautus K-porteilla: ' + notice);
         H.fill('#dsSleepTarget', '7.5');
         H.fill('#dsWakeTime', '06:30');
         H.fill('#dsBedtimeTarget', '22:45');
