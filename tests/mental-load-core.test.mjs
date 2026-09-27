@@ -23,7 +23,7 @@ import { normalizeTask, validateTask, reschedulePatch, isOverdue, TASK_HORIZON }
 import { normalizeLifeArea, validateLifeArea, categoryOwnerArea } from '../src/domain/lifeArea.js';
 import { dayCapacity, horizonCapacity } from '../src/domain/capacity.js';
 import { planHorizon } from '../src/domain/planScheduler.js';
-import { taskColumns, datelessTasksAllowed } from '../src/data/schema.js';
+import { taskColumns, datelessTasksAllowed, MENTAL_LOAD_FIELDS, TASK_EXTENDED_FIELDS } from '../src/data/schema.js';
 import { toRow, fromRow, TASK_COLUMNS_MENTAL_LOAD } from '../src/lib/rows.js';
 import {
   resetState, getState, setTasks, setBills, setProtectedPeriods, setGoals, setViewDate, setWeeklyPlans
@@ -342,7 +342,8 @@ test('päivätön tehtävä: sallittu vain horisontilla ja kun kanta tukee sitä
   assert.equal(validateTask(task('c', { horizon: 'LATER', time: '10:00' }), { allowDateless: true }).valid, false);
   assert.equal(validateTask(normalizeTask({ title: 'x', date: MON, horizon: 'NOT_YET', waitingOn: 'A' })).valid, true,
     'waitingOn putoaa, kun horisontti ei ole WAITING');
-  assert.equal(datelessTasksAllowed(), false, 'tuotehaaralla portti kiinni');
+  // Porttitietoinen: tuotehaaralla kiinni, aallon L ehdokkaassa auki.
+  assert.equal(datelessTasksAllowed(), MENTAL_LOAD_FIELDS && TASK_EXTENDED_FIELDS);
 });
 
 test('siirtojen seuranta ja myöhässä-sääntö', () => {
