@@ -12,8 +12,7 @@
 
 import { getState, currentLifeSettings } from './state.js';
 import { deviceOffsetMinutes } from './deviceTime.js';
-import { calendarInputs, departureForOccurrence, morningFor } from './calendarPlan.js';
-import { sleepScheduleFor } from '../domain/sleepRhythm.js';
+import { calendarInputs, departureForOccurrence, morningFor, sleepPlanFor } from './calendarPlan.js';
 import { fmtISO, addDays, parseISO } from '../lib/datetime.js';
 
 /** Paikallinen päivä, minuutit ja hetki (ms) Date-oliosta. */
@@ -100,13 +99,17 @@ function departureItems(dateIso, { state, now, providerResults }, accept) {
   return result;
 }
 
-/** Aamun sitoumus, aamusuunnitelma ja vaadittu herätys päivälle. */
+/**
+ * Aamun sitoumus, aamusuunnitelma ja vaadittu herätys päivälle. Herätyksen
+ * sääntö (kiinteä aika, kirjatun nukkumaanmenon raja) on mukana, kuten
+ * laitteen herätyksessä: sleepLogs kulkee calendarPlanille.
+ */
 function morningOn(dateIso, { state = getState(), now = new Date(), wakeTimeLimit = null, steps } = {}) {
   const { inputs } = inputsOn(dateIso, state, now);
   return morningFor({
     wakeDate: dateIso, occurrences: inputs.occurrences, departures: inputs.departures,
-    profile: state.profile || null, settings: currentLifeSettings(state), offsetMinutesFn: deviceOffsetMinutes,
-    wakeTimeLimit, steps
+    profile: state.profile || null, settings: currentLifeSettings(state), sleepLogs: state.sleepLogs || [],
+    offsetMinutesFn: deviceOffsetMinutes, wakeTimeLimit, steps
   });
 }
 
@@ -130,12 +133,25 @@ export function morningPlanOn(dateIso, options = {}) {
   return morningOn(dateIso, options).morning || null;
 }
 
-/** Unirytmi päivälle: herätys (tarvittaessa aikaisempi), nukkumaanmeno ja iltarauhoittuminen. */
-export function sleepScheduleOn(dateIso, options = {}) {
+/**
+ * Herätyspäivän unirytmi, sen vertailukohta (sama päivä ilman menoa),
+ * aamu ja herätyksen sääntö calendarPlan.sleepPlanForista: sama laskenta
+ * kuin kalenterin unilohkoissa ja laitteen herätyksessä. Huominen-kortti ja
+ * illan ennakko vertaavat `schedule`a `usual`iin, joten kiinteä herätys ei
+ * ole joka ilta "tavallista aiemmin", ja `alarmNote` kertoo, jos kiinteä
+ * herätys ei riitä aamulle.
+ */
+export function sleepPlanOn(dateIso, options = {}) {
   const state = options.state || getState();
-  const { requiredWake } = morningOn(dateIso, { ...options, state });
-  return sleepScheduleFor({
-    dateIso, profile: state.profile || {}, settings: currentLifeSettings(state), requiredWake,
+  const { inputs } = inputsOn(dateIso, state, options.now || new Date());
+  return sleepPlanFor({
+    wakeDate: dateIso, occurrences: inputs.occurrences, departures: inputs.departures,
+    profile: state.profile || null, settings: currentLifeSettings(state), sleepLogs: state.sleepLogs || [],
     offsetMinutesFn: deviceOffsetMinutes
   });
+}
+
+/** Unirytmi päivälle: herätys (tarvittaessa aikaisempi tai kiinteä), nukkumaanmeno ja iltarauhoittuminen. */
+export function sleepScheduleOn(dateIso, options = {}) {
+  return sleepPlanOn(dateIso, options).schedule;
 }

@@ -19,6 +19,9 @@
 // UNI ON SUOJATTU. Herätys on profiilin oletus, ellei aamun meno vaadi
 // aiempaa; nukkumaanmeno lasketaan herätyksestä taaksepäin. Unta ei
 // lyhennetä automaattisesti: aiempi herätys siirtää nukkumaanmenoa.
+// Käytössä oleva herätys kuuluu samaan laskentaan (alarmPlan.alarmWakeOf):
+// "Kiinteä aika" on herätysaika, josta uni lasketaan, ja jos aamu vaatisi
+// aiemman, siitä kerrotaan varoituksena (sleepPlanFor.alarmNote).
 //
 // Ei DOM:ia eikä kirjoituksia. Tämä päivä, kellonaika ja vyöhyke annetaan
 // parametreina, jotta tulos on toistettava.
@@ -29,7 +32,7 @@ import { planDeparture, selectTravelEstimate } from '../domain/departure.js';
 import { minusMinutes } from '../domain/travel.js';
 import { summarizeCommute } from '../domain/commuteLearning.js';
 import { sleepScheduleFor } from '../domain/sleepRhythm.js';
-import { morningOfDay } from '../domain/alarmPlan.js';
+import { morningOfDay, alarmWakeOf, alarmPlanningLimits, fixedAlarmNote } from '../domain/alarmPlan.js';
 import { buildDayPlan } from '../domain/scheduler.js';
 import { isIsoDate, isTimeOfDay } from '../domain/task.js';
 import { currentLifeSettings } from './state.js';
@@ -146,44 +149,86 @@ function commitmentsOn(occurrences, dateIso, departures) {
  * samaa mieltä. Keskiyön jälkeinen meno, jonka aamu alkaisi jo edellisenä
  * iltana, ei ole aamun sitoumus: valinta siirtyy seuraavaan menoon.
  *
- * Valinnaiset `wakeTimeLimit` (aikaisin sallittu herätys, esim. jo mennyt
- * hetki) ja `steps` (tämän aamun oma vaihejoukko) kulkevat suoraan
- * aamusuunnittelijalle: Tänään-näkymän aamuvalinnat lasketaan tätä samaa
- * polkua. Herätyksen ja unilohkojen kutsut eivät anna niitä.
+ * HERÄTYKSEN SÄÄNTÖ (alarmPlan.alarmWakeOf) on mukana: kun herätys on
+ * käytössä, aamu lasketaan samoilla rajoilla kuin laitteen herätys.
+ * "Kiinteä aika" on herätysaika (aamu ei mahdu -> vaje ja valinnat, ei
+ * hiljaista eri herätystä), ja suunnitelmaa seuraava herätys ei aikaistu
+ * kirjatun nukkumaanmenon suojaaman unen ohi (`sleepLogs`).
  *
- * @returns {{commitment:object|null, morning:object|null, requiredWake:string|null}}
+ * Valinnaiset `wakeTimeLimit` ja `steps` (tämän aamun oma vaihejoukko)
+ * kulkevat aamusuunnittelijalle: Tänään-näkymän aamuvalinnat lasketaan tätä
+ * samaa polkua. `wakeTimeLimit` on aamun TODELLINEN alku (herätyksen
+ * kuittaus tai käyttäjän "aloitan vasta nyt"), joten se korvaa herätyksen
+ * rajan. Herätyksen ja unilohkojen kutsut eivät anna niitä.
+ *
+ * @returns {{commitment:object|null, morning:object|null, requiredWake:string|null, alarm:object|null}}
+ *   alarm: herätyksen sääntö (null, kun herätys ei ole käytössä)
  */
 export function morningFor({
   wakeDate, occurrences = EMPTY, departures = new Map(), profile = null, settings = null,
-  offsetMinutesFn = deviceOffsetMinutes, wakeTimeLimit = null, steps = undefined
+  sleepLogs = EMPTY, offsetMinutesFn = deviceOffsetMinutes, wakeTimeLimit = null, steps = undefined
 } = {}) {
-  if (!isIsoDate(wakeDate)) return { commitment: null, morning: null, requiredWake: null };
+  if (!isIsoDate(wakeDate)) return { commitment: null, morning: null, requiredWake: null, alarm: null };
+  const alarm = alarmWakeOf({ dateIso: wakeDate, profile, settings, sleepLogs: listOf(sleepLogs), offsetMinutesFn });
+  const limits = alarmPlanningLimits(alarm);
   const { commitment, plan: morning } = morningOfDay({
     dateIso: wakeDate, commitments: commitmentsOn(listOf(occurrences), wakeDate, departures), profile, settings,
-    offsetMinutesFn, wakeTimeLimit, steps: Array.isArray(steps) ? steps : undefined
+    offsetMinutesFn,
+    usualWakeTime: limits.usualWakeTime,
+    wakeTimeLimit: isTimeOfDay(wakeTimeLimit) ? wakeTimeLimit : limits.wakeTimeLimit,
+    steps: Array.isArray(steps) ? steps : undefined
   });
   // Varmistus: herätys edellisen päivän puolella ei ole tämän yön herätys
   // (morningOfDay ohittaa jo sellaiset menot), joten silloin tavallinen rytmi.
   const requiredWake = morning && morning.wakeDate === wakeDate ? morning.wakeTime : null;
-  return { commitment, morning, requiredWake };
+  return { commitment, morning, requiredWake, alarm };
+}
+
+/**
+ * Herätyspäivän unirytmi, sen vertailukohta ja aamu YHDESTÄ paikasta:
+ * kalenterin unilohkot, Tänään-näkymän Huominen-kortti, ilta- ja
+ * nukkumaanmenomuistutukset, illan ennakko ja maanantaivalmius.
+ *
+ * - schedule: herätys (kiinteä herätys sellaisenaan; muuten tavallinen,
+ *   ellei meno vaadi aiempaa), nukkumaanmeno ja iltarutiini siitä.
+ * - usual: sama päivä ilman menoa. Käyttäjän oma herätysaika (herätyksen
+ *   arki-/viikonloppuaika) on tavallinen herätys, joten kiinteä 6.00 ei
+ *   ole joka ilta "tavallista aiemmin".
+ * - alarmNote: kiinteän herätyksen varoitus, kun aamu vaatisi aiemman.
+ *
+ * @returns {{schedule:object|null, usual:object|null, morning:object|null,
+ *   commitment:object|null, alarm:object|null, alarmNote:string|null}}
+ */
+export function sleepPlanFor({
+  wakeDate, occurrences = EMPTY, departures = new Map(), profile = null, settings = null,
+  sleepLogs = EMPTY, offsetMinutesFn = deviceOffsetMinutes
+} = {}) {
+  const { commitment, morning, requiredWake, alarm } = morningFor({
+    wakeDate, occurrences, departures, profile, settings, sleepLogs, offsetMinutesFn
+  });
+  const alarmWakeTime = alarm && alarm.override ? alarm.time : null;
+  const common = { dateIso: wakeDate, profile, settings, alarmWakeTime, offsetMinutesFn };
+  // Kiinteä herätys ei seuraa menoa: uni lasketaan kiinteästä herätyksestä.
+  const schedule = sleepScheduleFor({ ...common, requiredWake: alarm && alarm.fixed ? null : requiredWake });
+  const usual = sleepScheduleFor({ ...common, requiredWake: null });
+  return { schedule, usual, morning, commitment, alarm, alarmNote: fixedAlarmNote(morning, alarm) };
 }
 
 /**
  * Unen ja iltarauhoittumisen aikataulut herätyspäiville (calendarBlocks.sleepBlocks).
  *
  * Jokainen herätyspäivä tuottaa yön, joka alkaa EDELLISENÄ iltana. Herätys
- * on sleepScheduleFor-oletus, ellei aamun ensimmäinen meno (morningPlanner)
- * vaadi aiempaa.
+ * on sama kuin laitteen herätyksellä (sleepPlanFor): tavallinen, ellei
+ * aamun ensimmäinen meno vaadi aiempaa, tai kiinteä herätysaika.
  */
 export function sleepSchedulesFor({
   wakeDates = EMPTY, occurrences = EMPTY, departures = new Map(), profile = null, settings = null,
-  offsetMinutesFn = deviceOffsetMinutes
+  sleepLogs = EMPTY, offsetMinutesFn = deviceOffsetMinutes
 } = {}) {
   const schedules = [];
   for (const wakeDate of listOf(wakeDates)) {
     if (!isIsoDate(wakeDate)) continue;
-    const { requiredWake } = morningFor({ wakeDate, occurrences, departures, profile, settings, offsetMinutesFn });
-    const schedule = sleepScheduleFor({ dateIso: wakeDate, profile, settings, requiredWake, offsetMinutesFn });
+    const { schedule } = sleepPlanFor({ wakeDate, occurrences, departures, profile, settings, sleepLogs, offsetMinutesFn });
     const evening = addDaysToIso(wakeDate, -1);
     if (!schedule || !evening) continue;
     schedules.push(Object.freeze({
@@ -249,7 +294,8 @@ export function calendarInputs(state, {
     wakeDates.push(date);
   }
   const sleepSchedules = sleepSchedulesFor({
-    wakeDates, occurrences, departures, profile: state.profile, settings, offsetMinutesFn
+    wakeDates, occurrences, departures, profile: state.profile, settings,
+    sleepLogs: listOf(state.sleepLogs), offsetMinutesFn // herätyksen suojatun unen raja
   });
   const blocks = deriveBlocks({
     occurrences,

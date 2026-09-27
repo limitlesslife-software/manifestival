@@ -45,9 +45,9 @@ import { getState, currentLifeSettings } from '../state.js';
 import { editTask } from '../actions.js';
 import { recordCommuteObservation, logHabitEvent } from '../dailyLifeActions.js';
 import {
-  departuresOn, firstCommitmentOn, morningPlanOn, sleepScheduleOn, clockOf, shiftIso
+  departuresOn, firstCommitmentOn, morningPlanOn, sleepPlanOn, clockOf, shiftIso
 } from '../dailyLifeModel.js';
-import { EVENING_NOTICE_FROM_MINUTES } from '../dailyLifeNotices.js';
+import { EVENING_NOTICE_FROM_MINUTES, FIXED_ALARM_HINT } from '../dailyLifeNotices.js';
 import { calendarInputs } from '../calendarPlan.js';
 import {
   horizonDays, previewDayReplan, splitReplanChanges, taskPatch, isStaleChange, applyReplanChanges
@@ -61,7 +61,7 @@ import {
   ESTIMATE_SOURCE, ARRIVAL_RESULT, HABIT_KIND, HABIT_ACTION, HABIT_ACTIONS, protectionLabel
 } from '../../domain/dailyLife.js';
 import { observedTravelMinutes } from '../../domain/commuteLearning.js';
-import { sleepScheduleFor, eveningBefore, driftReport, mondayReadiness } from '../../domain/sleepRhythm.js';
+import { eveningBefore, driftReport, mondayReadiness } from '../../domain/sleepRhythm.js';
 import { CHOICE_KIND } from '../../domain/morningPlanner.js';
 import { status as habitStatus, habitActionText, HABIT_STATE } from '../../domain/habitEngine.js';
 import { proposeOpenEndedSlot, groupErrands, DEFAULT_HORIZON_DAYS } from '../../domain/errands.js';
@@ -205,7 +205,13 @@ export function modelFor(state = getState(), now = new Date()) {
     morning: (date, extra = null) => (extra
       ? safe(() => morningPlanOn(date, { ...options, ...extra }), null)
       : memo(`m|${date}`, () => morningPlanOn(date, options))),
-    sleep: date => memo(`s|${date}`, () => sleepScheduleOn(date, options))
+    // Unirytmi (= sleepScheduleOn) sekä vertailukohta ja herätyksen sääntö
+    // samasta laskennasta (sleepPlanOn): Huominen-kortti ja maanantaivalmius.
+    sleep: date => {
+      const plan = memo(`s|${date}`, () => sleepPlanOn(date, options));
+      return plan ? plan.schedule : null;
+    },
+    sleepPlan: date => memo(`s|${date}`, () => sleepPlanOn(date, options))
   };
 }
 
@@ -634,21 +640,25 @@ function tomorrowDeparture(model, tomorrow) {
 
 function tomorrowCard(state, model, clockNow) {
   const tomorrow = shiftIso(clockNow.todayIso, 1);
-  const schedule = model.sleep(tomorrow);
+  // Sama laskenta kuin laitteen herätyksellä ja iltamuistutuksilla
+  // (sleepPlanOn): kiinteä herätys on herätysaika, ja jos aamu vaatisi
+  // aiemman, kortti sanoo sen (alarmNote) eikä näytä eri herätystä.
+  const sleepPlan = model.sleepPlan(tomorrow);
+  const schedule = sleepPlan ? sleepPlan.schedule : null;
   if (!schedule) return '';
   const evening = clockNow.nowMinutes >= EVENING_CARD_FROM_MINUTES;
   const earlier = schedule.earlierThanUsualMinutes > 0;
+  const fixedAlarm = Boolean(sleepPlan.alarm && sleepPlan.alarm.fixed);
+  const alarmNote = sleepPlan.alarmNote;
   const weekend = weekendLines(state, model, clockNow.todayIso);
-  if (!evening && !earlier && weekend.length === 0) return '';
+  if (!evening && !earlier && !alarmNote && weekend.length === 0) return '';
 
-  const settings = currentLifeSettings(state);
-  const usual = safe(() => sleepScheduleFor({
-    dateIso: tomorrow, profile: state.profile || {}, settings, requiredWake: null, offsetMinutesFn: deviceOffsetMinutes
-  }), null);
-  const advice = safe(() => eveningBefore({ tomorrowSchedule: schedule, usualSchedule: usual, settings, cause: 'commitment' }), null);
+  const advice = safe(() => eveningBefore({ tomorrowSchedule: schedule, usualSchedule: sleepPlan.usual, cause: 'commitment' }), null);
 
   const facts = [];
-  facts.push(['Herätys', `${clock(schedule.wakeTime)}${earlier ? ` · ${durationText(schedule.earlierThanUsualMinutes)} tavallista aiemmin` : ''}`]);
+  const wakeTag = earlier ? ` · ${durationText(schedule.earlierThanUsualMinutes)} tavallista aiemmin`
+    : (fixedAlarm ? ' · kiinteä' : '');
+  facts.push(['Herätys', `${clock(schedule.wakeTime)}${wakeTag}`]);
   const first = tomorrowDeparture(model, tomorrow);
   if (first) {
     const title = first.occurrence.title || 'Meno';
@@ -661,7 +671,7 @@ function tomorrowCard(state, model, clockNow) {
 
   const factHtml = facts.map(([term, value]) =>
     `<div class="td-fact"><dt>${escapeHtml(term)}</dt> <dd>${escapeHtml(value)}</dd></div>`).join(' ');
-  const notes = [advice && advice.message, ...weekend].filter(Boolean)
+  const notes = [advice && advice.message, alarmNote && `${alarmNote} ${FIXED_ALARM_HINT}`, ...weekend].filter(Boolean)
     .map(text => `<p class="td-note">${escapeHtml(text)}</p>`).join('');
   return `
     <section class="td-card" aria-labelledby="tdTomorrowTitle">

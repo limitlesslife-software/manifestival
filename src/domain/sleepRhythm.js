@@ -58,7 +58,9 @@ export const MAX_TIME_IN_BED_MINUTES = 18 * 60;
 export const WAKE_SOURCE = Object.freeze({
   DEFAULT: 'default',
   WEEKEND: 'weekend',
-  COMMITMENT: 'commitment'
+  COMMITMENT: 'commitment',
+  /** Käyttäjän oma herätysaika tälle päivälle (herätyksen arki-/viikonloppuaika tai kiinteä aika). */
+  ALARM: 'alarm'
 });
 
 /** Mistä nukkumaanmenoaika tuli. */
@@ -146,6 +148,7 @@ function wakeSentence(source, wakeTime, rhythm, earlierMinutes) {
   if (source === WAKE_SOURCE.COMMITMENT) {
     return `Aamun meno vaatii herätyksen ${clockText(wakeTime)}, ${durationText(earlierMinutes)} tavallista aiemmin.`;
   }
+  if (source === WAKE_SOURCE.ALARM) return `Herätys ${clockText(wakeTime)} oman herätysaikasi mukaan.`;
   if (source === WAKE_SOURCE.WEEKEND) {
     return rhythm.weekendWakeShiftMaxMinutes > 0
       ? `Viikonloppuna herätys saa siirtyä enintään ${durationText(rhythm.weekendWakeShiftMaxMinutes)} myöhemmäksi: herätys ${clockText(wakeTime)}.`
@@ -164,6 +167,13 @@ function wakeSentence(source, wakeTime, rhythm, earlierMinutes) {
  *   nukkumaanmenotavoite on aiempi, se pysyy (viikonloppuöinä siihen saa
  *   lisätä viikonlopun väljyyden).
  * - Iltarutiini alkaa nukkumaanmeno - windDownMinutes.
+ * - alarmWakeTime (valinnainen 'HH:MM'): käyttäjän oma herätysaika tälle
+ *   päivälle (herätyksen arki-/viikonloppuaika tai "Kiinteä aika", ks.
+ *   alarmPlan.alarmWakeOf). Se on silloin päivän tavallinen herätys
+ *   profiilin oletuksen ja viikonlopun väljyyden sijaan, myös oletusta
+ *   myöhempänä: herätys, uni ja iltarutiini ovat samaa mieltä. Meno voi
+ *   silti vaatia aiemman (requiredWake), ellei kutsuja jätä sitä pois
+ *   (kiinteä herätys ei seuraa menoa).
  *
  * offsetMinutesFn (valinnainen, ks. wallClock.js): kesäajan vaihtoyönä
  * unitavoite lasketaan todellisena kestona, ei seinäkellon erotuksena.
@@ -171,7 +181,7 @@ function wakeSentence(source, wakeTime, rhythm, earlierMinutes) {
  * @returns {null | object} null, jos päivä on virheellinen
  */
 export function sleepScheduleFor(input) {
-  const { dateIso, profile, settings, requiredWake = null, offsetMinutesFn } = objectOf(input);
+  const { dateIso, profile, settings, requiredWake = null, alarmWakeTime = null, offsetMinutesFn } = objectOf(input);
   if (!isIsoDate(dateIso)) return null;
   const fn = offsetFnOf(offsetMinutesFn);
   const rhythm = rhythmSettingsOf(settings);
@@ -179,12 +189,13 @@ export function sleepScheduleFor(input) {
   const weekday = isoWeekday(dateIso);
   const weekend = weekday === 6 || weekday === 7;
 
-  let usualWakeMinutes = toMinutes(defaultWakeOf(profile));
-  if (weekend) usualWakeMinutes = Math.min(usualWakeMinutes + rhythm.weekendWakeShiftMaxMinutes, LAST_MINUTE);
+  const ownWake = isTimeOfDay(alarmWakeTime) ? alarmWakeTime : null;
+  let usualWakeMinutes = toMinutes(ownWake || defaultWakeOf(profile));
+  if (weekend && !ownWake) usualWakeMinutes = Math.min(usualWakeMinutes + rhythm.weekendWakeShiftMaxMinutes, LAST_MINUTE);
   const usualWakeTime = fromMinutes(usualWakeMinutes);
 
   let wakeTime = usualWakeTime;
-  let source = weekend ? WAKE_SOURCE.WEEKEND : WAKE_SOURCE.DEFAULT;
+  let source = ownWake ? WAKE_SOURCE.ALARM : (weekend ? WAKE_SOURCE.WEEKEND : WAKE_SOURCE.DEFAULT);
   if (isTimeOfDay(requiredWake) && toMinutes(requiredWake) < usualWakeMinutes) {
     wakeTime = requiredWake;
     source = WAKE_SOURCE.COMMITMENT;
