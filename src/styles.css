@@ -787,3 +787,61 @@ body.is-offline .offline-banner { display:block; }
   .screen { transition:none; }
   .toast { animation:none; }
 }
+/* ===== U4: Hyvinvointi ja Paikat (profiilin osiot) — alku ===== */
+/* Säiliöön piirrettävät osiot (src/app/views/wellbeingHub.js ja
+   placesSettings.js). Rivit, painikkeet ja lomakkeet käyttävät yhteisiä
+   luokkia (.assist-row, .assist-btn, .add-form); tässä vain osioiden omat
+   osat. Napautettavat vähintään 44 px, fokus kultaisella ääriviivalla,
+   tila myös tekstinä (ei pelkkä väri) eikä vaakavieritystä 360 px:llä. */
+.lh-hub { display:flex; flex-direction:column; min-width:0; }
+.lh-section { min-width:0; }
+.lh-heading:focus-visible { outline:2px solid var(--gold); outline-offset:2px; border-radius:6px; }
+.lh-list { list-style:none; margin:0 0 6px; padding:0; }
+.lh-row .assist-meta, .lh-row .assist-reason { overflow-wrap:anywhere; }
+.lh-field { min-width:0; }
+.lh-hint { font-size:11.5px; color:var(--text-2); line-height:1.5; margin-top:3px; }
+/* Virhe piirretään vain, kun se on olemassa: näkyy aina (.field-error on oletuksena piilossa). */
+.lh-error { display:block; margin-top:4px; }
+.lh-error:focus-visible { outline:2px solid var(--gold); outline-offset:2px; border-radius:6px; }
+.lh-unknown { color:var(--text-2); font-style:italic; }
+.lh-notice { margin-bottom:6px; }
+.lh-summary { background:var(--cream-card); border:1px solid var(--border); border-radius:14px; padding:10px 12px;
+  margin-bottom:10px; font-size:12.5px; line-height:1.55; color:var(--text-2); overflow-wrap:anywhere; }
+.lh-summary p + p, .lh-suggestion p + p { margin-top:4px; }
+.lh-summary strong { color:var(--forest); }
+.lh-sleep-note { margin-bottom:10px; }
+.lh-legend { font-size:11.5px; color:var(--text-2); line-height:1.5; margin:6px 0 4px; }
+/* Vointitaulukko: kuusi kapeaa saraketta mahtuu 328 px:iin; lyhenteet selitetään taulukon alla. */
+.lh-table-wrap { max-width:100%; overflow-x:auto; }
+.wbh-table { width:100%; border-collapse:collapse; table-layout:fixed; font-size:12.5px; color:var(--text-1);
+  background:var(--cream-card); border:1px solid var(--border); }
+.wbh-table th, .wbh-table td { padding:7px 2px; text-align:center; border-bottom:1px solid var(--border); }
+.wbh-table thead th { font-size:11px; font-weight:800; color:var(--text-2); }
+.wbh-table tbody th, .wbh-table tfoot th { width:72px; text-align:left; padding-left:8px; font-weight:700; color:var(--text-2); }
+.wbh-table tfoot th, .wbh-table tfoot td { font-weight:800; color:var(--forest); border-bottom:none; }
+.lh-chips { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px; }
+.lh-chip { min-height:44px; min-width:64px; }
+.lh-chip[aria-pressed="true"] { background:var(--forest); color:var(--cream); border-color:var(--forest); }
+.lh-chip:focus-visible { outline:2px solid var(--gold); outline-offset:2px; }
+.lh-inline { display:flex; flex-wrap:wrap; align-items:flex-end; gap:8px; margin-bottom:10px; }
+.lh-inline .lh-field { flex:1 1 140px; }
+.lh-inline input { font-family:'Manrope',sans-serif; font-size:13.5px; border:1px solid var(--border); border-radius:10px;
+  padding:9px 11px; min-height:44px; width:100%; max-width:100%; background:var(--cream-card); color:var(--text-1); }
+.lh-steps { border:1px solid var(--border); border-radius:12px; padding:8px 10px 10px; min-width:0; }
+.lh-steps legend { font-size:11px; font-weight:700; color:var(--text-2); padding:0 4px; }
+.lh-steps-list { list-style:none; margin:6px 0; padding:0; }
+.lh-step { display:flex; flex-wrap:wrap; align-items:flex-end; gap:6px; padding:6px 0; border-bottom:1px solid var(--border); }
+.lh-step .lh-field { flex:1 1 90px; }
+.lh-step .assist-btn { flex:0 0 auto; }
+.lh-subtitle { font-size:11px; font-weight:800; letter-spacing:.6px; text-transform:uppercase; color:var(--text-3); margin:10px 0 2px; }
+.lh-aliases { list-style:none; margin:0; padding:0; }
+.lh-aliases li { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:6px;
+  font-size:12.5px; color:var(--text-2); padding:2px 0; }
+.lh-aliases li span { min-width:0; overflow-wrap:anywhere; }
+.lh-learning { margin-top:4px; }
+@media (max-width:380px) {
+  .wbh-table { font-size:11.5px; }
+  .wbh-table tbody th, .wbh-table tfoot th { width:60px; padding-left:6px; }
+  .lh-chip { min-width:56px; }
+}
+/* ===== U4 — loppu ===== */
