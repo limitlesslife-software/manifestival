@@ -444,6 +444,18 @@ test('muutosten jako ja tehtäväkentät: rutiinin siirto on vain tieto, kiinte�
   assert.deepEqual(taskPatch({ kind: REPLAN_CHANGE.SKIP }, {}), { time: null, endTime: null });
   assert.deepEqual(taskPatch({ kind: REPLAN_CHANGE.DEFER, to: { date: TUE } }, { time: '09:00' }), { date: TUE, time: null, endTime: null });
   assert.deepEqual(taskPatch({ kind: REPLAN_CHANGE.DEFER, to: { date: TUE } }, { time: null }), { date: TUE });
+
+  // Kestolla ajastettu tehtävä pysyy kestollisena: siirto ei lisää loppuaikaa,
+  // ja jatko kasvattaa kestoa (yksi polku komentopalkin kanssa, dayReplanActions.js).
+  const timedByDuration = { id: 't2', date: MON, time: '09:00', durationMinutes: 30, schedulingState: 'auto' };
+  assert.deepEqual(taskPatch({ kind: REPLAN_CHANGE.SHIFT, to: { date: MON, time: '09:20', endTime: '09:50' } }, timedByDuration),
+    { time: '09:20', schedulingState: 'auto' });
+  assert.deepEqual(taskPatch({ kind: REPLAN_CHANGE.EXTEND, to: { time: '09:00', endTime: '09:45' } }, timedByDuration),
+    { durationMinutes: 45 });
+  // Aikatauluttamattoman tehtävän siirto on vain tieto: kellonaika tekisi siitä kiinteän.
+  const untimed = splitReplanChanges([{ kind: REPLAN_CHANGE.SHIFT, taskId: 't3', from: { date: MON, time: null }, to: { date: MON, time: '11:00' } }],
+    { tasks: [{ id: 't3', date: MON, time: null }] });
+  assert.deepEqual([untimed.applicable.length, untimed.informational.length], [0, 1]);
 });
 
 test('keskeytyksen ehdotus käyttää päivän kalenteria: meno ja sen matka ovat esteitä', t => {

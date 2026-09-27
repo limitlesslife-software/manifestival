@@ -118,12 +118,17 @@ export async function showNow(intent) {
  * silloin kun sovellus sattuu olemaan auki, kerromme rehellisesti ettei
  * tätä vielä ole.
  *
+ * `options.exactAllowed`: vain arvo true pyytää natiivilta tarkan
+ * hälytyksen (ks. nativeNotifications.schedule). Muuten ajastus on
+ * epätarkka, eikä hälytysasetuksia koskaan avata ilman käyttäjän elettä.
+ *
  * @returns {Promise<{ok:false, reason:string, planned:true}>}
  */
-export async function schedule(intents = []) {
+export async function schedule(intents = [], options = {}) {
   const list = Array.isArray(intents) ? intents : [];
+  const exactAllowed = Boolean(options) && typeof options === 'object' && options.exactAllowed === true;
 
-  if (isNativeShell() && native.isAvailable()) return native.schedule(list);
+  if (isNativeShell() && native.isAvailable()) return native.schedule(list, new Date(), { exactAllowed });
 
   return {
     ok: false,

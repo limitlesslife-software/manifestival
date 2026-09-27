@@ -59,6 +59,17 @@ import { renderPlacesSettings, initPlacesSettings, resetPlacesSettings } from '.
 import { runEventDepartureSweep, resetDepartureWatch } from './departureWatch.js';
 import { runDailyLifeNotices } from './dailyLifeNotices.js';
 import { resetDailyLifeActions } from './dailyLifeActions.js';
+// Arjen herätykset, laitteen kuittaukset ja lähtökori (aalto K, rooli W).
+import {
+  activateAlarmSync, resetAlarmSync, syncAlarms, scheduleAlarmSync, alarmRelevantChanged, alarmDayRolled
+} from './alarmSync.js';
+import {
+  activateAlarmEvents, consumeAlarmEvents, resetAlarmEvents, acknowledgeRecordedDepartures
+} from './alarmEvents.js';
+import {
+  activateDailyLifeOutbox, deactivateDailyLifeOutbox, replayDailyLifeOutbox, overlayDailyLifeOutbox,
+  dailyLifeOutboxStatus
+} from './dailyLifeOutbox.js';
 import { initInbox, closeCaptureReview, renderInbox } from './views/inbox.js';
 import { initReminderForm, closeReminderForm } from './views/reminders.js';
 import { initTravelForms, closeTravelForm, closeLocationRuleForm }
@@ -119,6 +130,8 @@ async function sendPending() {
     // Suunnan lähettämättömät aikakirjaukset (vain aikakirjaukset; uusinta
     // on idempotentti operaatiotunnisteen ansiosta).
     await flushTimeOutbox();
+    // Arjen lähtökori (menot, tapakirjaukset): sama periaate, yksi lähetys kerrallaan.
+    await replayDailyLifeOutbox();
   } catch (error) {
     logFailure('offline.replay_failed', error);
   } finally {
@@ -140,7 +153,8 @@ async function loadFresh() {
   const mark = beginDataLoad();
   const result = await loadUserData();
   // Palautetut tallennukset yhtenä ilmoituksena (loadUserData on jo yksi).
-  if (!result.discarded) batch(() => keepWritesSince(mark));
+  // Lähtökorin odottavat menot ja kirjaukset pysyvät näkyvissä latauksen yli.
+  if (!result.discarded) batch(() => { keepWritesSince(mark); overlayDailyLifeOutbox(); });
   return result;
 }
 
@@ -285,6 +299,60 @@ function watchNotifiableChanges() {
  * sovelluksen kayttoa: kierros yritetaan uudelleen kolmenkymmenen
  * sekunnin paasta, ja siihen asti kayttoliittyma toimii normaalisti.
  */
+// ================================================================
+// ARJEN HERÄTYKSET, LAITTEEN KUITTAUKSET JA LÄHTÖKORI (aalto K, rooli W)
+// ================================================================
+//
+// Kaikki laitteelle menevä (herätykset, puhutut muistutukset) lasketaan
+// src/app/alarmSync.js:ssä; tavalliset ilmoitukset ajastaa edelleen
+// notifications.js samasta jaosta. Näiden kytkentä on koottu tähän:
+//   kirjautuminen  -> startDailyLifeDevice (kori, kuittausmuisti, ajastus sallittu)
+//   latauksen jälkeen ja etualalle palatessa -> refreshDailyLifeDevice
+//                    (laitteen kuittaukset ENSIN, sitten ajastus)
+//   tilamuutos     -> watchDailyLifeChanges (viive 2 s, sama kuin muistutuksissa)
+//   kellon tikki   -> päivän vaihtuessa uusi päivä ajastetaan
+//   uloskirjautuminen -> stopDailyLifeDevice (laitteen herätykset perutaan)
+
+/** Herätykset ja tavalliset muistutukset uudelleen (viiveellä, peräkkäiset yhdistyvät). */
+function requestDailyLifeResync() {
+  scheduleAlarmSync();
+  scheduleNotificationResync();
+}
+
+/** Kirjautuminen: käyttäjän lähtökori ja kuittausmuisti käyttöön. */
+function startDailyLifeDevice(userId) {
+  activateDailyLifeOutbox(userId);
+  activateAlarmSync(userId);
+  activateAlarmEvents(userId, { changed: requestDailyLifeResync });
+}
+
+/** Laitteen kuittaukset ensin, sitten ajastus: kuitattua ei ajasteta uudelleen. */
+async function refreshDailyLifeDevice() {
+  await consumeAlarmEvents();
+  if (!signedIn) return;
+  await syncAlarms();
+}
+
+/**
+ * Tilamuutos, joka voi siirtää herätystä tai arjen muistutusta. Sovelluksessa
+ * kirjattu lähtö ("Lähdin nyt") kuittaa saman menon lähtöketjun ennen
+ * uudelleenajastusta: lähteneelle ei soi "Lähde nyt".
+ */
+function watchDailyLifeChanges() {
+  if (!signedIn) return;
+  const state = getState();
+  if (!alarmRelevantChanged(state)) return;
+  acknowledgeRecordedDepartures(state.commuteObservations);
+  requestDailyLifeResync();
+}
+
+/** Uloskirjautuminen: laitteen herätykset pois, kuittausmuisti pois, kori muistista. */
+function stopDailyLifeDevice() {
+  resetAlarmSync().catch(() => {});
+  resetAlarmEvents();
+  deactivateDailyLifeOutbox();
+}
+
 function runAssistantSweeps() {
   Promise.all([
     runReminderSweep(),
@@ -309,6 +377,8 @@ async function onSignedIn() {
   // koskaan osu tähän (avain on käyttäjäkohtainen).
   const current = getUser();
   offline.activate(current && current.id ? current.id : null);
+  // Arjen lähtökori ja laitteen kuittausmuisti samalla periaatteella (rooli W).
+  startDailyLifeDevice(current && current.id ? String(current.id) : null);
 
   // Käyttäjän oma ajastin laitteelta ENNEN latausta: uudelleenlataus ei
   // hukkaa kulunutta aikaa, eikä toisen käyttäjän ajastin osu tähän
@@ -343,7 +413,9 @@ async function onSignedIn() {
   // heti perään ei lataa uudelleen, mutta lähetyksen aikana palannut verkko
   // ajaa vielä oman kierroksensa.
   reconnect.noteRefreshStarted();
-  if (offline.status().total > 0 || pendingTimeEntryCount() > 0) await sendPending();
+  if (offline.status().total > 0 || pendingTimeEntryCount() > 0 || dailyLifeOutboxStatus().total > 0) {
+    await sendPending();
+  }
   if (!isSameSession(session)) return;
 
   // Lataus voi kestää, ja käyttäjä ehtii sinä aikana kirjautua ulos tai
@@ -383,6 +455,12 @@ async function onSignedIn() {
   // tilan avaintarkistus, kannan `notices_key_unique`), joten kierros
   // voidaan ajaa niin usein kuin halutaan.
   runAssistantSweeps();
+
+  // Herätykset ja puhutut muistutukset laitteelle, kun data on ladattu
+  // (rooli W). Selaimessa tämä ei ajasta mitään: herätystä ei teeskennellä.
+  refreshDailyLifeDevice().catch(error => {
+    logFailure('alarm.refresh_failed', error);
+  });
 
   maybeShowOnboarding();
 }
@@ -426,6 +504,9 @@ function onSignedOut() {
   // Offline-jono vapautetaan muistista; tallennus säilyy käyttäjäkohtaisella
   // avaimella eikä koskaan lähetetä toisen käyttäjän tilillä.
   offline.deactivate();
+  // Laitteen herätykset ja puhutut muistutukset perutaan, kuittausmuisti
+  // tyhjennetään ja arjen lähtökori vapautetaan muistista (rooli W).
+  stopDailyLifeDevice();
 
   // Nollaa myös kesken olevan kuvan luennan ja tyhjentää
   // tiedostovalitsimen. Seuraava käyttäjä samalla selaimella ei saa
@@ -512,6 +593,8 @@ async function start() {
   setScreenRenderers(SCREEN_RENDERERS, { always: ALWAYS_RENDERED, enabled: () => signedIn });
   subscribe(renderAll);
   subscribe(watchNotifiableChanges);
+  // Herätyksiin ja arjen muistutuksiin vaikuttavat kokoelmat (rooli W).
+  subscribe(watchDailyLifeChanges);
   // Skeematarkistuksen tila (rajoitettu / huoltokatko) ENNEN istunnon
   // palautusta: palautettu istunto ajaa tarkistuksen jo initAuthin aikana.
   // Palautuminen lähettää odottavat muutokset ja lataa tiedot samalla
@@ -540,6 +623,9 @@ async function start() {
     markScreensDirty();
     renderToday();
     runAssistantSweeps();
+    // Päivä vaihtui sovelluksen ollessa auki: herätysten ja muistutusten
+    // kolmen päivän ikkuna siirtyy (rooli W).
+    if (alarmDayRolled()) requestDailyLifeResync();
     // Lähettämättömät aikakirjaukset uudelleen (F16): heikko kenttä tai
     // kirjautumissivu ei välttämättä koskaan laukaise offline/online-
     // tapahtumaa. Tyhjällä korilla ei tehdä mitään; epäonnistuminen
@@ -570,6 +656,11 @@ async function start() {
       runAssistantSweeps();
       syncNotifications().catch(error => {
         logFailure('notifications.resume_sync_failed', error);
+      });
+      // Sovelluksen ollessa kiinni kirjatut kuittaukset ja "Lähdin"-painallukset
+      // ensin, sitten herätykset uudelleen (rooli W).
+      refreshDailyLifeDevice().catch(error => {
+        logFailure('alarm.resume_refresh_failed', error);
       });
       // Sovellus on voinut olla taustalla pitkään: data on voinut vanhentua
       // (esim. muokattu toisella laitteella). refreshNow() on limitelty

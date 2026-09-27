@@ -41,19 +41,21 @@
 // lokiin. Virhelokiin menee vain kortin nimi.
 
 import * as platform from '../../platform/index.js';
-import { getState, currentLifeSettings, findTask } from '../state.js';
-import { editTask, skipRoutineOccurrence, restoreRoutineOccurrence } from '../actions.js';
+import { getState, currentLifeSettings } from '../state.js';
+import { editTask } from '../actions.js';
 import { recordCommuteObservation, logHabitEvent } from '../dailyLifeActions.js';
 import {
   departuresOn, firstCommitmentOn, morningPlanOn, sleepScheduleOn, clockOf, shiftIso
 } from '../dailyLifeModel.js';
 import { EVENING_NOTICE_FROM_MINUTES } from '../dailyLifeNotices.js';
 import { calendarInputs } from '../calendarPlan.js';
+import {
+  horizonDays, previewDayReplan, splitReplanChanges, taskPatch, isStaleChange, applyReplanChanges
+} from '../dayReplanActions.js';
 import { deviceOffsetMinutes, deviceTimeZone } from '../deviceTime.js';
 import { sessionSnapshot, isSameSession } from '../../data/session.js';
 import { expandEventOccurrences, shortDateLabel, absoluteMinutesOf } from '../../domain/calendar.js';
 import { buildDayPlan, blockKindOf, BLOCK_KIND } from '../../domain/scheduler.js';
-import { dayCapacity } from '../../domain/capacity.js';
 import { DEPARTURE_PHASE } from '../../domain/departure.js';
 import {
   ESTIMATE_SOURCE, ARRIVAL_RESULT, HABIT_KIND, HABIT_ACTION, HABIT_ACTIONS, protectionLabel
@@ -63,7 +65,7 @@ import { sleepScheduleFor, eveningBefore, driftReport, mondayReadiness } from '.
 import { CHOICE_KIND } from '../../domain/morningPlanner.js';
 import { status as habitStatus, habitActionText, HABIT_STATE } from '../../domain/habitEngine.js';
 import { proposeOpenEndedSlot, groupErrands, DEFAULT_HORIZON_DAYS } from '../../domain/errands.js';
-import { replanDay, REPLAN_CHANGE } from '../../domain/dayReplan.js';
+import { REPLAN_CHANGE } from '../../domain/dayReplan.js';
 import { INTERRUPTION_KIND } from '../../domain/interruptions.js';
 import { buildNavigationTarget, googleMapsUrl, isAllowedNavigationUrl } from '../../domain/navigationLink.js';
 import { foldPlaceText, MIN_ALIAS_CONFIRMATIONS } from '../../domain/places.js';
@@ -865,23 +867,6 @@ export function errandGroups(state, todayIso) {
   return groupErrands({ tasks, trips, places: state.savedPlaces || [], todayIso, weekEndIso: last }).slice(0, MAX_ERRAND_GROUPS);
 }
 
-/** Päivän kapasiteetti ja vapaat välit ehdotukselle (kalenteri ja suojattu lepo mukana). */
-function horizonDays(fromIso, toIso, { state, now, model, clockNow }) {
-  const calendar = calendarRange(fromIso, toIso, { state, now, model });
-  const days = datesBetween(fromIso, toIso).map(date => {
-    const common = {
-      tasks: state.tasks, profile: state.profile, dateIso: date,
-      routines: state.routines, exceptions: state.routineExceptions,
-      events: calendar.events, blocks: calendar.blocks
-    };
-    const plan = buildDayPlan({
-      ...common, todayIso: clockNow.todayIso, nowMinutes: date === clockNow.todayIso ? clockNow.nowMinutes : null
-    });
-    const capacity = dayCapacity(common);
-    return { date, freeSlots: plan.freeSlots, usableMinutes: capacity.usableMinutes };
-  });
-  return { days, calendar };
-}
 
 /**
  * Aikaehdotus avoimelle asialle: ennen määräaikaa, päivän kuorman rajoissa,
@@ -1028,40 +1013,10 @@ function hasDayContent(plan) {
     + count(plan.flexibleRoutines) + count(plan.eventItems) > 0;
 }
 
-/** Muutokset, jotka voidaan tehdä olemassa olevilla toiminnoilla, ja pelkät tiedot. */
-export function splitReplanChanges(changes, state = getState()) {
-  const tasks = new Set((state.tasks || []).map(task => task.id));
-  const applicable = [];
-  const informational = [];
-  for (const change of Array.isArray(changes) ? changes : EMPTY) {
-    if (change.taskId && tasks.has(change.taskId)) applicable.push(change);
-    else if (change.kind === REPLAN_CHANGE.SKIP && change.routineId && change.from && change.from.date) applicable.push(change);
-    else informational.push(change);
-  }
-  return { applicable, informational };
-}
 
-/** Keskeytyksen ehdotus nykyisestä päivästä. Ei muuta mitään. */
+/** Keskeytyksen ehdotus nykyisestä päivästä (sama polku kuin komentopalkilla). Ei muuta mitään. */
 export function interruptionPreview(kind, minutes = null, { state = getState(), now = new Date() } = {}) {
-  const clockNow = clockOf(now);
-  const model = modelFor(state, now);
-  const plan = dayPlanFor(clockNow.todayIso, {
-    state, now, nowMinutes: clockNow.nowMinutes, todayIso: clockNow.todayIso, model
-  });
-  const days = kind === INTERRUPTION_KIND.DEFER_REMAINING
-    ? horizonDays(shiftIso(clockNow.todayIso, 1), shiftIso(clockNow.todayIso, DEFAULT_HORIZON_DAYS), { state, now, model, clockNow }).days
-    : [];
-  return replanDay({
-    plan,
-    interruption: { kind, minutes },
-    nowMinutes: clockNow.nowMinutes,
-    todayIso: clockNow.todayIso,
-    tasks: state.tasks,
-    events: plan.eventItems,
-    blocks: plan.blocks,
-    days,
-    offsetMinutesFn: deviceOffsetMinutes
-  });
+  return previewDayReplan({ kind, minutes }, { state, now });
 }
 
 function slotText(slot) {
@@ -1165,67 +1120,9 @@ function chooseMinutes(button) {
   showPreview(current.picker, minutes);
 }
 
-/** Tehtävän muutos olemassa olevan editTaskin kentiksi. Kiinteitä menoja tämä ei koskaan saa. */
-export function taskPatch(change, task) {
-  switch (change.kind) {
-    case REPLAN_CHANGE.SHIFT:
-      // Siirto pitää tehtävän joustavana: seuraava keskeytys saa siirtää sitä taas.
-      return { time: change.to.time, endTime: change.to.endTime, schedulingState: task.schedulingState };
-    case REPLAN_CHANGE.EXTEND:
-      return { endTime: change.to.endTime };
-    case REPLAN_CHANGE.SKIP:
-      return { time: null, endTime: null };
-    case REPLAN_CHANGE.DEFER:
-      return task.time ? { date: change.to.date, time: null, endTime: null } : { date: change.to.date };
-    default:
-      return null;
-  }
-}
 
-/** Onko päivä muuttunut ehdotuksen jälkeen (tehtävä poistettu tai siirretty muualta)? */
-function isStale(change, state) {
-  if (!change.taskId) return false;
-  const task = (state.tasks || []).find(entry => entry.id === change.taskId);
-  if (!task) return true;
-  return (task.date || null) !== (change.from ? change.from.date : null)
-    || (task.time || null) !== (change.from ? change.from.time : null);
-}
 
-async function applyOne(change) {
-  if (change.taskId) {
-    const task = findTask(change.taskId);
-    const patch = task ? taskPatch(change, task) : null;
-    if (!patch) return { ok: false };
-    const previous = {
-      date: task.date, time: task.time, endTime: task.endTime,
-      durationMinutes: task.durationMinutes, schedulingState: task.schedulingState
-    };
-    const result = await editTask(change.taskId, patch);
-    return result && result.ok ? { ok: true, undo: () => editTask(change.taskId, previous) } : { ok: false };
-  }
-  if (change.kind === REPLAN_CHANGE.SKIP && change.routineId && change.from && change.from.date) {
-    const ok = await skipRoutineOccurrence(change.routineId, change.from.date);
-    return ok ? { ok: true, undo: () => restoreRoutineOccurrence(change.routineId, change.from.date) } : { ok: false };
-  }
-  return { ok: false };
-}
 
-/**
- * Tee muutokset järjestyksessä. Jos yksikin epäonnistuu, jo tehdyt
- * perutaan: puoliksi siirretty päivä olisi pahempi kuin siirtämätön.
- */
-export async function applyReplanChanges(changes) {
-  const done = [];
-  for (const change of changes) {
-    const step = await applyOne(change);
-    if (!step.ok) {
-      for (const entry of done.reverse()) await entry.undo();
-      return { ok: false, applied: 0 };
-    }
-    done.push(step);
-  }
-  return { ok: true, applied: done.length };
-}
 
 /**
  * Vahvista ja tee keskeytyksen ehdotus. Vahvistus kysytään AINA ennen
@@ -1246,7 +1143,7 @@ export async function applyReplanPreview({ confirm = confirmAction, button = nul
   if (!confirmed) return { ok: false, cancelled: true };
   // Istunto tai ehdotus vaihtui vahvistuksen aikana: vanhaa ei tehdä.
   if (current !== uiState() || current.replan !== pending) return { ok: false, discarded: true };
-  if (applicable.some(change => isStale(change, getState()))) {
+  if (applicable.some(change => isStaleChange(change, getState()))) {
     notify('Päivän suunnitelma muuttui välillä. Katso ehdotus uudelleen ennen muutoksia.');
     showPreview(pending.kind, pending.minutes);
     return { ok: false, stale: true };
@@ -1406,3 +1303,6 @@ export function initTodayDailyLife() {
     });
   }
 }
+
+// Yksi polku: esikatselu ja toteutus ovat src/app/dayReplanActions.js:ssä.
+export { splitReplanChanges, taskPatch, applyReplanChanges };
