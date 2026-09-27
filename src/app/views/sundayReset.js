@@ -999,16 +999,21 @@ export function renderSundayReset() {
   const stepLabel = maybe('sundayResetStepLabel');
   if (stepLabel && stepLabel.textContent !== label) stepLabel.textContent = label;
   const previous = activeFocusKey(card);
+  const focusWasInside = typeof document !== 'undefined' && document.activeElement
+    && typeof card.contains === 'function' && card.contains(document.activeElement);
   const changed = setHtml(card, html);
   const live = maybe('sundayResetStatus');
   if (live && live.textContent !== status) live.textContent = status;
+  const focusTitle = () => {
+    const title = maybe('sundayResetTitle');
+    if (title && typeof title.focus === 'function') title.focus();
+  };
   if (session.focusTitle) {
     session.focusTitle = false;
-    const title = maybe('sundayResetTitle');
-    if (title && typeof title.focus === 'function') title.focus();
-  } else if (changed && previous && !restoreFocusKey(card, previous)) {
-    const title = maybe('sundayResetTitle');
-    if (title && typeof title.focus === 'function') title.focus();
+    focusTitle();
+  } else if (changed && focusWasInside && !restoreFocusKey(card, previous)) {
+    // Ohjain poistui tai estettiin (tallennus kesken): fokus ei putoa <body>:yyn.
+    focusTitle();
   }
   return key;
 }

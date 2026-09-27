@@ -339,6 +339,7 @@ test('C: virheellinen tuntimäärä ei tallennu ja kertoo syyn', async (t) => {
   assert.equal(getState().weeklyCapacities.length, 0);
   assert.equal(stepKey(), 'capacity');
   assert.match($('sundayResetError').textContent, /0–168/);
+  assert.ok(card().contains(doc.activeElement), 'fokus pysyy nollauksessa, ei putoa <body>:yyn');
 });
 
 // ================================================================ D: PRIORITEETIT
