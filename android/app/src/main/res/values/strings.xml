@@ -25,4 +25,9 @@
     <string name="reminder_snooze">Torku 5 min</string>
     <string name="reminder_route">Avaa reitti</string>
     <string name="alarm_sound_picker_title">Herätysääni</string>
+    <!-- Herätyksen puhe ja aamukatsaus: tervehdys ja kellonaika puhehetkellä (AlarmService). -->
+    <string name="alarm_greeting_morning">Hyvää huomenta. Kello on %1$s.</string>
+    <string name="alarm_greeting_day">Hyvää päivää. Kello on %1$s.</string>
+    <string name="alarm_greeting_evening">Hyvää iltaa. Kello on %1$s.</string>
+    <string name="alarm_brief_running">Aamukatsausta luetaan ääneen</string>
 </resources>

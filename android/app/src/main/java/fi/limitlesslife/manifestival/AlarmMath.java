@@ -284,8 +284,9 @@ final class AlarmMath {
      * yleisnimella.
      */
     static boolean isPrivateField(String key) {
+        // brief = aamukatsauksen loppuosa (menon nimi): vain avatun puhelimen tallessa.
         return "title".equals(key) || "body".equals(key) || "speech".equals(key)
-            || "routeDestination".equals(key) || "routeMode".equals(key);
+            || "routeDestination".equals(key) || "routeMode".equals(key) || "brief".equals(key);
     }
 
     // ------------------------------------------------------------ syotteet
@@ -314,6 +315,119 @@ final class AlarmMath {
 
     static boolean modePlaysSound(String mode) {
         return !MODE_SPEECH.equals(mode);
+    }
+
+    /** Tapa, tai heratysaani, jos tuntematon. */
+    static String modeOrDefault(String mode) {
+        return isMode(mode) ? mode : MODE_SOUND;
+    }
+
+    // ------------------------------------------------------------ aanilahteet (oma musiikki)
+
+    static final String SOURCE_MUSIC = "music";
+    static final String SOURCE_PICKED = "picked";
+    static final String SOURCE_DEFAULT = "default";
+
+    /** sound_fallback-tapahtuman koodi: musiikkia ei voitu soittaa, soi heratysaani. */
+    static final String CODE_MUSIC_UNAVAILABLE = "music-unavailable";
+    /** sound_fallback-tapahtuman koodi: mikaan aani ei soinut. */
+    static final String CODE_NO_SOUND = "no-sound";
+
+    /**
+     * Soittaako tapa kayttajan valitsemaa musiikkia (pickAlarmMusic), kun se
+     * on valittu ja luettavissa: "Oma musiikki" ja "Aani ja puhe". Puhetapa
+     * ja heratysaani eivat soita musiikkia.
+     */
+    static boolean modePrefersMusic(String mode) {
+        return MODE_MUSIC.equals(mode) || MODE_COMBINATION.equals(mode);
+    }
+
+    /**
+     * Aanilahteet soittojarjestyksessa: oma musiikki (jos tapa suosii sita
+     * ja se on valittu ja luettavissa), kayttajan valitsema heratysaani,
+     * puhelimen oletusaanet. Oletus on aina viimeisena: heratys ei jaa
+     * aanettomaksi, vaikka musiikkitiedosto olisi poistettu.
+     */
+    static String[] soundSources(String mode, boolean musicAvailable, boolean soundPicked) {
+        boolean music = modePrefersMusic(mode) && musicAvailable;
+        String[] sources = new String[(music ? 1 : 0) + (soundPicked ? 1 : 0) + 1];
+        int index = 0;
+        if (music) sources[index++] = SOURCE_MUSIC;
+        if (soundPicked) sources[index++] = SOURCE_PICKED;
+        sources[index] = SOURCE_DEFAULT;
+        return sources;
+    }
+
+    /**
+     * Kirjattavan varavaihtoehdon (sound_fallback) koodi, kun lahde `played`
+     * soi (null = mikaan ei soinut):
+     *   null                ei varavaihtoehtoa: ensisijainen lahde soi
+     *   CODE_MUSIC_UNAVAILABLE  tapa "Oma musiikki" (tai valittu musiikki tavalla
+     *                       "Aani ja puhe"), mutta musiikki ei soinut: ei valittu,
+     *                       poistettu, oikeus menetetty tai puhelin lukittu
+     *                       kaynnistyksen jalkeen. Soi heratysaani.
+     *   ""                  valittu heratysaani ei soinut, soi oletusaani (ei koodia)
+     *   CODE_NO_SOUND       mikaan ei soinut
+     */
+    static String soundFallbackCode(String mode, String[] sources, String played) {
+        if (played == null) return CODE_NO_SOUND;
+        String first = sources != null && sources.length > 0 ? sources[0] : SOURCE_DEFAULT;
+        boolean musicWanted = MODE_MUSIC.equals(mode) || SOURCE_MUSIC.equals(first);
+        if (musicWanted && !SOURCE_MUSIC.equals(played)) return CODE_MUSIC_UNAVAILABLE;
+        return played.equals(first) ? null : "";
+    }
+
+    // ------------------------------------------------------------ aamukatsaus
+
+    /**
+     * Tervehdys vuorokaudenajan mukaan, sama raja kuin alarmPlan.js
+     * greetingFor: 0 = huomenta (ennen klo 10), 1 = paivaa (ennen klo 17),
+     * 2 = iltaa.
+     */
+    static int greetingIndex(long epochMs, TimeZone zone) {
+        Calendar calendar = Calendar.getInstance(zone == null ? TimeZone.getDefault() : zone, Locale.ROOT);
+        calendar.setTimeInMillis(epochMs);
+        int minutes = calendar.get(Calendar.HOUR_OF_DAY) * 60 + calendar.get(Calendar.MINUTE);
+        if (minutes < 10 * 60) return 0;
+        if (minutes < 17 * 60) return 1;
+        return 2;
+    }
+
+    /** Puhuttava kellonaika suomalaisittain "6.05" (wallClock.js clockText). */
+    static String spokenClock(long epochMs, TimeZone zone) {
+        Calendar calendar = Calendar.getInstance(zone == null ? TimeZone.getDefault() : zone, Locale.ROOT);
+        calendar.setTimeInMillis(epochMs);
+        return String.format(Locale.ROOT, "%d.%02d",
+            calendar.get(Calendar.HOUR_OF_DAY), calendar.get(Calendar.MINUTE));
+    }
+
+    /**
+     * Luetaanko aamukatsaus kerran Sammuta-painalluksen jalkeen: vain
+     * heratys ja vain, kun kayttaja otti katsauksen kayttoon
+     * (briefOnDismiss). Tavasta riippumatta: myos oletustapa
+     * "Heratysaani" lukee sen (ennen katsaus oli hiljainen ilman puhevaihetta).
+     */
+    static boolean speaksBriefOnDismiss(String kind, boolean briefOnDismiss) {
+        return briefOnDismiss && KIND_WAKE.equals(kind);
+    }
+
+    /**
+     * Sammutuksen jalkeen luettava katsaus: tervehdys ja kellonaika
+     * (puhehetkella, joten torkun jalkeenkin oikein) ja katsauksen loppuosa,
+     * jos se on luettavissa (ei ennen ensimmaista lukituksen avausta).
+     * Rajattu puheen enimmaispituuteen.
+     */
+    static String briefSpeech(String greeting, String detail) {
+        String head = cleanText(greeting, MAX_SPEECH_LENGTH);
+        String tail = cleanText(detail, MAX_SPEECH_LENGTH);
+        if (head == null) return tail;
+        if (tail == null) return head;
+        return cleanText(head + " " + tail, MAX_SPEECH_LENGTH);
+    }
+
+    /** Onko valitun tiedoston osoite content-URI (tiedostovalitsin antaa vain niita). */
+    static boolean isContentScheme(String scheme) {
+        return "content".equals(scheme);
     }
 
     static int clamp(int value, int min, int max) {

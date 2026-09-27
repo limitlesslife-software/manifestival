@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.Intent;
+import android.database.Cursor;
 import android.media.AudioAttributes;
 import android.media.Ringtone;
 import android.media.RingtoneManager;
@@ -13,6 +14,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.PowerManager;
+import android.provider.OpenableColumns;
 import android.provider.Settings;
 import android.speech.tts.TextToSpeech;
 import android.speech.tts.UtteranceProgressListener;
@@ -125,6 +127,10 @@ public class AlarmPlugin extends Plugin {
         result.put("notifications", notifications);
         result.put("tts", AlarmStore.ttsStatus(context));
         result.put("soundPicked", AlarmStore.soundUri(context) != null);
+        // Oma heratysmusiikki: valittu ja nimi (nimi vain nayttoon, ei tapahtumiin).
+        result.put("musicPicked", AlarmStore.musicUri(context) != null);
+        String musicName = AlarmStore.musicName(context);
+        if (musicName != null) result.put("musicName", musicName);
         result.put("scheduled", AlarmStore.entries(context).size());
         result.put("ringing", AlarmService.isRingingAny());
         PowerManager power = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
@@ -241,6 +247,13 @@ public class AlarmPlugin extends Plugin {
         if (body != null) AlarmScheduler.put(entry, "body", body);
         String speech = AlarmMath.cleanText(stringOrNull(input, "speech"), AlarmMath.MAX_SPEECH_LENGTH);
         if (speech != null) AlarmScheduler.put(entry, "speech", speech);
+        // Aamukatsaus Sammuta-painalluksen jalkeen: loppuosa (yksityinen teksti)
+        // ja lippu (vain tosi boolean, vain heratykselle).
+        String brief = AlarmMath.cleanText(stringOrNull(input, "brief"), AlarmMath.MAX_SPEECH_LENGTH);
+        if (brief != null) AlarmScheduler.put(entry, "brief", brief);
+        if (AlarmMath.speaksBriefOnDismiss(kind, Boolean.TRUE.equals(input.opt("briefOnDismiss")))) {
+            AlarmScheduler.put(entry, "briefOnDismiss", true);
+        }
         AlarmScheduler.put(entry, "mode", mode);
         AlarmScheduler.put(entry, "escalation", escalation);
         AlarmScheduler.put(entry, "snoozeMinutes", snoozeMinutes);
@@ -402,8 +415,8 @@ public class AlarmPlugin extends Plugin {
 
     /**
      * Jarjestelman aanivalitsin (RingtoneManager): content-URI, ei
-     * tallennustilan lupaa. Valinta tallennetaan laitteelle. Oman
-     * musiikkitiedoston valinta ei ole mukana (vaatisi tiedostoluvan).
+     * tallennustilan lupaa. Valinta tallennetaan laitteelle. Oma
+     * musiikkitiedosto valitaan erikseen: pickAlarmMusic.
      */
     @PluginMethod
     public void pickAlarmSound(PluginCall call) {
@@ -462,6 +475,105 @@ public class AlarmPlugin extends Plugin {
             // nimi on mukavuus
         }
         call.resolve(result);
+    }
+
+    // ------------------------------------------------------------ oma heratysmusiikki
+
+    /**
+     * Oma heratysmusiikki jarjestelman tiedostovalitsimella (Storage Access
+     * Framework, ACTION_OPEN_DOCUMENT, audio/*). EI tallennustilan lupaa:
+     * kayttaja valitsee yhden tiedoston, ja sovellus saa pysyvan
+     * lukuoikeuden vain siihen (takePersistableUriPermission). Edellisen
+     * valinnan oikeus vapautetaan. VAIN kayttajan napautuksesta.
+     *
+     * Soi tavoilla "Oma musiikki" ja "Aani ja puhe" (AlarmService,
+     * AlarmMath.soundSources). Jos tiedosto poistetaan tai oikeus menetetaan,
+     * soi heratysaani ja se kirjataan (sound_fallback, music-unavailable).
+     */
+    @PluginMethod
+    public void pickAlarmMusic(PluginCall call) {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT)
+            .addCategory(Intent.CATEGORY_OPENABLE)
+            .setType("audio/*")
+            // Vain laitteella oleva tiedosto: pilvitiedoston lataus ei saa viivastyttaa soittoa aamulla.
+            .putExtra(Intent.EXTRA_LOCAL_ONLY, true)
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+        try {
+            startActivityForResult(call, intent, "onAlarmMusicPicked");
+        } catch (RuntimeException error) {
+            JSObject result = new JSObject();
+            result.put("ok", false);
+            result.put("code", "unavailable");
+            call.resolve(result);
+        }
+    }
+
+    @ActivityCallback
+    private void onAlarmMusicPicked(PluginCall call, ActivityResult activityResult) {
+        if (call == null) return;
+        JSObject result = new JSObject();
+        Intent data = activityResult == null ? null : activityResult.getData();
+        Uri picked = data == null ? null : data.getData();
+        if (activityResult == null || activityResult.getResultCode() != Activity.RESULT_OK || picked == null) {
+            result.put("ok", false);
+            result.put("code", "cancelled");
+            call.resolve(result);
+            return;
+        }
+        if (!AlarmMath.isContentScheme(picked.getScheme())) {
+            result.put("ok", false);
+            result.put("code", "unsupported");
+            call.resolve(result);
+            return;
+        }
+        Context context = getContext();
+        try {
+            // Pysyva lukuoikeus: heratys soi myos uudelleenkaynnistyksen jalkeen.
+            context.getContentResolver().takePersistableUriPermission(picked, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        } catch (SecurityException | IllegalArgumentException notPersistable) {
+            // Valitsin ei antanut pysyvaa oikeutta: tiedosto ei soisi aamulla. Ei valintaa.
+            result.put("ok", false);
+            result.put("code", "not-persistable");
+            call.resolve(result);
+            return;
+        }
+        String uri = picked.toString();
+        String previous = AlarmStore.musicUri(context);
+        String name = musicDisplayName(context, picked);
+        if (!AlarmStore.setMusic(context, uri, name)) {
+            releaseMusicGrant(context, uri);
+            result.put("ok", false);
+            result.put("code", "unavailable");
+            call.resolve(result);
+            return;
+        }
+        if (previous != null && !previous.equals(uri)) releaseMusicGrant(context, previous);
+        result.put("ok", true);
+        result.put("picked", true);
+        if (name != null) result.put("title", name);
+        call.resolve(result);
+    }
+
+    /** Valitun tiedoston nimi nayttoon (OpenableColumns.DISPLAY_NAME), tai null. */
+    private static String musicDisplayName(Context context, Uri uri) {
+        try (Cursor cursor = context.getContentResolver().query(uri, new String[] { OpenableColumns.DISPLAY_NAME }, null, null, null)) {
+            if (cursor != null && cursor.moveToFirst()) {
+                int column = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                if (column >= 0) return AlarmMath.cleanText(cursor.getString(column), AlarmMath.MAX_TITLE_LENGTH);
+            }
+        } catch (RuntimeException ignored) {
+            // nimi on mukavuus
+        }
+        return null;
+    }
+
+    /** Vapauta aiemman valinnan pysyva oikeus (oikeuksien maara on rajattu). */
+    private static void releaseMusicGrant(Context context, String uri) {
+        try {
+            context.getContentResolver().releasePersistableUriPermission(Uri.parse(uri), Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        } catch (RuntimeException ignored) {
+            // oikeutta ei ollut tai se on jo vapautettu
+        }
     }
 
     // ------------------------------------------------------------ navigointi

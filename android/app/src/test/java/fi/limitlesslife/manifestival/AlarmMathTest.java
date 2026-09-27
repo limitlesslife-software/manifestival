@@ -1,5 +1,6 @@
 package fi.limitlesslife.manifestival;
 
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
@@ -219,6 +220,83 @@ public class AlarmMathTest {
             "maxSnoozes", "snoozeCount", "snoozeUntil", "autoSnoozed", "firedAt", "exact" }) {
             assertFalse(key, AlarmMath.isPrivateField(key));
         }
+    }
+
+    @Test
+    public void briefTextStaysInCredentialStorage() {
+        // Aamukatsauksen loppuosa voi sisaltaa menon nimen: ei laitesuojattuun.
+        assertTrue(AlarmMath.isPrivateField("brief"));
+        // Lippu on soittoon tarvittava tieto: laitesuojattuun (luettavissa lukittuna).
+        assertFalse(AlarmMath.isPrivateField("briefOnDismiss"));
+    }
+
+    @Test
+    public void musicModesPlayPickedMusicFirstAndAlwaysFallBackToAlarmSound() {
+        // REGRESSIO (trace-alarm-music-mode-fake): "Oma musiikki" soitti heratysaanen.
+        assertTrue(AlarmMath.modePrefersMusic(AlarmMath.MODE_MUSIC));
+        assertTrue(AlarmMath.modePrefersMusic(AlarmMath.MODE_COMBINATION));
+        assertFalse(AlarmMath.modePrefersMusic(AlarmMath.MODE_SOUND));
+        assertFalse(AlarmMath.modePrefersMusic(AlarmMath.MODE_SPEECH));
+        assertArrayEquals(new String[] { "music", "picked", "default" }, AlarmMath.soundSources("music", true, true));
+        assertArrayEquals(new String[] { "music", "default" }, AlarmMath.soundSources("combination", true, false));
+        // Musiikkia ei ole valittu tai puhelin on lukittu kaynnistyksen jalkeen: heratysaani.
+        assertArrayEquals(new String[] { "picked", "default" }, AlarmMath.soundSources("music", false, true));
+        assertArrayEquals(new String[] { "default" }, AlarmMath.soundSources("music", false, false));
+        // Heratysaani-tapa ei koskaan soita musiikkia, vaikka se olisi valittu.
+        assertArrayEquals(new String[] { "picked", "default" }, AlarmMath.soundSources("alarm_sound", true, true));
+        assertArrayEquals(new String[] { "default" }, AlarmMath.soundSources("speech", true, false));
+        assertEquals("alarm_sound", AlarmMath.modeOrDefault("disco"));
+        assertEquals("music", AlarmMath.modeOrDefault("music"));
+    }
+
+    @Test
+    public void soundFallbackIsRecordedHonestly() {
+        String[] musicFirst = AlarmMath.soundSources("music", true, true);
+        assertNull(AlarmMath.soundFallbackCode("music", musicFirst, "music"));
+        // Tiedosto poistettu tai oikeus menetetty: soi heratysaani ja se kirjataan.
+        assertEquals("music-unavailable", AlarmMath.soundFallbackCode("music", musicFirst, "picked"));
+        assertEquals("music-unavailable", AlarmMath.soundFallbackCode("music", musicFirst, "default"));
+        // Musiikkitapa ilman luettavaa musiikkia: sekin kirjataan (ei hiljaista korvausta).
+        assertEquals("music-unavailable", AlarmMath.soundFallbackCode("music", AlarmMath.soundSources("music", false, false), "default"));
+        // Aani ja puhe ilman valittua musiikkia soittaa heratysaanen tarkoituksella: ei varavaihtoehto.
+        assertNull(AlarmMath.soundFallbackCode("combination", AlarmMath.soundSources("combination", false, false), "default"));
+        assertEquals("music-unavailable",
+            AlarmMath.soundFallbackCode("combination", AlarmMath.soundSources("combination", true, false), "default"));
+        // Ennallaan: valittu heratysaani ei soinut -> oletusaani, kirjataan ilman koodia.
+        assertEquals("", AlarmMath.soundFallbackCode("alarm_sound", AlarmMath.soundSources("alarm_sound", false, true), "default"));
+        assertNull(AlarmMath.soundFallbackCode("alarm_sound", AlarmMath.soundSources("alarm_sound", false, false), "default"));
+        assertEquals("no-sound", AlarmMath.soundFallbackCode("music", musicFirst, null));
+        assertTrue(AlarmMath.isContentScheme("content"));
+        assertFalse(AlarmMath.isContentScheme("file"));
+        assertFalse(AlarmMath.isContentScheme(null));
+    }
+
+    @Test
+    public void morningBriefIsSpokenAfterDismissInEveryModeButOnlyForWake() {
+        // REGRESSIO (claims-morning-brief-silent): oletustavalla katsaus oli hiljainen.
+        assertTrue(AlarmMath.speaksBriefOnDismiss("wake", true));
+        assertFalse(AlarmMath.speaksBriefOnDismiss("wake", false));
+        assertFalse(AlarmMath.speaksBriefOnDismiss("spoken", true));
+        assertFalse(AlarmMath.speaksBriefOnDismiss("critical", true));
+        // Tervehdys ja kellonaika puhehetkella, sitten loppuosa.
+        assertEquals("Hyvaa huomenta. Kello on 6.48. Lahtotavoite on 7.05.",
+            AlarmMath.briefSpeech("Hyvaa huomenta. Kello on 6.48.", " Lahtotavoite on 7.05.\n"));
+        // Lukittuna (ei tekstia) katsaus ei jaa hiljaiseksi: tervehdys ja kellonaika.
+        assertEquals("Hyvaa huomenta. Kello on 6.48.", AlarmMath.briefSpeech("Hyvaa huomenta. Kello on 6.48.", null));
+        assertEquals(AlarmMath.MAX_SPEECH_LENGTH,
+            AlarmMath.briefSpeech("Hei.", new String(new char[900]).replace('\0', 'x')).length());
+    }
+
+    @Test
+    public void greetingAndSpokenClockFollowTheDomain() {
+        // 28.9.2026 klo 7.00 Helsingissa = T. Sama raja kuin alarmPlan.js greetingFor.
+        assertEquals(0, AlarmMath.greetingIndex(T, HELSINKI));
+        assertEquals("7.00", AlarmMath.spokenClock(T, HELSINKI));
+        assertEquals("7.05", AlarmMath.spokenClock(T + 5L * AlarmMath.MINUTE_MS, HELSINKI));
+        assertEquals(0, AlarmMath.greetingIndex(T + 179L * AlarmMath.MINUTE_MS, HELSINKI));
+        assertEquals(1, AlarmMath.greetingIndex(T + 180L * AlarmMath.MINUTE_MS, HELSINKI));
+        assertEquals(2, AlarmMath.greetingIndex(T + 600L * AlarmMath.MINUTE_MS, HELSINKI));
+        assertEquals("17.00", AlarmMath.spokenClock(T + 600L * AlarmMath.MINUTE_MS, HELSINKI));
     }
 
     @Test

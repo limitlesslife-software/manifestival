@@ -27,7 +27,10 @@
 // lisäys): mitä listassa ei ole, perutaan. Sama tunniste = yksi herätys.
 // Merkintä: {id, kind:'wake'|'spoken'|'critical', date:'YYYY-MM-DD',
 // time:'HH:MM', title, body, speech|null, mode, escalation:[{afterSeconds,
-// step}], snoozeMinutes, maxSnoozes, routeDestination|null, routeMode|null}.
+// step}], snoozeMinutes, maxSnoozes, routeDestination|null, routeMode|null,
+// brief|null, briefOnDismiss}. Herätyksen briefOnDismiss: laite lukee
+// aamukatsauksen KERRAN Sammuta-painalluksen jälkeen tavasta riippumatta
+// (tervehdys ja kellonaika puhehetkellä + brief, jos luettavissa).
 // Aika annetaan SEINÄKELLOAIKANA; laite laskee hetken omassa
 // aikavyöhykkeessään ja laskee sen uudelleen, kun vyöhyke tai kello vaihtuu.
 //
@@ -267,6 +270,18 @@ function validateEntryUnsafe(input) {
     errors.speech = `Puhuttava teksti voi olla enintään ${ALARM_LIMITS.maxSpeechLength} merkkiä.`;
   }
 
+  // Aamukatsaus sammutuksen jälkeen: loppuosan teksti ja lippu (vain herätykselle).
+  const brief = source.brief === undefined || source.brief === null ? null : cleanText(source.brief);
+  if (source.brief !== undefined && source.brief !== null && typeof source.brief !== 'string') {
+    errors.brief = 'Aamukatsauksen teksti on virheellinen.';
+  } else if (brief && codePointLength(brief) > ALARM_LIMITS.maxSpeechLength) {
+    errors.brief = `Aamukatsaus voi olla enintään ${ALARM_LIMITS.maxSpeechLength} merkkiä.`;
+  }
+  const briefOnDismiss = source.briefOnDismiss === undefined || source.briefOnDismiss === null
+    ? false : source.briefOnDismiss;
+  if (typeof briefOnDismiss !== 'boolean') errors.briefOnDismiss = 'Aamukatsauksen valinta on virheellinen.';
+  else if (briefOnDismiss && source.kind !== ALARM_KIND.WAKE) errors.briefOnDismiss = 'Aamukatsaus kuuluu vain herätykseen.';
+
   const mode = source.mode === undefined || source.mode === null ? 'alarm_sound' : source.mode;
   if (!NATIVE_ALARM_MODES.includes(mode)) errors.mode = 'Herätyksen tapa on tuntematon.';
 
@@ -335,7 +350,9 @@ function validateEntryUnsafe(input) {
       snoozeMinutes,
       maxSnoozes,
       routeDestination,
-      routeMode
+      routeMode,
+      brief: brief || null,
+      briefOnDismiss: briefOnDismiss === true
     })
     : null;
   return Object.freeze({ valid, errors: Object.freeze(errors), entry });
@@ -446,7 +463,7 @@ export async function alarmStatus() {
     return Object.freeze({
       supported: false, implemented: false, reason: isNativeShell() ? NOT_IN_THIS_VERSION : ALARMS_WEB_REASON,
       exact: false, fullScreen: false, notifications: false, tts: 'unknown', soundPicked: false,
-      scheduled: 0, ringing: false, batteryOptimized: null
+      musicPicked: false, musicName: null, scheduled: 0, ringing: false, batteryOptimized: null
     });
   }
   const result = await callPlugin(plugin, 'status');
@@ -454,7 +471,7 @@ export async function alarmStatus() {
     return Object.freeze({
       supported: true, implemented: true, reason: 'Herätyksen tilaa ei saatu luettua.', code: result.code,
       exact: false, fullScreen: false, notifications: false, tts: 'unknown', soundPicked: false,
-      scheduled: 0, ringing: false, batteryOptimized: null
+      musicPicked: false, musicName: null, scheduled: 0, ringing: false, batteryOptimized: null
     });
   }
   const value = result.value;
@@ -472,6 +489,9 @@ export async function alarmStatus() {
     notifications,
     tts: ['available', 'missing'].includes(value.tts) ? value.tts : 'unknown',
     soundPicked: value.soundPicked === true,
+    // Oma herätysmusiikki (pickAlarmMusic): valittu ja tiedoston nimi (vain näyttöteksti).
+    musicPicked: value.musicPicked === true,
+    musicName: value.musicPicked === true ? displayName(value.musicName) : null,
     scheduled: Number.isInteger(value.scheduled) && value.scheduled >= 0 ? value.scheduled : 0,
     ringing: value.ringing === true,
     batteryOptimized: typeof value.batteryOptimized === 'boolean' ? value.batteryOptimized : null,
@@ -600,6 +620,40 @@ export async function openFullScreenSettings() {
   return Object.freeze({
     ok: result.ok && result.value.ok !== false, supported: true,
     notNeeded: result.ok && result.value.notNeeded === true
+  });
+}
+
+/** Laitteen antama nimi näyttötekstiksi (rajattu), tai null. */
+function displayName(value) {
+  const text = cleanText(value);
+  if (!text) return null;
+  const chars = Array.from(text);
+  return chars.length <= ALARM_LIMITS.maxTitleLength ? text : chars.slice(0, ALARM_LIMITS.maxTitleLength).join('');
+}
+
+/**
+ * Oma herätysmusiikki järjestelmän tiedostovalitsimella (Android:
+ * ACTION_OPEN_DOCUMENT audio/*, pysyvä lukuoikeus vain valittuun
+ * tiedostoon, EI tallennustilan lupaa). Soi tavoilla "Oma musiikki" ja
+ * "Ääni ja puhe"; jos tiedosto ei ole luettavissa (poistettu, puhelin
+ * käynnistetty eikä vielä avattu), soi herätysääni. VAIN käyttäjän napautuksesta.
+ *
+ * @returns {Promise<{ok, supported, picked, title, code}>} code: cancelled |
+ *   not-persistable | unsupported | unavailable | timeout | failed
+ */
+export async function pickAlarmMusic() {
+  const plugin = nativeAlarmPlugin();
+  if (!plugin) return unsupported({ picked: false, title: null, code: 'unsupported' });
+  const result = await callPlugin(plugin, 'pickAlarmMusic', undefined, PICK_TIMEOUT_MS);
+  if (!result.ok) return Object.freeze({ ok: false, supported: true, picked: false, title: null, code: result.code });
+  const value = result.value;
+  const ok = value.ok === true;
+  return Object.freeze({
+    ok,
+    supported: true,
+    picked: ok && value.picked === true,
+    title: ok ? displayName(value.title) : null,
+    code: ok ? null : (typeof value.code === 'string' ? value.code : 'unknown')
   });
 }
 

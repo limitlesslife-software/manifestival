@@ -109,12 +109,16 @@ public class AlarmReceiver extends BroadcastReceiver {
         }
         if (ACTION_DELETED.equals(action)) {
             // Muistutus pyyhkaistiin pois: "ei tata". Ei toisteta.
-            finish(context, id, entry);
+            finish(context, id, entry, false);
             AlarmStore.recordEvent(context, AlarmStore.EVENT_DISMISSED, id, kind, null);
             return;
         }
         if (ACTION_DISMISS.equals(action) || ACTION_ACK.equals(action) || ACTION_DEPARTED.equals(action)) {
-            finish(context, id, entry);
+            // Heratyksen Sammuta ja aamukatsaus kaytossa: katsaus luetaan kerran
+            // soiton jalkeen tavasta riippumatta (ei torkussa, ei aikarajalla).
+            boolean brief = ACTION_DISMISS.equals(action) && entry != null
+                && AlarmMath.speaksBriefOnDismiss(kind, entry.optBoolean("briefOnDismiss", false));
+            finish(context, id, entry, brief);
             AlarmStore.recordEvent(context, AlarmStore.EVENT_ACKNOWLEDGED, id, kind, null);
             if (ACTION_DEPARTED.equals(action)) {
                 AlarmStore.recordEvent(context, AlarmStore.EVENT_DEPARTED, id, kind, null);
@@ -122,13 +126,17 @@ public class AlarmReceiver extends BroadcastReceiver {
         }
     }
 
-    /** Kuitattu tai hylatty: pois ajastuksesta, tallesta ja ilmoitusalueelta; soitto seis. */
-    private static void finish(Context context, String id, JSONObject entry) {
+    /**
+     * Kuitattu tai hylatty: pois ajastuksesta, tallesta ja ilmoitusalueelta;
+     * soitto seis. brief = soiton jalkeen luetaan aamukatsaus (AlarmService).
+     */
+    private static void finish(Context context, String id, JSONObject entry, boolean brief) {
         if (entry != null) {
             AlarmStore.markHandled(context, id, entry.optString("date"), entry.optString("time"));
         }
         AlarmScheduler.cancel(context, Collections.singletonList(id));
-        AlarmService.stopRinging(id);
+        if (brief) AlarmService.stopRingingWithBrief(id);
+        else AlarmService.stopRinging(id);
         cancelReminderNotification(context, id);
     }
 
