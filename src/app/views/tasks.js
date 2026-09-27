@@ -18,7 +18,6 @@ import { offline } from '../offline.js';
 import { renderInbox } from './inbox.js';
 import { renderReminders } from './reminders.js';
 import { renderTravel } from './travel.js';
-import { renderStored, initStored } from './stored.js';
 import { ESTIMATE_PRESETS } from '../../domain/alignmentPolicy.js';
 import { formatMinutes } from '../../domain/lifeArea.js';
 import { estimateQueueCount, openEstimateQueue } from './direction.js';
@@ -41,6 +40,16 @@ const SEGMENT_NODES = Object.freeze([
   { key: 'travel', tab: 'segmentTravel', section: 'travelSection' }
 ]);
 
+
+/**
+ * Tallessa-osion piirtäjä (views/stored.js). Kytketään main.js:ssä: stored.js
+ * avaa muokkauksen tämän moduulin lomakkeeseen, joten suora import tänne
+ * tekisi syklin.
+ */
+let storedRenderer = () => {};
+export function setStoredRenderer(render) {
+  storedRenderer = typeof render === 'function' ? render : () => {};
+}
 
 /** Täytä valikot domainista, jottei listoja tarvitse ylläpitää kahdessa paikassa. */
 export function populateSelects() {
@@ -167,7 +176,7 @@ export function renderTasks() {
   }
 
   if (segment === 'routines') renderRoutines();
-  else if (segment === 'stored') renderStored();
+  else if (segment === 'stored') storedRenderer();
   else if (segment === 'inbox') renderInbox();
   else if (segment === 'reminders') renderReminders();
   else if (segment === 'travel') renderTravel();
@@ -557,8 +566,6 @@ export function initTaskForm() {
     el(id).addEventListener('input', syncDurationField);
   }
   syncDurationField();
-
-  initStored();
 
   // Horisontti (0015): odotuksen kentät näkyvät vain odottavalle.
   const horizonNode = maybe('afHorizon');

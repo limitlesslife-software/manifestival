@@ -399,9 +399,11 @@ function renderPlanStatus(container, state) {
       <p class="hint">
         Vuorokaudessa ei ole 24 suunniteltavaa tuntia. Luku on
         valveillaoloaika miinus kiinteät sitoumukset (kalenterin menot,
-        matkat ja valmistautuminen, suojattu uni ja rauhoittuminen) miinus
-        puskuri — eikä puskuri ole hukkaa vaan se, mikä pitää suunnitelman
-        mahdollisena.
+        matkat ja valmistautuminen, suojattu uni ja rauhoittuminen), suojattu
+        oma aika ja vapaa-aika, loma ja viikon vähimmäisvapaa-aika, miinus
+        oma väljyytesi (${Math.round(brake.bufferRatio * 100)} %) — eikä väljyys
+        ole hukkaa vaan se, mikä pitää suunnitelman mahdollisena. Mikä ei
+        mahdu, jää tallessa eikä kasvata yhtäkään päivää.
       </p>
     </div>
 

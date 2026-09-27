@@ -35,7 +35,8 @@ import { renderSetupChecklist, initSetupChecklist } from './views/setupChecklist
 import { initDiscretionaryLimit, resetDiscretionaryLimit } from './views/discretionaryLimit.js';
 import { renderWeek, initWeekNavigation } from './views/week.js';
 import { initCalendar, renderCalendar, resetCalendarView } from './views/calendar.js';
-import { renderTasks, initTaskForm, closeForm } from './views/tasks.js';
+import { renderTasks, initTaskForm, closeForm, setStoredRenderer } from './views/tasks.js';
+import { renderStored, initStored } from './views/stored.js';
 import { initRoutineForm, closeRoutineForm } from './views/routines.js';
 import { renderGoals, initGoalForm, closeGoalForm, refreshGoalPicker } from './views/goals.js';
 import { renderProjects, initProjectForm, closeProjectForm } from './views/projects.js';
@@ -578,6 +579,8 @@ async function start() {
   initWeekNavigation();
   initCalendar();
   initTaskForm();
+  setStoredRenderer(renderStored);
+  initStored();
   initRoutineForm();
   initGoalForm();
   initProjectForm();
