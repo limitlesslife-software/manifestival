@@ -402,8 +402,8 @@ function renderPlanStatus(container, state) {
         matkat ja valmistautuminen, suojattu uni ja rauhoittuminen), suojattu
         oma aika ja vapaa-aika, loma ja viikon vähimmäisvapaa-aika, miinus
         oma väljyytesi (${Math.round(brake.bufferRatio * 100)} %) — eikä väljyys
-        ole hukkaa vaan se, mikä pitää suunnitelman mahdollisena. Mikä ei
-        mahdu, jää tallessa eikä kasvata yhtäkään päivää.
+        ole hukkaa vaan se, mikä pitää suunnitelman mahdollisena. Ylimenevä työ pysyy
+        muuttumatta tallessa eikä kasvata yhtäkään päivää.
       </p>
     </div>
 
