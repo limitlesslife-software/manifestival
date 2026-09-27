@@ -256,6 +256,30 @@ test('tyylit: kosketusalueet vähintään 44 px, näkyvä fokus, kapea näyttö 
   assert.match(block, /@media \(max-width:380px\)/);
 });
 
+test('tyylit: osiopainikkeet (Päivä/Viikko/Kuukausi, Profiilin osiot) ja menon viikonpäivät ovat vähintään 44 × 44 px', () => {
+  const rules = parseRules(CSS);
+  // Osiopainike on näkymän päänavigointi: 9 px täyte ja noin 16 px rivi antoivat noin 34 px.
+  assert.ok((px(declarations(rules, '.segment-btn')['min-height']) ?? 0) >= 44, '.segment-btn min-height');
+  for (const selector of ['.segment-3 .segment-btn', '.segment-scroll .segment-btn']) {
+    const own = declarations(rules, selector);
+    assert.equal(own.height, undefined, `${selector}: ei kiinteää korkeutta`);
+    assert.ok(own['min-height'] === undefined || px(own['min-height']) >= 44, `${selector}: min-height`);
+  }
+  // Viikonpäivävalinta: leveys ja korkeus. Kapean näytön .weekday-chip { min-width:33px }
+  // ei kavenna tätä (tarkempi valitsin), eikä mikään @media-sääntö saa laskea sitä.
+  const chip = declarations(rules, '.cal-repeat .weekday-chip');
+  assert.ok(px(chip['min-height']) >= 44 && px(chip['min-width']) >= 44, '.cal-repeat .weekday-chip 44 × 44');
+  for (const rule of rules.filter(r => r.media && r.selectors.some(s => s === '.cal-repeat .weekday-chip' || s === '.segment-btn'))) {
+    for (const property of ['min-width', 'min-height']) {
+      if (rule.decls[property] !== undefined) assert.ok(px(rule.decls[property]) >= 44, `${rule.media} ${property}`);
+    }
+  }
+  // Seitsemän 44 px:n ruutua eivät mahdu 360 px:n näytölle yhdelle riville: rivi rivittyy.
+  assert.equal(declarations(rules, '.weekday-row')['flex-wrap'], 'wrap');
+  const repeat = screenMarkup().slice(screenMarkup().indexOf('id="ceRepeatDays"') - 40);
+  assert.match(repeat, /<div class="weekday-row" id="ceRepeatDays">/);
+});
+
 // ================================================================ TILA
 
 test('tila: oletus päivä ja tämä päivä; asettajat tarkistavat; resetState palauttaa', (t) => {
