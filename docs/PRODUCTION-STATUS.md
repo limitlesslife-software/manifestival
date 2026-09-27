@@ -61,6 +61,17 @@ Automaattinen testi vartioi, että tämä dokumentti pysyy ajan tasalla.
 | 0012 | `0012_life_alignment.sql` | **EI AJETTU** | — |
 | 0013 | `0013_alignment_reality.sql` | **EI AJETTU** | — |
 | 0014 | `0014_daily_life.sql` | **EI AJETTU** | — |
+| 0015 | `0015_mental_load.sql` | **EI AJETTU** | — |
+
+> **Migraatio 0015 on suunniteltu, ei ajettu.** Se riippuu 0014:stä ja
+> MUUTTAA tuotannossa auki olevaa `tasks`-taulua (horisontti, odotus,
+> tarkistuspäivä, arkistointi, siirtojen seuranta; `date` saa olla NULL)
+> sekä `life_areas`-taulua (`kind`; kategorian uniikkius poistuu).
+> Lisäksi kaksi uutta taulua: `protected_periods` (suojattu aika) ja
+> `weekly_plans` (sunnuntain nollaus). Portit `protectedPeriods`,
+> `weeklyPlans` ja sarakeportti `MENTAL_LOAD_FIELDS` ovat kiinni
+> (aalto L, v25). Riski keski, tuore varmuuskopio pakollinen
+> (`docs/MIGRATION-0015-RECOVERY.md`).
 
 > **Migraatio 0014 on suunniteltu, ei ajettu.** Se riippuu 0013:sta ja
 > luo kymmenen uutta taulua arjen käyttöjärjestelmälle (paikat ja
@@ -187,6 +198,9 @@ vertaa niihin.
 | `habitEvents` | 0014 | kiinni |
 | `exerciseSessions` | 0014 | kiinni |
 | `wellbeingCheckins` | 0014 | kiinni |
+| `protectedPeriods` | 0015 | kiinni |
+| `weeklyPlans` | 0015 | kiinni |
+| `MENTAL_LOAD_FIELDS` | 0015 | kiinni |
 
 `GOAL_PLANNING_FIELDS` on **sarakeportti** ja `GOAL_MAINTENANCE_MODE`
 **arvoportti**. Ne ovat erillisiä, koska niiden viat ovat erilaisia:

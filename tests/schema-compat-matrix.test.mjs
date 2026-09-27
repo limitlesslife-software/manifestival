@@ -1,4 +1,4 @@
-// Ajonaikaisen skeematarkistuksen matriisi: käännös (aallot C-J) x kanta.
+// Ajonaikaisen skeematarkistuksen matriisi: käännös (aallot C-L) x kanta.
 //
 // KYSYMYS, JOHON TÄMÄ VASTAA
 //
@@ -17,12 +17,12 @@
 //      onnistuu tai torjutaan ENNEN verkkoa -- kanta ei hylkää yhtäkään.
 //
 // Kannan tilat: 0008, +0009, +0010, +0011, +0012, 0008+0012 (0012 ilman
-// 0009-0011:tä), +0013 ja 0013 ilman operation_id-saraketta.
+// 0009-0011:tä), +0013, 0013 ilman operation_id-saraketta, +0014 ja +0015.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { WAVE_IDS, waveIndex } from '../tools/release/waves.mjs';
+import { WAVE_IDS, waveById, waveIndex } from '../tools/release/waves.mjs';
 import {
   createSchemaServer, memoryStorage, DB_STATES, schemaAt, migrationsThrough, ALL_MIGRATIONS
 } from './helpers/schemaServer.mjs';
@@ -147,7 +147,7 @@ test('manifesti: rivimuunnosten porttiehdot tuottavat täsmälleen manifestin sa
       checked += 1;
     }
   }
-  assert.equal(checked, 7, 'odotettiin seitsemän porttiehtoa (goals 2, projects, bills, 3 x Suunta)');
+  assert.equal(checked, 8, 'odotettiin kahdeksan porttiehtoa (goals 2, projects, bills, 3 x Suunta, life_areas.kind)');
 });
 
 // =====================================================================
@@ -279,14 +279,26 @@ graphTest('aaltojen porttiliteraalit vaihtuvat oikein (C-J)', async () => {
   }
 });
 
-graphTest('manifesti: auki olevan portin rivimuunnos = manifestin sarakkeet (aalto J)', async () => {
-  const { collections } = await loadWave('J');
-  for (const repo of collections.ALL_REPOSITORIES) {
-    const keys = Object.keys(repo.mapping.toRow(repo.mapping.normalize(example(repo)))).sort();
-    const expected = SCHEMA_REQUIREMENTS.filter(r => r.table === repo.table).flatMap(r => r.columns);
-    assert.deepEqual(keys, [...new Set(expected)].sort(), repo.table);
-  }
-});
+/**
+ * Aallon rivimuunnos kirjoittaa täsmälleen niiden migraatioiden sarakkeet,
+ * jotka aalto edellyttää ajetuiksi (migraatio <= aallon migraatio). Aallon
+ * J käännöksessä MENTAL_LOAD_FIELDS (0015) on kiinni, joten life_areas.kind
+ * ei saa olla rivissä; aallossa L se on.
+ */
+for (const wave of ['J', 'K', 'L']) {
+  graphTest(`manifesti: auki olevan portin rivimuunnos = manifestin sarakkeet (aalto ${wave})`, async () => {
+    const last = waveById(wave).migration;
+    const { collections } = await loadWave(wave);
+    const tableWave = new Map(SCHEMA_REQUIREMENTS.filter(r => r.kind === 'table').map(r => [r.table, r.migration]));
+    for (const repo of collections.ALL_REPOSITORIES) {
+      // Aallon jälkeen syntyvän taulun repositorio on muistissa (portti kiinni).
+      if ((tableWave.get(repo.table) || '0000') > last) continue;
+      const keys = Object.keys(repo.mapping.toRow(repo.mapping.normalize(example(repo)))).sort();
+      const expected = SCHEMA_REQUIREMENTS.filter(r => r.table === repo.table && r.migration <= last).flatMap(r => r.columns);
+      assert.deepEqual(keys, [...new Set(expected)].sort(), `aalto ${wave}: ${repo.table}`);
+    }
+  });
+}
 
 for (const wave of WAVES) {
   graphTest(`KRIITTINEN aalto ${wave}: tehtävät ja tavoitteet tallentuvat jokaisessa kannan tilassa`, async () => {

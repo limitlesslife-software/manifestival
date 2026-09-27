@@ -1,4 +1,4 @@
-// Migraatioiden 0009–0014 taulut RLS-hyväksyntätestissä (CRIT-07).
+// Migraatioiden 0009–0015 taulut RLS-hyväksyntätestissä (CRIT-07).
 //
 // MIKSI TÄMÄ ON OLEMASSA
 //
@@ -313,11 +313,35 @@ export const TABLE_SPECS = Object.freeze([
     code: 'WK', table: 'wellbeing_checkins', label: 'voinnin kirjauksen',
     row: (id, variant) => ({ id, date: MONDAYS[variant], motivation: null, control: null }),
     patch: { motivation: 3 }, patchField: 'motivation', patchValue: 3
+  }),
+
+  // --- 0015 (aalto L): mielen kuorman keventäminen ------------------------
+  // Suojattu jakso: viikoittainen oma aika aamulla (weekly: viikonpäivä
+  // pakollinen, alku ennen loppua). Muistiinpano jää nulliksi. Vahvuus on
+  // tekstisarake, joten vertailu ei riipu time-muotoilusta.
+  spec({
+    code: 'PP', table: 'protected_periods', label: 'suojatun jakson',
+    row: id => ({
+      id, kind: 'OWN_TIME', recurrence: 'weekly', title: nameFrom(id), start_date: null, end_date: null,
+      weekdays: [1], start_time: '06:00', end_time: '07:00', target_minutes: null, strength: 'firm',
+      active: false, note: null
+    }),
+    patch: { strength: 'soft' }, patchField: 'strength', patchValue: 'soft'
+  }),
+  // Yksi suunnitelma viikkoa kohti (user_id, week_start) ja viikko alkaa
+  // maanantaista: vuoden 1990 maanantait. Prioriteetteja ei kirjoiteta.
+  spec({
+    code: 'WP', table: 'weekly_plans', label: 'viikkosuunnitelman',
+    row: (id, variant) => ({
+      id, week_start: MONDAYS[variant], priorities: [], planned_minutes: null, closed_at: null, note: null
+    }),
+    patch: { planned_minutes: 60 }, patchField: 'planned_minutes', patchValue: 60
   })
 ]);
 
 /**
- * Jokainen migraatioiden 0009–0013 yhdistelmävierasavain käyttäjän
+ * Jokainen migraatioiden 0009–0015 yhdistelmävierasavain käyttäjän
+ * (0015 ei tuo yhtään: sen taulut viittaavat vain omistajaansa)
  * omistamaan tauluun: `foreign key (user_id, column) references
  * public.parent (user_id, id)`.
  *
@@ -365,6 +389,8 @@ export const CLEANUP_ORDER = Object.freeze([
   // tapakirjaukset ennen suunnitelmia).
   'place_aliases', 'commute_observations', 'calendar_events', 'habit_events', 'exercise_sessions',
   'life_settings', 'sleep_logs', 'wellbeing_checkins', 'saved_places', 'habit_plans',
+  // 0015: ei viitteitä muihin tauluihin.
+  'protected_periods', 'weekly_plans',
   'running_timers', 'time_entries', 'alignment_item_settings', 'alignment_reviews',
   'weekly_capacities', 'travel_plans', 'location_rules', 'notices', 'reminders',
   'inbox_items', 'transactions', 'investments', 'milestones', 'life_areas'

@@ -168,7 +168,7 @@ from (
 
   union all
   select '13'::text as check_no, '0015'::text as section,
-         'Migraation 0015 objekteja ei vielä ole (0/undefined)'::text as check_name, '0'::text as odotus,
+         'Migraation 0015 objekteja ei vielä ole (0/47)'::text as check_name, '0'::text as odotus,
          (select count(*)::text from (
            select 1 from pg_tables
            where schemaname = 'public'

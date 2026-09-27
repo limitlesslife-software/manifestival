@@ -317,5 +317,6 @@ export const DB_STATES = Object.freeze({
   '0008+0012': { applied: [...migrationsThrough('0008'), '0012'] },
   '+0013': { applied: migrationsThrough('0013') },
   '0013-ilman-operation_id': { applied: migrationsThrough('0013'), drop: { time_entries: ['operation_id'] } },
-  '+0014': { applied: migrationsThrough('0014') }
+  '+0014': { applied: migrationsThrough('0014') },
+  '+0015': { applied: migrationsThrough('0015') }
 });

@@ -43,5 +43,7 @@ export const ACCOUNT_DATA_MAP = Object.freeze({
   habitPlans: { table: 'habit_plans', ownerColumn: 'user_id' },
   habitEvents: { table: 'habit_events', ownerColumn: 'user_id' },
   exerciseSessions: { table: 'exercise_sessions', ownerColumn: 'user_id' },
-  wellbeingCheckins: { table: 'wellbeing_checkins', ownerColumn: 'user_id' }
+  wellbeingCheckins: { table: 'wellbeing_checkins', ownerColumn: 'user_id' },
+  protectedPeriods: { table: 'protected_periods', ownerColumn: 'user_id' },
+  weeklyPlans: { table: 'weekly_plans', ownerColumn: 'user_id' }
 });

@@ -14,7 +14,7 @@ import {
   DEFAULT_GATES_REF, K_GATES_REF_ENV, GATES_QUERY
 } from '../tools/e2e/gates.mjs';
 import { parseGates } from '../tools/release/state.mjs';
-import { ALL_GATES, COLUMN_GATES, WAVES, expectedMatrix } from '../tools/release/waves.mjs';
+import { ALL_GATES, COLUMN_GATES, WAVES, cumulativeGates, expectedMatrix, waveIndex } from '../tools/release/waves.mjs';
 import {
   DAILY_LIFE_TABLES, GROUPS, PENDING_ON, EXPECTED_CONSOLE_ERRORS, auditRequests, classifyResult, wednesdayTen, onPage,
   deferredCleanupScript
@@ -30,6 +30,9 @@ const HARNESS = read('tools/e2e/harness.mjs');
 const PAGE = read('tools/e2e/suunta-harness.html');
 const SCHEMA = read('src/data/schema.js');
 const WAVE_K = WAVES.find(wave => wave.id === 'K');
+/** Aallon K portit: kaikki aaltojen A–K portit auki, myöhemmät (L, 0015) kiinni. */
+const OPEN_IN_K = new Set(cumulativeGates('K'));
+const COLUMN_OPEN_IN_K = gate => waveIndex('K') >= waveIndex(COLUMN_GATES[gate]);
 
 // ------------------------------------------------------------ K-porttitila
 
@@ -38,11 +41,14 @@ test('K-porttitila: GATE_MODES = closed, J, K; tuntematon tila hylätään', () 
   assert.throws(() => resolveGateMode('L', { schemaSource: SCHEMA }), /Tuntematon porttitila: L/);
 });
 
-test('K-porttitila: junan määrittely avaa aallon K kymmenen porttia ja kaikki aiemmat, jokaisen sarakeportin', () => {
+test('K-porttitila: junan määrittely avaa aallon K kymmenen porttia ja kaikki aiemmat, K:hon mennessä avautuvat sarakeportit', () => {
   const matrix = trainMatrix('K');
   assert.deepEqual(matrix.tables, { ...expectedMatrix('K') });
-  for (const gate of ALL_GATES) assert.equal(matrix.tables[gate], true, gate);
-  for (const gate of Object.keys(COLUMN_GATES)) assert.equal(matrix.columns[gate], true, gate);
+  for (const gate of ALL_GATES) assert.equal(matrix.tables[gate], OPEN_IN_K.has(gate), gate);
+  for (const gate of Object.keys(COLUMN_GATES)) assert.equal(matrix.columns[gate], COLUMN_OPEN_IN_K(gate), gate);
+  // Aallon L portit (0015) pysyvät K-tilassa kiinni.
+  assert.equal(matrix.tables.protectedPeriods, false);
+  assert.equal(matrix.columns.MENTAL_LOAD_FIELDS, false);
   assert.deepEqual([...WAVE_K.gates], ['savedPlaces', 'placeAliases', 'calendarEvents', 'commuteObservations', 'lifeSettings',
     'sleepLogs', 'habitPlans', 'habitEvents', 'exerciseSessions', 'wellbeingCheckins']);
   // J ei avaa yhtäkään K:n portista: K-tila on todella eri tila.
@@ -58,8 +64,10 @@ test('K-porttitila: ilman K-ehdokasta portit tulevat junan määrittelystä, ja 
   assert.match(resolved.provenance, /aallon K ehdokasta ei ole/);
   assert.match(resolved.provenance, /trainMatrix\('K'\)/);
   const tables = parseGates(resolved.source);
-  for (const gate of ALL_GATES) assert.equal(tables[gate], true, gate);
-  assert.ok(Object.values(parseColumnGates(resolved.source)).every(Boolean), 'jokainen sarakeportti auki');
+  for (const gate of ALL_GATES) assert.equal(tables[gate], OPEN_IN_K.has(gate), gate);
+  for (const [gate, open] of Object.entries(parseColumnGates(resolved.source))) {
+    assert.equal(open, COLUMN_OPEN_IN_K(gate), `sarakeportti ${gate}`);
+  }
   // Ajonaikainen skeemakerros säilyy, vain porttiliteraalit muuttuvat.
   for (const name of ['export function isTableAvailable', 'export function columnGateOpen', 'export const SCHEMA_REQUIREMENTS',
     'export function writeRefusal']) {
@@ -68,8 +76,8 @@ test('K-porttitila: ilman K-ehdokasta portit tulevat junan määrittelystä, ja 
   const changed = resolved.source.split('\n').filter((line, i) => line !== SCHEMA.split('\n')[i]);
   // Haaran oma schema.js voi jo olla aallossa K (aaltocommit, kaikki portit
   // auki): silloin muutettavaa ei ole, ja lähde on haaran tiedosto sellaisenaan.
-  const branchAtK = ALL_GATES.every(gate => parseGates(SCHEMA)[gate] === true)
-    && Object.values(parseColumnGates(SCHEMA)).every(Boolean);
+  const branchAtK = ALL_GATES.every(gate => parseGates(SCHEMA)[gate] === OPEN_IN_K.has(gate))
+    && Object.entries(parseColumnGates(SCHEMA)).every(([gate, open]) => open === COLUMN_OPEN_IN_K(gate));
   if (branchAtK) assert.equal(resolved.source, SCHEMA, 'K-haaran lähdettä muutettiin');
   else assert.ok(changed.length > 0, 'K-tila ei avannut yhtään porttia');
   assert.ok(changed.every(line => /:\s*true,?\s*$|^export const [A-Z_]+ = true;/.test(line.trim())), changed.join('\n'));

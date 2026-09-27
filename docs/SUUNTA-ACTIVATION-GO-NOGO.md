@@ -18,12 +18,12 @@ Tämä korvaa aiemman aaltokohtaisen selainhyväksyntäportin.
 omistajan viesti):** [`docs/SUUNTA-FAST-ACTIVATION.md`](SUUNTA-FAST-ACTIVATION.md).
 
 **Omistajan hyväksyntä vaaditaan vain:** jokainen tuotantomigraatio
-(0009–0014; **0010 erikseen + varmuuskopio**), jokainen tuotantodeploy (D–K),
+(0009–0015; **0010 ja 0015 erikseen + varmuuskopio**), jokainen tuotantodeploy (D–L),
 valinnainen T-2-varmuuskopion kuivaharjoitus tuotannossa, AI-selityksen
 käyttöönotto ja Androidin versionCode-politiikka. Hyväksyntä annetaan
 lyhyellä viestillä: "hyväksyn D", "hyväksyn E", "hyväksyn 0009/F",
 "hyväksyn 0010/G", "hyväksyn 0011/H", "hyväksyn 0012/I", "hyväksyn 0013/J",
-"hyväksyn 0014/K".
+"hyväksyn 0014/K", "hyväksyn 0015/L".
 
 **Kaikki migraatiot 0009–0013 on harjoiteltu oikealla PostgreSQL 17:llä**
 tuotannon muotoisesta datasta: ketju, RLS (311 tarkistusta), virheet
@@ -41,6 +41,7 @@ tuotannon muotoisesta datasta: ketju, RLS (311 tarkistusta), virheet
 | **I** v22 | **Suunta 1** | `4a24fdf3e2cb74473c4066329a0b693862a0e019` (`rehearsal/wave-i-v3`) | **0012** | READY 0012:n jälkeen | "hyväksyn 0012/I" (välivaihe) | keski (goals + sarake) | H |
 | **J** v23 | **Suunta 2** (ajastin, energia, katsaus v2) + yön korjaukset | `cba9463155c823a24d0fdb4632ab18a1fcbd01d0` (`rehearsal/wave-j-v2`) | **0013** | READY 0013:n jälkeen | "hyväksyn 0013/J", sitten APK (vasta kun verify_0013 = 0 ja J on tuotannossa) | matala | I (aika säilyy) |
 | **K** v24 | **Arjen käyttöjärjestelmä** (kalenteri, paikat, uni, herätys, tavat, liikunta) | `d11d8b4661bc84c2e90b668132c11104db4cf203` (`rehearsal/wave-k-v1`) | **0014** | READY 0014:n jälkeen (K v1 lukittu J v2:n päälle; lukon SQL-lähde 0009–0014) | "hyväksyn 0014/K" (vasta kun verify_0013 = 0 ja J on tuotannossa; vain uusia tyhjiä tauluja, tilannekuva ei pakollinen) | matala | J (taulut jäävät) |
+| **L** v25 | **Mielen kuorman keventäminen** (horisontit, odotus, arkisto, suojattu aika, loma, sunnuntain nollaus) | ei vielä leikattu (`rehearsal/wave-l-v1` K v1:n päälle; pääkehittäjä leikkaa ja lukitsee) | **0015** | ESTETTY: 0015 EI AJETTU; ehdokas leikkaamatta | "hyväksyn 0015/L" (vasta kun verify_0014 = 0 ja K on tuotannossa) + **varmuuskopio** ensin (`snapshot_state_0014.sql`; [`MIGRATION-0015-RECOVERY.md`](MIGRATION-0015-RECOVERY.md)) | keski (muuttaa tasks + life_areas) | K + 0015 ROLLBACK (vartija: jaettu kategoria) |
 
 Deploykohde on **lukon** `docs/activation/release-train-c-j.json` täysi SHA
 (`deployTarget`) — ei haaran nimi eikä manifestin aaltocommit. Lukon
@@ -134,6 +135,15 @@ git push origin d11d8b4661bc84c2e90b668132c11104db4cf203:refs/heads/main   # K v
 `verify_0013` = 0, sitten "hyväksyn 0014/K" → 0014 → `verify_0014` = 0 →
 deploy K. Riski matala (vain uusia tyhjiä tauluja), tilannekuva ei pakollinen.
 
+**8.** L (0015) K:n jälkeen samalla kaavalla: edellytys `verify_0014` = 0,
+**tuore tilannekuva** (`supabase/backup/snapshot_state_0014.sql` +
+`restore-snapshot.mjs check`), `preflight_0015` 0 FAIL (kirjaa rivi
+"tasks.date NOT NULL ennen 0015:tä"), sitten "hyväksyn 0015/L" → 0015 →
+`verify_0015` = 0 → deploy L. Riski keski: 0015 muuttaa tuotannossa auki
+olevaa `tasks`-taulua (ei uudelleenkirjoitusta). Ehdokasta ei ole vielä
+leikattu eikä lukittu; C–K-lukko pysyy tavu tavulta ennallaan
+(`docs/MENTAL-LOAD-CORE.md`, "Juna ja lukko").
+
 **Nopein turvallinen polku päivittäiseen käyttöön:** C (tekninen) → D → E →
 0009/F → 0010/G → 0011/H → 0012/I → 0013/J → puhelin → 0014/K. Jokainen deploy ja
 migraatio on oma omistajan hyväksyntänsä; D ja E eivät vaadi migraatiota.
@@ -146,8 +156,8 @@ kanssa (todennettu), joten tauko minkä tahansa aallon jälkeen on turvallinen.
 
 | Luokka | Mitä |
 |---|---|
-| OWNER_DEPLOY_APPROVAL_REQUIRED | Aaltojen D–K deployt: "hyväksyn D", "hyväksyn E", F–K migraatioviestin kautta |
-| OWNER_PRODUCTION_MIGRATION_APPROVAL_REQUIRED | "hyväksyn 0009/F", **"hyväksyn 0010/G" (erikseen, tilannekuva ensin)**, "hyväksyn 0011/H", "hyväksyn 0012/I", "hyväksyn 0013/J", "hyväksyn 0014/K" |
+| OWNER_DEPLOY_APPROVAL_REQUIRED | Aaltojen D–L deployt: "hyväksyn D", "hyväksyn E", F–L migraatioviestin kautta |
+| OWNER_PRODUCTION_MIGRATION_APPROVAL_REQUIRED | "hyväksyn 0009/F", **"hyväksyn 0010/G" (erikseen, tilannekuva ensin)**, "hyväksyn 0011/H", "hyväksyn 0012/I", "hyväksyn 0013/J", "hyväksyn 0014/K", **"hyväksyn 0015/L" (tilannekuva ensin)** |
 | OWNER_READ_ONLY_SQL_REQUIRED | Omistajan syöte, ei hyväksyntä: tuore inventaario ennen 0009:ää, `preflight_00XX.sql`- ja `verify_00XX.sql`-tulokset (vain luku, liitetään Claudelle) |
 | TECHNICAL_ACCEPTANCE_REQUIRED | Claude: tuotannon aallon `AUTOMATED_TECHNICAL_ACCEPTANCE` päiväkirjaan (C live-todennuksesta, D–K orkestroijan deploysta) |
 | CANDIDATE_TESTS_REQUIRED | Claude: ehdokkaan oma täysi testipatteristo vihreänä ja kirjattuna ennen sen migraatiota tai deployta |

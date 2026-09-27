@@ -187,8 +187,8 @@ test('KRIITTINEN: yhdenkin portin poikkeama muuttaa tai mitätöi tilan', () => 
     }
   }
 
-  // Kaksitoista tilaa (BASE + A-K) kertaa kolmekymmentäneljä porttia.
-  assert.equal(mutaatioita, 408, `mutaatioita ajettiin ${mutaatioita}, odotettiin 408`);
+  // Kolmetoista tilaa (BASE + A-L) kertaa kolmekymmentäkuusi porttia.
+  assert.equal(mutaatioita, 468, `mutaatioita ajettiin ${mutaatioita}, odotettiin 468`);
 
   // Ainoat sallitut siirtymät ovat niiden aaltojen välillä, jotka
   // eroavat tasan yhdellä portilla. Jos tähän ilmestyisi uusi pari,
@@ -213,9 +213,10 @@ test('KRIITTINEN: yhdenkin portin poikkeama muuttaa tai mitätöi tilan', () => 
   // joten sekään ei tuo uutta paria. Aalto J avaa KAKSI porttia
   // (runningTimers, alignmentItemSettings), joten sekään ei ole yhden
   // käännöksen päässä I:stä: 264 - 4 sallittua siirtymää = 260.
-  // Aalto K avaa KYMMENEN porttia, joten sekään ei tuo uutta paria:
-  // 408 - 4 = 404.
-  assert.equal(mitättömiä, 404);
+  // Aalto K avaa KYMMENEN porttia, joten sekään ei tuo uutta paria.
+  // Aalto L avaa KAKSI porttia (protectedPeriods, weeklyPlans), joten
+  // sekään ei ole yhden käännöksen päässä K:sta: 468 - 4 = 464.
+  assert.equal(mitättömiä, 464);
 });
 
 test('KRIITTINEN: puuttuva tai ylimääräinen portti hylätään', () => {
@@ -356,7 +357,8 @@ test('KRIITTINEN: aallon taulut vastaavat sen portteja', () => {
     saved_places: 'savedPlaces', place_aliases: 'placeAliases', calendar_events: 'calendarEvents',
     commute_observations: 'commuteObservations', life_settings: 'lifeSettings',
     sleep_logs: 'sleepLogs', habit_plans: 'habitPlans', habit_events: 'habitEvents',
-    exercise_sessions: 'exerciseSessions', wellbeing_checkins: 'wellbeingCheckins'
+    exercise_sessions: 'exerciseSessions', wellbeing_checkins: 'wellbeingCheckins',
+    protected_periods: 'protectedPeriods', weekly_plans: 'weeklyPlans'
   };
 
   for (const wave of WAVES) {

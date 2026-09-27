@@ -59,6 +59,18 @@ taloutta eikä löytänyt kumpaakaan.
 | `habitEvents` | **ON** | **Profiili** → Hyvinvointi → Tapojen muutos; **Tänään** → tapakortti | Tapojen muutos | kirjaus + edistyminen | K |
 | `exerciseSessions` | **ON** | **Profiili** → Hyvinvointi → Liikunta | Liikunta | täysi | K |
 | `wellbeingCheckins` | **ON** | **Tänään** → voinnin kortti; **Profiili** → Hyvinvointi (14 pv) | Motivaatio | kirjaus + historia | K |
+| `protectedPeriods` | **ON** | **Profiili** → Suojattu aika (`#protectedTimeContainer`) | Suojattu aika | täysi + päälle/pois | L |
+| `weeklyPlans` | **ON** | **Tänään** / **Suunta** → Sunnuntain nollaus (`#sundayResetDialog`) | Sunnuntain nollaus | luonti + päivitys + viikon sulkeminen | L |
+
+### Aallon L kaksi domainia
+
+Suojattu aika (Profiili → Suojattu aika, `#protectedTimeContainer`) ja
+Sunnuntain nollaus (`#sundayResetDialog`, avataan Tänään-näkymän
+`#sundayResetOpenBtn`- ja Suunnan `#dirSundayResetBtn`-painikkeista).
+Tekeminen → Tallessa (`#storedListContainer`) näyttää tehtävien
+horisontit; se kuuluu sarakeporttiin `MENTAL_LOAD_FIELDS` eikä ole oma
+taulunsa. Aalto L on estetty kannan takia: migraatiota `0015` ei ole
+ajettu.
 
 ### Aallon K kymmenen domainia
 

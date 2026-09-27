@@ -459,7 +459,7 @@ test('KRIITTINEN: lukitsematon aalto (lukko ilman K:ta) pysäyttää (LOCK_DRIFT
   }
 });
 
-test('K + 0014: DEPLOY K vaatii verify_0014-tuloksen; K tuotannossa + 0014 -> DONE (junan loppu)', async () => {
+test('K + 0014: DEPLOY K vaatii verify_0014-tuloksen; K tuotannossa + 0014 -> seuraavaksi L (0015), lukitsematon L pysäyttää', async () => {
   const pending = setup({ production: 'J', dbState: '0014' });
   const missing = await runOrchestrator(pending.deps, pending.options);
   assert.equal(missing.plan.nextAction.kind, 'DEPLOY');
@@ -472,11 +472,22 @@ test('K + 0014: DEPLOY K vaatii verify_0014-tuloksen; K tuotannossa + 0014 -> DO
   assert.match(good.plan.evidence.migrationVerify, /verify_0014\.sql: 30\/30 tarkistusta, 0 poikkeavaa/);
   assert.deepEqual(pushes(pending.git), []);
 
-  const done = setup({ production: 'K', dbState: '0014', journal: journalOf(acceptanceEntry('K')) });
-  const end = await runOrchestrator(done.deps, done.options);
-  assert.equal(end.plan.decision, 'DONE', end.plan.reason);
-  assert.equal(end.exitCode, 0);
-  assert.deepEqual(pushes(done.git), []);
+  // Aalto L (mielen kuorma, 0015) seuraa K:ta. Ehdokasta ei ole vielä
+  // leikattu eikä lukittu: orkestroija kertoo seuraavan askeleen mutta
+  // pysähtyy (LOCK_DRIFT) — lukitsematonta SHA:ta ei koskaan deployata eikä
+  // sen migraatiota suunnitella. Varmuuskopio on pakollinen (0015 muuttaa
+  // tasks-taulua).
+  const next = setup({ production: 'K', dbState: '0014', journal: journalOf(acceptanceEntry('K')) });
+  const end = await runOrchestrator(next.deps, next.options);
+  assert.equal(end.plan.decision, 'STOP', end.plan.reason);
+  assert.equal(end.plan.stopClass, 'LOCK_DRIFT');
+  assert.equal(end.plan.nextAction.kind, 'MIGRATE');
+  assert.equal(end.plan.nextAction.wave, 'L');
+  assert.equal(end.plan.nextAction.migration, '0015');
+  assert.equal(end.plan.nextAction.backupRequired, true);
+  assert.equal(end.plan.nextAction.verifyPrerequisite, 'supabase/verify/verify_0014.sql');
+  assert.notEqual(end.exitCode, 0);
+  assert.deepEqual(pushes(next.git), []);
 });
 
 // =====================================================================
@@ -732,7 +743,7 @@ test('KRIITTINEN: käynnistyssavun kirjaus: vain PASS n/n nollalaskureilla, sama
     ['E:n savu D:n kirjauksena', { wave: 'E', sha: d, smokeText: smokeOutput({ label: 'E', sha: d }) }, /ei ole aallon E lukittu deployTarget/],
     ['E:n SHA D:lle', { wave: 'D', sha: shaOf('E'), smokeText: smokeOutput({ label: 'D', sha: shaOf('E') }) }, /ei ole aallon D lukittu deployTarget/],
     ['lyhyt SHA', { wave: 'D', sha: '0202020', smokeText: text }, /40-merkkisen/],
-    ['ei junan aalto', { wave: 'B', sha: d, smokeText: text }, /ei ole junan C–K aalto/]
+    ['ei junan aalto', { wave: 'B', sha: d, smokeText: text }, /ei ole junan C–L aalto/]
   ]) {
     const result = recordBootSmoke(s.deps, opts);
     assert.equal(result.ok, false, name);
@@ -830,23 +841,34 @@ test('KRIITTINEN: peruutuspaketti: irrotus deployTargetiin, revert ilman committ
   assert.equal(/-f\b|\+[0-9a-f<]/.test(lines.find(l => l.includes('git push'))), false);
 });
 
-test('peruutuspaketti junan viimeiselle aallolle K: tila J, v25, ei seuraavan aallon varausta', () => {
+test('peruutuspaketti aallolle K: tila J, v25 on aallon L varattu versio; junan viimeinen L: ei seuraavan varausta', () => {
   const lock = lockFrom(stubGit());
   const pack = rollbackPack('K', { lock }).join('\n');
   assert.match(pack, /^PERUUTUS aallolle K -> tila J/);
   assert.match(pack, new RegExp(`git switch --detach ${shaOf('K')}`));
   assert.match(pack, /nosta CACHE_VERSION v24 -> v25/);
-  assert.match(pack, /v25 on aallon - varattu versio/);
+  assert.match(pack, /v25 on aallon L varattu versio/);
+  // L ei ole vielä lukossa: paketti kertoo paikkamerkin eikä keksi SHA:ta.
+  const l = rollbackPack('L', { lock }).join('\n');
+  assert.match(l, /^PERUUTUS aallolle L -> tila K/);
+  assert.match(l, /git switch --detach <aallon L deployTarget>/);
+  assert.match(l, /nosta CACHE_VERSION v25 -> v26/);
+  assert.match(l, /v26 on aallon - varattu versio/);
 });
 
-test('hyväksyntäpaketti: APK J:n jälkeen (verify_0013), ei siirry junan viimeisen aallon K taakse', () => {
+test('hyväksyntäpaketti: APK J:n jälkeen (verify_0013), ei siirry junan viimeisen aallon L taakse', () => {
   const lock = lockFrom(stubGit());
   const of = wave => acceptancePack(wave, lock.waves.find(w => w.wave === wave)).join('\n');
   assert.match(of('J'), /J:n jälkeen: APK \(docs\/activation\/ANDROID-ACCEPTANCE-BUILD\.md; vasta kun verify_0013 = 0 ja J on tuotannossa\)/);
   assert.equal(/APK/.test(of('K')), false, 'APK-ehto siirtyi K:hon');
-  assert.match(of('K'), /K on junan viimeinen aalto/);
+  assert.equal(/viimeinen aalto/.test(of('K')), false, 'K ei ole enää junan viimeinen aalto (L)');
   assert.match(of('K'), /supabase\/verify\/verify_0014\.sql \(vain luku\) = 0 poikkeavaa/);
   assert.equal(/APK|viimeinen aalto/.test(of('I')), false);
+  // L:n paketti tietueesta (lukitaan myöhemmin): viimeinen aalto, verify_0015.
+  const l = acceptancePack('L', { deployTarget: 'ee'.repeat(20), acceptance: 'docs/acceptance/WAVE-L.md' }).join('\n');
+  assert.match(l, /L on junan viimeinen aalto/);
+  assert.match(l, /supabase\/verify\/verify_0015\.sql \(vain luku\) = 0 poikkeavaa/);
+  assert.equal(/APK/.test(l), false);
 });
 
 // =====================================================================
