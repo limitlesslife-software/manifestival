@@ -11,6 +11,7 @@ import {
   ROOT_STUB, acceptanceEntry, journalOf, lockFrom, projectFiles, shaOf, smokeEntry, stubFetch, stubFs, stubGit, testsEntry
 } from './helpers/activation-history.mjs';
 import { runDryRun } from '../tools/activation/orchestrate.mjs';
+import { TRAIN } from '../tools/activation/train-map.mjs';
 import { createGit } from '../tools/release/git-layer.mjs';
 
 const fixture = name => fs.readFileSync(path.join(ROOT, 'tests/fixtures/activation-inventory', name), 'utf8');
@@ -223,4 +224,26 @@ test('oikea repo (ehdollinen): tuotannon inventaario + origin/main C -> DEPLOY D
   assert.match(lineOf(result.lines, 'CURRENT_DB_WAVE'), /^CURRENT_DB_WAVE: E/);
   assert.match(lineOf(result.lines, 'REQUIRED_OWNER_GATE'), /^REQUIRED_OWNER_GATE: OWNER_DEPLOY_APPROVAL_REQUIRED — aallon D deploy: omistajan viesti "hyväksyn D"/);
   assert.match(lineOf(result.lines, 'REPO_PREFLIGHT'), /^REPO_PREFLIGHT: PASS/);
+});
+
+test('oikea repo (ehdollinen): origin/main F + kanta 0009 -> MIGRATE G 0010 (STOP_OWNER_MIGRATION), K:n lukitseminen ei muuta seuraavaa askelta', async t => {
+  const git = createGit({ cwd: ROOT });
+  const origin = git.revParse('origin/main');
+  const g = '4eb93a9e386123042485881fad9aa91b862069c7';
+  if (!origin || !TRAIN.every(e => git.revParse(e.ref))) { t.skip('ehdokashaarat eivät ole paikallisesti saatavilla'); return; }
+  if (origin !== '2c8e230f8864ce0df1529718fb17ae265fb5d82b') { t.skip(`origin/main on siirtynyt (${origin.slice(0, 7)}): odotus koski tuotantoa F`); return; }
+  const result = await runDryRun({ git, fs, root: ROOT, now: () => new Date('2026-09-27T12:00:00Z') },
+    { live: false, inventoryPath: 'tests/fixtures/activation-inventory/state-0009.json' });
+  const all = result.lines.join('\n');
+  assert.equal(lineOf(result.lines, 'CURRENT_WAVE'), 'CURRENT_WAVE: F', all);
+  assert.equal(lineOf(result.lines, 'CURRENT_CACHE'), 'CURRENT_CACHE: v19');
+  assert.equal(lineOf(result.lines, 'NEXT_ACTION'), 'NEXT_ACTION: MIGRATE G 0010');
+  assert.match(lineOf(result.lines, 'NEXT_DEPLOYMENT'), new RegExp(`^NEXT_DEPLOYMENT: G ${g} \\(migraation 0010 jälkeen\\)`));
+  assert.match(lineOf(result.lines, 'REPO_PREFLIGHT'), /^REPO_PREFLIGHT: PASS/);
+  assert.equal(result.report.STATE, 'STOP_OWNER_MIGRATION');
+  assert.equal(/LOCK_DRIFT|STOP: /.test(all), false, all);
+  for (const f of result.report.SQL) {
+    assert.equal(f.matchesLock, true, f.path);
+    assert.match(f.source, /^rehearsal\/wave-k-v1 @ d11d8b4661bc84c2e90b668132c11104db4cf203$/);
+  }
 });

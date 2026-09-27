@@ -91,8 +91,9 @@ test('KRIITTINEN: loppupäätös kertoo, jos testejä tai koontia EI ajettu', ()
   assert.equal(/ESITARKISTUS \(\$\{ODOTETTU_AALTO\}\): PASS/.test(cli), false, 'CLI:ssä on yhä oma PASS-teksti');
 });
 
-test('oikea historia (ehdollinen): lukitut F..J läpäisevät esitarkistuksen ilman checkoutia', t => {
-  const targets = lock.waves.filter(w => ['F', 'G', 'H', 'I', 'J'].includes(w.wave));
+test('oikea historia (ehdollinen): lukitut F..K läpäisevät esitarkistuksen ilman checkoutia', t => {
+  const targets = lock.waves.filter(w => ['F', 'G', 'H', 'I', 'J', 'K'].includes(w.wave));
+  assert.equal(targets.length, 6, 'lukosta puuttuu migraatioaalto');
   if (!targets.every(w => realGit.revParse(w.deployTarget)) || !realGit.revParse(lock.sqlSource.sha)) {
     t.skip('ehdokashistoria ei ole paikallisesti saatavilla'); return;
   }
