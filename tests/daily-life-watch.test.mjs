@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import { setUser } from '../src/data/session.js';
 import {
   resetState, getState, setProfile, setSavedPlaces, setCalendarEvents, setLifeSettings,
-  setCommuteObservations, setSleepLogs
+  setCommuteObservations, setSleepLogs, addNoticeToState, replaceNoticeInState
 } from '../src/app/state.js';
 import { clearAllCollections } from '../src/data/collectionsRepo.js';
 import { runEventDepartureSweep, resetDepartureWatch } from '../src/app/departureWatch.js';
@@ -182,6 +182,58 @@ test('illan ennakko: vain illalla ja vain kun huominen vaatii aiemman herätykse
 
   setCalendarEvents([]);
   assert.equal(eveningBeforeNotice({ now: at(2026, 9, 29, 19, 0) }), null, 'tavallinen aamu: ei huomautusta');
+});
+
+test('KRIITTINEN: illan ennakko ei kasaudu: yksi merkintä huomista kohti, päivittyy ja poistuu huomisen muuttuessa', async () => {
+  setSavedPlaces([{ id: 'p2', name: 'Lentokenttä', usualTravelMinutes: 35, overheadMinutes: 5, preparationMinutes: 10 }]);
+  const flight = { id: 'f', title: 'Lento', date: '2026-09-30', startTime: '06:00', durationMinutes: 120, placeId: 'p2' };
+  setCalendarEvents([flight]);
+  assert.equal((await runDailyLifeNotices({ now: at(2026, 9, 29, 18, 0) })).created, 1);
+  const [first] = noticesWith('evening|');
+  assert.equal(first.key, 'evening|2026-09-30', 'vakaa avain huomista kohti');
+
+  // Lento siirtyy tuntia myöhemmäksi: sama merkintä kertoo uuden neuvon, toista ei synny.
+  setCalendarEvents([{ ...flight, startTime: '07:00' }]);
+  assert.equal((await runDailyLifeNotices({ now: at(2026, 9, 29, 18, 30) })).created, 0);
+  const moved = noticesWith('evening|');
+  assert.equal(moved.length, 1);
+  assert.equal(moved[0].id, first.id);
+  assert.notEqual(moved[0].reason, first.reason);
+  assert.equal(moved[0].reason, eveningBeforeNotice({ now: at(2026, 9, 29, 18, 30) }).reason);
+
+  // Lento perutaan: lukematon, enää paikkansa pitämätön ennakko poistuu.
+  setCalendarEvents([]);
+  await runDailyLifeNotices({ now: at(2026, 9, 29, 19, 0) });
+  assert.deepEqual(noticesWith('evening|'), []);
+});
+
+test('illan ennakko: vanhan muotoinen lukematon merkintä korvautuu; luettu jää historiaan', async () => {
+  setSavedPlaces([{ id: 'p2', name: 'Lentokenttä', usualTravelMinutes: 35, overheadMinutes: 5, preparationMinutes: 10 }]);
+  setCalendarEvents([{ id: 'f', title: 'Lento', date: '2026-09-30', startTime: '06:00', durationMinutes: 120, placeId: 'p2' }]);
+  addNoticeToState({ id: 'old', key: 'evening|2026-09-30|19:55', kind: 'reminder', title: 'Huominen alkaa aiemmin', reason: 'vanha', createdDate: TODAY });
+  await runDailyLifeNotices({ now: at(2026, 9, 29, 19, 0) });
+  assert.deepEqual(noticesWith('evening|').map(n => n.key), ['evening|2026-09-30']);
+
+  const [current] = noticesWith('evening|');
+  replaceNoticeInState(current.id, { ...current, status: 'read' });
+  setCalendarEvents([]);
+  await runDailyLifeNotices({ now: at(2026, 9, 29, 20, 0) });
+  assert.deepEqual(noticesWith('evening|').map(n => [n.key, n.status]), [['evening|2026-09-30', 'read']]);
+});
+
+test('myöhästelyehdotus: uusi ehdotus korvaa lukemattoman vanhan, hyväksytty poistaa sen', async () => {
+  const obs = late => ['2026-09-21', '2026-09-22', '2026-09-23', '2026-09-24'].map((d, i) => ({
+    id: `o${i}`, placeId: 'p1', observedOn: d, plannedDeparture: '06:05', actualDeparture: late, travelMinutes: 35
+  }));
+  setCommuteObservations(obs('06:13'));
+  await runDailyLifeNotices({ now: at(2026, 9, 29, 12, 0) });
+  assert.deepEqual(noticesWith('lateness|').map(n => n.key), ['lateness|10']);
+  setCommuteObservations(obs('06:18'));
+  await runDailyLifeNotices({ now: at(2026, 9, 29, 12, 5) });
+  assert.deepEqual(noticesWith('lateness|').map(n => n.key), ['lateness|15'], 'ristiriitaiset ehdotukset eivät jää rinnakkain');
+  setLifeSettings([{ id: 's1', arrivalBufferMinutes: 10, reminderOffsetMinutes: 15 }]);
+  await runDailyLifeNotices({ now: at(2026, 9, 29, 12, 10) });
+  assert.deepEqual(noticesWith('lateness|'), []);
 });
 
 test('KRIITTINEN: keskiyön jälkeinen meno ei korvaa aamun sitoumusta (herätys, uni, unilohko, illan ennakko)', () => {
