@@ -16,7 +16,8 @@ import assert from 'node:assert/strict';
 import { createDocument, installDocument, type, assertSameNode } from './helpers/a11yDom.mjs';
 import { readCode } from './helpers/sources.mjs';
 import { setUser, clearUser } from '../src/data/session.js';
-import { clearAllCollections } from '../src/data/collectionsRepo.js';
+import { clearAllCollections, lifeSettingsRepo } from '../src/data/collectionsRepo.js';
+import { resetTestStore, storedRows } from './helpers/gateAwareStore.mjs';
 import { resetState, getState, subscribe, setSavingsGoals, currentLifeSettings } from '../src/app/state.js';
 import { resetDailyLifeActions, saveLifeSettings } from '../src/app/dailyLifeActions.js';
 import {
@@ -32,6 +33,8 @@ const flush = async (rounds = 12) => {
 function mount(t) {
   clearUser();
   clearAllCollections();
+  // Portin ollessa auki arjen asetukset kulkevat kantaa jäljittelevälle palvelimelle.
+  resetTestStore();
   resetState();
   resetDailyLifeActions();
   resetPurchaseCheck();
@@ -111,6 +114,8 @@ test('tunnin arvon tallennus arjen asetuksiin; virhe kentän alla; tyhjä poista
   assert.equal(currentLifeSettings(getState()).hourlyValueMinor, 3240);
   assert.match(view.text(), /Tunnin arvo tallennettu\./);
   assert.equal(view.byId('pcHourly').value, '32,40');
+  assert.deepEqual((await storedRows(lifeSettingsRepo)).map(row => row.hourlyValueMinor), [3240],
+    'tunnin arvo ei tallentunut arjen asetusten riville');
 
   type(view.byId('pcHourly'), '');
   view.byId('pcHourlySave').click();

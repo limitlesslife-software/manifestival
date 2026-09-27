@@ -1,7 +1,9 @@
 // Profiili → Hyvinvointi (src/app/views/wellbeingHub.js) oikeassa,
 // jäsennetyssä DOMissa: piirto omaan säiliöön, tallennus- ja poistopolut
-// muistivaraston kautta (portit ovat tuotehaaralla kiinni), käyttäjän
-// tekstin suojaus, saavutettavat nimet ja näppäimistö.
+// muistivaraston kautta, kun portit ovat kiinni (tuotehaara), ja kantaa
+// jäljittelevän palvelimen kautta, kun ne ovat auki
+// (helpers/gateAwareStore.mjs), käyttäjän tekstin suojaus, saavutettavat
+// nimet ja näppäimistö.
 //
 // Säiliön (#profileWellbeingSection) luo profiilinäkymä muualla; testi luo
 // oman säiliön, jottei se riipu index.html:n rakenteesta.
@@ -28,6 +30,7 @@ import {
 } from '../src/app/views/wellbeingHub.js';
 import { closeConfirmDialogs } from '../src/ui/confirm.js';
 import { clearToasts } from '../src/ui/toast.js';
+import { resetTestStore, seedStored, storedRow, storedRows } from './helpers/gateAwareStore.mjs';
 
 const USER = Object.freeze({ id: 'ccccaaaa-4444-4444-8444-00000000c0de', email: 'wellbeing@example.invalid' });
 /** Maanantai: viikon yhteenveto alkaa tästä päivästä. */
@@ -42,6 +45,7 @@ function mount(t) {
   freezeLocalDate(t, TODAY);
   clearUser();
   clearAllCollections();
+  resetTestStore();
   resetState();
   resetDailyLifeActions();
   resetWellbeingHub();
@@ -72,11 +76,12 @@ function mount(t) {
 }
 
 /**
- * Rivit sekä tilaan että muistivarastoon: päivitys ja poisto kulkevat
- * repositorion kautta, ja pelkkään tilaan asetettu rivi puuttuisi sieltä.
+ * Rivit sekä tilaan että tallennukseen (muisti tai kanta porttitilan
+ * mukaan): päivitys ja poisto kulkevat repositorion kautta, ja pelkkään
+ * tilaan asetettu rivi puuttuisi sieltä.
  */
 async function seed(repo, setter, rows) {
-  await repo.memory.replaceAll(rows);
+  await seedStored(repo, rows);
   setter(rows);
 }
 
@@ -192,6 +197,9 @@ test('tapasuunnitelma: luonti lomakkeella, vähennysaskel tallentuu, tyhjä kent
   assert.equal(plan.reminderDelivery, 'silent', 'hiljainen oletus');
   assert.equal(plan.active, true);
   assert.deepEqual(plan.steps, [{ from: '2026-10-05', intervalMinutes: 120, dailyTarget: 6 }]);
+  // Sama tallennuksessa (muisti tai kanta porttitilan mukaan).
+  const saved = await storedRow(habitPlansRepo, plan.id);
+  assert.deepEqual([saved.dailyTarget, saved.baselinePerDay, saved.steps], [null, 12, plan.steps]);
 
   assert.equal(view.byId('wbhHabitName'), null, 'lomake sulkeutui');
   const row = view.q(`[data-habit-row="${plan.id}"]`);
@@ -441,6 +449,7 @@ test('tapakirjaus: vahingossa tehty kirjaus poistetaan vahvistuksen jälkeen; pe
   view.q('[data-action="habit-event-delete"][data-id="ev1"]').click();
   await answerConfirm(view.doc, true);
   assert.deepEqual(getState().habitEvents.map(e => e.id), ['ev2']);
+  assert.deepEqual((await storedRows(habitEventsRepo)).map(e => e.id), ['ev2'], 'poisto ei poistanut tallennettua kirjausta');
   assert.match(view.q('[data-habit-row="h1"]').textContent, /Tänään ei vielä kirjauksia\./, 'edistyminen laskettiin uudelleen');
   assert.doesNotMatch(view.doc.getElementById('confirmMessage').textContent, /palaveri/, 'tilanne ei näy dialogissa');
 });
@@ -572,6 +581,9 @@ test('uni: herätyksen sammutuksesta kirjattu herääminen kerrotaan; käyttäj�
   const [log] = getState().sleepLogs;
   assert.deepEqual([log.actualBedtime, log.actualWake, log.source], ['23:05', '06:41', 'user'],
     'käyttäjän tallentama rivi on käyttäjän');
+  const stored = await storedRows(sleepLogsRepo);
+  assert.deepEqual(stored.map(item => [item.id, item.actualBedtime, item.actualWake, item.source]),
+    [['a1', '23:05', '06:41', 'user']], 'tallennus ei vastaa tilaa (tai loi toisen rivin samalle yölle)');
   assert.doesNotMatch(row(), /herätyksen sammutus/);
 });
 
