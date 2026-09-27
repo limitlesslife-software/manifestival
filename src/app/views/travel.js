@@ -38,6 +38,7 @@ import {
 } from '../../domain/travel.js';
 import { hasTable, isTableAvailable } from '../../data/schema.js';
 import { serverUnavailableHintHtml } from '../schemaStatus.js';
+import { deviceOffsetMinutes } from '../deviceTime.js';
 import {
   createTravelPlan, editTravelPlan, deleteTravelPlan, setTravelEstimate,
   createLocationRule, editLocationRule, deleteLocationRule, toggleLocationRule
@@ -99,8 +100,9 @@ const STATE_TAGS = Object.freeze({
 });
 
 function leaveByHtml(plan) {
+  // Laitteen vyöhyke: kesäaikaan siirtymisen yönä seinäkellon lähtö olisi tunnin myöhässä.
   const departure = departureState(plan, {
-    todayIso: fmtISO(todayMidnight()), nowMinutes: nowMinutes()
+    todayIso: fmtISO(todayMidnight()), nowMinutes: nowMinutes(), offsetMinutesFn: deviceOffsetMinutes
   });
 
   if (!departure.known) {

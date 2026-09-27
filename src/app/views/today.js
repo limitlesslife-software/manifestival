@@ -40,6 +40,7 @@ import { loadFailureHtml } from './loadNotice.js';
 import {
   dayPlanFor, calendarRange, modelFor, renderTodayDailyLife, initTodayDailyLife, timelineKindLabel
 } from './todayDailyLife.js';
+import { deviceOffsetMinutes } from '../deviceTime.js';
 
 const ROW_HEIGHT = 66;
 
@@ -661,7 +662,9 @@ function renderNowNext(container, state, plan, dateIso, todayIso, isToday) {
     routineOccurrences: plan.routineOccurrences,
     inboxItems: state.inboxItems,
     todayIso,
-    nowMinutes: minutes
+    nowMinutes: minutes,
+    // Matkojen lähtö laitteen vyöhykkeellä (kesäajan vaihtoyö), kuten muistutuksissa.
+    offsetMinutesFn: deviceOffsetMinutes
   });
 
   if (result.empty) {
