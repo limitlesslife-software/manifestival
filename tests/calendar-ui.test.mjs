@@ -35,7 +35,7 @@ import { resetDailyLifeActions } from '../src/app/dailyLifeActions.js';
 import { calendarDayPlan, calendarInputs, needsDeparture } from '../src/app/calendarPlan.js';
 import {
   renderCalendar, initCalendar, resetCalendarView, dayAgendaModel, dayTitle, relativeDayLabel,
-  departureSummary, selectCalendarView, stepCalendar, KIND_LABELS
+  departureSummary, selectCalendarView, stepCalendar, KIND_LABELS, dayAgendaHtml
 } from '../src/app/views/calendar.js';
 import {
   validateEventForm, openEventForm, editingEvent, submitEventForm, skipEditedOccurrence, OTHER_PLACE,
@@ -414,6 +414,33 @@ test('päivän malli: koko päivän menot ensin, rivit aikajärjestyksessä, loh
     'Pysäköinti ja kävely', 'Etuaika', 'Iltarauhoittuminen', 'Uni']);
   // Syötettä ei muuteta, ja tulos on jäädytetty.
   assert.ok(Object.isFrozen(model.timed) && Object.isFrozen(model.timed[0]));
+});
+
+test('Avaa reitti: sallittu Google Maps -linkki paikasta tai paikkatekstistä, ei linkkiä ilman kohdetta', () => {
+  const HOSTILE = { id: 'e-vihamielinen', title: 'Outo', date: TUESDAY, startTime: '20:00', locationText: 'javascript:alert(1)' };
+  const state = stateWith({ events: [...EVENTS, HOSTILE] });
+  const { plan, inputs } = calendarDayPlan(state, TUESDAY, { todayIso: TUESDAY });
+  const model = dayAgendaModel(plan, { departures: inputs.departures, placesById: new Map([[PLACE.id, PLACE]]) });
+  const row = title => model.timed.find(item => item.title === title && item.kind === 'event');
+
+  // Tallennettu paikka: kohde on paikan nimi (osoitetta ei ole), tapa paikalta.
+  assert.deepEqual(row('Hammaslääkäri').route, {
+    url: 'https://www.google.com/maps/dir/?api=1&destination=Hammasl%C3%A4%C3%A4k%C3%A4ri%20Keskusta&travelmode=driving',
+    destination: 'Hammaslääkäri Keskusta', mode: 'driving', label: 'Hammaslääkäri Keskusta'
+  });
+  // Pelkkä paikkateksti riittää.
+  assert.equal(row('Parturi').route.destination, 'Parturi Kallio');
+  // Ei paikkaa -> ei linkkiä. Skeema siivotaan pois, eikä sitä koskaan linkitetä.
+  assert.equal(row('Palaveri').route, null);
+  const hostile = row('Outo').route;
+  assert.ok(hostile === null || !/javascript/i.test(hostile.url + hostile.destination));
+
+  const html = dayAgendaHtml(model);
+  assert.match(html, /<a class="cal-inline-btn" href="https:\/\/www\.google\.com\/maps\/dir\/\?api=1&amp;destination=Hammasl%C3%A4%C3%A4k%C3%A4ri%20Keskusta&amp;travelmode=driving" target="_blank" rel="noopener noreferrer"/);
+  assert.match(html, /aria-label="Avaa reitti: Parturi Kallio \(Google Maps\)">Avaa reitti<\/a>/);
+  assert.equal(/href="javascript/i.test(html), false);
+  // Suojatut lohkot ja tehtävät eivät saa reittiä.
+  assert.ok(model.timed.filter(item => item.kind !== 'event').every(item => item.route === null));
 });
 
 test('lähdön tiivistelmä: edellisen päivän lähtö päivämäärällä, opittu ja pysäköinti tekstinä', () => {

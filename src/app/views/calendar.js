@@ -37,6 +37,8 @@ import { durationOf, toMinutes, fromMinutes, isIsoDate, isTimeOfDay } from '../.
 import { weekdayName } from '../../domain/routine.js';
 import { clockText } from '../../domain/wallClock.js';
 import { ESTIMATE_SOURCE } from '../../domain/dailyLife.js';
+import { navigationLinks, isAllowedNavigationUrl } from '../../domain/navigationLink.js';
+import { alarms } from '../../platform/index.js';
 import { hasTable, isTableAvailable } from '../../data/schema.js';
 import { serverUnavailableHintHtml } from '../schemaStatus.js';
 import { loadFailureHtml } from './loadNotice.js';
@@ -148,6 +150,23 @@ function placeTextOf(item, placesById) {
   return typeof item.locationText === 'string' && item.locationText.trim() ? item.locationText.trim() : null;
 }
 
+/**
+ * Reitin kohde menolle: tallennetun paikan osoite (tai nimi) tai menon oma
+ * paikkateksti. Linkki rakennetaan VAIN navigationLink.js:llä ja tarkistetaan
+ * sallittujen muotojen listaa vasten -- datasta tai tekoälyltä tullutta
+ * osoitetta ei koskaan avata sellaisenaan.
+ */
+function routeOf(item, placesById) {
+  const place = item.placeId ? placesById.get(item.placeId) || null : null;
+  const links = navigationLinks({
+    address: place && place.address ? place.address : null,
+    placeName: place && place.name ? place.name : (typeof item.locationText === 'string' ? item.locationText : null),
+    mode: item.travelMode || (place && place.travelMode) || undefined
+  });
+  if (!links.target || !links.webUrl || !isAllowedNavigationUrl(links.webUrl)) return null;
+  return Object.freeze({ url: links.webUrl, destination: links.target.query, mode: links.target.mode, label: links.target.label });
+}
+
 function kindOf(item) {
   if (blockKindOf(item) && item.block === true) return 'block';
   if (isEventOccurrence(item)) return 'event';
@@ -183,7 +202,8 @@ function eventRow(item, context, { allDay = false } = {}) {
     taskId: null,
     recurring: item.recurring === true,
     continuation,
-    departure: plan ? departureSummary(plan, item.date) : null
+    departure: plan ? departureSummary(plan, item.date) : null,
+    route: continuation ? null : routeOf(item, context.placesById)
   });
 }
 
@@ -208,7 +228,8 @@ function blockRow(item) {
     taskId: null,
     recurring: false,
     continuation: item.continuesFromPreviousDay === true,
-    departure: null
+    departure: null,
+    route: null
   });
 }
 
@@ -231,7 +252,8 @@ function taskRow(item, { timed }) {
     taskId: String(item.id),
     recurring: false,
     continuation: false,
-    departure: null
+    departure: null,
+    route: null
   });
 }
 
@@ -254,7 +276,8 @@ function routineRow(item, { timed }) {
     taskId: null,
     recurring: true,
     continuation: false,
-    departure: null
+    departure: null,
+    route: null
   });
 }
 
@@ -326,6 +349,15 @@ function departureHtml(row) {
     + `<p class="cal-departure-detail">${escapeHtml(departure.detail)}</p>`;
 }
 
+/** Avaa reitti: sallittu https-linkki (selain); Androidissa klikki ohjataan natiiviin navigointiin. */
+function routeHtml(row) {
+  if (!row.route) return '';
+  return '<p class="cal-route">'
+    + `<a class="cal-inline-btn" href="${escapeHtml(row.route.url)}" target="_blank" rel="noopener noreferrer" `
+    + `data-cal-route="${escapeHtml(row.route.destination)}" data-cal-route-mode="${escapeHtml(row.route.mode)}" `
+    + `aria-label="Avaa reitti: ${escapeHtml(row.route.label)} (Google Maps)">Avaa reitti</a></p>`;
+}
+
 function rowHtml(row) {
   const classes = ['cal-row', `cal-row-${row.kind}`];
   if (row.blockKind) classes.push(`cal-block-${row.blockKind}`);
@@ -355,7 +387,7 @@ function rowHtml(row) {
   } else {
     main = `<div class="cal-row-main">${body}</div>`;
   }
-  return `<li class="${classes.join(' ')}">${main}${departureHtml(row)}</li>`;
+  return `<li class="${classes.join(' ')}">${main}${departureHtml(row)}${routeHtml(row)}</li>`;
 }
 
 function listHtml(rows) {
@@ -608,6 +640,16 @@ export function openCalendarDay(dateIso) {
 function onAgendaClick(event) {
   const target = event.target && typeof event.target.closest === 'function' ? event.target : null;
   if (!target) return;
+  const route = target.closest('[data-cal-route]');
+  if (route) {
+    // Selaimessa linkki aukeaa itse. Androidissa natiivi navigointi.
+    if (!alarms.supportsBackgroundAlarms()) return;
+    event.preventDefault();
+    alarms.openNavigation({ destination: route.dataset.calRoute, mode: route.dataset.calRouteMode })
+      .then(result => { if (!result.ok) notify('Reittiä ei voitu avata.'); })
+      .catch(() => notify('Reittiä ei voitu avata.'));
+    return;
+  }
   const travel = target.closest('[data-cal-travel]');
   const open = travel || target.closest('[data-cal-open]');
   if (open) {
