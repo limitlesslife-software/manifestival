@@ -853,6 +853,8 @@ button.cal-row-main:focus-visible { outline:2px solid var(--gold); outline-offse
 .cal-form .form-row > .checkbox-row { flex:0 1 auto; align-self:flex-end; }
 .cal-repeat { border:none; margin:0; padding:0; min-width:0; display:flex; flex-direction:column; gap:6px; }
 .cal-repeat legend { padding:0; margin-bottom:6px; }
+/* Viikonpäivävalinta on kosketusalue: vähintään 44 px korkea myös tässä lomakkeessa. */
+.cal-repeat .weekday-chip { min-height:44px; }
 .cal-place-hint { margin-top:4px; }
 
 @media (max-width:380px) {

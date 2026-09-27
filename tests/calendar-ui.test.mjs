@@ -241,7 +241,7 @@ test('tyylit: kosketusalueet vähintään 44 px, näkyvä fokus, kapea näyttö 
   assert.ok(start > -1 && end > start, 'U1-lohko');
   const block = CSS.slice(start, end);
   const rules = parseRules(block);
-  for (const selector of ['.cal-row-main', '.cal-inline-btn', '.cal-day']) {
+  for (const selector of ['.cal-row-main', '.cal-inline-btn', '.cal-day', '.cal-repeat .weekday-chip']) {
     assert.ok((px(declarations(rules, selector)['min-height']) ?? 0) >= 44, `${selector} min-height`);
   }
   for (const selector of ['button.cal-row-main:focus-visible', '.cal-inline-btn:focus-visible', '.cal-day:focus-visible']) {
