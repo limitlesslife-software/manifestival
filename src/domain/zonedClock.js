@@ -126,6 +126,27 @@ export function offsetMinutesAt(ms, timeZone = DEFAULT_TIME_ZONE) {
   return offset === null ? null : Math.round(offset / MINUTE_MS);
 }
 
+/**
+ * YKSI AIKAMALLI. Kellonaikalaskennan ydin on src/domain/wallClock.js:
+ * kutsuja antaa funktion offsetMinutesFn(epochMs) -> minuutteja UTC:stä
+ * itään. Tämä silta tekee vyöhykenimestä sellaisen funktion, jotta
+ * lähtö-, herätys- ja unilaskenta käyttävät samaa vyöhykettä.
+ *
+ * Sovelluskerros antaa AINA laitteen oman vyöhykkeen (platform), joten
+ * Helsinki-oletus on vain viimeinen varasääntö suomalaiselle sovellukselle,
+ * ei koskaan hiljainen oletus toisessa maassa.
+ *
+ * @param {string} timeZone IANA-nimi, esim. 'Europe/Helsinki'
+ * @returns {(epochMs:number) => number}
+ */
+export function offsetFnForTimeZone(timeZone) {
+  const zone = resolveTimeZone(timeZone);
+  return epochMs => {
+    const minutes = offsetMinutesAt(epochMs, zone);
+    return minutes === null ? 0 : minutes;
+  };
+}
+
 /** ISO-viikonpäivä kalenteripäivästä: 1 = maanantai ... 7 = sunnuntai. */
 function isoWeekday(year, month, day) {
   // Päivä lasketaan UTC-kalenterista, joten kesäaika ei vaikuta.

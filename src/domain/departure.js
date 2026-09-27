@@ -334,6 +334,9 @@ export function planDeparture(input) {
   const event = isObject(opts.event) ? opts.event : {};
   const place = isObject(opts.place) ? opts.place : null;
   const settings = isObject(opts.settings) ? opts.settings : {};
+  // Laitteen vyöhyke (ms -> minuutteja UTC:stä itään). Ilman sitä laskenta
+  // on puhdasta seinäkelloa; ks. travel.js "KESÄAJAN YÖT".
+  const tz = typeof opts.offsetMinutesFn === 'function' ? opts.offsetMinutesFn : null;
   const occurrenceId = occurrence && typeof occurrence.id === 'string' ? occurrence.id : null;
 
   if (!occurrence || !isIsoDate(occurrence.date)) {
@@ -378,7 +381,7 @@ export function planDeparture(input) {
 
   const startAbs = absoluteMinutes(occurrence.date, toMinutes(occurrence.time));
   const eventStart = point(startAbs);
-  const arrivalTarget = point(minusMinutes(startAbs, early.value));
+  const arrivalTarget = point(minusMinutes(startAbs, early.value, tz));
   const date = occurrence.date;
 
   const lines = [`Alkaa ${whenText(eventStart, date)}.`];
@@ -428,7 +431,7 @@ export function planDeparture(input) {
     earlyArrivalMinutes: early.value,
     destination: base.destination
   };
-  const schedule = departureSchedule(plan, { todayIso: date });
+  const schedule = departureSchedule(plan, { todayIso: date, offsetMinutesFn: tz });
   const leave = point(schedule.leave.abs);
   const prepareStart = point(schedule.prepare.abs);
   const dstAdjusted = leave.abs !== startAbs - early.value - overhead.value - travel
@@ -451,9 +454,9 @@ export function planDeparture(input) {
   };
   const withLeaveIn5 = preparation.value === 0 || preparation.value > LEAVE_IN_MINUTES;
   const reminderTimes = Object.freeze({
-    prepare: preparation.value > 0 ? reminder(minusMinutes(prepareStart.abs, offset)) : null,
-    leaveIn5: withLeaveIn5 ? reminder(minusMinutes(leave.abs, LEAVE_IN_MINUTES + offset)) : null,
-    leaveNow: reminder(minusMinutes(leave.abs, offset))
+    prepare: preparation.value > 0 ? reminder(minusMinutes(prepareStart.abs, offset, tz)) : null,
+    leaveIn5: withLeaveIn5 ? reminder(minusMinutes(leave.abs, LEAVE_IN_MINUTES + offset, tz)) : null,
+    leaveNow: reminder(minusMinutes(leave.abs, offset, tz))
   });
 
   let phase = null;
@@ -463,7 +466,8 @@ export function planDeparture(input) {
     const state = departurePhase(plan, {
       todayIso: opts.todayIso,
       nowMinutes: opts.nowMinutes,
-      prepareSoonMinutes: opts.prepareSoonMinutes ?? PREPARE_SOON_MINUTES
+      prepareSoonMinutes: opts.prepareSoonMinutes ?? PREPARE_SOON_MINUTES,
+      offsetMinutesFn: tz
     });
     phase = state.phase;
     minutesUntilLeave = state.minutesUntilLeave;

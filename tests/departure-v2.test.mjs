@@ -15,13 +15,14 @@ import {
   DEPARTURE_PHASE, DEPARTURE_PHASES, departurePhase, departurePhaseLabel, classifyDeparturePhase,
   PREPARE_SOON_MINUTES, LEAVE_IN_MINUTES, stabilizeLeave, leaveAbsOf,
   LEAVE_EARLIER_TOLERANCE_MINUTES, LEAVE_LATER_TOLERANCE_MINUTES,
-  absoluteMinutes, fromAbsolute, minusMinutes, minutesBetween, finnishUtcOffsetMinutes, isFinnishSpringGap,
+  absoluteMinutes, fromAbsolute, minusMinutes, minutesBetween,
   TRAVEL_SOURCE, TRAVEL_SOURCES, hasTravelProvider
 } from '../src/domain/travel.js';
 import {
   planDeparture, selectTravelEstimate, recalcDecision, estimateSourceText, MIN_LEARNED_OBSERVATIONS
 } from '../src/domain/departure.js';
 import { ESTIMATE_SOURCE, DEFAULT_ARRIVAL_BUFFER_MINUTES } from '../src/domain/dailyLife.js';
+import { helsinkiOffset } from './helpers/helsinkiOffset.mjs';
 
 const TODAY = '2026-09-28';
 const NOW_MS = Date.parse('2026-09-28T13:00:00Z');
@@ -283,26 +284,6 @@ test('absoluteMinutes/fromAbsolute: edestakaisin karkauspäivän, kuun ja vuoden
   assert.deepEqual(fromAbsolute(absoluteMinutes('2026-12-31', hm('23:50')) + 20).date, '2027-01-01');
 });
 
-test('Suomen aika: kevään ja syksyn siirtymät 2026 ja 2027', () => {
-  const offset = (date, time) => finnishUtcOffsetMinutes(absoluteMinutes(date, hm(time)));
-  assert.equal(offset('2026-03-29', '02:59'), 120);
-  assert.equal(offset('2026-03-29', '03:30'), 120, 'puuttuva tunti luetaan talviaikana (kuten laite)');
-  assert.equal(offset('2026-03-29', '04:00'), 180);
-  assert.equal(offset('2026-10-25', '02:59'), 180);
-  assert.equal(offset('2026-10-25', '03:30'), 180, 'toistuva tunti: aikaisempi hetki');
-  assert.equal(offset('2026-10-25', '04:00'), 120);
-  assert.equal(offset('2026-07-01', '12:00'), 180);
-  assert.equal(offset('2026-12-24', '12:00'), 120);
-  assert.equal(offset('2027-03-28', '04:00'), 180);
-  assert.equal(offset('2027-03-27', '04:00'), 120);
-  assert.equal(offset('2027-10-31', '04:00'), 120);
-  assert.equal(offset('2027-10-30', '04:00'), 180);
-  assert.equal(isFinnishSpringGap('2026-03-29', hm('03:00')), true);
-  assert.equal(isFinnishSpringGap('2026-03-29', hm('04:00')), false);
-  assert.equal(isFinnishSpringGap('2026-10-25', hm('03:30')), false);
-  assert.equal(isFinnishSpringGap('ei', 200), false);
-});
-
 /**
  * Riippumaton vertailu: Intl tuntee Europe/Helsinki-vyöhykkeen. Palauttaa
  * kaikki UTC-hetket, joina Helsingin kello näyttää annettua aikaa
@@ -321,20 +302,38 @@ function helsinkiInstants(date, time) {
   return [180, 120].map(offset => base - offset * 60000).filter(ms => helsinkiWall(ms) === `${date} ${time}`);
 }
 
-test('KRIITTINEN: kevätyönä lähtö ei osu puuttuvaan tuntiin ja matkalle jää täysi aika', () => {
+// VYÖHYKE ANNETAAN, SITÄ EI KOVAKOODATA. Suomen säännöt tulevat testiapurin
+// kiinteästä Europe/Helsinki-funktiosta (tests/helpers/helsinkiOffset.mjs);
+// sovellus antaa laitteen oman vyöhykkeen.
+const HKI = helsinkiOffset;
+const fixed = minutes => () => minutes;
+/** America/New_York 2026: kesäaika 8.3. klo 07 UTC – 1.11. klo 06 UTC (−300 / −240). */
+const newYork = ms => (ms >= Date.UTC(2026, 2, 8, 7) && ms < Date.UTC(2026, 10, 1, 6) ? -240 : -300);
+const helsinkiGap = (date, minutes) => helsinkiInstants(date, fromAbsolute(minutes).time).length === 0;
+
+test('KRIITTINEN: ilman vyöhykettä laskenta on puhdasta seinäkelloa — mikään maa ei vuoda koodista', () => {
+  const s = departureSchedule(plan({ arrivalDate: '2026-03-29', arrivalTime: '05:00', travelMinutes: 90,
+    arrivalBufferMinutes: 0 }), { todayIso: '2026-03-29' });
+  assert.deepEqual([s.leave.date, s.leave.time], ['2026-03-29', '03:30']);
+  const code = readCode('src/domain/travel.js');
+  assert.equal(/Helsinki|finnish|EEST|\b(120|180)\b.*offset/i.test(code), false, 'travel.js ei saa tuntea yhtäkään vyöhykettä');
+});
+
+test('KRIITTINEN: kevätyönä (Helsinki) lähtö ei osu puuttuvaan tuntiin ja matkalle jää täysi aika', () => {
   // Saapuminen 05:00, 90 min: seinäkello sanoisi 03:30, jota ei ole -- laite soittaisi 04:30.
   const schedule = departureSchedule(plan({ arrivalDate: '2026-03-29', arrivalTime: '05:00', travelMinutes: 90,
-    arrivalBufferMinutes: 0 }), { todayIso: '2026-03-29' });
+    arrivalBufferMinutes: 0 }), { todayIso: '2026-03-29', offsetMinutesFn: HKI });
   assert.deepEqual([schedule.leave.date, schedule.leave.time], ['2026-03-29', '02:30']);
   assert.deepEqual(leaveAtMinus(departureSchedule(plan({ arrivalDate: '2026-03-29', arrivalTime: '05:15',
-    travelMinutes: 70, arrivalBufferMinutes: 0 }), { todayIso: '2026-03-29' }), 10), { date: '2026-03-29', time: '02:55' });
+    travelMinutes: 70, arrivalBufferMinutes: 0 }), { todayIso: '2026-03-29', offsetMinutesFn: HKI }), 10,
+    { offsetMinutesFn: HKI }), { date: '2026-03-29', time: '02:55' });
 
   for (let start = 0; start < 9 * 60; start += 5) {
     const startTime = fromAbsolute(start).time;
-    if (isFinnishSpringGap('2026-03-29', start)) continue; // tapahtumaa ei voi olla olemattomaan aikaan
+    if (helsinkiGap('2026-03-29', start)) continue; // tapahtumaa ei voi olla olemattomaan aikaan
     for (let travel = 5; travel <= 300; travel += 5) {
       const s = departureSchedule({ arrivalDate: '2026-03-29', arrivalTime: startTime, travelMinutes: travel,
-        arrivalBufferMinutes: 0, preparationMinutes: 0 }, { todayIso: '2026-03-29' });
+        arrivalBufferMinutes: 0, preparationMinutes: 0 }, { todayIso: '2026-03-29', offsetMinutesFn: HKI });
       const leaveInstants = helsinkiInstants(s.leave.date, s.leave.time);
       assert.equal(leaveInstants.length, 1, `${startTime}-${travel}: lähtö ${s.leave.time} ei ole olemassa`);
       const elapsed = (helsinkiInstants('2026-03-29', startTime)[0] - leaveInstants[0]) / 60000;
@@ -343,9 +342,9 @@ test('KRIITTINEN: kevätyönä lähtö ei osu puuttuvaan tuntiin ja matkalle jä
   }
 });
 
-test('KRIITTINEN: syysyönä lähtö on aina ajoissa eikä koskaan myöhemmin kuin seinäkello sanoo', () => {
+test('KRIITTINEN: syysyönä (Helsinki) lähtö on aina ajoissa eikä koskaan myöhemmin kuin seinäkello sanoo', () => {
   const schedule = departureSchedule(plan({ arrivalDate: '2026-10-25', arrivalTime: '04:30', travelMinutes: 120,
-    arrivalBufferMinutes: 0 }), { todayIso: '2026-10-25' });
+    arrivalBufferMinutes: 0 }), { todayIso: '2026-10-25', offsetMinutesFn: HKI });
   assert.deepEqual([schedule.leave.date, schedule.leave.time], ['2026-10-25', '02:30']);
 
   for (let start = 0; start < 9 * 60; start += 5) {
@@ -353,7 +352,7 @@ test('KRIITTINEN: syysyönä lähtö on aina ajoissa eikä koskaan myöhemmin ku
     const startInstant = Math.min(...helsinkiInstants('2026-10-25', startTime));
     for (let travel = 5; travel <= 300; travel += 5) {
       const s = departureSchedule({ arrivalDate: '2026-10-25', arrivalTime: startTime, travelMinutes: travel,
-        arrivalBufferMinutes: 0, preparationMinutes: 0 }, { todayIso: '2026-10-25' });
+        arrivalBufferMinutes: 0, preparationMinutes: 0 }, { todayIso: '2026-10-25', offsetMinutesFn: HKI });
       const naive = absoluteMinutes('2026-10-25', start) - travel;
       assert.ok(s.leave.abs <= naive, `${startTime}-${travel}: myöhemmin kuin seinäkello`);
       // Laite lukee toistuvan ajan ensimmäiseksi kerraksi.
@@ -363,28 +362,86 @@ test('KRIITTINEN: syysyönä lähtö on aina ajoissa eikä koskaan myöhemmin ku
   }
 });
 
-test('kesäajan ulkopuolella varovainen laskenta on täsmälleen seinäkelloa', () => {
+test('kesäajan ulkopuolella varovainen laskenta on täsmälleen seinäkelloa (Helsingin vyöhykkeellä)', () => {
   for (const date of ['2026-03-28', '2026-03-30', '2026-10-24', '2026-10-26', '2026-06-21', '2026-01-15']) {
     for (let start = 0; start < 1440; start += 7) {
       for (const minutes of [1, 15, 95, 600]) {
         const abs = absoluteMinutes(date, start);
-        assert.equal(minusMinutes(abs, minutes), abs - minutes, `${date} ${start} ${minutes}`);
-        assert.equal(minutesBetween(abs - minutes, abs), minutes);
+        assert.equal(minusMinutes(abs, minutes, HKI), abs - minutes, `${date} ${start} ${minutes}`);
+        assert.equal(minutesBetween(abs - minutes, abs, HKI), minutes);
       }
     }
   }
 });
 
+test('UTC, UTC+14 ja UTC−11: kiinteällä vyöhykkeellä tulos on seinäkelloa myös Suomen vaihtoöinä', () => {
+  for (const offset of [0, 840, -660]) {
+    for (const date of ['2026-03-29', '2026-10-25', '2026-06-21', '2026-12-31']) {
+      for (let start = 0; start < 1440; start += 13) {
+        for (const minutes of [1, 45, 95, 600]) {
+          const abs = absoluteMinutes(date, start);
+          assert.equal(minusMinutes(abs, minutes, fixed(offset)), abs - minutes, `${offset} ${date} ${start}`);
+          assert.equal(minutesBetween(abs - minutes, abs, fixed(offset)), minutes);
+        }
+      }
+    }
+    const s = departureSchedule(plan({ arrivalDate: '2026-03-29', arrivalTime: '05:00', travelMinutes: 90,
+      arrivalBufferMinutes: 0 }), { todayIso: '2026-03-29', offsetMinutesFn: fixed(offset) });
+    assert.equal(s.leave.time, '03:30', `UTC${offset >= 0 ? '+' : ''}${offset / 60}: ei Suomen sääntöä`);
+  }
+});
+
+test('vyöhykkeen vaihto: sama meno lasketaan laitteen nykyisellä vyöhykkeellä, ei edellisellä', () => {
+  const p = plan({ arrivalDate: '2026-03-29', arrivalTime: '05:00', travelMinutes: 90, arrivalBufferMinutes: 0 });
+  const inHelsinki = departureSchedule(p, { todayIso: '2026-03-29', offsetMinutesFn: HKI });
+  const inKiritimati = departureSchedule(p, { todayIso: '2026-03-29', offsetMinutesFn: fixed(840) });
+  const inNewYork = departureSchedule(p, { todayIso: '2026-03-29', offsetMinutesFn: newYork });
+  assert.equal(inHelsinki.leave.time, '02:30', 'Helsingin kevätaukko korjataan');
+  assert.equal(inKiritimati.leave.time, '03:30');
+  assert.equal(inNewYork.leave.time, '03:30', 'New Yorkissa 29.3. ei ole vaihtoa');
+  // New Yorkin oma vaihtoyö 8.3.2026: 02:00–02:59 puuttuu.
+  const us = departureSchedule(plan({ arrivalDate: '2026-03-08', arrivalTime: '03:30', travelMinutes: 60,
+    arrivalBufferMinutes: 0 }), { todayIso: '2026-03-08', offsetMinutesFn: newYork });
+  assert.equal(us.leave.time, '01:30', 'New Yorkin aukko korjataan New Yorkin yönä');
+  const usInHelsinki = departureSchedule(plan({ arrivalDate: '2026-03-08', arrivalTime: '03:30', travelMinutes: 60,
+    arrivalBufferMinutes: 0 }), { todayIso: '2026-03-08', offsetMinutesFn: HKI });
+  assert.equal(usInHelsinki.leave.time, '02:30');
+});
+
+test('keskiyön yli: lähtö ja valmistautuminen edelliselle päivälle, myös vaihtoyönä', () => {
+  const late = departureSchedule(plan({ arrivalDate: '2026-03-29', arrivalTime: '00:20', travelMinutes: 45,
+    arrivalBufferMinutes: 5, preparationMinutes: 30 }), { todayIso: '2026-03-29', offsetMinutesFn: HKI });
+  assert.deepEqual([late.leave.date, late.leave.time, late.prepare.date, late.prepare.time],
+    ['2026-03-28', '23:30', '2026-03-28', '23:00']);
+  const autumn = departureSchedule(plan({ arrivalDate: '2026-10-25', arrivalTime: '00:30', travelMinutes: 60,
+    arrivalBufferMinutes: 0, preparationMinutes: 30 }), { todayIso: '2026-10-25', offsetMinutesFn: HKI });
+  assert.deepEqual([autumn.leave.date, autumn.leave.time, autumn.prepare.time], ['2026-10-24', '23:30', '23:00']);
+  const year = departureSchedule(plan({ arrivalDate: '2027-01-01', arrivalTime: '00:10', travelMinutes: 30,
+    arrivalBufferMinutes: 0 }), { todayIso: '2026-12-31', offsetMinutesFn: fixed(-660) });
+  assert.deepEqual([year.leave.date, year.leave.time], ['2026-12-31', '23:40']);
+});
+
+test('planDeparture välittää vyöhykkeen: kevätyönä lähtö 02:30 vain Helsingin vyöhykkeellä', () => {
+  const occurrence = { id: 'event:e1:2026-03-29', date: '2026-03-29', time: '05:00' };
+  const place = { usualTravelMinutes: 90, overheadMinutes: 0, preparationMinutes: 0, arrivalBufferMinutes: 0 };
+  const settings = { arrivalBufferMinutes: 0 };
+  const withZone = planDeparture({ occurrence, place, settings, offsetMinutesFn: HKI });
+  const plain = planDeparture({ occurrence, place, settings });
+  assert.equal(withZone.leave.time, '02:30');
+  assert.equal(plain.leave.time, '03:30');
+});
+
 test('kevätyönä vaihe lasketaan kuluneesta ajasta: 02:55 -> 04:10 on 15 min, ei 75', () => {
   const p = plan({ arrivalDate: '2026-03-29', arrivalTime: '05:00', travelMinutes: 50, arrivalBufferMinutes: 0 });
-  const state = departureState(p, { todayIso: '2026-03-29', nowMinutes: hm('02:55') });
+  const state = departureState(p, { todayIso: '2026-03-29', nowMinutes: hm('02:55'), offsetMinutesFn: HKI });
   assert.equal(state.schedule.leave.time, '04:10');
   assert.equal(state.state, DEPARTURE_STATE.LEAVE_SOON);
   assert.equal(state.minutesUntilLeave, 15);
-  const beforeGap = departurePhase(p, { todayIso: '2026-03-29', nowMinutes: hm('02:59') });
+  const beforeGap = departurePhase(p, { todayIso: '2026-03-29', nowMinutes: hm('02:59'), offsetMinutesFn: HKI });
   assert.deepEqual([beforeGap.phase, beforeGap.minutesUntilLeave], [DEPARTURE_PHASE.PREPARE_SOON, 11],
     'seinäkello sanoisi 71 min ja NOT_YET');
-  assert.equal(departurePhase(p, { todayIso: '2026-03-29', nowMinutes: hm('04:05') }).phase, DEPARTURE_PHASE.LEAVE_IN_5);
+  assert.equal(departurePhase(p, { todayIso: '2026-03-29', nowMinutes: hm('04:05'), offsetMinutesFn: HKI }).phase,
+    DEPARTURE_PHASE.LEAVE_IN_5);
 });
 
 test('tulos ei riipu laitteen aikavyöhykkeestä (Helsinki, UTC, New York, Tokio)', () => {
@@ -681,11 +738,12 @@ test('keskiyö, kuun ja vuoden vaihde: päivä rullaa ja selitys kertoo päivän
   assert.equal(newYear.reminderTimes.prepare.date, '2026-12-31');
 });
 
-test('kesäajan yöt: kevään puuttuva tunti korjataan ja kerrotaan, syksy pysyy seinäkellossa', () => {
+test('kesäajan yöt (laitteen vyöhyke Helsinki): kevään puuttuva tunti korjataan ja kerrotaan, syksy pysyy seinäkellossa', () => {
   const spring = planDeparture({
     occurrence: occurrence({ date: '2026-03-29', time: '05:00' }),
     place: place({ usualTravelMinutes: 90, overheadMinutes: 0, preparationMinutes: 0 }),
-    settings: settings({ arrivalBufferMinutes: 0 })
+    settings: settings({ arrivalBufferMinutes: 0 }),
+    offsetMinutesFn: HKI
   });
   assert.equal(spring.leave.time, '02:30');
   assert.equal(spring.dstAdjusted, true);
@@ -693,11 +751,12 @@ test('kesäajan yöt: kevään puuttuva tunti korjataan ja kerrotaan, syksy pysy
   const autumn = planDeparture({
     occurrence: occurrence({ date: '2026-10-25', time: '04:30' }),
     place: place({ usualTravelMinutes: 120, overheadMinutes: 0, preparationMinutes: 0 }),
-    settings: settings({ arrivalBufferMinutes: 0 })
+    settings: settings({ arrivalBufferMinutes: 0 }),
+    offsetMinutesFn: HKI
   });
   assert.equal(autumn.leave.time, '02:30');
   assert.equal(autumn.dstAdjusted, false);
-  const ordinary = planDeparture({ occurrence: occurrence({ date: '2026-03-29', time: '09:00' }), place: place(), settings: settings() });
+  const ordinary = planDeparture({ occurrence: occurrence({ date: '2026-03-29', time: '09:00' }), place: place(), settings: settings(), offsetMinutesFn: HKI });
   assert.equal(ordinary.dstAdjusted, false);
   assert.equal(ordinary.leave.time, '08:05');
 });
@@ -800,4 +859,21 @@ test('käyttäjälle näkyvä teksti ei sisällä teknistä sanastoa', () => {
   for (const text of texts) {
     assert.equal(/provider|percentile|schema|null|undefined|NaN|p80/i.test(text), false, text);
   }
+});
+
+test('yksi aikamalli: zonedClock.offsetFnForTimeZone antaa saman lähdön kuin testin Helsinki-funktio', async () => {
+  const { offsetFnForTimeZone } = await import('../src/domain/zonedClock.js');
+  const intl = offsetFnForTimeZone('Europe/Helsinki');
+  // Riippumaton tarkistus vain, jos ajoympäristön ICU tuntee vyöhykkeen.
+  if (intl(Date.UTC(2026, 6, 1)) !== 180) return;
+  for (const [date, time, travel] of [['2026-03-29', '05:00', 90], ['2026-10-25', '04:30', 120], ['2026-07-01', '08:00', 35]]) {
+    const p = plan({ arrivalDate: date, arrivalTime: time, travelMinutes: travel, arrivalBufferMinutes: 0 });
+    const a = departureSchedule(p, { todayIso: date, offsetMinutesFn: HKI });
+    const b = departureSchedule(p, { todayIso: date, offsetMinutesFn: intl });
+    assert.deepEqual([b.leave.date, b.leave.time], [a.leave.date, a.leave.time], `${date} ${time}`);
+  }
+  const tokyo = offsetFnForTimeZone('Asia/Tokyo');
+  const t = departureSchedule(plan({ arrivalDate: '2026-03-29', arrivalTime: '05:00', travelMinutes: 90,
+    arrivalBufferMinutes: 0 }), { todayIso: '2026-03-29', offsetMinutesFn: tokyo });
+  assert.equal(t.leave.time, '03:30', 'Tokiossa ei ole kesäaikaa');
 });
