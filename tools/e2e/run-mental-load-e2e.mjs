@@ -134,6 +134,31 @@ const CLOSED_SCENARIOS = [
 // =====================================================================
 
 const L_SCENARIOS = [
+  { name: 'Brain Dump: monirivinen kirjaus → monta saapuvaa riviä ilman päätöksiä; erä "Myöhemmin" → päivättömät tehtävät',
+    run: ({ page }) => page(async () => {
+      await H.openToday();
+      const text = '- Soita Annalle\n2. Varaa hammaslääkäri; vie auto katsastukseen\n• osta maito\n\n- osta maito';
+      H.fill('#captureInput', text);
+      const before = H.db('inbox_items').length;
+      H.click('#captureSendBtn');
+      await H.waitFor(() => H.text('#captureStatus').includes('Kirjattu 4 asiaa saapuviin'), 'kirjauksen tila');
+      if (H.shown('#capturePending') && H.text('#capturePending').includes('Tarkista tulkinta')) throw new Error('päätöskortti avautui kirjauksessa');
+      const rows = await H.waitFor(() => { const all = H.db('inbox_items'); return all.length === before + 4 ? all : null; }, '4 riviä kantaan');
+      await H.openTab('screen-tasks');
+      H.click('#segmentInbox');
+      await H.waitFor(() => H.el('#inboxSelectAll'), 'erä-käsittely');
+      H.el('#inboxSelectAll').click();
+      await H.waitFor(() => document.querySelectorAll('[data-triage-select]:checked').length === 4, 'kaikki valittu');
+      document.querySelector('[data-triage="LATER"]').click();
+      const tasks = await H.waitFor(() => {
+        const created = H.db('tasks').filter(r => r.horizon === 'LATER' && r.date === null);
+        return created.length === 4 ? created : null;
+      }, '4 päivätöntä tehtävää');
+      const open = H.s().inboxItems.filter(item => !['converted', 'dismissed'].includes(item.status)).length;
+      return 'inbox_items +' + (rows.length - before) + ' (kaksoiskappale yhdistettiin); erä Myöhemmin → '
+        + tasks.length + ' tehtävää date=null horizon=LATER; avoimia saapuvia ' + open;
+    }) },
+
   { name: 'Tänään ≤ 3: myöhässä ei nouse automaattisesti, kiinteä meno ei ole fokuksessa, muu on tallessa',
     run: ({ page }) => page(async () => {
       const today = H.today();
