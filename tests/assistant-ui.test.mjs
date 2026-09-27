@@ -493,12 +493,10 @@ test('repositorioita on kolmekymmentäkolme', () => {
 
 test('tavoitettavuusmatriisi kattaa kaikki kolmekymmentäneljä', () => {
   // 0013 toi kaksi porttia: runningTimers ja alignmentItemSettings.
-  // 0014 toi kymmenen. Niiden näkymät rakennetaan erikseen: siihen asti
-  // ne ovat rehellisesti ilman käyttöliittymää (aalto K ESTETTY), ja
-  // joukko luetellaan nimeltä.
+  // 0014 toi kymmenen, ja niiden näkymät (Kalenteri, Profiilin Arki,
+  // Hyvinvointi ja Paikat, Tänään-kortit) on rakennettu: yksikään portti
+  // ei ole ilman käyttöliittymää.
   assert.equal(REACHABILITY.length, 34);
-  assert.deepEqual(REACHABILITY.filter(r => r.reach === REACH.NO_UI).map(r => r.gate).sort(),
-    ['calendarEvents', 'commuteObservations', 'exerciseSessions', 'habitEvents', 'habitPlans',
-      'lifeSettings', 'placeAliases', 'savedPlaces', 'sleepLogs', 'wellbeingCheckins'],
-    'jokin muu kuin aallon K domain on ilman käyttöliittymää');
+  assert.deepEqual(REACHABILITY.filter(r => r.reach === REACH.NO_UI).map(r => r.gate).sort(), [],
+    'jokin domain on ilman käyttöliittymää');
 });

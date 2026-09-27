@@ -36,7 +36,9 @@ function uiSource() {
   // jäi aiemmin löytymättä.
   const views = ['goals', 'goalDetail', 'inbox', 'notices',
                  'notificationSettings', 'planning', 'profile', 'reminders',
-                 'routines', 'tasks', 'today', 'travel', 'week'];
+                 'routines', 'tasks', 'today', 'travel', 'week',
+                 // Arjen käyttöjärjestelmä (aalto K).
+                 'calendar', 'dailySettings', 'placesSettings', 'wellbeingHub'];
   return [read('index.html'), ...views.map(v => read(`src/app/views/${v}.js`))]
     .join(NEWLINE);
 }
@@ -164,12 +166,12 @@ test('KRIITTINEN: puuttuvaksi merkittyä domainia ei ole käyttöliittymässä',
   // valmiustila ja dokumentaatio yhdessä.
   //
   //   5. Aallon K kymmenen domainia (0014) toivat sen jälleen takaisin:
-  //      domain, repositorio ja migraatio ovat olemassa, näkymät
-  //      rakennetaan erikseen. Aalto K on siksi ESTETTY.
-  assert.deepEqual([...unreachableGates()].sort(), [
-    'calendarEvents', 'commuteObservations', 'exerciseSessions', 'habitEvents', 'habitPlans',
-    'lifeSettings', 'placeAliases', 'savedPlaces', 'sleepLogs', 'wellbeingCheckins'
-  ], 'puuttuvien joukko muuttui — päivitä dokumentaatio ja aaltojen valmius');
+  //      domain, repositorio ja migraatio olivat olemassa, näkymät eivät.
+  //   6. Kalenteri, Profiilin Arki / Hyvinvointi / Paikat ja Tänään-kortit
+  //      rakennettiin, ja joukko tyhjeni kolmannen kerran. Aalto K on nyt
+  //      estetty vain kannan (0014) takia.
+  assert.deepEqual([...unreachableGates()].sort(), [],
+    'puuttuvien joukko muuttui — päivitä dokumentaatio ja aaltojen valmius');
 });
 
 test('KRIITTINEN: puuttuva käyttöliittymä ei silti riko latauspolkua', () => {

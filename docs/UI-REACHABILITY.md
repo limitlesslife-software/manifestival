@@ -49,26 +49,24 @@ taloutta eikä löytänyt kumpaakaan.
 | `alignmentReviews` | **ON** | **Suunta** → Viikkokatsaus | Viikkokatsaus | luonti + luku + päivitys | I |
 | `runningTimers` | **ON** | Kaikki näkymät → **Ajanseuranta**-palkki (käynnistys Suunnasta, tehtävästä, projektista tai rutiinista) | Ajanseuranta | käynnistys + tauko + pysäytys + hylkäys | J |
 | `alignmentItemSettings` | **ON** | Tehtävä → **Kuormittavuus** (myös rutiini, projekti, Suunta → Arvioi tehtäviä) | Kuormittavuus | luonti + luku + muokkaus + poisto kohteen mukana | J |
-| `savedPlaces` | **EI** | — (tuleva: Profiili → Paikat) | Paikat | domain + tallennus valmiina | K |
-| `placeAliases` | **EI** | — (tuleva: paikan vahvistus) | Paikkojen lisänimet | domain + tallennus valmiina | K |
-| `calendarEvents` | **EI** | — (tuleva: Kalenteri → Päivä / Viikko / Kuukausi) | Kalenteri | domain + tallennus valmiina | K |
-| `commuteObservations` | **EI** | — (tuleva: "Lähdin" / "Olin perillä") | Matka-ajat | domain + tallennus valmiina | K |
-| `lifeSettings` | **EI** | — (tuleva: Profiili → arjen asetukset) | Arjen asetukset | domain + tallennus valmiina | K |
-| `sleepLogs` | **EI** | — (tuleva: Tänään → Uni) | Uni | domain + tallennus valmiina | K |
-| `habitPlans` | **EI** | — (tuleva: Suunta → Tavat) | Tavat | domain + tallennus valmiina | K |
-| `habitEvents` | **EI** | — (tuleva: Suunta → Tavat → kirjaa) | Tapojen kirjaukset | domain + tallennus valmiina | K |
-| `exerciseSessions` | **EI** | — (tuleva: Suunta → Liikunta) | Liikunta | domain + tallennus valmiina | K |
-| `wellbeingCheckins` | **EI** | — (tuleva: Tänään → Hyvinvointi) | Motivaatio ja hallinnan tunne | domain + tallennus valmiina | K |
+| `savedPlaces` | **ON** | **Profiili** → Paikat | Paikat | täysi + oletusetuaika | K |
+| `placeAliases` | **ON** | **Profiili** → Paikat → paikan Tunnetut nimitykset | Tunnetut nimitykset | luku + poisto + oppimisen nollaus; syntyy vahvistuksesta | K |
+| `calendarEvents` | **ON** | **Kalenteri** → Päivä / Viikko / Kuukausi → Uusi meno | Kalenteri | täysi + yhden kerran ohitus | K |
+| `commuteObservations` | **ON** | **Profiili** → Paikat → matkojen oppiminen; syntyy "Lähdin" / "Olin perillä" | Paikat | luku + nollaus | K |
+| `lifeSettings` | **ON** | **Profiili** → Arki (ja Asetukset → Ohjaus ja puhe) | Arki | luku + tallennus | K |
+| `sleepLogs` | **ON** | **Profiili** → Hyvinvointi → Uni | Uni | luonti + muokkaus | K |
+| `habitPlans` | **ON** | **Profiili** → Hyvinvointi → Tapojen muutos | Tapojen muutos | täysi | K |
+| `habitEvents` | **ON** | **Profiili** → Hyvinvointi → Tapojen muutos; **Tänään** → tapakortti | Tapojen muutos | kirjaus + edistyminen | K |
+| `exerciseSessions` | **ON** | **Profiili** → Hyvinvointi → Liikunta | Liikunta | täysi | K |
+| `wellbeingCheckins` | **ON** | **Tänään** → voinnin kortti; **Profiili** → Hyvinvointi (14 pv) | Motivaatio | kirjaus + historia | K |
 
 ### Aallon K kymmenen domainia
 
-Samassa rehellisessä välitilassa kuin aalto H aikanaan: migraatio `0014`,
-repositoriot, lataus, vienti ja tilin poisto ovat olemassa, mutta
-käyttäjälle näkyvät polut rakennetaan erikseen. Aalto K on siksi
-**ESTETTY molemmista syistä** (näkymät puuttuvat JA migraatio on
-ajamatta). Kun näkymä on olemassa, sen rivi saa todisteen
-(`tools/release/reachability.mjs`), tämä taulukko päivitetään ja aallon
-valmiustila johdetaan uudelleen.
+Näkymät on rakennettu (Kalenteri-välilehti, Profiilin osiot Arki,
+Hyvinvointi ja Paikat sekä Tänään-kortit), ja jokaisella rivillä on
+koneellisesti tarkistettava todiste (`tools/release/reachability.mjs`).
+Aalto K on estetty enää **vain kannan takia**: migraatiota `0014` ei ole
+ajettu.
 
 ### Aallon H viisi näkymää
 

@@ -31,23 +31,21 @@ oikeassa käytössä, **ei estä junaa eikä ole koskaan PASS**. Omistajan viest
 
 ---
 
-## VALMIUS: ESTETTY
+## LÄHTÖTILANNE: kanta puuttuu (ESTETTY)
 
-Tätä aaltoa **ei saa vielä deployata**. Este on kaksinkertainen, kuten
-aallolla H aikanaan:
+Tätä aaltoa **ei saa vielä deployata**, koska kanta puuttuu:
 
 1. **Kanta puuttuu.** Migraatiota `0014_daily_life.sql` ei ole ajettu
    tuotantoon, eikä myöskään sen edellytystä `0013_alignment_reality.sql`.
    Portin avaaminen tauluun jota ei ole kaataisi jokaisen kirjoituksen
    virheeseen `42P01` (ajonaikainen skeematarkistus torjuu sen ennen
    verkkoa, mutta tieto ei silloin säily).
-2. **Näkymät rakennetaan erikseen.** Domain, repositoriot, lataus, vienti ja
-   tilin poisto ovat valmiit, mutta käyttäjälle näkyvät polut (kalenteri,
-   paikat, arjen asetukset, uni, tavat, liikunta) ovat rakenteilla.
 
-Valmiustilaa **ei kirjoiteta käsin**: `tests/ui-reachability.test.mjs`
-johtaa sen `tools/release/reachability.mjs` -matriisista. Kun näkymät ovat
-olemassa, matriisin rivit saavat todisteen ja tämä osio poistuu.
+Näkymät ovat valmiit: Kalenteri (Päivä / Viikko / Kuukausi), Profiili →
+Arki, Hyvinvointi ja Paikat (Tunnetut nimitykset, matkojen oppiminen),
+Tänään-kortit. Valmiustilaa **ei kirjoiteta käsin**:
+`tests/ui-reachability.test.mjs` johtaa sen `tools/release/reachability.mjs`
+-matriisista.
 
 **Aalto riippuu aallosta J.** Migraatio `0014` edellyttää 0013:n
 (`verify_0013.sql` = 0 poikkeavaa). Menot ja liikuntakerrat viittaavat
@@ -59,7 +57,7 @@ taulujen välisiä.
 ## Mitä esteen purkaminen vaatii
 
 1. Aalto J tuotannossa: `0013` ajettu ja `verify_0013.sql` → 0 poikkeavaa
-2. Näkymät olemassa ja `tools/release/reachability.mjs` päivitetty
+2. (tehty) Näkymät olemassa ja `tools/release/reachability.mjs` päivitetty
 3. Aallon K ehdokas leikattu (`rehearsal/wave-k-v1`), lukko kirjoitettu
    (`train-map --write`, `SQL_SOURCE_WAVE` = K) ja dokumentit synkattu
    (`train-map --sync-docs`)
@@ -161,11 +159,12 @@ npm run production:verify-assets -- --wave=K
 Jokainen kohta tarkistetaan **sivun latauksen jälkeen**.
 
 - [ ] Aaltojen A–J ominaisuudet toimivat kaikki yhä
-- [ ] Meno (kerran ja viikoittain toistuva) säilyy; esiintymän ohitus säilyy
-- [ ] Paikka ja sen lisänimi säilyvät; kaksi samannimistä paikkaa ei synny
-- [ ] Arjen asetukset säilyvät; puuttuva asetus käyttää oletusta
-- [ ] Unikirjaus, tavan kirjaus, liikuntakerta sekä motivaatio ja hallinnan
-      tunne säilyvät; tyhjä arvo pysyy tyhjänä eikä muutu nollaksi
+- [ ] **Kalenteri**: meno (kerran ja viikoittain toistuva) säilyy; esiintymän ohitus säilyy
+- [ ] **Paikat**: paikka säilyy; kaksi samannimistä paikkaa ei synny
+- [ ] **Tunnetut nimitykset**: vahvistettu nimitys säilyy ja näkyy paikan alla
+- [ ] **Arki**: arjen asetukset säilyvät; puuttuva asetus käyttää oletusta
+- [ ] **Uni**, **Tapojen muutos**, **Liikunta** ja **Motivaatio** (voinnin kortti):
+      kirjaukset säilyvät; tyhjä arvo pysyy tyhjänä eikä muutu nollaksi
 
 ---
 

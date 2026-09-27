@@ -718,7 +718,7 @@
       "title": "Arjen käyttöjärjestelmä: kalenteri, paikat, uni, herätys, tavat ja liikunta",
       "commitSha": null,
       "cacheVersion": "v24",
-      "readiness": "BLOCKED",
+      "readiness": "READY",
       "gatesEnabled": [
         "savedPlaces",
         "placeAliases",

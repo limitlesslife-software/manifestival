@@ -366,12 +366,11 @@ export const WAVES = Object.freeze([
     backupRequired: false,
     verifyPrerequisite: '0013',
 
-    // ESTETTY MOLEMMISTA SYISTÄ, kuten aalto H hetken oli: migraatio on
-    // ajamatta JA näkymät rakennetaan erikseen (kalenteri, paikat, uni,
-    // herätys, tavat, liikunta). Valmiustila JOHDETAAN tavoitettavuudesta
-    // (tests/ui-reachability.test.mjs): kun näkymät ovat olemassa, rivit
-    // tools/release/reachability.mjs:ssä ja tämä arvo muuttuvat yhdessä.
-    readiness: 'BLOCKED',
+    // Näkymät on rakennettu (Kalenteri, Profiili -> Arki / Hyvinvointi /
+    // Paikat, Tänään-kortit), joten aalto on estetty enää vain kannan
+    // takia: migraatiota 0014 ei ole ajettu. Valmiustila JOHDETAAN
+    // tavoitettavuudesta (tests/ui-reachability.test.mjs).
+    readiness: 'READY',
     blockedBy: 'supabase/migrations/0014_daily_life.sql — EI AJETTU',
     gates: Object.freeze(['savedPlaces', 'placeAliases', 'calendarEvents', 'commuteObservations',
                           'lifeSettings', 'sleepLogs', 'habitPlans', 'habitEvents',
