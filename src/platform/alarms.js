@@ -210,7 +210,8 @@ export function cleanDestination(value) {
 export function navigationUrl(destination, mode = 'driving') {
   const text = cleanDestination(destination);
   if (!text) return null;
-  const travel = WEB_TRAVEL_MODE[mode] || WEB_TRAVEL_MODE.driving;
+  // Vain omat avaimet: "constructor" tai "__proto__" ei saa päätyä linkkiin.
+  const travel = NATIVE_TRAVEL_MODES.includes(mode) ? WEB_TRAVEL_MODE[mode] : WEB_TRAVEL_MODE.driving;
   return `${MAPS_PREFIX}${encodeURIComponent(text)}&travelmode=${travel}`;
 }
 
@@ -226,6 +227,17 @@ export function navigationUrl(destination, mode = 'driving') {
  * @returns {{valid:boolean, errors:Object<string,string>, entry:object|null}}
  */
 export function validateAlarmEntry(input) {
+  try {
+    return validateEntryUnsafe(input);
+  } catch {
+    // Esim. heittävä getter: hylätään, ei kaadeta kutsujaa.
+    return Object.freeze({
+      valid: false, errors: Object.freeze({ entry: 'Herätyksen tiedot ovat virheelliset.' }), entry: null
+    });
+  }
+}
+
+function validateEntryUnsafe(input) {
   const errors = {};
   const source = isObject(input) ? input : {};
   if (!isObject(input)) errors.entry = 'Herätyksen tiedot puuttuvat.';
@@ -329,6 +341,14 @@ export function validateAlarmEntry(input) {
   return Object.freeze({ valid, errors: Object.freeze(errors), entry });
 }
 
+function safeId(input) {
+  try {
+    return isObject(input) && typeof input.id === 'string' ? input.id : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Koko joukko liitännäiselle: kelvolliset (ensimmäinen samalla
  * tunnisteella voittaa, enintään maxAlarms) ja hylätyt syineen.
@@ -341,7 +361,7 @@ export function prepareAlarms(entries) {
   const seen = new Set();
   for (const input of list) {
     const result = validateAlarmEntry(input);
-    const id = isObject(input) && typeof input.id === 'string' ? input.id : null;
+    const id = result.valid ? result.entry.id : safeId(input);
     if (!result.valid) {
       rejected.push(Object.freeze({ id, errors: result.errors }));
       continue;
@@ -467,9 +487,22 @@ export async function alarmStatus() {
  *
  * @returns {Promise<{ok, supported, scheduled, requested, exact, inexact, dropped, rejected, reason?, code?}>}
  */
-export async function scheduleAlarms(entries, { timeoutMs = CALL_TIMEOUT_MS } = {}) {
+export async function scheduleAlarms(entries, options) {
+  const timeoutMs = isObject(options) && Number.isFinite(options.timeoutMs) && options.timeoutMs > 0
+    ? options.timeoutMs : CALL_TIMEOUT_MS;
   const list = Array.isArray(entries) ? entries : [];
-  const { accepted, rejected } = prepareAlarms(list);
+  let prepared;
+  try {
+    prepared = prepareAlarms(list);
+  } catch {
+    // Rikkinäinen taulukko (heittävä indeksi tms.): ei kosketa laitteen herätyksiin.
+    return Object.freeze({
+      ok: false, supported: supportsBackgroundAlarms(), requested: 0, scheduled: 0, exact: false,
+      inexact: Object.freeze([]), dropped: Object.freeze([]), rejected: Object.freeze([]), code: 'invalid',
+      reason: 'Herätysten tiedot ovat virheelliset.'
+    });
+  }
+  const { accepted, rejected } = prepared;
   const base = { requested: list.length, scheduled: 0, exact: false, inexact: Object.freeze([]), dropped: Object.freeze([]), rejected };
   const plugin = nativeAlarmPlugin();
   if (!plugin) return unsupported(base);
@@ -597,7 +630,8 @@ let webUtterance = null;
  *
  * @returns {Promise<{ok:boolean, backend:'native'|'web'|'none', foregroundOnly:boolean, code?:string, note?:string}>}
  */
-export async function speak(text, { lang = 'fi-FI' } = {}) {
+export async function speak(text, options) {
+  const lang = isObject(options) ? options.lang : undefined;
   const clean = cleanText(text);
   const language = typeof lang === 'string' && LANG_PATTERN.test(lang) ? lang : 'fi-FI';
   if (!clean || codePointLength(clean) > ALARM_LIMITS.maxSpeechLength) {
@@ -691,7 +725,9 @@ export async function stopSpeaking() {
  *
  * @returns {Promise<{ok, backend:'native'|'web', opened:boolean, url:string|null, target?:string, code?:string}>}
  */
-export async function openNavigation({ destination, mode = 'driving' } = {}) {
+export async function openNavigation(target) {
+  const destination = isObject(target) ? target.destination : undefined;
+  const mode = isObject(target) ? target.mode : undefined;
   const text = cleanDestination(destination);
   const travel = NATIVE_TRAVEL_MODES.includes(mode) ? mode : 'driving';
   const plugin = nativeAlarmPlugin();
