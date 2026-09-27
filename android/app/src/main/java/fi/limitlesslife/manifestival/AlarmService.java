@@ -86,6 +86,8 @@ public class AlarmService extends Service {
     /** Samassa prosessissa elava palvelu (vastaanotin ja aktiviteetti viestivat sille). */
     private static volatile AlarmService running;
     private static volatile String ringingId;
+    /** Soivan heratyksen merkinta JSONina: nakyma voi torkuttaa, vaikka sovitus olisi jo poistanut sen tallesta. */
+    private static volatile String ringingEntryJson;
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private final List<Runnable> timers = new ArrayList<>();
@@ -118,6 +120,12 @@ public class AlarmService extends Service {
 
     static String currentRingingId() {
         return ringingId;
+    }
+
+    /** Soivan heratyksen merkinta (JSON), jos tunniste soi juuri nyt; muuten null. */
+    static String ringingEntryJson(String id) {
+        String json = ringingEntryJson;
+        return id != null && id.equals(ringingId) ? json : null;
     }
 
     /** Lopeta soitto tai puhe tunnisteelle (kuittaus, torkku, peruutus). Mista tahansa saikeesta. */
@@ -236,6 +244,7 @@ public class AlarmService extends Service {
         releaseWakeLock();
         String id = ringingId;
         ringingId = null;
+        ringingEntryJson = null;
         if (id != null) AlarmActivity.closeFor(id);
         if (running == this) running = null;
         super.onDestroy();
@@ -275,11 +284,14 @@ public class AlarmService extends Service {
             JSONObject extra = new JSONObject();
             AlarmScheduler.put(extra, "superseded", true);
             AlarmStore.recordEvent(this, AlarmStore.EVENT_MISSED, ringingId, ringing.optString("kind"), extra);
+            String previous = ringingId;
             haltRing();
+            AlarmActivity.closeFor(previous);
         } else if (ringing != null) {
             return; // sama heratys jo soi
         }
         ringing = entry;
+        ringingEntryJson = entry.toString();
         ringingId = id;
         if (speaking != null) {
             // Heratys menee puheen edelle. Muistutuksen ilmoitus jaa nakyviin.
@@ -411,6 +423,7 @@ public class AlarmService extends Service {
         stopSpeech();
         ringing = null;
         ringingId = null;
+        ringingEntryJson = null;
     }
 
     // ------------------------------------------------------------ puhuttu muistutus
@@ -500,6 +513,13 @@ public class AlarmService extends Service {
             }
 
             @Override
+            public void onError(String utteranceId, int errorCode) {
+                main.post(() -> utteranceFinished(utteranceId));
+            }
+
+            /** Pakollinen (abstrakti) vanha muoto; uudet moottorit kutsuvat ylla olevaa. */
+            @Override
+            @SuppressWarnings("deprecation")
             public void onError(String utteranceId) {
                 main.post(() -> utteranceFinished(utteranceId));
             }
@@ -769,12 +789,6 @@ public class AlarmService extends Service {
         return PendingIntent.getActivity(context, AlarmMath.requestCode(id), intent, AlarmScheduler.PI_FLAGS);
     }
 
-    private static PendingIntent openApp(Context context, String id) {
-        Intent launch = context.getPackageManager().getLaunchIntentForPackage(context.getPackageName());
-        if (launch == null) launch = new Intent(context, MainActivity.class);
-        launch.setData(Uri.parse("manifestival-alarm://open/" + Uri.encode(id)));
-        return PendingIntent.getActivity(context, AlarmMath.requestCode(id), launch, AlarmScheduler.PI_FLAGS);
-    }
 
     /**
      * "Avaa reitti": suoraan karttasovellukseen (ei trampoliinia). Navigointi
@@ -850,7 +864,7 @@ public class AlarmService extends Service {
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .setPublicVersion(publicVersion(context, CHANNEL_ID, R.string.reminder_default_label))
             .setAutoCancel(true)
-            .setContentIntent(openApp(context, id))
+            .setContentIntent(AlarmScheduler.openAppPendingIntent(context, id))
             .setDeleteIntent(broadcast(context, AlarmReceiver.ACTION_DELETED, entry));
         if (body != null) builder.setContentText(body);
         if (route) {

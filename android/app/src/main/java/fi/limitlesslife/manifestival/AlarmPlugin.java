@@ -307,7 +307,7 @@ public class AlarmPlugin extends Plugin {
             AlarmScheduler.put(row, "date", entry.optString("date"));
             AlarmScheduler.put(row, "time", entry.optString("time"));
             AlarmScheduler.put(row, "title", entry.optString("title"));
-            AlarmScheduler.put(row, "atMs", AlarmScheduler.targetOf(entry, now));
+            AlarmScheduler.put(row, "atMs", AlarmScheduler.targetOf(entry));
             AlarmScheduler.put(row, "exact", entry.optBoolean("exact", false));
             AlarmScheduler.put(row, "snoozeCount", entry.optInt("snoozeCount", 0));
             long snoozeUntil = entry.optLong("snoozeUntil", 0L);
@@ -592,6 +592,13 @@ public class AlarmPlugin extends Plugin {
             }
 
             @Override
+            public void onError(String utteranceId, int errorCode) {
+                main.post(() -> finishUtterance(utteranceId, false, "unavailable"));
+            }
+
+            /** Pakollinen (abstrakti) vanha muoto; uudet moottorit kutsuvat ylla olevaa. */
+            @Override
+            @SuppressWarnings("deprecation")
             public void onError(String utteranceId) {
                 main.post(() -> finishUtterance(utteranceId, false, "unavailable"));
             }

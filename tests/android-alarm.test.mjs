@@ -271,6 +271,14 @@ test('torkku on idempotentti ja rajattu; sammutus kuittaa ja pysäyttää', () =
   // Kuitattua esiintymää ei ajasteta uudelleen seuraavassa synkronoinnissa.
   assert.match(methodBody(javaCode('AlarmScheduler.java'), 'static synchronized Outcome reconcile('),
     /AlarmStore\.isHandled\(context, id, date, time\)/);
+  // REGRESSIO: laukeamishetki ei riipu "nyt"-hetkestä. Aiemmin torkutettu
+  // herätys palasi laukeamishetkellä alkuperäiseen aikaan, ja kolmen torkun
+  // jälkeen puolen tunnin myöhästymisraja olisi hylännyt sen ("missed").
+  const target = methodBody(javaCode('AlarmScheduler.java'), 'static long targetOf(JSONObject entry)');
+  assert.match(target, /return snoozeUntil > epoch \? snoozeUntil : epoch;/);
+  assert.equal(/targetOf\([^)]*,/.test(ALARM_FILES.map(javaCode).join('\n')), false, 'targetOf ei saa ottaa nykyhetkeä');
+  // Näkymän Torku toimii, vaikka synkronointi olisi poistanut soivan herätyksen tallesta.
+  assert.match(javaCode('AlarmActivity.java'), /AlarmService\.ringingEntryJson\(id\)/);
 });
 
 test('herätyslukko on aikarajattu ja vapautetaan', () => {

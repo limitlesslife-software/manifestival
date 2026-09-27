@@ -62,7 +62,7 @@ public class AlarmReceiver extends BroadcastReceiver {
         JSONObject entry = AlarmStore.entry(context, id);
         if (entry == null) return; // peruttu
         long now = System.currentTimeMillis();
-        long target = AlarmScheduler.targetOf(entry, now);
+        long target = AlarmScheduler.targetOf(entry);
         if (target < 0) {
             AlarmStore.removeEntry(context, id);
             return;
@@ -172,6 +172,9 @@ public class AlarmReceiver extends BroadcastReceiver {
         long until = now + minutes * AlarmMath.MINUTE_MS;
         AlarmScheduler.put(base, "snoozeCount", used + 1);
         AlarmScheduler.put(base, "snoozeUntil", until);
+        // Seuraava laukeaminen on vasta tulossa: jos puhelin on silloin pois
+        // paalta, kaynnistyksen jalkeen se kirjataan jaaneeksi valiin.
+        AlarmScheduler.put(base, "firedAt", 0L);
         if (auto) AlarmScheduler.put(base, "autoSnoozed", true);
         AlarmStore.putEntry(context, base);
         String result = AlarmScheduler.arm(context, base, until);

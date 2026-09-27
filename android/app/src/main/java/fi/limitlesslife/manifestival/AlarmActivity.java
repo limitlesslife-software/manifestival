@@ -93,7 +93,7 @@ public class AlarmActivity extends Activity {
         String id = intent == null ? null : intent.getStringExtra(AlarmScheduler.EXTRA_ID);
         if (!AlarmMath.isValidId(id)) id = AlarmService.currentRingingId();
         alarmId = id;
-        JSONObject entry = id == null ? null : AlarmStore.entry(this, id);
+        JSONObject entry = entryFor(id);
 
         TextView time = findViewById(R.id.alarmTime);
         TextView label = findViewById(R.id.alarmLabel);
@@ -123,9 +123,30 @@ public class AlarmActivity extends Activity {
         }
     }
 
+    /**
+     * Merkinta tallesta, tai soivan heratyksen muistista: sovelluksen
+     * synkronointi voi poistaa jo laukeaneen heratyksen tallesta kesken
+     * soiton, eika Torku saa silloin jaada tekematta.
+     */
+    private JSONObject entryFor(String id) {
+        if (id == null) return null;
+        JSONObject stored = AlarmStore.entry(this, id);
+        if (stored != null) return stored;
+        String json = AlarmService.ringingEntryJson(id);
+        if (json == null) return null;
+        try {
+            return new JSONObject(json);
+        } catch (org.json.JSONException broken) {
+            return null;
+        }
+    }
+
     private void act(String action) {
         String id = alarmId;
-        if (id != null) AlarmReceiver.handleUserAction(getApplicationContext(), action, id, null);
+        if (id != null) {
+            JSONObject entry = entryFor(id);
+            AlarmReceiver.handleUserAction(getApplicationContext(), action, id, entry == null ? null : entry.toString());
+        }
         finish();
     }
 }

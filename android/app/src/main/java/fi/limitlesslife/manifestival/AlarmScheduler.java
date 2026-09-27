@@ -75,19 +75,28 @@ final class AlarmScheduler {
         return PendingIntent.getBroadcast(context, AlarmMath.requestCode(id), intent, PI_FLAGS);
     }
 
-    /** Jarjestelman heratyskuvakkeen napautus avaa sovelluksen. */
-    private static PendingIntent showPendingIntent(Context context, String id) {
+    /**
+     * Sovelluksen avaus (jarjestelman heratyskuvake, muistutuksen napautus).
+     * Ei data-URIa: sovellus ei tulkitse tata syvalinkiksi. Eri
+     * tunnisteet erottaa pyyntokoodi.
+     */
+    static PendingIntent openAppPendingIntent(Context context, String id) {
         Intent launch = context.getPackageManager().getLaunchIntentForPackage(context.getPackageName());
         if (launch == null) launch = new Intent(context, MainActivity.class);
-        launch.setData(Uri.parse("manifestival-alarm://show/" + Uri.encode(id)));
         return PendingIntent.getActivity(context, AlarmMath.requestCode(id), launch, PI_FLAGS);
     }
 
-    /** Hetki, jolloin tallessa oleva heratys laukeaa seuraavaksi: torkku tai alkuperainen aika. */
-    static long targetOf(JSONObject entry, long now) {
+    /**
+     * Hetki, jolloin tallessa oleva heratys laukeaa seuraavaksi: torkun
+     * paattyminen, jos torkku on alkuperaista aikaa myohemmin, muuten
+     * alkuperainen aika. EI riipu nykyhetkesta: laukeamishetkella "nyt" on
+     * jo torkun jalkeen, eika torkutettu heratys saa silloin nayttaa
+     * alkuperaisen ajan mukaan myohastyneelta.
+     */
+    static long targetOf(JSONObject entry) {
+        long epoch = entry.optLong("epoch", -1L);
         long snoozeUntil = entry.optLong("snoozeUntil", 0L);
-        if (snoozeUntil > now) return snoozeUntil;
-        return entry.optLong("epoch", -1L);
+        return snoozeUntil > epoch ? snoozeUntil : epoch;
     }
 
     /**
@@ -103,7 +112,7 @@ final class AlarmScheduler {
         if (canScheduleExact(context)) {
             try {
                 if (wake) {
-                    manager.setAlarmClock(new AlarmManager.AlarmClockInfo(at, showPendingIntent(context, id)), fire);
+                    manager.setAlarmClock(new AlarmManager.AlarmClockInfo(at, openAppPendingIntent(context, id)), fire);
                 } else {
                     manager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, fire);
                 }
@@ -176,7 +185,7 @@ final class AlarmScheduler {
                 continue;
             }
             put(entry, "epoch", epoch);
-            long target = targetOf(entry, now);
+            long target = targetOf(entry);
             if (target <= now) {
                 outcome.dropped.add(new String[] { id, "past" });
                 continue;
@@ -195,7 +204,7 @@ final class AlarmScheduler {
         List<String> failed = new ArrayList<>();
         for (JSONObject entry : next.values()) {
             String id = entry.optString("id");
-            String result = arm(context, entry, targetOf(entry, now));
+            String result = arm(context, entry, targetOf(entry));
             put(entry, "exact", RESULT_EXACT.equals(result));
             if (RESULT_FAILED.equals(result)) {
                 failed.add(id);
@@ -238,7 +247,7 @@ final class AlarmScheduler {
                 }
                 put(entry, "epoch", epoch);
             }
-            long target = targetOf(entry, now);
+            long target = targetOf(entry);
             if (target <= now) {
                 disarm(context, id);
                 if (reportMissed && entry.optLong("firedAt", 0L) == 0L) {
