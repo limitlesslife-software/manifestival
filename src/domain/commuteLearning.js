@@ -490,11 +490,17 @@ export function forecastCommute(input) {
 
 // ------------------------------------------------------------ myöhästely
 
-/** Viimeisimpien lähtöjen keskimääräinen myöhästely (min) tai null. Poikkeamat (> 1 h) pois. */
-function latenessStats(observations, placeId) {
+/**
+ * Viimeisimpien lähtöjen keskimääräinen myöhästely (min) tai null. Poikkeamat (> 1 h) pois.
+ * `preparationMinutes` (kokonaisluku) rajaa lähtöihin, jotka kuitattiin tällä
+ * valmistautumisajalla: pidennyksen jälkeen vanhat lähdöt eivät enää todista.
+ */
+function latenessStats(observations, placeId, preparationMinutes = null) {
   const list = Array.isArray(observations) ? observations : [];
   const recent = newest(list, observation =>
     (placeId === null || observation.placeId === placeId)
+    && (preparationMinutes === null
+      || intIn(observation.preparationMinutes, 0, MAX_PREPARATION_MINUTES) === preparationMinutes)
     && isTimeOfDay(observation.plannedDeparture)
     && isTimeOfDay(observation.actualDeparture), LATENESS_WINDOW);
 
@@ -550,19 +556,25 @@ export function latenessSuggestion(observations, options) {
  * Ehdota pidempää valmistautumista samoin perustein kuin muistutuksen
  * aikaistusta (vaihtoehto sille). EI MUUTA MITÄÄN.
  *
+ * `onlyAtCurrentPreparation: true` laskee vain lähdöt, jotka kuitattiin
+ * nykyisellä valmistautumisajalla (havainnon preparationMinutes). Muuten
+ * hyväksytty pidennys ehdotettaisiin heti uudelleen vanhojen lähtöjen
+ * perusteella, ja valmistautuminen kasvaisi portaittain ilman uutta näyttöä.
+ *
  * @param {Array} observations
- * @param {{placeId?:string, currentPreparationMinutes?:number|null}} [options]
+ * @param {{placeId?:string, currentPreparationMinutes?:number|null, onlyAtCurrentPreparation?:boolean}} [options]
  * @returns {null|{currentMinutes:number|null, suggestedMinutes:number, meanLateMinutes:number,
  *                 count:number, message:string}}
  */
 export function preparationSuggestion(observations, options) {
   const opts = isObject(options) ? options : {};
   const placeId = typeof opts.placeId === 'string' && opts.placeId ? opts.placeId : null;
-  const stats = latenessStats(observations, placeId);
+  const current = intIn(opts.currentPreparationMinutes, 0, MAX_PREPARATION_MINUTES);
+  const only = opts.onlyAtCurrentPreparation === true && current !== null ? current : null;
+  const stats = latenessStats(observations, placeId, only);
   if (!stats || stats.mean < LATENESS_THRESHOLD_MINUTES) return null;
 
   const meanLateMinutes = Math.round(stats.mean);
-  const current = intIn(opts.currentPreparationMinutes, 0, MAX_PREPARATION_MINUTES);
   const suggestedMinutes = Math.min(MAX_PREPARATION_MINUTES, (current ?? 0) + roundUpToStep(stats.mean));
   if (current !== null && suggestedMinutes <= current) return null;
 

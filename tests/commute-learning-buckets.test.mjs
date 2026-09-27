@@ -16,7 +16,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  learnedCommuteFor, learnedCommuteBuckets, learningScopeText, summarizeCommute, LEARNING_SCOPE,
+  learnedCommuteFor, learnedCommuteBuckets, learningScopeText, summarizeCommute, preparationSuggestion, LEARNING_SCOPE,
   MIN_LEARNING_OBSERVATIONS
 } from '../src/domain/commuteLearning.js';
 import { selectTravelEstimate } from '../src/domain/departure.js';
@@ -190,6 +190,24 @@ test('ROSKA ja determinismi: mikään syöte ei kaada, syötettä ei muuteta', (
   assert.deepEqual(a, b, 'järjestys ei riipu syötteen järjestyksestä');
   assert.equal(JSON.stringify(history), snapshot);
   assert.ok(Object.isFrozen(learnedCommuteFor(history, { placeId: 'work' })));
+});
+
+test('valmistautumisehdotus: onlyAtCurrentPreparation laskee vain nykyisellä valmistautumisella kuitatut lähdöt', () => {
+  const late = (preparationMinutes, actual, prefix) => ['2026-09-14', '2026-09-15', '2026-09-16', '2026-09-17'].map((day, i) => ({
+    ...trip(day, '07:30', null), id: `${prefix}${i}`, actualDeparture: actual, preparationMinutes
+  }));
+  const old = late(10, '07:38', 'a');
+  // Ilman rajausta hyväksytty 20 min ehdotettaisiin heti 30 minuutiksi samoista lähdöistä.
+  assert.equal(preparationSuggestion(old, { placeId: 'work', currentPreparationMinutes: 20 }).suggestedMinutes, 30);
+  assert.equal(preparationSuggestion(old, { placeId: 'work', currentPreparationMinutes: 20, onlyAtCurrentPreparation: true }), null);
+  const first = preparationSuggestion(old, { placeId: 'work', currentPreparationMinutes: 10, onlyAtCurrentPreparation: true });
+  assert.deepEqual([first.suggestedMinutes, first.count, first.meanLateMinutes], [20, 4, 8]);
+  // Uusi näyttö nykyisellä ajalla.
+  const fresh = [...old, ...late(20, '07:36', 'b').map(o => ({ ...o, observedOn: '2026-09-2' + o.id.slice(1), createdAt: `2026-09-2${o.id.slice(1)}T06:00:00Z` }))];
+  const second = preparationSuggestion(fresh, { placeId: 'work', currentPreparationMinutes: 20, onlyAtCurrentPreparation: true });
+  assert.deepEqual([second.suggestedMinutes, second.count], [30, 4]);
+  assert.equal(preparationSuggestion(old, { placeId: 'gym', currentPreparationMinutes: 10, onlyAtCurrentPreparation: true }), null,
+    'toisen paikan lähdöt eivät todista');
 });
 
 // ================================================================ sovelluskerros: yksi laskentapolku

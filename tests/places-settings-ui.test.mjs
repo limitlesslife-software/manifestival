@@ -365,6 +365,52 @@ test('myöhästelyehdotus: kysymys ei muuta mitään; "Ei nyt" piilottaa; hyväk
   assert.equal(currentLifeSettings(getState()).reminderOffsetMinutes, 0);
 });
 
+test('valmistautumisehdotus paikalle: perusteltu kysymys, "Ei nyt" piilottaa, hyväksyntä tallentaa eikä toistu ilman uutta näyttöä', async t => {
+  const view = mount(t);
+  await seed(savedPlacesRepo, setSavedPlaces, [
+    { id: 'p1', name: 'Työ', usualTravelMinutes: 30, travelMode: 'driving' },
+    { id: 'p2', name: 'Sali', usualTravelMinutes: 15, preparationMinutes: 5 }
+  ]);
+  const departed = (placeId, preparationMinutes, actualDeparture, prefix, count = 4) =>
+    Array.from({ length: count }, (_, i) => ({
+      id: `${prefix}-${i}`, placeId, observedOn: `2026-09-${String(14 + i).padStart(2, '0')}`,
+      plannedDeparture: '07:30', actualDeparture, preparationMinutes, source: 'user_confirmed',
+      createdAt: `2026-09-${String(14 + i).padStart(2, '0')}T05:00:00Z`
+    }));
+  await seed(commuteObservationsRepo, setCommuteObservations, [
+    ...departed('p1', 10, '07:38', 'w'),
+    ...departed('p2', 5, '07:32', 'g')
+  ]);
+  const work = () => view.q('[data-place-row="p1"]').textContent.replace(/\s+/g, ' ');
+  assert.match(work(), /Olet viime kerroilla lähtenyt keskimäärin 8 min suunniteltua myöhemmin\. Pidennetäänkö valmistautumista 10 minuutista 20 minuuttiin\?/);
+  assert.match(work(), /Perustuu 4 viimeisimpään kuittaamaasi lähtöön tähän paikkaan\. Valmistautumiseen on nyt varattu kulkutavan oletus\. Mitään ei muuteta ilman hyväksyntääsi\./);
+  assert.equal(view.q('[data-action="prep-accept"][data-id="p2"]'), null, '2 min myöhässä ei ole syy ehdottaa');
+  assert.equal(getState().savedPlaces.find(p => p.id === 'p1').preparationMinutes, null, 'ehdotus ei muuttanut mitään');
+  const accept = action(view, 'prep-accept', 'p1');
+  assert.equal(accessibleName(accept), 'Varaa valmistautumiseen 20 min: Työ');
+  assert.equal(accessibleName(action(view, 'prep-dismiss', 'p1')), 'Ei nyt: Työ');
+
+  action(view, 'prep-dismiss', 'p1').click();
+  assert.equal(view.q('[data-action="prep-accept"][data-id="p1"]'), null, '"Ei nyt" piilottaa');
+  assertSameNode(view.doc.activeElement, action(view, 'place-edit', 'p1'));
+  resetPlacesSettings();
+  renderPlacesSettings(view.container);
+  assert.ok(view.q('[data-action="prep-accept"][data-id="p1"]'), 'uusi istunto kysyy uudelleen');
+
+  action(view, 'prep-accept', 'p1').click();
+  await flush();
+  assert.equal(getState().savedPlaces.find(p => p.id === 'p1').preparationMinutes, 20);
+  assert.match(work(), /valmistautuminen 20 min/);
+  assert.equal(view.q('[data-action="prep-accept"][data-id="p1"]'), null,
+    'vanhat lähdöt (10 min valmistautumisella) eivät heti todista uutta pidennystä');
+  assertSameNode(view.doc.activeElement, action(view, 'place-edit', 'p1'));
+
+  // Uusi näyttö: neljä lähtöä 20 min valmistautumisella, yhä 6 min myöhässä.
+  setCommuteObservations([...getState().commuteObservations, ...departed('p1', 20, '07:36', 'n')]
+    .map((o, i) => (o.id.startsWith('n-') ? { ...o, observedOn: `2026-09-2${i % 4}`, createdAt: `2026-09-2${i % 4}T06:00:00Z` } : o)));
+  assert.match(work(), /Pidennetäänkö valmistautumista 20 minuutista 30 minuuttiin\?/);
+});
+
 test('oletusetuaika: 5/10/15 yhdellä napautuksella, oma arvo, virheellinen oma arvo ja Escape', async t => {
   const view = mount(t);
   const chip = minutes => view.q(`[data-action="buffer-set"][data-value="${minutes}"]`);
