@@ -46,7 +46,7 @@ export const ROW = Object.freeze({
   migrations: Object.freeze({
     '0002': '11', '0003': '12', '0004': '13', '0005': '14', '0006': '15', '0007': '16',
     '0008': '17', '0009': '18', '0010': '19', '0011': '20', '0012': '21', '0013': '22',
-    '0014': '23'
+    '0014': '23', '0015': '24'
   }),
   v2Check: '30',
   owner: '40', authUsers: '41', ownerKeys: '42', touchFn: '43', badGoalStatus: '44', idleTx: '45',
@@ -61,10 +61,24 @@ export const ROW = Object.freeze({
  * inventaarioversio ei tunne riviä, ja omistajan jo liittämät inventaariot
  * (fixturet, docs/activation/PRODUCTION-INVENTORY-*) on voitava pisteyttää
  * yhä samoin. Puuttuva rivi = migraatiota ei ole ajettu: seuraava askel
- * ajaa ensin sen esitarkistuksen (preflight_0014.sql), joka laskee
- * objektit uudelleen ja pysäyttää, jos ne ovatkin jo kannassa.
+ * ajaa ensin sen esitarkistuksen (preflight_0014.sql, preflight_0015.sql),
+ * joka laskee objektit uudelleen ja pysäyttää, jos ne ovatkin jo kannassa.
  */
-export const OPTIONAL_MIGRATION_ROWS = Object.freeze(['0014']);
+export const OPTIONAL_MIGRATION_ROWS = Object.freeze(['0014', '0015']);
+
+/**
+ * Myöhempi migraatio poistaa tai korvaa aiemman migraation objektin, jolloin
+ * aiemman migraation täysi luku pienenee. Luku on "ajettu" vain, jos
+ * myöhempi migraatio on todistetusti ajettu (sen oma rivi täysi, tai 0013:n
+ * korvaava rajoite rivillä 30). Muulloin pienempi luku on yhä "kesken".
+ *
+ *   0013 korvaa time_entries_source_check  -> 0012: 58 - 1
+ *   0015 poistaa life_areas_category_unique -> 0012: 58 - 1 (- 1 jos 0013)
+ */
+export const SUPERSEDED_OBJECTS = Object.freeze([
+  Object.freeze({ migration: '0012', by: '0013', object: 'time_entries_source_check' }),
+  Object.freeze({ migration: '0012', by: '0015', object: 'life_areas_category_unique' })
+]);
 
 const REQUIRED_MIGRATION_ROWS = Object.freeze(Object.entries(ROW.migrations)
   .filter(([number]) => !OPTIONAL_MIGRATION_ROWS.includes(number)).map(([, row]) => row));
@@ -153,9 +167,18 @@ function migrationState(number, rows) {
   const full = String(expected).split('|').map(Number);
   if (count === 0) return { state: 'not_run', count, expected };
   if (full.includes(count)) return { state: 'run', count, expected };
-  // 0013 korvaa 0012:n rajoitteen: 57 + korvaava rajoite = ajettu.
-  if (number === '0012' && count === 57 && num(rows[ROW.v2Check]) === 1) return { state: 'run', count, expected };
+  // Myöhempi migraatio on poistanut tai korvannut objektin (SUPERSEDED_OBJECTS).
+  const removed = SUPERSEDED_OBJECTS.filter(s => s.migration === number && supersededBy(s.by, rows)).length;
+  if (removed > 0 && full.map(n => n - removed).includes(count)) return { state: 'run', count, expected };
   return { state: 'partial', count, expected };
+}
+
+/** Onko myöhempi (poistava tai korvaava) migraatio todistetusti ajettu? */
+function supersededBy(by, rows) {
+  // 0013 korvaa 0012:n rajoitteen: korvaava rajoite (rivi 30) todistaa sen.
+  if (by === '0013') return num(rows[ROW.v2Check]) === 1;
+  const raw = rows[ROW.migrations[by]];
+  return !missing(raw) && num(raw) === Number(EXPECTED[by]);
 }
 
 /** Päätös kannan kunnosta. Palauttaa { decision: 'GO'|'STOP', ... }. */
@@ -213,7 +236,7 @@ export function scoreInventory(rows) {
   facts.ownerPresent = num(rows[ROW.owner]) === 1;
   facts.authUsers = num(rows[ROW.authUsers]);
   if (!missing(rows[ROW.owner]) && !facts.ownerPresent) {
-    stops.push('Hyväksyttyä omistajaa (2cc00622-…) ei löydy auth.users-taulusta: jokainen migraatio 0002–0014 keskeytyy. Väärä projekti?');
+    stops.push('Hyväksyttyä omistajaa (2cc00622-…) ei löydy auth.users-taulusta: jokainen migraatio 0002–0015 keskeytyy. Väärä projekti?');
   }
   if (!missing(rows[ROW.ownerKeys]) && num(rows[ROW.ownerKeys]) !== 5) {
     stops.push(`Omistajan rivin avaimia ${rows[ROW.ownerKeys]}/5.`);
@@ -254,14 +277,15 @@ export function scoreInventory(rows) {
   if (stops.length) {
     nextAction = 'PYSÄHDY. Älä aja migraatioita eikä deployaa. Liitä tämä raportti Claudelle.';
   } else if (!next) {
-    nextAction = 'Kaikki migraatiot 0009–0014 on ajettu. Seuraava: aallon K deploy/hyväksyntä, sitten Day 1 -hyväksyntä puhelimella.';
+    nextAction = 'Kaikki migraatiot 0009–0015 on ajettu. Seuraava: aallon L deploy/hyväksyntä, sitten Day 1 -hyväksyntä puhelimella.';
   } else {
     const wave = MIGRATION_WAVE[next];
     const accepted = 'teknisesti hyväksytty (AUTOMATED_TECHNICAL_ACCEPTANCE)';
     const before = { F: `aallot D ja E on deployattu ja E ${accepted}`, G: `aalto F on deployattu ja ${accepted}`,
       H: `aalto G on deployattu ja ${accepted}`, I: `aalto H on deployattu ja ${accepted}`,
       J: `aalto I on deployattu ja ${accepted}, ja verify_0012 on ajettu`,
-      K: `aalto J on deployattu ja ${accepted}, ja verify_0013 on ajettu` }[wave];
+      K: `aalto J on deployattu ja ${accepted}, ja verify_0013 on ajettu`,
+      L: `aalto K on deployattu ja ${accepted}, verify_0014 on ajettu ja tuore varmuuskopio (snapshot_state_0014) on otettu` }[wave];
     nextAction = `Seuraava migraatio on ${next} (aalto ${wave}). Aja se VASTA kun ${before}. `
       + `Ensin supabase/preflight/preflight_${next}.sql (vain luku) -> 0 FAIL, sitten Panun hyväksyntä ("hyväksyn ${next}/${wave}"), sitten migraatio, sitten verify_${next}.sql.`;
   }
@@ -282,7 +306,7 @@ export function scoreInventory(rows) {
 // =====================================================================
 
 /**
- * Viimeisin täysin ajettu migraatio väliltä 0008–0014, tai null.
+ * Viimeisin täysin ajettu migraatio väliltä 0008–0015, tai null.
  */
 export function lastRunMigration(base) {
   const order = [DB_FLOOR.migration, ...TRAIN_MIGRATIONS];
@@ -321,8 +345,8 @@ function emptyAction(kind) {
  *   codeWave > kannan aalto              -> STOP / ROLLBACK_CODE (koodi edellä kantaa)
  *   codeWave ei sallittu                 -> STOP
  *   codeWave < kannan aalto              -> GO / DEPLOY seuraava aalto
- *   codeWave == kannan aalto < K         -> GO / MIGRATE seuraava migraatio
- *   K + 0014                             -> GO / DONE
+ *   codeWave == kannan aalto < L         -> GO / MIGRATE seuraava migraatio
+ *   L + 0015                             -> GO / DONE
  *
  * @param {object} rows parseInventory()-tulos
  * @param {object} [options]

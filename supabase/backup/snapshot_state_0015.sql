@@ -1,16 +1,15 @@
 -- =====================================================================
--- Manifestival — looginen tilannekuva, tila 0014 (VAIN LUKU)
+-- Manifestival — looginen tilannekuva, tila 0015 (VAIN LUKU)
 -- =====================================================================
 --
 -- GENEROITU: node tools/activation/build-snapshots.mjs. ÄLÄ MUOKKAA
 -- KÄSIN — testi vertaa tiedostoa generaattoriin.
 --
--- TÄMÄ TIEDOSTO ON TILALLE 0014: migraatiot 0001–0014 ajettu, 0015 ei.
--- MILLOIN: juuri ENNEN migraatiota 0015 (PAKOLLINEN, aalto L),
---          sovellus suljettuna: preflight_0015.sql -> 0 FAIL -> TÄMÄ
---          -> check -> 0015. Samoin ennen mitä tahansa peruutusta tai
---          palautusta tilassa 0014 (esim. aallon K revertti tai 0014:n
---          ROLLBACK-osio).
+-- TÄMÄ TIEDOSTO ON TILALLE 0015: migraatiot 0001–0015 ajettu.
+-- MILLOIN: ennen mitä tahansa peruutusta tai palautusta tilassa 0015
+--          (migraatiot 0001–0015 ajettu), esim. ennen aallon L
+--          revertiä tai migraation 0015 ROLLBACK-osiota
+--          (docs/MIGRATION-0015-RECOVERY.md).
 --
 -- Ohje: docs/activation/0010-BACKUP-AND-RECOVERY.md
 --
@@ -18,7 +17,7 @@
 -- Koko tulos tulee yhdestä MVCC-tilannekuvasta (ei repeytymistä).
 -- auth-skeemasta luetaan vain omistajan olemassaolo ja käyttäjien
 -- lukumäärä — ei sähköposteja, ei salasanoja, ei tunnisteita.
--- Taulut (36):
+-- Taulut (38):
 --   tasks, profile, routines, routine_exceptions, goals, projects,
 --   notification_preferences, wellbeing_entries, recurring_expenses,
 --   bills, savings_goals, ai_action_audit, transactions, investments,
@@ -27,7 +26,8 @@
 --   alignment_reviews, running_timers, alignment_item_settings,
 --   saved_places, place_aliases, calendar_events,
 --   commute_observations, life_settings, sleep_logs, habit_plans,
---   habit_events, exercise_sessions, wellbeing_checkins
+--   habit_events, exercise_sessions, wellbeing_checkins,
+--   protected_periods, weekly_plans
 --
 -- Jos ajo kaatuu virheeseen "relation ... does not exist", kanta on
 -- eri tilassa kuin tiedoston nimi: aja tilan mukainen tiedosto.
@@ -131,6 +131,10 @@ dump as (
          coalesce(jsonb_agg(to_jsonb(x) order by to_jsonb(x)::text), '[]'::jsonb)::text as payload
     from public.projects x
   union all
+  select 'protected_periods'::text as t, count(*)::bigint as n,
+         coalesce(jsonb_agg(to_jsonb(x) order by to_jsonb(x)::text), '[]'::jsonb)::text as payload
+    from public.protected_periods x
+  union all
   select 'recurring_expenses'::text as t, count(*)::bigint as n,
          coalesce(jsonb_agg(to_jsonb(x) order by to_jsonb(x)::text), '[]'::jsonb)::text as payload
     from public.recurring_expenses x
@@ -183,6 +187,10 @@ dump as (
          coalesce(jsonb_agg(to_jsonb(x) order by to_jsonb(x)::text), '[]'::jsonb)::text as payload
     from public.weekly_capacities x
   union all
+  select 'weekly_plans'::text as t, count(*)::bigint as n,
+         coalesce(jsonb_agg(to_jsonb(x) order by to_jsonb(x)::text), '[]'::jsonb)::text as payload
+    from public.weekly_plans x
+  union all
   select 'wellbeing_checkins'::text as t, count(*)::bigint as n,
          coalesce(jsonb_agg(to_jsonb(x) order by to_jsonb(x)::text), '[]'::jsonb)::text as payload
     from public.wellbeing_checkins x
@@ -195,7 +203,7 @@ tabs as (
   select c.oid as reloid, c.relname::text as t, c.relowner, c.relrowsecurity, c.relforcerowsecurity
     from pg_class c
    where c.relnamespace = 'public'::regnamespace and c.relkind = 'r'
-     and c.relname in ('ai_action_audit', 'alignment_item_settings', 'alignment_reviews', 'bills', 'calendar_events', 'commute_observations', 'exercise_sessions', 'goals', 'habit_events', 'habit_plans', 'inbox_items', 'investments', 'life_areas', 'life_settings', 'location_rules', 'milestones', 'notices', 'notification_preferences', 'place_aliases', 'profile', 'projects', 'recurring_expenses', 'reminders', 'routine_exceptions', 'routines', 'running_timers', 'saved_places', 'savings_goals', 'sleep_logs', 'tasks', 'time_entries', 'transactions', 'travel_plans', 'weekly_capacities', 'wellbeing_checkins', 'wellbeing_entries')
+     and c.relname in ('ai_action_audit', 'alignment_item_settings', 'alignment_reviews', 'bills', 'calendar_events', 'commute_observations', 'exercise_sessions', 'goals', 'habit_events', 'habit_plans', 'inbox_items', 'investments', 'life_areas', 'life_settings', 'location_rules', 'milestones', 'notices', 'notification_preferences', 'place_aliases', 'profile', 'projects', 'protected_periods', 'recurring_expenses', 'reminders', 'routine_exceptions', 'routines', 'running_timers', 'saved_places', 'savings_goals', 'sleep_logs', 'tasks', 'time_entries', 'transactions', 'travel_plans', 'weekly_capacities', 'weekly_plans', 'wellbeing_checkins', 'wellbeing_entries')
 ),
 cols as (
   select a.attrelid as reloid,
@@ -228,7 +236,7 @@ trg as (
 manifest as (
   select jsonb_build_object(
     'format', 'mv-snapshot-v1',
-    'state', '0014',
+    'state', '0015',
     'db', current_database(),
     'server', current_setting('server_version'),
     'at', to_char(now() at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),

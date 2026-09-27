@@ -1,4 +1,4 @@
-// Generoi supabase/preflight/preflight_0009.sql ... preflight_0014.sql.
+// Generoi supabase/preflight/preflight_0009.sql ... preflight_0015.sql.
 //
 //   node tools/activation/build-preflights.mjs          kirjoita tiedostot
 //   node tools/activation/build-preflights.mjs --check  vertaa levyyn (testit)
@@ -92,6 +92,23 @@ const SPECIFIC = Object.freeze({
     ['0014', 'tasks, goals, projects, routines, 0012:n ja 0013:n taulut: 40 politiikkaa (0014 vaatii ennen committia)', '40',
       policyCount(['tasks', 'goals', 'projects', 'routines', 'life_areas', 'weekly_capacities', 'time_entries',
         'alignment_reviews', 'running_timers', 'alignment_item_settings'])]
+  ],
+  '0015': [
+    ['0015', 'life_areas_category_unique on olemassa (0015 poistaa sen)', '1',
+      "(select count(*)::text from pg_constraint where contype = 'u' and conname = 'life_areas_category_unique')"],
+    ['0015', 'tasks ja life_areas: RLS päällä (uudet sarakkeet kuuluvat olemassa oleviin politiikkoihin)', '2',
+      "(select count(*)::text from pg_class where relnamespace = 'public'::regnamespace and relname in ('tasks', 'life_areas') and relrowsecurity)"],
+    ['kirjattavat', 'tasks.date NOT NULL ennen 0015:tä (kirjaa: peruutus palauttaa ehdon vain jos kyllä)', 'INFO',
+      "(select case when a.attnotnull then 'kyllä' else 'ei' end from pg_attribute a where a.attrelid = to_regclass('public.tasks') and a.attname = 'date' and not a.attisdropped)"],
+    ['kirjattavat', 'tasks.date-sarakkeen tyyppi', 'INFO',
+      "(select data_type::text from information_schema.columns where table_schema = 'public' and table_name = 'tasks' and column_name = 'date')"],
+    ['kirjattavat', 'Elämänalueita (saavat kind = STANDARD, ei uudelleenkirjoitusta)', 'INFO',
+      "(select case when to_regclass('public.life_areas') is null then 'puuttuu' else (xpath('/row/c/text()', query_to_xml('select count(*) as c from public.life_areas', false, true, '')))[1]::text end)"],
+    ['0015', 'tasks, goals, projects, routines, 0012:n, 0013:n ja 0014:n taulut: 80 politiikkaa (0015 vaatii ennen committia)', '80',
+      policyCount(['tasks', 'goals', 'projects', 'routines', 'life_areas', 'weekly_capacities', 'time_entries',
+        'alignment_reviews', 'running_timers', 'alignment_item_settings', 'saved_places', 'place_aliases',
+        'calendar_events', 'commute_observations', 'life_settings', 'sleep_logs', 'habit_plans', 'habit_events',
+        'exercise_sessions', 'wellbeing_checkins'])]
   ]
 });
 
@@ -114,7 +131,10 @@ export const LOCKED_TABLES = Object.freeze({
   '0013': Object.freeze(['public.time_entries', 'public.weekly_capacities', 'public.alignment_reviews', 'public.goals',
     'public.tasks', 'public.projects', 'public.routines', 'public.life_areas', 'auth.users']),
   // 0014 luo vain uusia tauluja: ainoat lukot ovat vierasavainten kohteet.
-  '0014': Object.freeze(['public.goals', 'auth.users'])
+  '0014': Object.freeze(['public.goals', 'auth.users']),
+  // 0015: ALTER TABLE tasks ja life_areas (ACCESS EXCLUSIVE), uusien
+  // taulujen omistajan vierasavaimet (auth.users).
+  '0015': Object.freeze(['public.tasks', 'public.life_areas', 'auth.users'])
 });
 
 function previous(number) {
@@ -140,8 +160,21 @@ export const MIGRATION_TABLES = Object.freeze([
   'alignment_reviews', 'alignment_item_settings', 'running_timers'
 ]);
 
-/** Migraatioiden 0001–0014 taulut = tilin poiston kartta (verify_0014 rivit 34–36). */
-export const ACCOUNT_TABLES_THROUGH_0014 = Object.freeze(Object.values(ACCOUNT_DATA_MAP).map(entry => entry.table));
+/**
+ * Migraatioiden 0001–0014 taulut: verify_0014:n rivit 34–36 (testi vertaa).
+ *
+ * JÄÄDYTETTY 0014:N AIKAISEKSI samasta syystä kuin MIGRATION_TABLES:
+ * verify_0014.sql on junan lukitussa SQL-lähteessä (K, d11d8b4), eikä se
+ * saa muuttua, kun tilin poiston kartta kasvaa aallon L tauluilla.
+ */
+export const ACCOUNT_TABLES_THROUGH_0014 = Object.freeze([
+  ...MIGRATION_TABLES,
+  'saved_places', 'place_aliases', 'calendar_events', 'commute_observations', 'life_settings',
+  'sleep_logs', 'habit_plans', 'habit_events', 'exercise_sessions', 'wellbeing_checkins'
+]);
+
+/** Migraatioiden 0001–0015 taulut = tilin poiston kartta (verify_0015 rivit 31–33). */
+export const ACCOUNT_TABLES_THROUGH_0015 = Object.freeze(Object.values(ACCOUNT_DATA_MAP).map(entry => entry.table));
 
 /**
  * Junan alussa (vain preflight_0009, rivien loppuun): oletukset, joihin
