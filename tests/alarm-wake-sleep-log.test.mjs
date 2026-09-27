@@ -30,6 +30,7 @@ import {
 import { alarmWakeLogInput } from '../src/domain/sleepLog.js';
 import { driftReport } from '../src/domain/sleepRhythm.js';
 import { deviceOffsetMinutes } from '../src/app/deviceTime.js';
+import { resetTestStore, storedRows } from './helpers/gateAwareStore.mjs';
 
 const USER_A = { id: 'aaaaaaaa-0000-4000-8000-00000000000a', email: 'a@example.com' };
 const USER_B = { id: 'bbbbbbbb-0000-4000-8000-00000000000b', email: 'b@example.com' };
@@ -91,6 +92,8 @@ const wakeEvent = (seq, type, atMs, id = WAKE_ID) => ({ seq, type, id, kind: 'wa
 beforeEach(() => {
   delete globalThis.Capacitor;
   clearAllCollections();
+  // Portin ollessa auki unikirjaus kulkee kantaa jäljittelevälle palvelimelle.
+  resetTestStore();
   resetState();
   clearUser();
   resetAlarmsForTests();
@@ -159,6 +162,8 @@ test('Sammuta herätyksestä kirjaa heräämisen: lähde alarm, suunniteltu ja t
   assert.equal(logs[0].source, 'alarm');
   assert.equal(logs[0].kind, 'opportunity', 'vuoteessa oloaika, ei mitattua unta');
   assert.equal((await sleepLogsRepo.list()).value.length, 1, 'tallentui repositorioon');
+  const [stored] = await storedRows(sleepLogsRepo);
+  assert.deepEqual([stored.wakeDate, stored.actualWake, stored.source], ['2026-09-30', '06:41', 'alarm']);
 });
 
 test('IDEMPOTENTTI: sama sammutus elävänä ja jonosta, ja toinen kuittaus myöhemmin = yksi kirjoitus, ensimmäinen aika', async () => {

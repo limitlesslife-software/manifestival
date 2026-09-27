@@ -22,6 +22,7 @@ import { clearAllCollections, lifeSettingsRepo, changedColumns } from '../src/da
 import { saveLifeSettings, resetDailyLifeActions } from '../src/app/dailyLifeActions.js';
 import { normalizeLifeSettings, mergeLifeSettings } from '../src/domain/lifeSettings.js';
 import { readCode } from './helpers/sources.mjs';
+import { resetTestStore, storedRow, storedRows, writeFromOtherDevice } from './helpers/gateAwareStore.mjs';
 
 const USER_A = { id: 'aaaaaaaa-6666-0000-0000-00000000000a', email: 'a@example.com' };
 const S0 = normalizeLifeSettings({ id: 'ls1', alarm: { enabled: false, weekdayTime: '07:00' }, morningBriefEnabled: false });
@@ -29,6 +30,8 @@ const S0 = normalizeLifeSettings({ id: 'ls1', alarm: { enabled: false, weekdayTi
 beforeEach(async () => {
   clearUser();
   clearAllCollections();
+  // Portin ollessa auki rivi elää kantaa jäljittelevällä palvelimella.
+  resetTestStore();
   resetState();
   resetDailyLifeActions();
   setUser(USER_A);
@@ -36,12 +39,13 @@ beforeEach(async () => {
   setLifeSettings([S0]);
 });
 
-const stored = async () => (await lifeSettingsRepo.memory.get('ls1')).value;
+/** Tallennettu rivi siitä varastosta, jota portti käyttää (muisti tai kanta). */
+const stored = () => storedRow(lifeSettingsRepo, 'ls1');
 const tick = () => new Promise(resolve => setTimeout(resolve, 5));
 
 test('KRIITTINEN: vanhentunut laite ei kumoa toisen laitteen herätystä vaihtaessaan ohjaustyyliä', async () => {
   // Puhelin kytki herätyksen päälle klo 6.00 (kannassa); tämä laite näkee yhä vanhan rivin.
-  await lifeSettingsRepo.memory.update({ ...S0, alarm: { ...S0.alarm, enabled: true, weekdayTime: '06:00' } });
+  await writeFromOtherDevice(lifeSettingsRepo, { ...S0, alarm: { ...S0.alarm, enabled: true, weekdayTime: '06:00' } });
 
   const result = await saveLifeSettings({ guidanceStyle: 'napakka' });
   assert.equal(result.ok, true);
@@ -61,8 +65,9 @@ test('KRIITTINEN: kannan päivitys sisältää vain muuttuneet sarakkeet', () =>
   assert.equal(patch.alarm.weekdayTime, '07:00', 'herätyksen muut kentät säilyvät sarakkeen sisällä');
   assert.deepEqual(changedColumns(toRow(S0), toRow(S0)), {}, 'muuttumaton rivi ei lähetä mitään');
 
-  // Kantapolku rakentaa päivityksen muuttuneista sarakkeista (portit ovat
-  // tällä haaralla kiinni, joten polkua ei voi ajaa).
+  // Kantapolku rakentaa päivityksen muuttuneista sarakkeista. Portin
+  // ollessa kiinni polkua ei voi ajaa; auki ollessa ensimmäinen testi ajaa
+  // sen palvelinta vasten (vanhentunut laite ei kumoa herätystä).
   const code = readCode('src/data/collectionsRepo.js');
   const update = code.slice(code.indexOf('async update('), code.indexOf('async remove(id)'));
   assert.ok(update.length > 0 && update.length < 3000, 'update-metodia ei löytynyt');
@@ -125,6 +130,7 @@ test('peruutus ei kumoa samaan kenttään myöhemmin tehtyä muutosta', async ()
 
 test('ensimmäinen tallennus luo rivin; epäonnistunut luonti poistaa sen tilasta', async () => {
   clearAllCollections();
+  resetTestStore();
   setLifeSettings([]);
   const original = lifeSettingsRepo.insert;
   lifeSettingsRepo.insert = async () => ({ ok: false, error: { message: 'verkko' } });
@@ -136,5 +142,5 @@ test('ensimmäinen tallennus luo rivin; epäonnistunut luonti poistaa sen tilast
   assert.deepEqual(getState().lifeSettings, []);
   const created = await saveLifeSettings({ windDownMinutes: 15 });
   assert.equal(created.ok, true);
-  assert.equal((await lifeSettingsRepo.memory.list()).value.length, 1);
+  assert.equal((await storedRows(lifeSettingsRepo)).length, 1);
 });

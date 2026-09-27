@@ -14,8 +14,9 @@ import {
   resetState, getState, setProfile, setSavedPlaces, setCalendarEvents, setLifeSettings,
   setNotificationPreferences, setHabitPlans, setHabitEvents, setCommuteObservations
 } from '../src/app/state.js';
-import { clearAllCollections } from '../src/data/collectionsRepo.js';
+import { clearAllCollections, commuteObservationsRepo } from '../src/data/collectionsRepo.js';
 import { resetAckStoreForTests, loadAckState, ackStoreKey } from '../src/data/alarmAckStore.js';
+import { resetTestStore, storedRows } from './helpers/gateAwareStore.mjs';
 import * as capabilities from '../src/platform/capabilities.js';
 import { ALARM_LIMITS, isAlarmId, resetAlarmsForTests, ALARMS_WEB_REASON } from '../src/platform/alarms.js';
 import {
@@ -129,6 +130,8 @@ function signIn(user = USER_A) {
 beforeEach(() => {
   delete globalThis.Capacitor;
   clearAllCollections();
+  // Portin ollessa auki matkahavainto kulkee kantaa jäljittelevälle palvelimelle.
+  resetTestStore();
   resetState();
   clearUser();
   resetAlarmsForTests();
@@ -489,6 +492,8 @@ test('"Lähdin": koko lähtöketju kuitataan ja matka kirjataan kerran (kaksoisp
   assert.equal(observations[0].eventId, 'e1');
   assert.equal(observations[0].plannedDeparture, '17:10');
   assert.equal(observations[0].actualDeparture, '17:07');
+  assert.deepEqual((await storedRows(commuteObservationsRepo)).map(o => [o.eventId, o.actualDeparture]), [['e1', '17:07']],
+    'kaksoispaluu tallensi matkan kahdesti (tai ei lainkaan)');
   const ids = desiredNativeEntries({ now: at(2026, 9, 29, 17, 8), nativeSupported: true }).entries.map(e => e.id);
   assert.equal(ids.some(id => id.startsWith('departure')), false, 'lähtenyt ei saa "lähde nyt" -muistutusta');
 });
