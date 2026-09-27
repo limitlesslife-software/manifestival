@@ -30,6 +30,7 @@ import { reconcileTemporal } from '../ai/temporalReconcile.js';
 // Menon luonti ja päivän keskeytys tunnistetaan laitteella ENNEN tekoälyä
 // (src/app/localCommands.js): sama vahvistus, ei verkkoa, ei arvausta.
 import { runLocalCommand } from './localCommands.js';
+import { sessionSnapshot, isSameSession } from '../data/session.js';
 
 /** Vaiheraportti (onPhase) on valinnainen: ilman sitä vaiheista ei kerrota kenellekään. */
 const NO_PHASE = () => {};
@@ -148,6 +149,10 @@ export async function runTypedCommand(text, {
 } = {}) {
   const trimmed = String(text ?? '').trim();
   if (!trimmed) return { ok: false, status: 'empty' };
+  // Komento kuuluu sille, joka sen antoi. Tekoälyn vastaus voi viipyä 15 s;
+  // jos tili vaihtuu sillä välin, A:n lause ei saa päätyä B:n
+  // tarkistusdialogiin, B:n auditointiin eikä B:n tietoihin.
+  const startedIn = sessionSnapshot();
 
   const phase = typeof onPhase === 'function' ? onPhase : NO_PHASE;
   phase('classifying');
@@ -172,6 +177,10 @@ export async function runTypedCommand(text, {
   logEvent('command.classified', {
     source, ok: classified.ok, code: classified.ok ? null : classified.error.code, chars: trimmed.length
   });
+  if (!isSameSession(startedIn)) {
+    logEvent('command.discarded', { source, code: 'session_changed' });
+    return { ok: false, status: 'discarded' };
+  }
   if (!classified.ok) {
     showError(classified.error);
     return { ok: false, status: 'error', reason: classified.error.userMessage };

@@ -184,3 +184,27 @@ test('kohde jota ei löydy ei tarjoa tyhjää valitsinta', async () => {
   });
   assert.equal(result.ok, false);
 });
+
+test('KRIITTINEN: tilin vaihto tekoälyn vastausta odotellessa hylkää komennon (ei B:n dialogia, auditointia eikä riviä)', async () => {
+  // Bugijahti 2026-09-27: A:n komento päätyi B:n vahvistusdialogiin ja
+  // B:n auditointiin, kun tili vaihtui 15 s:n odotuksen aikana.
+  const OTHER = { id: 'bbbbbbbb-8888-0000-0000-00000000000b', email: 'b@example.com' };
+  let confirmCalled = false;
+  const result = await runTypedCommand('muistuta varaamaan aika psykiatrille torstaina', {
+    fetchImpl: async () => {
+      // Tili vaihtuu kesken pyynnön: uloskirjautuminen ja toisen kirjautuminen.
+      clearUser();
+      clearLocalUserData();
+      resetState();
+      setUser(OTHER);
+      return fetchReturning('{"intent":"create_task","title":"Varaa aika psykiatrille","date":"2026-09-24"}')();
+    },
+    confirmFn: async () => { confirmCalled = true; return true; },
+    chooseFn: async () => null
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 'discarded');
+  assert.equal(confirmCalled, false, 'A:n komentoa ei näytetä B:lle');
+  assert.equal(getState().tasks.length, 0);
+  assert.deepEqual(getState().aiAudit || [], [], 'A:n lause ei päädy B:n auditointiin');
+});
