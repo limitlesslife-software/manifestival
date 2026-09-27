@@ -341,6 +341,68 @@ async function lateFailureCase({ sql, fail, scenario }) {
   return out;
 }
 
+/**
+ * 0014: sovellus pitää goals-kirjoituslukkoa, ja 0014 odottaa sitä.
+ * Mitataan, montako DDL-komentoa ehti alkaa ennen odotusta ja jumittuuko
+ * auth.users-kirjoitus (kirjautuminen) odotuksen ajan. `strict = false`
+ * vertailuajolle (vanha versio git-historiasta): tulos kirjataan, ei
+ * hylätä.
+ */
+async function authStall0014Case({ sql, label, fail, scenario, strict = true }) {
+  const db = `mv_rehearsal_lk_auth14_${label.replace(/\W/g, '_')}`.toLowerCase().slice(0, 60);
+  const client = await cloneProdShape('0013', db);
+  const monitor = await connect(db);
+  const auth = await connect(db);
+  const out = { label };
+  try {
+    await installDdlCounter(client);
+    const pid = Number(await scalar(client, 'select pg_backend_pid()'));
+    const itemsBefore = await catalogItems(client);
+    const blocker = await openBlocker(db, 'public.goals', 'ROW EXCLUSIVE');
+    let run;
+    try {
+      client.notices.length = 0;
+      const t0 = Date.now();
+      const migration = runSql(client, sql).then(r => ({ ...r, ms: Date.now() - t0 }));
+      out.migrationWaitingOnGoalsAfterMs = await waitUntilWaiting(monitor, pid, 'public.goals');
+      out.migrationLockModesWhileWaiting = (await monitor.query(
+        `select l.relation::regclass::text as rel, l.mode, l.granted from pg_locks l
+          where l.pid = $1 and l.locktype = 'relation' and l.relation in (to_regclass('public.goals'), to_regclass('auth.users'))
+          order by 1, 2`, [pid])).rows.map(r => `${r.rel} ${r.mode}${r.granted ? '' : ' (odottaa)'}`);
+      // GoTruen kaltainen kirjoitus auth.users-tauluun (kirjautuminen).
+      const s0 = Date.now();
+      await auth.query('update auth.users set email = email where id = $1', [OWNER]);
+      out.authWriteStallMs = Date.now() - s0;
+      run = await migration;
+    } finally {
+      await closeBlocker(blocker);
+    }
+    Object.assign(out, { migrationOk: run.ok, migrationMs: run.ms, error: run.error?.message || null,
+      ddlStartedBeforeFailure: client.notices.filter(n => n.startsWith('mv-ddl:')).length });
+    const d = diffCatalog(itemsBefore, await catalogItems(client));
+    out.catalogUnchanged = !d.added.length && !d.removed.length;
+    const problems = [];
+    if (out.migrationWaitingOnGoalsAfterMs === null) problems.push('0014 ei jäänyt odottamaan goals-lukkoa');
+    if (run.ok) problems.push('0014 meni läpi estäjästä huolimatta');
+    else if (!/lock timeout/i.test(run.error.message)) problems.push(`virhe ei ole lukon aikakatkaisu: ${run.error.message}`);
+    if (!out.catalogUnchanged) problems.push('katalogi muuttui');
+    if (out.ddlStartedBeforeFailure !== 0) problems.push(`${out.ddlStartedBeforeFailure} DDL-komentoa ennen goals-odotusta (odotus 0)`);
+    if (out.authWriteStallMs > 1000) problems.push(`auth.users-kirjoitus jumissa ${out.authWriteStallMs} ms 0014:n odottaessa goals-lukkoa`);
+    out.pass = problems.length === 0;
+    out.problems = problems;
+    if (strict) for (const p of problems) fail(scenario, `0014 goals-odotus (${label}): ${p}`);
+  } finally {
+    await auth.end();
+    await monitor.end();
+    await client.end();
+    await dropDatabase(db);
+  }
+  return out;
+}
+
+/** 0014 ennen goals-lukitusta (vertailu, 2026-09-27 perustusagentin versio). */
+export const AUTH_STALL_BASELINE_REF = '8ba874a';
+
 /** Keskeytynyt istunto (ei rollbackia): pitääkö se lukkoja, näkyykö preflightissa? */
 async function abortedSessionCase({ sql, fail, scenario }) {
   const db = 'mv_rehearsal_lk_aborted_0010';
@@ -449,6 +511,17 @@ export async function locksScenario({ fail }) {
   // "JO AJETTU" -vastausta.
   results.rerunBlocked0014 = await rerunUnderLockCase({ sql: readSql(`supabase/migrations/${migrationName('0014')}.sql`),
     label: 'nykyinen', fail, scenario, n: '0014' });
+  // 0014 lukitsee goals-taulun ennen yhtäkään DDL:ää: goals-estäjä -> 0 DDL,
+  // eikä auth.users-kirjoitus jumitu odotuksen aikana.
+  for (const r of results.matrix.filter(x => x.migration === '0014' && x.expectBlocked && x.table === 'public.goals')) {
+    if (r.ddlStarted !== 0) fail(scenario, `0014 ${r.table} ${r.mode}: ${r.ddlStarted} DDL-komentoa ennen lukon aikakatkaisua (odotus 0)`);
+  }
+  results.authStall0014 = await authStall0014Case({ sql: readSql(`supabase/migrations/${migrationName('0014')}.sql`),
+    label: 'nykyinen', fail, scenario });
+  const old0014 = gitShow(AUTH_STALL_BASELINE_REF, 'supabase/migrations/0014_daily_life.sql');
+  results.authStall0014Before = old0014 && !/^lock table public\.goals/m.test(old0014)
+    ? await authStall0014Case({ sql: old0014, label: `ennen ${AUTH_STALL_BASELINE_REF}`, fail: () => {}, scenario, strict: false })
+    : { skipped: `git show ${AUTH_STALL_BASELINE_REF} ei saatavilla tai sisältää jo goals-lukituksen` };
   // Vertailu: sama uudelleenajo 0010:llä, jossa tunnistus oli lukituksen jälkeen.
   const beforeReorder = gitShow(RERUN_BASELINE_REF, 'supabase/migrations/0010_goal_to_action.sql');
   if (beforeReorder && beforeReorder.indexOf('lock table public.goals') < beforeReorder.indexOf('into olemassa from (')) {

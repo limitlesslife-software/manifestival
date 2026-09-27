@@ -123,6 +123,29 @@ test('KRIITTINEN: 0014:n peruutus pudottaa täsmälleen omat taulunsa, lapset en
   assert.equal(/\balter\b/i.test(rb), false);
 });
 
+test('KRIITTINEN: 0014 lukitsee goals-taulun uudelleenajon tunnistuksen jälkeen ja ennen ensimmäistä DDL:ää', () => {
+  // Harjoittelun löydös 2026-09-27: ilman tätä 0014 loi kaksi taulua ja
+  // piti auth.users-lukkoa odottaessaan goals-lukkoa — kirjautuminen jumissa
+  // 4 981 ms (failure:0010-locks, authStall0014).
+  const src = read('supabase/migrations/0014_daily_life.sql').replace(/\r\n/g, '\n');
+  const body = src.slice(src.indexOf('\nbegin;'), src.indexOf('\ncommit;'))
+    .split('\n').filter(l => !l.trim().startsWith('--')).join('\n');
+  const lock = 'lock table public.goals in share row exclusive mode;';
+  assert.equal(body.split(lock).length - 1, 1, 'goals-lukitus puuttuu tai toistuu');
+  assert.equal((body.match(/^lock table /gm) || []).length, 1, 'useampi lukituslause');
+  const at = body.indexOf(lock);
+  assert.ok(body.indexOf("set local lock_timeout = '5s';") < at, 'lock_timeout ennen lukitusta');
+  assert.ok(body.indexOf('JO AJETTU') < at, 'uudelleenajon tunnistus ennen lukitusta ("JO AJETTU" heti)');
+  assert.ok(body.indexOf('touch_updated_at() on SECURITY DEFINER') < at);
+  for (const ddl of ['create table', 'alter table', 'create index', 'create policy', 'create trigger', 'revoke ', 'grant ']) {
+    const first = body.indexOf(ddl);
+    if (first !== -1) assert.ok(at < first, `"${ddl}" ennen goals-lukitusta`);
+  }
+  // auth.usersia ei lukita erikseen: LOCK TABLE vaatisi Supabasessa oikeuden,
+  // jota postgres-roolilla ei välttämättä ole auth-skeeman tauluun.
+  assert.equal(/lock table auth\./.test(body), false);
+});
+
 test('harjoittelun ketju = supabase/migrations (0001–0014)', async () => {
   const { MIGRATIONS: CHAIN } = await import('../tools/pg-rehearsal/chain.mjs');
   const files = fs.readdirSync(path.join(ROOT, 'supabase/migrations'))

@@ -19,8 +19,11 @@
 -- eikä yksikään nykyinen toiminto voi lakata toimimasta tämän takia.
 --
 -- Ainoat lukot ovat auth.users- ja goals-taulujen SHARE ROW EXCLUSIVE,
--- jotka vierasavainten luonti ottaa hetkeksi. `lock_timeout` rajaa
--- odotuksen viiteen sekuntiin.
+-- jotka vierasavainten luonti ottaa. goals lukitaan samassa tilassa
+-- ENNEN yhtäkään muutosta (vaihe 0d): odotus tapahtuu ennen kuin
+-- auth.users-tauluun on otettu muuta kuin lukulukko, joten kirjautumiset
+-- eivät jonoudu migraation taakse sen odottaessa. `lock_timeout` rajaa
+-- odotuksen viiteen sekuntiin. Sovelluksen luku ei estä ajoa.
 --
 -- EI SARAKEPORTTEJA. Uusi sarakeportti kirjoittaisi uudelleen jokaisen
 -- lukitun C–J-tietueen (docs/activation/release-train-c-j.json). Kaikki
@@ -338,6 +341,27 @@ begin
     raise exception 'public.touch_updated_at() ei kiinnita search_pathia.';
   end if;
 end $$;
+
+-- ---------------------------------------------------------------------
+-- VAIHE 0d: goals lukitaan ENNEN yhtäkään muutosta
+--
+-- Tavoitekytkennän vierasavaimet (vaiheet 3 ja 9) ottavat goals-tauluun
+-- SHARE ROW EXCLUSIVE -lukon. Jos lukko otettaisiin vasta niissä,
+-- migraatio olisi jo luonut kaksi taulua ja pitäisi auth.users-tauluun
+-- samaa lukkoa odottaessaan goals-lukkoa: jokainen kirjautuminen
+-- jonoutuisi sen taakse jopa viideksi sekunniksi. Harjoittelu
+-- 2026-09-27 (tools/pg-rehearsal, failure:0010-locks): sovelluksen avoin
+-- goals-kirjoitus -> 58 DDL-komentoa ennen odotusta ja auth.users-
+-- kirjoitus jumissa 4 981 ms.
+--
+-- Sama tila otetaan nyt ensin: goals-kirjoitus -> 5 s ja peruutus ilman
+-- yhtäkään muutosta, eikä auth.users-tauluun ole sillä hetkellä kuin
+-- vaiheen 0b lukulukko. Sovelluksen luku (ACCESS SHARE) ei estä.
+--
+-- Uudelleenajon tunnistus (vaihe 0b) on tätä ennen: "JO AJETTU" tulee
+-- heti, vaikka sovellus pitäisi goals-lukkoa.
+-- ---------------------------------------------------------------------
+lock table public.goals in share row exclusive mode;
 
 -- ---------------------------------------------------------------------
 -- VAIHE 1: saved_places
@@ -1463,9 +1487,10 @@ commit;
 --
 --   MATALA   kymmenen uutta tyhjää taulua — eivät koske olemassa olevaan
 --            dataan
---   MATALA   lukitus: vain auth.users ja goals vierasavainten luonnin
---            ajaksi (SHARE ROW EXCLUSIVE, lock_timeout 5 s); ei ALTER
---            TABLEa olemassa oleviin tauluihin
+--   MATALA   lukitus: vain auth.users ja goals (SHARE ROW EXCLUSIVE,
+--            lock_timeout 5 s); goals lukitaan ennen yhtäkään muutosta,
+--            joten odotus ei pidä auth.users-lukkoa; ei ALTER TABLEa
+--            olemassa oleviin tauluihin
 --   MATALA   peruutus on taulujen pudotus, ei rakenteen palautus
 --   HUOMIO   arkaluonteiset tiedot (uni, motivaatio, hallinnan tunne,
 --            nikotiini) — RLS neljällä omalla politiikalla, ei anonille
