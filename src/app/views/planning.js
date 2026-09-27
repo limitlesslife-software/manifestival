@@ -253,7 +253,9 @@ async function onGenerate() {
 
   try {
     const result = await requestPlan({ goalText: text });
-    if (!result.ok) showError(result.error);
+    // Hylätty = istunto vaihtui kesken; seuraavalle käyttäjälle ei näytetä
+    // edellisen pyynnön lopputulosta, ei edes virhettä.
+    if (!result.ok && !result.discarded) showError(result.error);
   } finally {
     generating = false;
     const button = maybe('plGenerate');

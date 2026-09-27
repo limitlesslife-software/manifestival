@@ -30,9 +30,10 @@ import {
   createProject, editProject, deleteProject,
   createBill, editBill, setBillPaid
 } from './actions.js';
-import { updatePreferences } from './notifications.js';
+import { updatePreferences, syncNotifications } from './notifications.js';
 import { switchTab } from './navigation.js';
-import { setViewDate, setWeekStart, setCalendarView } from './state.js';
+import { getState, setViewDate, setWeekStart, setCalendarView } from './state.js';
+import { logFailure } from '../lib/logger.js';
 import { INTENT } from '../ai/intentSchema.js';
 import { applyShift } from './aiCommands.js';
 import { parseISO, startOfWeek } from '../lib/datetime.js';
@@ -46,6 +47,26 @@ const NO_QUEUE = Object.freeze({ queueOffline: false });
  */
 function fromBoolean(result, reason) {
   return result ? { ok: true } : { ok: false, reason };
+}
+
+/**
+ * Avustajan asetusmuutos samaan muotoon kuin asetusnäkymän.
+ *
+ * RAUHOITUSAIKA ON YKSI OLIO, EI KAKSI KENTTÄÄ. Skeema (intentSchema.js)
+ * hyväksyy litteät `quietHoursFrom`/`quietHoursTo`, mutta
+ * normalizePreferences lukee vain `quietHours.{from,to}`: litteä avain
+ * pudotettiin hiljaa, ja avustaja kertoi onnistuneensa. Puuttuva puolisko
+ * otetaan nykyisistä asetuksista — muuten "rauhoitus alkaa klo 21"
+ * palauttaisi lopun oletukseen eikä käyttäjän omaan arvoon.
+ */
+function preferenceChanges(changes = {}) {
+  const { quietHoursFrom, quietHoursTo, ...rest } = changes;
+  if (quietHoursFrom === undefined && quietHoursTo === undefined) return rest;
+  const current = getState().notificationPreferences.quietHours || {};
+  return {
+    ...rest,
+    quietHours: { from: quietHoursFrom ?? current.from, to: quietHoursTo ?? current.to }
+  };
 }
 
 /**
@@ -154,8 +175,19 @@ export const handlers = Object.freeze({
 
   // ------------------------------------------------------------ asetukset
 
-  [INTENT.SET_NOTIFICATION_PREFERENCE]: async ({ payload }) =>
-    updatePreferences(payload.changes),
+  // SAMA KETJU KUIN ASETUSNÄKYMÄSSÄ: tallennus, sitten laite. Ilman
+  // synkronointia "kytke muistutukset pois" jätti jo ajastetut ilmoitukset
+  // laukeamaan, ja uusi ennakko tai rauhoitusaika ei koskaan päätynyt
+  // laitteelle ennen seuraavaa paluuta. syncNotifications peruu kaiken, kun
+  // muistutukset ovat pois, eikä koskaan kysy lupaa. Tallennettu asetus on
+  // onnistunut komento, vaikka laite ei vastaisi.
+  [INTENT.SET_NOTIFICATION_PREFERENCE]: async ({ payload }) => {
+    const result = await updatePreferences(preferenceChanges(payload.changes));
+    if (result.ok) {
+      await syncNotifications().catch(error => logFailure('notifications.sync_failed', error));
+    }
+    return result;
+  },
 
   // ------------------------------------------------------------ vain luku
 

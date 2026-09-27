@@ -1504,8 +1504,16 @@ export async function deleteInvestment(id) {
  * tarkistettavaksi, ja vasta `approveReceipt` tai `approveScannedBill`
  * kirjoittaa mitään. Kuva vapautetaan `extractFromImage`-funktiossa
  * riippumatta lopputuloksesta.
+ *
+ * ISTUNTO OTETAAN TALTEEN ENNEN LUENTAA. Luenta kestää sekunteja, ja sinä
+ * aikana istunto voi päättyä. Ilman tarkistusta A:n kuitti tai lasku
+ * (kauppias, summa, viite) päätyisi B:n tarkistettavaksi — tai jäisi
+ * uloskirjautuneeseen tilaan seuraavaa kirjautujaa odottamaan — ja
+ * hyväksyntä kirjaisi sen B:n tilille. Vaihtunut istunto palauttaa
+ * `discarded: true` eikä virhettä.
  */
 export async function scanImage({ file, subject }) {
+  const startedIn = sessionSnapshot();
   const result = await extractFromImage({
     file,
     subject,
@@ -1513,6 +1521,7 @@ export async function scanImage({ file, subject }) {
     id: newTaskId()
   });
 
+  if (!isSameSession(startedIn)) return { ok: false, discarded: true };
   if (result.ok) setPendingExtraction(result.extraction);
   return result;
 }

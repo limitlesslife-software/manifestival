@@ -25,7 +25,7 @@ import {
   initNavigation, restoreLastScreen, setScreenRenderers, markScreensDirty, renderVisible,
   renderEveryScreen, forgetRenderedScreens
 } from './navigation.js';
-import { initVoice } from './voice.js';
+import { initVoice, resetVoice } from './voice.js';
 import { initSearch, closeSearch } from './search.js';
 import { initOnboarding, maybeShowOnboarding } from './onboarding.js';
 import { renderToday, initTodayNavigation } from './views/today.js';
@@ -496,6 +496,9 @@ function onSignedOut() {
   closeCaptureReview();
   closeNoticeCenter();
   closeSearch();
+  // Puhepaneelin tarkistettava sanelu säilyy piilotuksen yli; seuraava
+  // käyttäjä ei saa nähdä sitä eikä lähettää sitä omilla tunnuksillaan.
+  resetVoice();
 
   // Muistissa oleva sijainti unohtuu uloskirjautuessa (ei koskaan levylle).
   platformLocation.forget();
@@ -549,6 +552,11 @@ function onSignedOut() {
   clearLocalUserData();
   clearDevicePreferences();
   resetState();
+  // Profiilin kentät (ikä, paino, pituus, uni) kirjoittaa vain
+  // fillProfileForm, ja kirjautuessa vasta latauksen jälkeen. Nollatusta
+  // tilasta täytetty lomake on oletuksissa: seuraava käyttäjä ei näe
+  // edellisen terveystietoja, eikä "Tallenna" kirjoita niitä hänelle.
+  fillProfileForm();
   showAuthGate();
 }
 
