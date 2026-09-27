@@ -294,9 +294,6 @@ const L_SCENARIOS = [
       await H.waitFor(() => H.el('#tdReplanTitle'), 'ehdotus');
       const text = H.squash(H.text('#todayInterruptions'));
       const target = (H.s().tasks.find(t => t.id === 'rest') || {}).date;
-      if (text.includes(tomorrow.split('-').reverse().slice(0, 2).map(Number).join('.') + '.')) {
-        // lyhyt päiväys voi esiintyä myös selitteessä; tarkistetaan varsinainen muutos alta
-      }
       document.querySelector('[data-td-action="replan-apply"]').click();
       await H.confirm(true, 'Muutetaanko päivän suunnitelmaa?');
       const moved = await H.waitFor(() => { const t = H.s().tasks.find(x => x.id === 'rest'); return t && t.date !== today ? t : null; }, 'siirto tehty');
