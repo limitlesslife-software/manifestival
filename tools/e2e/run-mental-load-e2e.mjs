@@ -443,9 +443,9 @@ const SHOT_SCENARIOS = [
         return true;
       });
       const files = [await shot(cdp, '01-tanaan')];
-      await page(async () => { await H.openStored('THIS_WEEK'); window.scrollTo(0, 0); return true; });
+      await page(async () => { await H.openStored('THIS_WEEK'); window.scrollTo(0, 0); await H.sleep(900); return true; });
       files.push(await shot(cdp, '02-tallessa'));
-      await page(async () => { await H.profile('protected'); window.scrollTo(0, 0); return true; });
+      await page(async () => { await H.profile('protected'); window.scrollTo(0, 0); await H.sleep(900); return true; });
       files.push(await shot(cdp, '03-suojattu-aika'));
       await page(async () => {
         H.fill('#captureInput', 'Soita Annalle\nVaraa hammaslääkäri');
@@ -456,6 +456,7 @@ const SHOT_SCENARIOS = [
         H.click('#segmentInbox');
         await H.waitFor(() => H.el('#inboxSelectAll'), 'saapuvat');
         window.scrollTo(0, 0);
+        await H.sleep(900);
         return true;
       });
       files.push(await shot(cdp, '04-saapuvat'));

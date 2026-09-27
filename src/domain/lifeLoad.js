@@ -396,6 +396,8 @@ export function computeLifeLoad({
     if (entry.eligible && now.length < limit && !fitsDay) {
       reasons.push('Ei mahdu tämän päivän aikaan');
       overflow.add(entry.key);
+    } else if (entry.eligible && now.length >= limit) {
+      reasons.push('Päivän fokus on jo täynnä');
     } else if (!entry.eligible) {
       reasons.push('Valinnainen: nosta fokukseen, jos haluat');
     }

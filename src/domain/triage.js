@@ -480,7 +480,9 @@ export function triageSummary(proposal, { areas = [] } = {}) {
   const area = proposal.areaId ? (areas || []).find(entry => entry && entry.id === proposal.areaId) : null;
   const where = area ? area.name
     : (proposal.categoryKey && proposal.categoryKey !== DEFAULT_CATEGORY ? categoryLabel(proposal.categoryKey) : null);
-  return ['Ehdotus: ' + when, where, natureLabel(proposal.nature)].filter(Boolean).join(' · ');
+  // Sama sana kahdesti (alue Hyvinvointi, luonne Hyvinvointi) ei kerro mitään lisää.
+  const nature = natureLabel(proposal.nature);
+  return ['Ehdotus: ' + when, where, nature && nature !== where ? nature : null].filter(Boolean).join(' · ');
 }
 
 // =====================================================================
