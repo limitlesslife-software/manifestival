@@ -65,9 +65,9 @@ PERSONAL_USE_P1 (ensimmäiset viikot), **P2** = PERSONAL_USE_P2, **CL** = COMMER
 | Rytmi | Illan ennakkosuunnittelu | P0 | COMPLETE_LOCAL | K | `app/dailyLifeNotices.eveningBeforeNotice` |
 | Rytmi | Viikonlopun rytmi ja maanantain valmius | P1 | COMPLETE_LOCAL | K | `app/dailyLifeNotices.weekendRhythmNotices` |
 | Herätys | Natiivi tarkka herätys (lukitusnäyttö, uudelleenkäynnistys, kesäaika) | P0 | IMPLEMENTED_DEVICE_UNVERIFIED | K | `ManifestivalAlarm` (Java) + `platform/alarms.js` + `app/alarmSync.js`; laitehyväksyntä `docs/DEVICE-ACCEPTANCE-BACKLOG.md` |
-| Herätys | Tilat: ääni, musiikki, puhe, yhdistelmä | P0 | IMPLEMENTED_DEVICE_UNVERIFIED | K | `AlarmService`; valittu ääni `pickAlarmSound` |
+| Herätys | Tilat: ääni, musiikki, puhe, yhdistelmä | P0 | IMPLEMENTED_DEVICE_UNVERIFIED | K | `AlarmService`; valittu ääni `pickAlarmSound`; oma musiikki `pickAlarmMusic` (järjestelmän tiedostovalitsin audio/*, pysyvä lukuoikeus, ei tallennuslupaa) soi tavoilla Oma musiikki ja Ääni ja puhe, varavaihtoehto herätysääni (`AlarmMath.soundSources`); laitteella vahvistamatta |
 | Herätys | Porrastettu voimistuminen | P1 | IMPLEMENTED_DEVICE_UNVERIFIED | K | `alarmPlan.normalizeEscalation`, `AlarmService` |
-| Herätys | Puhuttu aamukooste | P1 | IMPLEMENTED_DEVICE_UNVERIFIED | K | `alarmPlan.morningBrief` herätyksen puheena; TTS laitteella vahvistamatta |
+| Herätys | Puhuttu aamukooste | P1 | IMPLEMENTED_DEVICE_UNVERIFIED | K | `alarmPlan.morningBrief` luetaan kerran Sammuta-painalluksen jälkeen (`briefOnDismiss`) tavasta riippumatta, myös oletustavalla; ei torkussa; TTS laitteella vahvistamatta |
 | Päivä | Päivän uudelleensuunnittelu lohkoineen | P0 | COMPLETE_LOCAL | K | `domain/dayReplan.js` + `app/dayReplanActions.js`; kiinteät menot, matkat ja lepo eivät siirry |
 | Päivä | Avoimet asiat ("tällä viikolla") | P1 | COMPLETE_LOCAL | K | Tänään → Avoimet asiat: Ehdota aikaa → perustelu → hyväksyntä |
 | Päivä | Asiointien ryhmittely | P1 | COMPLETE_LOCAL | K | Tänään: "olet jo menossa lähelle" -ehdotus |
