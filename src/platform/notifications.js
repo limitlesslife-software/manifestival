@@ -179,6 +179,20 @@ export async function refreshPermission() {
 }
 
 /**
+ * Kuuntele lähtöilmoituksen "Avaa reitti" -painalluksia.
+ *
+ * Vain natiivikuoressa: selaimen ilmoituksissa ei ole toimintoja, joten
+ * lopetusfunktio ei tee mitään. `handler` saa { destination, mode,
+ * intentId, type, ackKey } -- kohde on tekstiä, ei koskaan linkkiä.
+ *
+ * @returns {Function} lopetusfunktio; ei koskaan heitä
+ */
+export function onRouteAction(handler) {
+  if (isNativeShell() && native.isAvailable()) return native.onRouteAction(handler);
+  return () => {};
+}
+
+/**
  * Montako ilmoitusta on tällä hetkellä ajastettuna laitteelle.
  *
  * Vain natiivikuoressa tarkoittaa jotain: selaimessa ei ole laiteajastusta,

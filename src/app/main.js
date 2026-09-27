@@ -84,7 +84,7 @@ import {
 } from './assistantActions.js';
 import {
   refreshNotificationPermission, syncNotifications,
-  scheduleNotificationResync, cancelScheduledResync, cancelDeviceNotifications
+  scheduleNotificationResync, cancelScheduledResync, cancelDeviceNotifications, startNotificationActions
 } from './notifications.js';
 import { lifecycle, location as platformLocation, speech } from '../platform/index.js';
 import { logFailure, LOG_LEVEL } from '../lib/logger.js';
@@ -598,6 +598,9 @@ async function start() {
   initVoice();
   initSearch();
   initOnboarding();
+  // Lähtöilmoituksen "Avaa reitti" (Android) ENNEN istunnon palautusta:
+  // kylmäkäynnistyksen painallus odottaa liitännäisessä kuuntelijaa.
+  startNotificationActions();
 
   // 2. Näkymät seuraavat tilaa: avoin näyttö heti, muut ennen näyttämistä.
   setScreenRenderers(SCREEN_RENDERERS, { always: ALWAYS_RENDERED, enabled: () => signedIn });

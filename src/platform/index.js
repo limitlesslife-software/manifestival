@@ -89,7 +89,12 @@ export const notifications = Object.freeze({
   removeAllDelivered: notificationPlatform.removeAllDelivered,
   describeSupport: notificationPlatform.describeSupport,
   /** Montako ilmoitusta on tällä hetkellä ajastettuna laitteelle. */
-  pendingCount: notificationPlatform.pendingCount
+  pendingCount: notificationPlatform.pendingCount,
+  /**
+   * Lähtöilmoituksen "Avaa reitti" -painallukset (Android). Palauttaa
+   * lopetusfunktion; selaimessa ei tee mitään.
+   */
+  onRouteAction: notificationPlatform.onRouteAction
 });
 
 // ------------------------------------------------------------- sijainti

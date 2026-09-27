@@ -696,8 +696,21 @@ export function desiredNativeEntries({
   return {
     entries: items.map(item => item.entry),
     targets: items.map(item => item.target),
-    localIntents: [...local, ...fallback]
+    localIntents: [...local, ...fallback].map(intent => withRoute(intent, routes))
   };
+}
+
+/**
+ * Tavallinen lähtöilmoitus saa saman reitin kohteen kuin laitteen puhuva
+ * muistutus: "Avaa reitti" -painike (src/platform/nativeNotifications.js)
+ * kokoaa siitä reitin painalluksesta. Kohde on tekstiä, ei linkkiä.
+ */
+function withRoute(intent, routes) {
+  if (!intent || !DEPARTURE_CHAIN_TYPES.includes(intent.type) || typeof intent.departureId !== 'string') return intent;
+  const route = routes.get(intent.departureId);
+  const destination = route ? clip(route.destination, 200) : null;
+  if (!destination) return intent;
+  return Object.freeze({ ...intent, routeDestination: destination, routeMode: route.mode || null });
 }
 
 /**

@@ -285,12 +285,147 @@ async function ensureChannel(api) {
   }
 }
 
-/** Ilmoituksen lisätiedot: tunnisteet kuittausta ja napautusta varten. */
+// ------------------------------------------------------------ "Avaa reitti"
+
+/**
+ * Lähtöilmoituksen toiminto "Avaa reitti" (paketin §14 ja §36). Tavallinen
+ * "Lähde nyt" -ilmoitus (oletustoimitus Ääni) saa saman painikkeen kuin
+ * herätysliitännäisen puhuva muistutus.
+ *
+ * Ilmoitus kantaa vain kohteen TEKSTIN (osoite tai paikan nimi) ja
+ * kulkutavan, ei koskaan linkkiä. Painalluksesta sovellus kokoaa kohteen
+ * uudelleen (src/domain/navigationLink.js) ja avaa sen alustan
+ * reittitoiminnolla (alarms.openNavigation).
+ */
+export const ROUTE_ACTION_TYPE_ID = 'manifestival-route';
+export const ROUTE_ACTION_ID = 'avaa-reitti';
+/** Capacitorin tapahtuma, jonka liitännäinen lähettää toiminnon painalluksesta. */
+export const ACTION_PERFORMED_EVENT = 'localNotificationActionPerformed';
+
+export const ACTION_TYPES = Object.freeze([
+  Object.freeze({
+    id: ROUTE_ACTION_TYPE_ID,
+    actions: Object.freeze([Object.freeze({ id: ROUTE_ACTION_ID, title: 'Avaa reitti', foreground: true })])
+  })
+]);
+
+/** Kohteen enimmäispituus (sama kuin herätysliitännäisellä, ALARM_LIMITS.maxDestinationLength). */
+const MAX_ROUTE_TEXT = 200;
+const ROUTE_MODE = /^[a-z_]{1,20}$/;
+const CONTROL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g;
+
+/** Kohde pelkkänä, rajattuna tekstinä tai null. Linkkiä ei tästä koskaan synny. */
+function routeText(value) {
+  if (typeof value !== 'string') return null;
+  const text = value.replace(CONTROL, ' ').replace(/\s+/g, ' ').trim();
+  if (!text) return null;
+  return Array.from(text).slice(0, MAX_ROUTE_TEXT).join('').trim() || null;
+}
+
+function routeMode(value) {
+  return typeof value === 'string' && ROUTE_MODE.test(value) ? value : null;
+}
+
+/** Toimintotyypit rekisteröidään kerran kutakin liitännäistä kohden. */
+let registeredFor = new WeakSet();
+
+async function ensureActionTypes(api) {
+  if (typeof api.registerActionTypes !== 'function' || registeredFor.has(api)) return;
+  try {
+    await api.registerActionTypes({ types: ACTION_TYPES.map(type => ({ ...type, actions: type.actions.map(a => ({ ...a })) })) });
+    registeredFor.add(api);
+  } catch {
+    // Ilman toimintotyyppiä ilmoitus näkyy silti, vain ilman painiketta.
+  }
+}
+
+/** Testit: toimintotyypit rekisteröidään uudelleen. */
+export function resetActionTypesForTests() {
+  registeredFor = new WeakSet();
+}
+
+/**
+ * "Avaa reitti" -painalluksen tiedot ilmoituksen lisätiedoista, tai null
+ * (muu toiminto, napautus tai kelvoton kohde).
+ *
+ * @returns {null | {destination:string, mode:string|null, intentId:string|null, type:string|null, ackKey:string|null}}
+ */
+export function routeActionPayload(event) {
+  if (!event || typeof event !== 'object' || event.actionId !== ROUTE_ACTION_ID) return null;
+  const notification = event.notification;
+  const extra = notification && typeof notification === 'object' ? notification.extra : null;
+  if (!extra || typeof extra !== 'object') return null;
+  const destination = routeText(extra.routeDestination);
+  if (!destination) return null;
+  const idOf = value => (typeof value === 'string' && value && value.length <= 400 ? value : null);
+  return Object.freeze({
+    destination,
+    mode: routeMode(extra.routeMode),
+    intentId: idOf(extra.intentId),
+    type: idOf(extra.type),
+    ackKey: idOf(extra.ackKey)
+  });
+}
+
+/**
+ * Kuuntele "Avaa reitti" -painalluksia. `handler` saa routeActionPayload-
+ * olion. Liitännäinen säilyttää painalluksen, kunnes kuuntelija on
+ * kytketty, joten kylmäkäynnistyskään ei hukkaa sitä.
+ *
+ * @returns {Function} lopetusfunktio; ei koskaan heitä
+ */
+export function onRouteAction(handler) {
+  const api = plugin();
+  if (!api || typeof api.addListener !== 'function' || typeof handler !== 'function') return () => {};
+  let handle = null;
+  let removed = false;
+  const listener = event => {
+    const payload = routeActionPayload(event);
+    if (!payload) return;
+    try {
+      handler(payload);
+    } catch {
+      // Kuuntelijan virhe ei saa kaataa liitännäisen tapahtumaketjua.
+    }
+  };
+  try {
+    const registration = api.addListener(ACTION_PERFORMED_EVENT, listener);
+    Promise.resolve(registration).then(value => {
+      handle = value;
+      if (removed && handle && typeof handle.remove === 'function') handle.remove();
+    }).catch(() => {});
+  } catch {
+    return () => {};
+  }
+  return () => {
+    removed = true;
+    try {
+      if (handle && typeof handle.remove === 'function') handle.remove();
+    } catch {
+      // jo poistettu
+    }
+  };
+}
+
+/** Ilmoituksen lisätiedot: tunnisteet kuittausta ja napautusta varten, lähdöllä reitin kohde. */
 function extraFor(intent) {
   const extra = { intentId: intent.id, type: intent.type };
   if (typeof intent.ackKey === 'string' && intent.ackKey) extra.ackKey = intent.ackKey;
   if (typeof intent.speech === 'string' && intent.speech) extra.speech = intent.speech;
+  const destination = routeText(intent.routeDestination);
+  if (destination) {
+    extra.routeDestination = destination;
+    const mode = routeMode(intent.routeMode);
+    if (mode) extra.routeMode = mode;
+  }
   return extra;
+}
+
+/** Ilmoitus ja sen lisätiedot; reitin kohteella toimintotyyppi "Avaa reitti". */
+function withRouteAction(notification) {
+  return notification.extra && notification.extra.routeDestination
+    ? { ...notification, actionTypeId: ROUTE_ACTION_TYPE_ID }
+    : notification;
 }
 
 /**
@@ -329,13 +464,14 @@ export async function schedule(intents = [], now = new Date(), options = {}) {
   }
 
   await ensureChannel(api);
+  await ensureActionTypes(api);
 
   const notifications = [];
   for (const intent of list) {
     if (!intent || typeof intent !== 'object') continue;
     const at = instantOf(intent);
     if (!at || at.getTime() <= now.getTime()) continue;
-    notifications.push({
+    notifications.push(withRouteAction({
       id: numericId(intent.id),
       title: intent.title,
       body: intent.body,
@@ -349,7 +485,7 @@ export async function schedule(intents = [], now = new Date(), options = {}) {
       },
       isExactNotification: exact,
       extra: extraFor(intent)
-    });
+    }));
   }
 
   if (notifications.length === 0) {
@@ -419,9 +555,10 @@ export async function showNow(intent, now = new Date()) {
   }
 
   await ensureChannel(api);
+  await ensureActionTypes(api);
   try {
     await api.schedule({
-      notifications: [{
+      notifications: [withRouteAction({
         id: numericId(intent.id),
         title: intent.title,
         body: intent.body,
@@ -433,7 +570,7 @@ export async function showNow(intent, now = new Date()) {
         // hälytysasetuksia (ks. schedule).
         isExactNotification: false,
         extra: extraFor(intent)
-      }]
+      })]
     });
     return { ok: true, reason: '' };
   } catch {

@@ -19,6 +19,8 @@ import { fmtISO, todayMidnight } from '../lib/datetime.js';
 import { summarizeIntents, normalizePreferences } from '../domain/notification.js';
 import { notifications as platformNotifications, alarms as platformAlarms, PERMISSION } from '../platform/index.js';
 import { dailyLifeLocalIntents, dailyLifeReminderPlan, resetAlarmSync } from './alarmSync.js';
+import { handleAlarmEvents, DEVICE_EVENT } from './alarmEvents.js';
+import { buildNavigationTarget, isAllowedNavigationUrl } from '../domain/navigationLink.js';
 import { getState, setNotificationPreferences } from './state.js';
 import { savePreferences, isPersistent } from '../data/notificationPrefsRepo.js';
 import { sessionSnapshot, isSameSession } from '../data/session.js';
@@ -326,6 +328,72 @@ export async function cancelDeviceNotifications({ timeoutMs = DEVICE_CANCEL_TIME
   } finally {
     if (timer) clearTimeout(timer);
   }
+}
+
+// ------------------------------------------------------------ "Avaa reitti"
+
+/**
+ * Lähtöilmoituksen "Avaa reitti" -painallus (src/platform/nativeNotifications.js).
+ *
+ * Ilmoitus kantaa vain kohteen tekstin ja kulkutavan. Reitti kootaan tässä
+ * AINA uudelleen src/domain/navigationLink.js:llä (siivottu teksti, kiinteä
+ * muoto) ja avataan alustan reittitoiminnolla: ilmoituksen tiedoista ei
+ * koskaan avata linkkiä sellaisenaan. Painallus kuittaa ilmoituksen
+ * (sama kuin laitteen muistutuksen kuittaus), joten "Lähde nyt" -toisto
+ * ei enää tule.
+ *
+ * Ei heitä. @returns {Promise<{ok:boolean, opened:boolean, code:string|null}>}
+ */
+export async function openRouteFromNotification(payload, { nowMs = Date.now() } = {}) {
+  const source = payload && typeof payload === 'object' ? payload : {};
+  const target = buildNavigationTarget({ address: source.destination, mode: source.mode });
+  if (!target) return { ok: false, opened: false, code: 'invalid' };
+  const key = typeof source.ackKey === 'string' && source.ackKey ? source.ackKey : source.intentId;
+  if (typeof key === 'string' && key) {
+    handleAlarmEvents([{ type: DEVICE_EVENT.ACKNOWLEDGED, id: key, atMs: nowMs }]).catch(() => {});
+  }
+  let result = null;
+  try {
+    result = await platformAlarms.openNavigation({ destination: target.query, mode: target.mode });
+  } catch {
+    result = null;
+  }
+  if (result && result.opened === true) return { ok: true, opened: true, code: null };
+  // Android-sovellus ilman herätysliitännäistä: sallittu reittiohjeen
+  // https-linkki selaimeen (sama muoto kuin navigationLink.googleMapsUrl).
+  const url = result && typeof result.url === 'string' ? result.url : null;
+  if (url && isAllowedNavigationUrl(url) && typeof globalThis.open === 'function') {
+    try {
+      globalThis.open(url, '_blank', 'noopener');
+      return { ok: true, opened: true, code: null };
+    } catch {
+      // alla virheviesti
+    }
+  }
+  notify('Reittiä ei voitu avata. Tarkista, että karttasovellus on asennettu.');
+  return { ok: false, opened: false, code: (result && result.code) || 'failed' };
+}
+
+let stopRouteActions = null;
+
+/**
+ * Kuuntele lähtöilmoitusten "Avaa reitti" -painalluksia. Kutsutaan kerran
+ * käynnistyksessä ENNEN istunnon palautusta: liitännäinen säilyttää
+ * kylmäkäynnistyksen painalluksen, kunnes kuuntelija on kytketty.
+ */
+export function startNotificationActions() {
+  if (stopRouteActions) return;
+  stopRouteActions = platformNotifications.onRouteAction(payload => {
+    openRouteFromNotification(payload).catch(() => {});
+  });
+}
+
+/** Testit: kuuntelu pois. */
+export function stopNotificationActions() {
+  if (typeof stopRouteActions === 'function') {
+    try { stopRouteActions(); } catch { /* jo poistettu */ }
+  }
+  stopRouteActions = null;
 }
 
 /**
