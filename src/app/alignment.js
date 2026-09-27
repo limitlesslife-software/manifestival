@@ -55,8 +55,13 @@ import { dailyObservations } from '../domain/dailyAlignment.js';
 import { weekSummary, compareWeeks, alignmentTrends, FIRST_WEEK_NOTE } from '../domain/reviewComparison.js';
 import { TREND_RULES, POLICY_VERSION } from '../domain/alignmentPolicy.js';
 import { explainWithFallback, aiExplainEnabled } from '../ai/alignmentExplainClient.js';
-import { brakedHorizonCapacity } from './capacityBrake.js';
+import { brakedHorizonCapacity, brakeInputs } from './capacityBrake.js';
 import { datelessTasksAllowed } from '../data/schema.js';
+import { driftSignals, capacityBiasSignal, DRIFT_SIGNAL } from '../domain/driftSignals.js';
+import { horizonCapacity } from '../domain/capacity.js';
+import { isMovable } from '../domain/planScheduler.js';
+import { isSchedulable, schedulingContext } from '../domain/lifeLoad.js';
+import { durationOf } from '../domain/task.js';
 
 /** Suunnan muutokset eivät mene offline-jonoon: ne vaativat vahvistuksen ja verkon. */
 const NO_QUEUE = Object.freeze({ queueOffline: false });
@@ -218,9 +223,123 @@ export function currentProposals(analysis, clock = clockNow()) {
     nextCapacity: capacityForWeek(state.weeklyCapacities, next),
     recentAnalyses,
     destinationRoomMinutes: weekRoomMinutes(state, addDaysIso(next, 7), clock),
-    laterAllowed: datelessTasksAllowed()
+    laterAllowed: datelessTasksAllowed(),
+    // Ajautuminen v2: toistuva suunnitelma > toteuma syöttää kapasiteettiehdotuksen.
+    capacityBias: currentCapacityBias(analysis.weekStart, clock, state)
   });
 }
+
+// ------------------------------------------------ ajautuminen v2 (aalto L)
+
+/**
+ * CAPACITY_BIAS tilasta (suljetut viikkosuunnitelmat vs. toteuma) tai null.
+ * Halpa: ei kalenteria eikä analyysia.
+ */
+export function currentCapacityBias(weekStart = null, clock = clockNow(), state = getState()) {
+  if (!clock || !clock.todayIso) return null;
+  try {
+    return capacityBiasSignal({
+      weeklyPlans: state.weeklyPlans, timeEntries: state.timeEntries, tasks: state.tasks,
+      todayIso: clock.todayIso, weekStart: weekStart || clock.todayIso
+    });
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Viikon joustava työ, joka ei mahdu kapasiteettijarrun jäännökseen
+ * (tästä päivästä viikon loppuun). Mahtumaton työ vie viikon
+ * vähimmäisvapaa-ajan varauksen (FREE_TIME_EROSION).
+ */
+function weekOverflowMinutes(state, inputs, { monday, sunday, todayIso }) {
+  const from = todayIso && todayIso > monday ? todayIso : monday;
+  if (!from || from > sunday) return 0;
+  const context = schedulingContext({ goals: state.goals, projects: state.projects, todayIso });
+  const flexible = task => Boolean(task) && !task.completed && isMovable(task) && isSchedulable(task, context);
+  let flexibleMinutes = 0;
+  for (const task of state.tasks || []) {
+    if (!flexible(task) || !task.date || task.date < from || task.date > sunday) continue;
+    const known = durationOf(task);
+    flexibleMinutes += Number.isFinite(known) && known > 0 ? known : 30;
+  }
+  if (flexibleMinutes === 0) return 0;
+  const capacity = horizonCapacity({
+    tasks: (state.tasks || []).filter(task => !flexible(task)), profile: state.profile,
+    fromIso: from, toIso: sunday, routines: state.routines || [], exceptions: state.routineExceptions || [],
+    bufferRatio: inputs.bufferRatio, events: inputs.events, blocks: inputs.blocks,
+    reserves: inputs.reserves, sleepShortfalls: inputs.sleepShortfalls
+  });
+  return Math.max(0, flexibleMinutes - capacity.totalUsableMinutes);
+}
+
+/** Ajautumisen lähdekokoelmat: sama viittausperiaate kuin analyysin välimuistissa. */
+function driftSources(state) {
+  return [
+    state.tasks, state.timeEntries, state.weeklyPlans, state.protectedPeriods, state.calendarEvents,
+    state.lifeAreas, state.goals, state.projects, state.profile, state.routines, state.routineExceptions,
+    state.sleepLogs, state.lifeSettings, state.savedPlaces
+  ];
+}
+
+let driftCache = null;
+
+/** Vain testeille: tyhjennä ajautumisen välimuisti. */
+export function resetDriftCacheForTests() {
+  driftCache = null;
+}
+
+/**
+ * Todellisuus / ajautuminen v2 viikolle (src/domain/driftSignals.js).
+ *
+ * Syötteet tilasta: suojatut lohkot ja menot samasta kapasiteettijarrun
+ * polusta kuin Tänään ja suunnittelija (brakeInputs -> periodBlocks),
+ * suljetut viikkosuunnitelmat, kirjaukset ja tehtävät. Ei tallenna mitään.
+ * Jos jokin analyysin syöte jäi lataamatta, palauttaa tyhjän: vajaista
+ * luvuista ei päätellä ajautumista.
+ *
+ * @param {string} [weekStart] mikä tahansa viikon päivä (oletus: tämä viikko)
+ * @param {{todayIso?: string, nowMinutes?: number}} [clock]
+ * @returns {ReadonlyArray<object>} havainnot vahvimmasta alkaen
+ */
+export function currentDriftSignals(weekStart = null, clock = clockNow(), { state = getState() } = {}) {
+  if (!clock || !clock.todayIso) return Object.freeze([]);
+  if (analysisLoadProblems(state).length > 0) return Object.freeze([]);
+  const monday = weekStartOf(weekStart || clock.todayIso);
+  if (!monday) return Object.freeze([]);
+  const sources = driftSources(state);
+  if (driftCache && driftCache.monday === monday && driftCache.todayIso === clock.todayIso
+    && driftCache.sources.every((source, index) => source === sources[index])) {
+    return driftCache.signals;
+  }
+  const sunday = addDaysIso(monday, 6);
+  let signals;
+  try {
+    const inputs = brakeInputs(state, { from: monday, to: sunday, todayIso: clock.todayIso });
+    signals = driftSignals({
+      weekStart: monday,
+      todayIso: clock.todayIso,
+      tasks: state.tasks,
+      timeEntries: state.timeEntries,
+      weeklyPlans: state.weeklyPlans,
+      periods: state.protectedPeriods,
+      blocks: inputs.blocks,
+      events: inputs.events,
+      goals: state.goals,
+      projects: state.projects,
+      lifeAreas: state.lifeAreas,
+      overflowMinutes: weekOverflowMinutes(state, inputs, { monday, sunday, todayIso: clock.todayIso }),
+      dateOf: localDateOf
+    });
+  } catch {
+    logEvent('alignment.drift_failed', { code: 'compute' });
+    signals = Object.freeze([]);
+  }
+  driftCache = { monday, todayIso: clock.todayIso, sources, signals };
+  return signals;
+}
+
+export { DRIFT_SIGNAL };
 
 /**
  * Viikon vapaa aika minuutteina siirtojen kohdeviikolle (L0): pienempi

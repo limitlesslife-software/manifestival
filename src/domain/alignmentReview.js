@@ -392,7 +392,12 @@ export function proposeAdjustments(analysis, {
   // siirto viikolla eteenpäin ei saa täyttää sitä viikkoa. null = ei tiedossa.
   destinationRoomMinutes = null,
   // 0015: mahtumaton tehtävä saa siirtyä "Myöhemmin" ilman päivää.
-  laterAllowed = false
+  laterAllowed = false,
+  // Ajautuminen v2 (driftSignals.capacityBiasSignal): suljettujen viikkojen
+  // suunnitelma on ollut toistuvasti toteumaa suurempi. Syöttää ensi viikon
+  // kapasiteettiehdotuksen lähtöarvon, kun tämän viikon kirjattu toteuma ei
+  // jo tee sitä. null = ei havaintoa (ennallaan).
+  capacityBias = null
 } = {}) {
   const proposals = new Map();
   const add = proposal => { if (!proposals.has(proposal.id)) proposals.set(proposal.id, proposal); };
@@ -418,20 +423,27 @@ export function proposeAdjustments(analysis, {
       && analysis.actual.entryCount > 0 && declared > 0 && trackedWeek
       && Math.abs(actual - declared) >= REVIEW_RULES.CAPACITY_DEVIATION_MIN_MINUTES
       && Math.abs(actual - declared) / declared >= REVIEW_RULES.CAPACITY_DEVIATION_RATIO;
-    const suggestion = deviates ? Math.round(actual / 30) * 30 : declared;
+    const biasMinutes = capacityBias && capacityBias.adjustment && capacityBias.adjustment.payload
+      ? capacityBias.adjustment.payload.availableMinutes : null;
+    // Harha näkyy vain, kun se todella pienentää lähtöarvoa (tai arviota ei ole).
+    const biased = !deviates && Number.isInteger(biasMinutes) && biasMinutes > 0
+      && (!Number.isInteger(declared) || biasMinutes < declared);
+    const suggestion = deviates ? Math.round(actual / 30) * 30 : biased ? biasMinutes : declared;
     add({
       id: `${ADJUSTMENT.SET_CAPACITY}:${next}`,
       type: ADJUSTMENT.SET_CAPACITY,
-      reason: deviates ? { kind: 'capacity_deviation' } : null,
+      reason: deviates ? { kind: 'capacity_deviation' } : biased ? { kind: 'capacity_bias' } : null,
       label: deviates
         ? (actual < declared ? 'Pienennetäänkö ensi viikon kapasiteettioletusta?' : 'Kasvatetaanko ensi viikon kapasiteettioletusta?')
-        : 'Aseta ensi viikon kapasiteetti',
+        : biased ? capacityBias.adjustment.label : 'Aseta ensi viikon kapasiteetti',
       detail: deviates
         ? `Arvioit ehtiväsi ${formatMinutes(declared)}, ja kirjasit ${formatMinutes(actual)}. `
           + 'Voit pitää arviosi tai käyttää kirjattua aikaa lähtökohtana — valitse itse.'
-        : analysis.capacity.declared
-          ? `Tämän viikon arvio oli ${formatMinutes(declared)}.`
-          : 'Ilman kapasiteettia kuormitusta ei voi arvioida.',
+        : biased
+          ? `${capacityBias.reason} ${capacityBias.adjustment.detail}`
+          : analysis.capacity.declared
+            ? `Tämän viikon arvio oli ${formatMinutes(declared)}.`
+            : 'Ilman kapasiteettia kuormitusta ei voi arvioida.',
       payload: { weekStart: next, availableMinutes: suggestion }
     });
   }
