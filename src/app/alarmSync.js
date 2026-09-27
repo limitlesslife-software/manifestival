@@ -91,6 +91,7 @@ import {
 import { wallClockToEpoch, epochToWallClock } from '../domain/wallClock.js';
 import { isTimeOfDay } from '../domain/task.js';
 import { logEvent } from '../lib/logger.js';
+import { lifeLoadFor } from './lifeLoadModel.js';
 
 /** Kuinka monta päivää eteenpäin (tänään mukaan lukien). Sama kuin tavallisissa muistutuksissa. */
 export const ALARM_SYNC_HORIZON_DAYS = 3;
@@ -586,7 +587,7 @@ export function reminderLoad({ state = getState(), now = new Date(), dates = EMP
  */
 export function dailyLifeReminderPlan({
   state = getState(), now = new Date(), ackLog = currentAckLog(), includePast = false, fromIso = null,
-  load = null, capacityOverflow = false
+  load = null, capacityOverflow = null
 } = {}) {
   const preferences = normalizePreferences(state.notificationPreferences || {});
   if (!preferences.enabled) return { intents: EMPTY, routes: new Map() };
@@ -629,7 +630,11 @@ export function dailyLifeReminderPlan({
   let currentLoad = load && typeof load === 'object' ? load : null;
   if (!currentLoad) {
     try {
-      currentLoad = reminderLoad({ state, now, dates, capacityOverflow });
+      // Aalto L: tämän päivän kapasiteetin ylitys tulee kuormamoottorista
+      // (lifeLoad overflow), ellei kutsuja kerro sitä itse.
+      const overflow = typeof capacityOverflow === 'boolean' ? capacityOverflow
+        : (lifeLoadFor(state, { todayIso }) || { overflow: EMPTY }).overflow.length > 0;
+      currentLoad = reminderLoad({ state, now, dates, capacityOverflow: overflow });
     } catch {
       currentLoad = { level: LOAD_LEVEL.NORMAL, dates: [], reasons: [] };
     }

@@ -20,7 +20,7 @@ import {
 import { escapeHtml, capitalize } from '../../lib/format.js';
 import { fmtISO, todayMidnight } from '../../lib/datetime.js';
 import {
-  getState, findLifeArea, findTask, findRoutine, findGoal, findProject, currentLifeSettings
+  getState, findLifeArea, findTask, findRoutine, findGoal, findProject, currentLifeSettings, setProfileSegment
 } from '../state.js';
 import { switchTab } from '../navigation.js';
 import { CATEGORIES } from '../../domain/categories.js';
@@ -558,7 +558,9 @@ function driftSignalHtml(signal) {
   const capacity = adjustment.type === DRIFT_ADJUSTMENT.SET_CAPACITY && adjustment.payload
     && Number.isInteger(adjustment.payload.availableMinutes)
     ? `<button class="assist-btn" type="button" data-drift-action="capacity">${escapeHtml(adjustment.label)}</button>`
-    : '';
+    : adjustment.type === DRIFT_ADJUSTMENT.PROTECT_EVENING
+      ? '<button class="assist-btn" type="button" data-drift-action="protected">Avaa Suojattu aika</button>'
+      : '';
   return `
     <div class="dir-signal dir-drift ${signal.severity === DRIFT_SEVERITY.ATTENTION ? 'dir-attention' : 'dir-info'}">
       <div class="dir-signal-head">
@@ -593,6 +595,12 @@ function driftHtml(analysis) {
 const onDriftAction = singleFlight(async button => {
   const action = button.dataset.driftAction;
   const id = button.dataset.task || null;
+  // Suojattu aika -asetukset (Profiili → Suojattu aika): ei kirjoita mitään.
+  if (action === 'protected') {
+    setProfileSegment('protected');
+    switchTab('screen-profile');
+    return;
+  }
   if (action === 'open') {
     if (id && driftTaskOpener) driftTaskOpener(id);
     else switchTab('screen-tasks');
