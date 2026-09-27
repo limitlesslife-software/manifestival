@@ -25,7 +25,7 @@ import { setClient } from '../src/data/client.js';
 import { clearAllCollections } from '../src/data/collectionsRepo.js';
 import {
   resetState, getState, subscribe, setTasks, setSavedPlaces, setCalendarEvents, setCommuteObservations,
-  setLifeSettings, setHabitPlans, setHabitEvents, setWellbeingCheckins, setViewDate, setPlaceAliases
+  setLifeSettings, setHabitPlans, setWellbeingCheckins, setViewDate, setSleepLogs
 } from '../src/app/state.js';
 import { resetDailyLifeActions } from '../src/app/dailyLifeActions.js';
 import { departuresOn, morningPlanOn } from '../src/app/dailyLifeModel.js';
@@ -638,6 +638,23 @@ test('huominen päivälläkin, kun aamu vaatii tavallista aiemman herätyksen', 
   assert.match(text, new RegExp(`Herätys klo ${plan.wakeTime.replace(/^0/, '').replace(':', '\\.')}`));
   assert.match(text, /Lähtö klo 6\.50 · Hammaslääkäri klo 7\.30/);
   assert.match(text, /Huominen aamu alkaa tavallista aiemmin/);
+});
+
+test('viikonloppu: rytmin siirtymä ja maanantaivalmius ehdotuksina, ilman kirjauksia ei korttia keskipäivällä', t => {
+  const SAT = '2026-10-03';
+  const view = mount(t, { date: SAT, time: '12:00' });
+  assert.equal(view.byId('todayTomorrow').innerHTML.trim(), '', 'ei kirjauksia: ei ehdotettavaa');
+
+  setSleepLogs(['2026-09-26', '2026-09-27', SAT].map((wakeDate, index) => ({
+    id: `s${index}`, wakeDate, actualBedtime: '01:30', actualWake: '09:30'
+  })));
+  const text = view.text('todayTomorrow');
+  assert.match(text, /Viikonlopun rytmi on siirtynyt asettamaasi väljyyttä enemmän 2 viikonloppuna/);
+  assert.match(text, /Haluatko pitää sunnuntain herätyksen lähempänä arkirytmiä\?/);
+  assert.match(text, /Ehdotus: sunnuntaina herätys 9\.00 ja maanantaina 7\.00\./);
+  assert.match(text, /Nämä ovat ehdotuksia: mitään ei muuteta ilman sinua\./);
+  assert.match(text, /tämä perustuu kirjaamiisi kellonaikoihin, ei unen mittaukseen/i);
+  assert.equal(getState().notices.length, 0, 'kortti ei luo ilmoituksia');
 });
 
 // ================================================================ aamu

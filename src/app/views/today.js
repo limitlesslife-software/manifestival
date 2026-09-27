@@ -38,7 +38,7 @@ import { saveWellbeingCheckin } from '../dailyLifeActions.js';
 import { openEditForm } from './tasks.js';
 import { loadFailureHtml } from './loadNotice.js';
 import {
-  dayPlanFor, calendarRange, renderTodayDailyLife, initTodayDailyLife, timelineKindLabel
+  dayPlanFor, calendarRange, modelFor, renderTodayDailyLife, initTodayDailyLife, timelineKindLabel
 } from './todayDailyLife.js';
 
 const ROW_HEIGHT = 66;
@@ -714,12 +714,15 @@ export function renderToday() {
 
   // Kalenterin menot ja suojatut lohkot (valmistautuminen, matka, uni ...)
   // ovat aikajanalla eivätkä vapaata aikaa. Sama suunnitelma kuin
-  // keskeytyksen uudelleensuunnittelussa (todayDailyLife.js).
+  // keskeytyksen uudelleensuunnittelussa (todayDailyLife.js). Yksi malli
+  // koko piirrolle: sama päivän lähtö lasketaan vain kerran.
+  const model = modelFor(state, now);
   const plan = dayPlanFor(dateIso, {
     state,
     now,
     nowMinutes: isToday ? nowMinutes() : null,
-    todayIso
+    todayIso,
+    model
   });
 
   // Kuormituschip
@@ -757,7 +760,7 @@ export function renderToday() {
 
   // Arjen kortit: seuraava lähtö, aamu, tavat, keskeytykset, avoimet asiat
   // ja huominen. Omat säiliöt ja kerran kytketyt kuuntelijat.
-  renderTodayDailyLife({ state, now, isToday, plan: isToday ? plan : null });
+  renderTodayDailyLife({ state, now, isToday, plan: isToday ? plan : null, model });
 
   attachHandlers(el('screen-today'), dateIso);
 

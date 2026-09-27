@@ -699,7 +699,7 @@ function tomorrowCard(state, model, clockNow) {
       <div class="assist-row">
         <dl class="td-facts">${factHtml}</dl>
         ${notes}
-        <p class="hint">Ehdotus: mitään ei muuteta ilman sinua.</p>
+        ${notes ? '<p class="hint">Nämä ovat ehdotuksia: mitään ei muuteta ilman sinua.</p>' : ''}
       </div>
     </section>`;
 }
@@ -1339,11 +1339,14 @@ function card(id, build) {
  * @param {Date}   [context.now]
  * @param {boolean} context.isToday
  * @param {object} [context.plan] päivän suunnitelma (dayPlanFor)
+ * @param {object} [context.model] saman piirron malli (modelFor samalla tilalla ja kellolla)
  */
-export function renderTodayDailyLife({ state = getState(), now = new Date(), isToday = true, plan = null } = {}) {
+export function renderTodayDailyLife({
+  state = getState(), now = new Date(), isToday = true, plan = null, model: given = null
+} = {}) {
   lastContext = { isToday };
   const clockNow = clockOf(now);
-  const model = modelFor(state, now);
+  const model = given && given.state === state && given.now === now ? given : modelFor(state, now);
   const dayPlan = plan || (isToday
     ? safe(() => dayPlanFor(clockNow.todayIso, { state, now, nowMinutes: clockNow.nowMinutes, todayIso: clockNow.todayIso, model }), null)
     : null);
