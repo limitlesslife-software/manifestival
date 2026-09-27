@@ -10,7 +10,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { read } from './helpers/sources.mjs';
-import { PAUSES, trainWaves, shapeKeys, waveWrites } from '../tools/pg-rehearsal/waves.mjs';
+import { PAUSES, trainWaves, trainWavesFrom, shapeKeys, waveWrites } from '../tools/pg-rehearsal/waves.mjs';
 import { patchSchemaSource, KNOWN_GATES } from '../tools/pg-rehearsal/app-gate-hooks.mjs';
 
 const train = trainWaves();
@@ -114,6 +114,19 @@ test('KRIITTINEN: aalto K luetaan lukosta (locked: true), ja muoto vastaa julkai
   assert.deepEqual(train.K.gates, train.J.gates);
   // Lukitun aallon johdettu muoto täsmää lukkoon (johtaminen on oikein).
   assert.deepEqual([...cumulativeGates('J')].sort(), [...train.J.tables].sort());
+});
+
+test('KRIITTINEN: aalto, jota lukko ei vielä tunne, johdetaan julkaisuaalloista (locked: false) täsmälleen lukon muotoon', async () => {
+  // Sama tilanne kuin ennen K v1:n lukitsemista: lukko ilman K:ta.
+  const lock = JSON.parse(read('docs/activation/release-train-c-j.json'));
+  const withoutK = trainWavesFrom({ ...lock, waves: lock.waves.filter(w => w.wave !== 'K') });
+  for (const w of ['C', 'D', 'E', 'F', 'G', 'H', 'I', 'J']) assert.equal(withoutK[w].locked, true, w);
+  assert.equal(withoutK.K.locked, false);
+  // Johdettu K on sama kuin lukittu K: johtaminen ja lukko ovat samaa mieltä.
+  assert.equal(withoutK.K.migration, train.K.migration);
+  assert.deepEqual([...withoutK.K.tables].sort(), [...train.K.tables].sort());
+  assert.deepEqual(withoutK.K.gates, train.K.gates);
+  assert.throws(() => trainWavesFrom({}), /waves-lista puuttuu/);
 });
 
 test('aallon K rivimuodot: kaikki kymmenen taulua sovelluksen omalla toRow:lla, J ei kirjoita niihin', async () => {
