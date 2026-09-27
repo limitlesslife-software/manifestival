@@ -1041,3 +1041,23 @@ a.cal-inline-btn { display:inline-flex; align-items:center; }
 .discretionary-limit { margin-top:16px; }
 .discretionary-limit input[type="text"] { width:100%; max-width:220px; min-height:44px; }
 .discretionary-limit .dl-status { margin:8px 0 10px; overflow-wrap:anywhere; }
+
+/* ============ Rauhallinen tänään ja Tallessa (aalto L, docs/MENTAL-LOAD-CORE.md) ============ */
+.calm-focus .focus-row { align-items:center; }
+.calm-focus .skip-btn { min-height:44px; }
+.calm-empty { margin:6px 0 10px; color:var(--forest-muted); }
+.calm-room { margin-top:6px; }
+.calm-stored { margin-top:12px; padding:12px 14px; border-radius:14px; background:var(--sage-soft); color:var(--forest); }
+.calm-stored-title { font-weight:700; margin:0; }
+.calm-stored-text { margin:2px 0 8px; }
+.calm-slipped { margin:10px 0; padding:10px 14px; border-radius:14px; border:1px solid var(--border); background:var(--cream-card); }
+.calm-slipped p { margin:0 0 6px; }
+.calm-vacation { margin:0 0 8px; }
+.calm-protected ul { margin:4px 0 8px; padding-left:18px; }
+.calm-protected-group { margin-top:6px; }
+.calm-stored-lead { margin:4px 0 10px; }
+.stored-list { list-style:none; padding:0; margin:10px 0; }
+.stored-row.is-overflow { border-left:3px solid var(--sage); }
+.stored-open { background:none; border:0; padding:0; text-align:left; cursor:pointer; min-height:44px; width:100%; }
+.stored-wait-form { display:grid; gap:6px; margin-top:8px; }
+.stored-wait-form input { min-height:44px; }

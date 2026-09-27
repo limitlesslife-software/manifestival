@@ -173,7 +173,13 @@ export function compareCandidates(a, b) {
  * @param {Function} [input.offsetMinutesFn]  laitteen vyöhyke lähtölaskentaan (wallClock.js);
  *        ilman sitä kesäajan vaihtoyönä lähtö olisi tunnin väärässä
  */
+/** Tekeillä oleva tehtävä: ei odottava, ei "ei vielä", ei arkistoitu (0015). */
+function isActionableTask(task) {
+  return !task.archivedAt && task.horizon !== 'WAITING' && task.horizon !== 'NOT_YET';
+}
+
 export function collectCandidates({
+  focusTaskIds = null,
   tasks = [],
   reminders = [],
   travelPlans = [],
@@ -186,6 +192,7 @@ export function collectCandidates({
   if (!isIsoDate(todayIso)) return [];
 
   const out = [];
+  const focus = focusTaskIds instanceof Set ? focusTaskIds : null;
 
   // LÄHTÖAIKA ENSIN. Ainoa asia, jonka myöhästyminen ei ole
   // korjattavissa myöhemmin samana päivänä.
@@ -271,9 +278,15 @@ export function collectCandidates({
   }
 
   // MYÖHÄSSÄ OLEVA TYÖ.
+  //
+  // RAUHALLINEN TÄNÄÄN (aalto L): myöhässä ei ole automaattisesti "nyt".
+  // Kun kutsuja antaa päivän fokuksen (lifeLoad NOW, `focusTaskIds`), vain
+  // fokuksessa oleva myöhässä oleva työ nousee tähän; muu on tallessa.
+  // Odottava, "ei vielä" ja arkistoitu eivät ole koskaan myöhässä.
   for (const task of tasks) {
     if (!task || task.completed || !task.date) continue;
     if (task.date >= todayIso) continue;
+    if (!isActionableTask(task) || (focus && !focus.has(task.id))) continue;
 
     out.push(candidate(CANDIDATE_KIND.OVERDUE, {
       id: task.id,
@@ -313,9 +326,11 @@ export function collectCandidates({
     }));
   }
 
-  // TÄMÄN PÄIVÄN JOUSTAVA TYÖ.
+  // TÄMÄN PÄIVÄN JOUSTAVA TYÖ. Fokuksen kanssa vain fokuksen asiat (sama
+  // lähde kuin Tänään-näkymän fokuslohkossa).
   for (const task of tasks) {
     if (!task || task.completed || task.date !== todayIso || task.time) continue;
+    if (!isActionableTask(task) || (focus && !focus.has(task.id))) continue;
 
     out.push(candidate(CANDIDATE_KIND.FLEXIBLE, {
       id: task.id,

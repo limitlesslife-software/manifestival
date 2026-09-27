@@ -30,6 +30,9 @@ import {
 import { TASK_HORIZON, isIsoDate } from '../domain/task.js';
 import { weekStartOf } from '../domain/weeklyCapacity.js';
 import { confirmAction } from '../ui/confirm.js';
+import { notify } from '../ui/toast.js';
+import { horizonDays } from './dayReplanActions.js';
+import { addDaysIso } from '../domain/fiTemporal.js';
 
 function findPeriod(id) {
   return getState().protectedPeriods.find(period => period.id === id) || null;
@@ -177,6 +180,67 @@ export function markWaiting(id, { waitingOn = null, followUpDate = null } = {}) 
   };
   if (datelessTasksAllowed() && !task.time) changes.date = null;
   return editTask(id, changes);
+}
+
+/**
+ * "Ei tänään" (Rauhallinen tänään): asia pois tämän päivän fokuksesta
+ * KAPASITEETTIJARRUN mukaan.
+ *
+ *   - päivätön sallittu (0015): "tällä viikolla" ilman päivää, sunnuntaina
+ *     "myöhemmin" (viikko päättyy tänään)
+ *   - muuten ensimmäinen päivä 14 päivän sisällä, jolle kesto mahtuu
+ *   - jos mikään päivä ei riitä: ei siirretä täydelle päivälle; kerrotaan
+ *
+ * @returns {Promise<{ok:boolean, date?:string|null, horizon?:string, reason?:string}>}
+ */
+export async function deferFromToday(id, { todayIso, now = new Date() } = {}) {
+  const task = findTask(id);
+  if (!task || !isIsoDate(todayIso)) return { ok: false };
+  if (datelessTasksAllowed() && !task.time) {
+    const sunday = new Date(`${todayIso}T12:00:00Z`).getUTCDay() === 0;
+    const horizon = sunday ? TASK_HORIZON.LATER : TASK_HORIZON.THIS_WEEK;
+    const result = await editTask(id, { horizon, date: null, waitingOn: null, followUpDate: null });
+    return result && result.ok ? { ok: true, date: null, horizon } : { ok: false };
+  }
+  const need = Number.isInteger(task.durationMinutes) && task.durationMinutes > 0 ? task.durationMinutes : 30;
+  const from = addDaysIso(todayIso, 1);
+  const { days } = horizonDays(from, addDaysIso(todayIso, 14), { state: getState(), now });
+  const target = days.find(day => Number.isFinite(day.usableMinutes) && day.usableMinutes >= need);
+  if (!target) {
+    notify('Seuraavien kahden viikon päivät ovat täynnä, joten asiaa ei siirretty. Se on tallessa; valitse itse, mikä jää pois.', 7000);
+    return { ok: false, reason: 'no_room' };
+  }
+  const result = await editTask(id, task.time
+    ? { date: target.date, time: null, endTime: null }
+    : { date: target.date });
+  return result && result.ok ? { ok: true, date: target.date } : { ok: false };
+}
+
+/**
+ * Siirrä tehtävä ensimmäiselle päivälle `preferIso`sta alkaen, jolle se
+ * MAHTUU (kapasiteettijarru). Illan katsauksen "Siirrä huomiselle" ja muut
+ * yksittäiset siirrot. Täydelle päivälle ei siirretä: 14 päivän sisällä
+ * tilaa vailla -> "Myöhemmin" (0015) tai ei muutosta ja ilmoitus.
+ */
+export async function moveToDayWithRoom(id, { preferIso, now = new Date() } = {}) {
+  const task = findTask(id);
+  if (!task || !isIsoDate(preferIso)) return { ok: false };
+  const need = Number.isInteger(task.durationMinutes) && task.durationMinutes > 0 ? task.durationMinutes : 30;
+  const { days } = horizonDays(preferIso, addDaysIso(preferIso, 13), { state: getState(), now });
+  const target = days.find(day => Number.isFinite(day.usableMinutes) && day.usableMinutes >= need);
+  if (target) {
+    const result = await editTask(id, task.time ? { date: target.date, time: null, endTime: null } : { date: target.date });
+    if (result && result.ok && target.date !== preferIso) {
+      notify(`Huomenna ei ollut tilaa, joten asia siirtyi päivälle ${target.date.split('-').reverse().slice(0, 2).map(Number).join('.')}.`, 6000);
+    }
+    return result && result.ok ? { ok: true, date: target.date } : { ok: false };
+  }
+  if (datelessTasksAllowed() && !task.time) {
+    const result = await editTask(id, { date: null, horizon: TASK_HORIZON.LATER });
+    return result && result.ok ? { ok: true, date: null, horizon: TASK_HORIZON.LATER } : { ok: false };
+  }
+  notify('Seuraavat päivät ovat täynnä, joten asiaa ei siirretty. Se on tallessa.', 7000);
+  return { ok: false, reason: 'no_room' };
 }
 
 /** Poista näkyvistä (arkisto). Ei poista tietoa; palautettavissa. */

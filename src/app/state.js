@@ -875,6 +875,8 @@ export function setEditingInvestmentId(id) {
  */
 export const TASKS_SEGMENTS = Object.freeze([
   { key: 'tasks', label: 'Tehtavat' },
+  // Aalto L: kaikki, mitä ei tarvitse hoitaa tänään (lifeLoad).
+  { key: 'stored', label: 'Tallessa' },
   { key: 'routines', label: 'Rutiinit' },
   { key: 'inbox', label: 'Saapuvat' },
   { key: 'reminders', label: 'Muistutukset' },
@@ -1272,6 +1274,8 @@ export function setProfile(profile, exists = true) {
  */
 export const PROFILE_SEGMENTS = Object.freeze([
   { key: 'daily', label: 'Arki' },
+  // Aalto L: oma aika, vapaa-aika, loma ja suunnittelun väljyys.
+  { key: 'protected', label: 'Suojattu aika' },
   { key: 'wellbeing', label: 'Hyvinvointi' },
   { key: 'places', label: 'Paikat' },
   { key: 'settings', label: 'Asetukset' }

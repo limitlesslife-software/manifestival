@@ -18,10 +18,12 @@ import { offline } from '../offline.js';
 import { renderInbox } from './inbox.js';
 import { renderReminders } from './reminders.js';
 import { renderTravel } from './travel.js';
+import { renderStored, initStored } from './stored.js';
 import { ESTIMATE_PRESETS } from '../../domain/alignmentPolicy.js';
 import { formatMinutes } from '../../domain/lifeArea.js';
 import { estimateQueueCount, openEstimateQueue } from './direction.js';
 import { loadFailureHtml } from './loadNotice.js';
+import { datelessTasksAllowed } from '../../data/schema.js';
 import { showError } from '../../ui/toast.js';
 
 /**
@@ -32,6 +34,7 @@ import { showError } from '../../ui/toast.js';
  */
 const SEGMENT_NODES = Object.freeze([
   { key: 'tasks', tab: 'segmentTasks', section: 'tasksSection' },
+  { key: 'stored', tab: 'segmentStored', section: 'storedSection' },
   { key: 'routines', tab: 'segmentRoutines', section: 'routinesSection' },
   { key: 'inbox', tab: 'segmentInbox', section: 'inboxSection' },
   { key: 'reminders', tab: 'segmentReminders', section: 'remindersSection' },
@@ -164,11 +167,14 @@ export function renderTasks() {
   }
 
   if (segment === 'routines') renderRoutines();
+  else if (segment === 'stored') renderStored();
   else if (segment === 'inbox') renderInbox();
   else if (segment === 'reminders') renderReminders();
   else if (segment === 'travel') renderTravel();
   else {
-    renderList(el('tasksListContainer'), state.tasks);
+    // Päivättömät (0015) ja arkistoidut ovat Tallessa-osiossa: tämä lista on
+    // päivätty suunnitelma, ei koko jono.
+    renderList(el('tasksListContainer'), state.tasks.filter(task => task.date && !task.archivedAt));
     renderEstimateButton();
   }
 }
@@ -206,7 +212,10 @@ export const FIELD_TO_INPUT = {
   endTime: 'afEndTime',
   durationMinutes: 'afDuration',
   description: 'afDescription',
-  deadline: 'afDeadline'
+  deadline: 'afDeadline',
+  horizon: 'afHorizon',
+  waitingOn: 'afWaitingOn',
+  followUpDate: 'afFollowUp'
 };
 
 /**
@@ -243,13 +252,47 @@ export function showFieldErrors(errors) {
   return unplaced;
 }
 
+/**
+ * Lomakkeen päivä ja horisontti (0015). Tyhjä päivä + valittu horisontti =
+ * tarkoituksella päivätön, kun kanta tukee sitä. Muuten tyhjä päivä on
+ * tämä päivä kuten ennenkin: keksittyä päivää ei pakoteta, mutta päivätöntä
+ * ei voi tallentaa ennen migraatiota 0015 (validointi kertoo sen).
+ */
+function readSchedule() {
+  const horizonNode = maybe('afHorizon');
+  const horizon = horizonNode && horizonNode.value ? horizonNode.value : null;
+  const dateValue = el('afDate').value || null;
+  const date = dateValue || (horizon && datelessTasksAllowed() ? null : fmtISO(todayMidnight()));
+  const waiting = horizon === 'WAITING';
+  const waitingNode = maybe('afWaitingOn');
+  const followNode = maybe('afFollowUp');
+  return {
+    date,
+    horizon,
+    waitingOn: waiting && waitingNode ? (waitingNode.value.trim() || null) : null,
+    followUpDate: waiting && followNode ? (followNode.value || null) : null
+  };
+}
+
+/** Odotuksen kentät näkyvät vain, kun horisontti on "Odottaa jotakuta". */
+function syncHorizonFields() {
+  const horizonNode = maybe('afHorizon');
+  const waiting = Boolean(horizonNode && horizonNode.value === 'WAITING');
+  toggle('afWaitingRow', waiting);
+  toggle('afFollowUpRow', waiting);
+}
+
 function readForm() {
   const durationRaw = el('afDuration').value;
   const goalPicker = maybe('afGoal');
+  const schedule = readSchedule();
   return {
     title: el('afTitle').value.trim(),
     description: el('afDescription').value.trim() || null,
-    date: el('afDate').value || fmtISO(todayMidnight()),
+    date: schedule.date,
+    horizon: schedule.horizon,
+    waitingOn: schedule.waitingOn,
+    followUpDate: schedule.followUpDate,
     time: el('afTime').value || null,
     endTime: el('afEndTime').value || null,
     // Määräaika on eri asia kuin aikataulutus: se kertoo milloin asian on
@@ -303,7 +346,14 @@ function syncDurationField() {
 function fillForm(task) {
   el('afTitle').value = task ? task.title : '';
   el('afDescription').value = task && task.description ? task.description : '';
-  el('afDate').value = task ? task.date : fmtISO(todayMidnight());
+  el('afDate').value = task ? (task.date || '') : fmtISO(todayMidnight());
+  const horizonNode = maybe('afHorizon');
+  if (horizonNode) horizonNode.value = task && task.horizon && task.horizon !== 'NOW' ? task.horizon : '';
+  const waitingNode = maybe('afWaitingOn');
+  if (waitingNode) waitingNode.value = task && task.waitingOn ? task.waitingOn : '';
+  const followNode = maybe('afFollowUp');
+  if (followNode) followNode.value = task && task.followUpDate ? task.followUpDate : '';
+  syncHorizonFields();
   el('afTime').value = task && task.time ? task.time : '';
   el('afEndTime').value = task && task.endTime ? task.endTime : '';
   el('afDeadline').value = task && task.deadline ? task.deadline : '';
@@ -416,7 +466,7 @@ const submitForm = singleFlight(async () => {
 
   // Esitarkistus ennen verkkokutsua: virheet näkyvät heti.
   const candidate = normalizeTask({ ...input, id: getState().editingId || 'uusi' });
-  const preflight = validateTask(candidate);
+  const preflight = validateTask(candidate, { allowDateless: datelessTasksAllowed() });
   if (!preflight.valid) {
     showFieldErrors(preflight.errors);
     return;
@@ -507,4 +557,11 @@ export function initTaskForm() {
     el(id).addEventListener('input', syncDurationField);
   }
   syncDurationField();
+
+  initStored();
+
+  // Horisontti (0015): odotuksen kentät näkyvät vain odottavalle.
+  const horizonNode = maybe('afHorizon');
+  if (horizonNode) horizonNode.addEventListener('change', syncHorizonFields);
+  syncHorizonFields();
 }

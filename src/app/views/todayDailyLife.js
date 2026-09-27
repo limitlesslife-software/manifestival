@@ -1084,6 +1084,8 @@ function syncHabitNoteInput() {
  */
 function isOpenEnded(task) {
   if (!task || task.completed || !task.deadline) return false;
+  // Odottava, "ei vielä" ja arkistoitu eivät ole avoimia asioita tänään (0015).
+  if (task.archivedAt || task.horizon === 'WAITING' || task.horizon === 'NOT_YET') return false;
   return !task.date || (task.date === task.deadline && !task.time);
 }
 
@@ -1174,9 +1176,10 @@ function errandProposalHtml(pending) {
     </div>`;
 }
 
-function openEndedCard(state, clockNow) {
+function openEndedCard(state, clockNow, focusIds = null) {
   const current = uiState();
-  const tasks = openEndedTasks(state, clockNow.todayIso);
+  // Rauhallinen tänään: fokuksen asia ei näy toista kertaa täällä.
+  const tasks = openEndedTasks(state, clockNow.todayIso).filter(task => !(focusIds && focusIds.has(task.id)));
   const groups = safe(() => errandGroups(state, clockNow.todayIso), EMPTY);
   if (tasks.length === 0 && groups.length === 0) return '';
   const places = new Map((state.savedPlaces || []).map(place => [place.id, place]));
@@ -1492,9 +1495,9 @@ function card(id, build) {
  * @param {object} [context.model] saman piirron malli (modelFor samalla tilalla ja kellolla)
  */
 export function renderTodayDailyLife({
-  state = getState(), now = new Date(), isToday = true, plan = null, model: given = null
+  state = getState(), now = new Date(), isToday = true, plan = null, model: given = null, focusIds = null
 } = {}) {
-  lastContext = { isToday };
+  lastContext = { isToday, focusIds };
   const clockNow = clockOf(now);
   const model = given && given.state === state && given.now === now ? given : modelFor(state, now);
   const dayPlan = plan || (isToday
@@ -1505,7 +1508,7 @@ export function renderTodayDailyLife({
     todayMorning: () => morningCard(model, clockNow),
     todayHabits: () => habitCards(state, now),
     todayInterruptions: () => interruptionCard(state, clockNow, dayPlan),
-    todayOpenEnded: () => openEndedCard(state, clockNow),
+    todayOpenEnded: () => openEndedCard(state, clockNow, focusIds),
     todayTomorrow: () => tomorrowCard(state, model, clockNow)
   };
   for (const [id, heading] of Object.entries(CONTAINERS)) {
@@ -1521,7 +1524,7 @@ export function renderTodayDailyLife({
 /** Näkymän oma muutos (esikatselu, valinta): piirretään nykyisellä tilalla. */
 function rerender() {
   if (!lastContext) return;
-  renderTodayDailyLife({ state: getState(), now: new Date(), isToday: lastContext.isToday });
+  renderTodayDailyLife({ state: getState(), now: new Date(), isToday: lastContext.isToday, focusIds: lastContext.focusIds });
 }
 
 // ------------------------------------------------------------ kytkennät

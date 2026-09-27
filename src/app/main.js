@@ -55,6 +55,7 @@ import { renderNotificationSettings } from './views/notificationSettings.js';
 // Arjen käyttöjärjestelmä (aalto K): profiilin osiot ja niiden näkymät.
 import { renderProfileSegments, initProfileSegments } from './views/profileSegments.js';
 import { renderDailySettings, initDailySettings, resetDailySettings } from './views/dailySettings.js';
+import { renderProtectedTimeSettings, initProtectedTimeSettings } from './views/protectedTimeSettings.js';
 import { renderGuidanceSettings, initGuidanceSettings, resetGuidanceSettings } from './views/guidanceSettings.js';
 import { renderWellbeingHub, initWellbeingHub, resetWellbeingHub } from './views/wellbeingHub.js';
 import { renderPlacesSettings, initPlacesSettings, resetPlacesSettings } from './views/placesSettings.js';
@@ -233,7 +234,7 @@ const SCREEN_RENDERERS = Object.freeze({
   'screen-finance': () => { renderFinance(); },
   'screen-profile': () => {
     renderSetupChecklist(); renderProfileSegments(); renderProfile(); renderNotificationSettings();
-    renderDailySettings(); renderGuidanceSettings();
+    renderDailySettings(); renderGuidanceSettings(); renderProtectedTimeSettings();
     renderWellbeingHub(maybe('profileWellbeingSection')); renderPlacesSettings(maybe('profilePlacesSection'));
   }
 });
@@ -591,6 +592,7 @@ async function start() {
   initProfileSegments();
   initSetupChecklist();
   initDailySettings();
+  initProtectedTimeSettings();
   initGuidanceSettings();
   initWellbeingHub(maybe('profileWellbeingSection'));
   initPlacesSettings(maybe('profilePlacesSection'));
