@@ -93,6 +93,7 @@ import {
   setExerciseSessions, setWellbeingCheckins
 } from './state.js';
 import { adoptLoadedTimers, timerMutationSeq } from './timerState.js';
+import { dailyLifeWriteMark, keepDailyLifeWritesSince } from './dailyLifeActions.js';
 import {
   loadPreferences as loadNotificationPreferences,
   clearPreferences as clearNotificationPreferences
@@ -202,6 +203,10 @@ export async function loadUserData() {
   // Ajastimen muutos kesken latauksen (esim. pysäytys paluun päivityksen
   // aikana): ennen sitä luettu lista ei saa herättää ajastinta henkiin.
   const timerSeq = timerMutationSeq();
+  // Sama arjen tallennuksille (dailyLifeActions.js): latauksen aikana
+  // valmistunut meno, unikirjaus tai asetus ei saa kadota vanhemman listan
+  // alle, eikä sen aikana poistettu meno palata.
+  const dailyLifeMark = dailyLifeWriteMark();
 
   const loaded = await Promise.all([
     tasksRepo.listTasks(),
@@ -251,11 +256,11 @@ export async function loadUserData() {
 
   // Koko tulos tilaan YHDELLÄ ilmoituksella (state.js batch): muuten
   // jokainen kokoelma ja sen latausstatus piirsi näkymät erikseen (CRIT-01).
-  return batch(() => applyLoadedData(loaded, timerSeq));
+  return batch(() => applyLoadedData(loaded, timerSeq, dailyLifeMark));
 }
 
 /** loadUserData():n hakutulokset tilaan. Synkroninen: ajetaan batchissa. */
-function applyLoadedData(loaded, timerSeq) {
+function applyLoadedData(loaded, timerSeq, dailyLifeMark) {
   const [tasksResult, profileResult, routinesResult, exceptionsResult,
     goalsResult, projectsResult, wellbeingResult, preferencesResult,
     billsResult, expensesResult, savingsResult, transactionsResult,
@@ -335,6 +340,11 @@ function applyLoadedData(loaded, timerSeq) {
     applyLoadResult('exerciseSessions', exerciseResult, setExerciseSessions),
     applyLoadResult('wellbeingCheckins', checkinsResult, setWellbeingCheckins)
   ];
+
+  // Latauksen alun jälkeen valmistuneet arjen tallennukset ladatun listan
+  // päälle (samassa batchissa): muuten juuri tallennettu meno katosi,
+  // poistettu palasi ja seuraava tallennus loi toisen rivin.
+  keepDailyLifeWritesSince(dailyLifeMark);
 
   // Aikakirjausten haku epäonnistui (F6): lähtökorin kirjaukset näkyvät
   // silti. Muuten offline-kylmäkäynnistyksessä odottava kirjaus puuttui

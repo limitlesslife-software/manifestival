@@ -261,7 +261,7 @@ test('lataus: tulosten käsittely (applyLoadedData) ei kirjoita mitään kantaan
     assert.equal(body.includes(writing), false, `applyLoadedData kutsuu kirjoittavaa operaatiota: ${writing}`);
   }
   const load = code.slice(code.indexOf('export async function loadUserData'));
-  assert.match(load.slice(0, load.indexOf('\n}')), /return batch\(\(\) => applyLoadedData\(loaded, timerSeq\)\);/);
+  assert.match(load.slice(0, load.indexOf('\n}')), /return batch\(\(\) => applyLoadedData\(loaded, timerSeq, dailyLifeMark\)\);/);
 });
 
 // ====================================================== analyysin välimuisti

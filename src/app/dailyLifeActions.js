@@ -56,26 +56,149 @@ function warnIfVolatile(repo, label) {
   notify(`${label} säilyvät toistaiseksi vain tämän istunnon ajan.`, 7000);
 }
 
-/** Uloskirjautuminen: varoitukset näytetään seuraavalle käyttäjälle uudelleen. */
+/**
+ * Uloskirjautuminen: varoitukset näytetään seuraavalle käyttäjälle
+ * uudelleen, eikä edellisen käyttäjän kirjoituksia toisteta hänen tilaansa.
+ */
 export function resetDailyLifeActions() {
   volatileWarningsShown.clear();
+  recentWrites.length = 0;
+  latestStart.clear();
 }
 
 const DISCARDED = Object.freeze({ ok: false, discarded: true });
 
+// ------------------------------------------ latauksen ja tallennuksen limitys
+//
+// loadUserData() lukee jokaisen kokoelman latauksen ALUSSA (muistipolulla
+// synkronisesti) ja korvaa tilan listalla vasta, kun kaikki parikymmentä
+// hakua ovat valmiit. Lataus käynnistyy sovelluksen palatessa etualalle ja
+// verkon palautuessa. Sillä välin valmistunut tallennus katosi: uusi meno
+// tai unikirjaus hävisi (ei lähtöilmoitusta), poistettu meno palasi
+// haamuna, ja seuraava saman yön tai asetusrivin tallennus loi toisen rivin
+// (muistissa tupla, kannassa 23505). Asetusten seuraava tallennus yhdisti
+// muutoksensa palautuneeseen vanhaan riviin: herätysmuutos katosi pysyvästi.
+//
+// Siksi jokainen onnistunut kirjoitus kirjataan järjestysnumerolla
+// toimintona, joka toistaa sen vaikutuksen tilaan (idempotentisti). Lataus
+// ottaa merkin ennen hakuja ja toistaa sen jälkeen valmistuneet
+// (keepDailyLifeWritesSince). Kirjoitus, joka oli yhä kesken latauksen
+// korvatessa tilan, toistetaan heti valmistuttuaan -- paitsi jos samaan
+// riviin on sillä välin aloitettu uudempi kirjoitus: sen tila on uudempi.
+// Sama periaate kuin Suunnan tallennuksilla (src/app/alignment.js
+// keepWritesSince).
+
+let writeSeq = 0;
+let startSeq = 0;
+let loadsApplied = 0;
+const recentWrites = [];
+const MAX_RECENT_WRITES = 200;
+/** Rivin avain -> viimeksi aloitetun kirjoituksen numero. */
+const latestStart = new Map();
+
+/** Kirjoituksen alku (ennen verkkoa). `key` yksilöi rivin, esim. 'calendarEvents:id'. */
+function beginWrite(key) {
+  startSeq += 1;
+  latestStart.set(key, startSeq);
+  return { key, token: startSeq, loads: loadsApplied };
+}
+
+/** Kirjoitus päättyi; onnistuneen vaikutus (`reapply`) kirjataan toistettavaksi. */
+function endWrite(started, startedIn, reapply = null) {
+  const newest = latestStart.get(started.key) === started.token;
+  if (newest) latestStart.delete(started.key);
+  if (!reapply) return;
+  writeSeq += 1;
+  recentWrites.push({ seq: writeSeq, session: startedIn, reapply });
+  if (recentWrites.length > MAX_RECENT_WRITES) recentWrites.splice(0, recentWrites.length - MAX_RECENT_WRITES);
+  // Lataus korvasi tilan tämän odottaessa: vaikutus takaisin heti.
+  if (newest && loadsApplied !== started.loads) reapply();
+}
+
+/** Kutsu ENNEN latauksen hakuja: merkki keepDailyLifeWritesSince()-kutsulle. */
+export function dailyLifeWriteMark() {
+  return writeSeq;
+}
+
+/**
+ * Kutsu HETI kun lataus on korvannut tilan (samassa batchissa): toistaa
+ * merkin jälkeen valmistuneet tämän istunnon kirjoitukset järjestyksessä.
+ */
+export function keepDailyLifeWritesSince(mark) {
+  loadsApplied += 1;
+  for (const write of recentWrites) {
+    if (write.seq > mark && isSameSession(write.session)) write.reapply();
+  }
+}
+
 /**
  * Kirjoita kantaan ja peru epäonnistuessa. `undo` ajetaan vain, jos
  * istunto on yhä sama; muuten tila on jo tyhjennetty eikä sitä kosketa.
+ * `reapply` toistaa onnistuneen kirjoituksen vaikutuksen latauksen jälkeen.
  */
-async function persist(write, undo, startedIn) {
+async function persist(write, undo, startedIn, { key, reapply }) {
+  const started = beginWrite(key);
   const result = await write();
   if (!isSameSession(startedIn)) return DISCARDED;
   if (!result || !result.ok) {
+    endWrite(started, startedIn);
     undo();
     showError(result && result.error);
     return { ok: false, error: result && result.error };
   }
+  endWrite(started, startedIn, reapply);
   return { ok: true, value: result.value };
+}
+
+// Rivi tilaan tunnisteen mukaan: korvaa olemassa olevan, muuten lisää.
+// Toistettavissa: lataus on voinut jo tuoda rivin (tai viedä sen).
+function putCalendarEvent(event) {
+  if (findCalendarEvent(event.id)) replaceCalendarEventInState(event.id, event);
+  else addCalendarEventToState(event);
+}
+
+function putSavedPlace(place) {
+  if (findSavedPlace(place.id)) replaceSavedPlaceInState(place.id, place);
+  else addSavedPlaceToState(place);
+}
+
+function putCommuteObservation(observation) {
+  removeCommuteObservationFromState(observation.id);
+  addCommuteObservationToState(observation);
+}
+
+function putHabitPlan(plan) {
+  if (findHabitPlan(plan.id)) replaceHabitPlanInState(plan.id, plan);
+  else addHabitPlanToState(plan);
+}
+
+function putHabitEvent(event) {
+  removeHabitEventFromState(event.id);
+  addHabitEventToState(event);
+}
+
+function putExerciseSession(session) {
+  if (findExerciseSession(session.id)) replaceExerciseSessionInState(session.id, session);
+  else addExerciseSessionToState(session);
+}
+
+/** Paikan poisto tilaan kuten kanta, myös jos paikka puuttui jo ladatusta listasta. */
+function forgetPlaceInState(id) {
+  if (removeSavedPlaceFromState(id)) return;
+  const state = getState();
+  for (const alias of state.placeAliases.filter(a => a.placeId === id)) removePlaceAliasFromState(alias.id);
+  for (const observation of state.commuteObservations.filter(o => o.placeId === id)) {
+    removeCommuteObservationFromState(observation.id);
+  }
+  for (const event of state.calendarEvents.filter(e => e.placeId === id)) {
+    replaceCalendarEventInState(event.id, { ...event, placeId: null });
+  }
+}
+
+/** Suunnitelman poisto tilaan kuten kanta (kirjaukset mukana). */
+function forgetHabitPlanInState(id) {
+  if (removeHabitPlanFromState(id)) return;
+  for (const event of getState().habitEvents.filter(e => e.planId === id)) removeHabitEventFromState(event.id);
 }
 
 // ------------------------------------------------------------ menot
@@ -103,7 +226,7 @@ export async function saveCalendarEvent(input = {}) {
   const result = await persist(
     () => (previous ? calendarEventsRepo.update(safe) : calendarEventsRepo.insert(safe)),
     () => (previous ? replaceCalendarEventInState(safe.id, previous) : removeCalendarEventFromState(safe.id)),
-    startedIn);
+    startedIn, { key: `calendarEvents:${safe.id}`, reapply: () => putCalendarEvent(safe) });
   return result.ok ? { ok: true, event: safe } : result;
 }
 
@@ -155,7 +278,10 @@ export async function deleteCalendarEvent(id, { confirm = confirmAction } = {}) 
 
   const startedIn = sessionSnapshot();
   removeCalendarEventFromState(id);
-  return persist(() => calendarEventsRepo.remove(id), () => addCalendarEventToState(previous), startedIn);
+  // Peruutus korvaa eikä lisää: välissä valmistunut lataus on voinut jo
+  // tuoda menon takaisin (kanta piti sen), ja lisäys olisi monistanut sen.
+  return persist(() => calendarEventsRepo.remove(id), () => putCalendarEvent(previous), startedIn,
+    { key: `calendarEvents:${id}`, reapply: () => removeCalendarEventFromState(id) });
 }
 
 /** Ohita toistuvan menon yksi kerta (idempotentti). */
@@ -170,7 +296,8 @@ export async function skipEventOccurrence(eventId, dateIso) {
   const startedIn = sessionSnapshot();
   replaceCalendarEventInState(eventId, next);
   const result = await persist(() => calendarEventsRepo.update(next),
-    () => replaceCalendarEventInState(eventId, previous), startedIn);
+    () => replaceCalendarEventInState(eventId, previous), startedIn,
+    { key: `calendarEvents:${eventId}`, reapply: () => putCalendarEvent(next) });
   return result.ok ? { ok: true, event: next } : result;
 }
 
@@ -192,7 +319,7 @@ export async function savePlace(input = {}) {
   const result = await persist(
     () => (previous ? savedPlacesRepo.update(place) : savedPlacesRepo.insert(place)),
     () => (previous ? replaceSavedPlaceInState(place.id, previous) : removeSavedPlaceFromState(place.id)),
-    startedIn);
+    startedIn, { key: `savedPlaces:${place.id}`, reapply: () => putSavedPlace(place) });
   return result.ok ? { ok: true, place } : result;
 }
 
@@ -213,7 +340,8 @@ export async function deletePlace(id, { confirm = confirmAction } = {}) {
 
   const startedIn = sessionSnapshot();
   const removed = removeSavedPlaceFromState(id);
-  return persist(() => savedPlacesRepo.remove(id), () => restoreSavedPlaceInState(removed), startedIn);
+  return persist(() => savedPlacesRepo.remove(id), () => restoreSavedPlaceInState(removed), startedIn,
+    { key: `savedPlaces:${id}`, reapply: () => forgetPlaceInState(id) });
 }
 
 /**
@@ -235,7 +363,7 @@ export async function confirmPlaceAlias(aliasText, placeId, { nowIso = new Date(
   const result = await persist(
     () => (existing ? placeAliasesRepo.update(next) : placeAliasesRepo.insert(next)),
     () => (existing ? upsertPlaceAliasInState(existing) : removePlaceAliasFromState(next.id)),
-    startedIn);
+    startedIn, { key: `placeAliases:${next.id}`, reapply: () => upsertPlaceAliasInState(next) });
   return result.ok ? { ok: true, alias: next } : result;
 }
 
@@ -245,7 +373,8 @@ export async function deletePlaceAlias(id) {
   if (!previous) return { ok: false };
   const startedIn = sessionSnapshot();
   removePlaceAliasFromState(id);
-  return persist(() => placeAliasesRepo.remove(id), () => upsertPlaceAliasInState(previous), startedIn);
+  return persist(() => placeAliasesRepo.remove(id), () => upsertPlaceAliasInState(previous), startedIn,
+    { key: `placeAliases:${id}`, reapply: () => removePlaceAliasFromState(id) });
 }
 
 /**
@@ -269,16 +398,24 @@ export async function resetPlaceLearning(placeId, { confirm = confirmAction } = 
   const startedIn = sessionSnapshot();
   for (const alias of aliases) removePlaceAliasFromState(alias.id);
   for (const observation of observations) removeCommuteObservationFromState(observation.id);
+  // Kaikki kirjoitukset alkavat nyt, samalla kun tila muuttui: jonon
+  // loppupään poisto on muuten "aloitettu" vasta latauksen jälkeen, eikä
+  // latauksen takaisin tuomaa riviä poistettaisi tilasta.
+  const aliasWrites = aliases.map(alias => ({ alias, started: beginWrite(`placeAliases:${alias.id}`) }));
+  const observationWrites = observations.map(observation =>
+    ({ observation, started: beginWrite(`commuteObservations:${observation.id}`) }));
   let failed = 0;
-  for (const alias of aliases) {
+  for (const { alias, started } of aliasWrites) {
     const result = await placeAliasesRepo.remove(alias.id);
     if (!isSameSession(startedIn)) return DISCARDED;
-    if (!result.ok) { failed += 1; upsertPlaceAliasInState(alias); }
+    if (!result.ok) { failed += 1; endWrite(started, startedIn); upsertPlaceAliasInState(alias); }
+    else endWrite(started, startedIn, () => removePlaceAliasFromState(alias.id));
   }
-  for (const observation of observations) {
+  for (const { observation, started } of observationWrites) {
     const result = await commuteObservationsRepo.remove(observation.id);
     if (!isSameSession(startedIn)) return DISCARDED;
-    if (!result.ok) { failed += 1; addCommuteObservationToState(observation); }
+    if (!result.ok) { failed += 1; endWrite(started, startedIn); putCommuteObservation(observation); }
+    else endWrite(started, startedIn, () => removeCommuteObservationFromState(observation.id));
   }
   if (place.useLearned) {
     const off = await savePlace({ ...place, useLearned: false });
@@ -307,7 +444,8 @@ export async function recordCommuteObservation(input = {}) {
   addCommuteObservationToState(observation);
   warnIfVolatile(commuteObservationsRepo, 'Matkahavainnot');
   const result = await persist(() => commuteObservationsRepo.insert(observation),
-    () => removeCommuteObservationFromState(observation.id), startedIn);
+    () => removeCommuteObservationFromState(observation.id), startedIn,
+    { key: `commuteObservations:${observation.id}`, reapply: () => putCommuteObservation(observation) });
   if (!result.ok) return result;
 
   await pruneObservations(observation.placeId, startedIn);
@@ -324,11 +462,13 @@ async function pruneObservations(placeId, startedIn) {
   const excess = own.slice(0, Math.max(0, own.length - MAX_OBSERVATIONS_PER_PLACE));
   for (const old of excess) {
     removeCommuteObservationFromState(old.id);
+    const started = beginWrite(`commuteObservations:${old.id}`);
     const result = await commuteObservationsRepo.remove(old.id);
     if (!isSameSession(startedIn)) return;
     // Karsinta ei ole käyttäjän toimi: epäonnistunut poisto palautetaan
     // hiljaa ja yritetään seuraavalla kirjauksella uudelleen.
-    if (!result.ok) addCommuteObservationToState(old);
+    if (!result.ok) { endWrite(started, startedIn); putCommuteObservation(old); }
+    else endWrite(started, startedIn, () => removeCommuteObservationFromState(old.id));
   }
 }
 
@@ -363,8 +503,24 @@ export async function saveLifeSettings(changes = {}) {
   const result = await persist(
     () => (current ? lifeSettingsRepo.update(next, { changedFrom: current }) : lifeSettingsRepo.insert(next)),
     () => revertLifeSettings(current, next, fields),
-    startedIn);
+    startedIn, { key: 'lifeSettings', reapply: () => reapplyLifeSettings(next, fields) });
   return result.ok ? { ok: true, settings: next } : result;
+}
+
+/**
+ * Onnistunut tallennus latauksen jälkeen: omat kentät ladatun rivin päälle
+ * (muut kentät voivat olla toisen laitteen uudempia). Ilman riviä -- lataus
+ * luki ennen luontia -- tallennettu rivi sellaisenaan.
+ */
+function reapplyLifeSettings(next, fields) {
+  const row = (getState().lifeSettings || [])[0] || null;
+  if (!row || row.id !== next.id) {
+    upsertLifeSettingsInState(next);
+    return;
+  }
+  const merged = { ...row };
+  for (const field of fields) merged[field] = next[field];
+  upsertLifeSettingsInState(merged);
 }
 
 /** Epäonnistuneen tallennuksen peruutus kentittäin (ks. saveLifeSettings). */
@@ -400,7 +556,7 @@ export async function saveSleepLog(input = {}) {
   const result = await persist(
     () => (existing ? sleepLogsRepo.update(log) : sleepLogsRepo.insert(log)),
     () => (existing ? upsertSleepLogInState(existing) : removeSleepLogFromState(log.id)),
-    startedIn);
+    startedIn, { key: `sleepLogs:${log.id}`, reapply: () => upsertSleepLogInState(log) });
   return result.ok ? { ok: true, log } : result;
 }
 
@@ -420,7 +576,7 @@ export async function saveHabitPlan(input = {}) {
   const result = await persist(
     () => (previous ? habitPlansRepo.update(plan) : habitPlansRepo.insert(plan)),
     () => (previous ? replaceHabitPlanInState(plan.id, previous) : removeHabitPlanFromState(plan.id)),
-    startedIn);
+    startedIn, { key: `habitPlans:${plan.id}`, reapply: () => putHabitPlan(plan) });
   return result.ok ? { ok: true, plan } : result;
 }
 
@@ -437,7 +593,8 @@ export async function deleteHabitPlan(id, { confirm = confirmAction } = {}) {
 
   const startedIn = sessionSnapshot();
   const removed = removeHabitPlanFromState(id);
-  return persist(() => habitPlansRepo.remove(id), () => restoreHabitPlanInState(removed), startedIn);
+  return persist(() => habitPlansRepo.remove(id), () => restoreHabitPlanInState(removed), startedIn,
+    { key: `habitPlans:${id}`, reapply: () => forgetHabitPlanInState(id) });
 }
 
 /** Kirjaa käyttö, lykkäys tai väliin jättäminen. Neutraali: ei arvostelua. */
@@ -454,7 +611,8 @@ export async function logHabitEvent({ planId, action, occurredAt = null, note = 
   addHabitEventToState(event);
   warnIfVolatile(habitEventsRepo, 'Tapakirjaukset');
   const result = await persist(() => habitEventsRepo.insert(event),
-    () => removeHabitEventFromState(event.id), startedIn);
+    () => removeHabitEventFromState(event.id), startedIn,
+    { key: `habitEvents:${event.id}`, reapply: () => putHabitEvent(event) });
   return result.ok ? { ok: true, event } : result;
 }
 
@@ -464,7 +622,8 @@ export async function deleteHabitEvent(id) {
   if (!previous) return { ok: false };
   const startedIn = sessionSnapshot();
   removeHabitEventFromState(id);
-  return persist(() => habitEventsRepo.remove(id), () => addHabitEventToState(previous), startedIn);
+  return persist(() => habitEventsRepo.remove(id), () => putHabitEvent(previous), startedIn,
+    { key: `habitEvents:${id}`, reapply: () => removeHabitEventFromState(id) });
 }
 
 // ------------------------------------------------------------ liikunta
@@ -486,7 +645,7 @@ export async function saveExerciseSession(input = {}) {
   const result = await persist(
     () => (previous ? exerciseSessionsRepo.update(session) : exerciseSessionsRepo.insert(session)),
     () => (previous ? replaceExerciseSessionInState(session.id, previous) : removeExerciseSessionFromState(session.id)),
-    startedIn);
+    startedIn, { key: `exerciseSessions:${session.id}`, reapply: () => putExerciseSession(session) });
   return result.ok ? { ok: true, session } : result;
 }
 
@@ -501,7 +660,8 @@ export async function deleteExerciseSession(id, { confirm = confirmAction } = {}
   if (!confirmed) return { ok: false, cancelled: true };
   const startedIn = sessionSnapshot();
   removeExerciseSessionFromState(id);
-  return persist(() => exerciseSessionsRepo.remove(id), () => addExerciseSessionToState(previous), startedIn);
+  return persist(() => exerciseSessionsRepo.remove(id), () => putExerciseSession(previous), startedIn,
+    { key: `exerciseSessions:${id}`, reapply: () => removeExerciseSessionFromState(id) });
 }
 
 // ------------------------------------------------------------ vointi
@@ -519,6 +679,6 @@ export async function saveWellbeingCheckin(input = {}) {
   const result = await persist(
     () => (existing ? wellbeingCheckinsRepo.update(checkin) : wellbeingCheckinsRepo.insert(checkin)),
     () => (existing ? upsertWellbeingCheckinInState(existing) : removeWellbeingCheckinFromState(checkin.id)),
-    startedIn);
+    startedIn, { key: `wellbeingCheckins:${checkin.id}`, reapply: () => upsertWellbeingCheckinInState(checkin) });
   return result.ok ? { ok: true, checkin } : result;
 }
