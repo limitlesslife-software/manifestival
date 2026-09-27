@@ -358,6 +358,49 @@ L_SCENARIOS.push(
     }) }
 );
 
+L_SCENARIOS.push(
+  { name: 'ajautuminen: jonon kasvu, vapaa-ajan kuluminen ja loman tunkeutuminen näkyvät säätöinä, ilman syyllistämistä',
+    run: ({ page }) => page(async () => {
+      const today = H.today();
+      const created = new Date().toISOString();
+      const monday = H.addDays(today, 1 - H.isoWeekday(today));
+      const tasks = [];
+      // Jonon kasvu: 18 uutta avointa asiaa viikon sisällä, ei ratkenneita.
+      for (let n = 1; n <= 18; n += 1) tasks.push({ id: 'bg' + n, title: 'Uusi asia ' + n, horizon: 'LATER', createdAt: created });
+      // Loman tunkeutuminen: joustava työ lomapäivälle (kiinteä meno ei ole tunkeutumista).
+      const vacationDay = H.addDays(today, 3);
+      tasks.push({ id: 'vi1', title: 'Joustava selvitys', date: vacationDay, durationMinutes: 60, createdAt: created });
+      tasks.push({ id: 'vi2', title: 'Hammaslääkäri lomalla', date: vacationDay, time: '10:00', endTime: '10:30', createdAt: created });
+      // Vapaa-ajan kuluminen: velvoite suojattuun iltaan.
+      tasks.push({ id: 'fe1', title: 'Raportti illalla', date: today, time: '19:00', endTime: '20:30', deadline: today, createdAt: created });
+      window.__e2e.setTasks(tasks);
+      const actions = await import('/src/app/mentalLoadActions.js');
+      for (const period of [...H.s().protectedPeriods]) await actions.deleteProtectedPeriod(period.id, { confirmed: true });
+      await actions.saveVacation({ startDate: vacationDay, endDate: vacationDay });
+      await actions.saveFreeTimeRules({ eveningWeekdays: [1, 2, 3, 4, 5, 6, 7], eveningFrom: '18:00', minimumMinutes: 600 });
+      const alignment = await import('/src/app/alignment.js');
+      if (alignment.resetDriftCacheForTests) alignment.resetDriftCacheForTests();
+      const signals = alignment.currentDriftSignals(monday);
+      const kinds = signals.map(signal => signal.kind);
+      for (const kind of ['backlog_growth', 'free_time_erosion', 'vacation_intrusion']) {
+        if (!kinds.includes(kind)) throw new Error('puuttuu ' + kind + ': ' + kinds.join(','));
+      }
+      const intrusion = signals.find(signal => signal.kind === 'vacation_intrusion');
+      if ((intrusion.items || []).some(item => item.id === 'vi2')) throw new Error('kiinteä meno laskettiin tunkeutumiseksi');
+      const copy = signals.map(signal => [signal.title, signal.reason, signal.adjustment && signal.adjustment.label].join(' ')).join(' ').toLowerCase();
+      for (const word of ['epäonnistu', 'laiminl', 'huono', 'syy on sinun']) {
+        if (copy.includes(word)) throw new Error('syyllistävä sana: ' + word);
+      }
+      if (signals.some(signal => !signal.adjustment || !signal.adjustment.label)) throw new Error('säätö puuttuu');
+      await H.openTab('screen-direction');
+      await H.sleep(200);
+      const section = H.text('#screen-direction');
+      const shown = section.includes('Suunnitelma ja todellisuus');
+      return kinds.join(', ') + '; jokaisella säätö; kiinteä meno ei tunkeutumista; Suunnassa osio '
+        + (shown ? 'näkyy' : 'ei näy (Suunnan aloitus kesken, havainnot laskettu samasta polusta)');
+    }) }
+);
+
 // =====================================================================
 // KUVAKAAPPAUKSET (valinnainen, E2E_SHOTS=1): visuaalinen tarkistus
 // =====================================================================
