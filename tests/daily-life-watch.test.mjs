@@ -164,3 +164,13 @@ test('lokiin ei päädy otsikoita, paikkoja eikä kellonaikoja; vain koodit', ()
     }
   }
 });
+
+test('viikkokatsauksen Arki-osio: omista merkinnöistä, ei tekoälylle eikä tallenneta tilannekuvaan', () => {
+  const view = readCode('src/app/views/direction.js');
+  assert.match(view, /title: 'Arki', lead: 'Miten arki kantoi\?'/);
+  assert.match(view, /dailyLifeSignals\(\{/);
+  assert.match(view, /timeZone: deviceTimeZone\(\) \|\| undefined/, 'laitteen vyöhyke, ei oletusmaata');
+  for (const file of ['src/ai/alignmentContext.js', 'src/ai/alignmentExplainClient.js', 'src/domain/alignmentReview.js']) {
+    assert.equal(/dailyLifeSignals|sleepLogs|wellbeingCheckins|habit/.test(readCode(file)), false, file);
+  }
+});

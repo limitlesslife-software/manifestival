@@ -19,7 +19,9 @@ import {
 } from '../../ui/dom.js';
 import { escapeHtml } from '../../lib/format.js';
 import { fmtISO, todayMidnight } from '../../lib/datetime.js';
-import { getState, findLifeArea, findTask, findRoutine, findGoal, findProject } from '../state.js';
+import {
+  getState, findLifeArea, findTask, findRoutine, findGoal, findProject, currentLifeSettings
+} from '../state.js';
 import { switchTab } from '../navigation.js';
 import { CATEGORIES } from '../../domain/categories.js';
 import {
@@ -45,6 +47,8 @@ import { POLICY_VERSIONS, ESTIMATE_PRESETS } from '../../domain/alignmentPolicy.
 import { energyDemandLabel } from '../../domain/alignmentItemSettings.js';
 import { addDaysIso } from '../../domain/fiTemporal.js';
 import { durationOf } from '../../domain/task.js';
+import { dailyLifeSignals } from '../../domain/dailyLifeSignals.js';
+import { deviceTimeZone } from '../deviceTime.js';
 import {
   analyzeCurrentWeek, currentProposals, currentWeekStart, alignmentPersistence,
   createLifeArea, editLifeArea, deleteLifeArea, assignGoalToLifeArea,
@@ -1266,6 +1270,34 @@ function knownUnknownHtml(analysis, areas = []) {
  * Versio 3: alussa "Tiedossa / Ei tiedossa / Ei kirjattu", ja osittain
  * kirjatun viikon toteuma sanotaan kirjattuna, ei elettynä aikana.
  */
+/**
+ * Arjen havainnot viikkokatsaukseen: uni (vuoteessa oloaika, ei mitattu
+ * uni), rytmi ja vointi omien merkintöjen perusteella. Deterministinen ja
+ * selitettävä; ei lähde tekoälylle eikä lokiin. Harva data ei ole nolla:
+ * ilman riittäviä merkintöjä havaintoa ei tehdä.
+ */
+function dailyLifeRow(analysis, state = getState()) {
+  const settings = currentLifeSettings(state);
+  const profile = state.profile || {};
+  const today = fmtISO(todayMidnight());
+  const result = dailyLifeSignals({
+    weekStart: analysis.weekStart,
+    todayIso: today >= analysis.weekStart && today <= analysis.weekEnd ? today : undefined,
+    timeZone: deviceTimeZone() || undefined,
+    sleepLogs: state.sleepLogs || [],
+    sleepDeclared: {
+      targetHours: profile.sleepTargetHours, bedtimeTarget: settings.bedtimeTarget,
+      wakeTime: profile.defaultWakeTime, weekendShiftMinutes: settings.weekendWakeShiftMaxMinutes
+    },
+    wellbeingEntries: state.wellbeing || [],
+    wellbeingCheckins: state.wellbeingCheckins || []
+  });
+  if (!result) return null;
+  const texts = result.signals.map(signal => signal.explanation).filter(Boolean);
+  return texts.length ? texts.join(' ')
+    : 'Unesta, rytmistä tai voinnista ei ole tällä viikolla huomioita omien merkintöjesi perusteella.';
+}
+
 function reviewHtml(analysis, areas) {
   const active = [...areas].filter(area => area.active)
     .sort((a, b) => b.importance - a.importance || compareLifeAreas(a, b));
@@ -1308,6 +1340,7 @@ function reviewHtml(analysis, areas) {
       + (Number.isInteger(analysis.energy.budgetMinutes) ? `, oma raja ${hours(analysis.energy.budgetMinutes)}.` : '.')
     : null;
   const energySignals = signalsOfKind(analysis, SIGNAL.ENERGY_OVERLOAD, areas).join(' ');
+  const dailyLife = dailyLifeRow(analysis);
   const sections = [
     { title: 'Suunta', lead: 'Mitä sanoin tärkeäksi?', rows: [[REVIEW_QUESTIONS[0], answers[0]]] },
     { title: 'Suunnitelma', lead: 'Mitä aioin?', rows: [[REVIEW_QUESTIONS[1], answers[1]]] },
@@ -1320,7 +1353,11 @@ function reviewHtml(analysis, areas) {
         [REVIEW_QUESTIONS[4], answers[4]],
         [REVIEW_QUESTIONS[5], answers[5]]
       ]
-    }
+    },
+    ...(dailyLife ? [{
+      title: 'Arki', lead: 'Miten arki kantoi?',
+      rows: [['Riittikö aika unelle ja pysyikö rytmi?', dailyLife]]
+    }] : [])
   ];
   return knownUnknownHtml(analysis, areas) + sections.map(section => `
     <div class="dir-review-section">
