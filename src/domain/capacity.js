@@ -37,7 +37,11 @@
 
 import { fmtISO, parseISO, addDays } from '../lib/datetime.js';
 import { isIsoDate, durationOf } from './task.js';
-import { DEFAULT_PROFILE, DEFAULT_TASK_MINUTES, awakeWindow } from './scheduler.js';
+import {
+  DEFAULT_PROFILE, DEFAULT_TASK_MINUTES, awakeWindow,
+  eventsOnDate, eventItemsOnDate, blocksOnDate, protectSleepRange, unionMinutesWithin,
+  indexEventOccurrences, indexCalendarBlocks
+} from './scheduler.js';
 import { expandRoutines } from './routine.js';
 import { DEFAULT_ROUTINE_MINUTES } from './routine.js';
 
@@ -80,6 +84,16 @@ function clampRatio(value, fallback) {
  * @param {Array}  [input.routines]
  * @param {Array}  [input.exceptions]
  * @param {number} [input.bufferRatio]
+ * @param {Array}  [input.events]  tapahtumaesiintymät (calendar.js)
+ * @param {Array}  [input.blocks]  suojatut lohkot (calendarBlocks.js)
+ *
+ * KALENTERITIETOINEN LASKENTA ON VALINNAINEN. Kun `events` tai `blocks`
+ * annetaan (tyhjäkin taulukko), sitoutunut aika lasketaan varattujen
+ * välien UNIONINA valveillaoloikkunan sisällä: matka, joka osuu
+ * kiinteän tapaamisen päälle, ei vähennä samaa aikaa kahdesti, eikä
+ * nukkumaanmenon jälkeinen merkintä syö valveillaoloaikaa. Ilman niitä
+ * tulos on täsmälleen sama kuin ennen, jotta vanhat kutsujat ja niiden
+ * luvut eivät muutu huomaamatta.
  */
 export function dayCapacity({
   tasks = [],
@@ -87,8 +101,18 @@ export function dayCapacity({
   dateIso,
   routines = [],
   exceptions = [],
-  bufferRatio = DEFAULT_BUFFER_RATIO
+  bufferRatio = DEFAULT_BUFFER_RATIO,
+  events = null,
+  blocks = null
 } = {}) {
+  if (Array.isArray(events) || Array.isArray(blocks)) {
+    return calendarDayCapacity({
+      tasks, profile, dateIso, routines, exceptions, bufferRatio,
+      events: Array.isArray(events) ? events : [],
+      blocks: Array.isArray(blocks) ? blocks : []
+    });
+  }
+
   const ratio = clampRatio(bufferRatio, DEFAULT_BUFFER_RATIO);
 
   const dayTasks = tasks.filter(task => task && task.date === dateIso && !task.completed);
@@ -136,16 +160,103 @@ export function dayCapacity({
     bufferMinutes,
     /** SE LUKU, JOTA SUUNNITTELIJA SAA KÄYTTÄÄ. */
     usableMinutes: usableMinutes >= MIN_USABLE_MINUTES ? usableMinutes : 0,
+    /** Tapahtumia ja lohkoja ei annettu: niiden minuutteja ei laskettu (ei nolla). */
+    calendarAware: false,
+    eventMinutes: null,
+    blockMinutes: null,
     counts: {
       fixed: fixed.length,
       flexible: flexible.length,
-      routines: occurrences.length
+      routines: occurrences.length,
+      events: 0,
+      blocks: 0
+    }
+  };
+}
+
+/**
+ * Kalenteritietoinen päiväkapasiteetti (ks. dayCapacity).
+ *
+ * VARATTU = ajallisten merkintöjen (kiinteät ja automaattiset tehtävät,
+ * kiinteät rutiinit, tapahtumat ja lohkot) UNIONI valveillaoloikkunan
+ * sisällä + ajattomien rutiinien minuutit (ne vievät aikaa jossain
+ * kohtaa päivää, mutta niillä ei ole väliä, jonka voisi yhdistää).
+ *
+ * Valveillaoloikkuna luetaan KAIKISTA tehtävistä kuten päivänäkymässä
+ * (huomisen työ määrää tämän illan nukkumaanmenon), ja suojattu uni
+ * kaventaa sitä samalla tavalla kuin buildDayPlan.
+ */
+function calendarDayCapacity({ tasks, profile, dateIso, routines, exceptions, bufferRatio, events, blocks }) {
+  const ratio = clampRatio(bufferRatio, DEFAULT_BUFFER_RATIO);
+  const all = Array.isArray(tasks) ? tasks.filter(Boolean) : [];
+  const dayTasks = all.filter(task => task.date === dateIso && !task.completed);
+
+  const dayBlocks = blocksOnDate(blocks, dateIso);
+  const dayEvents = eventsOnDate(events, dateIso);
+  const eventItems = eventItemsOnDate(events, dateIso);
+
+  const range = protectSleepRange(awakeWindow({ tasks: all, profile, dateIso }), dayBlocks);
+  const awakeMinutes = Math.max(0, range.end - range.start);
+
+  const fixed = dayTasks.filter(task => task.time && task.schedulingState !== 'auto');
+  const flexible = dayTasks.filter(task => task.time && task.schedulingState === 'auto');
+
+  const occurrences = expandRoutines({ routines, from: dateIso, to: dateIso, exceptions });
+  const timedRoutines = occurrences.filter(o => o.time);
+  const untimedRoutineMinutes = occurrences
+    .filter(o => !o.time)
+    .reduce((total, o) => total + (o.durationMinutes || DEFAULT_ROUTINE_MINUTES), 0);
+
+  const timedCommitted = unionMinutesWithin(
+    [...fixed, ...flexible, ...timedRoutines, ...eventItems, ...dayBlocks], range);
+  const committedMinutes = timedCommitted + untimedRoutineMinutes;
+  const rawFreeMinutes = Math.max(0, awakeMinutes - committedMinutes);
+
+  const bufferMinutes = Math.round(rawFreeMinutes * ratio);
+  const usableMinutes = Math.max(0, rawFreeMinutes - bufferMinutes);
+
+  return {
+    dateIso,
+    awakeMinutes,
+    // Erittely näytettäväksi: summat kuten ennen. Päällekkäisyys on
+    // poistettu vain `committedMinutes`-luvusta, johon suunnittelu nojaa.
+    fixedMinutes: sumMinutes(fixed),
+    flexibleMinutes: sumMinutes(flexible),
+    routineMinutes: occurrences
+      .reduce((total, o) => total + (o.durationMinutes || DEFAULT_ROUTINE_MINUTES), 0),
+    committedMinutes,
+    rawFreeMinutes,
+    bufferMinutes,
+    usableMinutes: usableMinutes >= MIN_USABLE_MINUTES ? usableMinutes : 0,
+    calendarAware: true,
+    /** Tapahtumien varaama aika valveillaoloikkunassa (unioni). */
+    eventMinutes: unionMinutesWithin(eventItems, range),
+    /** Suojattujen lohkojen aika valveillaoloikkunassa (unioni). Uni on jo ikkunan ulkopuolella. */
+    blockMinutes: unionMinutesWithin(dayBlocks, range),
+    counts: {
+      fixed: fixed.length,
+      flexible: flexible.length,
+      routines: occurrences.length,
+      events: dayEvents.length,
+      blocks: dayBlocks.length
     }
   };
 }
 
 function sumMinutes(tasks) {
   return tasks.reduce((total, task) => total + (durationOf(task) ?? DEFAULT_TASK_MINUTES), 0);
+}
+
+/**
+ * Kalenterisyötteen jäädytys kerran koko horisontille: päiväindeksi
+ * rakennetaan silloin vain kerran, ja jokainen päivähaku on O(1).
+ * null säilyy nullina, jotta vanha laskenta pysyy vanhana.
+ */
+function calendarInputOnce(items, indexer) {
+  if (!Array.isArray(items)) return null;
+  const frozen = Object.isFrozen(items) ? items : Object.freeze([...items]);
+  indexer(frozen);
+  return frozen;
 }
 
 /**
@@ -164,13 +275,19 @@ export function horizonCapacity({
   toIso,
   routines = [],
   exceptions = [],
-  bufferRatio = DEFAULT_BUFFER_RATIO
+  bufferRatio = DEFAULT_BUFFER_RATIO,
+  events = null,
+  blocks = null
 } = {}) {
   const days = [];
 
   if (!isIsoDate(fromIso) || !isIsoDate(toIso) || toIso < fromIso) {
     return { days, totalUsableMinutes: 0, dayCount: 0 };
   }
+
+  // Päiväindeksit rakennetaan kerran koko horisontille, ei joka päivälle.
+  const eventList = calendarInputOnce(events, indexEventOccurrences);
+  const blockList = calendarInputOnce(blocks, indexCalendarBlocks);
 
   let cursor = parseISO(fromIso);
   const end = parseISO(toIso);
@@ -179,7 +296,8 @@ export function horizonCapacity({
   while (cursor <= end && guard < MAX_HORIZON_DAYS) {
     const dateIso = fmtISO(cursor);
     days.push(dayCapacity({
-      tasks, profile, dateIso, routines, exceptions, bufferRatio
+      tasks, profile, dateIso, routines, exceptions, bufferRatio,
+      events: eventList, blocks: blockList
     }));
     cursor = addDays(cursor, 1);
     guard += 1;
@@ -220,14 +338,16 @@ export function capacityUntil({
   deadlineIso,
   routines = [],
   exceptions = [],
-  bufferRatio = DEFAULT_BUFFER_RATIO
+  bufferRatio = DEFAULT_BUFFER_RATIO,
+  events = null,
+  blocks = null
 } = {}) {
   if (!isIsoDate(todayIso) || !isIsoDate(deadlineIso)) return null;
   if (deadlineIso < todayIso) return null;
 
   return horizonCapacity({
     tasks, profile, fromIso: todayIso, toIso: deadlineIso,
-    routines, exceptions, bufferRatio
+    routines, exceptions, bufferRatio, events, blocks
   });
 }
 
