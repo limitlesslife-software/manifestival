@@ -1197,6 +1197,18 @@ const MEAL_LIST_ERROR_IDS = Object.freeze({
   general: 'dsMealError'
 });
 
+/**
+ * Vesimuistutukset lasketaan päivän muistutusrajaan (Muistutukset -> enintään
+ * päivässä). Rajan täyttyessä lähtö-, uni- ja määräaikamuistutukset menevät
+ * edelle (notificationPolicy.capPerDay), ja myöhemmät vesimuistutukset jäävät
+ * pois: kerrotaan se tässä eikä anneta niiden kadota hiljaa.
+ */
+function waterCapHint() {
+  const prefs = getState().notificationPreferences || {};
+  const max = Number.isInteger(prefs.maxPerDay) && prefs.maxPerDay > 0 ? prefs.maxPerDay : 12;
+  return `Vesimuistutukset kuuluvat päivän muistutusrajaan (nyt ${max} päivässä). Kun raja täyttyy, lähtö-, uni- ja määräaikamuistutukset menevät edelle ja myöhemmät vesimuistutukset jäävät pois.`;
+}
+
 /** Yksittäisen kentän tunniste; virheilmoitus on `<tunniste>Error`. */
 const MEAL_FIELD_IDS = Object.freeze({
   waterEveryMinutes: 'dsWaterEvery',
@@ -1337,7 +1349,7 @@ function mealHtml(settings) {
       ${timeField({ id: 'dsWaterFrom', label: 'Alkaen', value: values.waterFrom, error: errors.waterFrom })}
       ${timeField({ id: 'dsWaterTo', label: 'Asti', value: values.waterTo, error: errors.waterTo })}
     </div>
-    <div class="hint">Jätä väli tyhjäksi, jos et halua vesimuistutuksia.</div>
+    <div class="hint">Jätä väli tyhjäksi, jos et halua vesimuistutuksia. ${escapeHtml(waterCapHint())}</div>
     <div class="add-form-title">Lisäravinteet</div>
     ${values.supplements.length > 0
     ? `<ol class="ds-list">${values.supplements.map((item, index) => supplementRowHtml(item, index, errors)).join('')}</ol>`

@@ -798,6 +798,11 @@ test('aamukatsaus tallentuu heti; epäonnistuminen palauttaa ruudun tallennettuu
 
 // ================================================================ Arki: ateriat
 
+test('vesimuistutukset: kerrotaan, että ne kuuluvat päivän muistutusrajaan (eivät katoa hiljaa)', () => {
+  const { $ } = mount();
+  assert.match(text($('dailyMealSettings')), /Vesimuistutukset kuuluvat päivän muistutusrajaan \(nyt \d+ päivässä\)/);
+});
+
 test('ateriat: lukematon numerosyöte (valmistelu, veden väli) on virhe, ei hiljaa tyhjä', async () => {
   const { $ } = mount();
   $('dsMealAdd').click();
