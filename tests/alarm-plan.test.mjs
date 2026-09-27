@@ -223,6 +223,28 @@ test('katsaus herätykseen vain, kun se on otettu käyttöön', () => {
   assert.equal(alarms({ commitmentsByDate: { [MONDAY]: MEETING } })[0].briefText, null);
 });
 
+test('katsaus kertoo ajan aamulenkille aamun väljyydestä (§34), ei keksi vapaata aikaa', () => {
+  const settings = { ...SETTINGS, morningBriefEnabled: true };
+  // Lääkäri klo 10, lähtö 9.30: aamurutiini (75 min) alkaa 8.15, herätys 7.00 -> 75 min vapaata.
+  const doctor = { id: 'l', title: 'Lääkäri', startTime: '10:00', leaveTime: '09:30' };
+  const [alarm] = alarms({ settings, commitmentsByDate: { [MONDAY]: doctor } });
+  assert.equal(alarm.time, '07:00');
+  assert.equal(alarm.briefText, 'Hyvää huomenta. Kello on 7.00. Lähtötavoite on 9.30. '
+    + 'Ensimmäinen meno on Lääkäri kello 10.00. Sinulla on aikaa 75 minuutin aamulenkille.');
+  // Herätys on täsmälleen tarvittava: vapaata aikaa ei ole.
+  assert.doesNotMatch(alarms({ settings, commitmentsByDate: { [MONDAY]: MEETING } })[0].briefText, /aamulenkille/);
+  // Ilman menoa aamulla ei ole ankkuria: vapaata aikaa ei tiedetä.
+  assert.doesNotMatch(alarms({ settings })[0].briefText, /aamulenkille/);
+  // Aamu ei mahdu (myöhäinen nukkumaanmeno): lenkkiä ei ehdoteta.
+  const cramped = alarms({ settings, commitmentsByDate: { [MONDAY]: MEETING },
+    sleepLogs: [{ id: 's', wakeDate: MONDAY, actualBedtime: '23:30' }] })[0];
+  assert.equal(cramped.fits, false);
+  assert.doesNotMatch(cramped.briefText, /aamulenkille/);
+  // Alle MIN_RUN_MINUTES väljyys ei ole lenkkiaika (rutiini alkaa 7.05, herätys 7.00).
+  const near = { id: 'n', title: 'Palaveri', startTime: '08:30', leaveTime: '08:20' };
+  assert.doesNotMatch(alarms({ settings, commitmentsByDate: { [MONDAY]: near } })[0].briefText, /aamulenkille/);
+});
+
 // ================================================================ voimistuminen
 
 test('voimistumisen tarkistus: enintään 4 vaihetta, kasvava, alle 10 min, tunnetut vaiheet', () => {

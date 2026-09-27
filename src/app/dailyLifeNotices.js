@@ -28,11 +28,11 @@ import { newTaskId } from '../lib/rows.js';
 import {
   normalizeNotice, validateNotice, NOTICE_KIND, NOTICE_LEVEL, NOTICE_STATUS
 } from '../domain/notificationCenter.js';
-import { eveningBefore, driftReport, mondayReadiness, sleepScheduleFor } from '../domain/sleepRhythm.js';
+import { eveningBefore, driftReport, mondayReadiness } from '../domain/sleepRhythm.js';
 import { latenessSuggestion } from '../domain/commuteLearning.js';
 import { isoWeekday } from '../domain/wallClock.js';
 import { deviceOffsetMinutes } from './deviceTime.js';
-import { clockOf, shiftIso, sleepScheduleOn } from './dailyLifeModel.js';
+import { clockOf, shiftIso, sleepScheduleOn, sleepPlanOn } from './dailyLifeModel.js';
 import { logEvent } from '../lib/logger.js';
 
 /** Illan ennakko näytetään aikaisintaan tähän aikaan (minuutteja keskiyöstä). */
@@ -45,31 +45,40 @@ function notice({ key, kind, level = NOTICE_LEVEL.INFO, title, reason, targetId,
   });
 }
 
+/** Kiinteän herätyksen varoituksen jatko: mitä käyttäjä voi tehdä (hän päättää itse). */
+export const FIXED_ALARM_HINT = 'Voit aikaistaa herätystä asetuksista (Profiili → Arki) tai valita aamulla, mitä jätät pois tai lyhennät.';
+
 /**
  * Illan ennakon tilanne: huominen päivä ja sen merkintä (tai null, kun
- * huominen ei vaadi aiempaa herätystä). null koko tuloksena, kun ei vielä
- * ole ilta: silloin ei myöskään poisteta mitään.
+ * huominen ei vaadi aiempaa herätystä eikä kiinteä herätys jää aamulle
+ * liian myöhäiseksi). null koko tuloksena, kun ei vielä ole ilta: silloin
+ * ei myöskään poisteta mitään.
+ *
+ * Huominen ja sen vertailukohta tulevat samasta laskennasta kuin laitteen
+ * herätys ja iltamuistutukset (dailyLifeModel.sleepPlanOn). Kiinteällä
+ * herätyksellä uni lasketaan kiinteästä ajasta, joten "iltarutiini 10 min
+ * aiemmin" ei synny; jos aamu vaatisi kiinteää aiemman herätyksen, siitä
+ * kerrotaan (alarmNote), ja napautus avaa herätyksen asetukset.
  */
 function eveningAdvice({ state, now }) {
   const { todayIso, nowMinutes } = clockOf(now);
   if (nowMinutes < EVENING_NOTICE_FROM_MINUTES) return null;
   const tomorrow = shiftIso(todayIso, 1);
-  const settings = currentLifeSettings(state);
-  const tomorrowSchedule = sleepScheduleOn(tomorrow, { state, now });
-  const usualSchedule = sleepScheduleFor({
-    dateIso: tomorrow, profile: state.profile || {}, settings, requiredWake: null, offsetMinutesFn: deviceOffsetMinutes
-  });
-  const advice = eveningBefore({ tomorrowSchedule, usualSchedule, settings, cause: 'commitment' });
-  return {
-    tomorrow,
-    notice: advice
-      ? notice({
-        // Vakaa avain huomista kohti: neuvon muuttuessa sama merkintä päivittyy.
-        key: `evening|${tomorrow}`, kind: NOTICE_KIND.REMINDER,
-        title: 'Huominen alkaa aiemmin', reason: advice.message, todayIso
-      })
-      : null
-  };
+  const plan = sleepPlanOn(tomorrow, { state, now });
+  const advice = eveningBefore({ tomorrowSchedule: plan.schedule, usualSchedule: plan.usual, cause: 'commitment' });
+  const note = plan.alarmNote ? `${plan.alarmNote} ${FIXED_ALARM_HINT}` : null;
+  let current = null;
+  if (advice || note) {
+    current = notice({
+      // Vakaa avain huomista kohti: neuvon muuttuessa sama merkintä päivittyy.
+      key: `evening|${tomorrow}`, kind: NOTICE_KIND.REMINDER,
+      title: advice ? 'Huominen alkaa aiemmin' : 'Huomisen herätys on kiinteä',
+      reason: [advice && advice.message, note].filter(Boolean).join(' '),
+      targetId: note ? 'daily' : null,
+      todayIso
+    });
+  }
+  return { tomorrow, notice: current };
 }
 
 /** Illan ennakko: huominen vaatii aiemman herätyksen -> iltarutiini aiemmin. */
@@ -152,8 +161,12 @@ function reconcileCurrent(base, current, changes) {
   const same = getState().notices.find(existing => existing.key === current.key);
   if (!same) {
     if (addNoticeToState(current)) changes.created.push(current);
-  } else if (same.reason !== current.reason) {
-    const updated = normalizeNotice({ ...same, reason: current.reason });
+  } else if (same.reason !== current.reason || same.title !== current.title || same.targetId !== current.targetId) {
+    // Otsikko ja kohde kulkevat neuvon mukana (illan ennakko: "alkaa
+    // aiemmin" <-> kiinteän herätyksen varoitus asetuksiin).
+    const updated = normalizeNotice({
+      ...same, title: current.title, reason: current.reason, targetType: current.targetType, targetId: current.targetId
+    });
     replaceNoticeInState(same.id, updated);
     changes.updated.push(updated);
   }

@@ -13,6 +13,10 @@
 // - Oma arki- tai viikonloppuherätysaika (weekdayTime / weekendTime) voittaa
 //   rytmin oletuksen. followPlan: aamun meno voi aikaistaa herätystä, mutta
 //   ei koskaan yli suojatun unen rajan ilman käyttäjän valintaa.
+// - "Kiinteä aika" (followPlan: false) ON herätysaika: aamun meno ei siirrä
+//   sitä, ja uni lasketaan siitä. Jos meno vaatisi aiemman herätyksen,
+//   siitä kerrotaan varoituksena (fixedAlarmNote). Sääntö on yksi
+//   (alarmWakeOf), ja calendarPlan käyttää sitä unelle ja aamulle.
 // - Herätys ei soi loputtomiin: enintään MAX_ALARM_RING_MINUTES, torkku
 //   enintään MAX_SNOOZE_MINUTES ja MAX_SNOOZES kertaa.
 // - Puhe vain, jos käyttäjä on valinnut puheen (puhetila tai speechEnabled).
@@ -27,7 +31,7 @@ import { isIsoDate, isTimeOfDay, toMinutes } from './task.js';
 import { sleepScheduleFor, sleepTargetMinutes } from './sleepRhythm.js';
 import { planMorning } from './morningPlanner.js';
 import {
-  ZERO_OFFSET, shiftDateIso, wallClockToEpoch, epochToWallClock, clockText
+  ZERO_OFFSET, shiftDateIso, wallClockToEpoch, epochToWallClock, clockText, durationText
 } from './wallClock.js';
 
 export { wallClockToEpoch, epochToWallClock } from './wallClock.js';
@@ -56,8 +60,12 @@ export const ALARM_SOURCE = Object.freeze({
   PLAN: 'plan'
 });
 
-/** Aamun katsaus on lyhyt: enintään näin monta virkettä. */
-export const BRIEF_MAX_SENTENCES = 4;
+/**
+ * Aamun katsaus on lyhyt: enintään näin monta virkettä. Viisi, jotta
+ * tervehdys, kellonaika, lähtötavoite, ensimmäinen meno ja aika
+ * aamulenkille mahtuvat (paketin §34 esimerkki + menon nimi).
+ */
+export const BRIEF_MAX_SENTENCES = 5;
 
 /** Lenkistä kerrotaan vasta, kun aikaa on vähintään näin monta minuuttia. */
 export const MIN_RUN_MINUTES = 10;
@@ -302,6 +310,95 @@ function wakeFloor(log, date, baselineMs, profile, fn) {
 }
 
 /**
+ * Yhden päivän herätyssääntö ja tavallinen unirytmi (sisäinen: desiredAlarms
+ * ja alarmWakeOf käyttävät tätä samaa). null, jos päivää ei voi laskea.
+ */
+function wakeRuleOf(date, alarm, profile, settings, log, fn) {
+  const usual = sleepScheduleFor({ dateIso: date, profile, settings, offsetMinutesFn: fn });
+  if (!usual) return null;
+  const override = usual.weekend ? alarm.weekendTime : alarm.weekdayTime;
+  const baselineAt = wallClockToEpoch(date, override || usual.wakeTime, fn);
+  if (!baselineAt) return null;
+  const fixed = alarm.followPlan !== true;
+  const rule = deepFreeze({
+    date,
+    weekend: usual.weekend,
+    fixed,
+    override: Boolean(override),
+    time: baselineAt.time,
+    floorTime: fixed ? null : wakeFloor(log, date, baselineAt.epochMs, profile, fn)
+  });
+  return { rule, usual };
+}
+
+/**
+ * Herätyksen sääntö yhdelle herätyspäivälle: mitä herätys tekee aamulle.
+ *
+ * YKSI SÄÄNTÖ. Laitteen herätys (desiredAlarms) ja kaikki, mikä kertoo
+ * herätysajan (calendarPlan: Tänään-näkymän aamu, Huominen-kortti,
+ * kalenterin unilohkot, ilta- ja nukkumaanmenomuistutukset, illan ennakko),
+ * kysyvät sen tältä funktiolta. Muuten "Kiinteä aika" soisi 6.30, mutta uni,
+ * iltarutiini ja illan neuvo laskettaisiin menon vaatimasta 6.20:stä.
+ *
+ * PÄÄTÖS: KIINTEÄ AIKA ON HERÄTYSAIKA. Kiinteä herätys (followPlan: false)
+ * soi aina `time`: aamun meno ei siirrä sitä, ja uni lasketaan siitä. Jos
+ * meno vaatisi aiemman herätyksen, aamusuunnitelma ei mahdu, ja siitä
+ * kerrotaan varoituksena (fixedAlarmNote) sen sijaan, että näkymät olisivat
+ * hiljaa eri mieltä. Suunnitelmaa seuraava herätys saa aikaistua menon
+ * mukaan, mutta ei kirjatun nukkumaanmenon suojaaman unen ohi (floorTime).
+ *
+ * @param {object} input
+ * @param {string} input.dateIso herätyspäivä
+ * @param {object} input.profile
+ * @param {object} input.settings LifeSettings
+ * @param {Array}  [input.sleepLogs] SleepLog-rivit (kirjattu nukkumaanmeno rajaa)
+ * @param {Function} [input.offsetMinutesFn]
+ * @returns {null | {date, weekend, fixed, override, time, floorTime}} null, kun
+ *   herätys ei ole käytössä: aamusuunnitelman herätys on silloin suositus.
+ */
+export function alarmWakeOf(input) {
+  const { dateIso, profile, settings, sleepLogs = [], offsetMinutesFn } = objectOf(input);
+  if (!isIsoDate(dateIso)) return null;
+  const alarm = alarmSettingsOf(settings);
+  if (!alarm.enabled) return null;
+  const log = latestLogsByDate(sleepLogs, [dateIso]).get(dateIso) || null;
+  const found = wakeRuleOf(dateIso, alarm, profile, settings, log, offsetFnOf(offsetMinutesFn));
+  return found ? found.rule : null;
+}
+
+/**
+ * Aamusuunnittelijan herätysrajat säännöstä (planMorning / morningOfDay):
+ * tavallinen herätys on herätyksen perusaika, ja aikaisin sallittu herätys
+ * on kiinteä aika tai suojatun unen raja. Ilman sääntöä ei rajoja.
+ */
+export function alarmPlanningLimits(wake) {
+  if (!wake || typeof wake !== 'object' || !isTimeOfDay(wake.time)) {
+    return Object.freeze({ usualWakeTime: null, wakeTimeLimit: null });
+  }
+  return Object.freeze({
+    usualWakeTime: wake.time,
+    wakeTimeLimit: wake.fixed === true ? wake.time : (isTimeOfDay(wake.floorTime) ? wake.floorTime : null)
+  });
+}
+
+/**
+ * Kiinteän herätyksen varoitus, kun aamu vaatisi aiemman herätyksen.
+ * Sama lause herätyksen perusteluna, Huominen-kortissa, illan ennakossa ja
+ * Tänään-näkymän aamussa. null, kun ristiriitaa ei ole.
+ *
+ * @param {object|null} plan aamusuunnitelma (samoilla herätysrajoilla)
+ * @param {object|null} wake alarmWakeOf-tulos
+ */
+export function fixedAlarmNote(plan, wake) {
+  if (!wake || typeof wake !== 'object' || wake.fixed !== true) return null;
+  if (!plan || typeof plan !== 'object' || plan.fits !== false) return null;
+  if (!isTimeOfDay(plan.wakeTime) || !isTimeOfDay(plan.requiredWakeTime)) return null;
+  if (!Number.isInteger(plan.shortfallMinutes) || plan.shortfallMinutes <= 0) return null;
+  return `Herätys on kiinteä ${clockText(plan.wakeTime)}, mutta aamu vaatisi herätyksen`
+    + ` ${clockText(plan.requiredWakeTime)}: aikaa puuttuu ${durationText(plan.shortfallMinutes)}.`;
+}
+
+/**
  * Halutut herätykset päiville fromIso ... fromIso + days - 1 (days ≤ 3).
  *
  * Jokainen herätys on seinäkelloaika {date, time}; hetkeksi sen muuntaa
@@ -336,39 +433,40 @@ export function desiredAlarms(input) {
 
   const alarms = new Map();
   for (const date of dates) {
-    const usual = sleepScheduleFor({ dateIso: date, profile, settings, offsetMinutesFn: fn });
-    if (!usual) continue;
-    const override = usual.weekend ? alarm.weekendTime : alarm.weekdayTime;
-    const baseline = override || usual.wakeTime;
-    const baselineAt = wallClockToEpoch(date, baseline, fn);
-    if (!baselineAt) continue;
+    // Sama sääntö kuin calendarPlanissa (alarmWakeOf): herätys ja uni samaa mieltä.
+    const found = wakeRuleOf(date, alarm, profile, settings, logs.get(date) || null, fn);
+    if (!found) continue;
+    const { rule, usual } = found;
 
     const dayCommitments = commitmentsOn(commitmentsByDate, date);
 
-    let source = override ? ALARM_SOURCE.OVERRIDE : ALARM_SOURCE.RHYTHM;
+    // Sama aamun menon valinta ja samat herätysrajat kuin kalenterissa ja
+    // Tänään-näkymässä: keskiyön jälkeinen meno ei tee herätystä
+    // edelliselle illalle. Kiinteälläkin herätyksellä suunnitelma lasketaan,
+    // jotta vaje voidaan kertoa (fixedAlarmNote) ja lähtö katsaukseen.
+    const plan = morningOfDay({
+      dateIso: date, commitments: dayCommitments, profile, settings,
+      ...alarmPlanningLimits(rule), offsetMinutesFn: fn
+    }).plan;
+
+    let source = rule.override ? ALARM_SOURCE.OVERRIDE : ALARM_SOURCE.RHYTHM;
     let wakeDate = date;
-    let time = baselineAt.time;
-    let plan = null;
-    if (alarm.followPlan) {
-      const floor = wakeFloor(logs.get(date), date, baselineAt.epochMs, profile, fn);
-      // Sama aamun menon valinta kuin kalenterissa ja Tänään-näkymässä:
-      // keskiyön jälkeinen meno ei tee herätystä edelliselle illalle.
-      plan = morningOfDay({
-        dateIso: date, commitments: dayCommitments, profile, settings,
-        wakeTimeLimit: floor, usualWakeTime: baselineAt.time, offsetMinutesFn: fn
-      }).plan;
-      if (plan) {
-        time = plan.wakeTime;
-        wakeDate = plan.wakeDate;
-        if (plan.earlierThanUsualMinutes > 0) source = ALARM_SOURCE.PLAN;
-      }
+    let time = rule.time;
+    if (plan && !rule.fixed) {
+      time = plan.wakeTime;
+      wakeDate = plan.wakeDate;
+      if (plan.earlierThanUsualMinutes > 0) source = ALARM_SOURCE.PLAN;
     }
 
+    const note = fixedAlarmNote(plan, rule);
     let reason;
     if (source === ALARM_SOURCE.PLAN) reason = plan.explanation;
     else if (source === ALARM_SOURCE.OVERRIDE) {
-      reason = `Oma ${usual.weekend ? 'viikonlopun' : 'arkiaamun'} herätysaikasi ${clockText(baselineAt.time)}.`;
-      if (plan && !plan.fits) reason += ` ${plan.explanation}`;
+      reason = `Oma ${usual.weekend ? 'viikonlopun' : 'arkiaamun'} herätysaikasi ${clockText(rule.time)}.`;
+      if (note) reason += ` ${note}`;
+      else if (plan && !plan.fits) reason += ` ${plan.explanation}`;
+    } else if (note) {
+      reason = `${usual.reason} ${note}`;
     } else {
       reason = plan && !plan.fits ? `${usual.reason} ${plan.explanation}` : usual.reason;
     }
@@ -379,7 +477,7 @@ export function desiredAlarms(input) {
         wakeTime: time,
         leaveTime: plan ? plan.leaveTime : null,
         commitments: dayCommitments,
-        freeMinutesForRun: null,
+        freeMinutesForRun: runMinutesOf(plan),
         settings
       })
       : null;
@@ -407,6 +505,18 @@ export function desiredAlarms(input) {
     });
   }
   return deepFreeze([...alarms.values()].sort((a, b) => a.forDate.localeCompare(b.forDate)));
+}
+
+/**
+ * Aamun vapaa aika katsauksen lenkkivirkkeelle: aamusuunnitelman väljyys
+ * herätyksestä aamurutiinin alkuun (paketin §34 "Sinulla on aikaa 20
+ * minuutin aamulenkille"). Vain kun aamussa on meno, johon rutiini on
+ * ajoitettu, ja aamu mahtuu: muuten vapaata aikaa ei tiedetä, eikä sitä
+ * keksitä. Alle MIN_RUN_MINUTES jättää morningBrief itse sanomatta.
+ */
+function runMinutesOf(plan) {
+  if (!plan || !plan.commitment || plan.fits !== true) return null;
+  return Number.isInteger(plan.slackMinutes) && plan.slackMinutes > 0 ? plan.slackMinutes : null;
 }
 
 /** Herätyksen hetki kutsujan aikavyöhykkeessä (kesäaikasiirron tiedot mukana). */
