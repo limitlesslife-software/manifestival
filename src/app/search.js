@@ -20,6 +20,11 @@ import { openGoalForm } from './views/goals.js';
 import { openProjectForm } from './views/projects.js';
 import { openBillForm } from './views/finance.js';
 import { runTypedCommand } from './commandBar.js';
+// Tallenna saapuviin (aalto L): aina tarjolla oleva toissijainen toiminto,
+// ja ensisijainen seuraava askel, kun komentoa ei ymmärretty.
+import { saveCommandToInbox, canOfferInbox } from './commandBar.js';
+import { captureDumpMessage } from './capture.js';
+import { success, notify } from '../ui/toast.js';
 
 /**
  * Reitti tulostyypistä: mihin näkymään ja osioon siirrytään, ja millä
@@ -36,6 +41,9 @@ export const RESULT_ROUTES = Object.freeze({
   [SEARCH_TYPE.PROJECT]: { screen: 'screen-goals', segment: () => setGoalsSegment('projects'), open: openProjectForm },
   [SEARCH_TYPE.BILL]: { screen: 'screen-finance', segment: () => setFinanceSegment('bills'), open: openBillForm }
 });
+
+/** "Tallenna saapuviin" -painike luodaan ajon aikana komentopainikkeen viereen. */
+const INBOX_BUTTON_ID = 'searchInboxBtn';
 
 /** Korosta osuma indekseinä — escapetus ENSIN, merkintä VASTA SEN JÄLKEEN. */
 export function highlightLabel(label, matchIndex, matchLength) {
@@ -94,13 +102,61 @@ function updateCommandAffordance(query) {
   if (!button) return;
 
   const trimmed = query.trim();
+  const inbox = maybe(INBOX_BUTTON_ID);
   if (!trimmed) {
     button.hidden = true;
+    if (inbox) inbox.hidden = true;
     return;
   }
   button.hidden = false;
   button.textContent = `Tulkitse komentona: "${trimmed}"`;
   button.disabled = false;
+  if (inbox) {
+    inbox.hidden = false;
+    inbox.disabled = false;
+  }
+}
+
+/**
+ * Tallenna hakukentän teksti Saapuviin sellaisenaan (monirivinen = monta
+ * riviä). Ei tulkintaa eikä tekoälyä: asia on tallessa ja luokitellaan
+ * myöhemmin Saapuvissa.
+ */
+async function saveSearchToInbox() {
+  const input = maybe('searchInput');
+  const button = maybe(INBOX_BUTTON_ID);
+  const text = input ? input.value : '';
+  if (!text.trim() || !button) return;
+
+  button.disabled = true;
+  try {
+    const result = await saveCommandToInbox(text, { source: 'text' });
+    if (result.ok) {
+      success(captureDumpMessage(result) || 'Tallessa Saapuvissa.');
+      closeSearch();
+    } else if (result.errors && result.errors.text) {
+      notify(result.errors.text);
+    }
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+/** Luo "Tallenna saapuviin" -painike komentopainikkeen viereen (merkintä ennallaan). */
+function ensureInboxButton() {
+  const existing = maybe(INBOX_BUTTON_ID);
+  if (existing) return existing;
+  const command = maybe('searchCommandBtn');
+  if (!command || !command.parentNode || typeof document.createElement !== 'function') return null;
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.id = INBOX_BUTTON_ID;
+  button.className = 'search-command-btn';
+  button.textContent = 'Tallenna saapuviin';
+  button.setAttribute('aria-label', 'Tallenna teksti saapuviin päättämättä mitään');
+  button.hidden = true;
+  command.parentNode.insertBefore(button, command.nextSibling);
+  return button;
 }
 
 function runSearch() {
@@ -143,6 +199,12 @@ async function runCommandFromSearch() {
     // hylätty tai epäonnistunut komento jättää tekstin näkyviin, jotta
     // käyttäjä voi korjata tai yrittää uudelleen ilman uudelleenkirjoitusta.
     if (result.ok) closeSearch();
+    // Ymmärtämätön komento ei ole umpikuja: seuraava askel on tallentaa se
+    // Saapuviin, joten fokus siirtyy sinne.
+    else if (canOfferInbox(result)) {
+      const inbox = maybe(INBOX_BUTTON_ID);
+      if (inbox && !inbox.hidden && typeof inbox.focus === 'function') inbox.focus();
+    }
   } finally {
     if (button) button.disabled = false;
   }
@@ -183,6 +245,8 @@ export function openSearch(query = '') {
   if (input) input.value = prefill;
   if (results) results.innerHTML = '';
   if (commandBtn) commandBtn.hidden = true;
+  const inboxBtn = maybe(INBOX_BUTTON_ID);
+  if (inboxBtn) inboxBtn.hidden = true;
   if (prefill) runSearch();
   if (input) input.focus();
 }
@@ -216,4 +280,6 @@ export function initSearch() {
   });
 
   maybe('searchCommandBtn').addEventListener('click', runCommandFromSearch);
+  const inbox = ensureInboxButton();
+  if (inbox) inbox.addEventListener('click', saveSearchToInbox);
 }

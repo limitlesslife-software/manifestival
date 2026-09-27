@@ -41,10 +41,14 @@
 // kirjoittaa saman asian tekstinä. Puheohjaus ei koskaan päädy umpikujaan.
 
 import { el, maybe, singleFlight } from '../ui/dom.js';
-import { runTypedCommand } from './commandBar.js';
+import { runTypedCommand, saveCommandToInbox, canOfferInbox } from './commandBar.js';
+import { captureDumpMessage } from './capture.js';
 import { openSearch } from './search.js';
 import { speech } from '../platform/index.js';
 import { logEvent } from '../lib/logger.js';
+import { success, notify } from '../ui/toast.js';
+import { fmtISO, todayMidnight } from '../lib/datetime.js';
+import { parseCreateEvent } from '../domain/eventParse.js';
 import {
   VOICE, VOICE_EVENT, initialVoiceState, nextVoiceState, micActive
 } from '../domain/voiceFlow.js';
@@ -91,6 +95,12 @@ let flow = initialVoiceState();
 let lastErrorCode = '';
 /** Elementti, joka avasi paneelin: sulkeminen palauttaa fokuksen sinne (näppäimistö- ja ruudunlukijakäyttäjä ei putoa sivun alkuun). */
 let opener = null;
+/**
+ * Viimeisin käyttäjän näkemä teksti, jota ei vielä käsitelty: epäonnistunut
+ * komento tarjoaa sen "Tallenna saapuviin" -painikkeella. Vain muistissa;
+ * tyhjennetään tallennuksessa, onnistumisessa ja nollauksessa.
+ */
+let lastText = '';
 
 /** Voiko tällä alustalla kuunnella lainkaan? Natiivikuoressa vain omalla liitännäisellä. */
 function micSupported() {
@@ -124,6 +134,7 @@ function closeOverlay() {
   el('voiceOverlay').setAttribute('aria-hidden', 'true');
   stopRecognition();
   lastErrorCode = '';
+  lastText = '';
   if (opener && typeof opener.focus === 'function') opener.focus();
   opener = null;
 }
@@ -155,6 +166,8 @@ function showErrorActions() {
   const denied = flow === VOICE.MIC_DENIED;
   showButton('voiceErrorRetry', !denied);
   showButton('voiceErrorSettings', denied && lastErrorCode === 'blocked' && speech.canOpenSettings());
+  // Ymmärtämätön komento ei ole umpikuja: sanottu voi mennä Saapuviin.
+  showButton('voiceErrorSaveInbox', Boolean(lastText) && !denied);
 }
 
 /** Kirjoituspaneeli kertoo, miksi puhe ei ole käytettävissä (jos ei ole). */
@@ -224,6 +237,46 @@ export async function runVoiceCommand(text, options = {}) {
 }
 
 /**
+ * Onko paljas "kirjaa ..." oikeastaan selvä meno ("kirjaa parturi huomenna
+ * klo 16")? Silloin se kulkee menon luontiin kuten ennenkin, eikä Saapuviin.
+ */
+function looksLikeEvent(text) {
+  try {
+    return parseCreateEvent(text, { todayIso: fmtISO(todayMidnight()) }) !== null;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Tallenna käyttäjän näkemä teksti Saapuviin päättämättä mitään (aalto L).
+ *
+ * EI TULKINTAA, EI SUORITUSTA. Rivi (tai monirivisestä monta riviä)
+ * syntyy Saapuviin, ja luokittelu tapahtuu myöhemmin erässä. ÄÄNTÄ EI
+ * TALLENNETA: vain litterointi, jonka käyttäjä on nähnyt paneelissa.
+ *
+ * @param {string} text
+ * @returns {Promise<object>} captureBrainDump-tulos
+ */
+export async function saveTranscriptToInbox(text) {
+  const result = await saveCommandToInbox(text, { source: 'voice' });
+  // Vain lukumäärä lokiin: litterointi on käyttäjän puhetta.
+  logEvent('voice.inbox', { ok: Boolean(result.ok), count: result.items ? result.items.length : 0 });
+  if (!result.ok) {
+    if (result.status !== 'empty') notify((result.errors && result.errors.text) || 'Tallennus Saapuviin ei onnistunut.');
+    return result;
+  }
+  lastText = '';
+  for (const id of ['vfTranscriptText', 'vfFallbackInput']) {
+    const input = maybe(id);
+    if (input) input.value = '';
+  }
+  transition(VOICE_EVENT.SAVE_TO_INBOX);
+  success(captureDumpMessage(result) || 'Tallessa Saapuvissa.');
+  return result;
+}
+
+/**
  * Aja tarkistettu teksti loppuun asti.
  *
  * SUOJATTU TUPLAKLIKKAUKSELTA singleFlight:llä (ks. src/ui/dom.js) --
@@ -248,6 +301,14 @@ const submitTranscript = singleFlight(async (text, ui) => {
     return;
   }
 
+  // Selvä kirjaus ("muista että ...", "kirjaa ...", "saapuviin ...") menee
+  // Saapuviin sellaisenaan: ei tulkintaa, ei päätöksiä.
+  if (route.kind === ROUTE.INBOX && !(route.bare && looksLikeEvent(clean))) {
+    logEvent('voice.route', { kind: 'inbox' });
+    await saveTranscriptToInbox(route.text);
+    return;
+  }
+
   transition(VOICE_EVENT.SUBMIT);
   if (flow !== VOICE.CLASSIFYING) return;
 
@@ -269,10 +330,14 @@ const submitTranscript = singleFlight(async (text, ui) => {
     return;
   }
   // 'rejected' | 'error' | 'empty' | 'duplicate' | suoritus epäonnistui:
-  // näytetään syy ja tarjotaan uudelleenyritys tai kirjoitus, ei umpikuja.
-  failWith(result.status === 'empty'
+  // näytetään syy ja tarjotaan uudelleenyritys, kirjoitus tai Saapuviin
+  // tallennus (sanottu ei katoa), ei umpikuja.
+  lastText = canOfferInbox(result) ? clean : '';
+  const reason = result.status === 'empty'
     ? 'En kuullut mitään. Yritä uudelleen.'
-    : (result.reason || 'Komentoa ei ymmärretty.'), VOICE_EVENT.DONE_ERROR);
+    : (result.reason || 'Komentoa ei ymmärretty.');
+  failWith(lastText ? `${reason} Voit tallentaa sen Saapuviin ja järjestää myöhemmin.` : reason,
+    VOICE_EVENT.DONE_ERROR);
 });
 
 /**
@@ -359,6 +424,7 @@ export function resetVoice() {
   stopRecognition();
   flow = initialVoiceState();
   lastErrorCode = '';
+  lastText = '';
   opener = null;
   for (const id of ['vfTranscriptText', 'vfFallbackInput']) {
     const input = maybe(id);
@@ -444,6 +510,47 @@ export function initVoice() {
   el('vfFallbackInput').addEventListener('keydown', event => {
     if (event.key === 'Enter') { event.preventDefault(); submitFallback(); }
   });
+
+  initSaveToInboxButtons(transcriptInput);
+}
+
+// =====================================================================
+// TALLENNA SAAPUVIIN (aalto L)
+// =====================================================================
+//
+// Kolme paikkaa, joissa käyttäjä näkee tekstin: tarkistus, kirjoitus ja
+// virhe (komentoa ei ymmärretty). Jokaisessa voi tallentaa tekstin
+// Saapuviin päättämättä mitään. Painikkeet luodaan tässä, jotta paneelin
+// merkintä (index.html) pysyy ennallaan.
+
+const INBOX_BUTTON_STYLE = 'width:100%; margin-top:8px; padding:12px;';
+
+function ensureInboxButton(id, parentId, { before = null, hidden = false } = {}) {
+  const existing = maybe(id);
+  if (existing) return existing;
+  if (typeof document === 'undefined' || typeof document.createElement !== 'function') return null;
+  const parent = maybe(parentId);
+  if (!parent || typeof parent.insertBefore !== 'function') return null;
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.id = id;
+  button.className = 'form-btn secondary';
+  button.textContent = 'Tallenna saapuviin';
+  button.setAttribute('aria-label', 'Tallenna saapuviin päättämättä mitään');
+  button.setAttribute('style', INBOX_BUTTON_STYLE + (hidden ? ' display:none;' : ''));
+  const anchor = before ? maybe(before) : null;
+  parent.insertBefore(button, anchor && anchor.parentNode === parent ? anchor : null);
+  return button;
+}
+
+function initSaveToInboxButtons(transcriptInput) {
+  const save = singleFlight(text => saveTranscriptToInbox(text));
+  const transcript = ensureInboxButton('voiceTranscriptSaveInbox', 'voiceState-transcript');
+  if (transcript) transcript.addEventListener('click', () => save(transcriptInput.value));
+  const error = ensureInboxButton('voiceErrorSaveInbox', 'voiceState-error', { before: 'voiceErrorTypeInstead', hidden: true });
+  if (error) error.addEventListener('click', () => save(lastText));
+  const fallback = ensureInboxButton('vfFallbackSaveInbox', 'voiceState-typefallback', { before: 'vfFallbackReason' });
+  if (fallback) fallback.addEventListener('click', () => save(el('vfFallbackInput').value));
 }
 
 /**
