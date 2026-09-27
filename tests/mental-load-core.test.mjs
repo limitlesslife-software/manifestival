@@ -478,3 +478,30 @@ test('Today-järjestys: fokus heti kirjauksen jälkeen, ennen aikajanaa', () => 
   assert.ok(at('todayProtected') < at('todayTimelineContainer'));
   assert.ok(at('todayFocus') < at('todayHabits'));
 });
+
+// =====================================================================
+// SUORITUSKYKY
+// =====================================================================
+
+test('suorituskyky: kuormamoottori ja jarru 10 000 tehtävällä pysyvät piirron budjetissa', () => {
+  const many = [];
+  for (let i = 0; i < 10000; i++) {
+    const day = new Date(Date.UTC(2026, 8, 1 + (i % 90))).toISOString().slice(0, 10);
+    many.push(normalizeTask({
+      id: `p${i}`, title: `P${i}`, date: i % 7 === 0 ? null : day, horizon: i % 7 === 0 ? 'LATER' : null,
+      durationMinutes: 15 + (i % 60), completed: i % 3 === 0, time: i % 11 === 0 ? '10:00' : null
+    }));
+  }
+  let started = performance.now();
+  const load = computeLifeLoad({ tasks: many, todayIso: MON, capacity: { todayRemainingMinutes: 300, weekRemainingMinutes: 1500 } });
+  const engineMs = performance.now() - started;
+  assert.ok(load.now.length <= 3);
+  setTasks(many);
+  setProtectedPeriods([{ id: 'w', kind: 'FREE_TIME', recurrence: 'weekly_target', targetMinutes: 600 }]);
+  started = performance.now();
+  lifeLoadFor(getState(), { todayIso: MON });
+  const fullMs = performance.now() - started;
+  // Väljät rajat (hidas CI-kone): mittaus paikallisesti ~80 ms / ~95 ms.
+  assert.ok(engineMs < 1000, `moottori ${engineMs.toFixed(0)} ms`);
+  assert.ok(fullMs < 2000, `jarru + moottori ${fullMs.toFixed(0)} ms`);
+});

@@ -221,10 +221,21 @@ function minutesOf(task) {
   return Number.isFinite(stored) && stored > 0 ? stored : DEFAULT_ITEM_MINUTES;
 }
 
-function areaOfTask(task, { goalsById, projectsById, areasById, areas }) {
+function areaOfTask(task, { goalsById, projectsById, areasById, areas, categoryAreas }) {
   const goal = goalOf(task, goalsById, projectsById);
   if (goal && goal.lifeAreaId && areasById.has(goal.lifeAreaId)) return areasById.get(goal.lifeAreaId);
-  return categoryOwnerArea(areas, task.category);
+  if (!task.category || areas.length === 0) return null;
+  // Kategorian perivä alue kerran kategoriaa kohti (suuri aineisto).
+  if (!categoryAreas.has(task.category)) categoryAreas.set(task.category, categoryOwnerArea(areas, task.category));
+  return categoryAreas.get(task.category);
+}
+
+/** Tallessa-korien kevyt järjestys: päivä, sitten otsikko (pisteytystä ei tarvita). */
+function compareStored(a, b) {
+  const ad = a.date || a.deadline || '9999-12-31';
+  const bd = b.date || b.deadline || '9999-12-31';
+  if (ad !== bd) return ad < bd ? -1 : 1;
+  return a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
 }
 
 function weeklyPriorityRefs(weeklyPlan) {
@@ -285,7 +296,7 @@ export function computeLifeLoad({
   const areas = listOf(lifeAreas);
   const areasById = new Map(areas.filter(area => area.id).map(area => [area.id, area]));
   const refs = weeklyPriorityRefs(weeklyPlan);
-  const lookup = { ...context, areasById, areas };
+  const lookup = { ...context, areasById, areas, categoryAreas: new Map() };
 
   const buckets = {
     [LOAD_HORIZON.NOW]: [], [LOAD_HORIZON.THIS_WEEK]: [], [LOAD_HORIZON.LATER]: [],
@@ -312,9 +323,12 @@ export function computeLifeLoad({
       continue;
     }
     if (where.horizon !== LOAD_HORIZON.NOW) {
-      const scored = scoreTask(task, { dateIso: task.date || todayIso, todayIso });
+      // Pisteet vain tämän viikon joukolle (se järjestetään kapasiteetin
+      // mukaan); muut korit järjestetään päivän mukaan (compareStored).
       const followUp = where.followUpDue ? LOAD_SCORE.FOLLOW_UP_DUE : 0;
-      buckets[where.horizon].push({ ...base, score: scored.score + followUp });
+      const score = where.horizon === LOAD_HORIZON.THIS_WEEK
+        ? scoreTask(task, { dateIso: task.date || todayIso, todayIso }).score + followUp : 0;
+      buckets[where.horizon].push({ ...base, score });
       continue;
     }
 
@@ -367,7 +381,7 @@ export function computeLifeLoad({
 
   candidates.sort(compareEntries);
   const now = [];
-  const overflow = [];
+  const overflow = new Set();
   let used = 0;
   for (const entry of candidates) {
     const fitsDay = dayRoom === null || used + entry.minutes <= dayRoom;
@@ -379,7 +393,7 @@ export function computeLifeLoad({
     const reasons = [...entry.reasons];
     if (entry.eligible && now.length < limit && !fitsDay) {
       reasons.push('Ei mahdu tämän päivän aikaan');
-      overflow.push(entry.key);
+      overflow.add(entry.key);
     } else if (!entry.eligible) {
       reasons.push('Valinnainen: nosta fokukseen, jos haluat');
     }
@@ -397,13 +411,13 @@ export function computeLifeLoad({
         weekUsed += entry.minutes;
         return entry;
       }
-      if (!overflow.includes(entry.key)) overflow.push(entry.key);
+      overflow.add(entry.key);
       return { ...entry, fits: false, reasons: entry.reasons.includes('Ei mahdu tämän viikon aikaan')
         ? entry.reasons : [...entry.reasons, 'Ei mahdu tämän viikon aikaan'] };
     });
   }
   for (const key of [LOAD_HORIZON.LATER, LOAD_HORIZON.NOT_YET, LOAD_HORIZON.WAITING, LOAD_HORIZON.ARCHIVED]) {
-    buckets[key].sort(compareEntries);
+    buckets[key].sort(compareStored);
   }
 
   const frozen = key => Object.freeze(buckets[key].map(freezeEntry));
@@ -417,7 +431,7 @@ export function computeLifeLoad({
     waiting: frozen(LOAD_HORIZON.WAITING),
     archived: frozen(LOAD_HORIZON.ARCHIVED),
     fixedToday: Object.freeze(fixedToday),
-    overflow: Object.freeze(thisWeek.filter(entry => overflow.includes(entry.key))),
+    overflow: Object.freeze(thisWeek.filter(entry => overflow.has(entry.key))),
     nowMinutes: used,
     dayRoomMinutes: dayRoom,
     weekRoomMinutes: weekRoom,

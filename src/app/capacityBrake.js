@@ -41,6 +41,17 @@ function listOf(value) {
   return Array.isArray(value) ? value : EMPTY;
 }
 
+/**
+ * Välin kapasiteettiin vaikuttavat tehtävät: välin päivät ja niiden
+ * naapuripäivät (huomisen aamu määrää tämän illan nukkumaanmenon). Suuren
+ * aineiston laskenta ei kulje jokaisen tehtävän läpi jokaisena päivänä.
+ */
+function tasksNear(tasks, from, to) {
+  const start = addDaysIso(from, -1);
+  const end = addDaysIso(to, 1);
+  return listOf(tasks).filter(task => task && task.date && task.date >= start && task.date <= end);
+}
+
 function datesBetween(from, to) {
   const dates = [];
   for (let date = from; date && date <= to && dates.length < MAX_DAYS; date = addDaysIso(date, 1)) dates.push(date);
@@ -105,7 +116,7 @@ export function brakeInputs(state, { from, to, todayIso = from, nowMinutes = nul
   const hasTarget = periods.some(period => period && period.active !== false && period.recurrence === 'weekly_target');
   if (hasTarget) {
     const base = horizonCapacity({
-      tasks: listOf(state.tasks).filter(task => !isMovable(task)), profile: state.profile,
+      tasks: tasksNear(listOf(state.tasks).filter(task => !isMovable(task)), weekFrom, weekTo), profile: state.profile,
       fromIso: weekFrom, toIso: weekTo, routines: listOf(state.routines), exceptions: listOf(state.routineExceptions),
       bufferRatio, events: calendar.events, blocks: calendar.blocks, sleepShortfalls
     });
@@ -128,7 +139,7 @@ export function brakeInputs(state, { from, to, todayIso = from, nowMinutes = nul
 export function brakedHorizonCapacity(state, { from, to, todayIso = from, nowMinutes = null, tasks = null } = {}) {
   const inputs = brakeInputs(state, { from, to, todayIso, nowMinutes });
   const capacity = horizonCapacity({
-    tasks: Array.isArray(tasks) ? tasks : listOf(state && state.tasks), profile: state ? state.profile : null,
+    tasks: tasksNear(Array.isArray(tasks) ? tasks : listOf(state && state.tasks), from, to), profile: state ? state.profile : null,
     fromIso: from, toIso: to, routines: listOf(state && state.routines), exceptions: listOf(state && state.routineExceptions),
     bufferRatio: inputs.bufferRatio, events: inputs.events, blocks: inputs.blocks,
     reserves: inputs.reserves, sleepShortfalls: inputs.sleepShortfalls
