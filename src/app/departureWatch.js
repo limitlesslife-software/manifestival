@@ -20,7 +20,7 @@ import { noticesRepo } from '../data/collectionsRepo.js';
 import { newTaskId } from '../lib/rows.js';
 import { normalizeNotice, validateNotice, NOTICE_KIND, NOTICE_LEVEL } from '../domain/notificationCenter.js';
 import { recalcDecision, DEPARTURE_PHASE } from '../domain/departure.js';
-import { departuresOn, clockOf } from './dailyLifeModel.js';
+import { departuresLeavingOn, clockOf } from './dailyLifeModel.js';
 import { logEvent } from '../lib/logger.js';
 
 /** Viimeksi kerrottu lähtö esiintymää kohti: { leave, source }. Vain muistissa. */
@@ -34,17 +34,53 @@ export function resetDepartureWatch() {
   lastAnnounced.clear();
 }
 
-const DUE_PHASES = new Set([DEPARTURE_PHASE.LEAVE_IN_5, DEPARTURE_PHASE.LEAVE_NOW, DEPARTURE_PHASE.LATE]);
+/**
+ * Minuutteja menon alusta (negatiivinen = alkuun on vielä aikaa).
+ *
+ * Myöhässä-raja mitataan menon ALUSTA, ei lähtöajasta: pitkällä matkalla
+ * lähtö voi olla mennyt 40 min sitten, vaikka menon alkuun on vielä puolitoista
+ * tuntia ja lähtemällä nyt ehtii. Lähdöstä alkuun on matka + pysäköinti ja
+ * kävely + etuaika (lähtömoottori laskee ne todellisina minuutteina myös
+ * kesäajan yönä), joten erotus on todellinen aika menon alusta.
+ */
+function minutesSinceStart(departure) {
+  if (departure.minutesLate === null || departure.minutesLate === undefined) return -Infinity;
+  const parts = departure.parts || {};
+  return departure.minutesLate - (parts.travel || 0) - (parts.overhead || 0) - (parts.early || 0);
+}
 
-function dueNotice({ occurrence, departure }, todayIso) {
+/** Vaihe merkinnän avaimeen: jokaisella vaiheella oma merkintänsä. */
+const DUE_PHASE_KEYS = new Map([
+  [DEPARTURE_PHASE.LEAVE_IN_5, 'soon'],
+  [DEPARTURE_PHASE.LEAVE_NOW, 'now'],
+  [DEPARTURE_PHASE.LATE, 'late']
+]);
+
+/**
+ * Lähtövaiheen merkintä. `announced` on viimeksi kerrottu (hystereesin
+ * vakauttama) lähtö.
+ *
+ * AVAIN = esiintymä + kerrottu lähtö + vaihe:
+ * - vaihe: "lähtö pian" ei peitä "lähde nyt" -merkintää
+ * - lähtöaika: siirretyn menon uusi lähtö kerrotaan omana merkintänään.
+ *   Aika on vakautettu (recalcDecision), joten liikennetiedon minuutin
+ *   heilahtelu ei tee uutta merkintää joka kierroksella.
+ * - LÄHDÖN päivä, ei kierroksen: keskiyön jälkeisen menon lähtö on
+ *   edellisenä iltana, ja sama vaihe saa saman avaimen, ajettiin kierros
+ *   ennen tai jälkeen keskiyön.
+ */
+function dueNotice({ occurrence, departure }, announced, todayIso) {
   const late = departure.phase === DEPARTURE_PHASE.LATE;
+  const label = departure.phaseLabel ? `${departure.phaseLabel}. ` : '';
   return normalizeNotice({
     id: newTaskId(),
-    key: `departure|${occurrence.id}|${todayIso}|${late ? 'late' : 'due'}`,
+    key: `departure|${occurrence.id}|${announced.date}|${announced.time}|${DUE_PHASE_KEYS.get(departure.phase)}`,
     kind: NOTICE_KIND.LEAVE_NOW,
     level: late ? NOTICE_LEVEL.URGENT : NOTICE_LEVEL.WARNING,
     title: occurrence.title || 'Lähtöaika',
-    reason: departure.explanation,
+    // Vaihe näkyy perustelun alussa: muuten "lähtö pian" ja "lähde nyt"
+    // näyttäisivät listassa samalta merkinnältä kahdesti.
+    reason: `${label}${departure.explanation}`,
     targetType: 'calendar_event',
     targetId: occurrence.eventId,
     createdDate: todayIso
@@ -66,7 +102,9 @@ function changeNotice({ occurrence }, decision, todayIso) {
 }
 
 /**
- * Yksi kierros: tämän päivän menojen lähtövaiheet ja merkittävät muutokset.
+ * Yksi kierros: tänään osuvien lähtöjen vaiheet ja merkittävät muutokset.
+ * Mukana ovat myös huomisen menot, joiden lähtö on jo tänä iltana
+ * (dailyLifeModel.departuresLeavingOn).
  * Ei koskaan heitä; tallennusvirhe ei estä sovelluksen käyttöä.
  *
  * @returns {Promise<{created:number}>}
@@ -76,7 +114,7 @@ export async function runEventDepartureSweep({ now = new Date(), state = getStat
   const created = [];
   let departures = [];
   try {
-    departures = departuresOn(todayIso, { state, now, providerResults });
+    departures = departuresLeavingOn(todayIso, { state, now, providerResults });
   } catch (error) {
     logEvent('departure.watch_failed', { code: 'compute' });
     return { created: 0 };
@@ -104,10 +142,9 @@ export async function runEventDepartureSweep({ now = new Date(), state = getStat
     }
 
     // 2. Lähtövaihe: 5 min, nyt, myöhässä (ei enää puolen tunnin jälkeen).
-    if (!DUE_PHASES.has(departure.phase)) continue;
-    if (departure.phase === DEPARTURE_PHASE.LATE && departure.minutesLate !== null
-      && departure.minutesLate > LATE_NOTICE_MAX_MINUTES + (departure.parts.early || 0)) continue;
-    const notice = dueNotice(item, todayIso);
+    if (!DUE_PHASE_KEYS.has(departure.phase)) continue;
+    if (departure.phase === DEPARTURE_PHASE.LATE && minutesSinceStart(departure) > LATE_NOTICE_MAX_MINUTES) continue;
+    const notice = dueNotice(item, lastAnnounced.get(occurrence.id) || next, todayIso);
     if (!validateNotice(notice).valid) continue;
     if (!addNoticeToState(notice)) continue;
     created.push(notice);

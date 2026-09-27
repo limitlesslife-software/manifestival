@@ -46,12 +46,44 @@ function inputsOn(dateIso, state, now) {
  * @returns {Array<{occurrence:object, place:object|null, departure:object|null}>}
  */
 export function departuresOn(dateIso, { state = getState(), now = new Date(), providerResults = null } = {}) {
+  return departureItems(dateIso, { state, now, providerResults }, occurrence => occurrence.date === dateIso);
+}
+
+/**
+ * Lähdöt, jotka osuvat päivälle: päivän omat menot SEKÄ seuraavan päivän
+ * menot, joiden lähtö tai valmistautuminen alkaa jo tänään.
+ *
+ * MIKSI. Meno klo 00.20, jonne on 40 min matka, vaatii lähdön edellisenä
+ * iltana klo 23.30. Pelkät päivän omat menot katsova kierros ei näkisi
+ * sitä ennen keskiyötä, ja ensimmäinen merkintä olisi "myöhässä".
+ * Lähtökierros (departureWatch) käyttää tätä; Tänään-näkymän päivän menot
+ * tulevat edelleen departuresOn-funktiosta.
+ *
+ * @param {string} dateIso
+ * @param {{state?:object, now?:Date, providerResults?:Map<string,object>}} [options]
+ * @returns {Array<{occurrence:object, place:object|null, departure:object|null}>}
+ */
+export function departuresLeavingOn(dateIso, { state = getState(), now = new Date(), providerResults = null } = {}) {
+  const tomorrow = shiftIso(dateIso, 1);
+  const startsToday = point => Boolean(point) && point.date === dateIso;
+  return departureItems(dateIso, { state, now, providerResults }, (occurrence, departure) => {
+    if (occurrence.date === dateIso) return true;
+    return occurrence.date === tomorrow && Boolean(departure) && departure.known === true
+      && (startsToday(departure.leave) || startsToday(departure.prepareStart));
+  });
+}
+
+/**
+ * Yhteinen runko: laskentasyötteet calendarPlanista, liikennetieto
+ * mukaan (jos annettu) ja valinta `accept(esiintymä, lähtö)`.
+ */
+function departureItems(dateIso, { state, now, providerResults }, accept) {
   const { clock, inputs } = inputsOn(dateIso, state, now);
   const places = new Map((state.savedPlaces || []).map(place => [place.id, place]));
   const settings = currentLifeSettings(state);
   const result = [];
   for (const occurrence of inputs.occurrences) {
-    if (occurrence.date !== dateIso || occurrence.allDay || !occurrence.time || occurrence.continuation) continue;
+    if (occurrence.date < dateIso || occurrence.allDay || !occurrence.time || occurrence.continuation) continue;
     let departure = inputs.departures.get(occurrence.id) || null;
     const providerResult = providerResults ? providerResults.get(occurrence.id) ?? null : null;
     if (departure && providerResult) {
@@ -61,6 +93,7 @@ export function departuresOn(dateIso, { state = getState(), now = new Date(), pr
         providerResult, nowMs: clock.nowMs
       });
     }
+    if (!accept(occurrence, departure)) continue;
     const place = occurrence.placeId ? places.get(occurrence.placeId) || null : null;
     result.push({ occurrence, place, departure });
   }

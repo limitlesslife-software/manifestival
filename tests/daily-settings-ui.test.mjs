@@ -17,8 +17,10 @@ import { setUser, clearUser } from '../src/data/session.js';
 import { setClient } from '../src/data/client.js';
 import { lifeSettingsRepo } from '../src/data/collectionsRepo.js';
 import {
-  resetState, getState, subscribe, setTasks, setProfile, setProfileSegment, setLifeSettings, currentLifeSettings
+  resetState, getState, subscribe, setTasks, setProfile, setProfileSegment, setLifeSettings, currentLifeSettings,
+  setSavedPlaces, setCalendarEvents, setCommuteObservations
 } from '../src/app/state.js';
+import { morningPlanOn } from '../src/app/dailyLifeModel.js';
 import { clearLocalUserData } from '../src/app/actions.js';
 import { resetDailyLifeActions, saveLifeSettings } from '../src/app/dailyLifeActions.js';
 import { renderProfileSegments, initProfileSegments } from '../src/app/views/profileSegments.js';
@@ -480,6 +482,39 @@ test('herätys seuraa suunnitelmaa: aamun meno aikaistaa seuraavaa herätystä',
   assert.ok(early.time < '07:00', `herätys ${early.time}`);
   assert.equal(early.source, 'plan');
   assert.match(text($('dailyAlarmNext')), new RegExp(`klo ${Number(early.time.slice(0, 2))}\\.${early.time.slice(3)}`));
+});
+
+test('KRIITTINEN: Seuraava herätys samasta laskentapolusta kuin Tänään ja kalenteri', () => {
+  // Ei näkymää: nextAlarmFor on puhdas tilan ja hetken funktio.
+  const now = new Date(2026, 8, 29, 20, 0);
+  setUser(USER);
+  setProfile({ sleepTargetHours: 8, defaultWakeTime: '07:00', routineMinutes: 45, commuteMinutes: 30 }, true);
+  setLifeSettings([{ id: 's1', arrivalBufferMinutes: 10, alarm: { enabled: true, followPlan: true } }]);
+
+  // Opittu matka (hyväksytty, 4 x 45 min), paikalla ei omaa tavallista matka-aikaa:
+  // lähtö 8.00 - 10 - 45 = 7.05, herätys 7.05 - 45 = 6.20.
+  setSavedPlaces([{ id: 'p1', name: 'Työ', useLearned: true, overheadMinutes: 0, preparationMinutes: 0 }]);
+  setCommuteObservations(['2026-09-21', '2026-09-22', '2026-09-23', '2026-09-24'].map((d, i) => ({
+    id: `o${i}`, placeId: 'p1', observedOn: d, plannedDeparture: '07:00', actualDeparture: '07:00', travelMinutes: 45
+  })));
+  setCalendarEvents([{ id: 'e1', title: 'Työ', date: '2026-09-30', startTime: '08:00', durationMinutes: 480, placeId: 'p1' }]);
+  assert.equal(morningPlanOn('2026-09-30', { now }).wakeTime, '06:20', 'Tänään-näkymän aamu');
+  const learned = nextAlarmFor(getState(), now.getTime());
+  assert.deepEqual([learned.date, learned.time], ['2026-09-30', '06:20']);
+  assert.doesNotMatch(learned.reason, /profiilisi matka-ajasta/, 'opittua matkaa ei korvata profiilin arvauksella');
+
+  // Kotona pidettävä meno ilman paikkaa: lähtö = alku, ei profiilin työmatkaa.
+  setCalendarEvents([{ id: 'h1', title: 'Etäpalaveri', date: '2026-09-30', startTime: '07:30', durationMinutes: 30 }]);
+  assert.equal(morningPlanOn('2026-09-30', { now }).wakeTime, '06:45');
+  assert.equal(nextAlarmFor(getState(), now.getTime()).time, '06:45');
+
+  // Lähtö edellisenä iltana (meno klo 0.30, matka 45 min): aamu ei ole sen herätys.
+  setCalendarEvents([
+    { id: 'n1', title: 'Yölento', date: '2026-09-30', startTime: '00:30', durationMinutes: 60, placeId: 'p1' },
+    { id: 'e1', title: 'Työ', date: '2026-09-30', startTime: '08:00', durationMinutes: 480, placeId: 'p1' }
+  ]);
+  const both = nextAlarmFor(getState(), now.getTime());
+  assert.deepEqual([both.date, both.time], ['2026-09-30', '06:20']);
 });
 
 test('mukautettu voimistus säilyy, kun tasoa ei vaihdeta', async () => {

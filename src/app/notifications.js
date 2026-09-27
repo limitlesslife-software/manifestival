@@ -21,6 +21,7 @@ import { capPerDay } from '../domain/notificationPolicy.js';
 import { expandRoutines } from '../domain/routine.js';
 import { notifications as platformNotifications, alarms as platformAlarms, PERMISSION } from '../platform/index.js';
 import { dailyLifeLocalIntents, resetAlarmSync } from './alarmSync.js';
+import { deviceOffsetMinutes } from './deviceTime.js';
 import { getState, setNotificationPreferences } from './state.js';
 import { savePreferences, isPersistent } from '../data/notificationPrefsRepo.js';
 import { sessionSnapshot, isSameSession } from '../data/session.js';
@@ -84,7 +85,10 @@ export function planUpcoming(from = todayMidnight()) {
     from: fromIso,
     days: SYNC_HORIZON_DAYS,
     todayIso,
-    preferences
+    preferences,
+    // Matkan lähtö lasketaan laitteen vyöhykkeellä: kesäaikaan siirtymisen
+    // yönä muistutus ei tule tuntia myöhässä (bugijahti time-04).
+    offsetMinutesFn: deviceOffsetMinutes
   });
 
   return { intents, summary: summarizeIntents(intents) };

@@ -170,6 +170,8 @@ export function compareCandidates(a, b) {
  * @param {Array}  [input.inboxItems]
  * @param {string} input.todayIso
  * @param {number} input.nowMinutes
+ * @param {Function} [input.offsetMinutesFn]  laitteen vyöhyke lähtölaskentaan (wallClock.js);
+ *        ilman sitä kesäajan vaihtoyönä lähtö olisi tunnin väärässä
  */
 export function collectCandidates({
   tasks = [],
@@ -178,7 +180,8 @@ export function collectCandidates({
   routineOccurrences = [],
   inboxItems = [],
   todayIso,
-  nowMinutes = 0
+  nowMinutes = 0,
+  offsetMinutesFn = null
 } = {}) {
   if (!isIsoDate(todayIso)) return [];
 
@@ -194,7 +197,7 @@ export function collectCandidates({
   // ehdokas -- lähtöaikaa ei väitetä.
   for (const plan of travelPlans) {
     if (!plan) continue;
-    const departure = departureState(plan, { todayIso, nowMinutes });
+    const departure = departureState(plan, { todayIso, nowMinutes, offsetMinutesFn });
     if (!departure.known) continue;
 
     const state = departure.state;

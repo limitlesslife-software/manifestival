@@ -190,7 +190,17 @@ function readDeparture(raw, expectedStartAbs) {
   if (!(prepareStartAbs <= leaveAbs && leaveAbs <= startAbs)) return null;
   if (startAbs - prepareStartAbs > MAX_DEPARTURE_SPAN_MINUTES) return null;
 
-  return { prepareStartAbs, leaveAbs, startAbs, travel, overhead, early };
+  // Matkan loppu ja perilläolo lähtömoottorin omina seinäkellohetkinä, jos
+  // kutsuja antaa ne. Kesäaikaan siirtymisen yönä "lähtö + matka" ei ole
+  // seinäkellolla matkan loppu: tunti puuttuu, ja ero näkyisi keksittynä
+  // varmuusaikana. Puuttuessa ne lasketaan seinäkellosta kuten ennenkin.
+  const travelEndAbs = raw.travelEndAbs === undefined || raw.travelEndAbs === null ? null : wholeMinutes(raw.travelEndAbs);
+  const arrivalAbs = raw.arrivalAbs === undefined || raw.arrivalAbs === null ? null : wholeMinutes(raw.arrivalAbs);
+  if ((raw.travelEndAbs != null && travelEndAbs === null) || (raw.arrivalAbs != null && arrivalAbs === null)) return null;
+  if (travelEndAbs !== null && !(leaveAbs <= travelEndAbs && travelEndAbs <= (arrivalAbs ?? startAbs))) return null;
+  if (arrivalAbs !== null && !(leaveAbs <= arrivalAbs && arrivalAbs <= startAbs)) return null;
+
+  return { prepareStartAbs, leaveAbs, startAbs, travel, overhead, early, travelEndAbs, arrivalAbs };
 }
 
 function isTimedOccurrence(item) {
@@ -210,12 +220,16 @@ function clockOf(abs) {
  * Jokaiselle ajalliselle esiintymälle kysytään `departureFor(esiintymä)`:
  *   { known: false }                                  -> ei lohkoja
  *   { known: true, prepareStartAbs, leaveAbs, travelMinutes,
- *     overheadMinutes, earlyMinutes, startAbs }        -> lohkot:
+ *     overheadMinutes, earlyMinutes, startAbs,
+ *     travelEndAbs?, arrivalAbs? }                     -> lohkot:
  *
  *   PREPARATION     [prepareStartAbs, leaveAbs)
- *   TRAVEL          [leaveAbs, leaveAbs + matka)
- *   OVERHEAD        [.. , .. + pysäköinti ja kävely)
+ *   TRAVEL          [leaveAbs, travelEndAbs ?? leaveAbs + matka)
+ *   OVERHEAD        [.. , arrivalAbs ?? .. + pysäköinti ja kävely)
  *   ARRIVAL_BUFFER  [.. , tapahtuman alku)
+ *
+ * travelEndAbs ja arrivalAbs ovat lähtömoottorin kesäaikaturvallisia
+ * seinäkellohetkiä (calendarPlan.departureBlockInput).
  *
  * Nollan mittainen osa ei tuota lohkoa. Heittävä tai roskaa palauttava
  * funktio tulkitaan tuntemattomaksi lähdöksi.
@@ -242,9 +256,14 @@ export function eventBlocks({ occurrences = [], departureFor = null } = {}) {
     const departure = safely(() => readDeparture(departureFor(occurrence), expectedStart), null);
     if (!departure) continue;
 
-    const { prepareStartAbs, leaveAbs, startAbs, travel, overhead } = departure;
-    const travelEnd = Math.min(leaveAbs + travel, startAbs);
-    const overheadEnd = Math.min(travelEnd + overhead, startAbs);
+    const { prepareStartAbs, leaveAbs, startAbs, travel, overhead, travelEndAbs, arrivalAbs } = departure;
+    // Lähtömoottorin hetket voittavat seinäkellon yhteenlaskun (kesäajan yö).
+    const travelEnd = travelEndAbs ?? Math.min(leaveAbs + travel, arrivalAbs ?? startAbs);
+    const overheadEnd = arrivalAbs ?? Math.min(travelEnd + overhead, startAbs);
+    // Tekstin minuutit: moottorin antamina todellisina minuutteina, muuten
+    // lohkon seinäkellopituus (sama asia tavallisena päivänä).
+    const overheadText = arrivalAbs !== null ? overhead : overheadEnd - travelEnd;
+    const earlyText = arrivalAbs !== null ? departure.early : startAbs - overheadEnd;
     const title = safely(() => (typeof occurrence.title === 'string' && occurrence.title.trim()
       ? occurrence.title.trim() : 'Tapahtuma'), 'Tapahtuma');
     const category = safely(() => (typeof occurrence.category === 'string' && occurrence.category
@@ -283,7 +302,7 @@ export function eventBlocks({ occurrences = [], departureFor = null } = {}) {
         startAbs: travelEnd,
         endAbs: overheadEnd,
         title: `${blockLabel(BLOCK_KIND.OVERHEAD)} · ${title}`,
-        explanation: `Pysäköinti ja kävely perille noin ${overheadEnd - travelEnd} min.`
+        explanation: `Pysäköinti ja kävely perille noin ${overheadText} min.`
       }),
       ...blockPieces({
         ...common,
@@ -291,7 +310,7 @@ export function eventBlocks({ occurrences = [], departureFor = null } = {}) {
         startAbs: overheadEnd,
         endAbs: startAbs,
         title: `${blockLabel(BLOCK_KIND.ARRIVAL_BUFFER)} · ${title}`,
-        explanation: `Olet perillä ${startAbs - overheadEnd} min ennen alkua klo ${start}. `
+        explanation: `Olet perillä ${earlyText} min ennen alkua klo ${start}. `
           + 'Mieluummin ajoissa kuin kiireessä.'
       })
     );

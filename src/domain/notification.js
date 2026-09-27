@@ -396,6 +396,9 @@ export function compareIntents(a, b) {
  * @param {string} args.dateIso              Päivä, jolle suunnitellaan
  * @param {string} [args.todayIso]           Nykyinen päivä (kiireellisyyteen)
  * @param {object} [args.preferences]
+ * @param {Function} [args.offsetMinutesFn]  Laitteen vyöhyke (wallClock.js). Matkojen lähtö
+ *        lasketaan sillä todellisina minuutteina, jotta kesäaikaan siirtymisen yönä muistutus
+ *        ei tule tuntia myöhässä. Ilman sitä puhdas seinäkello.
  * @returns {Array} NotificationIntent[]
  */
 export function planNotifications({
@@ -404,7 +407,8 @@ export function planNotifications({
   travelPlans = [],
   dateIso,
   todayIso = null,
-  preferences = {}
+  preferences = {},
+  offsetMinutesFn = null
 } = {}) {
   const prefs = normalizePreferences(preferences);
   if (!prefs.enabled) return [];
@@ -507,10 +511,10 @@ export function planNotifications({
   // hiljaisuus. Käsin annettu kesto kelpaa.
   for (const plan of travelPlans) {
     if (!plan || !plan.arrivalDate) continue;
-    const schedule = departureSchedule(plan, { todayIso: reference });
+    const schedule = departureSchedule(plan, { todayIso: reference, offsetMinutesFn });
     if (!schedule.known) continue;
 
-    const alert = leaveAtMinus(schedule, DEPARTURE_ALERT_LEAD_MINUTES);
+    const alert = leaveAtMinus(schedule, DEPARTURE_ALERT_LEAD_MINUTES, { offsetMinutesFn });
     if (!alert || alert.date !== dateIso) continue;
 
     const source = plan.travelSource === TRAVEL_SOURCE.MANUAL ? 'itse arvioitu'
@@ -616,8 +620,11 @@ export function summarizeIntents(intents) {
 /**
  * Ilmoitukset useammalle päivälle.
  * Käytetään esimerkiksi silloin, kun natiivikerros ajastaa etukäteen.
+ * `offsetMinutesFn` (laitteen vyöhyke) kulkee planNotificationsille.
  */
-export function planRange({ tasks, routineOccurrences, travelPlans = [], from, days = 1, todayIso, preferences }) {
+export function planRange({
+  tasks, routineOccurrences, travelPlans = [], from, days = 1, todayIso, preferences, offsetMinutesFn = null
+}) {
   if (!isIsoDate(from)) return [];
   const limit = Math.max(1, Math.min(days, 14));
   const all = [];
@@ -625,7 +632,7 @@ export function planRange({ tasks, routineOccurrences, travelPlans = [], from, d
   for (let i = 0; i < limit; i++) {
     const dateIso = fmtISO(addDays(parseISO(from), i));
     all.push(...planNotifications({
-      tasks, routineOccurrences, travelPlans, dateIso, todayIso: todayIso || from, preferences
+      tasks, routineOccurrences, travelPlans, dateIso, todayIso: todayIso || from, preferences, offsetMinutesFn
     }));
   }
   return all;

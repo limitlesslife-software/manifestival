@@ -70,6 +70,7 @@ import {
 } from './state.js';
 import { showError, success, notify } from '../ui/toast.js';
 import { confirmDelete, confirmAction } from '../ui/confirm.js';
+import { deviceOffsetMinutes } from './deviceTime.js';
 
 /** Tämän päivän ISO-päivä. Kello luetaan TÄSSÄ, ei domainissa. */
 function todayIso() {
@@ -602,14 +603,17 @@ export async function deleteTravelPlan(id) {
  */
 export async function runDepartureSweep({ now = new Date() } = {}) {
   const state = getState();
-  const today = todayIso();
+  // Päivä ja minuutit samasta hetkestä: annettu `now` ei saa sekoittua
+  // koneen kelloon (keskiyön tienoilla päivä ja minuutit menisivät ristiin).
+  const today = fmtISO(now);
   const minutes = nowMinutes(now);
 
   const created = [];
   for (const plan of state.travelPlans) {
     // Sama lähtömoottori kuin NOW/NEXT:ssä ja ajastetuissa ilmoituksissa
-    // (travel.js departureState): yksi totuus lähtöajalle.
-    const departure = departureState(plan, { todayIso: today, nowMinutes: minutes });
+    // (travel.js departureState): yksi totuus lähtöajalle. Laitteen vyöhyke
+    // mukaan, jotta kesäaikaan siirtymisen yönä lähtö ei ole tuntia väärässä.
+    const departure = departureState(plan, { todayIso: today, nowMinutes: minutes, offsetMinutesFn: deviceOffsetMinutes });
     if (!departure.known) continue;
 
     const late = departure.state === DEPARTURE_STATE.LATE;

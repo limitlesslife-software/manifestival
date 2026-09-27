@@ -206,25 +206,65 @@ function textKey(value) {
   return typeof value === 'string' ? value : '';
 }
 
-/** Aamua eniten sitova meno: aikaisin ankkuri, sitten alku, nimi ja tunniste. */
-export function firstCommitmentOf(list, profile) {
-  if (!Array.isArray(list)) return null;
+/**
+ * Ajalliset menot aamua sitovassa järjestyksessä: aikaisin ankkuri, sitten
+ * alku, nimi ja tunniste. Tasapelissä syötteen järjestys säilyy.
+ */
+function commitmentsInOrder(list, profile) {
+  if (!Array.isArray(list)) return [];
   const commute = commuteOf(profile);
-  let best = null;
-  let bestKey = null;
+  const keyed = [];
   for (const item of list) {
     if (!item || typeof item !== 'object' || !isTimeOfDay(item.startTime)) continue;
-    const key = [anchorMinutes(item, commute), toMinutes(item.startTime), textKey(item.title), textKey(item.id)];
-    if (!best || compareKeys(key, bestKey) < 0) {
-      best = item;
-      bestKey = key;
-    }
+    keyed.push({ item, key: [anchorMinutes(item, commute), toMinutes(item.startTime), textKey(item.title), textKey(item.id)] });
   }
-  return best;
+  return keyed.sort((a, b) => compareKeys(a.key, b.key)).map(entry => entry.item);
+}
+
+/** Aamua eniten sitova meno: aikaisin ankkuri, sitten alku, nimi ja tunniste. */
+export function firstCommitmentOf(list, profile) {
+  return commitmentsInOrder(list, profile)[0] || null;
 }
 
 function compareKeys(a, b) {
   return a[0] - b[0] || a[1] - b[1] || a[2].localeCompare(b[2], 'fi') || a[3].localeCompare(b[3], 'fi');
+}
+
+/**
+ * Herätyspäivän aamun sitoumus ja aamusuunnitelma (morningPlanner.planMorning).
+ *
+ * YKSI VALINTA. Kalenterin unilohkot, Tänään-näkymän aamu, illan ennakko
+ * (calendarPlan.morningFor) ja herätys (desiredAlarms) valitsevat aamun
+ * menon tällä samalla funktiolla, jotta ne eivät voi olla eri mieltä.
+ *
+ * KESKIYÖN JÄLKEINEN MENO EI OLE AAMUN MENO. Etäpuhelu klo 00.15 tai joka
+ * yö toistuva lääke klo 00.00 on kellonajaltaan päivän aikaisin, mutta sen
+ * aamurutiini alkaisi jo EDELLISENÄ iltana: se ei ole tämän yön herätys.
+ * Sellainen meno ohitetaan, ja aamun sitoumus on seuraava meno, jonka
+ * vaatima herätys osuu herätyspäivälle. Muuten klo 7.30 palaveri jäisi
+ * huomiotta, herätys olisi tavallinen ja uni suojattaisiin väärään aikaan
+ * (tai herätys soisi edellisenä iltana). Jos yksikään meno ei sovi, aamu on
+ * tavallinen (ei sitoumusta).
+ *
+ * Ratkaisee VAADITTU herätys (requiredWakeDate), ei lopullinen: aikaisin
+ * sallittu herätys (wakeTimeLimit) nostaa herätyksen aina herätyspäivälle,
+ * eikä menon valinta saa riippua siitä.
+ *
+ * @param {object} input planMorning-syöte ilman firstCommitmentia, sekä
+ * @param {Array}  input.commitments päivän menot {title, startTime, leaveTime|null, prepareStart|null}
+ * @returns {{commitment:object|null, plan:object|null}}
+ */
+export function morningOfDay(input) {
+  const {
+    dateIso, commitments = null, profile, settings, steps, wakeTimeLimit = null, usualWakeTime = null, offsetMinutesFn
+  } = objectOf(input);
+  const base = { dateIso, profile, settings, steps, wakeTimeLimit, usualWakeTime, offsetMinutesFn };
+  for (const commitment of commitmentsInOrder(commitments, profile)) {
+    const plan = planMorning({ ...base, firstCommitment: commitment });
+    if (plan && isIsoDate(plan.requiredWakeDate) && plan.requiredWakeDate < dateIso) continue;
+    return { commitment, plan };
+  }
+  return { commitment: null, plan: planMorning({ ...base, firstCommitment: null }) };
 }
 
 // ------------------------------------------------------------ herätykset
@@ -304,7 +344,6 @@ export function desiredAlarms(input) {
     if (!baselineAt) continue;
 
     const dayCommitments = commitmentsOn(commitmentsByDate, date);
-    const commitment = firstCommitmentOf(dayCommitments, profile);
 
     let source = override ? ALARM_SOURCE.OVERRIDE : ALARM_SOURCE.RHYTHM;
     let wakeDate = date;
@@ -312,10 +351,12 @@ export function desiredAlarms(input) {
     let plan = null;
     if (alarm.followPlan) {
       const floor = wakeFloor(logs.get(date), date, baselineAt.epochMs, profile, fn);
-      plan = planMorning({
-        dateIso: date, firstCommitment: commitment, profile, settings,
+      // Sama aamun menon valinta kuin kalenterissa ja Tänään-näkymässä:
+      // keskiyön jälkeinen meno ei tee herätystä edelliselle illalle.
+      plan = morningOfDay({
+        dateIso: date, commitments: dayCommitments, profile, settings,
         wakeTimeLimit: floor, usualWakeTime: baselineAt.time, offsetMinutesFn: fn
-      });
+      }).plan;
       if (plan) {
         time = plan.wakeTime;
         wakeDate = plan.wakeDate;

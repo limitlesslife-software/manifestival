@@ -24,6 +24,8 @@ import { expandEventOccurrences, absoluteMinutesOf } from '../src/domain/calenda
 import { departureSchedule } from '../src/domain/travel.js';
 import { toMinutes, durationOf } from '../src/domain/task.js';
 import { DEFAULT_WIND_DOWN_MINUTES, MAX_WIND_DOWN_MINUTES } from '../src/domain/dailyLife.js';
+import { departureForOccurrence, departureBlockInput } from '../src/app/calendarPlan.js';
+import { helsinkiOffset } from './helpers/helsinkiOffset.mjs';
 
 // ------------------------------------------------------------------ apurit
 
@@ -376,6 +378,46 @@ test('kesäajan vaihtoyöt: seinäkelloaika pysyy, lohkot pilkotaan keskiyöllä
   assert.deepEqual(summary(eventBlocks({ occurrences, departureFor: departureWith({ travel: 20, prep: 10, overhead: 0, early: 0 }) })), [
     'preparation 2026-03-29 03:30-03:40',
     'travel 2026-03-29 03:40-04:00'
+  ]);
+});
+
+test('KRIITTINEN: kesäaikaan siirtymisen yönä matkalohko ei keksi perilläolon varmuusaikaa', () => {
+  // Lento 29.3. klo 4.30, matka 60 min, ei etuaikaa. Klo 3-4 ei ole olemassa:
+  // lähtö 2.30 ja perillä 4.30 -- varmuusaikaa ei ole, vaikka seinäkello
+  // antaisi matkan loppuvan 3.30.
+  const events = [{ id: 'f', title: 'Lento', date: '2026-03-29', startTime: '04:30', durationMinutes: 60,
+    travelMinutes: 60, preparationMinutes: 0, overheadMinutes: 0 }];
+  const occurrences = expandEventOccurrences({ events, from: '2026-03-29', to: '2026-03-29' });
+  const blocksWith = arrivalBufferMinutes => {
+    const plan = departureForOccurrence(occurrences[0], { offsetMinutesFn: helsinkiOffset, settings: { arrivalBufferMinutes } });
+    return eventBlocks({ occurrences, departureFor: () => departureBlockInput(plan, helsinkiOffset) });
+  };
+  const none = blocksWith(0);
+  assert.deepEqual(summary(none), ['travel 2026-03-29 02:30-04:30']);
+  assert.match(none[0].explanation, /Lähde klo 02:30\. Matka kestää noin 60 min\./);
+
+  // 30 min etuaika: perillä 4.00, lähtö 2.00; varmuusaika on todelliset 30 min.
+  const early = blocksWith(30);
+  assert.deepEqual(summary(early), ['travel 2026-03-29 02:00-04:00', 'arrival_buffer 2026-03-29 04:00-04:30']);
+  assert.match(early[1].explanation, /^Olet perillä 30 min ennen alkua klo 04:30\./);
+
+  // Tavallisena yönä sama laskenta kuin ennenkin.
+  const plain = expandEventOccurrences({ events: [{ ...events[0], date: '2026-03-22' }], from: '2026-03-22', to: '2026-03-22' });
+  const plan = departureForOccurrence(plain[0], { offsetMinutesFn: helsinkiOffset, settings: { arrivalBufferMinutes: 30 } });
+  assert.deepEqual(summary(eventBlocks({ occurrences: plain, departureFor: () => departureBlockInput(plan, helsinkiOffset) })),
+    ['travel 2026-03-22 03:00-04:00', 'arrival_buffer 2026-03-22 04:00-04:30']);
+});
+
+test('lähtömoottorin seinäkellohetket: epäjohdonmukaiset hylätään, puuttuvat lasketaan seinäkellosta', () => {
+  const occurrences = occurrencesOf([{}], '2026-09-28', '2026-09-28');
+  const base = departureWith({})(occurrences[0]);
+  const bad = eventBlocks({ occurrences, departureFor: () => ({ ...base, travelEndAbs: base.leaveAbs - 1 }) });
+  assert.deepEqual(bad, [], 'matka ei voi loppua ennen lähtöä');
+  const reversed = eventBlocks({ occurrences, departureFor: () => ({ ...base, arrivalAbs: base.startAbs + 5 }) });
+  assert.deepEqual(reversed, [], 'perillä ei voi olla alun jälkeen');
+  assert.deepEqual(summary(eventBlocks({ occurrences, departureFor: () => base })), [
+    'preparation 2026-09-28 09:00-09:15', 'travel 2026-09-28 09:15-09:45',
+    'overhead 2026-09-28 09:45-09:50', 'arrival_buffer 2026-09-28 09:50-10:00'
   ]);
 });
 

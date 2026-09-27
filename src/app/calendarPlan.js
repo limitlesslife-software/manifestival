@@ -26,10 +26,10 @@
 import { expandEventOccurrences, addDaysToIso } from '../domain/calendar.js';
 import { deriveBlocks } from '../domain/calendarBlocks.js';
 import { planDeparture, selectTravelEstimate } from '../domain/departure.js';
+import { minusMinutes } from '../domain/travel.js';
 import { summarizeCommute } from '../domain/commuteLearning.js';
 import { sleepScheduleFor } from '../domain/sleepRhythm.js';
-import { planMorning } from '../domain/morningPlanner.js';
-import { firstCommitmentOf } from '../domain/alarmPlan.js';
+import { morningOfDay } from '../domain/alarmPlan.js';
 import { buildDayPlan } from '../domain/scheduler.js';
 import { isIsoDate, isTimeOfDay } from '../domain/task.js';
 import { currentLifeSettings } from './state.js';
@@ -87,11 +87,17 @@ export function departureForOccurrence(occurrence, {
 /**
  * Lähtösuunnitelma lohkomoottorin muotoon (calendarBlocks.eventBlocks).
  * Tuntematon matka-aika -> { known: false }: lohkoja ei synny.
+ *
+ * Perilläolo ja matkan loppu annetaan lähtömoottorin seinäkellohetkinä
+ * samalla vyöhykkeellä kuin lähtö: kesäaikaan siirtymisen yönä "lähtö +
+ * matka" seinäkellolla jättäisi matkan loppumaan tuntia liian aikaisin, ja
+ * väliin syntyisi keksitty "Olet perillä 60 min ennen alkua" -lohko.
  */
-export function departureBlockInput(plan) {
+export function departureBlockInput(plan, offsetMinutesFn = deviceOffsetMinutes) {
   if (!plan || plan.known !== true || !plan.leave || !plan.prepareStart || !plan.eventStart) {
     return { known: false };
   }
+  const arrivalAbs = plan.arrivalTarget ? plan.arrivalTarget.abs : null;
   return {
     known: true,
     startAbs: plan.eventStart.abs,
@@ -99,12 +105,14 @@ export function departureBlockInput(plan) {
     prepareStartAbs: plan.prepareStart.abs,
     travelMinutes: plan.parts.travel,
     overheadMinutes: plan.parts.overhead,
-    earlyMinutes: plan.parts.early
+    earlyMinutes: plan.parts.early,
+    arrivalAbs,
+    travelEndAbs: arrivalAbs === null ? null : minusMinutes(arrivalAbs, plan.parts.overhead || 0, offsetMinutesFn)
   };
 }
 
 /**
- * Menot aamun sitoumuksiksi (alarmPlan.firstCommitmentOf, planMorning).
+ * Menot aamun sitoumuksiksi (alarmPlan.morningOfDay).
  * Meno ilman paikkaa ja matkaa alkaa siellä missä olet: lähtö = alku.
  * Paikallinen meno ilman matka-aikaa jättää lähdön tuntemattomaksi, jolloin
  * aamusuunnitelma käyttää profiilin matka-aikaa ja sanoo sen ääneen.
@@ -123,15 +131,20 @@ function commitmentsOn(occurrences, dateIso, departures) {
     } else if (!needsDeparture(occurrence)) {
       leaveTime = occurrence.time;
     }
-    list.push({ id: occurrence.id, title: occurrence.title, startTime: occurrence.time, leaveTime, prepareStart });
+    list.push({
+      id: occurrence.id, title: occurrence.title, startTime: occurrence.time, leaveTime, prepareStart,
+      category: occurrence.category
+    });
   }
   return list;
 }
 
 /**
- * Päivän aamun sitoumus (alarmPlan.firstCommitmentOf) ja sitä vastaava
- * aamusuunnitelma. Sama logiikka kuin unilohkoissa, jotta kalenteri,
- * Tänään, herätys ja illan ennakko ovat samaa mieltä.
+ * Päivän aamun sitoumus ja sitä vastaava aamusuunnitelma
+ * (alarmPlan.morningOfDay). Sama logiikka kuin unilohkoissa ja
+ * herätyksessä, jotta kalenteri, Tänään, herätys ja illan ennakko ovat
+ * samaa mieltä. Keskiyön jälkeinen meno, jonka aamu alkaisi jo edellisenä
+ * iltana, ei ole aamun sitoumus: valinta siirtyy seuraavaan menoon.
  *
  * Valinnaiset `wakeTimeLimit` (aikaisin sallittu herätys, esim. jo mennyt
  * hetki) ja `steps` (tämän aamun oma vaihejoukko) kulkevat suoraan
@@ -145,13 +158,12 @@ export function morningFor({
   offsetMinutesFn = deviceOffsetMinutes, wakeTimeLimit = null, steps = undefined
 } = {}) {
   if (!isIsoDate(wakeDate)) return { commitment: null, morning: null, requiredWake: null };
-  const commitment = firstCommitmentOf(commitmentsOn(listOf(occurrences), wakeDate, departures), profile);
-  const morning = planMorning({
-    dateIso: wakeDate, firstCommitment: commitment, profile, settings, offsetMinutesFn,
-    wakeTimeLimit, steps: Array.isArray(steps) ? steps : undefined
+  const { commitment, plan: morning } = morningOfDay({
+    dateIso: wakeDate, commitments: commitmentsOn(listOf(occurrences), wakeDate, departures), profile, settings,
+    offsetMinutesFn, wakeTimeLimit, steps: Array.isArray(steps) ? steps : undefined
   });
-  // Aamun herätys edellisen päivän puolella (meno heti keskiyön jälkeen)
-  // ei ole tämän yön herätys: silloin käytetään tavallista rytmiä.
+  // Varmistus: herätys edellisen päivän puolella ei ole tämän yön herätys
+  // (morningOfDay ohittaa jo sellaiset menot), joten silloin tavallinen rytmi.
   const requiredWake = morning && morning.wakeDate === wakeDate ? morning.wakeTime : null;
   return { commitment, morning, requiredWake };
 }
@@ -241,7 +253,7 @@ export function calendarInputs(state, {
   });
   const blocks = deriveBlocks({
     occurrences,
-    departureFor: occurrence => departureBlockInput(departures.get(occurrence.id)),
+    departureFor: occurrence => departureBlockInput(departures.get(occurrence.id), offsetMinutesFn),
     sleepSchedules
   });
   return Object.freeze({ occurrences, departures, blocks, sleepSchedules });

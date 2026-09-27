@@ -52,8 +52,8 @@ import { validateMealRhythm } from '../../domain/mealRhythm.js';
 import { MEAL_RULES } from '../../domain/dailyLifeSignalsPolicy.js';
 import { desiredAlarms, alarmEpoch } from '../../domain/alarmPlan.js';
 import { sleepScheduleFor, MIN_SLEEP_TARGET_HOURS, MAX_SLEEP_TARGET_HOURS } from '../../domain/sleepRhythm.js';
-import { expandEventOccurrences, shortDateLabel } from '../../domain/calendar.js';
-import { planDeparture } from '../../domain/departure.js';
+import { shortDateLabel } from '../../domain/calendar.js';
+import { firstCommitmentOn } from '../dailyLifeModel.js';
 import { clockText, durationText, shiftDateIso, epochToWallClock } from '../../domain/wallClock.js';
 
 // ------------------------------------------------------------ säiliöt
@@ -814,31 +814,21 @@ function todayWall(nowMs = Date.now()) {
 }
 
 /**
- * Aamun sitoumukset herätyssuunnitelmalle: kalenterin ajalliset menot ja
- * niiden lähtö- ja valmistautumisajat samalta päivältä. Matka-ajaton meno
- * sitoo aamua alkamisajallaan (alarmPlan vähentää profiilin työmatkan).
+ * Aamun sitoumus herätyssuunnitelmalle kullekin päivälle.
+ *
+ * YKSI LASKENTAPOLKU: sitoumus tulee dailyLifeModel.firstCommitmentOn-
+ * funktiosta (calendarPlan), samasta kuin Tänään-näkymän aamu, kalenterin
+ * unilohkot ja illan ennakko. Oma lähtölaskenta tässä pudotti opitun
+ * matka-ajan ja kotona pidettävän menon säännön (lähtö = alku), joten
+ * esikatselun herätys saattoi olla eri kuin suunnitelman.
  */
-function commitmentsByDate(state, fromIso, days, settings) {
-  const to = shiftDateIso(fromIso, days - 1);
-  if (!to) return {};
-  const events = new Map((state.calendarEvents || []).map(event => [event.id, event]));
-  const places = new Map((state.savedPlaces || []).map(place => [place.id, place]));
+function commitmentsByDate(state, fromIso, days, nowMs) {
   const byDate = {};
-  for (const occurrence of expandEventOccurrences({ events: state.calendarEvents || [], from: fromIso, to })) {
-    if (occurrence.allDay || !occurrence.time) continue;
-    const event = events.get(occurrence.eventId) || null;
-    const place = event && event.placeId ? places.get(event.placeId) || null : null;
-    const plan = planDeparture({ occurrence, event, place, settings, offsetMinutesFn: deviceOffsetMinutes });
-    const sameDay = point => (plan && plan.known && point && point.date === occurrence.date ? point.time : null);
-    if (!byDate[occurrence.date]) byDate[occurrence.date] = [];
-    byDate[occurrence.date].push({
-      id: occurrence.id,
-      title: occurrence.title,
-      startTime: occurrence.time,
-      leaveTime: sameDay(plan && plan.leave),
-      prepareStart: sameDay(plan && plan.prepareStart),
-      category: occurrence.category
-    });
+  const now = new Date(nowMs);
+  for (let index = 0; index < days; index += 1) {
+    const date = shiftDateIso(fromIso, index);
+    const commitment = date ? firstCommitmentOn(date, { state, now }) : null;
+    if (commitment) byDate[date] = [commitment];
   }
   return byDate;
 }
@@ -857,7 +847,7 @@ export function nextAlarmFor(state = getState(), nowMs = Date.now()) {
     days: 2,
     profile: state.profile,
     settings,
-    commitmentsByDate: commitmentsByDate(state, now.date, 2, settings),
+    commitmentsByDate: commitmentsByDate(state, now.date, 2, nowMs),
     sleepLogs: state.sleepLogs || [],
     offsetMinutesFn: deviceOffsetMinutes
   });

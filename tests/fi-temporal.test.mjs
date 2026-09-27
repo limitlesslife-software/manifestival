@@ -214,8 +214,29 @@ test('vuorokaudenaika ratkaisee: iltapäivällä klo 3 = 15:00, illalla klo 8 = 
   for (const [text, expected] of [
     ['iltapäivällä klo 3', '15:00'], ['klo 3 iltapäivällä', '15:00'], ['illalla klo 8', '20:00'], ['klo 8 illalla', '20:00'],
     ['illalla klo 11', '23:00'], ['aamulla klo 8', '08:00'], ['aamulla klo 6', '06:00'], ['yöllä klo 2', '02:00'],
-    ['yöllä klo 11', '23:00'], ['iltapäivällä klo 12', '12:00'], ['illalla klo 12', '12:00']
+    ['yöllä klo 11', '23:00'], ['iltapäivällä klo 12', '12:00']
   ]) assert.equal(timeOf(text), expected, text);
+});
+
+test('KRIITTINEN: kaksitoista yöllä on keskiyö, ei keskipäivä (puoli yksi yöllä = 00:30)', () => {
+  for (const [text, expected] of [
+    ['soita äidille huomenna puoli yksi yöllä', '00:30'], ['lääke klo 12 yöllä', '00:00'],
+    ['varttia vaille yksi yöllä herätys', '00:45'], ['kahdeltatoista yöllä huomenna', '00:00'],
+    ['viittä yli kaksitoista yöllä', '00:05'], ['yöllä klo 12.15', '00:15']
+  ]) {
+    const result = hint(text);
+    assert.equal(result.time, expected, text);
+    assert.equal(result.timeAmbiguous, false, text);
+  }
+  assert.equal(clockFromParts(12, 30, 'yöllä').time, '00:30');
+});
+
+test('kaksitoista illalla ei ole keskipäivä: jäsennin ei väitä aikaa (keskiyö kuuluisi seuraavalle päivälle)', () => {
+  for (const text of ['illalla klo 12', 'klo 12 illalla', 'puoli yksi illalla']) {
+    const result = hint(text);
+    assert.equal(result.time, null, text);
+    assert.equal(result.timeAmbiguous, true, text);
+  }
 });
 
 test('ristiriitainen vuorokaudenaika on epäselvä', () => {

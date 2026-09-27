@@ -52,6 +52,15 @@ export const MAX_LATENESS_SAMPLE_MINUTES = 60;
 export const TIME_BUCKET_MINUTES = 30;
 /** Ehdotukset pyöristetään ylöspäin tämän monikertaan. */
 export const SUGGESTION_STEP_MINUTES = 5;
+/**
+ * Pisin uskottava yksittäinen kuitattu matka (12 h). Kellonajoista laskettu
+ * kesto kulkee keskiyön yli (23.50 -> 0.20 on 30 min), joten väärin päin
+ * kuitatut ajat (lähtö 8.10, perillä 8.09) antaisivat muuten 1439 min
+ * "matkan", ja yksi sellainen siirtäisi opitun lähdön edelliselle päivälle.
+ * Perilläolo ennen lähtöä tai yli 12 h lähdön jälkeen on kirjausvirhe, ei
+ * matka: se ei opeta mitään.
+ */
+export const MAX_OBSERVED_TRIP_MINUTES = 12 * 60;
 
 // ------------------------------------------------------------ apurit
 
@@ -126,13 +135,19 @@ function roundUpToStep(value) {
  * perilläoloaika ovat, kesto on niiden erotus MIINUS kirjattu pysäköinti ja
  * kävely: "Olin perillä" kuitataan ovelta, ja lähtöaika laskee pysäköinnin
  * erikseen -- muuten se tulisi kahteen kertaan.
+ *
+ * MAHDOTON EI OPETA. Perilläolo ennen lähtöä tai yli 12 h lähdön jälkeen
+ * (MAX_OBSERVED_TRIP_MINUTES), samoin yli 12 h kirjattu kesto, on null.
  */
 export function observedTravelMinutes(observation) {
   if (!isObject(observation)) return null;
-  const recorded = intIn(observation.travelMinutes, 1, MAX_TRAVEL_MINUTES);
+  const recorded = intIn(observation.travelMinutes, 1, MAX_OBSERVED_TRIP_MINUTES);
   if (recorded !== null) return recorded;
   if (!isTimeOfDay(observation.actualDeparture) || !isTimeOfDay(observation.arrivalAt)) return null;
+  // Kellotaulun ympäri, jotta keskiyön yli kulkeva matka on oikein. Väärin
+  // päin kuitattu pari kiertäisi lähes vuorokauden: yli 12 h ei ole matka.
   const doorToDoor = ((toMinutes(observation.arrivalAt) - toMinutes(observation.actualDeparture)) + 1440) % 1440;
+  if (doorToDoor > MAX_OBSERVED_TRIP_MINUTES) return null;
   const overhead = intIn(observation.overheadMinutes, 0, MAX_OVERHEAD_MINUTES) ?? 0;
   const travel = doorToDoor - overhead;
   return travel >= 1 ? travel : null;

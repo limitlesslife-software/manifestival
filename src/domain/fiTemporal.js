@@ -134,15 +134,23 @@ function pad2(n) {
  * Ilman vuorokaudenaikaa: 7-12 ja 13-23 ovat selviä (aamu- tai 24 h
  * -oletus), 0 on keskiyö, mutta 1-6 voisi olla yö tai iltapäivä --
  * epäselvä, jäsennin ei väitä mitään.
+ *
+ * KAKSITOISTA YÖLLÄ ON KESKIYÖ: "puoli yksi yöllä" = 00.30 ja "klo 12
+ * yöllä" = 00.00, kuten muutkin yön tunnit nimetyn päivän alussa.
+ * "Klo 12 illalla" on myös keskiyö, mutta se kuuluu SEURAAVAAN päivään,
+ * jota tämä funktio ei voi siirtää: se on epäselvä eikä koskaan keskipäivä,
+ * jottei jäsennin korvaa mallin oikeaa vastausta 12 tuntia väärällä.
  */
 function clock(hour, minute, part) {
   if (!Number.isInteger(hour) || hour < 0 || hour > 23 || !Number.isInteger(minute) || minute < 0 || minute > 59) {
     return { time: null, ambiguous: true, reason: 'invalid' };
   }
   if (part === 'conflict') return { time: null, ambiguous: true, reason: 'daypart_conflict' };
+  if (part === 'evening' && hour === 12) return { time: null, ambiguous: true, reason: 'daypart_conflict' };
 
   let h = hour;
-  if ((part === 'evening' || part === 'afternoon') && h >= 1 && h < 12) h += 12;
+  if (part === 'night' && h === 12) h = 0;
+  else if ((part === 'evening' || part === 'afternoon') && h >= 1 && h < 12) h += 12;
   else if (part === 'night' && h >= 9 && h <= 11) h += 12;
   else if (part === 'morning' && h > 12) return { time: null, ambiguous: true, reason: 'daypart_conflict' };
   else if (part === null && h >= 1 && h <= 6) {
