@@ -56,8 +56,12 @@ export const ALARM_SOURCE = Object.freeze({
   PLAN: 'plan'
 });
 
-/** Aamun katsaus on lyhyt: enintään näin monta virkettä. */
-export const BRIEF_MAX_SENTENCES = 4;
+/**
+ * Aamun katsaus on lyhyt: enintään näin monta virkettä. Viisi, jotta
+ * tervehdys, kellonaika, lähtötavoite, ensimmäinen meno ja aika
+ * aamulenkille mahtuvat (paketin §34 esimerkki + menon nimi).
+ */
+export const BRIEF_MAX_SENTENCES = 5;
 
 /** Lenkistä kerrotaan vasta, kun aikaa on vähintään näin monta minuuttia. */
 export const MIN_RUN_MINUTES = 10;
@@ -379,7 +383,7 @@ export function desiredAlarms(input) {
         wakeTime: time,
         leaveTime: plan ? plan.leaveTime : null,
         commitments: dayCommitments,
-        freeMinutesForRun: null,
+        freeMinutesForRun: runMinutesOf(plan),
         settings
       })
       : null;
@@ -407,6 +411,18 @@ export function desiredAlarms(input) {
     });
   }
   return deepFreeze([...alarms.values()].sort((a, b) => a.forDate.localeCompare(b.forDate)));
+}
+
+/**
+ * Aamun vapaa aika katsauksen lenkkivirkkeelle: aamusuunnitelman väljyys
+ * herätyksestä aamurutiinin alkuun (paketin §34 "Sinulla on aikaa 20
+ * minuutin aamulenkille"). Vain kun aamussa on meno, johon rutiini on
+ * ajoitettu, ja aamu mahtuu: muuten vapaata aikaa ei tiedetä, eikä sitä
+ * keksitä. Alle MIN_RUN_MINUTES jättää morningBrief itse sanomatta.
+ */
+function runMinutesOf(plan) {
+  if (!plan || !plan.commitment || plan.fits !== true) return null;
+  return Number.isInteger(plan.slackMinutes) && plan.slackMinutes > 0 ? plan.slackMinutes : null;
 }
 
 /** Herätyksen hetki kutsujan aikavyöhykkeessä (kesäaikasiirron tiedot mukana). */
