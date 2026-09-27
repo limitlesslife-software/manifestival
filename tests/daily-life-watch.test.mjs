@@ -174,3 +174,27 @@ test('viikkokatsauksen Arki-osio: omista merkinnöistä, ei tekoälylle eikä ta
     assert.equal(/dailyLifeSignals|sleepLogs|wellbeingCheckins|habit/.test(readCode(file)), false, file);
   }
 });
+
+test('KRIITTINEN: yksi laskentapolku — sovelluskerroksessa vain calendarPlan.js johtaa lohkot ja aamun', async () => {
+  // Kalenteri, Tänään, herätys, muistutukset ja illan ennakko saavat saman
+  // lähdön, saman aamun ja samat suojatut lohkot, koska vain yksi moduuli
+  // kutsuu lohko- ja aamumoottoria. Toinen kutsuja olisi toinen totuus.
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const dir = path.join(process.cwd(), 'src', 'app');
+  const files = [];
+  const walk = d => {
+    for (const entry of fs.readdirSync(d, { withFileTypes: true })) {
+      const full = path.join(d, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.name.endsWith('.js')) files.push(full);
+    }
+  };
+  walk(dir);
+  const relative = file => path.relative(process.cwd(), file).split(path.sep).join('/');
+  const callers = files
+    .map(relative)
+    .filter(file => /\b(deriveBlocks|planMorning|sleepSchedulesFor)\s*\(/.test(readCode(file)))
+    .sort();
+  assert.deepEqual(callers, ['src/app/calendarPlan.js']);
+});

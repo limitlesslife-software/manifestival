@@ -947,3 +947,54 @@ a.cal-inline-btn { display:inline-flex; align-items:center; }
   .cal-day-num { width:24px; height:24px; font-size:12px; }
 }
 /* ===== U1 — loppu ===== */
+
+/* ===== U3: Tänään-näkymän arjen kortit — alku ===== */
+/* Seuraava lähtö, aamu, tavat, keskeytykset, avoimet asiat ja huominen
+   (src/app/views/todayDailyLife.js) sekä aikajanan menot ja suojatut
+   lohkot (today.js). Rivit ja painikkeet käyttävät yhteisiä luokkia
+   (.assist-row, .assist-btn, .section-title); tässä vain korttien omat
+   osat. Tila kerrotaan aina tekstinä, ei pelkkänä värinä; napautettavat
+   vähintään 44 px; ei vaakavieritystä 360 px:llä. */
+.td-card { min-width:0; }
+.td-card .section-title:focus-visible, .td-subtitle:focus-visible { outline:2px solid var(--gold); outline-offset:2px; border-radius:6px; }
+.td-phase { font-size:15px; font-weight:800; color:var(--forest); line-height:1.4; margin-bottom:4px; overflow-wrap:anywhere; }
+.td-phase.is-late { color:var(--clay-ink); }
+.td-lines { list-style:none; margin:8px 0 0; padding:0; }
+.td-lines li { font-size:12.5px; color:var(--text-2); line-height:1.55; padding:2px 0; overflow-wrap:anywhere; }
+.td-list { list-style:none; margin:0; padding:0; }
+.td-note { font-size:12.5px; color:var(--text-1); line-height:1.55; background:var(--sage-soft); border-radius:12px;
+  padding:9px 12px; margin:8px 0; overflow-wrap:anywhere; }
+.td-subtitle { font-size:12px; font-weight:800; color:var(--text-2); margin:10px 0 4px; overflow-wrap:anywhere; }
+.td-steps { margin:8px 0 6px; padding-left:20px; }
+.td-steps li { font-size:12.5px; color:var(--text-1); line-height:1.6; overflow-wrap:anywhere; }
+.td-step-time { font-weight:700; color:var(--forest); margin-right:4px; }
+.td-tag { display:inline-block; font-size:10.5px; font-weight:700; color:var(--path-ink); border:1px solid var(--border);
+  border-radius:7px; padding:0 6px; margin-left:4px; }
+.td-facts { display:flex; flex-direction:column; gap:4px; margin:0; }
+.td-fact { display:flex; flex-wrap:wrap; justify-content:space-between; gap:2px 10px; font-size:13px; line-height:1.5; }
+.td-fact dt { color:var(--text-2); font-weight:700; }
+.td-fact dd { margin:0; color:var(--text-1); font-weight:700; min-width:0; overflow-wrap:anywhere; }
+.td-link { display:inline-flex; align-items:center; justify-content:center; text-decoration:none; }
+.td-proposal, .td-picker { margin-top:10px; padding-top:8px; border-top:1px dashed var(--border); min-width:0; }
+.td-changes li { font-size:12.5px; color:var(--text-1); line-height:1.5; padding:5px 0; border-bottom:1px solid var(--border); overflow-wrap:anywhere; }
+.td-reason { display:block; font-size:12px; color:var(--text-2); margin-top:2px; }
+.td-when { font-size:13px; font-weight:700; color:var(--forest); }
+.td-alt { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:6px; padding:6px 0;
+  border-bottom:1px solid var(--border); }
+.td-alt .hint { flex-basis:100%; }
+.td-choices .assist-btn[aria-pressed="true"] { background:var(--forest); color:var(--cream); border-color:var(--forest); }
+.td-interrupt-actions .assist-btn { flex:1 1 96px; }
+/* Aikajana: menot kiinteinä, suojatut lohkot himmeinä ja merkittyinä. */
+.kind-tag { font-size:9px; font-weight:800; letter-spacing:.4px; text-transform:uppercase; color:var(--path-ink);
+  border:1px solid var(--path); border-radius:8px; padding:1px 5px; margin-left:4px; }
+.event-dot { width:22px; height:22px; border-radius:6px; border:1.6px solid var(--forest); flex-shrink:0; display:inline-block; }
+.block-dot { width:22px; height:22px; border-radius:50%; border:1.6px dotted var(--path); flex-shrink:0; display:inline-block; }
+.t-item.t-block { opacity:.72; border-bottom:1px dashed var(--border); }
+.t-item.t-block .t-title { font-weight:600; color:var(--text-2); }
+.t-item.t-event .t-title { font-weight:700; }
+@media (max-width:380px) {
+  .td-phase { font-size:14px; }
+  .td-fact { font-size:12.5px; }
+  .td-interrupt-actions .assist-btn { flex-basis:88px; }
+}
+/* ===== U3 — loppu ===== */

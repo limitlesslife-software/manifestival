@@ -30,6 +30,7 @@ import { initVoice } from './voice.js';
 import { initSearch, closeSearch } from './search.js';
 import { initOnboarding, maybeShowOnboarding } from './onboarding.js';
 import { renderToday, initTodayNavigation } from './views/today.js';
+import { resetTodayDailyLife } from './views/todayDailyLife.js';
 import { renderWeek, initWeekNavigation } from './views/week.js';
 import { initCalendar, renderCalendar, resetCalendarView } from './views/calendar.js';
 import { renderTasks, initTaskForm, closeForm } from './views/tasks.js';
@@ -443,6 +444,8 @@ function onSignedOut() {
   resetPlacesSettings();
   resetDepartureWatch();
   resetDailyLifeActions();
+  // Tänään-korttien avoin valitsin, keskeytyksen esikatselu ja aamuvalinta.
+  resetTodayDailyLife();
   closeAreaForm();
   closeTimeLogDialog();
   stopTimerCrossTabSync();

@@ -21,7 +21,8 @@ import { escapeHtml, WD_FULL, formatLongDate, formatTimeRange, formatDuration } 
 import { categoryLabel } from '../../domain/categories.js';
 import { priorityLabel, priorityTone } from '../../domain/priority.js';
 import { toMinutes, durationOf, deadlineUrgency, urgencyLabel, URGENCY } from '../../domain/task.js';
-import { buildDayPlan, proposeSchedule, DEFAULT_TASK_MINUTES } from '../../domain/scheduler.js';
+import { proposeSchedule, blockKindOf, isEventOccurrence, DEFAULT_TASK_MINUTES } from '../../domain/scheduler.js';
+import { checkinForDate } from '../../domain/wellbeingCheckin.js';
 import { todayFocus, describeFocus } from '../../domain/focus.js';
 import { buildEveningReview, summarizeReview } from '../../domain/review.js';
 import { entryForDate, planningLoadSuggestion, loadStateLabel, assessLoadState } from '../../domain/wellbeing.js';
@@ -33,8 +34,12 @@ import {
   toggleComplete, deleteTask, editTask, acceptProposal,
   skipRoutineOccurrence, restoreRoutineOccurrence, saveWellbeingEntry
 } from '../actions.js';
+import { saveWellbeingCheckin } from '../dailyLifeActions.js';
 import { openEditForm } from './tasks.js';
 import { loadFailureHtml } from './loadNotice.js';
+import {
+  dayPlanFor, calendarRange, modelFor, renderTodayDailyLife, initTodayDailyLife, timelineKindLabel
+} from './todayDailyLife.js';
 
 const ROW_HEIGHT = 66;
 
@@ -42,6 +47,15 @@ const ROW_HEIGHT = 66;
 function nowMinutes() {
   const now = new Date();
   return now.getHours() * 60 + now.getMinutes();
+}
+
+/**
+ * Kalenterin meno (myös edelliseltä päivältä jatkuva osa) tai suojattu
+ * lohko. Näitä ei kuitata eikä muokata tehtävänä: meno on kiinteä, ja
+ * lohko (matka, valmistautuminen, uni ...) on johdettu menosta tai unesta.
+ */
+function isCalendarItem(item) {
+  return Boolean(blockKindOf(item)) || isEventOccurrence(item) || item.continuation === true;
 }
 
 /**
@@ -54,6 +68,9 @@ function nowMinutes() {
  *
  * Sama koskee rutiiniesiintymiä: niitä ei kuitata vaan ohitetaan, joten ne
  * eivät voi olla myöhässä.
+ *
+ * Ja kalenterin menoja sekä suojattuja lohkoja (valmistautuminen, matka,
+ * uni ...): niitä ei kuitata koskaan. Päättynyt meno ei ole "myöhässä".
  */
 export function resolveNowState(items, currentMinutes) {
   if (currentMinutes == null) return { index: -1, status: 'running' };
@@ -82,7 +99,7 @@ export function resolveNowState(items, currentMinutes) {
 
   for (let i = items.length - 1; i >= 0; i--) {
     const item = items[i];
-    if (item.virtual || item.isRoutine || !item.time || item.completed) continue;
+    if (item.virtual || item.isRoutine || !item.time || item.completed || isCalendarItem(item)) continue;
     if (currentMinutes >= endMinuteOf(item, i)) return { index: i, status: 'late' };
   }
 
@@ -124,7 +141,9 @@ const TIMELINE_DOMAINS = Object.freeze(['tasks', 'routines', 'routineExceptions'
 function renderTimeline(container, items, nowState, todayIso) {
   // Epäonnistunut lataus: pelkät automaattiset rivit (herätys, aamutoimet,
   // uni) näyttäisivät päivän tyhjältä, vaikka tehtävät ovat tallessa.
-  if (!items.some(item => !item.virtual)) {
+  // Suojatut lohkot (uni, rauhoittuminen) ovat samanlaisia johdettuja
+  // rivejä: ne eivät kerro, että tehtävät latautuivat.
+  if (!items.some(item => !item.virtual && !blockKindOf(item))) {
     const notice = loadFailureHtml(getState(), TIMELINE_DOMAINS);
     if (notice) {
       container.innerHTML = notice;
@@ -176,6 +195,38 @@ function renderTimeline(container, items, nowState, todayIso) {
           <span class="t-title">${escapeHtml(item.title)}</span>
           ${item.note ? `<span class="t-sub">${escapeHtml(item.note)}</span>` : ''}
         </div>
+      </div>`;
+    }
+
+    // Suojattu lohko: valmistautuminen, matka, pysäköinti ja kävely, etuaika,
+    // iltarauhoittuminen ja uni. Ei vapaata aikaa eikä kuitattavaa; laji
+    // kerrotaan tekstinä, ei pelkkänä värinä.
+    if (blockKindOf(item)) {
+      const label = timelineKindLabel(item);
+      const source = item.sourceTitle ? String(item.sourceTitle) : '';
+      return `<div class="t-item t-block ${isNow ? 'now ' + statusClass : ''}" style="height:${ROW_HEIGHT}px">
+        <span class="block-dot" aria-hidden="true"></span>
+        <div class="t-body">
+          <span class="t-time">${escapeHtml(timeLabel)} <span class="kind-tag">${escapeHtml(label)}</span></span>
+          <span class="t-title">${escapeHtml(source || label)}</span>
+          <span class="t-sub">Suojattu aika, ei vapaata</span>
+        </div>
+        ${isNow ? `<span class="now-badge ${statusClass}">${badgeText}</span>` : ''}
+      </div>`;
+    }
+
+    // Kalenterin meno: kiinteä sitoumus, jota ei kuitata eikä siirretä täältä.
+    if (isCalendarItem(item)) {
+      const place = item.locationText ? String(item.locationText) : '';
+      const sub = item.continuation ? 'Jatkuu edelliseltä päivältä' : place;
+      return `<div class="t-item t-event ${isNow ? 'now ' + statusClass : ''}" style="height:${ROW_HEIGHT}px">
+        <span class="event-dot" aria-hidden="true"></span>
+        <div class="t-body">
+          <span class="t-time">${escapeHtml(timeLabel)} <span class="kind-tag">${escapeHtml(timelineKindLabel(item))}</span></span>
+          <span class="t-title">${escapeHtml(item.title)}</span>
+          ${sub ? `<span class="t-sub">${escapeHtml(sub)}</span>` : ''}
+        </div>
+        ${isNow ? `<span class="now-badge ${statusClass}">${badgeText}</span>` : ''}
       </div>`;
     }
 
@@ -382,7 +433,7 @@ function renderProposals(container, result) {
 
 function renderFreeSlots(container, plan) {
   const usable = plan.freeSlots.filter(slot => slot.minutes >= DEFAULT_TASK_MINUTES);
-  if (usable.length === 0 || (plan.load.count === 0 && plan.load.routines === 0)) {
+  if (usable.length === 0 || (plan.load.count === 0 && plan.load.routines === 0 && !plan.load.events)) {
     container.innerHTML = '';
     return;
   }
@@ -433,16 +484,19 @@ function renderCompleted(container, plan) {
 
 function renderWellbeing(container, state, dateIso, plan) {
   const entry = entryForDate(state.wellbeing, dateIso);
+  // Motivaatio ja hallinnan tunne omassa taulussaan (wellbeing_checkins),
+  // samalla päivällä. Puuttuva arvo ei ole nolla: yhtään pistettä ei valita.
+  const checkin = checkinForDate(state.wellbeingCheckins || [], dateIso);
   const suggestion = planningLoadSuggestion({ entry, plan });
   const stateLabel = loadStateLabel(assessLoadState(entry));
 
-  const scale = (name, label, current) => `
+  const scale = (name, label, current, attribute = 'data-wb-metric') => `
     <div class="wb-metric">
       <span class="wb-label">${escapeHtml(label)}</span>
       <div class="wb-scale" role="radiogroup" aria-label="${escapeHtml(label)}">
         ${[1, 2, 3, 4, 5].map(value => `
-          <button class="wb-dot ${current === value ? 'selected' : ''}"
-                  data-wb-metric="${name}" data-wb-value="${value}"
+          <button type="button" class="wb-dot ${current === value ? 'selected' : ''}"
+                  ${attribute}="${name}" data-wb-value="${value}"
                   role="radio" aria-checked="${current === value ? 'true' : 'false'}"
                   aria-label="${escapeHtml(label)} ${value}">${value}</button>`).join('')}
       </div>
@@ -457,6 +511,8 @@ function renderWellbeing(container, state, dateIso, plan) {
         ${scale('energy', 'Energia', entry ? entry.energy : null)}
         ${scale('mood', 'Mieliala', entry ? entry.mood : null)}
         ${scale('stress', 'Kuormitus', entry ? entry.stress : null)}
+        ${scale('motivation', 'Motivaatio', checkin ? checkin.motivation : null, 'data-wb-checkin')}
+        ${scale('control', 'Hallinnan tunne', checkin ? checkin.control : null, 'data-wb-checkin')}
         ${suggestion.suggestion
           ? `<div class="wb-suggestion ${suggestion.actionable ? 'actionable' : ''}">${escapeHtml(suggestion.suggestion)}</div>`
           : ''}
@@ -552,6 +608,12 @@ function attachHandlers(root, dateIso) {
       });
     }));
 
+  // Motivaatio ja hallinnan tunne: yksi rivi päivää kohti, toinen arvo säilyy.
+  root.querySelectorAll('[data-wb-checkin]').forEach(node =>
+    node.addEventListener('click', () => {
+      saveWellbeingCheckin({ date: dateIso, [node.dataset.wbCheckin]: Number(node.dataset.wbValue) });
+    }));
+
   root.querySelectorAll('[data-move-task]').forEach(node =>
     node.addEventListener('click', () => {
       const tomorrow = fmtISO(addDays(getState().viewDate, 1));
@@ -640,6 +702,7 @@ function renderNowNext(container, state, plan, dateIso, todayIso, isToday) {
 /** Renderöi koko päivänäkymä nykytilan perusteella. */
 export function renderToday() {
   const state = getState();
+  const now = new Date();
   const date = state.viewDate;
   const dateIso = fmtISO(date);
   const todayIso = fmtISO(todayMidnight());
@@ -649,19 +712,22 @@ export function renderToday() {
   setText('todayTitle', formatLongDate(date));
   toggle('todayJumpBtn', !isToday);
 
-  const plan = buildDayPlan({
-    tasks: state.tasks,
-    profile: state.profile,
-    dateIso,
+  // Kalenterin menot ja suojatut lohkot (valmistautuminen, matka, uni ...)
+  // ovat aikajanalla eivätkä vapaata aikaa. Sama suunnitelma kuin
+  // keskeytyksen uudelleensuunnittelussa (todayDailyLife.js). Yksi malli
+  // koko piirrolle: sama päivän lähtö lasketaan vain kerran.
+  const model = modelFor(state, now);
+  const plan = dayPlanFor(dateIso, {
+    state,
+    now,
     nowMinutes: isToday ? nowMinutes() : null,
-    routines: state.routines,
-    exceptions: state.routineExceptions,
-    todayIso
+    todayIso,
+    model
   });
 
   // Kuormituschip
   const chip = el('todayLoadChip');
-  if (plan.load.count === 0 && plan.load.routines === 0) {
+  if (plan.load.count === 0 && plan.load.routines === 0 && !plan.load.events) {
     chip.textContent = 'Ei suunniteltua';
     chip.className = 'load-chip tone-sage';
   } else {
@@ -692,19 +758,28 @@ export function renderToday() {
   renderWellbeing(el('todayWellbeing'), state, dateIso, plan);
   renderEveningReview(el('todayReview'), state, dateIso, todayIso);
 
+  // Arjen kortit: seuraava lähtö, aamu, tavat, keskeytykset, avoimet asiat
+  // ja huominen. Omat säiliöt ja kerran kytketyt kuuntelijat.
+  renderTodayDailyLife({ state, now, isToday, plan: isToday ? plan : null, model });
+
   attachHandlers(el('screen-today'), dateIso);
 
   const proposeBtn = maybe('proposeBtn');
   if (proposeBtn) {
     proposeBtn.addEventListener('click', () => {
       const current = getState();
+      // Ehdotus kiertää menot, matkat ja suojatun levon kuten aikajana.
+      const calendar = calendarRange(dateIso, dateIso, { state: current });
       const result = proposeSchedule({
         tasks: current.tasks,
         profile: current.profile,
         dateIso,
         routines: current.routines,
         exceptions: current.routineExceptions,
-        todayIso
+        todayIso,
+        events: calendar.events,
+        blocks: calendar.blocks,
+        nowMinutes: dateIso === todayIso ? nowMinutes() : null
       });
       const container = maybe('proposalContainer');
       renderProposals(container, result);
@@ -724,6 +799,11 @@ export function initTodayNavigation() {
   el('todayPrev').addEventListener('click', () => setViewDate(addDays(getState().viewDate, -1)));
   el('todayNext').addEventListener('click', () => setViewDate(addDays(getState().viewDate, 1)));
   el('todayJumpBtn').addEventListener('click', () => setViewDate(todayMidnight()));
+
+  // Arjen korttien painikkeet: kuuntelija kerran säiliöön (renderHtml ei
+  // kirjoita muuttumatonta merkintää uudelleen, joten solmukohtainen
+  // kytkentä joka piirrossa ei toimisi).
+  initTodayDailyLife();
 
   // Pyyhkäisy vasemmalle/oikealle vaihtaa päivää kosketusnäytöllä.
   const screen = el('screen-today');

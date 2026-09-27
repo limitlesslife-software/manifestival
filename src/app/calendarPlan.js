@@ -133,15 +133,23 @@ function commitmentsOn(occurrences, dateIso, departures) {
  * aamusuunnitelma. Sama logiikka kuin unilohkoissa, jotta kalenteri,
  * Tänään, herätys ja illan ennakko ovat samaa mieltä.
  *
+ * Valinnaiset `wakeTimeLimit` (aikaisin sallittu herätys, esim. jo mennyt
+ * hetki) ja `steps` (tämän aamun oma vaihejoukko) kulkevat suoraan
+ * aamusuunnittelijalle: Tänään-näkymän aamuvalinnat lasketaan tätä samaa
+ * polkua. Herätyksen ja unilohkojen kutsut eivät anna niitä.
+ *
  * @returns {{commitment:object|null, morning:object|null, requiredWake:string|null}}
  */
 export function morningFor({
   wakeDate, occurrences = EMPTY, departures = new Map(), profile = null, settings = null,
-  offsetMinutesFn = deviceOffsetMinutes
+  offsetMinutesFn = deviceOffsetMinutes, wakeTimeLimit = null, steps = undefined
 } = {}) {
   if (!isIsoDate(wakeDate)) return { commitment: null, morning: null, requiredWake: null };
   const commitment = firstCommitmentOf(commitmentsOn(listOf(occurrences), wakeDate, departures), profile);
-  const morning = planMorning({ dateIso: wakeDate, firstCommitment: commitment, profile, settings, offsetMinutesFn });
+  const morning = planMorning({
+    dateIso: wakeDate, firstCommitment: commitment, profile, settings, offsetMinutesFn,
+    wakeTimeLimit, steps: Array.isArray(steps) ? steps : undefined
+  });
   // Aamun herätys edellisen päivän puolella (meno heti keskiyön jälkeen)
   // ei ole tämän yön herätys: silloin käytetään tavallista rytmiä.
   const requiredWake = morning && morning.wakeDate === wakeDate ? morning.wakeTime : null;

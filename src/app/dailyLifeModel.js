@@ -68,11 +68,12 @@ export function departuresOn(dateIso, { state = getState(), now = new Date(), pr
 }
 
 /** Aamun sitoumus, aamusuunnitelma ja vaadittu herätys päivälle. */
-function morningOn(dateIso, { state = getState(), now = new Date() } = {}) {
+function morningOn(dateIso, { state = getState(), now = new Date(), wakeTimeLimit = null, steps } = {}) {
   const { inputs } = inputsOn(dateIso, state, now);
   return morningFor({
     wakeDate: dateIso, occurrences: inputs.occurrences, departures: inputs.departures,
-    profile: state.profile || null, settings: currentLifeSettings(state), offsetMinutesFn: deviceOffsetMinutes
+    profile: state.profile || null, settings: currentLifeSettings(state), offsetMinutesFn: deviceOffsetMinutes,
+    wakeTimeLimit, steps
   });
 }
 
@@ -84,7 +85,14 @@ export function firstCommitmentOn(dateIso, options = {}) {
   return morningOn(dateIso, options).commitment || null;
 }
 
-/** Aamusuunnitelma päivälle (ensimmäinen sitoumus + aamurutiini + uni). */
+/**
+ * Aamusuunnitelma päivälle (ensimmäinen sitoumus + aamurutiini + uni).
+ *
+ * Valinnaiset `wakeTimeLimit` ('HH:MM', aikaisin herätys ilman käyttäjän
+ * valintaa, esim. jo mennyt hetki) ja `steps` (tämän aamun oma vaihejoukko)
+ * kulkevat suoraan aamusuunnittelijalle: Tänään-näkymän valinnat lasketaan
+ * samaa polkua, eivät omalla laskennallaan.
+ */
 export function morningPlanOn(dateIso, options = {}) {
   return morningOn(dateIso, options).morning || null;
 }
