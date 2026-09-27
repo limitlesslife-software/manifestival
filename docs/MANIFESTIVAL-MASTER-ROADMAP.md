@@ -80,7 +80,7 @@ PERSONAL_USE_P1 (ensimmäiset viikot), **P2** = PERSONAL_USE_P2, **CL** = COMMER
 | Terveys | Terveysdata ja puettavat (Health Connect) | P2 | ARCHITECTURE_ONLY | — | `domain/healthData.js` sopimus; ei palvelua |
 | Talous | Talous 2.0: tapahtumat, budjetti, laskut, kuitit, säästöt | P2 | COMPLETE_LOCAL | F (tuotannossa) | `docs/FINANCE-2.0.md` |
 | Talous | Rahan suunta ja ostos työtunteina | P2 | COMPLETE_LOCAL | K | Talous → Säästötavoitteet → Ostos omana aikana (`views/purchaseCheck.js`, oma tunnin arvo); Talous → Budjetti → Harkinnanvarainen käyttö omaa kuukausirajaa vasten (`views/discretionaryLimit.js`, raja laitteella kunnes tilisarake on migraatiossa) ja sama vertailu katsauksen Arki-osiossa |
-| Talous | Sijoitukset (oma kirjanpito) | P2 | COMPLETE_LOCAL | F | `docs/INVESTMENTS-ARCHITECTURE.md` |
+| Talous | Sijoitukset (oma kirjanpito) | P2 | COMPLETE_LOCAL | F | `docs/INVESTMENTS-ARCHITECTURE.md`; oma tavoitearvo lomakkeessa ja rivillä (`targetComparison`); omat hälytykset vain domainissa (`evaluateUserAlerts`), ei tallennusta eikä näkymää |
 | Talous | Automaattinen kurssiseuranta | P2 | BLOCKED_EXTERNAL_PROVIDER | — | `domain/marketData.js` palauttaa UNKNOWN |
 | Talous | Pankkiyhteys | CL | BLOCKED_EXTERNAL_PROVIDER | — | PSD2-palvelu ja sopimus puuttuvat |
 | Oppiminen | Selitettävä personointi (käyttäjä hyväksyy) | P1 | COMPLETE_LOCAL | K | oppiminen ehdottaa, ei koskaan muuta itse |
