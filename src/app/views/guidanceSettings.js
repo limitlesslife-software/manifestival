@@ -21,9 +21,9 @@ import { hasTable, isTableAvailable } from '../../data/schema.js';
 import { serverUnavailableHintHtml } from '../schemaStatus.js';
 import {
   GUIDANCE_STYLES, guidanceStyleLabel, GUIDANCE_STYLE, DELIVERIES, deliveryLabel,
-  REMINDER_TOPICS, reminderTopicLabel
+  REMINDER_TOPICS, reminderTopicLabel, OPTIONAL_TOPIC, DELIVERY_OFF, optionalTopicLabel
 } from '../../domain/dailyLife.js';
-import { deliveryFor, DEFAULT_DIGEST_TIME } from '../../domain/lifeSettings.js';
+import { deliveryFor, topicOff, DEFAULT_DIGEST_TIME } from '../../domain/lifeSettings.js';
 import { remindersOffHintHtml, openReminderSettings } from './notificationSettings.js';
 
 const CONTAINER = 'guidanceSettings';
@@ -35,6 +35,17 @@ const STYLE_HINTS = Object.freeze({
   [GUIDANCE_STYLE.ACTIVE]: 'Ennakkomuistutukset tulevat hieman aiemmin, ja lähtömuistutus toistetaan kerran '
     + 'kolmen minuutin päästä, jos et kuittaa sitä.'
 });
+
+/**
+ * Hyvinvoinnin valinnaiset aiheet, jotka voi kytkeä kokonaan pois (aalto L).
+ * Vain aiheet, joilla on muistutuksia: ateriarytmi (ateriat, vesi,
+ * lisäravinteet) ja tapojen muutos. Liikunta ja kirjauskehotteet ovat
+ * politiikassa valmiina (notificationPolicy.optionalTopicOf), mutta niille ei
+ * vielä synny muistutuksia, joten valintaa ei näytetä turhaan.
+ */
+export const GUIDANCE_OPTIONAL_TOPICS = Object.freeze([
+  OPTIONAL_TOPIC.MEAL, OPTIONAL_TOPIC.WATER, OPTIONAL_TOPIC.SUPPLEMENT, OPTIONAL_TOPIC.HABIT
+]);
 
 const TIME = /^([01]\d|2[0-3]):([0-5]\d)$/;
 const textOf = value => String(value ?? '').trim();
@@ -57,10 +68,13 @@ export function resetGuidanceSettings() {
 function savedValues(settings) {
   const delivery = {};
   for (const topic of REMINDER_TOPICS) delivery[topic] = deliveryFor(settings, topic);
+  const topicsOff = {};
+  for (const topic of GUIDANCE_OPTIONAL_TOPICS) topicsOff[topic] = topicOff(settings, topic);
   return {
     style: settings.guidanceStyle,
     speech: settings.speechEnabled === true,
     delivery,
+    topicsOff,
     digest: settings.digestEnabled === true,
     digestTime: settings.digestTime || DEFAULT_DIGEST_TIME
   };
@@ -75,6 +89,11 @@ function readForm() {
     const select = root.querySelector(`#gsDelivery-${topic}`);
     delivery[topic] = select ? select.value : null;
   }
+  const topicsOff = {};
+  for (const topic of GUIDANCE_OPTIONAL_TOPICS) {
+    const box = root.querySelector(`#gsTopic-${topic}`);
+    topicsOff[topic] = box ? !box.checked : false;
+  }
   const speech = root.querySelector('#gsSpeech');
   const digest = root.querySelector('#gsDigest');
   const time = root.querySelector('#gsDigestTime');
@@ -82,6 +101,7 @@ function readForm() {
     style: chosen ? chosen.value : null,
     speech: Boolean(speech && speech.checked),
     delivery,
+    topicsOff,
     digest: Boolean(digest && digest.checked),
     digestTime: time ? String(time.value ?? '') : ''
   };
@@ -108,12 +128,26 @@ export function validateGuidanceDraft(value) {
 /** Tarkistettu luonnos tallennettaviksi muutoksiksi. */
 export function guidanceChangesFrom(value, current) {
   const time = textOf(value.digestTime);
+  // Kaikki aiheet aina: asetusten yhdistäminen on kentittäistä, joten
+  // pois jätetty aihe jättäisi vanhan valinnan voimaan.
+  const delivery = Object.fromEntries(REMINDER_TOPICS.map(topic => [topic, value.delivery[topic]]));
+  // Aalto L: valinnainen aihe kokonaan pois ('off'). Päälle/pois-aihe
+  // kirjoitetaan aina ('on' poistuu normalisoinnissa), jotta kentittäinen
+  // yhdistäminen voi kytkeä sen takaisin päälle.
+  if (value.topicsOff && typeof value.topicsOff === 'object') {
+    for (const topic of GUIDANCE_OPTIONAL_TOPICS) {
+      const off = value.topicsOff[topic] === true;
+      if (REMINDER_TOPICS.includes(topic)) {
+        if (off) delivery[topic] = DELIVERY_OFF;
+      } else {
+        delivery[topic] = off ? DELIVERY_OFF : 'on';
+      }
+    }
+  }
   return {
     guidanceStyle: value.style,
     speechEnabled: value.speech === true,
-    // Kaikki aiheet aina: asetusten yhdistäminen on kentittäistä, joten
-    // pois jätetty aihe jättäisi vanhan valinnan voimaan.
-    delivery: Object.fromEntries(REMINDER_TOPICS.map(topic => [topic, value.delivery[topic]])),
+    delivery,
     digestEnabled: value.digest === true,
     digestTime: TIME.test(time) ? time : (current && current.digestTime) || DEFAULT_DIGEST_TIME
   };
@@ -162,6 +196,28 @@ function deliveryHtml(values) {
     <div class="form-row">${rows}</div>`;
 }
 
+/**
+ * Hyvinvoinnin valinnaiset aiheet: päälle/pois. Hyvinvointi on tukea, ei
+ * tehtävälista — sanamuoto kertoo sen, eikä mitään vaadita.
+ */
+function optionalTopicsHtml(values) {
+  const off = values.topicsOff || {};
+  const rows = GUIDANCE_OPTIONAL_TOPICS.map(topic => `
+      <label class="checkbox-row" for="gsTopic-${topic}">
+        <input type="checkbox" id="gsTopic-${topic}" data-optional-topic="${topic}" aria-describedby="gsTopicsHint"`
+    + `${off[topic] === true ? '' : ' checked'}>
+        ${escapeHtml(optionalTopicLabel(topic))}
+      </label>`).join('');
+  return `<fieldset class="ds-fieldset">
+      <legend class="field-label">Hyvinvoinnin muistutukset (valinnaisia)</legend>
+      ${rows}
+      <div class="hint" id="gsTopicsHint">Hyvinvointi on valinnaista tukea, ei tehtävälista. Poista valinta, niin sen aiheen
+        muistutuksia ei tule lainkaan. Vesitauot ja lisäravinteet kootaan päivän koosteeseen, kun kooste on päällä.
+        Raskaana päivänä (stressi 4–5 tai energia 1–2) tai ylikuormitetulla viikolla nämä kevenevät: ne siirtyvät
+        koosteeseen tai jäävät pois. Lähtö, herätys ja määräajat tulevat aina.</div>
+    </fieldset>`;
+}
+
 function guidanceHtml(settings, state) {
   const values = draft || savedValues(settings);
   const timeError = errors.digestTime;
@@ -177,6 +233,7 @@ function guidanceHtml(settings, state) {
     <div class="hint" id="gsSpeechHint">Kun puhe on pois päältä, puheeksi valitut muistutukset tulevat äänimerkkinä.
       Selaimessa puhe kuuluu vain, kun sovellus on auki.</div>
     ${deliveryHtml(values)}
+    ${optionalTopicsHtml(values)}
     <label class="checkbox-row" for="gsDigest">
       <input type="checkbox" id="gsDigest" aria-describedby="gsDigestHint"${values.digest ? ' checked' : ''}>
       Päivän kooste

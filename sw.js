@@ -200,6 +200,7 @@ const SHELL = [
   '/src/domain/lifeLoad.js',
   '/src/domain/protectedTime.js',
   '/src/domain/weeklyPlan.js',
+  '/src/domain/driftSignals.js',
   '/src/app/capacityBrake.js',
   '/src/app/lifeLoadModel.js',
   '/src/app/mentalLoadActions.js',
