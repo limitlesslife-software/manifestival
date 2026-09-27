@@ -134,8 +134,12 @@ export function selectTravelEstimate(input) {
   const learnedCount = learned && Number.isInteger(learned.count) ? learned.count : 0;
   const learnedUsable = place.useLearned === true && learnedCount >= MIN_LEARNED_OBSERVATIONS
     && learnedP80 !== null && learnedMedian !== null;
+  // Viikonpäivään ja lähtöaikaan tarkentunut luku kertoo rajauksensa
+  // (commuteLearning.learnedCommuteFor: "maanantaisin klo 7.30–8.00 lähteneet").
+  const learnedScope = learned && typeof learned.scopeText === 'string' && learned.scopeText.trim()
+    ? `${learned.scopeText.trim().slice(0, 80)}, ` : '';
   const learnedText = learnedUsable
-    ? `omien matkojesi perusteella (${learnedCount} matkaa) tavallisesti ${learnedMedian} min`
+    ? `omien matkojesi perusteella (${learnedScope}${learnedCount} matkaa) tavallisesti ${learnedMedian} min`
       + (learnedP80 > learnedMedian ? `, varman päälle ${learnedP80} min` : '')
     : '';
 

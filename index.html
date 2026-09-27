@@ -1393,6 +1393,8 @@
       <!-- ---- Budjetti ---- -->
       <div id="budgetSection" style="display:none;">
         <div id="budgetContainer"></div>
+        <!-- Harkinnanvarainen käyttö suhteessa omaan kuukausirajaan (views/discretionaryLimit.js). -->
+        <div id="discretionaryLimitContainer"></div>
       </div>
 
       <!-- ---- Laskut ---- -->
@@ -1668,6 +1670,13 @@
           <div>
             <label class="field-label" for="ifValuedOn">Milloin arvo on kirjattu</label>
             <input type="date" id="ifValuedOn">
+          </div>
+
+          <div>
+            <label class="field-label" for="ifTargetValue">Tavoitearvo (valinnainen)</label>
+            <input type="text" id="ifTargetValue" inputmode="decimal" placeholder="esim. 5000" autocomplete="off" aria-describedby="ifTargetValueHint">
+            <p class="hint" id="ifTargetValueHint">Oma tavoitteesi koko omistuksen arvolle. Verrataan vain käsin kirjattuun arvoon; tyhjä poistaa tavoitteen.</p>
+            <div class="field-error" id="ifTargetValueMinorError"></div>
           </div>
 
           <div>

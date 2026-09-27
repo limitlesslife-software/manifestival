@@ -258,6 +258,7 @@ const SHELL = [
   '/src/app/dayReplanActions.js',
   '/src/app/views/purchaseCheck.js',
   '/src/app/views/setupChecklist.js',
+  '/src/app/views/discretionaryLimit.js',
   '/src/styles.css',
   '/src/ui/confirm.js',
   '/src/ui/dom.js',

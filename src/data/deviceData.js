@@ -113,7 +113,8 @@ export const DEVICE_STORAGE = Object.freeze([
     prefix: 'manifestival.userPrefs.v1.',
     owner: 'src/data/preferences.js',
     contains: 'Käyttäjäkohtaiset liput (USER_DEFAULTS): ensikäytön opastus nähty, '
-      + 'Suunnan aloituksen ohitetut vaiheet. Ei käyttäjän kirjoittamaa tekstiä',
+      + 'Suunnan aloituksen ohitetut vaiheet, oma harkinnanvarainen kuukausiraja (luku ja valuutta). '
+      + 'Ei käyttäjän kirjoittamaa tekstiä',
     onSignOut: DEVICE_ACTION.KEEP,
     onDelete: DEVICE_ACTION.PURGE
   }),

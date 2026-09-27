@@ -32,6 +32,7 @@ import { renderToday, initTodayNavigation } from './views/today.js';
 import { resetTodayDailyLife } from './views/todayDailyLife.js';
 import { initPurchaseCheck, resetPurchaseCheck } from './views/purchaseCheck.js';
 import { renderSetupChecklist, initSetupChecklist } from './views/setupChecklist.js';
+import { initDiscretionaryLimit, resetDiscretionaryLimit } from './views/discretionaryLimit.js';
 import { renderWeek, initWeekNavigation } from './views/week.js';
 import { initCalendar, renderCalendar, resetCalendarView } from './views/calendar.js';
 import { renderTasks, initTaskForm, closeForm } from './views/tasks.js';
@@ -532,6 +533,7 @@ function onSignedOut() {
   // Tänään-korttien avoin valitsin, keskeytyksen esikatselu ja aamuvalinta.
   resetTodayDailyLife();
   resetPurchaseCheck();
+  resetDiscretionaryLimit();
   closeAreaForm();
   closeTimeLogDialog();
   stopTimerCrossTabSync();
@@ -580,6 +582,7 @@ async function start() {
   initProjectForm();
   initFinanceForms();
   initPurchaseCheck();
+  initDiscretionaryLimit();
   initTransactionForms();
   initInvestmentForms();
   initGoalDetail();

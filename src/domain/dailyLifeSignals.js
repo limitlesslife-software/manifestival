@@ -5,16 +5,18 @@
 // Viikko ja tämä päivä annetaan parametreina.
 //
 // =====================================================================
-// EI KYTKETTY SUUNTAAN
+// VAIN KATSAUKSEN NÄKYMÄÄN — EI ANALYYSIIN, TILANNEKUVAAN EIKÄ TEKOÄLYLLE
 // =====================================================================
 //
-// Nämä havainnot EIVÄT ole analyzeWeek-signaaleja eivätkä kulje Suunnan
-// katsaukseen, tilannekuvaan tai tekoälyn kontekstiin. Muoto on
-// yhteensopiva ({kind, severity, areaId, basis, rule, metrics}), jotta
-// kytkentä onnistuu myöhemmin — mutta jo lajin nimi (esim.
-// sleep_rhythm_drift) on terveystietoa, joten kytkentä vaatii oman
-// suostumuksen, lokisuojauksen ja tekoälyrajauksen (ks.
-// docs/LIFE-ALIGNMENT.md ja alignment-kartoitus, kohta F).
+// Nämä havainnot EIVÄT ole analyzeWeek-signaaleja. Ainoa kytkentä on
+// viikkokatsauksen Arki-osio (src/app/views/direction.js dailyLifeRows),
+// joka piirtää evaluationText-tekstit ruudulle. Ne eivät kulje Suunnan
+// tilannekuvaan (alignmentReview), tekoälyn kontekstiin eivätkä lokiin.
+// Muoto on yhteensopiva ({kind, severity, areaId, basis, rule, metrics}),
+// mutta jo lajin nimi (esim. sleep_rhythm_drift) on terveystietoa, joten
+// laajempi kytkentä vaatii oman suostumuksen, lokisuojauksen ja
+// tekoälyrajauksen (ks. docs/LIFE-ALIGNMENT.md ja alignment-kartoitus,
+// kohta F).
 //
 // =====================================================================
 // TUNTEMATON EI OLE "EI HAVAINTOA"
@@ -35,8 +37,9 @@
 // omat merkinnät ovat harvoja ja kertovat vain osan.
 
 import {
-  SLEEP_SIGNAL_RULES, WELLBEING_SIGNAL_RULES, WELLBEING_RULES
+  SLEEP_SIGNAL_RULES, WELLBEING_SIGNAL_RULES, WELLBEING_RULES, MONEY_RULES
 } from './dailyLifeSignalsPolicy.js';
+import { normalizeCurrency } from './money.js';
 import { SLEEP_KIND, MAX_WEEKEND_SHIFT_MINUTES } from './dailyLife.js';
 import { addDaysIso, weekdayOfIso } from './fiTemporal.js';
 import {
@@ -273,8 +276,7 @@ export function sleepRhythmDrift(input) {
     && reported >= SLEEP_SIGNAL_RULES.ATTENTION_MIN_REPORTED_NIGHTS
     ? DAILY_LIFE_SEVERITY.ATTENTION
     : DAILY_LIFE_SEVERITY.INFO;
-  let explanation = `Nukkumaanmeno tai herääminen poikkesi omasta rytmistäsi vähintään `
-    + `${durationText(SLEEP_SIGNAL_RULES.DRIFT_MINUTES)} ${drifted} yönä ${reported} kirjatusta.`;
+  let explanation = driftText(metrics);
   if (direction === 'later') explanation += ' Poikkeamat olivat myöhempään.';
   else if (direction === 'earlier') explanation += ' Poikkeamat olivat aiempaan.';
   const signal = makeSignal(kind, severity, DAILY_LIFE_RULE.SLEEP_DRIFT, { ...metrics, direction }, explanation);
@@ -337,11 +339,7 @@ export function sleepOpportunityLow(input) {
     && reported >= SLEEP_SIGNAL_RULES.ATTENTION_MIN_REPORTED_NIGHTS
     ? DAILY_LIFE_SEVERITY.ATTENTION
     : DAILY_LIFE_SEVERITY.INFO;
-  const subject = measured === reported ? 'Mitattua unta' : measured === 0 ? 'Aikaa unelle' : 'Aikaa unelle tai mitattua unta';
-  const explanation = `${subject} oli keskimäärin ${durationText(meanMinutes)}, kun oma tavoitteesi on `
-    + `${durationText(declared.targetMinutes)}. Vähintään ${durationText(SLEEP_SIGNAL_RULES.SHORTFALL_MINUTES)} `
-    + `tavoitetta lyhyempiä öitä oli ${short} / ${reported} kirjatusta.`;
-  const signal = makeSignal(kind, severity, DAILY_LIFE_RULE.SLEEP_SHORT, metrics, explanation);
+  const signal = makeSignal(kind, severity, DAILY_LIFE_RULE.SLEEP_SHORT, metrics, opportunityText(metrics));
   return evaluation(kind, EVALUATION_STATUS.SIGNAL, { signal, metrics: signal.metrics });
 }
 
@@ -377,10 +375,7 @@ export function wellbeingStrain(input) {
     && counts.reportedDays >= WELLBEING_SIGNAL_RULES.ATTENTION_MIN_REPORTED_DAYS
     ? DAILY_LIFE_SEVERITY.ATTENTION
     : DAILY_LIFE_SEVERITY.INFO;
-  const explanation = `Kuormitus oli korkea (vähintään ${WELLBEING_RULES.HIGH_LOAD_MIN}/5) ja energia `
-    + `(enintään ${WELLBEING_RULES.LOW_ENERGY_MAX}/5) tai hallinnan tunne (enintään ${WELLBEING_RULES.LOW_CONTROL_MAX}/5) `
-    + `matala ${counts.strainedDays} päivänä `
-    + `${counts.reportedDays} merkitystä. Tämä on havainto omista merkinnöistäsi, ei arvio voinnistasi.`;
+  const explanation = `${strainText(metrics)} Tämä on havainto omista merkinnöistäsi, ei arvio voinnistasi.`;
   const signal = makeSignal(kind, severity, DAILY_LIFE_RULE.WELLBEING_STRAIN, metrics, explanation);
   return evaluation(kind, EVALUATION_STATUS.SIGNAL, { signal, metrics: signal.metrics });
 }
@@ -403,7 +398,26 @@ export function moneyOverload(input) {
   const status = discretionaryStatus({
     monthSummary, declaredCapacityMinor, currency, capacityCurrency, mixedCurrencies
   });
-  if (!status) return evaluation(kind, EVALUATION_STATUS.INSUFFICIENT_DATA, { reason: 'sparse_or_mixed_month' });
+  if (!status) {
+    // Syy erikseen, jotta katsaus voi sanoa, mikä puuttuu: harva kuukausi
+    // ei ole "rajassa", eikä eri valuutta ole vertailukelpoinen.
+    const summary = isObject(monthSummary) ? monthSummary : null;
+    const count = summary && Number.isInteger(summary.transactionCount) && summary.transactionCount >= 0
+      ? summary.transactionCount : 0;
+    let reason = 'sparse_or_mixed_month';
+    if (!summary) reason = 'no_month';
+    else if (mixedCurrencies === true) reason = 'mixed_currencies';
+    else if (capacityCurrency !== undefined && capacityCurrency !== null
+      && normalizeCurrency(capacityCurrency) !== normalizeCurrency(currency)) reason = 'currency_mismatch';
+    else if (count < MONEY_RULES.MIN_TRANSACTIONS) reason = 'few_transactions';
+    return evaluation(kind, EVALUATION_STATUS.INSUFFICIENT_DATA, {
+      reason,
+      metrics: {
+        month: summary && typeof summary.month === 'string' ? summary.month : null,
+        transactionCount: count
+      }
+    });
+  }
   if (status.state === DISCRETIONARY_STATE.NO_CAPACITY) {
     return evaluation(kind, EVALUATION_STATUS.NO_REFERENCE, { reason: 'no_declared_capacity' });
   }
@@ -426,6 +440,158 @@ export function moneyOverload(input) {
     explanation
   );
   return evaluation(kind, EVALUATION_STATUS.SIGNAL, { signal, metrics: signal.metrics });
+}
+
+// ------------------------------------------------------------ tekstit
+//
+// Samat lauseet havainnolle ja "selvälle" arviolle: selvä viikko kerrotaan
+// samoilla luvuilla, ei yleisellä "ei huomioita" -lauseella. Luvut tulevat
+// arvion mittareista ja politiikasta, eivät käsin kirjoitetuista vakioista.
+
+function nightsWord(count) {
+  return count === 1 ? '1 yö' : `${count} yötä`;
+}
+
+function daysWord(count) {
+  return count === 1 ? '1 päivä' : `${count} päivää`;
+}
+
+function driftText(metrics) {
+  const limit = durationText(SLEEP_SIGNAL_RULES.DRIFT_MINUTES);
+  if (metrics.driftNights === 0) {
+    return `Nukkumaanmeno ja herääminen poikkesivat omasta rytmistäsi alle ${limit} `
+      + `kaikkina ${metrics.reportedNights} kirjattuna yönä.`;
+  }
+  return `Nukkumaanmeno tai herääminen poikkesi omasta rytmistäsi vähintään ${limit} `
+    + `${metrics.driftNights} yönä ${metrics.reportedNights} kirjatusta.`;
+}
+
+function opportunityText(metrics) {
+  const { measuredNights: measured, reportedNights: reported } = metrics;
+  const subject = measured === reported ? 'Mitattua unta' : measured === 0 ? 'Aikaa unelle' : 'Aikaa unelle tai mitattua unta';
+  return `${subject} oli keskimäärin ${durationText(metrics.meanMinutes)}, kun oma tavoitteesi on `
+    + `${durationText(metrics.targetMinutes)}. Vähintään ${durationText(SLEEP_SIGNAL_RULES.SHORTFALL_MINUTES)} `
+    + `tavoitetta lyhyempiä öitä oli ${metrics.shortNights} / ${reported} kirjatusta.`;
+}
+
+function strainText(metrics) {
+  const rule = `Korkea kuormitus (vähintään ${WELLBEING_RULES.HIGH_LOAD_MIN}/5) yhdessä matalan energian `
+    + `(enintään ${WELLBEING_RULES.LOW_ENERGY_MAX}/5) tai hallinnan tunteen (enintään ${WELLBEING_RULES.LOW_CONTROL_MAX}/5) kanssa`;
+  if (metrics.strainedDays === 0) {
+    return `${rule} ei näkynyt yhdessäkään ${metrics.reportedDays} merkitystä päivästä.`;
+  }
+  return `Kuormitus oli korkea (vähintään ${WELLBEING_RULES.HIGH_LOAD_MIN}/5) ja energia `
+    + `(enintään ${WELLBEING_RULES.LOW_ENERGY_MAX}/5) tai hallinnan tunne (enintään ${WELLBEING_RULES.LOW_CONTROL_MAX}/5) `
+    + `matala ${metrics.strainedDays} päivänä ${metrics.reportedDays} merkitystä.`;
+}
+
+/**
+ * Harva aineisto sanotaan tuntemattomaksi: "2 / 4 yötä, joten tätä ei
+ * tiedetä". Kesken olevalla viikolla vähimmäismäärä voi olla suurempi
+ * kuin kuluneiden päivien määrä — silloin kerrotaan, ettei vielä tiedetä.
+ */
+function insufficientText(subject, reported, windowCount, rules, word) {
+  const reportedCount = Number.isInteger(reported) ? reported : 0;
+  const window = Number.isInteger(windowCount) ? windowCount : 0;
+  const needed = Math.max(rules.minCount, Math.ceil(window * rules.minCoverage));
+  const counts = `${reportedCount} / ${word(needed)}`;
+  if (needed > window) {
+    return `${subject} (${counts}): viikkoa on kulunut vasta ${word(window)}, joten tätä ei vielä tiedetä.`;
+  }
+  return `${subject} (${counts}), joten tätä ei tiedetä.`;
+}
+
+const SLEEP_MINIMUM = Object.freeze({
+  minCount: SLEEP_SIGNAL_RULES.MIN_REPORTED_NIGHTS, minCoverage: SLEEP_SIGNAL_RULES.MIN_COVERAGE
+});
+const WELLBEING_MINIMUM = Object.freeze({
+  minCount: WELLBEING_SIGNAL_RULES.MIN_REPORTED_DAYS, minCoverage: WELLBEING_SIGNAL_RULES.MIN_COVERAGE
+});
+
+/**
+ * Arvion teksti katsaukseen. Jokainen tila sanotaan omana asianaan:
+ *
+ *   signal             havainnon selitys
+ *   clear              samat luvut kuin havainnossa ("0 yönä 5 kirjatusta")
+ *   insufficient_data  "Liian vähän unikirjauksia arvioon (2 / 4 yötä),
+ *                      joten tätä ei tiedetä." — EI koskaan "kaikki hyvin"
+ *   no_reference       oma vertailuluku puuttuu, joten vertailua ei tehdä
+ *
+ * @returns {string|null} null tuntemattomalle arviolle
+ */
+export function evaluationText(evaluationValue) {
+  if (!isObject(evaluationValue)) return null;
+  const { kind, status, reason } = evaluationValue;
+  const metrics = isObject(evaluationValue.metrics) ? evaluationValue.metrics : {};
+  if (status === EVALUATION_STATUS.SIGNAL) {
+    return isObject(evaluationValue.signal) && typeof evaluationValue.signal.explanation === 'string'
+      ? evaluationValue.signal.explanation : null;
+  }
+  if (status === EVALUATION_STATUS.INSUFFICIENT_DATA && reason === 'no_week') {
+    return 'Viikkoa ei voi vielä arvioida, joten tätä ei tiedetä.';
+  }
+  switch (kind) {
+    case DAILY_LIFE_SIGNAL.SLEEP_OPPORTUNITY_LOW:
+      if (status === EVALUATION_STATUS.NO_REFERENCE) {
+        return 'Omaa unitavoitetta ei ole asetettu, joten aikaa unelle ei verrata mihinkään.';
+      }
+      if (status === EVALUATION_STATUS.INSUFFICIENT_DATA) {
+        return insufficientText('Liian vähän unikirjauksia arvioon', metrics.reportedNights, metrics.windowNights,
+          SLEEP_MINIMUM, nightsWord);
+      }
+      return status === EVALUATION_STATUS.CLEAR ? opportunityText(metrics) : null;
+    case DAILY_LIFE_SIGNAL.SLEEP_RHYTHM_DRIFT:
+      if (status === EVALUATION_STATUS.NO_REFERENCE) {
+        return 'Omaa nukkumaanmeno- tai heräämisaikaa ei ole asetettu, joten rytmiä ei verrata mihinkään.';
+      }
+      if (status === EVALUATION_STATUS.INSUFFICIENT_DATA) {
+        return insufficientText('Liian vähän unikirjauksia rytmin arvioon', metrics.reportedNights, metrics.windowNights,
+          SLEEP_MINIMUM, nightsWord);
+      }
+      return status === EVALUATION_STATUS.CLEAR ? driftText(metrics) : null;
+    case DAILY_LIFE_SIGNAL.WELLBEING_STRAIN:
+      if (status === EVALUATION_STATUS.INSUFFICIENT_DATA) {
+        return insufficientText('Liian vähän voinnin merkintöjä arvioon', metrics.reportedDays, metrics.windowDays,
+          WELLBEING_MINIMUM, daysWord);
+      }
+      return status === EVALUATION_STATUS.CLEAR ? strainText(metrics) : null;
+    case DAILY_LIFE_SIGNAL.MONEY_OVERLOAD:
+      return moneyEvaluationText(status, reason, metrics);
+    default:
+      return null;
+  }
+}
+
+/**
+ * Raha kuvataan prosentteina omasta rajasta, ei euroina eikä arvioina
+ * ("liikaa", "tuhlaus"). Harva tai sekavaluuttainen kuukausi on tuntematon.
+ */
+function moneyEvaluationText(status, reason, metrics) {
+  if (status === EVALUATION_STATUS.NO_REFERENCE) {
+    return 'Omaa harkinnanvaraista kuukausirajaa ei ole asetettu (Talous → Budjetti), '
+      + 'joten rahankäyttöä ei verrata mihinkään.';
+  }
+  if (status === EVALUATION_STATUS.INSUFFICIENT_DATA) {
+    if (reason === 'few_transactions') {
+      const count = Number.isInteger(metrics.transactionCount) ? metrics.transactionCount : 0;
+      const recorded = count === 1 ? '1 tapahtuma' : `${count} tapahtumaa`;
+      return `Kuukaudelta on kirjattu vasta ${recorded} (vertailuun tarvitaan vähintään ${MONEY_RULES.MIN_TRANSACTIONS}), `
+        + 'joten tätä ei vielä tiedetä.';
+    }
+    if (reason === 'mixed_currencies') {
+      return 'Harkinnanvaraisissa menoissa on useita valuuttoja, joten vertailua omaan rajaan ei tehdä.';
+    }
+    if (reason === 'currency_mismatch') {
+      return 'Oma kuukausirajasi on eri valuutassa kuin menot, joten vertailua ei tehdä.';
+    }
+    return 'Kuukauden menoja ei voi arvioida, joten tätä ei tiedetä.';
+  }
+  if (status === EVALUATION_STATUS.CLEAR) {
+    return Number.isInteger(metrics.usedPercent)
+      ? `Harkinnanvaraisia menoja on kirjattu ${metrics.usedPercent} % omasta kuukausirajastasi.`
+      : 'Harkinnanvaraisia menoja ei ole kirjattu, ja oma kuukausirajasi on 0.';
+  }
+  return null;
 }
 
 // ------------------------------------------------------------ kooste

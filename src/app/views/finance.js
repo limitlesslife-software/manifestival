@@ -51,6 +51,7 @@ import { FINANCE_SEGMENTS } from '../state.js';
 import { summarizeMonth } from '../../domain/budget.js';
 import { volatileBillFields } from '../../data/schema.js';
 import { renderPurchaseCheck } from './purchaseCheck.js';
+import { renderDiscretionaryLimit } from './discretionaryLimit.js';
 
 /**
  * Tuetut valuutat.
@@ -431,6 +432,7 @@ export function renderFinance() {
   renderExpenses(el('expensesListContainer'), state);
   renderSavings(el('savingsListContainer'), state);
   renderPurchaseCheck();
+  renderDiscretionaryLimit();
   renderTransactionViews();
   renderInvestments();
   syncSegment();

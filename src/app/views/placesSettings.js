@@ -13,8 +13,9 @@
 //
 // OPPIMINEN EHDOTTAA, KÄYTTÄJÄ PÄÄTTÄÄ. Opittu kesto otetaan käyttöön vasta
 // hyväksynnästä (place.useLearned), ja myöhästelyn perusteella ehdotettu
-// muistutuksen aikaistus on kysymys, ei muutos (commuteLearning.js).
-// "Ei nyt" piilottaa ehdotuksen tämän istunnon ajaksi; mitään ei tallenneta.
+// muistutuksen aikaistus tai paikan pidempi valmistautuminen on kysymys,
+// ei muutos (commuteLearning.js). "Ei nyt" piilottaa ehdotuksen tämän
+// istunnon ajaksi; mitään ei tallenneta.
 //
 // TUNTEMATON EI OLE NOLLA. Tyhjä matka-aika näkyy "Matka-aika puuttuu"
 // eikä nollana: nollasta laskettu lähtöaika olisi vale.
@@ -29,8 +30,10 @@ import { renderHtml, singleFlight, setBusy } from '../../ui/dom.js';
 import { success } from '../../ui/toast.js';
 import { escapeHtml } from '../../lib/format.js';
 import { hasTable, isTableAvailable } from '../../data/schema.js';
-import { summarizeCommute, latenessSuggestion, MIN_LEARNING_OBSERVATIONS } from '../../domain/commuteLearning.js';
-import { TRAVEL_MODE, TRAVEL_MODES, travelModeLabel } from '../../domain/travel.js';
+import {
+  summarizeCommute, latenessSuggestion, preparationSuggestion, learnedCommuteBuckets, MIN_LEARNING_OBSERVATIONS
+} from '../../domain/commuteLearning.js';
+import { TRAVEL_MODE, TRAVEL_MODES, DEFAULT_BUFFERS, travelModeLabel } from '../../domain/travel.js';
 import {
   ARRIVAL_BUFFER_CHOICES, MAX_ARRIVAL_BUFFER_MINUTES, MAX_PLACE_NAME_LENGTH, MAX_ADDRESS_LENGTH,
   MAX_TRAVEL_MINUTES, MAX_PREPARATION_MINUTES, MAX_PLACE_ARRIVAL_BUFFER_MINUTES, MAX_OVERHEAD_MINUTES
@@ -60,10 +63,14 @@ let drafts = { place: null, buffer: null };
 /** Istunnon aikana "Ei nyt" -vastauksen saanut ehdotus (ehdotettu minuuttimäärä). */
 let dismissedOffset = null;
 
+/** Paikan valmistautumisehdotus, johon vastattiin "Ei nyt": paikka -> ehdotettu minuuttimäärä. */
+let dismissedPreparation = new Map();
+
 /** Uloskirjautuminen ja testit: luonnokset ja hylätty ehdotus pois (cross-user leak). */
 export function resetPlacesSettings() {
   drafts = { place: null, buffer: null };
   dismissedOffset = null;
+  dismissedPreparation = new Map();
 }
 
 // ------------------------------------------------------------ apurit
@@ -210,17 +217,42 @@ function latenessHtml(state, settings) {
 
 // ------------------------------------------------------------ paikat
 
+/**
+ * Viikonpäivän ja lähtöajan mukaan tarkentuneet luvut
+ * (commuteLearning.learnedCommuteBuckets): sama sääntö kuin lähtöajassa
+ * (calendarPlan.departureForOccurrence), joten tämä selittää, miksi
+ * maanantaiaamun lähtö voi olla aiemmin kuin perjantain.
+ */
+function learnedBucketsHtml(place, state) {
+  const rows = learnedCommuteBuckets(state.commuteObservations, { placeId: place.id });
+  if (rows.length === 0) return '';
+  const items = rows.map(row => {
+    const scope = row.scopeText.charAt(0).toUpperCase() + row.scopeText.slice(1);
+    const safer = row.p80 !== null && row.p80 > row.median ? `, varman päälle ${row.p80} min` : '';
+    return `<li><span>${escapeHtml(scope)}: mediaani ${row.median} min${safer} (${row.count} matkaa)</span></li>`;
+  }).join('');
+  const lead = place.useLearned
+    ? 'Näinä aikoina lähtö lasketaan niiden omista matkoista:'
+    : 'Käyttöön otettuna lähtö tarkentuu näinä aikoina niiden omista matkoista:';
+  return `<p class="assist-reason">${lead}</p>
+      <ul class="lh-aliases">${items}</ul>
+      <p class="assist-reason">Tarkennus tarvitsee vähintään ${MIN_LEARNING_OBSERVATIONS} matkaa samalta `
+    + 'viikonpäivältä ja lähtöajalta (30 min). Muina aikoina käytetään kaikkien matkojen lukua.</p>';
+}
+
 function learningHtml(place, state) {
   const summary = summarizeCommute(state.commuteObservations, { placeId: place.id });
   const id = escapeHtml(place.id);
   if (summary.count >= MIN_LEARNING_OBSERVATIONS && summary.median !== null) {
     const base = `Viimeisten ${summary.count} matkan mediaani oli ${summary.median} min`;
+    const buckets = learnedBucketsHtml(place, state);
     if (place.useLearned) {
       const safer = summary.p80 !== null && summary.p80 > summary.median
         ? ` Lähtö lasketaan ${summary.p80} minuutin mukaan, johon useimmat matkat ovat mahtuneet.`
         : '';
       return `<div class="lh-learning">
           <p class="assist-reason">${base}. Opittu kesto on käytössä.${safer}</p>
+          ${buckets}
           <div class="assist-actions">
             <button type="button" class="assist-btn" data-action="learned-off" data-id="${id}">Käytä omaa arviota</button>
           </div>
@@ -231,6 +263,7 @@ function learningHtml(place, state) {
       : '';
     return `<div class="lh-learning">
         <p class="assist-reason">${base} — käytä tätä?</p>
+        ${buckets}
         <div class="assist-actions">
           <button type="button" class="assist-btn primary" data-action="learned-on" data-id="${id}">Käytä opittua kestoa</button>
           ${setUsual}
@@ -246,6 +279,47 @@ function learningHtml(place, state) {
       + `vähintään ${MIN_LEARNING_OBSERVATIONS}.${meanwhile}</p>`;
   }
   return '';
+}
+
+// ------------------------------------------------------------ valmistautuminen
+//
+// Opittu valmistautumisehdotus paikalle (§19 "learned suggested value"):
+// jos tähän paikkaan lähtö on toistuvasti ollut suunniteltua myöhemmin,
+// ehdotetaan pidempää valmistautumista (commuteLearning.preparationSuggestion).
+// Vain nykyisellä valmistautumisajalla kuitatut lähdöt lasketaan, joten
+// hyväksytty pidennys ei johda heti uuteen ehdotukseen. Kysymys, ei muutos:
+// "Varaa" tallentaa, "Ei nyt" piilottaa tämän istunnon ajaksi.
+
+/** Paikan todellinen valmistautumisaika: oma luku tai kulkutavan oletus (sama kuin lähtömoottorissa). */
+function effectivePreparation(place) {
+  if (Number.isInteger(place.preparationMinutes)) return place.preparationMinutes;
+  const defaults = DEFAULT_BUFFERS[place.travelMode] || DEFAULT_BUFFERS[TRAVEL_MODE.DRIVING];
+  return defaults.preparation;
+}
+
+function preparationProposal(place, state) {
+  const suggestion = preparationSuggestion(state.commuteObservations, {
+    placeId: place.id, currentPreparationMinutes: effectivePreparation(place), onlyAtCurrentPreparation: true
+  });
+  if (!suggestion || dismissedPreparation.get(place.id) === suggestion.suggestedMinutes) return null;
+  return suggestion;
+}
+
+function preparationHtml(place, state) {
+  const suggestion = preparationProposal(place, state);
+  if (!suggestion) return '';
+  const id = escapeHtml(place.id);
+  const name = escapeHtml(place.name);
+  const basis = Number.isInteger(place.preparationMinutes) ? '' : ' Valmistautumiseen on nyt varattu kulkutavan oletus.';
+  return `<div class="lh-summary" role="group" aria-label="Ehdotus valmistautumisesta: ${name}">
+      <p>${escapeHtml(suggestion.message)}</p>
+      <p class="assist-reason">Perustuu ${suggestion.count} viimeisimpään kuittaamaasi lähtöön tähän paikkaan.${basis} `
+    + `Mitään ei muuteta ilman hyväksyntääsi.</p>
+      <div class="assist-actions">
+        <button type="button" class="assist-btn primary" data-action="prep-accept" data-id="${id}" data-value="${suggestion.suggestedMinutes}" aria-label="Varaa valmistautumiseen ${suggestion.suggestedMinutes} min: ${name}">Varaa ${suggestion.suggestedMinutes} min</button>
+        <button type="button" class="assist-btn" data-action="prep-dismiss" data-id="${id}" data-value="${suggestion.suggestedMinutes}" aria-label="Ei nyt: ${name}">Ei nyt</button>
+      </div>
+    </div>`;
 }
 
 function aliasesHtml(place, aliases, index) {
@@ -287,6 +361,7 @@ function placeRowHtml(place, index, state, settings) {
       <div class="assist-meta">${escapeHtml(travelModeLabel(place.travelMode))} · ${travel}</div>
       <div class="assist-meta">${details.join(' · ')}</div>
       ${learningHtml(place, state)}
+      ${preparationHtml(place, state)}
       ${aliasesHtml(place, aliases, index)}
       ${place.note ? `<div class="assist-reason">${escapeHtml(place.note)}</div>` : ''}
       <div class="assist-actions">
@@ -636,6 +711,18 @@ function onClick(container, event) {
         success(`Oma arvio on nyt ${value} min.`);
         focusIn(container, byAction('learned-on', id), byAction('place-edit', id));
       });
+      break;
+    case 'prep-accept':
+      if (!Number.isInteger(value)) break;
+      quick(container, button, () => savePlace({ id, preparationMinutes: value }), () => {
+        success(`Valmistautumiseen varataan nyt ${value} min.`);
+        focusIn(container, byAction('place-edit', id));
+      });
+      break;
+    case 'prep-dismiss':
+      if (Number.isInteger(value)) dismissedPreparation.set(id, value);
+      renderPlacesSettings(container);
+      focusIn(container, byAction('place-edit', id), `#${SECTION_HEADINGS.places}`);
       break;
     case 'alias-delete': {
       const placeId = button.getAttribute('data-place');

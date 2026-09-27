@@ -64,6 +64,7 @@ import { observedTravelMinutes } from '../../domain/commuteLearning.js';
 import { eveningBefore, driftReport, mondayReadiness } from '../../domain/sleepRhythm.js';
 import { CHOICE_KIND } from '../../domain/morningPlanner.js';
 import { status as habitStatus, habitActionText, HABIT_STATE } from '../../domain/habitEngine.js';
+import { MAX_HABIT_EVENT_NOTE_LENGTH } from '../../domain/habit.js';
 import { proposeOpenEndedSlot, groupErrands, DEFAULT_HORIZON_DAYS } from '../../domain/errands.js';
 import { REPLAN_CHANGE } from '../../domain/dayReplan.js';
 import { INTERRUPTION_KIND } from '../../domain/interruptions.js';
@@ -193,6 +194,7 @@ function uiState() {
 /** Uloskirjautuminen: luonnokset pois (main.js onSignedOut). */
 export function resetTodayDailyLife() {
   ui = freshUi();
+  habitNote = freshHabitNote();
   lastContext = null;
 }
 
@@ -928,12 +930,41 @@ function morningCard(model, clockNow) {
 
 // ------------------------------------------------------------ tavat
 
+/** Tilannekentän tunniste: kenttä on auki enintään yhdelle suunnitelmalle kerrallaan. */
+const HABIT_NOTE_INPUT_ID = 'tdHabitNote';
+
+// Kirjauksen valinnainen tilanne tai muistiinpano ("kahvitauko töissä",
+// habit_events.note). Luonnos on istuntoon sidottu ja elää vain tässä
+// moduulissa: ei tilassa, ei lokissa, ei tekoälylle (arkaluonteinen).
+// Merkintä riippuu vain siitä, onko kenttä auki, EI kirjoitetusta
+// tekstistä: näppäily ei piirrä korttia uudelleen, ja piirron jälkeen
+// arvo palautetaan kenttään (syncHabitNoteInput).
+function freshHabitNote() {
+  return { session: sessionSnapshot(), planId: null, text: '' };
+}
+
+let habitNote = freshHabitNote();
+
+function habitNoteState() {
+  if (!isSameSession(habitNote.session)) habitNote = freshHabitNote();
+  return habitNote;
+}
+
+function habitAttrValue(value) {
+  return String(value).replace(/["\\]/g, '\\$&');
+}
+
 function habitCards(state, now) {
+  // Kaikki aktiiviset suunnitelmat, myös "Muu" (yleinen tapa): muistutus
+  // tulee jokaisesta aktiivisesta suunnitelmasta (alarmSync.habitEntries),
+  // joten jokaisen on oltava kirjattavissa. Ennen vain nikotiini näkyi, ja
+  // yleisen tavan edistyminen jäi pysyvästi nollaan.
   const plans = (state.habitPlans || [])
-    .filter(plan => plan && plan.active !== false && plan.kind === HABIT_KIND.NICOTINE)
+    .filter(plan => plan && plan.id && plan.active !== false)
     .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'fi') || String(a.id).localeCompare(String(b.id), 'fi'));
   if (plans.length === 0) return '';
   const nowMs = now.getTime();
+  const note = habitNoteState();
   const rows = plans.map(plan => {
     const current = habitStatus({ plan, events: state.habitEvents || [], nowMs, timeZone: timeZone() });
     if (!current) return '';
@@ -943,16 +974,27 @@ function habitCards(state, now) {
         + (current.dailyTarget !== null ? `, suunnitelmassa ${current.dailyTarget}.` : '.')
       : '';
     const name = plan.name || 'Tapa';
+    const id = escapeHtml(plan.id);
     const button = (action, label) => `<button type="button" class="assist-btn" data-td-action="habit"
-      data-habit-action="${action}" data-plan="${escapeHtml(plan.id)}" aria-label="${escapeHtml(`${label}: ${name}`)}">${escapeHtml(label)}</button>`;
+      data-habit-action="${action}" data-plan="${id}" aria-label="${escapeHtml(`${label}: ${name}`)}">${escapeHtml(label)}</button>`;
+    const noteOpen = note.planId === plan.id;
+    const noteToggle = `<button type="button" class="assist-btn" data-td-action="habit-note" data-plan="${id}"
+      aria-expanded="${noteOpen}" aria-label="${escapeHtml(`Lisää tilanne: ${name}`)}">Lisää tilanne</button>`;
+    const noteField = noteOpen ? `
+        <div class="lh-field td-habit-note">
+          <label class="field-label" for="${HABIT_NOTE_INPUT_ID}">Tilanne tai muistiinpano<span class="visually-hidden">: ${escapeHtml(name)}</span></label>
+          <input id="${HABIT_NOTE_INPUT_ID}" type="text" maxlength="${MAX_HABIT_EVENT_NOTE_LENGTH}" autocomplete="off"
+            data-td-input="habit-note" data-plan="${id}" aria-describedby="${HABIT_NOTE_INPUT_ID}Hint">
+          <p class="hint" id="${HABIT_NOTE_INPUT_ID}Hint">Valinnainen, esimerkiksi mikä sai tarttumaan tapaan. Tallentuu seuraavan kirjauksen mukana vain sinulle.</p>
+        </div>` : '';
     return `
       <li class="assist-row">
         <div class="assist-title">${escapeHtml(name)}</div>
         <p class="td-phase">${escapeHtml(headline || '')}</p>
         ${count ? `<div class="assist-meta">${escapeHtml(count)}</div>` : ''}
         <div class="assist-actions">
-          ${button(HABIT_ACTION.USE, 'Kirjaa nyt')}${button(HABIT_ACTION.DELAY, 'Siirrä 15 min')}${button(HABIT_ACTION.SKIP, 'Ohita')}
-        </div>
+          ${button(HABIT_ACTION.USE, 'Kirjaa nyt')}${button(HABIT_ACTION.DELAY, 'Siirrä 15 min')}${button(HABIT_ACTION.SKIP, 'Ohita')}${noteToggle}
+        </div>${noteField}
       </li>`;
   }).join('');
   return `
@@ -967,10 +1009,20 @@ const recordHabit = singleFlight(async button => {
   const planId = button.dataset.plan;
   const action = button.dataset.habitAction;
   if (!HABIT_ACTIONS.includes(action)) return { ok: false };
+  // Auki oleva tilanne kuuluu vain saman suunnitelman kirjaukseen.
+  const noteDraft = habitNoteState();
+  const note = noteDraft.planId === planId ? noteDraft.text.trim() || null : null;
   setBusy(button, true);
   try {
-    const result = await logHabitEvent({ planId, action, nowIso: new Date().toISOString() });
+    const result = await logHabitEvent({ planId, action, note, nowIso: new Date().toISOString() });
     if (result && result.ok) {
+      // Tilanne tallentui tämän kirjauksen mukana: kenttä sulkeutuu, jottei
+      // sama teksti tartu seuraavaan kirjaukseen.
+      const after = habitNoteState();
+      if (after.planId === planId) {
+        habitNote = freshHabitNote();
+        rerender();
+      }
       const state = getState();
       const nowMs = Date.now();
       const plan = (state.habitPlans || []).find(entry => entry.id === planId) || null;
@@ -984,6 +1036,42 @@ const recordHabit = singleFlight(async button => {
     setBusy(button, false);
   }
 });
+
+/** "Lisää tilanne": avaa kentän tälle suunnitelmalle; uusi painallus sulkee ja hylkää tekstin. */
+function toggleHabitNote(button) {
+  const planId = button.dataset.plan;
+  const opening = habitNoteState().planId !== planId;
+  habitNote = freshHabitNote();
+  if (opening) habitNote.planId = planId;
+  rerender();
+  if (opening) {
+    focusById(HABIT_NOTE_INPUT_ID);
+    return;
+  }
+  const container = maybe('todayHabits');
+  const again = container
+    ? container.querySelector(`[data-td-action="habit-note"][data-plan="${habitAttrValue(planId)}"]`)
+    : null;
+  if (again && typeof again.focus === 'function') again.focus();
+  else focusById('tdHabitsTitle');
+}
+
+/** Näppäily päivittää vain luonnoksen (ei piirtoa, kirjoitus ei katkea). */
+function onHabitNoteInput(event) {
+  const target = event.target;
+  if (!target || target.id !== HABIT_NOTE_INPUT_ID) return;
+  const current = habitNoteState();
+  if (!current.planId || current.planId !== (target.dataset ? target.dataset.plan : null)) return;
+  current.text = String(target.value ?? '').slice(0, MAX_HABIT_EVENT_NOTE_LENGTH);
+}
+
+/** Piirron jälkeen: uudelleen kirjoitettu kenttä saa luonnoksen arvon takaisin. */
+function syncHabitNoteInput() {
+  const current = habitNoteState();
+  if (!current.planId) return;
+  const input = maybe(HABIT_NOTE_INPUT_ID);
+  if (input && input.value !== current.text) input.value = current.text;
+}
 
 // ------------------------------------------------------------ avoimet asiat
 
@@ -1426,6 +1514,8 @@ export function renderTodayDailyLife({
     const html = isToday ? card(id, builders[id]) : '';
     renderHtml(container, html, { fallback: [heading, 'todayTitle'] });
   }
+  // Tapakortin tilanne: uudelleen kirjoitettu kenttä saa kirjoitetun tekstin takaisin.
+  syncHabitNoteInput();
 }
 
 /** Näkymän oma muutos (esikatselu, valinta): piirretään nykyisellä tilalla. */
@@ -1480,6 +1570,7 @@ const ACTIONS = Object.freeze({
   arrived: button => recordArrived(button),
   route: button => openRoute(button),
   habit: button => recordHabit(button),
+  'habit-note': toggleHabitNote,
   'morning-choice': chooseMorning,
   'morning-undo': undoMorning,
   'morning-start': startMorningNow,
@@ -1500,6 +1591,8 @@ const ACTIONS = Object.freeze({
 
 /** Säiliöt, joihin kuuntelija on jo kytketty (sama säiliö ei saa kahta). */
 const wired = new WeakSet();
+/** Tapakortin säiliöt, joihin tilannekentän kuuntelija on jo kytketty. */
+const habitNoteWired = new WeakSet();
 
 /**
  * Kytke korttien painikkeet kerran: kuuntelija on säiliössä, ei piirretyissä
@@ -1524,6 +1617,12 @@ export function initTodayDailyLife() {
           showError('Toiminto ei onnistunut. Yritä uudelleen.');
         });
     });
+  }
+  // Tapakortin tilannekenttä: näppäily luonnokseen (kerran säiliötä kohti).
+  const habits = maybe('todayHabits');
+  if (habits && !habitNoteWired.has(habits)) {
+    habitNoteWired.add(habits);
+    habits.addEventListener('input', onHabitNoteInput);
   }
 }
 

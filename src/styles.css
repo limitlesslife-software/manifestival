@@ -842,6 +842,15 @@ body.is-offline .offline-banner { display:block; }
   font-size:12.5px; color:var(--text-2); padding:2px 0; }
 .lh-aliases li span { min-width:0; overflow-wrap:anywhere; }
 .lh-learning { margin-top:4px; }
+/* Tapakirjaukset rivillä: oletuksena kiinni (tilanne on arkaluonteinen), poisto rivin lopussa. */
+.lh-recent { margin:6px 0 2px; font-size:12.5px; color:var(--text-2); }
+.lh-recent summary { min-height:44px; display:flex; align-items:center; cursor:pointer; font-weight:700; }
+.lh-recent summary:focus-visible { outline:2px solid var(--gold); outline-offset:2px; border-radius:6px; }
+.lh-events { list-style:none; margin:0; padding:0; }
+.lh-event { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:4px 6px;
+  padding:4px 0; border-bottom:1px solid var(--border); }
+.lh-event span { min-width:0; overflow-wrap:anywhere; }
+.lh-event .assist-reason { flex-basis:100%; }
 @media (max-width:380px) {
   .wbh-table { font-size:11.5px; }
   .wbh-table tbody th, .wbh-table tfoot th { width:60px; padding-left:6px; }
@@ -997,6 +1006,11 @@ a.cal-inline-btn { display:inline-flex; align-items:center; }
 .t-item.t-block { opacity:.72; border-bottom:1px dashed var(--border); }
 .t-item.t-block .t-title { font-weight:600; color:var(--text-2); }
 .t-item.t-event .t-title { font-weight:700; }
+/* Tapakortin valinnainen tilanne: yksi tekstikenttä, koko rivin levyinen. */
+.td-habit-note { margin-top:8px; min-width:0; }
+.td-habit-note input { font-family:'Manrope',sans-serif; font-size:13.5px; border:1px solid var(--border); border-radius:10px;
+  padding:9px 11px; min-height:44px; width:100%; max-width:100%; background:var(--cream-card); color:var(--text-1); }
+.td-habit-note input:focus-visible { outline:2px solid var(--gold); outline-offset:2px; }
 @media (max-width:380px) {
   .td-phase { font-size:14px; }
   .td-fact { font-size:12.5px; }
@@ -1022,3 +1036,8 @@ a.cal-inline-btn { display:inline-flex; align-items:center; }
 .setup-row.is-done .setup-mark { color:var(--forest); }
 .setup-label { flex:1; font-weight:600; overflow-wrap:anywhere; }
 .setup-note { font-size:12.5px; color:var(--text-2); }
+
+/* ============ Harkinnanvarainen käyttö (views/discretionaryLimit.js) ============ */
+.discretionary-limit { margin-top:16px; }
+.discretionary-limit input[type="text"] { width:100%; max-width:220px; min-height:44px; }
+.discretionary-limit .dl-status { margin:8px 0 10px; overflow-wrap:anywhere; }
