@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import {
   summarizeCommute, forecastCommute, latenessSuggestion, preparationSuggestion, pruneObservations,
   prunableObservations, timeBucket, observedTravelMinutes, LEARNING_WINDOW, MIN_LEARNING_OBSERVATIONS,
-  LATENESS_WINDOW, MIN_LATENESS_OBSERVATIONS
+  LATENESS_WINDOW, MIN_LATENESS_OBSERVATIONS, MAX_OBSERVED_TRIP_MINUTES
 } from '../src/domain/commuteLearning.js';
 import { ESTIMATE_SOURCE, MAX_OBSERVATIONS_PER_PLACE } from '../src/domain/dailyLife.js';
 
@@ -126,6 +126,27 @@ test('kesto lasketaan lähtö- ja perilläoloajasta, pysäköinti vähennetään
   assert.equal(observedTravelMinutes(obs({ travelMinutes: null, arrivalAt: null })), null);
   assert.equal(observedTravelMinutes(obs({ travelMinutes: 41, actualDeparture: '07:00', arrivalAt: '09:00' })), 41, 'kirjattu voittaa');
   for (const bad of [null, 'x', [], 5]) assert.equal(observedTravelMinutes(bad), null);
+});
+
+test('KRIITTINEN: mahdoton havainto hylätään: perillä ennen lähtöä tai yli 12 h matka ei opeta mitään', () => {
+  const reversed = obs({ travelMinutes: null, actualDeparture: '08:10', arrivalAt: '08:09', overheadMinutes: 0 });
+  assert.equal(observedTravelMinutes(reversed), null, 'kuittaukset väärin päin: ei 1439 min matkaa');
+  assert.equal(observedTravelMinutes(obs({ travelMinutes: null, actualDeparture: '08:00', arrivalAt: '20:30', overheadMinutes: 0 })), null,
+    'yli 12 h lähdöstä: kirjausvirhe, ei matka');
+  assert.equal(observedTravelMinutes(obs({ travelMinutes: null, actualDeparture: '08:00', arrivalAt: '20:00', overheadMinutes: 0 })), MAX_OBSERVED_TRIP_MINUTES);
+  // Perilläolorivi (ei lähtöaikaa), johon on aiemmin tallentunut mahdoton kesto.
+  assert.equal(observedTravelMinutes(obs({ travelMinutes: 1439, actualDeparture: null, arrivalAt: '08:09' })), null,
+    'aiemmin tallentunut mahdoton kesto');
+  assert.equal(observedTravelMinutes(obs({ travelMinutes: null, actualDeparture: '23:50', arrivalAt: '00:20', overheadMinutes: null })), 30,
+    'keskiyön yli kulkeva matka kelpaa');
+  assert.equal(MAX_OBSERVED_TRIP_MINUTES, 720);
+
+  // Kaksi oikeaa matkaa ja yksi mahdoton: opittua kestoa ei vielä ole, eikä lähtö siirry edelliselle päivälle.
+  const list = [obs({ travelMinutes: 30 }), obs({ travelMinutes: 32 }), reversed];
+  const summary = summarizeCommute(list, { placeId: 'work' });
+  assert.deepEqual([summary.count, summary.p80], [2, 32]);
+  const forecast = forecastCommute({ observations: list, placeId: 'work', useLearned: true });
+  assert.equal(forecast.learnedAvailable, false);
 });
 
 test('deterministinen sekoitetulla syötteellä eikä muuta syötettä', () => {
