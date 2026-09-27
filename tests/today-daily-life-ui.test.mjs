@@ -16,7 +16,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createDocument, installDocument, accessibleName } from './helpers/a11yDom.mjs';
+import { createDocument, installDocument, accessibleName, type } from './helpers/a11yDom.mjs';
 import { freezeLocalDate } from './helpers/clock.mjs';
 import { read } from './helpers/sources.mjs';
 import { echoClient } from './helpers/a11ySuunta.mjs';
@@ -304,20 +304,23 @@ test('havaintojen rakentajat: suunniteltu lähtö vain samalta päivältä, peri
 
 // ================================================================ tavat
 
-test('tapakortti: vain aktiivinen nikotiinisuunnitelma; Kirjaa nyt, Siirrä 15 min ja Ohita kirjaavat neutraalisti', async t => {
+test('tapakortti: kaikki aktiiviset suunnitelmat (myös "Muu"); Kirjaa nyt, Siirrä 15 min ja Ohita kirjaavat neutraalisti', async t => {
   const view = mount(t, { time: '12:00' });
   setHabitPlans([
     { id: 'h-gen', kind: 'generic', name: 'Kahvi', minIntervalMinutes: 60, active: true },
     { id: 'h-off', kind: 'nicotine', name: 'Vanha', minIntervalMinutes: 60, active: false },
     { id: 'h1', kind: 'nicotine', name: 'Nikotiini', minIntervalMinutes: 60, dailyTarget: 8, active: true }
   ]);
+  // Muutettu: "Muu"-laji (yleinen tapa) muistuttaa kuten nikotiini
+  // (alarmSync.habitEntries), joten sen on oltava kirjattavissa täältä.
   const rows = view.qa('todayHabits', 'li.assist-row');
-  assert.equal(rows.length, 1, 'yksi kortti: aktiivinen nikotiini');
+  assert.equal(rows.length, 2, 'kaksi riviä: Kahvi ja Nikotiini, tauolla oleva ei näy');
+  assert.doesNotMatch(view.text('todayHabits'), /Vanha/);
   assert.match(view.text('todayHabits'), /Nyt on suunniteltu aika\./);
   assert.match(view.text('todayHabits'), /Tänään 0 kertaa, suunnitelmassa 8\./);
 
-  const click = action => view.q('todayHabits', `[data-habit-action="${action}"]`).click();
-  const use = view.q('todayHabits', '[data-habit-action="use"]');
+  const click = action => view.q('todayHabits', `[data-plan="h1"][data-habit-action="${action}"]`).click();
+  const use = view.q('todayHabits', '[data-plan="h1"][data-habit-action="use"]');
   assert.equal(accessibleName(use), 'Kirjaa nyt: Nikotiini');
   click('use');
   await flush();
@@ -331,6 +334,80 @@ test('tapakortti: vain aktiivinen nikotiinisuunnitelma; Kirjaa nyt, Siirrä 15 m
   assert.ok(getState().habitEvents.every(e => e.planId === 'h1'));
   const text = view.text('todayHabits') + view.doc.getElementById('toastHost').textContent;
   assert.doesNotMatch(text, /retkahd|epäonnist|huono|lipsah/i, 'ei moralisoivaa kieltä');
+});
+
+test('tapakortti: "Muu"-tavan kirjaus ja siirto; tila ja seuraava aika tulevat samasta moottorista', async t => {
+  const view = mount(t, { time: '12:00' });
+  setHabitPlans([{ id: 'h-gen', kind: 'generic', name: 'Kahvi', minIntervalMinutes: 90, dailyTarget: 3, active: true }]);
+  const use = view.q('todayHabits', '[data-plan="h-gen"][data-habit-action="use"]');
+  assert.ok(use, 'yleisellä tavalla on Kirjaa nyt -painike');
+  assert.equal(accessibleName(use), 'Kirjaa nyt: Kahvi');
+  use.click();
+  await flush();
+  assert.deepEqual(getState().habitEvents.map(e => [e.planId, e.action]), [['h-gen', 'use']]);
+  assert.match(view.text('todayHabits'), /Seuraava suunniteltu aika 13\.30/);
+  assert.match(view.text('todayHabits'), /Tänään 1 kerta, suunnitelmassa 3\./);
+  view.q('todayHabits', '[data-plan="h-gen"][data-habit-action="skip"]').click();
+  await flush();
+  assert.deepEqual(getState().habitEvents.map(e => e.action), ['use', 'skip']);
+  assert.equal(getState().habitEvents[1].note, null, 'ilman tilannetta muistiinpano on tyhjä, ei keksitty');
+});
+
+test('tapakortti: valinnainen tilanne kulkee kirjauksen mukana, säilyy taustapiirrossa ja tyhjenee kirjauksen jälkeen', async t => {
+  const view = mount(t, { time: '12:00' });
+  setHabitPlans([
+    { id: 'h1', kind: 'nicotine', name: 'Nikotiini', minIntervalMinutes: 60, active: true },
+    { id: 'h-gen', kind: 'generic', name: 'Kahvi', minIntervalMinutes: 60, active: true }
+  ]);
+  assert.equal(view.byId('tdHabitNote'), null, 'tilannekenttä ei ole auki oletuksena (ei melua)');
+  const toggle = view.q('todayHabits', '[data-td-action="habit-note"][data-plan="h1"]');
+  assert.equal(accessibleName(toggle), 'Lisää tilanne: Nikotiini');
+  assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+  toggle.click();
+  await flush();
+  const input = view.byId('tdHabitNote');
+  assert.ok(input, 'kenttä avautui');
+  assert.equal(view.q('todayHabits', '[data-td-action="habit-note"][data-plan="h1"]').getAttribute('aria-expanded'), 'true');
+  assert.equal(accessibleName(input), 'Tilanne tai muistiinpano: Nikotiini');
+  assert.equal(input.getAttribute('maxlength'), '200');
+  type(input, 'kahvitauko töissä');
+
+  // Taustan uudelleenpiirto (toisen tavan kirjaus muuttaa saman kortin) ei pyyhi kirjoitusta.
+  view.q('todayHabits', '[data-plan="h-gen"][data-habit-action="use"]').click();
+  await flush();
+  assert.equal(getState().habitEvents[0].note, null, 'toisen tavan kirjaus ei saa tätä tilannetta');
+  assert.equal(view.byId('tdHabitNote').value, 'kahvitauko töissä', 'kirjoitus säilyi');
+
+  view.q('todayHabits', '[data-plan="h1"][data-habit-action="use"]').click();
+  await flush();
+  const logged = getState().habitEvents.find(e => e.planId === 'h1');
+  assert.equal(logged.note, 'kahvitauko töissä', 'tilanne tallentui kirjauksen mukana');
+  assert.equal(view.byId('tdHabitNote'), null, 'kenttä sulkeutui kirjauksen jälkeen');
+  view.q('todayHabits', '[data-plan="h1"][data-habit-action="delay"]').click();
+  await flush();
+  assert.equal(getState().habitEvents.filter(e => e.planId === 'h1')[1].note, null, 'sama tilanne ei tartu seuraavaan kirjaukseen');
+
+  // Peruminen: avaa, kirjoita, sulje -> ei tallennu.
+  view.q('todayHabits', '[data-td-action="habit-note"][data-plan="h1"]').click();
+  await flush();
+  type(view.byId('tdHabitNote'), 'ei tallennu');
+  view.q('todayHabits', '[data-td-action="habit-note"][data-plan="h1"]').click();
+  await flush();
+  assert.equal(view.byId('tdHabitNote'), null);
+  view.q('todayHabits', '[data-plan="h1"][data-habit-action="skip"]').click();
+  await flush();
+  assert.ok(getState().habitEvents.every(e => e.note !== 'ei tallennu'), 'suljettu tilanne ei kulje kirjaukseen');
+});
+
+test('tapakortti: tilanne ei jää seuraavalle käyttäjälle (istunto vaihtuu)', async t => {
+  const view = mount(t, { time: '12:00' });
+  setHabitPlans([{ id: 'h1', kind: 'nicotine', name: 'Nikotiini', minIntervalMinutes: 60, active: true }]);
+  view.q('todayHabits', '[data-td-action="habit-note"][data-plan="h1"]').click();
+  await flush();
+  type(view.byId('tdHabitNote'), 'yksityinen');
+  resetTodayDailyLife();
+  renderToday();
+  assert.equal(view.byId('tdHabitNote'), null, 'luonnos ei jäänyt näkyviin');
 });
 
 // ================================================================ keskeytykset

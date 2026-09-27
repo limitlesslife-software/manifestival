@@ -16,7 +16,7 @@ import { freezeLocalDate } from './helpers/clock.mjs';
 import { read } from './helpers/sources.mjs';
 import { parseRules, declarations, px } from './helpers/a11yCss.mjs';
 import { setUser, clearUser } from '../src/data/session.js';
-import { clearAllCollections, habitPlansRepo } from '../src/data/collectionsRepo.js';
+import { clearAllCollections, habitPlansRepo, habitEventsRepo } from '../src/data/collectionsRepo.js';
 import { isTableAvailable } from '../src/data/schema.js';
 import {
   resetState, getState, subscribe, setWellbeing, setWellbeingCheckins, setHabitPlans, setHabitEvents,
@@ -330,6 +330,129 @@ test('epäonnistunut tallennus: tila perutaan, lomake ja kirjoitus jäävät, pa
   assert.equal(save.textContent.trim(), 'Tallenna');
 });
 
+// ================================================================ tapakirjaus
+
+/** Paikallinen seinäkelloaika -> ISO-aikaleima (sama muunnos kuin sovelluksessa laitteen vyöhykkeellä). */
+function localIso(dateIso, time) {
+  const [y, m, d] = dateIso.split('-').map(Number);
+  const [hh, mm] = time.split(':').map(Number);
+  return new Date(y, m - 1, d, hh, mm, 0, 0).toISOString();
+}
+
+test('tapakirjaus: "Muu"-tavan käyttö kirjataan Hyvinvoinnista ajankohdan ja tilanteen kanssa', async t => {
+  const view = mount(t);
+  setHabitPlans([
+    { id: 'h-gen', name: 'Kahvi', kind: 'generic', minIntervalMinutes: 60, dailyTarget: 3, active: true },
+    { id: 'h-off', name: 'Tauolla', kind: 'nicotine', active: false }
+  ]);
+  assert.equal(view.q('[data-action="habit-log"][data-id="h-off"]'), null, 'tauolla olevaa ei kirjata');
+  const open = clickAction(view, 'habit-log', 'h-gen');
+  assert.equal(accessibleName(open), 'Kirjaa: Kahvi');
+  assertSameNode(view.doc.activeElement, view.byId('wbhLogAction'), 'fokus ensimmäiseen kenttään');
+  assert.equal(view.byId('wbhLogAction').value, 'use', 'oletuksena käyttökerta');
+  assert.equal(view.byId('wbhLogDate').value, TODAY, 'oletuksena tänään');
+  assert.equal(view.byId('wbhLogTime').value, '12:00', 'oletuksena nyt');
+  assert.equal(view.byId('wbhLogNote').getAttribute('maxlength'), '200');
+
+  type(view.byId('wbhLogTime'), '10:15');
+  type(view.byId('wbhLogNote'), 'aamukahvi töissä');
+  clickAction(view, 'habitLog-save');
+  await flush();
+
+  const events = getState().habitEvents;
+  assert.equal(events.length, 1);
+  assert.equal(events[0].planId, 'h-gen');
+  assert.equal(events[0].action, 'use');
+  assert.equal(events[0].note, 'aamukahvi töissä');
+  assert.equal(events[0].occurredAt, localIso(TODAY, '10:15'), 'ajankohta laitteen vyöhykkeellä');
+  assert.equal(view.byId('wbhLogAction'), null, 'lomake sulkeutui');
+  assertSameNode(view.doc.activeElement, view.q('[data-action="habit-log"][data-id="h-gen"]'), 'fokus takaisin riville');
+
+  const row = view.q('[data-habit-row="h-gen"]').textContent.replace(/\s+/g, ' ');
+  assert.match(row, /Tänään kirjattu 1 kerta\./, 'edistyminen laskee kirjauksen');
+  assert.match(row, /Viimeisimmät kirjaukset \(1\)/);
+  assert.match(row, /ma 28\.9\. klo 10\.15 · Käyttökerta/);
+  assert.match(row, /aamukahvi töissä/, 'tilanne näkyy omissa kirjauksissa');
+});
+
+test('tapakirjaus: siirto ja ohitus valittavissa; tyhjä tilanne on null eikä tyhjä merkkijono', async t => {
+  const view = mount(t);
+  setHabitPlans([{ id: 'h1', name: 'Nuuska', kind: 'nicotine', minIntervalMinutes: 60, active: true }]);
+  clickAction(view, 'habit-log', 'h1');
+  const options = view.byId('wbhLogAction').querySelectorAll('option').map(option => option.value);
+  assert.deepEqual(options, ['use', 'delay', 'skip']);
+  choose(view.byId('wbhLogAction'), 'skip');
+  type(view.byId('wbhLogNote'), '   ');
+  clickAction(view, 'habitLog-save');
+  await flush();
+  assert.deepEqual(getState().habitEvents.map(e => [e.action, e.note]), [['skip', null]]);
+  assert.match(view.q('[data-habit-row="h1"]').textContent, /Ohitus/);
+});
+
+test('tapakirjaus: tuleva ajankohta ja puuttuva aika ovat kentän virheitä; mitään ei tallennu', async t => {
+  const view = mount(t);
+  setHabitPlans([{ id: 'h1', name: 'Nuuska', kind: 'nicotine', active: true }]);
+  clickAction(view, 'habit-log', 'h1');
+  type(view.byId('wbhLogTime'), '13:30');
+  clickAction(view, 'habitLog-save');
+  await flush();
+  assert.deepEqual(getState().habitEvents, []);
+  assert.match(view.byId('wbhLogTimeError').textContent, /tulevaisuudessa/);
+  assertSameNode(view.doc.activeElement, view.byId('wbhLogTime'), 'fokus virheelliseen kenttään');
+
+  type(view.byId('wbhLogTime'), '');
+  type(view.byId('wbhLogDate'), '2026-09-29');
+  clickAction(view, 'habitLog-save');
+  await flush();
+  assert.deepEqual(getState().habitEvents, []);
+  assert.match(view.byId('wbhLogDateError').textContent, /tulevaisuudessa/);
+  assert.match(view.byId('wbhLogTimeError').textContent, /kellonaika/i);
+
+  // Korjaus: eilinen ilta.
+  type(view.byId('wbhLogDate'), '2026-09-27');
+  type(view.byId('wbhLogTime'), '21:40');
+  clickAction(view, 'habitLog-save');
+  await flush();
+  assert.equal(getState().habitEvents.length, 1);
+  assert.equal(getState().habitEvents[0].occurredAt, localIso('2026-09-27', '21:40'));
+});
+
+test('tapakirjaus: vahingossa tehty kirjaus poistetaan vahvistuksen jälkeen; peruutus säilyttää', async t => {
+  const view = mount(t);
+  setHabitPlans([{ id: 'h1', name: 'Nuuska', kind: 'nicotine', active: true }]);
+  await seed(habitEventsRepo, setHabitEvents, [
+    { id: 'ev1', planId: 'h1', action: 'use', occurredAt: localIso(TODAY, '09:05'), note: null },
+    { id: 'ev2', planId: 'h1', action: 'delay', occurredAt: localIso(TODAY, '11:00'), note: 'palaveri' }
+  ]);
+  const row = view.q('[data-habit-row="h1"]').textContent.replace(/\s+/g, ' ');
+  assert.ok(row.indexOf('klo 11.00') < row.indexOf('klo 9.05'), 'uusin ensin');
+  const recent = view.q('[data-habit-row="h1"] details.lh-recent');
+  assert.equal(recent.open, false, 'kirjaukset (ja tilanteet) ovat oletuksena kiinni');
+  recent.querySelector('summary').click();
+  assert.equal(recent.open, true);
+  const remove = view.q('[data-action="habit-event-delete"][data-id="ev1"]');
+  assert.equal(accessibleName(remove), 'Poista kirjaus ma 28.9. klo 9.05: Nuuska');
+
+  remove.click();
+  await answerConfirm(view.doc, false);
+  assert.equal(getState().habitEvents.length, 2, 'peruutus ei poista');
+  assertSameNode(view.doc.activeElement, view.q('[data-action="habit-event-delete"][data-id="ev1"]'), 'fokus palaa');
+
+  view.q('[data-action="habit-event-delete"][data-id="ev1"]').click();
+  await answerConfirm(view.doc, true);
+  assert.deepEqual(getState().habitEvents.map(e => e.id), ['ev2']);
+  assert.match(view.q('[data-habit-row="h1"]').textContent, /Tänään ei vielä kirjauksia\./, 'edistyminen laskettiin uudelleen');
+  assert.doesNotMatch(view.doc.getElementById('confirmMessage').textContent, /palaveri/, 'tilanne ei näy dialogissa');
+});
+
+test('TURVA: kirjauksen tilanne näkyy tekstinä, ei merkintänä', async t => {
+  const view = mount(t);
+  setHabitPlans([{ id: 'h1', name: 'Nuuska', kind: 'nicotine', active: true }]);
+  setHabitEvents([{ id: 'ev1', planId: 'h1', action: 'use', occurredAt: localIso(TODAY, '09:05'), note: '<img src=x onerror=alert(1)>' }]);
+  assert.equal(view.q('img'), null);
+  assert.ok(view.text().includes('<img src=x onerror=alert(1)>'));
+});
+
 // ================================================================ liikunta
 
 test('liikunta: kirjaus, viikkoyhteenveto, tavoite ja poisto; kestoton kerta ei ole nolla minuuttia', async t => {
@@ -496,9 +619,12 @@ test('saavutettavuus: jokaisella ohjaimella on nimi, painikkeilla tyyppi, numero
   setHabitPlans([{ id: 'h1', name: 'Nuuska', kind: 'nicotine', steps: [{ from: '2026-10-05', intervalMinutes: 120 }] }]);
   setExerciseSessions([{ id: 'x1', date: TODAY, kind: 'Juoksu', actualMinutes: 30 }]);
   setSleepLogs([{ id: 's1', wakeDate: TODAY, actualWake: '07:00' }]);
+  setHabitEvents([{ id: 'ev1', planId: 'h1', action: 'use', occurredAt: '2026-09-28T06:00:00.000Z', note: 'aamu' }]);
   clickAction(view, 'habit-edit', 'h1');
+  clickAction(view, 'habit-log', 'h1');
   clickAction(view, 'exercise-add');
   clickAction(view, 'sleep-add');
+  assert.ok(view.byId('wbhLogAction') && view.q('[data-action="habit-event-delete"]'), 'kirjauslomake ja kirjauslista mukana');
 
   const controls = view.qa('button, input, select, textarea');
   assert.ok(controls.length > 30, `ohjaimia ${controls.length}`);

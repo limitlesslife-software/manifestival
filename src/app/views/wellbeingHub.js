@@ -27,13 +27,15 @@
 
 import { getState, currentLifeSettings } from '../state.js';
 import {
-  saveHabitPlan, deleteHabitPlan, saveExerciseSession, deleteExerciseSession, saveSleepLog
+  saveHabitPlan, deleteHabitPlan, saveExerciseSession, deleteExerciseSession, saveSleepLog,
+  logHabitEvent, deleteHabitEvent
 } from '../dailyLifeActions.js';
 import { deviceOffsetMinutes, deviceTimeZone } from '../deviceTime.js';
 import { serverUnavailableHintHtml } from '../schemaStatus.js';
 import { loadFailureHtml } from './loadNotice.js';
 import { renderHtml, singleFlight } from '../../ui/dom.js';
 import { success } from '../../ui/toast.js';
+import { confirmAction } from '../../ui/confirm.js';
 import { escapeHtml } from '../../lib/format.js';
 import { fmtISO } from '../../lib/datetime.js';
 import { hasTable, isTableAvailable } from '../../data/schema.js';
@@ -41,17 +43,23 @@ import { mergeDays, windowAverages, strainSuggestion } from '../../domain/wellbe
 import { progress as habitProgress, currentStep } from '../../domain/habitEngine.js';
 import { weeklyExercise } from '../../domain/exercise.js';
 import { driftReport, sleepOpportunity, DRIFT_WINDOW_DAYS, REFERENCE_BASIS } from '../../domain/sleepRhythm.js';
-import { HABIT_KIND, DELIVERY, DELIVERIES, deliveryLabel, MAX_HABIT_STEPS } from '../../domain/dailyLife.js';
 import {
-  MAX_HABIT_NAME_LENGTH, MAX_HABIT_INTERVAL_MINUTES, MAX_HABIT_DAILY_TARGET, MAX_HABIT_UNIT_COST_MINOR
+  HABIT_KIND, HABIT_ACTION, HABIT_ACTIONS, DELIVERY, DELIVERIES, deliveryLabel, MAX_HABIT_STEPS
+} from '../../domain/dailyLife.js';
+import {
+  MAX_HABIT_NAME_LENGTH, MAX_HABIT_INTERVAL_MINUTES, MAX_HABIT_DAILY_TARGET, MAX_HABIT_UNIT_COST_MINOR,
+  MAX_HABIT_EVENT_NOTE_LENGTH
 } from '../../domain/habit.js';
+import { HABIT_RULES } from '../../domain/dailyLifeSignalsPolicy.js';
 import {
   MAX_EXERCISE_KIND_LENGTH, MAX_EXERCISE_MINUTES, MAX_EXERCISE_NOTE_LENGTH
 } from '../../domain/exerciseSession.js';
 import { MAX_SLEEP_NOTE_LENGTH } from '../../domain/sleepLog.js';
 import { SCALE_MIN, SCALE_MAX } from '../../domain/wellbeing.js';
 import { parseMoneyToMinor, formatMinorAsInput } from '../../domain/money.js';
-import { clockText, durationText, isoWeekday, shiftDateIso } from '../../domain/wallClock.js';
+import {
+  clockText, durationText, isoWeekday, shiftDateIso, wallClockToEpoch, epochToWallClock
+} from '../../domain/wallClock.js';
 import { isIsoDate } from '../../domain/task.js';
 
 /** Vointihistorian pituus päivinä (tämä päivä mukaan lukien). */
@@ -96,15 +104,18 @@ const SECTION_HEADINGS = Object.freeze({
 /** Säiliöt, joihin kuuntelijat on jo sidottu (kerran kutakin kohti). */
 const bound = new WeakSet();
 
-/** Avoimet lomakkeet. null = lomake kiinni. Ei koskaan sovelluksen tilassa. */
-let drafts = { habit: null, exercise: null, sleep: null };
+/**
+ * Avoimet lomakkeet. null = lomake kiinni. Ei koskaan sovelluksen tilassa.
+ * habitLog = yksittäisen tapakirjauksen lomake (käyttö, siirto, ohitus).
+ */
+let drafts = { habit: null, habitLog: null, exercise: null, sleep: null };
 
 /**
  * Uloskirjautuminen ja testit: keskeneräiset luonnokset pois, jottei
  * edellisen käyttäjän kirjoitus näy seuraavalle (cross-user leak).
  */
 export function resetWellbeingHub() {
-  drafts = { habit: null, exercise: null, sleep: null };
+  drafts = { habit: null, habitLog: null, exercise: null, sleep: null };
 }
 
 // ------------------------------------------------------------ apurit
@@ -425,6 +436,136 @@ function todayUsesText(uses) {
   return uses === 0 ? 'Tänään ei vielä kirjauksia.' : `Tänään kirjattu ${timesText(uses)}.`;
 }
 
+// ------------------------------------------------------------ tapakirjaukset
+//
+// Kirjaus (käyttö, siirto, ohitus) mistä tahansa aktiivisesta
+// suunnitelmasta, myös "Muu"-lajista: muistutus tulee kaikista, joten
+// kaikkien on oltava kirjattavissa. Ajankohta voi olla mennyt ("kirjaan
+// aamun kerran nyt"), ja valinnainen tilanne tai muistiinpano tallentuu
+// kirjauksen mukana (habit_events.note). Tilanne on arkaluonteinen: se
+// näkyy vain omissa kirjauksissa, ei vahvistusdialogissa, lokissa eikä
+// tekoälylle.
+
+/** Viimeisimpiä kirjauksia rivillä enintään. */
+const RECENT_HABIT_EVENTS = 5;
+
+const HABIT_ACTION_LABELS = Object.freeze({
+  [HABIT_ACTION.USE]: 'Käyttökerta',
+  [HABIT_ACTION.DELAY]: `Siirto ${HABIT_RULES.DELAY_MINUTES} min myöhemmäksi`,
+  [HABIT_ACTION.SKIP]: 'Ohitus'
+});
+
+/** Hetken seinäkelloaika laitteen vyöhykkeellä (yksi aikamalli: wallClock.js). */
+function wallOf(epochMs) {
+  return epochToWallClock(epochMs, deviceOffsetMinutes);
+}
+
+/** "ma 28.9. klo 10.15" aikaleimasta, tai '' jos aikaleima on roskaa. */
+function eventWhenText(occurredAt) {
+  const ms = typeof occurredAt === 'string' ? Date.parse(occurredAt) : NaN;
+  const wall = Number.isFinite(ms) ? wallOf(ms) : null;
+  return wall ? `${dateLabel(wall.date)} klo ${clockText(wall.time)}` : '';
+}
+
+/** Suunnitelman uusimmat kirjaukset, uusin ensin. */
+function recentHabitEvents(events, planId) {
+  return (Array.isArray(events) ? events : [])
+    .filter(event => event && event.planId === planId && HABIT_ACTIONS.includes(event.action)
+      && Number.isFinite(Date.parse(event.occurredAt)))
+    .sort((a, b) => Date.parse(b.occurredAt) - Date.parse(a.occurredAt)
+      || String(a.id).localeCompare(String(b.id), 'fi'))
+    .slice(0, RECENT_HABIT_EVENTS);
+}
+
+function recentEventsHtml(plan, state) {
+  const recent = recentHabitEvents(state.habitEvents, plan.id);
+  if (recent.length === 0) return '';
+  const name = escapeHtml(plan.name);
+  const items = recent.map(event => {
+    const when = eventWhenText(event.occurredAt);
+    return `<li class="lh-event">
+        <span>${escapeHtml(when)} · ${escapeHtml(HABIT_ACTION_LABELS[event.action])}</span>
+        ${event.note ? `<span class="assist-reason">${escapeHtml(event.note)}</span>` : ''}
+        <button type="button" class="assist-btn danger" data-action="habit-event-delete" data-id="${escapeHtml(event.id)}" aria-label="Poista kirjaus ${escapeHtml(when)}: ${name}">Poista</button>
+      </li>`;
+  }).join('');
+  return `<details class="lh-recent">
+      <summary>Viimeisimmät kirjaukset (${recent.length})</summary>
+      <ul class="lh-events">${items}</ul>
+    </details>`;
+}
+
+function habitLogDraftFrom(plan, nowMs = Date.now()) {
+  const now = wallOf(nowMs);
+  return {
+    planId: plan.id,
+    action: HABIT_ACTION.USE,
+    date: now ? now.date : todayIso(),
+    time: now ? now.time : '',
+    note: '',
+    errors: {},
+    saving: false,
+    returnFocus: null
+  };
+}
+
+/**
+ * Kirjausluonnos -> logHabitEvent-syöte tai kenttävirheet. Ajankohta
+ * muunnetaan laitteen vyöhykkeellä (wallClockToEpoch); tulevaisuuteen
+ * kirjausta ei tehdä (pieni kellojen ero sallitaan, HABIT_RULES).
+ *
+ * @param {object} draft
+ * @param {{nowMs?:number, offsetMinutesFn?:Function}} [options]
+ */
+export function parseHabitLogDraft(draft, { nowMs = Date.now(), offsetMinutesFn = deviceOffsetMinutes } = {}) {
+  const errors = {};
+  const action = HABIT_ACTIONS.includes(draft.action) ? draft.action : null;
+  if (!action) errors.wbhLogAction = 'Valitse, mitä kirjaat.';
+  const date = String(draft.date || '').trim();
+  const time = String(draft.time || '').trim();
+  const now = epochToWallClock(nowMs, offsetMinutesFn);
+  if (!isIsoDate(date)) errors.wbhLogDate = 'Valitse päivä.';
+  else if (now && date > now.date) errors.wbhLogDate = 'Päivä ei voi olla tulevaisuudessa.';
+  if (!TIME_PATTERN.test(time)) errors.wbhLogTime = 'Anna kellonaika muodossa 14.30.';
+  let occurredAt = null;
+  if (!errors.wbhLogDate && !errors.wbhLogTime) {
+    const at = wallClockToEpoch(date, time, offsetMinutesFn);
+    if (!at) errors.wbhLogTime = 'Ajankohtaa ei voitu lukea.';
+    else if (at.epochMs > nowMs + HABIT_RULES.FUTURE_SKEW_MINUTES * 60 * 1000) {
+      errors.wbhLogTime = 'Ajankohta ei voi olla tulevaisuudessa.';
+    } else {
+      occurredAt = new Date(at.epochMs).toISOString();
+    }
+  }
+  const note = String(draft.note || '').trim().slice(0, MAX_HABIT_EVENT_NOTE_LENGTH);
+  return { errors, input: { planId: draft.planId, action, occurredAt, note: note || null } };
+}
+
+function habitLogFormHtml(draft, plan, today) {
+  const errors = draft.errors;
+  return `<div class="add-form lh-form" role="group" aria-labelledby="wbhLogFormTitle" data-form-root="habitLog">
+      <div class="add-form-title" id="wbhLogFormTitle">Kirjaa: ${escapeHtml(plan.name)}</div>
+      ${selectField({
+        id: 'wbhLogAction', label: 'Mitä kirjaat', value: draft.action, form: 'habitLog', field: 'action', errors,
+        options: HABIT_ACTIONS.map(action => [action, HABIT_ACTION_LABELS[action]])
+      })}
+      <div class="form-row">
+        ${inputField({
+          id: 'wbhLogDate', label: 'Päivä', value: draft.date, form: 'habitLog', field: 'date', errors, type: 'date',
+          required: true, attrs: `max="${today}"`
+        })}
+        ${inputField({ id: 'wbhLogTime', label: 'Kellonaika', value: draft.time, form: 'habitLog', field: 'time', errors, type: 'time', required: true })}
+      </div>
+      ${textareaField({
+        id: 'wbhLogNote', label: 'Tilanne tai muistiinpano (valinnainen)', value: draft.note, form: 'habitLog', field: 'note',
+        maxLength: MAX_HABIT_EVENT_NOTE_LENGTH
+      })}
+      <p class="hint">Esimerkiksi mikä sai tarttumaan tapaan. Näkyy vain sinulle omissa kirjauksissasi.</p>
+      ${formErrorHtml('wbhLogFormError', errors)}
+      ${actionsHtml('habitLog', draft, { removable: false })}
+    </div>`;
+}
+
 function habitRowHtml(plan, state, today, settings) {
   const step = currentStep(plan, today);
   const result = habitProgress({
@@ -437,6 +578,11 @@ function habitRowHtml(plan, state, today, settings) {
   const moneyHint = plan.baselinePerDay === null || plan.unitCostMinor === null
     ? '<div class="assist-reason">Säästöä ei lasketa ilman lähtötasoa ja yksikköhintaa.</div>'
     : '';
+  // Kirjaus vain käytössä olevaan suunnitelmaan (tauolla oleva ei muistuta).
+  const logButton = plan.active !== false
+    ? `<button type="button" class="assist-btn primary" data-action="habit-log" data-id="${id}" aria-label="Kirjaa: ${name}">Kirjaa</button>`
+    : '';
+  const logForm = drafts.habitLog && drafts.habitLog.planId === plan.id ? habitLogFormHtml(drafts.habitLog, plan, today) : '';
   return `<li class="assist-row lh-row" data-habit-row="${id}">
       <div class="assist-title">${name}</div>
       <div class="assist-meta">
@@ -449,10 +595,13 @@ function habitRowHtml(plan, state, today, settings) {
       ${result ? `<div class="assist-meta">${todayUsesText(result.today.uses)}</div>` : ''}
       ${moneyHint}
       <div class="assist-meta">Muistutus: ${escapeHtml(deliveryLabel(plan.reminderDelivery))}</div>
+      ${recentEventsHtml(plan, state)}
       <div class="assist-actions">
+        ${logButton}
         <button type="button" class="assist-btn" data-action="habit-edit" data-id="${id}" aria-label="Muokkaa suunnitelmaa ${name}">Muokkaa</button>
         <button type="button" class="assist-btn danger" data-action="habit-delete" data-id="${id}" aria-label="Poista suunnitelma ${name}">Poista</button>
       </div>
+      ${logForm}
     </li>`;
 }
 
@@ -885,10 +1034,14 @@ function focusFirstInvalid(container, form) {
 }
 
 function formErrorId(form) {
-  return { habit: 'wbhHabitFormError', exercise: 'wbhExerciseFormError', sleep: 'wbhSleepFormError' }[form];
+  return {
+    habit: 'wbhHabitFormError', habitLog: 'wbhLogFormError', exercise: 'wbhExerciseFormError', sleep: 'wbhSleepFormError'
+  }[form];
 }
 
-const FIRST_FIELD = Object.freeze({ habit: '#wbhHabitName', exercise: '#wbhExerciseKind', sleep: '#wbhSleepDate' });
+const FIRST_FIELD = Object.freeze({
+  habit: '#wbhHabitName', habitLog: '#wbhLogAction', exercise: '#wbhExerciseKind', sleep: '#wbhSleepDate'
+});
 
 // ------------------------------------------------------------ toiminnot
 
@@ -964,6 +1117,49 @@ const saveHabit = singleFlight(container => submitDraft(container, 'habit', {
   }
 }));
 
+const saveHabitLog = singleFlight(container => submitDraft(container, 'habitLog', {
+  parse: draft => parseHabitLogDraft(draft),
+  save: logHabitEvent,
+  fields: { action: 'wbhLogAction', occurredAt: 'wbhLogTime', note: 'wbhLogNote' },
+  done(result) {
+    success('Kirjaus tallennettu.');
+    const planId = result.event ? result.event.planId : null;
+    focusIn(container, planId ? `[data-action="habit-log"][data-id="${attrValue(planId)}"]` : null,
+      `#${SECTION_HEADINGS.habits}`);
+  }
+}));
+
+/**
+ * Yksittäisen kirjauksen poisto (esim. vahingossa napautettu). Vahvistus
+ * kertoo ajankohdan ja lajin, EI tilannetta (arkaluonteinen). Peruutuksen
+ * tai epäonnistumisen jälkeen fokus palaa samaan painikkeeseen.
+ */
+const removeHabitEvent = singleFlight(async (container, id, again) => {
+  const event = getState().habitEvents.find(item => item.id === id);
+  if (!event) return;
+  const confirmed = await confirmAction({
+    title: 'Poistetaanko kirjaus?',
+    message: `${eventWhenText(event.occurredAt)} · ${HABIT_ACTION_LABELS[event.action] || 'Kirjaus'}. `
+      + 'Edistyminen lasketaan uudelleen ilman sitä.',
+    confirmLabel: 'Poista',
+    destructive: true
+  });
+  if (!confirmed) {
+    focusIn(container, again);
+    return;
+  }
+  const result = await deleteHabitEvent(id);
+  if (result && result.discarded) return;
+  renderWellbeingHub(container);
+  if (!result || !result.ok) {
+    focusIn(container, again);
+    return;
+  }
+  success('Kirjaus poistettu.');
+  focusIn(container, `[data-action="habit-log"][data-id="${attrValue(event.planId)}"]`,
+    `[data-action="habit-edit"][data-id="${attrValue(event.planId)}"]`, `#${SECTION_HEADINGS.habits}`);
+});
+
 const saveExercise = singleFlight(container => submitDraft(container, 'exercise', {
   parse: parseExerciseDraft,
   save: saveExerciseSession,
@@ -1013,7 +1209,7 @@ const removeEntry = singleFlight(async (container, form, id, again) => {
 });
 
 function headingOf(form) {
-  return SECTION_HEADINGS[form === 'habit' ? 'habits' : form];
+  return SECTION_HEADINGS[form === 'habit' || form === 'habitLog' ? 'habits' : form];
 }
 
 function openerSelector(action, id) {
@@ -1065,6 +1261,17 @@ function onClick(container, event) {
     }
     case 'habit-save': saveHabit(container); break;
     case 'habit-cancel': closeForm(container, 'habit'); break;
+
+    case 'habit-log': {
+      const plan = state.habitPlans.find(item => item.id === id);
+      if (plan && plan.active !== false) openForm(container, 'habitLog', habitLogDraftFrom(plan), openerSelector('habit-log', id));
+      break;
+    }
+    case 'habitLog-save': saveHabitLog(container); break;
+    case 'habitLog-cancel': closeForm(container, 'habitLog'); break;
+    case 'habit-event-delete':
+      removeHabitEvent(container, id, openerSelector('habit-event-delete', id));
+      break;
 
     case 'exercise-add':
       openForm(container, 'exercise', exerciseDraftFrom(null, today), openerSelector('exercise-add'));
@@ -1130,7 +1337,7 @@ function onFieldInput(event) {
   }
 }
 
-const SAVE = Object.freeze({ habit: saveHabit, exercise: saveExercise, sleep: saveSleep });
+const SAVE = Object.freeze({ habit: saveHabit, habitLog: saveHabitLog, exercise: saveExercise, sleep: saveSleep });
 
 /** Enter tekstikentässä tallentaa, Escape sulkee lomakkeen (kuten tehtävälomake). */
 function onKeydown(container, event) {
