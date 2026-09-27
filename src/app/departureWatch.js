@@ -20,7 +20,7 @@ import { noticesRepo } from '../data/collectionsRepo.js';
 import { newTaskId } from '../lib/rows.js';
 import { normalizeNotice, validateNotice, NOTICE_KIND, NOTICE_LEVEL } from '../domain/notificationCenter.js';
 import { recalcDecision, DEPARTURE_PHASE } from '../domain/departure.js';
-import { departuresOn, clockOf } from './dailyLifeModel.js';
+import { departuresLeavingOn, clockOf } from './dailyLifeModel.js';
 import { logEvent } from '../lib/logger.js';
 
 /** Viimeksi kerrottu lähtö esiintymää kohti: { leave, source }. Vain muistissa. */
@@ -40,7 +40,10 @@ function dueNotice({ occurrence, departure }, todayIso) {
   const late = departure.phase === DEPARTURE_PHASE.LATE;
   return normalizeNotice({
     id: newTaskId(),
-    key: `departure|${occurrence.id}|${todayIso}|${late ? 'late' : 'due'}`,
+    // Avaimessa LÄHDÖN päivä, ei kierroksen: keskiyön jälkeisen menon
+    // lähtö on edellisenä iltana, ja sama vaihe saa saman avaimen, ajettiin
+    // kierros ennen tai jälkeen keskiyön.
+    key: `departure|${occurrence.id}|${departure.leave.date}|${late ? 'late' : 'due'}`,
     kind: NOTICE_KIND.LEAVE_NOW,
     level: late ? NOTICE_LEVEL.URGENT : NOTICE_LEVEL.WARNING,
     title: occurrence.title || 'Lähtöaika',
@@ -66,7 +69,9 @@ function changeNotice({ occurrence }, decision, todayIso) {
 }
 
 /**
- * Yksi kierros: tämän päivän menojen lähtövaiheet ja merkittävät muutokset.
+ * Yksi kierros: tänään osuvien lähtöjen vaiheet ja merkittävät muutokset.
+ * Mukana ovat myös huomisen menot, joiden lähtö on jo tänä iltana
+ * (dailyLifeModel.departuresLeavingOn).
  * Ei koskaan heitä; tallennusvirhe ei estä sovelluksen käyttöä.
  *
  * @returns {Promise<{created:number}>}
@@ -76,7 +81,7 @@ export async function runEventDepartureSweep({ now = new Date(), state = getStat
   const created = [];
   let departures = [];
   try {
-    departures = departuresOn(todayIso, { state, now, providerResults });
+    departures = departuresLeavingOn(todayIso, { state, now, providerResults });
   } catch (error) {
     logEvent('departure.watch_failed', { code: 'compute' });
     return { created: 0 };

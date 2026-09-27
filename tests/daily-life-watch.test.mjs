@@ -17,7 +17,9 @@ import { runEventDepartureSweep, resetDepartureWatch } from '../src/app/departur
 import {
   runDailyLifeNotices, eveningBeforeNotice, weekendRhythmNotices, latenessNotice
 } from '../src/app/dailyLifeNotices.js';
-import { departuresOn, firstCommitmentOn, morningPlanOn, sleepScheduleOn } from '../src/app/dailyLifeModel.js';
+import {
+  departuresOn, departuresLeavingOn, firstCommitmentOn, morningPlanOn, sleepScheduleOn
+} from '../src/app/dailyLifeModel.js';
 import { readCode } from './helpers/sources.mjs';
 
 const at = (y, m, d, hh, mm) => new Date(y, m - 1, d, hh, mm);
@@ -58,6 +60,27 @@ test('KRIITTINEN: lähtövaiheista yksi merkintä vaihetta kohti, ei toistoa, ei
   assert.equal((await runEventDepartureSweep({ now: at(2026, 9, 29, 17, 25) })).created, 1, 'myöhässä on oma merkintänsä');
   assert.equal(noticesWith('departure|event:e1:').filter(n => n.level === 'urgent').length, 1);
   assert.equal((await runEventDepartureSweep({ now: at(2026, 9, 29, 18, 50) })).created, 0);
+});
+
+test('KRIITTINEN: keskiyön jälkeisen menon lähtö tänä iltana tarkistetaan jo tänään; avain ei vaihdu keskiyöllä', async () => {
+  // Meno ke 30.9. klo 00.20, matka 40 + etuaika 10 -> lähtö ti 29.9. klo 23.30.
+  setCalendarEvents([{ id: 'n1', title: 'Yölento', date: '2026-09-30', startTime: '00:20', durationMinutes: 60, placeId: 'p1' }]);
+  const tonight = departuresLeavingOn(TODAY, { now: at(2026, 9, 29, 23, 26) });
+  assert.deepEqual(tonight.map(item => item.occurrence.id), ['event:n1:2026-09-30']);
+  assert.deepEqual([tonight[0].departure.leave.date, tonight[0].departure.leave.time], [TODAY, '23:30']);
+  assert.equal(departuresOn(TODAY, { now: at(2026, 9, 29, 23, 26) }).length, 0, 'päivän omat menot pysyvät ennallaan');
+
+  assert.equal((await runEventDepartureSweep({ now: at(2026, 9, 29, 23, 26) })).created, 1, 'lähtö pian jo edellisenä iltana');
+  assert.equal(noticesWith('departure|event:n1:')[0].level, 'warning');
+  assert.equal((await runEventDepartureSweep({ now: at(2026, 9, 29, 23, 45) })).created, 1, 'myöhässä');
+  // Keskiyön jälkeen sama esiintymä tulee päivän omista menoista: sama avain, ei toista merkintää.
+  assert.equal((await runEventDepartureSweep({ now: at(2026, 9, 30, 0, 5) })).created, 0);
+  assert.equal(noticesWith('departure|event:n1:').filter(n => n.level === 'urgent').length, 1);
+});
+
+test('huomisen meno, jonka lähtö on vasta huomenna, ei kuulu tämän illan kierrokseen', () => {
+  setCalendarEvents([{ id: 'm1', title: 'Aamupalaveri', date: '2026-09-30', startTime: '09:00', durationMinutes: 60, placeId: 'p1' }]);
+  assert.deepEqual(departuresLeavingOn(TODAY, { now: at(2026, 9, 29, 23, 26) }), []);
 });
 
 test('tuntematon matka-aika: ei lähtömerkintää eikä arvattua aikaa', async () => {
