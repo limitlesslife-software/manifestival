@@ -17,7 +17,7 @@
 import {
   el, maybe, toggle, setText, focus, setBusy, singleFlight, renderHtml, setHtml, renderAnnouncingError
 } from '../../ui/dom.js';
-import { escapeHtml } from '../../lib/format.js';
+import { escapeHtml, capitalize } from '../../lib/format.js';
 import { fmtISO, todayMidnight } from '../../lib/datetime.js';
 import {
   getState, findLifeArea, findTask, findRoutine, findGoal, findProject, currentLifeSettings
@@ -47,7 +47,11 @@ import { POLICY_VERSIONS, ESTIMATE_PRESETS } from '../../domain/alignmentPolicy.
 import { energyDemandLabel } from '../../domain/alignmentItemSettings.js';
 import { addDaysIso } from '../../domain/fiTemporal.js';
 import { durationOf } from '../../domain/task.js';
-import { dailyLifeSignals, evaluationText, DAILY_LIFE_SIGNAL } from '../../domain/dailyLifeSignals.js';
+import {
+  dailyLifeSignals, evaluationText, DAILY_LIFE_SIGNAL, EVALUATION_STATUS
+} from '../../domain/dailyLifeSignals.js';
+import { monthLabel } from '../../domain/calendar.js';
+import { discretionaryReviewInput } from './discretionaryLimit.js';
 import { deviceTimeZone } from '../deviceTime.js';
 import {
   analyzeCurrentWeek, currentProposals, currentWeekStart, alignmentPersistence,
@@ -1274,13 +1278,20 @@ function knownUnknownHtml(analysis, areas = []) {
 const DAILY_LIFE_QUESTIONS = Object.freeze({
   [DAILY_LIFE_SIGNAL.SLEEP_OPPORTUNITY_LOW]: 'Riittikö aika unelle?',
   [DAILY_LIFE_SIGNAL.SLEEP_RHYTHM_DRIFT]: 'Pysyikö unirytmi omana?',
-  [DAILY_LIFE_SIGNAL.WELLBEING_STRAIN]: 'Näkyikö kuormitus voinnin merkinnöissä?'
+  [DAILY_LIFE_SIGNAL.WELLBEING_STRAIN]: 'Näkyikö kuormitus voinnin merkinnöissä?',
+  [DAILY_LIFE_SIGNAL.MONEY_OVERLOAD]: 'Miten harkinnanvarainen rahankäyttö suhteutui omaan rajaasi?'
 });
 
 /**
  * Arjen havainnot viikkokatsaukseen: uni (vuoteessa oloaika, ei mitattu
  * uni), rytmi ja vointi omien merkintöjen perusteella. Deterministinen ja
  * selitettävä; ei lähde tekoälylle eikä lokiin.
+ *
+ * Raha: harkinnanvarainen käyttö (harrastukset, ostokset, viihde) sen
+ * kuukauden osalta, johon katsottava jakso päättyy, suhteessa käyttäjän
+ * omaan kuukausirajaan (views/discretionaryLimit.js). Prosentteina, ei
+ * euroina eikä arvioina. Rivi jää pois, kun omaa rajaa ei ole eikä
+ * Taloutta käytetä (ei yhtään tapahtumaa).
  *
  * Jokainen arvio saa oman rivinsä ja tilansa mukaisen tekstin
  * (evaluationText): harva aineisto sanotaan tuntemattomaksi ("Liian vähän
@@ -1293,9 +1304,12 @@ function dailyLifeRows(analysis, state = getState()) {
   const settings = currentLifeSettings(state);
   const profile = state.profile || {};
   const today = fmtISO(todayMidnight());
+  const inWeek = today >= analysis.weekStart && today <= analysis.weekEnd;
+  const month = (inWeek ? today : analysis.weekEnd).slice(0, 7);
+  const money = discretionaryReviewInput({ month, state, todayIso: today });
   const result = dailyLifeSignals({
     weekStart: analysis.weekStart,
-    todayIso: today >= analysis.weekStart && today <= analysis.weekEnd ? today : undefined,
+    todayIso: inWeek ? today : undefined,
     timeZone: deviceTimeZone() || undefined,
     sleepLogs: state.sleepLogs || [],
     sleepDeclared: {
@@ -1303,12 +1317,22 @@ function dailyLifeRows(analysis, state = getState()) {
       wakeTime: profile.defaultWakeTime, weekendShiftMinutes: settings.weekendWakeShiftMaxMinutes
     },
     wellbeingEntries: state.wellbeing || [],
-    wellbeingCheckins: state.wellbeingCheckins || []
+    wellbeingCheckins: state.wellbeingCheckins || [],
+    ...(money || {})
   });
   if (!result) return null;
+  const monthName = capitalize(monthLabel(month));
   const rows = result.evaluations
     .filter(evaluation => Object.prototype.hasOwnProperty.call(DAILY_LIFE_QUESTIONS, evaluation.kind))
-    .map(evaluation => [DAILY_LIFE_QUESTIONS[evaluation.kind], evaluationText(evaluation)])
+    .filter(evaluation => evaluation.kind !== DAILY_LIFE_SIGNAL.MONEY_OVERLOAD || money !== null)
+    .map(evaluation => {
+      const text = evaluationText(evaluation);
+      // Rahan vertailu koskee kuukautta, ei viikkoa: kuukausi kerrotaan.
+      const dated = evaluation.kind === DAILY_LIFE_SIGNAL.MONEY_OVERLOAD
+        && evaluation.status !== EVALUATION_STATUS.NO_REFERENCE && text && monthName
+        ? `${monthName}: ${text}` : text;
+      return [DAILY_LIFE_QUESTIONS[evaluation.kind], dated];
+    })
     .filter(([, text]) => Boolean(text));
   return rows.length ? rows : null;
 }

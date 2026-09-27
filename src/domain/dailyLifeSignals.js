@@ -37,8 +37,9 @@
 // omat merkinnät ovat harvoja ja kertovat vain osan.
 
 import {
-  SLEEP_SIGNAL_RULES, WELLBEING_SIGNAL_RULES, WELLBEING_RULES
+  SLEEP_SIGNAL_RULES, WELLBEING_SIGNAL_RULES, WELLBEING_RULES, MONEY_RULES
 } from './dailyLifeSignalsPolicy.js';
+import { normalizeCurrency } from './money.js';
 import { SLEEP_KIND, MAX_WEEKEND_SHIFT_MINUTES } from './dailyLife.js';
 import { addDaysIso, weekdayOfIso } from './fiTemporal.js';
 import {
@@ -397,7 +398,26 @@ export function moneyOverload(input) {
   const status = discretionaryStatus({
     monthSummary, declaredCapacityMinor, currency, capacityCurrency, mixedCurrencies
   });
-  if (!status) return evaluation(kind, EVALUATION_STATUS.INSUFFICIENT_DATA, { reason: 'sparse_or_mixed_month' });
+  if (!status) {
+    // Syy erikseen, jotta katsaus voi sanoa, mikä puuttuu: harva kuukausi
+    // ei ole "rajassa", eikä eri valuutta ole vertailukelpoinen.
+    const summary = isObject(monthSummary) ? monthSummary : null;
+    const count = summary && Number.isInteger(summary.transactionCount) && summary.transactionCount >= 0
+      ? summary.transactionCount : 0;
+    let reason = 'sparse_or_mixed_month';
+    if (!summary) reason = 'no_month';
+    else if (mixedCurrencies === true) reason = 'mixed_currencies';
+    else if (capacityCurrency !== undefined && capacityCurrency !== null
+      && normalizeCurrency(capacityCurrency) !== normalizeCurrency(currency)) reason = 'currency_mismatch';
+    else if (count < MONEY_RULES.MIN_TRANSACTIONS) reason = 'few_transactions';
+    return evaluation(kind, EVALUATION_STATUS.INSUFFICIENT_DATA, {
+      reason,
+      metrics: {
+        month: summary && typeof summary.month === 'string' ? summary.month : null,
+        transactionCount: count
+      }
+    });
+  }
   if (status.state === DISCRETIONARY_STATE.NO_CAPACITY) {
     return evaluation(kind, EVALUATION_STATUS.NO_REFERENCE, { reason: 'no_declared_capacity' });
   }
@@ -535,9 +555,43 @@ export function evaluationText(evaluationValue) {
           WELLBEING_MINIMUM, daysWord);
       }
       return status === EVALUATION_STATUS.CLEAR ? strainText(metrics) : null;
+    case DAILY_LIFE_SIGNAL.MONEY_OVERLOAD:
+      return moneyEvaluationText(status, reason, metrics);
     default:
       return null;
   }
+}
+
+/**
+ * Raha kuvataan prosentteina omasta rajasta, ei euroina eikä arvioina
+ * ("liikaa", "tuhlaus"). Harva tai sekavaluuttainen kuukausi on tuntematon.
+ */
+function moneyEvaluationText(status, reason, metrics) {
+  if (status === EVALUATION_STATUS.NO_REFERENCE) {
+    return 'Omaa harkinnanvaraista kuukausirajaa ei ole asetettu (Talous → Budjetti), '
+      + 'joten rahankäyttöä ei verrata mihinkään.';
+  }
+  if (status === EVALUATION_STATUS.INSUFFICIENT_DATA) {
+    if (reason === 'few_transactions') {
+      const count = Number.isInteger(metrics.transactionCount) ? metrics.transactionCount : 0;
+      const recorded = count === 1 ? '1 tapahtuma' : `${count} tapahtumaa`;
+      return `Kuukaudelta on kirjattu vasta ${recorded} (vertailuun tarvitaan vähintään ${MONEY_RULES.MIN_TRANSACTIONS}), `
+        + 'joten tätä ei vielä tiedetä.';
+    }
+    if (reason === 'mixed_currencies') {
+      return 'Harkinnanvaraisissa menoissa on useita valuuttoja, joten vertailua omaan rajaan ei tehdä.';
+    }
+    if (reason === 'currency_mismatch') {
+      return 'Oma kuukausirajasi on eri valuutassa kuin menot, joten vertailua ei tehdä.';
+    }
+    return 'Kuukauden menoja ei voi arvioida, joten tätä ei tiedetä.';
+  }
+  if (status === EVALUATION_STATUS.CLEAR) {
+    return Number.isInteger(metrics.usedPercent)
+      ? `Harkinnanvaraisia menoja on kirjattu ${metrics.usedPercent} % omasta kuukausirajastasi.`
+      : 'Harkinnanvaraisia menoja ei ole kirjattu, ja oma kuukausirajasi on 0.';
+  }
+  return null;
 }
 
 // ------------------------------------------------------------ kooste

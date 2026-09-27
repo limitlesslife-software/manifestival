@@ -1025,3 +1025,8 @@ a.cal-inline-btn { display:inline-flex; align-items:center; }
 .purchase-check .pc-work { margin:0 0 6px; color:var(--forest); font-weight:700; }
 .purchase-check .pc-goals { margin:4px 0 10px; padding-left:18px; }
 .purchase-check .pc-goals li { margin:2px 0; overflow-wrap:anywhere; }
+
+/* ============ Harkinnanvarainen käyttö (views/discretionaryLimit.js) ============ */
+.discretionary-limit { margin-top:16px; }
+.discretionary-limit input[type="text"] { width:100%; max-width:220px; min-height:44px; }
+.discretionary-limit .dl-status { margin:8px 0 10px; overflow-wrap:anywhere; }

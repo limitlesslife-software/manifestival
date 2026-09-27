@@ -130,7 +130,9 @@ export function setDevicePreference(key, value) {
 //
 // Uloskirjautuminen SÄILYTTÄÄ merkinnän (kuten lähtökorin), tilin poisto
 // POISTAA sen (purgeUserPreferences, src/data/deviceData.js). Sisältö on
-// pelkkiä lippuja ja vaiheiden nimiä, ei käyttäjän kirjoittamaa tekstiä.
+// lippuja, vaiheiden nimiä ja yksi oma luku (harkinnanvarainen
+// kuukausiraja sentteinä ja valuuttakoodi) — ei käyttäjän kirjoittamaa
+// vapaata tekstiä.
 
 const USER_PREFIX = 'manifestival.userPrefs.v1.';
 const USER_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
@@ -144,7 +146,20 @@ export const USER_DEFAULTS = Object.freeze({
    * aloitus on kertaalleen käyty loppuun. Vaiheen valmius päätellään
    * tiedoista (src/domain/alignmentSetup.js), ei tästä.
    */
-  suuntaSetup: Object.freeze({ skipped: Object.freeze([]), completed: false })
+  suuntaSetup: Object.freeze({ skipped: Object.freeze([]), completed: false }),
+  /**
+   * Oma harkinnanvarainen kuukausiraja (harrastukset, ostokset, viihde):
+   * { minor, currency } tai null = ei asetettu. Vertailukohta
+   * moneyAlignment.discretionaryStatus-laskulle (Talous → Budjetti ja
+   * viikkokatsauksen Arki-osio).
+   *
+   * LAITTEELLA EIKÄ TILILLÄ — toistaiseksi. Tilikohtainen koti olisi
+   * life_settings-sarake, joka vaatii migraation; sama perustelu kuin
+   * DEVICE_DEFAULTS.automationLevel: raja toimii tänään, ja uusi laite
+   * EPÄONNISTUU TURVALLISESTI (ei rajaa = ei vertailua). Lukija
+   * tarkistaa muodon (src/app/views/discretionaryLimit.js).
+   */
+  discretionaryLimit: null
 });
 
 function userKey(userId) {

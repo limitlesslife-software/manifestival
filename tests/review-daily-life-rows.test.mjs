@@ -23,7 +23,8 @@ import { freezeLocalDate } from './helpers/clock.mjs';
 import { fakeClient } from './helpers/gates.mjs';
 import { setUser, clearUser } from '../src/data/session.js';
 import { setClient } from '../src/data/client.js';
-import { resetState, setProfile, setSleepLogs, setWellbeing } from '../src/app/state.js';
+import { resetState, setProfile, setSleepLogs, setWellbeing, setTransactions } from '../src/app/state.js';
+import { saveDiscretionaryLimit } from '../src/app/views/discretionaryLimit.js';
 import { clearLocalUserData } from '../src/app/actions.js';
 import { resetAppliedAdjustments } from '../src/app/alignment.js';
 import { renderDirection, resetDirectionView } from '../src/app/views/direction.js';
@@ -142,6 +143,12 @@ function installDom() {
     body: { appendChild: () => {} }
   };
   globalThis.CSS = { escape: value => String(value) };
+  const data = new Map();
+  globalThis.localStorage = {
+    getItem: key => (data.has(key) ? data.get(key) : null),
+    setItem: (key, value) => { data.set(key, String(value)); },
+    removeItem: key => { data.delete(key); }
+  };
 }
 
 /** Arki-osion rivit: [[kysymys, vastaus], ...]. */
@@ -167,13 +174,15 @@ beforeEach(() => {
 afterEach(() => {
   delete globalThis.document;
   delete globalThis.CSS;
+  delete globalThis.localStorage;
 });
 
-function renderWeek(t, { logs = [], wellbeing = [] } = {}) {
+function renderWeek(t, { logs = [], wellbeing = [], transactions = [] } = {}) {
   freezeLocalDate(t, SUNDAY, '20:00');
   setProfile({ sleepTargetHours: 8, defaultWakeTime: '07:00' });
   setSleepLogs(logs);
   setWellbeing(wellbeing);
+  setTransactions(transactions);
   renderDirection();
   return arkiRows();
 }
@@ -207,4 +216,40 @@ test('näkymä: Arki-osio ei lue tekoälyä eikä tallenna tekstejä tilannekuva
   const view = read('src/app/views/direction.js');
   const rowsFn = view.slice(view.indexOf('function dailyLifeRows'), view.indexOf('function reviewHtml'));
   assert.doesNotMatch(rowsFn, /ai\/|explain|logEvent|save|snapshot/i);
+});
+
+// ================================================================ RAHA KATSAUKSESSA
+
+const MONEY_QUESTION = 'Miten harkinnanvarainen rahankäyttö suhteutui omaan rajaasi?';
+const expense = (id, category, amountMinor) => ({ id, kind: 'expense', category, amountMinor, currency: 'EUR', date: day(2) });
+/** 180 € harkinnanvaraista viidessä kirjauksessa (kesäkuu 2026). */
+const FIVE = [expense('t1', 'viihde', 4000), expense('t2', 'ostokset', 8000), expense('t3', 'harrastukset', 6000),
+  expense('t4', 'asuminen', 90000), expense('t5', 'ruoka', 3000)];
+
+test('katsaus: ilman omaa rajaa ja ilman tapahtumia rahariviä ei ole', (t) => {
+  const rows = renderWeek(t, { logs: nights(5) });
+  assert.equal(rows.some(([question]) => question === MONEY_QUESTION), false);
+});
+
+test('katsaus: oma raja -> kuukauden harkinnanvarainen käyttö prosentteina omasta rajasta, kuukausi kerrotaan', (t) => {
+  saveDiscretionaryLimit(20000, 'EUR');
+  const rows = renderWeek(t, { logs: nights(5), transactions: FIVE });
+  const money = rows.find(([question]) => question === MONEY_QUESTION);
+  assert.ok(money, 'raharivi näkyy');
+  assert.equal(money[1], 'Kesäkuu 2026: Harkinnanvaraisia menoja on kirjattu 90 % omasta kuukausirajastasi.');
+  assert.doesNotMatch(money[1], /€|tuhla|liikaa|pitäisi/i, 'ei euroja eikä arvottavia sanoja');
+  assert.equal(rows[rows.length - 1], money, 'raha viimeisenä');
+});
+
+test('katsaus: harva kuukausi on tuntematon; ilman rajaa sanotaan, ettei verrata', (t) => {
+  saveDiscretionaryLimit(20000, 'EUR');
+  let money = renderWeek(t, { transactions: FIVE.slice(0, 2) }).find(([question]) => question === MONEY_QUESTION);
+  assert.equal(money[1],
+    'Kesäkuu 2026: Kuukaudelta on kirjattu vasta 2 tapahtumaa (vertailuun tarvitaan vähintään 5), joten tätä ei vielä tiedetä.');
+  assert.doesNotMatch(money[1], ALL_CLEAR);
+  t.mock.timers.reset();
+
+  saveDiscretionaryLimit(null);
+  money = renderWeek(t, { transactions: FIVE }).find(([question]) => question === MONEY_QUESTION);
+  assert.equal(money[1], 'Omaa harkinnanvaraista kuukausirajaa ei ole asetettu (Talous → Budjetti), joten rahankäyttöä ei verrata mihinkään.');
 });
