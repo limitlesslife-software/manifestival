@@ -9,7 +9,7 @@
 import { todayMidnight, startOfWeek, fmtISO } from '../lib/datetime.js';
 import { logFailure, LOG_LEVEL } from '../lib/logger.js';
 import { DEFAULT_PROFILE } from '../domain/scheduler.js';
-import { normalizeTask } from '../domain/task.js';
+import { normalizeTask, isIsoDate } from '../domain/task.js';
 import { normalizeRoutine, normalizeException } from '../domain/routine.js';
 import { normalizeGoal } from '../domain/goal.js';
 import { normalizeWellbeingEntry } from '../domain/wellbeing.js';
@@ -213,6 +213,17 @@ function initialState() {
     budgetMonth: fmtISO(today).slice(0, 7),
     /** Tehtävänäkymän osio: 'tasks' tai 'routines'. */
     tasksSegment: 'tasks',
+    /**
+     * Kalenterin näkymä: 'day', 'week' tai 'month'. Oletus on päivä,
+     * koska kalenteri vastaa ensin kysymykseen "mitä tänään on".
+     */
+    calendarView: 'day',
+    /**
+     * Kalenterin katsottava päivä ISO-muodossa. Päivä- ja kuukausinäkymä
+     * lukevat tätä; viikkonäkymällä on oma `weekStart`, jotta vanha
+     * viikkonäkymä toimii täsmälleen kuten ennen.
+     */
+    calendarDate: fmtISO(today),
     /** Näkymä, joka on auki. */
     screen: 'screen-today',
     /** Onko ensimmäinen lataus vielä kesken. */
@@ -875,6 +886,46 @@ export function setBudgetMonth(month) {
   const valid = typeof month === 'string' && /^\d{4}-\d{2}$/.test(month);
   if (!valid) return;
   commit({ budgetMonth: month });
+}
+
+/**
+ * Kalenterin näkymät. Järjestys on segmenttien järjestys: päivä ensin,
+ * koska se on useimmin avattu.
+ */
+export const CALENDAR_VIEWS = Object.freeze([
+  Object.freeze({ key: 'day', label: 'Päivä' }),
+  Object.freeze({ key: 'week', label: 'Viikko' }),
+  Object.freeze({ key: 'month', label: 'Kuukausi' })
+]);
+
+const CALENDAR_VIEW_KEYS = Object.freeze(CALENDAR_VIEWS.map(v => v.key));
+
+/** Kalenterin näkymä. Tuntematon arvo palautuu päivään. */
+export function setCalendarView(view) {
+  const next = CALENDAR_VIEW_KEYS.includes(view) ? view : 'day';
+  if (next === state.calendarView) return;
+  commit({ calendarView: next });
+}
+
+/**
+ * Kalenterin katsottava päivä. Kelvoton päivä jätetään huomiotta: väärä
+ * päivä näyttäisi tyhjää kalenteria, ja tyhjä kalenteri näyttää siltä
+ * kuin menoja ei olisi.
+ */
+export function setCalendarDate(dateIso) {
+  if (!isIsoDate(dateIso) || dateIso === state.calendarDate) return;
+  commit({ calendarDate: dateIso });
+}
+
+/**
+ * Avaa päivänäkymä annetulle päivälle YHDELLÄ muutoksella (kuukauden tai
+ * viikon päivän napautus): kaksi peräkkäistä muutosta piirtäisi näkymän
+ * välissä väärälle päivälle.
+ */
+export function showCalendarDay(dateIso) {
+  if (!isIsoDate(dateIso)) return;
+  if (state.calendarView === 'day' && state.calendarDate === dateIso) return;
+  commit({ calendarView: 'day', calendarDate: dateIso });
 }
 
 /** Siirry kuukausi eteen tai taakse. */
