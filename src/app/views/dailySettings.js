@@ -56,6 +56,7 @@ import { shortDateLabel } from '../../domain/calendar.js';
 import { firstCommitmentOn } from '../dailyLifeModel.js';
 import { clockText, durationText, shiftDateIso, epochToWallClock } from '../../domain/wallClock.js';
 import { remindersOffHintHtml, openReminderSettings } from './notificationSettings.js';
+import { alarmSyncStatus } from '../alarmSync.js';
 
 // ------------------------------------------------------------ säiliöt
 
@@ -1049,6 +1050,18 @@ function statusRow(label, value) {
   return `<div class="ds-status-row"><span>${escapeHtml(label)}:</span> <strong>${escapeHtml(value)}</strong></div>`;
 }
 
+/**
+ * Mihin asti herätykset on ajastettu laitteelle (viimeisin onnistunut
+ * ajastus). Kertoo rehellisesti, milloin sovellus on avattava viimeistään,
+ * jotta herätys soi myös sen jälkeen.
+ */
+function wakeUntilRow() {
+  let sync = null;
+  try { sync = alarmSyncStatus(); } catch { sync = null; }
+  if (!sync || !sync.wakeUntil) return '';
+  return statusRow('Herätykset ajastettu laitteelle', `${shortDateLabel(sync.wakeUntil)} asti`);
+}
+
 function alarmStatusHtml() {
   if (!nativeShell()) {
     return `<div class="notice tone-gold" id="dsAlarmWebNotice"><strong>Herätys toimii vain Android-sovelluksessa.</strong>
@@ -1098,6 +1111,7 @@ function alarmStatusHtml() {
     ${statusRow('Täsmälliset herätykset sallittu', yesNo(status.exact))}
     ${statusRow('Koko näytön herätys lukitulla näytöllä', yesNo(status.fullScreen))}
     ${statusRow('Herätysääni', status.soundName || (status.soundPicked === true ? 'oma valittu ääni' : 'puhelimen oletusääni'))}
+    ${wakeUntilRow()}
     ${musicHtml}
     ${warning}
     <div class="form-actions">${buttons.join('')}</div>

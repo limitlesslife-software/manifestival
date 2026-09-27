@@ -36,8 +36,14 @@ import {
 
 export { wallClockToEpoch, epochToWallClock } from './wallClock.js';
 
-/** Herätyksiä suunnitellaan enintään näin moneksi päiväksi eteenpäin. */
-export const MAX_ALARM_DAYS = 3;
+/**
+ * Herätyksiä suunnitellaan enintään näin moneksi päiväksi eteenpäin
+ * (tänään + 7). Laite soittaa vain sille ajastetut herätykset: lyhyt
+ * horisontti jätti maanantain herätyksen ajastamatta, jos sovellusta ei
+ * avattu viikonloppuna. Kahdeksan päivää kattaa saman viikonpäivän
+ * seuraavalla viikolla, vaikka sovellus olisi kiinni koko viikon.
+ */
+export const MAX_ALARM_DAYS = 8;
 
 /** Voimistuvassa herätyksessä on enintään näin monta vaihetta. */
 export const MAX_ESCALATION_STEPS = 4;

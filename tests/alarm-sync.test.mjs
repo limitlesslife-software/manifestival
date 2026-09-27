@@ -198,6 +198,22 @@ test('muistutukset pois päältä: vain herätys (oma valintansa) menee laitteel
   assert.deepEqual(dailyLifeReminderPlan({ now: NOON }).intents, []);
 });
 
+test('KRIITTINEN: herätykset ajastetaan viikoksi eteenpäin — perjantai-iltana maanantain herätys on laitteella', () => {
+  // Bugi (uusintakatselmointi): horisontti oli 3 päivää, eikä laite ajasta
+  // mitään itse. Viikonloppuna avaamaton sovellus jätti maanantain
+  // herätyksen soimatta.
+  signIn();
+  seedDay({ preferences: { enabled: false } });
+  const fridayEvening = at(2026, 10, 2, 20, 0); // pe 2.10.2026
+  const { entries } = desiredNativeEntries({ now: fridayEvening, nativeSupported: true });
+  const wakeDates = entries.filter(entry => entry.kind === 'wake').map(entry => entry.date).sort();
+  assert.ok(wakeDates.includes('2026-10-05'), 'maanantai mukana: ' + wakeDates.join(', '));
+  assert.ok(wakeDates.includes('2026-10-09'), 'seuraava perjantai mukana (tänään + 7)');
+  assert.ok(wakeDates.length <= 8 && wakeDates.length >= 7, String(wakeDates.length));
+  // Muistutukset pysyvät lyhyellä horisontilla (3 päivää).
+  assert.ok(entries.filter(entry => entry.kind !== 'wake').every(entry => entry.date <= '2026-10-04'));
+});
+
 test('herätys pois (oletus): laitteelle ei herätystä', () => {
   signIn();
   seedDay({ settings: { alarm: { enabled: false } } });

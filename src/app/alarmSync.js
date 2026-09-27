@@ -87,6 +87,13 @@ import { logEvent } from '../lib/logger.js';
 /** Kuinka monta päivää eteenpäin (tänään mukaan lukien). Sama kuin tavallisissa muistutuksissa. */
 export const ALARM_SYNC_HORIZON_DAYS = 3;
 
+/**
+ * Herätysten horisontti (tänään + 7, alarmPlan.MAX_ALARM_DAYS). Pidempi kuin
+ * muistutusten: herätys ei saa jäädä ajastamatta, vaikka sovellusta ei
+ * avattaisi päiviin. Kahdeksan merkintää mahtuu laitteen rajaan (50).
+ */
+export const WAKE_ALARM_HORIZON_DAYS = 8;
+
 /** Tilamuutokset kootaan yhdeksi ajastukseksi (sama kuin notifications.RESYNC_DEBOUNCE_MS). */
 export const ALARM_SYNC_DEBOUNCE_MS = 2000;
 
@@ -549,7 +556,7 @@ export function partitionReminders(intents, { nativeSupported = false, capacity 
 /** Herätykset horisontille; kuitatut ja menneet pois. */
 export function plannedWakeAlarms({ state = getState(), now = new Date(), ackLog = currentAckLog() } = {}) {
   const { todayIso } = clockOf(now);
-  const dates = horizonDates(todayIso);
+  const dates = horizonDates(todayIso, WAKE_ALARM_HORIZON_DAYS);
   const commitmentsByDate = {};
   for (const date of dates) {
     try {
@@ -852,12 +859,16 @@ async function runSync(ticket, fixedNow) {
     dropped: result && Array.isArray(result.dropped) ? result.dropped.length : 0,
     rejected: result && Array.isArray(result.rejected) ? result.rejected.length : 0
   });
+  // Viimeinen laitteelle pyydetty herätyspäivä: Arki kertoo, mihin asti
+  // herätykset ovat ajastettuina ilman sovelluksen avaamista.
+  const wakeDates = desired.entries.filter(entry => entry.kind === 'wake').map(entry => entry.date).sort();
   return finish({
     ok: Boolean(result && result.ok),
     supported: true,
     scheduled: result ? result.scheduled || 0 : 0,
     requested: desired.entries.length,
     exact: Boolean(result && result.exact),
+    wakeUntil: result && result.ok && wakeDates.length > 0 ? wakeDates[wakeDates.length - 1] : null,
     reason: result && result.reason ? result.reason : ''
   });
 }

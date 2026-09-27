@@ -86,7 +86,8 @@ test('arkiaamu ilman menoa: herätys profiilin mukaan, rajattu soitto ja torkku'
 });
 
 test(`päiviä enintään ${MAX_ALARM_DAYS}; vuoden vaihde ja viikonloppu`, () => {
-  assert.equal(alarms({ days: 5 }).length, MAX_ALARM_DAYS);
+  assert.equal(MAX_ALARM_DAYS, 8, 'tänään + 7: sama viikonpäivä ensi viikolla on katettu');
+  assert.equal(alarms({ days: 20 }).length, MAX_ALARM_DAYS);
   for (const days of [0, -2, 'kolme', null, NaN]) assert.equal(alarms({ days }).length, 1, String(days));
   const newYear = desiredAlarms({ fromIso: '2026-12-31', days: 3, profile: PROFILE, settings: SETTINGS });
   assert.deepEqual(newYear.map(alarm => [alarm.id, alarm.time]), [
