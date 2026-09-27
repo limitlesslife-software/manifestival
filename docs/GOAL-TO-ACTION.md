@@ -117,10 +117,15 @@ Päivä kuluu neljään osaan:
 
 | Osa | Mistä tulee |
 |---|---|
-| **Uni** | profiilista, ei suunniteltavissa |
-| **Kiinteä** | käyttäjän itse ajastama työ |
+| **Uni** | profiilista ja unirytmin suojatusta unesta, ei suunniteltavissa |
+| **Kiinteä** | käyttäjän itse ajastama työ, kalenterin menot, niiden valmistautuminen ja matka sekä rauhoittuminen ennen unta (suojatut lohkot) |
 | **Joustava** | automaatin sijoittama, siirrettävissä |
 | **Vapaa** | se mitä jää — ja siitäkään ei käytetä kaikkea |
+
+Kiinteä aika lasketaan varattujen välien **unionina**: matka, joka osuu
+menon päälle, ei vähennä samaa aikaa kahdesti (`capacity.dayCapacity`
+kalenteritietoisena). Menot ja lohkot tulevat samasta laskennasta kuin
+Tänään- ja Kalenteri-näkymissä, ks. "Kalenteri" alempana.
 
 `bufferRatio` (oletus 0,25) jättää neljänneksen vapaasta ajasta
 suunnittelematta. **Puskuri ei ole hukkaa vaan realismia:** täyteen
@@ -354,11 +359,37 @@ puhesuunnittelijaa ei ole eikä tule** — kaksi polkua erkanisi.
 
 ### Kalenteri
 
-Suunnittelu käyttää Manifestivalin omaa aikataulumallia. Ulkoista
-kalenteria ei ole eikä tässä paketissa toteuteta. Sovitinraja on
-`planHorizon`in syöte: ulkoiset sitoumukset tulisivat sisään
-kiinteinä tehtävinä, jolloin kapasiteettilaskenta ottaisi ne huomioon
-ilman muutoksia muualle.
+Suunnittelu **ottaa Manifestivalin oman kalenterin huomioon** (§42):
+kiinteät menot pysyvät kiinteinä, valmistautuminen ja matka ovat
+varattuja, ja suojattu uni ja lepo pysyvät suojattuina. Menot ja
+suojatut lohkot lasketaan yhdestä paikasta,
+`calendarPlan.calendarForPlanning` (sama `calendarInputs` kuin Tänään,
+Kalenteri ja päivän keskeytykset; yli 14 päivän horisontti jaksoissa,
+jotta uni suojataan joka yöltä). Ne annetaan `events`- ja
+`blocks`-syötteinä kaikille neljälle kutsujalle:
+
+| Kutsuja | Mitä kalenteri muuttaa |
+|---|---|
+| `app/planning.requestPlan` | tekoälylle lähtevä kapasiteettiluku (28 pv) on menojen, matkojen ja suojatun unen jälkeen jäävä aika; mallille lähtee edelleen vain luku |
+| `views/planning.js` "Seuraavat kaksi viikkoa" | `horizonCapacity` ja `planHorizon` samalla kalenterilla; automaatin ajastama tehtävä ei siirry päivälle, jolla sen kellonaika osuisi menoon, matkaan tai lepoon |
+| `actions.proposeReplan` ("Ehdota muutoksia") | myöhästyneet eivät siirry päivälle, jonka menot jo täyttävät |
+| `assistantActions.runReplanCheck` (myöhästyneiden ilmoitus) | sama kalenteri ja sama 14 päivän horisontti kuin ehdotuksessa, joten ilmoituksen luku ja avautuva ehdotus täsmäävät |
+
+Päivän sisäinen uudelleensuunnittelu keskeytyksestä ("olen myöhässä",
+"tämä kestää pidempään", "jätä väliin", "siirrä loput") kulkee
+Tänään-kortista ja puheesta yhtä polkua
+(`app/dayReplanActions.js` → `domain/dayReplan.js`), ja se laskee
+päivän `calendarPlan.calendarDayPlan`-funktiolla: menot, matkat ja
+suojattu lepo eivät koskaan näy vapaana aikana eivätkä siirry.
+
+Testit: `tests/goal-to-action-calendar.test.mjs` (kapasiteetti putoaa,
+kun meno on olemassa; täyteen varattu päivä ei saa siirrettyjä
+tehtäviä) ja `tests/today-interrupt-skip.test.mjs`.
+
+**Ulkoista kalenteria** (esim. Google tai laitteen kalenteri) ei ole
+eikä tässä paketissa toteuteta. Sovitinraja on sama `events`-syöte:
+ulkoiset sitoumukset tulisivat sisään menoesiintyminä, jolloin
+kapasiteetti ja siirrot ottaisivat ne huomioon ilman muutoksia muualle.
 
 ---
 
@@ -538,4 +569,5 @@ Deploypaketti valitsee numeron ja nostaa sen samassa commitissa.
    tehty.
 4. **Automaatiotason siirto tiliin** — sarake on olemassa migraation
    jälkeen.
-5. **Ulkoinen kalenteri** — sovitinraja on kuvattu, toteutusta ei ole.
+5. **Ulkoinen kalenteri** — oma kalenteri on jo mukana suunnittelussa;
+   ulkoisen kalenterin sovitinraja on kuvattu, toteutusta ei ole.
