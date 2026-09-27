@@ -48,7 +48,7 @@ Tätä aaltoa **ei saa vielä deployata**, koska kanta puuttuu:
    tuotannossa auki.
 
 Näkymien sisäänkäynnit: Profiili → Suojattu aika (`#protectedTimeContainer`),
-Sunnuntain nollaus (`#sundayResetDialog`, avataan Tänään-näkymän
+Sulje viikko eli sunnuntain nollaus (`#sundayResetDialog`, avataan Tänään-näkymän
 `#sundayResetOpenBtn`- ja Suunnan `#dirSundayResetBtn`-painikkeista) ja
 Tekeminen → Tallessa (`#storedListContainer`). Valmiustilaa **ei kirjoiteta
 käsin**: `tests/ui-reachability.test.mjs` johtaa sen
@@ -179,7 +179,7 @@ Jokainen kohta tarkistetaan **sivun latauksen jälkeen**.
 - [ ] **Odottaa**: kenen varassa -teksti ja tarkistuspäivä säilyvät
 - [ ] **Arkisto**: arkistoitu tehtävä pysyy poissa Tänään-näkymästä ja näkyy Arkistossa
 - [ ] **Suojattu aika**: oma aika, vapaa-ajan sääntö ja loma säilyvät
-- [ ] **Sunnuntain nollaus**: viikon prioriteetit (≤ 3) ja suljettu viikko säilyvät
+- [ ] **Sulje viikko** (sunnuntain nollaus): viikon prioriteetit (≤ 3) ja suljettu viikko säilyvät
 - [ ] **Elämänalueen laji** säilyy; kaksi aluetta voi jakaa kategorian
 
 ---

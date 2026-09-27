@@ -60,7 +60,7 @@ taloutta eikä löytänyt kumpaakaan.
 | `exerciseSessions` | **ON** | **Profiili** → Hyvinvointi → Liikunta | Liikunta | täysi | K |
 | `wellbeingCheckins` | **ON** | **Tänään** → voinnin kortti; **Profiili** → Hyvinvointi (14 pv) | Motivaatio | kirjaus + historia | K |
 | `protectedPeriods` | **ON** | **Profiili** → Suojattu aika (`#protectedTimeContainer`) | Suojattu aika | täysi + päälle/pois | L |
-| `weeklyPlans` | **ON** | **Tänään** / **Suunta** → Sunnuntain nollaus (`#sundayResetDialog`) | Sunnuntain nollaus | luonti + päivitys + viikon sulkeminen | L |
+| `weeklyPlans` | **ON** | **Suunta** → Sulje viikko (sunnuntain nollaus); **Tänään** → Sulje viikko -kortti (`#sundayResetDialog`) | Sulje viikko | luonti + päivitys + viikon sulkeminen | L |
 
 ### Aallon L kaksi domainia
 

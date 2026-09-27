@@ -420,15 +420,15 @@ export const REACHABILITY = Object.freeze([
     reach: REACH.REACHABLE,
     label: 'Suojattu aika',
     nav: 'Profiili -> Suojattu aika (oma aika, vapaa-ajan säännöt, loma)',
-    evidence: { html: 'protectedTimeContainer', view: 'src/app/views/protectedTime.js' },
+    evidence: { html: 'protectedTimeContainer', view: 'src/app/views/protectedTimeSettings.js' },
     crud: 'luonti, muokkaus, poisto, päälle/pois',
     note: 'Oma aika, vapaa-ajan säännöt ja loma yhtenä mallina. Suojattua aikaa ei koskaan oteta automaattisesti; loma ei poista kiinteitä menoja.'
   }),
   Object.freeze({
     gate: 'weeklyPlans',
     reach: REACH.REACHABLE,
-    label: 'Sunnuntain nollaus',
-    nav: 'Tänään -> Sunnuntain nollaus; Suunta -> Sunnuntain nollaus',
+    label: 'Sulje viikko',
+    nav: 'Suunta -> Sulje viikko (sunnuntain nollaus); Tänään -> Sulje viikko -kortti (la–su ja maanantaiaamu)',
     evidence: { html: 'sundayResetDialog', view: 'src/app/views/sundayReset.js' },
     crud: 'luonti ja päivitys (viikon prioriteetit, viikon sulkeminen)',
     note: 'Yksi suunnitelma viikkoa kohti: enintään kolme viikon prioriteettia ja suljettu viikko. Prioriteetti on viittaus, ei vierasavain.'

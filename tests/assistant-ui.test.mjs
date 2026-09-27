@@ -494,12 +494,13 @@ test('repositorioita on kolmekymmentäviisi', () => {
     `repositorioita on ${ALL_REPOSITORIES.length}`);
 });
 
-test('tavoitettavuusmatriisi kattaa kaikki kolmekymmentäneljä', () => {
+test('tavoitettavuusmatriisi kattaa kaikki kolmekymmentäkuusi', () => {
   // 0013 toi kaksi porttia: runningTimers ja alignmentItemSettings.
   // 0014 toi kymmenen, ja niiden näkymät (Kalenteri, Profiilin Arki,
   // Hyvinvointi ja Paikat, Tänään-kortit) on rakennettu: yksikään portti
-  // ei ole ilman käyttöliittymää.
-  assert.equal(REACHABILITY.length, 34);
+  // ei ole ilman käyttöliittymää. 0015 toi kaksi: protectedPeriods
+  // (Suojattu aika) ja weeklyPlans (Sunnuntain nollaus).
+  assert.equal(REACHABILITY.length, 36);
   assert.deepEqual(REACHABILITY.filter(r => r.reach === REACH.NO_UI).map(r => r.gate).sort(), [],
     'jokin domain on ilman käyttöliittymää');
 });
