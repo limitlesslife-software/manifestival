@@ -13,7 +13,8 @@ import {
   LEVEL, CHANNEL, DEFAULT_PREFERENCES,
   levelLabel, channelForLevel, normalizePreferences, isQuietTime,
   escalationForTask, escalationForDeadline, intentId,
-  planNotifications, applyLimits, summarizeIntents, planRange
+  planNotifications, applyLimits, summarizeIntents, planRange,
+  createIntent, compareIntents, DEPARTURE_CHAIN_TYPES
 } from '../src/domain/notification.js';
 import { normalizeTask } from '../src/domain/task.js';
 import { normalizeRoutine, expandRoutines, RECURRENCE } from '../src/domain/routine.js';
@@ -527,4 +528,94 @@ test('valmiista tehtävästä ei muistuteta eikä maksetusta laskusta', () => {
 
   assert.equal(intents.some(i => i.targetId === 'valmis'), false,
     'valmiista tehtävästä muistutettiin');
+});
+
+// ------------------------------------ arjen käyttöjärjestelmän laajennus
+
+test('uudet ilmoitustyypit: lähtöketju, uni, ateria, tapa, illan ja aamun kooste, kooste', () => {
+  const expected = ['departure_prepare', 'departure_leave_in_5', 'departure_leave_now', 'wind_down', 'bedtime',
+    'meal', 'habit', 'evening_before', 'morning_brief', 'digest'];
+  for (const type of expected) assert.ok(NOTIFICATION_TYPES.includes(type), type);
+  assert.equal(NOTIFICATION_TYPES.length, 6 + expected.length);
+  assert.deepEqual([...DEPARTURE_CHAIN_TYPES],
+    [NOTIFICATION_TYPE.DEPARTURE_PREPARE, NOTIFICATION_TYPE.DEPARTURE_LEAVE_IN_5, NOTIFICATION_TYPE.DEPARTURE_LEAVE_NOW]);
+  // Kaikki toimitetaan tavallisena ilmoituksena: mikään ei ole "suunniteltu".
+  assert.deepEqual([...PLANNED_TYPES], []);
+});
+
+test('planNotifications ei tuota arjen tyyppejä (ne tulevat dailyReminders.js:stä)', () => {
+  const intents = planNotifications({
+    tasks: [task({ id: 'a', time: '10:00', deadline: DAY })], dateIso: DAY, todayIso: DAY, preferences: on
+  });
+  const legacy = ['task_reminder', 'routine_reminder', 'deadline_warning', 'departure_reminder', 'daily_plan', 'evening_review'];
+  assert.ok(intents.length > 0);
+  for (const intent of intents) assert.ok(legacy.includes(intent.type), intent.type);
+});
+
+test('perinteinen aikomus kantaa uudet kentät: aihe ja toimitustapa päättämättä, kuittausavain = tunniste', () => {
+  const [intent] = planNotifications({
+    tasks: [task({ id: 'k', time: '14:00' })], dateIso: DAY,
+    preferences: { ...on, dailyPlanEnabled: false, eveningReviewEnabled: false }
+  });
+  assert.equal(intent.topic, null, 'null = ei vielä päätetty, ei hiljainen');
+  assert.equal(intent.delivery, null);
+  assert.equal(intent.speech, null);
+  assert.equal(intent.anchor, null);
+  assert.equal(intent.ackKey, intent.id);
+  assert.equal(intent.ackKey, intentId(NOTIFICATION_TYPE.TASK_REMINDER, 'k', DAY));
+});
+
+test('createIntent: jäädytetty, täydellinen aikomus tai null', () => {
+  const intent = createIntent({
+    type: NOTIFICATION_TYPE.MEAL, level: LEVEL.REMINDER, date: DAY, time: '16:30', title: 'Päivällinen',
+    body: 'Aloita valmistus', targetId: 'm1', reason: 'Valmistus vie 30 min', topic: 'meal', delivery: 'vibrate',
+    speech: 'Nyt on hyvä aika aloittaa ruoan valmistus.', anchor: { date: DAY, time: '17:00', offsetMinutes: -30 },
+    extra: { mealId: 'm1', list: ['a'] }
+  });
+  assert.ok(Object.isFrozen(intent));
+  assert.equal(intent.id, `meal:m1:${DAY}`);
+  assert.equal(intent.ackKey, intent.id);
+  assert.equal(intent.atMinutes, 990);
+  assert.equal(intent.channel, CHANNEL.NOTIFICATION);
+  assert.deepEqual(intent.anchor, { date: DAY, time: '17:00', offsetMinutes: -30 });
+  assert.ok(Object.isFrozen(intent.anchor));
+  assert.equal(intent.mealId, 'm1');
+  assert.ok(Object.isFrozen(intent.list));
+
+  for (const bad of [
+    { type: 'tuntematon' }, { level: 5 }, { level: '2' }, { date: '2026-02-30' }, { time: '24:00' },
+    { title: '' }, { title: '   ' }, { title: 5 }
+  ]) {
+    assert.equal(createIntent({
+      type: NOTIFICATION_TYPE.MEAL, level: LEVEL.REMINDER, date: DAY, time: '16:30', title: 'T', ...bad
+    }), null, JSON.stringify(bad));
+  }
+  for (const garbage of [undefined, null, 5, 'x', []]) assert.equal(createIntent(garbage), null);
+});
+
+test('createIntent: lisäkentät eivät ylikirjoita ydinkenttiä; kelvoton ankkuri hylätään', () => {
+  const intent = createIntent({
+    type: NOTIFICATION_TYPE.HABIT, level: LEVEL.REMINDER, date: DAY, time: '10:30', title: 'Tapa',
+    extra: { id: 'huijaus', level: 4, time: '03:00', ackKey: 'x' },
+    anchor: { date: DAY, time: '10:30', offsetMinutes: 1.5 }
+  });
+  assert.equal(intent.level, LEVEL.REMINDER);
+  assert.equal(intent.time, '10:30');
+  assert.notEqual(intent.id, 'huijaus');
+  assert.equal(intent.ackKey, intent.id);
+  assert.equal(intent.anchor, null);
+  const custom = createIntent({ type: NOTIFICATION_TYPE.HABIT, level: 2, date: DAY, time: '10:30', title: 'T',
+    id: 'oma', ackKey: 'yhteinen' });
+  assert.equal(custom.id, 'oma');
+  assert.equal(custom.ackKey, 'yhteinen');
+});
+
+test('compareIntents: päivä, aika, taso (kiireellisin ensin), tunniste', () => {
+  const make = over => createIntent({ type: NOTIFICATION_TYPE.MEAL, level: 2, date: DAY, time: '12:00', title: 'T',
+    targetId: 'x', ...over });
+  const list = [
+    make({ targetId: 'b' }), make({ targetId: 'a' }), make({ targetId: 'c', level: 4 }),
+    make({ targetId: 'd', time: '11:00' }), make({ targetId: 'e', date: '2026-08-31', time: '23:00' })
+  ];
+  assert.deepEqual([...list].sort(compareIntents).map(i => i.targetId), ['e', 'd', 'c', 'a', 'b']);
 });

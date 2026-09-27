@@ -32,6 +32,10 @@ import {
 } from '../src/domain/notification.js';
 import { rankTasks, scoreTask } from '../src/domain/focus.js';
 import { buildEveningReview } from '../src/domain/review.js';
+import { planDepartureChain, planDailyLifeReminders } from '../src/domain/dailyReminders.js';
+import { applyNotificationPolicy, QUIET_PASS_TYPES, wallClockMinutes } from '../src/domain/notificationPolicy.js';
+import { buildAckLog } from '../src/domain/notificationAck.js';
+import { DELIVERY, REMINDER_TOPIC, GUIDANCE_STYLES } from '../src/domain/dailyLife.js';
 
 // --------------------------------------------------------- satunnaisuus
 
@@ -630,6 +634,98 @@ test('muistutusten tunnisteet ovat uniikkeja', () => {
     const ids = intents.map(intent => intent.id);
     assert.equal(new Set(ids).size, ids.length, 'sama muistutus kahdesti');
   });
+});
+
+// --------------------------------------------- arjen muistutukset ja politiikka
+
+function randomDeparture(gen, dateIso, index) {
+  const leave = gen.int(0, 1439);
+  const prep = gen.pick([null, 0, 3, 5, 6, 15, 30, 90]);
+  return {
+    id: 'lahto' + index,
+    date: dateIso,
+    leave: timeOfDay(leave),
+    prepareStart: prep === null ? null : timeOfDay(leave - prep),
+    title: 'Meno ' + index,
+    placeName: gen.maybe('Paikka', 0.5),
+    // Tuntematon matka-aika kolmasosassa: sen ei pidä tuottaa mitään.
+    knownTravel: gen.random() < 0.67 ? true : gen.pick([false, null, undefined])
+  };
+}
+
+test('lähtöketju: tuntematon matka-aika ei tuota mitään, tunnettu on aina järjestyksessä', () => {
+  forEachCase(gen => {
+    const dateIso = isoDate(gen.int(0, 400));
+    const departures = Array.from({ length: gen.int(0, 6) }, (unused, i) => randomDeparture(gen, dateIso, i));
+    const intents = planDepartureChain({ departures, guidanceStyle: gen.pick(GUIDANCE_STYLES) });
+
+    const known = new Set(departures.filter(d => d.knownTravel === true).map(d => d.id));
+    for (const intent of intents) {
+      assert.ok(known.has(intent.departureId), `tuntemattomasta matka-ajasta syntyi ${intent.type}`);
+    }
+    for (const id of known) {
+      const own = intents.filter(i => i.departureId === id && i.step !== 'repeat')
+        .map(i => wallClockMinutes(i.date, i.time));
+      assert.ok(own.length >= 2, 'tunnetulla lähdöllä on vähintään "pian" ja "nyt"');
+      for (let i = 1; i < own.length; i++) assert.ok(own[i] > own[i - 1], 'ketju ei ole järjestyksessä');
+    }
+    const ids = intents.map(i => i.id);
+    assert.equal(new Set(ids).size, ids.length, 'sama muistutus kahdesti');
+  });
+});
+
+test('arjen muistutusputki: rauhoitusaika, kuittaus, päiväraja ja puheen lupa pitävät', () => {
+  forEachCase(gen => {
+    const dateIso = isoDate(gen.int(0, 400));
+    const quietHours = { from: '22:00', to: '06:30' };
+    const maxPerDay = gen.int(1, 12);
+    const speechEnabled = gen.random() < 0.5;
+    const settings = {
+      speechEnabled,
+      guidanceStyle: gen.pick(GUIDANCE_STYLES),
+      digestEnabled: gen.random() < 0.5,
+      digestTime: gen.pick(['18:00', '23:30', '07:00']),
+      morningBriefEnabled: gen.random() < 0.5,
+      delivery: { departure: gen.pick(Object.values(DELIVERY)), meal: gen.pick(Object.values(DELIVERY)),
+        bedtime: DELIVERY.SOUND_AND_SPEECH, habit: DELIVERY.SPEECH }
+    };
+    const departures = Array.from({ length: gen.int(0, 4) }, (unused, i) => randomDeparture(gen, dateIso, i));
+    const entries = Array.from({ length: gen.int(0, 8) }, (unused, i) => ({
+      kind: gen.pick(['wind_down', 'bedtime', 'meal', 'habit', 'evening_before', 'morning_brief']),
+      id: 'a' + i, date: dateIso, time: timeOfDay(gen.int(0, 1439)), prepMinutes: gen.maybe(gen.int(0, 90))
+    }));
+    const tasks = Array.from({ length: gen.int(0, 10) }, () => ({ ...randomTask(gen, dateIso), completed: false }));
+
+    const all = [
+      ...planNotifications({ tasks, routineOccurrences: [], dateIso, todayIso: dateIso,
+        preferences: normalizePreferences({ enabled: true, maxPerDay: 50, quietHours: { from: '00:00', to: '00:00' } }) }),
+      ...planDepartureChain({ departures, settings }),
+      ...planDailyLifeReminders({ entries, settings })
+    ];
+    const acked = all.filter(() => gen.random() < 0.2);
+    const ackLog = buildAckLog(acked.map(i => ({ type: gen.pick(['acknowledged', 'dismissed']), key: i.ackKey, atMs: 1 })));
+    const result = applyNotificationPolicy(all, {
+      settings, ackLog, preferences: { enabled: true, quietHours, maxPerDay }
+    });
+
+    const handled = new Set(acked.map(i => i.ackKey));
+    const nonCritical = new Map();
+    for (const intent of result) {
+      assert.equal(handled.has(intent.ackKey), false, 'kuitattu tai hylätty palasi');
+      if (isQuietTime(intent.time, quietHours)) {
+        const passes = intent.level === LEVEL.CRITICAL || QUIET_PASS_TYPES.includes(intent.type)
+          || intent.topic === REMINDER_TOPIC.DEPARTURE;
+        const silentBedtime = intent.topic === REMINDER_TOPIC.BEDTIME && intent.delivery === DELIVERY.SILENT
+          && intent.speech === null;
+        assert.ok(passes || silentBedtime, `${intent.type} taso ${intent.level} klo ${intent.time} rauhoitusaikana`);
+      }
+      if (!speechEnabled) assert.equal(intent.speech, null, 'puhe ilman lupaa');
+      if (intent.level !== LEVEL.CRITICAL) nonCritical.set(intent.date, (nonCritical.get(intent.date) || 0) + 1);
+    }
+    for (const [date, count] of nonCritical) assert.ok(count <= maxPerDay, `${date}: ${count} > ${maxPerDay}`);
+    const ids = result.map(i => i.id);
+    assert.equal(new Set(ids).size, ids.length, 'sama muistutus kahdesti');
+  }, 150);
 });
 
 // -------------------------------------------------------------- fokus ja katsaus
