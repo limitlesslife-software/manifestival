@@ -1044,3 +1044,54 @@ test('tehtävän napautus Kalenterissa avaa näkyvän muokkauslomakkeen, vaikka 
   assert.equal(isRendered(byId('addForm')), true);
   assertSameNode(doc.activeElement, byId('afTitle'));
 });
+
+test('Viikko: menon tallennus vie fokuksen näkyvään viikon riviin, ei piilossa olevan Päivän vanhaan riviin', async (t) => {
+  freezeLocalDate(t, TUESDAY);
+  const { doc, byId } = mountCalendar({ before: () => seed({ tasks: [] }) });
+  // Kalenteri avautuu Päivään: päivälistaan jää hammaslääkärin rivi, kun osio vaihtuu.
+  assert.ok(doc.querySelector('#calDayAgenda [data-cal-open="e-hammas"]'));
+  byId('segmentCalWeek').click();
+  const row = doc.querySelector('#calWeekEvents [data-cal-open="e-hammas"]');
+  row.focus();
+  press(doc, 'Enter');
+  assertSameNode(doc.activeElement, byId('ceTitle'));
+  type(byId('ceTitle'), 'Hammaslääkäri (tarkastus)');
+  press(doc, 'Enter');
+  await flush();
+
+  assert.equal(getState().calendarEvents.find(e => e.id === 'e-hammas').title, 'Hammaslääkäri (tarkastus)');
+  assert.equal(isRendered(byId('calEventForm')), false);
+  const fresh = doc.querySelector('#calWeekEvents [data-cal-open="e-hammas"]');
+  assert.notEqual(fresh, row, 'rivi piirrettiin uudelleen (avaaja katosi)');
+  assertSameNode(doc.activeElement, fresh, 'fokus saman menon näkyvään riviin');
+  assert.equal(isRendered(doc.activeElement), true);
+});
+
+test('Päivä Viikon jälkeen: poisto vie fokuksen "Uusi meno" -painikkeeseen, ei piilossa olevaan viikon riviin', async (t) => {
+  freezeLocalDate(t, TUESDAY);
+  const { doc, byId } = mountCalendar({ before: () => seed({ tasks: [] }) });
+  byId('segmentCalWeek').click();
+  byId('segmentCalDay').click();
+  // Piilossa olevaan viikkolistaan jäi palaverin rivi edelliseltä käynniltä.
+  assert.ok(doc.querySelector('#calWeekEvents [data-cal-open="e-palaveri"]'));
+  const row = doc.querySelector('#calDayAgenda [data-cal-open="e-palaveri"]');
+  row.focus();
+  press(doc, 'Enter');
+  byId('ceDelete').click();
+  doc.getElementById('confirmAccept').click();
+  await flush();
+
+  assert.equal(getState().calendarEvents.some(e => e.id === 'e-palaveri'), false);
+  assertSameNode(doc.activeElement, byId('calNewEvent'), 'fokus "Uusi meno" -painikkeeseen');
+
+  // Toistuvan menon ohitus samassa tilanteessa: kerran rivi katoaa päivältä.
+  showCalendarDay(THURSDAY);
+  byId('segmentCalWeek').click();
+  byId('segmentCalDay').click();
+  doc.querySelector(`#calDayAgenda [data-cal-open="e-jooga"][data-cal-date="${THURSDAY}"]`).click();
+  byId('ceSkip').click();
+  doc.getElementById('confirmAccept').click();
+  await flush();
+  assert.deepEqual(getState().calendarEvents.find(e => e.id === 'e-jooga').skipDates, [THURSDAY]);
+  assertSameNode(doc.activeElement, byId('calNewEvent'));
+});

@@ -430,13 +430,17 @@ function focusAfterClose(opener, eventId) {
     if (typeof document === 'undefined' || document.activeElement === opener) return;
   }
   // Avaaja katosi uudelleenpiirrossa: saman menon rivi, muuten "Uusi meno".
+  // Vain näkyvä osio piirretään uudelleen, joten piilossa olevaan (edellisen
+  // osion) listaan jää vanhentunut rivi samalle menolle. Piilotettu rivi ei
+  // ota fokusta vastaan: siksi tarkistetaan, että fokus todella siirtyi, ja
+  // muuten jatketaan seuraavaan listaan ja lopulta "Uusi meno" -painikkeeseen.
   if (eventId) {
     for (const container of [maybe('calDayAgenda'), maybe('calWeekEvents')]) {
       if (!container || typeof container.querySelectorAll !== 'function') continue;
       const row = [...container.querySelectorAll('[data-cal-open]')].find(node => node.dataset.calOpen === eventId);
       if (row) {
         row.focus();
-        return;
+        if (typeof document === 'undefined' || document.activeElement === row) return;
       }
     }
   }
