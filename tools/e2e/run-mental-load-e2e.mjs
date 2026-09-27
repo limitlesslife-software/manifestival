@@ -358,11 +358,77 @@ L_SCENARIOS.push(
     }) }
 );
 
+// =====================================================================
+// KUVAKAAPPAUKSET (valinnainen, E2E_SHOTS=1): visuaalinen tarkistus
+// =====================================================================
+
+const SHOT_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'tmp', 'wave-l-shots');
+
+async function shot(cdp, name) {
+  const fs = await import('node:fs');
+  fs.mkdirSync(SHOT_DIR, { recursive: true });
+  const { data } = await cdp.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
+  const file = path.join(SHOT_DIR, name + '.png');
+  fs.writeFileSync(file, Buffer.from(data, 'base64'));
+  return file;
+}
+
+const SHOT_SCENARIOS = [
+  { name: 'kuvat: Tänään, Tallessa, Suojattu aika, Saapuvat ja sunnuntain nollaus',
+    run: async ({ page, cdp }) => {
+      await page(async () => {
+        const today = H.today();
+        window.__e2e.setTasks([
+          ...[1, 2, 3, 4, 5].map(n => ({ id: 's' + n, title: 'Asia numero ' + n, date: today, durationMinutes: 25 })),
+          { id: 'sf', title: 'Hammaslääkäri', date: today, time: '14:00', endTime: '15:00' },
+          { id: 'sl', title: 'Maalaa aita', horizon: 'LATER' },
+          { id: 'sw', title: 'Taloyhtiön vastaus', horizon: 'WAITING', waitingOn: 'Isännöitsijä' }
+        ]);
+        const actions = await import('/src/app/mentalLoadActions.js');
+        await actions.saveProtectedPeriod({ kind: 'OWN_TIME', recurrence: 'weekly', weekdays: [H.isoWeekday(today)],
+          startTime: '18:00', endTime: '19:30', title: 'Kitara' });
+        await H.openToday();
+        window.scrollTo(0, 0);
+        return true;
+      });
+      const files = [await shot(cdp, '01-tanaan')];
+      await page(async () => { await H.openStored('THIS_WEEK'); window.scrollTo(0, 0); return true; });
+      files.push(await shot(cdp, '02-tallessa'));
+      await page(async () => { await H.profile('protected'); window.scrollTo(0, 0); return true; });
+      files.push(await shot(cdp, '03-suojattu-aika'));
+      await page(async () => {
+        H.fill('#captureInput', 'Soita Annalle\nVaraa hammaslääkäri');
+        await H.openToday();
+        H.click('#captureSendBtn');
+        await H.waitFor(() => H.text('#captureStatus').includes('Kirjattu'), 'kirjattu');
+        await H.openTab('screen-tasks');
+        H.click('#segmentInbox');
+        await H.waitFor(() => H.el('#inboxSelectAll'), 'saapuvat');
+        window.scrollTo(0, 0);
+        return true;
+      });
+      files.push(await shot(cdp, '04-saapuvat'));
+      await page(async () => {
+        const reset = await import('/src/app/views/sundayReset.js');
+        reset.openSundayReset({ fresh: true });
+        await H.waitFor(() => H.el('#sundayResetDialog').open, 'nollaus');
+        return true;
+      });
+      files.push(await shot(cdp, '05-sunnuntain-nollaus'));
+      return files.map(file => path.basename(file)).join(', ');
+    } }
+];
+
 export const GROUPS = Object.freeze([
   { key: 'closed', label: 'suljetut portit', query: { gates: 'closed', seed: 'empty', clock: wednesdayTen(), onboarding: 'skip' },
     scenarios: CLOSED_SCENARIOS },
   { key: 'L', label: 'aalto L', query: { gates: 'L', seed: 'empty', clock: wednesdayTen(), onboarding: 'skip' },
-    scenarios: L_SCENARIOS }
+    scenarios: L_SCENARIOS },
+  // Vain pyydettäessä (E2E_SHOTS=1 ja E2E_GROUPS=shots): kuvat tmp/wave-l-shots/.
+  ...(process.env.E2E_SHOTS === '1'
+    ? [{ key: 'shots', label: 'kuvat', query: { gates: 'L', seed: 'empty', clock: wednesdayTen(), onboarding: 'skip' },
+      scenarios: SHOT_SCENARIOS }]
+    : [])
 ]);
 
 export const PENDING_ON = Object.freeze({});
