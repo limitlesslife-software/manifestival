@@ -999,6 +999,40 @@ test('poisto kysyy vahvistuksen; hyväksyntä poistaa menon ja fokus siirtyy "Uu
   assertSameNode(doc.activeElement, byId('calNewEvent'));
 });
 
+test('KRIITTINEN: paikkojen lataus epäonnistui -> lomake säilyttää menon paikan, otsikon muutos ei katkaise liitosta', async (t) => {
+  // Menot latautuivat, paikat eivät: lomake näytti aiemmin "Ei paikkaa" ja
+  // lähetti placeId = null -- lähtö ja muistutukset katosivat pysyvästi.
+  freezeLocalDate(t, TUESDAY);
+  const { doc, byId } = mountCalendar({
+    before: () => {
+      seed({ events: [EVENTS[0]], places: [], tasks: [] });
+      setDomainLoadStatus('savedPlaces', false, { message: 'verkko' });
+    }
+  });
+  doc.querySelector('[data-cal-open="e-hammas"]').click();
+  assert.equal(byId('cePlace').value, 'p-hammas', 'paikka putosi valinnasta');
+  const chosen = byId('cePlace').querySelectorAll('option').find(option => option.value === 'p-hammas');
+  assert.match(text(chosen), /Tallennettu paikka/);
+  type(byId('ceTitle'), 'Hammaslääkäri (siirretty)');
+  const result = await submitEventForm();
+  assert.equal(result.ok, true);
+  assert.equal(getState().calendarEvents[0].placeId, 'p-hammas');
+  assert.equal((await calendarEventsRepo.memory.get('e-hammas')).value.placeId, 'p-hammas');
+});
+
+test('paikat latautuivat ja menon paikka puuttuu: lomake näyttää "Ei paikkaa" (kuollutta liitosta ei tarjota)', (t) => {
+  freezeLocalDate(t, TUESDAY);
+  const { doc, byId } = mountCalendar({
+    before: () => {
+      seed({ events: [EVENTS[0]], places: [], tasks: [] });
+      setDomainLoadStatus('savedPlaces', true);
+    }
+  });
+  doc.querySelector('[data-cal-open="e-hammas"]').click();
+  assert.equal(byId('cePlace').value, '');
+  assert.equal(byId('cePlace').querySelectorAll('option').some(option => option.value === 'p-hammas'), false);
+});
+
 test('uloskirjautuminen: resetCalendarView sulkee ja tyhjentää lomakkeen (ei vuotoa seuraavalle käyttäjälle)', (t) => {
   freezeLocalDate(t, TUESDAY);
   const { doc, byId } = mountCalendar({ before: () => seed({ tasks: [] }) });

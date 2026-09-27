@@ -67,7 +67,7 @@ import {
   clearOtherWakeFlagsInState,
   setRoutines, addRoutineToState, replaceRoutineInState, removeRoutineFromState, findRoutine,
   setRoutineExceptions, addRoutineExceptionToState, removeRoutineExceptionFromState,
-  setGoals, addGoalToState, replaceGoalInState, removeGoalFromState, findGoal,
+  setGoals, addGoalToState, replaceGoalInState, removeGoalFromState, restoreGoalInState, findGoal,
   setProjects, addProjectToState, replaceProjectInState, removeProjectFromState,
   findProject,
   setWellbeing, upsertWellbeingEntry, setNotificationPreferences,
@@ -93,6 +93,7 @@ import {
   setExerciseSessions, setWellbeingCheckins
 } from './state.js';
 import { adoptLoadedTimers, timerMutationSeq } from './timerState.js';
+import { dailyLifeWriteMark, keepDailyLifeWritesSince } from './dailyLifeActions.js';
 import {
   loadPreferences as loadNotificationPreferences,
   clearPreferences as clearNotificationPreferences
@@ -202,6 +203,10 @@ export async function loadUserData() {
   // Ajastimen muutos kesken latauksen (esim. pysäytys paluun päivityksen
   // aikana): ennen sitä luettu lista ei saa herättää ajastinta henkiin.
   const timerSeq = timerMutationSeq();
+  // Sama arjen tallennuksille (dailyLifeActions.js): latauksen aikana
+  // valmistunut meno, unikirjaus tai asetus ei saa kadota vanhemman listan
+  // alle, eikä sen aikana poistettu meno palata.
+  const dailyLifeMark = dailyLifeWriteMark();
 
   const loaded = await Promise.all([
     tasksRepo.listTasks(),
@@ -251,11 +256,11 @@ export async function loadUserData() {
 
   // Koko tulos tilaan YHDELLÄ ilmoituksella (state.js batch): muuten
   // jokainen kokoelma ja sen latausstatus piirsi näkymät erikseen (CRIT-01).
-  return batch(() => applyLoadedData(loaded, timerSeq));
+  return batch(() => applyLoadedData(loaded, timerSeq, dailyLifeMark));
 }
 
 /** loadUserData():n hakutulokset tilaan. Synkroninen: ajetaan batchissa. */
-function applyLoadedData(loaded, timerSeq) {
+function applyLoadedData(loaded, timerSeq, dailyLifeMark) {
   const [tasksResult, profileResult, routinesResult, exceptionsResult,
     goalsResult, projectsResult, wellbeingResult, preferencesResult,
     billsResult, expensesResult, savingsResult, transactionsResult,
@@ -335,6 +340,11 @@ function applyLoadedData(loaded, timerSeq) {
     applyLoadResult('exerciseSessions', exerciseResult, setExerciseSessions),
     applyLoadResult('wellbeingCheckins', checkinsResult, setWellbeingCheckins)
   ];
+
+  // Latauksen alun jälkeen valmistuneet arjen tallennukset ladatun listan
+  // päälle (samassa batchissa): muuten juuri tallennettu meno katosi,
+  // poistettu palasi ja seuraava tallennus loi toisen rivin.
+  keepDailyLifeWritesSince(dailyLifeMark);
 
   // Aikakirjausten haku epäonnistui (F6): lähtökorin kirjaukset näkyvät
   // silti. Muuten offline-kylmäkäynnistyksessä odottava kirjaus puuttui
@@ -863,12 +873,12 @@ export async function setGoalStatus(id, status) {
  * Tehtäviä EI koskaan poisteta tavoitteen mukana — niiden yhteys vain
  * katkeaa. Työ, joka on jo tehty, ei katoa siksi että tavoite poistuu.
  */
-export async function deleteGoal(id) {
+export async function deleteGoal(id, { confirm = confirmAction } = {}) {
   const goal = findGoal(id);
   if (!goal) return false;
 
   const linked = getState().tasks.filter(task => task.goalId === id);
-  const confirmed = await confirmAction({
+  const confirmed = await confirm({
     title: 'Poistetaanko tavoite?',
     message: linked.length
       ? `"${goal.title}" poistetaan. ${linked.length} tehtävää säilyy, mutta niiden yhteys tavoitteeseen katkeaa.`
@@ -879,11 +889,23 @@ export async function deleteGoal(id) {
   });
   if (!confirmed) return false;
 
-  removeGoalFromState(id);
+  // Tila luetaan UUDELLEEN vahvistuksen jälkeen (kuten deleteLifeArea):
+  // dialogin aikana ehtinyt lataus tai muutos jäisi muuten peruutuksen
+  // ulkopuolelle.
+  const current = findGoal(id);
+  if (!current) return false;
+  const startedIn = sessionSnapshot();
+  const unlinked = removeGoalFromState(id);
 
   const result = await goalsRepo.remove(id);
+  // Uloskirjautuminen tai tilin vaihto odotuksen aikana: tila on jo
+  // tyhjennetty, eikä edellisen käyttäjän tavoitetta palauteta seuraavalle.
+  if (!isSameSession(startedIn)) return false;
   if (!result.ok) {
-    addGoalToState(goal); // peruutus
+    // Kanta ei muuttunut: tavoite JA liitokset takaisin. Pelkkä tavoite
+    // jätti liitetyt rivit irrallisiksi, ja seuraava muokkaus olisi
+    // tallentanut goal_id = null kantaan.
+    restoreGoalInState(current, unlinked);
     showError(result.error);
     return false;
   }

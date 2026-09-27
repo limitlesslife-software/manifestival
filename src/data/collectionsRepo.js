@@ -69,6 +69,112 @@ function assertClientSafe(row) {
   return row;
 }
 
+// ------------------------------------------------------ sivutettu lataus
+//
+// PostgREST palauttaa yhdessä vastauksessa enintään max-rows riviä
+// (Supabasessa oletus 1000) EIKÄ kerro katkaisusta mitään. Ilman
+// järjestystä ja sivutusta lataus näki pitkäikäisestä taulusta vain
+// satunnaisen tuhannen rivin osajoukon ja korvasi tilan sillä: uusimmat
+// unikirjaukset ja tulevat menot katosivat jokaisella latauksella, ja
+// puuttuvan päivän tallennus törmäsi uniikkiavaimeen (23505).
+//
+// Siksi arjen taulut (0014) ladataan sivuittain vakaassa järjestyksessä
+// (tunniste on uniikki, joten sivut eivät mene päällekkäin). Ensimmäinen
+// sivu pyytää kokonaismäärän: jos palvelimen raja on sivua pienempi,
+// jatketaan kunnes kaikki on haettu. Karkaamisraja estää loputtoman
+// silmukan, ja sen ylitys on näkyvä virhe — ei hiljainen katkaisu.
+
+/** Pyydetyn sivun koko (sama kuin Supabasen oletusraja). */
+export const LIST_PAGE_ROWS = 1000;
+
+/** Karkaamisraja: näin monta riviä yhdestä taulusta on jo vika, ei käyttöä. */
+export const MAX_LIST_ROWS = 50000;
+
+/**
+ * Hae kirjautuneen käyttäjän kaikki rivit sivuittain.
+ *
+ * @param {string} table
+ * @param {string} orderColumn uniikki sarake, jonka mukaan sivutetaan
+ * @param {{pageRows?:number, maxRows?:number}} [limits]
+ * @returns {Promise<{data:object[]|null, error:object|null, overflow?:boolean}>}
+ */
+export async function selectOwnedRows(table, orderColumn,
+  { pageRows = LIST_PAGE_ROWS, maxRows = MAX_LIST_ROWS } = {}) {
+  const rows = [];
+  let total = null;
+  while (rows.length < maxRows) {
+    const from = rows.length;
+    const { data, error, count } = await getClient()
+      .from(table)
+      .select('*', from === 0 ? { count: 'exact' } : {})
+      .eq('user_id', requireUserId())
+      .order(orderColumn, { ascending: true })
+      .range(from, from + pageRows - 1);
+    if (error) return { data: null, error };
+    const page = Array.isArray(data) ? data : [];
+    if (from === 0 && Number.isInteger(count)) total = count;
+    rows.push(...page);
+    // Tyhjä sivu päättää aina. Tunnettu kokonaismäärä ratkaisee, vaikka
+    // palvelimen raja olisi sivua pienempi; ilman sitä vajaa sivu on viimeinen.
+    const done = page.length === 0 || (total !== null ? rows.length >= total : page.length < pageRows);
+    if (done) return { data: rows, error: null };
+  }
+  return { data: null, error: null, overflow: true };
+}
+
+// ------------------------------------------------ muuttuneet sarakkeet
+
+/** Domain-olion kentät, jotka eivät ole käyttäjän muutoksia. */
+const DOMAIN_META_FIELDS = Object.freeze(['id', 'createdAt', 'updatedAt']);
+
+/**
+ * Sarakkeet (tai domain-kentät), joiden arvo eroaa. Tunniste ei ole muutos.
+ * jsonb-sarake verrataan kokonaisena: sisäkkäinen olio lähtee koko
+ * sarakkeena, kuten kanta sen tallentaa.
+ *
+ * @param {object|null} before rivi, johon muutos yhdistettiin
+ * @param {object} after
+ * @param {string[]} [ignore]
+ * @returns {object} vain muuttuneet avaimet
+ */
+export function changedColumns(before, after, ignore = ['id']) {
+  const patch = {};
+  for (const [key, value] of Object.entries(after || {})) {
+    if (ignore.includes(key)) continue;
+    const previous = before ? before[key] : undefined;
+    if (JSON.stringify(previous) !== JSON.stringify(value)) patch[key] = value;
+  }
+  return patch;
+}
+
+// ------------------------------------------ poistosäännöt muistipolulla
+//
+// Kanta hoitaa poiston seuraukset itse (0014: ON DELETE SET NULL ja
+// CASCADE). Muistivarasto ei: paikan poiston jälkeen menon muistiriville
+// jäi kuollut place_id, ja seuraava lataus (paluu sovellukseen, verkon
+// palautuminen) toi sen tilaan. Lähtö muuttui tuntemattomaksi ja aamun
+// suunnitelma putosi profiilin työmatkaan, joten suositeltu herätys
+// aikaistui ilman käyttäjän muutosta.
+//
+// Siksi onnistunut poisto peilaa kannan säännön niihin lapsitauluihin,
+// jotka elävät muistissa. Kannassa oleva lapsi on kannan vastuulla (ja
+// muistissa elävään vanhempaan se ei voi viitata: vierasavain estäisi).
+
+/** Kannan ON DELETE -toiminnot. */
+export const ON_DELETE = Object.freeze({ SET_NULL: 'set null', CASCADE: 'cascade' });
+
+async function mirrorDeleteInMemory(references, id) {
+  for (const { repo, field, onDelete } of references) {
+    if (repo.isPersistent()) continue;
+    const listed = await repo.memory.list();
+    for (const row of listed.value || []) {
+      if (row[field] == null || String(row[field]) !== String(id)) continue;
+      if (onDelete === ON_DELETE.CASCADE) await repo.memory.remove(row.id);
+      else await repo.memory.patch(row.id, { [field]: null });
+    }
+  }
+}
+
 /**
  * Luo repositorio, joka käyttää Supabasea jos taulu on olemassa ja
  * muistivarastoa muuten.
@@ -81,6 +187,11 @@ function assertClientSafe(row) {
  * @param {Function} config.fromRow   Kannan rivi -> domain
  * @param {Function} [config.guardWrite] normalisoitu -> kieltäytyminen tai null
  *   (arvot, joita kanta ei vielä hyväksy; tarkistetaan ennen verkkoa)
+ * @param {string} [config.listOrder] uniikki sarake: lataus sivuittain tämän
+ *   mukaan järjestettynä (selectOwnedRows). Puuttuu = yksi haku.
+ * @param {Function} [config.referencedBy] () => [{repo, field, onDelete}]:
+ *   kannan vierasavaimet tähän tauluun, peilataan muistiin poistossa
+ *   (laiska, koska lapsirepositoriot määritellään myöhemmin)
  *
  * AJONAIKAINEN SKEEMATARKISTUS (src/data/schema.js, schemaRuntime.js):
  * käännösaikainen portti valitsee yhä kannan ja muistin välillä. Jos kanta
@@ -94,15 +205,44 @@ function assertClientSafe(row) {
  *
  * Torjunta tapahtuu ENNEN verkkokutsua ja kertoo syyn käyttäjälle.
  */
-export function createRepository({ table, schemaKey, normalize, toRow, fromRow, guardWrite = null }) {
+export function createRepository({
+  table, schemaKey, normalize, toRow, fromRow, guardWrite = null, listOrder = null, referencedBy = null
+}) {
   const memory = createMemoryRepository({ normalize, name: table });
 
   const usesDatabase = () => hasTable(schemaKey);
   const refusal = normalized => writeRefusal(schemaKey) || (guardWrite ? guardWrite(normalized) : null);
 
+  async function removeRow(id) {
+    if (!usesDatabase()) return memory.remove(id);
+    const refused = writeRefusal(schemaKey);
+    if (refused) return refused;
+    try {
+      const { error } = await getClient()
+        .from(table)
+        .delete()
+        .eq('user_id', requireUserId())
+        .eq('id', id);
+      if (error) {
+        noteSchemaError(table, error, [], { write: true });
+        return failFromCause(error, { op: 'delete', fallback: 'Poisto ei onnistunut.', code: table + '.delete' });
+      }
+      return ok({ id });
+    } catch (cause) {
+      return failFromThrown(cause, { op: 'delete', fallback: 'Poisto ei onnistunut.', code: table + '.delete' });
+    }
+  }
+
   return {
     table,
     schemaKey,
+
+    /** Sivutetun latauksen järjestyssarake, tai null (yksi haku). */
+    listOrder,
+
+    /** Muistiin peilattavat vierasavaimet tarkastelua varten: [{table, field, onDelete}]. */
+    references: () => (referencedBy ? referencedBy() : [])
+      .map(({ repo, field, onDelete }) => ({ table: repo.table, field, onDelete })),
 
     /** Säilyykö tieto tallennuksen yli tällä hetkellä? */
     isPersistent: () => usesDatabase(),
@@ -131,6 +271,18 @@ export function createRepository({ table, schemaKey, normalize, toRow, fromRow, 
       // auttaisi, ja tyhjässä taulussa ei ole mitään kadonnutta.
       if (isTableMissing(schemaKey)) return ok([]);
       try {
+        if (listOrder) {
+          const paged = await selectOwnedRows(table, listOrder);
+          if (paged.overflow) {
+            return failWith(ERROR_CODE.UNSUPPORTED, 'Tietoja on enemmän kuin sovellus pystyy kerralla lataamaan.',
+              { op: table + '.list' });
+          }
+          if (paged.error) {
+            noteSchemaError(table, paged.error);
+            return failFromCause(paged.error, { op: 'load', fallback: 'Tietojen lataus ei onnistunut.', code: table + '.list' });
+          }
+          return ok(paged.data.map(fromRow));
+        }
         const { data, error } = await getClient()
           .from(table)
           .select('*')
@@ -170,21 +322,35 @@ export function createRepository({ table, schemaKey, normalize, toRow, fromRow, 
      * poistettu toisella laitteella tai RLS suodatti sen) onnistuneeksi:
      * näkymä väitti tallentaneensa, ja seuraava lataus pudotti muutoksen
      * sanomatta mitään. Nyt nolla riviä on NOT_FOUND, ja kutsuja peruu.
+     *
+     * `changedFrom` = rivi, johon kutsuja yhdisti muutoksensa. Silloin
+     * lähetetään VAIN muuttuneet sarakkeet (changedColumns), ei koko riviä
+     * laitteen välimuistista: muuten vanhentunut laite kumosi hiljaa toisella
+     * laitteella tehdyt muutokset saman rivin muihin sarakkeisiin.
      */
-    async update(entity) {
+    async update(entity, { changedFrom = null } = {}) {
       const normalized = normalize(entity);
-      if (!usesDatabase()) return memory.update(normalized);
+      if (!usesDatabase()) {
+        if (!changedFrom) return memory.update(normalized);
+        // Muistissa sama sääntö: vain muuttuneet kentät yhdistetään riviin.
+        return memory.patch(normalized.id,
+          changedColumns(normalize(changedFrom), normalized, DOMAIN_META_FIELDS));
+      }
       const refused = refusal(normalized);
       if (refused) return refused;
+      const fullRow = toRow(normalized);
+      const row = changedFrom ? changedColumns(toRow(normalize(changedFrom)), fullRow) : fullRow;
+      // Mikään ei muuttunut: ei tyhjää UPDATEa (PostgREST hylkäisi sen).
+      if (Object.keys(row).length === 0) return ok(normalized);
       try {
         const { data, error } = await getClient()
           .from(table)
-          .update(stripLoweredColumns(table, assertClientSafe(toRow(normalized))))
+          .update(stripLoweredColumns(table, assertClientSafe(row)))
           .eq('user_id', requireUserId())
           .eq('id', normalized.id)
           .select('id');
         if (error) {
-          noteSchemaError(table, error, Object.keys(toRow(normalized)));
+          noteSchemaError(table, error, Object.keys(row));
           return failFromCause(error, { op: 'save', fallback: 'Muutoksen tallennus ei onnistunut.', code: table + '.update' });
         }
         if (!Array.isArray(data) || data.length === 0) {
@@ -196,24 +362,11 @@ export function createRepository({ table, schemaKey, normalize, toRow, fromRow, 
       }
     },
 
+    /** Poisto; onnistuessa kannan poistosäännöt peilataan muistissa eläviin lapsiin. */
     async remove(id) {
-      if (!usesDatabase()) return memory.remove(id);
-      const refused = writeRefusal(schemaKey);
-      if (refused) return refused;
-      try {
-        const { error } = await getClient()
-          .from(table)
-          .delete()
-          .eq('user_id', requireUserId())
-          .eq('id', id);
-        if (error) {
-          noteSchemaError(table, error, [], { write: true });
-          return failFromCause(error, { op: 'delete', fallback: 'Poisto ei onnistunut.', code: table + '.delete' });
-        }
-        return ok({ id });
-      } catch (cause) {
-        return failFromThrown(cause, { op: 'delete', fallback: 'Poisto ei onnistunut.', code: table + '.delete' });
-      }
+      const result = await removeRow(id);
+      if (result.ok && referencedBy) await mirrorDeleteInMemory(referencedBy(), id);
+      return result;
     },
 
     /** Tyhjennä muistivarasto. Kutsutaan uloskirjautumisessa. */
@@ -302,6 +455,11 @@ export const goalsRepo = createRepository({
     maintenanceAllowed: columnGateOpen('GOAL_MAINTENANCE_MODE')
   }) ? null : failWith(ERROR_CODE.VALIDATION_ERROR,
     'Ylläpitotila ei ole vielä käytössä. Valitse tavoitteelle toinen tila.')),
+  // 0014: menot ja liikuntakerrat säilyvät, tavoiteliitos katkeaa.
+  referencedBy: () => [
+    { repo: calendarEventsRepo, field: 'goalId', onDelete: ON_DELETE.SET_NULL },
+    { repo: exerciseSessionsRepo, field: 'goalId', onDelete: ON_DELETE.SET_NULL }
+  ],
   toRow: goal => ({
     id: goal.id,
     title: goal.title,
@@ -1130,6 +1288,13 @@ export const savedPlacesRepo = createRepository({
   table: 'saved_places',
   schemaKey: 'savedPlaces',
   normalize: normalizeSavedPlace,
+  listOrder: 'id',
+  // 0014: menot jäävät ilman paikkaa; nimitykset ja havainnot poistuvat.
+  referencedBy: () => [
+    { repo: calendarEventsRepo, field: 'placeId', onDelete: ON_DELETE.SET_NULL },
+    { repo: placeAliasesRepo, field: 'placeId', onDelete: ON_DELETE.CASCADE },
+    { repo: commuteObservationsRepo, field: 'placeId', onDelete: ON_DELETE.CASCADE }
+  ],
   toRow: place => ({
     id: place.id,
     name: place.name,
@@ -1167,6 +1332,7 @@ export const placeAliasesRepo = createRepository({
   table: 'place_aliases',
   schemaKey: 'placeAliases',
   normalize: normalizePlaceAlias,
+  listOrder: 'id',
   toRow: alias => ({
     id: alias.id,
     place_id: alias.placeId,
@@ -1194,6 +1360,7 @@ export const calendarEventsRepo = createRepository({
   table: 'calendar_events',
   schemaKey: 'calendarEvents',
   normalize: normalizeCalendarEvent,
+  listOrder: 'id',
   toRow: event => ({
     id: event.id,
     title: event.title,
@@ -1250,6 +1417,7 @@ export const commuteObservationsRepo = createRepository({
   table: 'commute_observations',
   schemaKey: 'commuteObservations',
   normalize: normalizeCommuteObservation,
+  listOrder: 'id',
   toRow: observation => ({
     id: observation.id,
     place_id: observation.placeId,
@@ -1295,6 +1463,7 @@ export const lifeSettingsRepo = createRepository({
   table: 'life_settings',
   schemaKey: 'lifeSettings',
   normalize: normalizeLifeSettings,
+  listOrder: 'id',
   toRow: settings => ({
     id: settings.id,
     weekend_wake_shift_max_minutes: settings.weekendWakeShiftMaxMinutes,
@@ -1346,6 +1515,7 @@ export const sleepLogsRepo = createRepository({
   table: 'sleep_logs',
   schemaKey: 'sleepLogs',
   normalize: normalizeSleepLog,
+  listOrder: 'id',
   toRow: log => ({
     id: log.id,
     wake_date: log.wakeDate,
@@ -1377,6 +1547,9 @@ export const habitPlansRepo = createRepository({
   table: 'habit_plans',
   schemaKey: 'habitPlans',
   normalize: normalizeHabitPlan,
+  listOrder: 'id',
+  // 0014: suunnitelman kirjaukset poistuvat sen mukana.
+  referencedBy: () => [{ repo: habitEventsRepo, field: 'planId', onDelete: ON_DELETE.CASCADE }],
   toRow: plan => ({
     id: plan.id,
     kind: plan.kind,
@@ -1410,6 +1583,7 @@ export const habitEventsRepo = createRepository({
   table: 'habit_events',
   schemaKey: 'habitEvents',
   normalize: normalizeHabitEvent,
+  listOrder: 'id',
   toRow: event => ({
     id: event.id,
     plan_id: event.planId,
@@ -1433,6 +1607,7 @@ export const exerciseSessionsRepo = createRepository({
   table: 'exercise_sessions',
   schemaKey: 'exerciseSessions',
   normalize: normalizeExerciseSession,
+  listOrder: 'id',
   toRow: session => ({
     id: session.id,
     session_date: session.date,
@@ -1464,6 +1639,7 @@ export const wellbeingCheckinsRepo = createRepository({
   table: 'wellbeing_checkins',
   schemaKey: 'wellbeingCheckins',
   normalize: normalizeWellbeingCheckin,
+  listOrder: 'id',
   toRow: checkin => ({
     id: checkin.id,
     date: checkin.date,

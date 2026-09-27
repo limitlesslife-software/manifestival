@@ -24,7 +24,9 @@ import {
   activateDailyLifeOutbox, deactivateDailyLifeOutbox, replayDailyLifeOutbox, dailyLifeOutboxStatus,
   overlayDailyLifeOutbox
 } from '../src/app/dailyLifeOutbox.js';
-import { saveCalendarEvent, logHabitEvent, deleteCalendarEvent, resetDailyLifeActions } from '../src/app/dailyLifeActions.js';
+import {
+  saveCalendarEvent, logHabitEvent, deleteCalendarEvent, resetDailyLifeActions, dailyLifeWriteMark, keepDailyLifeWritesSince
+} from '../src/app/dailyLifeActions.js';
 import { normalizeCalendarEvent } from '../src/domain/calendarEvent.js';
 import { readCode } from './helpers/sources.mjs';
 
@@ -353,4 +355,17 @@ test('main.js lähettää korin ennen latausta ja pitää odottavat näkyvissä 
   assert.match(load.slice(0, 600), /overlayDailyLifeOutbox\(\)/);
   const signedIn = main.slice(main.indexOf('async function onSignedIn'));
   assert.match(signedIn, /dailyLifeOutboxStatus\(\)\.total > 0/);
+});
+
+test('KILPAILU: koriin jäänyt meno ei katoa kesken olleeseen lataukseen (palvelimella sitä ei vielä ole)', async () => {
+  // Lataus ottaa merkin ennen hakuja; tallennus epäonnistuu verkkoon ja jää
+  // koriin; lataus korvaa tilan palvelimen listalla, jossa menoa ei ole.
+  const mark = dailyLifeWriteMark();
+  server.fail = NETWORK;
+  const saved = await saveCalendarEvent(EVENT);
+  assert.equal(saved.queued, true);
+  setCalendarEvents([]);
+  keepDailyLifeWritesSince(mark);
+  assert.deepEqual(getState().calendarEvents.map(event => event.id), [saved.event.id], 'koriin jäänyt meno pysyy näkyvissä');
+  assert.equal(dailyLifeOutboxStatus().pending, 1);
 });

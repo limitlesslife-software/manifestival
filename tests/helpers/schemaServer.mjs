@@ -181,7 +181,9 @@ export function createSchemaServer({
           }
         }
         if (entry.limit === 0) return { data: [], error: null, status: 200 };
-        const found = tableRows(name).filter(matches).map(row => ({ ...row }));
+        let found = tableRows(name).filter(matches).map(row => ({ ...row }));
+        // Sivutettu lataus (collectionsRepo selectOwnedRows).
+        if (entry.range) found = found.slice(entry.range[0], entry.range[1] + 1);
         return { data: single ? (found[0] || null) : found, error: null, status: 200 };
       }
 
@@ -261,6 +263,7 @@ export function createSchemaServer({
       neq(column, value) { entry.filters.push(['neq', column, value]); return q; },
       is(column, value) { entry.filters.push(['is', column, value]); return q; },
       order() { return q; },
+      range(from, to) { entry.range = [from, to]; return q; },
       maybeSingle() { single = true; return q; },
       single() { single = true; return q; },
       insert(value) { entry.op = 'insert'; payload = value; entry.payloadKeys = keysOf(value); return q; },
