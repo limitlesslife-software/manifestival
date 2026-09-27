@@ -249,7 +249,8 @@ test('tyylit: kosketusalueet vähintään 44 px, näkyvä fokus, kapea näyttö 
   }
   assert.equal(/nowrap/.test(block), false, 'ei nowrap-sääntöjä');
   for (const match of block.matchAll(/(?:^|[;{\s])width:\s*(\d+)px/g)) assert.ok(Number(match[1]) <= 328, `leveys ${match[1]}px`);
-  assert.equal(/color:\s*var\(--(sage|gold|clay|path)\)/.test(block), false, 'logon sävy tekstinä');
+  // Vain tekstin väri: reunaviiva (border-left-color) saa käyttää logon sävyä.
+  assert.equal(/(?:^|[;{\s])color:\s*var\(--(sage|gold|clay|path)\)/.test(block), false, 'logon sävy tekstinä');
   assert.match(block, /@media \(max-width:380px\)/);
 });
 
@@ -515,7 +516,10 @@ test('tynkä-DOM: päivä, viikko ja kuukausi piirtyvät kaatumatta ja tuottavat
     const week = node('calWeekEvents').innerHTML;
     assert.match(week, /Menot <span class="count-badge">6<\/span>/, 'viisi menoa tiistaina ja joogan torstai');
     assert.match(week, /To 1\.10\./);
-    assert.equal(node('weekRangeLabel').textContent, 'Viikko 40 · 28.9. – 4.10.');
+    assert.equal(node('weekRangeLabel').textContent, 'Viikko 40 · 28.9.–4.10.');
+    setWeekStart(parseISO('2026-12-28'));
+    renderWeek();
+    assert.equal(node('weekRangeLabel').textContent, 'Viikko 53 · 28.12.2026–3.1.2027', 'vuodenvaihde');
   });
 });
 
@@ -566,7 +570,7 @@ test('osiot: viikko näyttää kalenterin päivän viikon, ja paluu pitää päi
   setCalendarDate('2026-10-14');
   byId('segmentCalWeek').click();
   assert.equal(getState().calendarView, 'week');
-  assert.equal(text(byId('weekRangeLabel')), 'Viikko 42 · 12.10. – 18.10.');
+  assert.equal(text(byId('weekRangeLabel')), 'Viikko 42 · 12.10.–18.10.');
   assert.equal(isRendered(byId('calWeekNav')), true);
   assert.equal(isRendered(byId('calNav')), false);
   assert.equal(byId('segmentCalWeek').getAttribute('aria-selected'), 'true');
@@ -827,7 +831,7 @@ test('toistuva meno: "Ohita tämä kerta" kysyy vahvistuksen ja ohittaa vain sen
   assert.ok(row, 'joogan torstain kerta');
   row.click();
   assert.equal(isRendered(byId('ceSkip')), true);
-  assert.match(text(byId('calFormNote')), /Toistuva meno\. Muutokset koskevat kaikkia kertoja\. Voit myös ohittaa vain kerran 1\.10\./);
+  assert.equal(text(byId('calFormNote')), 'Toistuva meno. Muutokset koskevat kaikkia kertoja. Voit myös ohittaa vain kerran 1.10.');
   assert.deepEqual(editingEvent(), { eventId: 'e-jooga', occurrenceDate: THURSDAY, open: true });
 
   // Peruminen ei ohita mitään.

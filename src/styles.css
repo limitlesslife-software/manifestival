@@ -799,13 +799,14 @@ body.is-offline .offline-banner { display:block; }
 .cal-segments { margin-bottom:12px; }
 .cal-nav { margin-bottom:8px; }
 .cal-nav-center { flex:1; min-width:0; text-align:center; }
-.cal-nav-center h1.title { overflow-wrap:anywhere; }
+/* Viikon otsikko on pisin ("Viikko 40 · 28.9.–4.10."): hieman pienempi kirjasin pitää sen kahden nuolen välissä. */
+.cal-nav-center h1.title { font-size:21px; overflow-wrap:anywhere; }
 .cal-nav-center h1.title:focus-visible { outline:2px solid var(--gold); outline-offset:2px; border-radius:8px; }
 .cal-new { margin-top:4px; }
 .cal-notice { margin-bottom:10px; }
 
 .cal-list { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; }
-.cal-row { border-bottom:1px solid var(--border); padding:2px 0; }
+.cal-row { border-bottom:1px solid var(--border); border-left:3px solid transparent; padding:2px 0 2px 6px; }
 .cal-row-main { display:flex; align-items:flex-start; gap:10px; width:100%; min-height:44px; padding:8px 4px; text-align:left;
   background:none; border:none; font-family:'Manrope',sans-serif; color:var(--text-1); }
 button.cal-row-main { appearance:none; -webkit-appearance:none; cursor:pointer; border-radius:10px; }
@@ -816,7 +817,8 @@ button.cal-row-main:focus-visible { outline:2px solid var(--gold); outline-offse
 .cal-row-meta { font-size:11.5px; color:var(--text-2); overflow-wrap:anywhere; }
 .cal-kind { font-weight:700; color:var(--forest); }
 .cal-protected { font-style:italic; }
-.cal-row-event { border-left:3px solid var(--gold); padding-left:6px; }
+/* Meno erottuu reunaviivalla; laji kerrotaan silti tekstinä ("Meno"). */
+.cal-row-event { border-left-color:var(--gold); }
 .cal-row.is-protected { border-bottom-style:dashed; }
 .cal-row.is-protected .cal-row-title { font-weight:500; color:var(--text-2); }
 .cal-row.is-protected .cal-kind { color:var(--text-2); }
@@ -854,6 +856,7 @@ button.cal-row-main:focus-visible { outline:2px solid var(--gold); outline-offse
 .cal-place-hint { margin-top:4px; }
 
 @media (max-width:380px) {
+  .cal-nav-center h1.title { font-size:19px; }
   .cal-row-time { flex-basis:64px; font-size:11.5px; }
   .cal-departure, .cal-departure-detail { margin-left:4px; }
   .cal-month-head, .cal-month-row { gap:2px; }

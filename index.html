@@ -449,7 +449,7 @@
         <button class="nav-arrow" id="weekPrev" type="button" aria-label="Edellinen viikko"><svg class="icon" aria-hidden="true"><use href="#i-chevron-left"/></svg></button>
         <div class="cal-nav-center">
           <h1 class="title" id="weekRangeLabel" tabindex="-1" aria-live="polite"></h1>
-          <button class="jump-link" id="calWeekToday" type="button">Tämä viikko</button>
+          <button class="jump-link" id="calWeekToday" type="button">Tänään</button>
         </div>
         <button class="nav-arrow" id="weekNext" type="button" aria-label="Seuraava viikko"><svg class="icon" aria-hidden="true"><use href="#i-chevron-right"/></svg></button>
       </div>
@@ -508,24 +508,25 @@
           <div class="field-error" id="ceLocationError" role="alert"></div>
         </div>
 
+        <div>
+          <label class="field-label" for="ceMode">Kulkutapa</label>
+          <select id="ceMode"></select>
+        </div>
+
         <div class="form-row">
-          <div>
-            <label class="field-label" for="ceMode">Kulkutapa</label>
-            <select id="ceMode"></select>
-          </div>
           <div>
             <label class="field-label" for="ceTravel">Oma arvio matka-ajasta (min)</label>
             <input type="number" id="ceTravel" min="1" max="1440" step="1" inputmode="numeric" aria-describedby="ceTravelError">
             <div class="field-error" id="ceTravelError" role="alert"></div>
           </div>
-        </div>
-
-        <div class="form-row">
           <div>
             <label class="field-label" for="cePrep">Valmistautuminen (min)</label>
             <input type="number" id="cePrep" min="0" max="480" step="1" inputmode="numeric" aria-describedby="cePrepError">
             <div class="field-error" id="cePrepError" role="alert"></div>
           </div>
+        </div>
+
+        <div class="form-row">
           <div>
             <label class="field-label" for="ceEarly">Saavu etuajassa (min)</label>
             <input type="number" id="ceEarly" min="0" max="240" step="1" inputmode="numeric" aria-describedby="ceEarlyError">

@@ -374,7 +374,7 @@ function fillForm(event, { date, occurrenceDate }) {
   toggle('ceDelete', Boolean(event), 'block');
   toggle('ceSkip', canSkip, 'block');
   const note = recurring
-    ? `Toistuva meno. Muutokset koskevat kaikkia kertoja.${canSkip ? ` Voit myös ohittaa vain kerran ${dayMonth(occurrenceDate)}.` : ''}`
+    ? `Toistuva meno. Muutokset koskevat kaikkia kertoja.${canSkip ? ` Voit myös ohittaa vain kerran ${dayMonth(occurrenceDate)}` : ''}`
     : '';
   setText('calFormNote', note);
   toggle('calFormNote', Boolean(note));

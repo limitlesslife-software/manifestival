@@ -282,7 +282,7 @@ export function renderWeek() {
   // Otsikko on live-alue (Kalenteri-välilehti): kirjoitetaan vain muuttuessa,
   // ettei sama viikko kuulu ruudunlukijalla jokaisella piirrolla.
   const title = maybe('weekRangeLabel');
-  const label = `Viikko ${isoWeekNumber(state.weekStart)} · ${weekRangeLabel(state.weekStart)}`;
+  const label = `Viikko ${isoWeekNumber(state.weekStart)} · ${weekRangeLabel(state.weekStart).replace(' – ', '–')}`;
   if (title && title.textContent !== label) title.textContent = label;
 
   const routineOccurrences = expandRoutines({
