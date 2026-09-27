@@ -405,11 +405,19 @@ test('koodi edellä kantaa -> STOP ROLLBACK_CODE', async () => {
   assert.deepEqual(pushes(git), []);
 });
 
-test('J + 0013 -> DONE, exit 0, ei mitään deployattavaa', async () => {
+test('J + 0013 -> seuraavaksi K (0014); lukitsematon K pysäyttää (LOCK_DRIFT), ei pushia', async () => {
+  // Aalto K (arjen käyttöjärjestelmä, 0014) seuraa J:tä. Ennen kuin K:n
+  // ehdokas on lukittu, orkestroija kertoo seuraavan askeleen mutta
+  // pysähtyy: lukitsematonta SHA:ta ei koskaan deployata.
   const { git, deps, options } = setup({ production: 'J', dbState: '0013' });
   const result = await runOrchestrator(deps, options);
-  assert.equal(result.plan.decision, 'DONE');
-  assert.equal(result.exitCode, 0);
+  assert.equal(result.plan.decision, 'STOP');
+  assert.equal(result.plan.stopClass, 'LOCK_DRIFT');
+  assert.equal(result.plan.nextAction.kind, 'MIGRATE');
+  assert.equal(result.plan.nextAction.wave, 'K');
+  assert.equal(result.plan.nextAction.migration, '0014');
+  assert.equal(result.plan.nextAction.verifyPrerequisite, 'supabase/verify/verify_0013.sql');
+  assert.notEqual(result.exitCode, 0);
   assert.deepEqual(pushes(git), []);
 });
 

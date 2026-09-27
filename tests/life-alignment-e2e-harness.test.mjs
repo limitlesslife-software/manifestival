@@ -15,7 +15,7 @@ import {
   resolveGateMode, patchSchemaGates, trainMatrix, harnessHtml, parseColumnGates, DEFAULT_GATES_REF
 } from '../tools/e2e/gates.mjs';
 import { parseGates } from '../tools/release/state.mjs';
-import { ALL_GATES } from '../tools/release/waves.mjs';
+import { ALL_GATES, cumulativeGates } from '../tools/release/waves.mjs';
 
 const RUNNER = read('tools/e2e/run-suunta-e2e.mjs');
 const HARNESS = read('tools/e2e/harness.mjs');
@@ -92,7 +92,10 @@ test('J-porttitila: haaran schema.js saa aallon J portit; ajonaikainen skeemaker
   const j = trainMatrix('J');
   const patched = patchSchemaGates(SCHEMA, j);
   const tables = parseGates(patched);
-  for (const gate of ALL_GATES) assert.equal(tables[gate], true, gate);
+  // J avaa kaikki aaltojen A–J portit; myöhemmät (aalto K, 0014) pysyvät kiinni.
+  const openInJ = new Set(cumulativeGates('J'));
+  for (const gate of ALL_GATES) assert.equal(tables[gate], openInJ.has(gate), gate);
+  assert.ok(ALL_GATES.some(gate => !openInJ.has(gate)), 'aalto K:n portit ovat J:n jälkeen');
   assert.deepEqual(Object.values(parseColumnGates(patched)), Object.values(j.columns));
   assert.ok(Object.values(j.columns).every(Boolean), 'J avaa jokaisen sarakeportin');
   for (const name of ['export function isTableAvailable', 'export function columnGateOpen', 'export const SCHEMA_REQUIREMENTS',

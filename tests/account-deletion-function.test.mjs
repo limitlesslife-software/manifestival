@@ -440,8 +440,8 @@ test('tyhjät taulut / puuttuvat resurssit eivät kaada poistoa', async () => {
 
 /**
  * Tuotannon taulut aallolla C: lähtötila (tasks, profile) + migraatiot
- * 0001-0008. Migraatiot 0009-0013 ovat ajamatta, joten niiden 14 taulua
- * puuttuvat. Lista on kirjoitettu auki (se on tuotannon tosiasia), ja
+ * 0001-0008. Migraatiot 0009-0014 ovat ajamatta, joten niiden 24 taulua
+ * puuttuvat (0009-0013: 14, 0014: 10). Lista on kirjoitettu auki (se on tuotannon tosiasia), ja
  * alla oleva testi todistaa sen migraatiotiedostoista.
  */
 const WAVE_C_TABLES = Object.freeze([
@@ -462,7 +462,7 @@ test('aallon C taululista on täsmälleen lähtötila + migraatioiden 0001-0008 
     .flatMap(name => [...fs.readFileSync(path.join(dir, name), 'utf8')
       .matchAll(/^create table public\.(\w+)/gm)].map(match => match[1]));
   assert.deepEqual([...WAVE_C_TABLES].sort(), ['tasks', 'profile', ...created].sort());
-  assert.equal(WAVE_C_ABSENT_DOMAINS.length, 14);
+  assert.equal(WAVE_C_ABSENT_DOMAINS.length, 24);
 });
 
 for (const shape of Object.keys(MISSING_RESPONSES)) {

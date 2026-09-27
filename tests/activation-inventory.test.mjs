@@ -81,7 +81,8 @@ test('KRIITTINEN: tuotannon nykytila (0008): GO, seuraava 0009 / aalto F', () =>
 });
 
 test('jokainen junan tila johtaa seuraavaan migraatioon', () => {
-  const expected = { '0009': '0010', '0010': '0011', '0011': '0012', '0012': '0013', '0013': null };
+  // 0013 -> 0014: aalto K (arjen käyttöjärjestelmä) seuraa J:tä.
+  const expected = { '0009': '0010', '0010': '0011', '0011': '0012', '0012': '0013', '0013': '0014' };
   for (const [state, next] of Object.entries(expected)) {
     const result = scoreInventory(parseInventory(fixture(`state-${state}.json`)));
     assert.equal(result.decision, 'GO', `tila ${state}: ${result.stops.join('; ')}`);
@@ -204,7 +205,7 @@ test('rivi 89 (kesto > 0) on inventaariossa ja pisteytyksen faktoissa, mutta ei 
 // ACT-05: KOODIAALTO + KANTA -> SEURAAVA TOIMENPIDE
 // =====================================================================
 
-const CODE_WAVES = ['BASE', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J'];
+const CODE_WAVES = ['BASE', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K'];
 
 /** Täysi odotustaulukko: tila -> koodiaalto -> [päätös, laji, aalto, migraatio]. */
 const EXPECTED_ACTIONS = {
@@ -213,11 +214,11 @@ const EXPECTED_ACTIONS = {
   '0010': { F: ['GO', 'DEPLOY', 'G'], G: ['GO', 'MIGRATE', 'H', '0011'] },
   '0011': { G: ['GO', 'DEPLOY', 'H'], H: ['GO', 'MIGRATE', 'I', '0012'] },
   '0012': { H: ['GO', 'DEPLOY', 'I'], I: ['GO', 'MIGRATE', 'J', '0013'] },
-  '0013': { I: ['GO', 'DEPLOY', 'J'], J: ['GO', 'DONE', 'J'] }
+  '0013': { I: ['GO', 'DEPLOY', 'J'], J: ['GO', 'MIGRATE', 'K', '0014'] }
 };
 const DB_WAVE = { '0008': 'E', '0009': 'F', '0010': 'G', '0011': 'H', '0012': 'I', '0013': 'J' };
 
-test('KRIITTINEN: koko taulukko — tila 0008–0013 × koodiaalto BASE, A–J', () => {
+test('KRIITTINEN: koko taulukko — tila 0008–0013 × koodiaalto BASE, A–K', () => {
   for (const [state, expectations] of Object.entries(EXPECTED_ACTIONS)) {
     const rows = parseInventory(fixture(`state-${state}.json`));
     const dbIndex = CODE_WAVES.indexOf(DB_WAVE[state]);
@@ -255,7 +256,10 @@ test('ACT-05 yksityiskohdat: esitarkistus, varmuuskopio, verify_0012-edellytys j
   assert.match(at('0008', 'F').reason, /koodi edellä kantaa/);
   assert.deepEqual(at('0008', 'C').allowedCodeWaves, ['C', 'D', 'E']);
   assert.deepEqual(at('0010', 'G').allowedCodeWaves, ['F', 'G']);
-  assert.equal(at('0013', 'J').nextAction.kind, 'DONE');
+  assert.equal(at('0013', 'J').nextAction.kind, 'MIGRATE');
+  assert.equal(at('0013', 'J').nextAction.migration, '0014');
+  assert.equal(at('0013', 'J').nextAction.verifyPrerequisite, 'supabase/verify/verify_0013.sql');
+  assert.equal(at('0013', 'J').nextAction.backupRequired, false);
 });
 
 test('KRIITTINEN: keskeneräinen 0012 ja puuttuva omistaja pysäyttävät jokaisella koodiaallolla', () => {
@@ -372,7 +376,7 @@ test('KRIITTINEN: --code-wave=origin-main: peruutusmatriisi (C + v18) -> STOP TR
 
 test('KRIITTINEN: --code-wave=origin-main: epäjohdonmukainen tila -> STOP PRODUCTION_INCONSISTENT', async () => {
   const rows = parseInventory(fixture('state-0008.json'));
-  for (const bad of [origin('D', 'v16'), origin('C', null), { ...origin('C', 'v16'), gates: null }, origin('J', 'v24')]) {
+  for (const bad of [origin('D', 'v16'), origin('C', null), { ...origin('C', 'v16'), gates: null }, origin('K', 'v25'), origin('J', 'v22')]) {
     const resolved = codeWaveFromOrigin(bad);
     assert.equal(resolved.stop && resolved.stop.class, 'PRODUCTION_INCONSISTENT', JSON.stringify(bad.cacheVersion));
     assert.equal(classifyResolved(rows, resolved).decision, 'STOP');

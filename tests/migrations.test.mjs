@@ -230,7 +230,8 @@ const KOVENNETUT = [
   '0005_notification_preferences.sql', '0006_wellbeing.sql',
   '0007_finance.sql', '0008_ai_audit.sql', '0009_finance_2.sql',
   '0010_goal_to_action.sql', '0011_personal_assistant.sql',
-  '0012_life_alignment.sql', '0013_alignment_reality.sql'
+  '0012_life_alignment.sql', '0013_alignment_reality.sql',
+  '0014_daily_life.sql'
 ];
 
 /** Migraation suorittava osa: kommenttirivit pois. */
@@ -245,7 +246,7 @@ function allCode() {
   return migrationFiles().map(code).join(NEWLINE);
 }
 
-test('KRIITTINEN: taulusäännöt eivät ole tyhjiä — ne kattavat 24 taulua', () => {
+test('KRIITTINEN: taulusäännöt eivät ole tyhjiä — ne kattavat 34 taulua', () => {
   // Tämä testi on olemassa yhtä vikaa varten: yllä olevat säännöt
   // etsivät tauluja hahmolla `create table public.X`. Jos hahmo ei
   // vastaa migraatioiden muotoa, jokainen sääntö käy läpi nolla taulua
@@ -258,12 +259,14 @@ test('KRIITTINEN: taulusäännöt eivät ole tyhjiä — ne kattavat 24 taulua',
     .map(m => m[1]).sort();
 
   assert.deepEqual(taulut, [
-    'ai_action_audit', 'alignment_item_settings', 'alignment_reviews', 'bills', 'goals',
-    'inbox_items', 'investments',
-    'life_areas', 'location_rules', 'milestones', 'notices', 'notification_preferences',
-    'projects', 'recurring_expenses', 'reminders',
-    'routine_exceptions', 'routines', 'running_timers', 'savings_goals', 'time_entries', 'transactions',
-    'travel_plans', 'weekly_capacities', 'wellbeing_entries'
+    'ai_action_audit', 'alignment_item_settings', 'alignment_reviews', 'bills',
+    'calendar_events', 'commute_observations', 'exercise_sessions', 'goals',
+    'habit_events', 'habit_plans', 'inbox_items', 'investments',
+    'life_areas', 'life_settings', 'location_rules', 'milestones', 'notices', 'notification_preferences',
+    'place_aliases', 'projects', 'recurring_expenses', 'reminders',
+    'routine_exceptions', 'routines', 'running_timers', 'saved_places', 'savings_goals', 'sleep_logs',
+    'time_entries', 'transactions',
+    'travel_plans', 'weekly_capacities', 'wellbeing_checkins', 'wellbeing_entries'
   ], 'migraatioiden luomat taulut eivät vastaa odotusta');
 });
 
@@ -1626,7 +1629,13 @@ test('KRIITTINEN: loppuvarmistuksen luvut lasketaan migraatioista', () => {
      'running_timers_owner_row_key',
      'time_entries_owner_row_key',
      'transactions_owner_row_key', 'travel_plans_owner_row_key',
-     'weekly_capacities_owner_row_key'],
+     'weekly_capacities_owner_row_key',
+     // 0014: arjen käyttöjärjestelmän kymmenen taulua (verify_0014.sql).
+     'calendar_events_owner_row_key', 'commute_observations_owner_row_key',
+     'exercise_sessions_owner_row_key', 'habit_events_owner_row_key',
+     'habit_plans_owner_row_key', 'life_settings_owner_row_key',
+     'place_aliases_owner_row_key', 'saved_places_owner_row_key',
+     'sleep_logs_owner_row_key', 'wellbeing_checkins_owner_row_key'].sort(),
     'erän ulkopuolisten omistajan rivin avainten joukko muuttui');
 
   // Yhdeksän liipaisinta erässä: jokaiselle taululle jolla on
@@ -4524,7 +4533,12 @@ test('KRIITTINEN: yksikään portti ei ole auki ilman ajettua migraatiota', () =
     alignmentReviews: '0012', GOAL_LIFE_AREA_FIELD: '0012',
     // Migraatio 0013 tuo kaksi taulua JA sarakkeita 0012:n tauluihin.
     // Sarakeportti on erillinen: 0012:n portit voivat olla auki ilman 0013:a.
-    runningTimers: '0013', alignmentItemSettings: '0013', ALIGNMENT_REALITY_FIELDS: '0013'
+    runningTimers: '0013', alignmentItemSettings: '0013', ALIGNMENT_REALITY_FIELDS: '0013',
+    // Migraatio 0014 tuo kymmenen UUTTA taulua eikä yhtään saraketta
+    // olemassa olevaan tauluun: ei sarakeporttia (aalto K).
+    savedPlaces: '0014', placeAliases: '0014', calendarEvents: '0014', commuteObservations: '0014',
+    lifeSettings: '0014', sleepLogs: '0014', habitPlans: '0014', habitEvents: '0014',
+    exerciseSessions: '0014', wellbeingCheckins: '0014'
   };
 
   // KAKSI HYVAKSYTTYA LAHDETTA SILLE, ETTA MIGRAATIO ON AJETTU.
@@ -4606,8 +4620,9 @@ test('KRIITTINEN: yksikään portti ei ole auki ilman ajettua migraatiota', () =
   // tarkistaa, että portti on myös tilannedokumentissa ja
   // migraatiokartassa.
   // Kaksikymmentäneljä taulua + kuusi sarake-/arvoporttia (0013 toi
-  // kaksi taulua ja sarakeportin ALIGNMENT_REALITY_FIELDS).
-  assert.equal(Object.keys(portit).length, 30);
+  // kaksi taulua ja sarakeportin ALIGNMENT_REALITY_FIELDS). 0014 toi
+  // kymmenen taulua ilman sarakeporttia: 34 + 6 = 40.
+  assert.equal(Object.keys(portit).length, 40);
 
   // Ja avatun portin migraatio on todella ajettu — sama sääntö kuin yllä,
   // mutta nimenomaisesti sille portille joka on auki.

@@ -637,7 +637,11 @@ test('KRIITTINEN: varmistuksen odotusluvut vastaavat migraatioita', () => {
      'running_timers->routines', 'running_timers->tasks',
      'tasks->milestones', 'time_entries->goals',
      'time_entries->life_areas', 'time_entries->projects', 'time_entries->routines',
-     'time_entries->tasks', 'travel_plans->tasks'],
+     'time_entries->tasks', 'travel_plans->tasks',
+     // 0014: arjen käyttöjärjestelmä (verify_0014.sql kattaa nämä).
+     'calendar_events->goals', 'calendar_events->saved_places',
+     'commute_observations->saved_places', 'exercise_sessions->goals',
+     'habit_events->habit_plans', 'place_aliases->saved_places'].sort(),
     'erän ulkopuolisten omistajuusviitteiden joukko muuttui');
 
   // 10 porttitaulua.

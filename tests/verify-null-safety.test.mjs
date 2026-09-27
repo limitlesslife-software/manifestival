@@ -13,10 +13,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { read } from './helpers/sources.mjs';
-import { MIGRATION_TABLES } from '../tools/activation/build-preflights.mjs';
+import { MIGRATION_TABLES, ACCOUNT_TABLES_THROUGH_0014 } from '../tools/activation/build-preflights.mjs';
 import { ACCOUNT_DATA_MAP } from '../src/domain/accountLifecycle.js';
+import { waveById } from '../tools/release/waves.mjs';
 
-const NUMBERS = ['0009', '0010', '0011', '0012', '0013'];
+const NUMBERS = ['0009', '0010', '0011', '0012', '0013', '0014'];
 const FILES = [
   ...NUMBERS.map(n => `supabase/verify/verify_${n}.sql`),
   ...NUMBERS.map(n => `supabase/preflight/preflight_${n}.sql`)
@@ -74,7 +75,10 @@ test('KRIITTINEN: verify_0013 rivit 26–28 rajaavat tilin poiston tarkistukset 
   const c = code('supabase/verify/verify_0013.sql');
   const expected = [...MIGRATION_TABLES].sort();
   assert.equal(expected.length, 26);
-  assert.deepEqual(expected, Object.values(ACCOUNT_DATA_MAP).map(e => e.table).sort());
+  // Lista on jäädytetty 0013:n aikaiseksi: kartta ilman aallon K (0014)
+  // tauluja. Muuten jo lukittu verify_0013/preflight_0009 muuttuisi.
+  const kTables = new Set(waveById('K').tables);
+  assert.deepEqual(expected, Object.values(ACCOUNT_DATA_MAP).map(e => e.table).filter(t => !kTables.has(t)).sort());
   for (const no of ['26', '27', '28']) {
     const m = new RegExp(`select '${no}'[\\s\\S]*?(?=\\n\\s*union all|\\n\\) c)`).exec(c);
     assert.ok(m, `tarkistus ${no} puuttuu`);
@@ -85,6 +89,21 @@ test('KRIITTINEN: verify_0013 rivit 26–28 rajaavat tilin poiston tarkistukset 
   }
   assert.match(c, /select '28', 'omistajuus', [^\n]*'INFO',/);
   assert.match(c, /c\.relname not in \(/);
+});
+
+test('KRIITTINEN: verify_0014 rivit 34–36 kattavat koko tilin poiston kartan (36 taulua)', () => {
+  const c = code('supabase/verify/verify_0014.sql');
+  const expected = [...ACCOUNT_TABLES_THROUGH_0014].sort();
+  assert.equal(expected.length, 36);
+  assert.deepEqual(expected, Object.values(ACCOUNT_DATA_MAP).map(e => e.table).sort());
+  for (const no of ['34', '35', '36']) {
+    const m = new RegExp(`select '${no}'[\\s\\S]*?(?=\\n\\s*union all|\\n\\) c)`).exec(c);
+    assert.ok(m, `tarkistus ${no} puuttuu`);
+    const list = /(?:relname (?:not )?in \(|array\[)((?:\s*'\w+',?)+)\s*[)\]]/.exec(m[0]);
+    assert.ok(list, `tarkistus ${no}: taululista puuttuu`);
+    const tables = [...list[1].matchAll(/'(\w+)'/g)].map(x => x[1]).sort();
+    assert.deepEqual(tables, expected, `tarkistus ${no}: lista ≠ kartan taulut`);
+  }
 });
 
 test('KRIITTINEN: preflight_0009 tarkistaa tilin poiston oletukset jo ennen junaa', () => {
@@ -102,7 +121,7 @@ test('KRIITTINEN: preflight_0009 tarkistaa tilin poiston oletukset jo ennen juna
   assert.match(cascade.sql, /f\.confdeltype <> 'c'/);
   assert.match(cascade.sql, /f\.connamespace = 'public'::regnamespace/);
   // Vain junan alussa: muut esitarkistukset eivät toista rivejä.
-  for (const n of ['0010', '0011', '0012', '0013']) {
+  for (const n of ['0010', '0011', '0012', '0013', '0014']) {
     assert.equal(/'junan alku'/.test(read(`supabase/preflight/preflight_${n}.sql`)), false, n);
   }
 });

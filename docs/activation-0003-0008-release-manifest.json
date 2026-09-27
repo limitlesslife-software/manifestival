@@ -40,7 +40,17 @@
     "timeEntries": [],
     "alignmentReviews": [],
     "runningTimers": [],
-    "alignmentItemSettings": []
+    "alignmentItemSettings": [],
+    "savedPlaces": [],
+    "placeAliases": [],
+    "calendarEvents": [],
+    "commuteObservations": [],
+    "lifeSettings": [],
+    "sleepLogs": [],
+    "habitPlans": [],
+    "habitEvents": [],
+    "exerciseSessions": [],
+    "wellbeingCheckins": []
   },
   "waves": [
     {
@@ -79,7 +89,17 @@
         "timeEntries",
         "alignmentReviews",
         "runningTimers",
-        "alignmentItemSettings"
+        "alignmentItemSettings",
+        "savedPlaces",
+        "placeAliases",
+        "calendarEvents",
+        "commuteObservations",
+        "lifeSettings",
+        "sleepLogs",
+        "habitPlans",
+        "habitEvents",
+        "exerciseSessions",
+        "wellbeingCheckins"
       ],
       "tables": [
         "notification_preferences",
@@ -134,7 +154,17 @@
         "timeEntries",
         "alignmentReviews",
         "runningTimers",
-        "alignmentItemSettings"
+        "alignmentItemSettings",
+        "savedPlaces",
+        "placeAliases",
+        "calendarEvents",
+        "commuteObservations",
+        "lifeSettings",
+        "sleepLogs",
+        "habitPlans",
+        "habitEvents",
+        "exerciseSessions",
+        "wellbeingCheckins"
       ],
       "tables": [
         "goals",
@@ -189,7 +219,17 @@
         "timeEntries",
         "alignmentReviews",
         "runningTimers",
-        "alignmentItemSettings"
+        "alignmentItemSettings",
+        "savedPlaces",
+        "placeAliases",
+        "calendarEvents",
+        "commuteObservations",
+        "lifeSettings",
+        "sleepLogs",
+        "habitPlans",
+        "habitEvents",
+        "exerciseSessions",
+        "wellbeingCheckins"
       ],
       "tables": [
         "routines",
@@ -247,7 +287,17 @@
         "timeEntries",
         "alignmentReviews",
         "runningTimers",
-        "alignmentItemSettings"
+        "alignmentItemSettings",
+        "savedPlaces",
+        "placeAliases",
+        "calendarEvents",
+        "commuteObservations",
+        "lifeSettings",
+        "sleepLogs",
+        "habitPlans",
+        "habitEvents",
+        "exerciseSessions",
+        "wellbeingCheckins"
       ],
       "tables": [
         "recurring_expenses",
@@ -302,7 +352,17 @@
         "timeEntries",
         "alignmentReviews",
         "runningTimers",
-        "alignmentItemSettings"
+        "alignmentItemSettings",
+        "savedPlaces",
+        "placeAliases",
+        "calendarEvents",
+        "commuteObservations",
+        "lifeSettings",
+        "sleepLogs",
+        "habitPlans",
+        "habitEvents",
+        "exerciseSessions",
+        "wellbeingCheckins"
       ],
       "tables": [
         "ai_action_audit"
@@ -356,7 +416,17 @@
         "timeEntries",
         "alignmentReviews",
         "runningTimers",
-        "alignmentItemSettings"
+        "alignmentItemSettings",
+        "savedPlaces",
+        "placeAliases",
+        "calendarEvents",
+        "commuteObservations",
+        "lifeSettings",
+        "sleepLogs",
+        "habitPlans",
+        "habitEvents",
+        "exerciseSessions",
+        "wellbeingCheckins"
       ],
       "tables": [
         "transactions",
@@ -410,7 +480,17 @@
         "timeEntries",
         "alignmentReviews",
         "runningTimers",
-        "alignmentItemSettings"
+        "alignmentItemSettings",
+        "savedPlaces",
+        "placeAliases",
+        "calendarEvents",
+        "commuteObservations",
+        "lifeSettings",
+        "sleepLogs",
+        "habitPlans",
+        "habitEvents",
+        "exerciseSessions",
+        "wellbeingCheckins"
       ],
       "tables": [
         "milestones"
@@ -467,7 +547,17 @@
         "timeEntries",
         "alignmentReviews",
         "runningTimers",
-        "alignmentItemSettings"
+        "alignmentItemSettings",
+        "savedPlaces",
+        "placeAliases",
+        "calendarEvents",
+        "commuteObservations",
+        "lifeSettings",
+        "sleepLogs",
+        "habitPlans",
+        "habitEvents",
+        "exerciseSessions",
+        "wellbeingCheckins"
       ],
       "tables": [
         "inbox_items",
@@ -527,7 +617,17 @@
       ],
       "gatesDisabled": [
         "runningTimers",
-        "alignmentItemSettings"
+        "alignmentItemSettings",
+        "savedPlaces",
+        "placeAliases",
+        "calendarEvents",
+        "commuteObservations",
+        "lifeSettings",
+        "sleepLogs",
+        "habitPlans",
+        "habitEvents",
+        "exerciseSessions",
+        "wellbeingCheckins"
       ],
       "tables": [
         "life_areas",
@@ -584,7 +684,18 @@
         "runningTimers",
         "alignmentItemSettings"
       ],
-      "gatesDisabled": [],
+      "gatesDisabled": [
+        "savedPlaces",
+        "placeAliases",
+        "calendarEvents",
+        "commuteObservations",
+        "lifeSettings",
+        "sleepLogs",
+        "habitPlans",
+        "habitEvents",
+        "exerciseSessions",
+        "wellbeingCheckins"
+      ],
       "tables": [
         "running_timers",
         "alignment_item_settings"
@@ -601,6 +712,86 @@
         "supabase/acceptance/verify_0003_0008_post_activation.sql"
       ],
       "rationale": "Kaksi uutta taulua (running_timers, alignment_item_settings) ja sarakkeita aallon I tauluihin (time_entries, weekly_capacities, alignment_reviews). Riippuu aallosta I: 0013 muuttaa 0012:n tauluja ja viittaa life_areas-tauluun. Yhtäkään tuotannossa auki olevaa taulua (tasks, goals, projects, routines) ei muuteta; niihin viitataan vain yhdistelmävierasavaimilla. Siksi oma aalto: I voi mennä tuotantoon ilman J:tä, mutta ei päinvastoin."
+    },
+    {
+      "id": "K",
+      "title": "Arjen käyttöjärjestelmä: kalenteri, paikat, uni, herätys, tavat ja liikunta",
+      "commitSha": null,
+      "cacheVersion": "v24",
+      "readiness": "BLOCKED",
+      "gatesEnabled": [
+        "savedPlaces",
+        "placeAliases",
+        "calendarEvents",
+        "commuteObservations",
+        "lifeSettings",
+        "sleepLogs",
+        "habitPlans",
+        "habitEvents",
+        "exerciseSessions",
+        "wellbeingCheckins"
+      ],
+      "gatesCumulative": [
+        "notificationPreferences",
+        "wellbeing",
+        "goals",
+        "projects",
+        "routines",
+        "routineExceptions",
+        "recurringExpenses",
+        "savingsGoals",
+        "bills",
+        "aiAudit",
+        "transactions",
+        "investments",
+        "milestones",
+        "inboxItems",
+        "reminders",
+        "notices",
+        "travelPlans",
+        "locationRules",
+        "lifeAreas",
+        "weeklyCapacities",
+        "timeEntries",
+        "alignmentReviews",
+        "runningTimers",
+        "alignmentItemSettings",
+        "savedPlaces",
+        "placeAliases",
+        "calendarEvents",
+        "commuteObservations",
+        "lifeSettings",
+        "sleepLogs",
+        "habitPlans",
+        "habitEvents",
+        "exerciseSessions",
+        "wellbeingCheckins"
+      ],
+      "gatesDisabled": [],
+      "tables": [
+        "saved_places",
+        "place_aliases",
+        "calendar_events",
+        "commute_observations",
+        "life_settings",
+        "sleep_logs",
+        "habit_plans",
+        "habit_events",
+        "exercise_sessions",
+        "wellbeing_checkins"
+      ],
+      "dependencies": [],
+      "rollbackTarget": "J",
+      "rollbackSha": null,
+      "acceptancePack": "docs/acceptance/WAVE-K.md",
+      "requiredAcceptance": [
+        "npm run activation:verify-wave -- K",
+        "npm run activation:preflight -- --wave=K",
+        "npm run production:verify-assets -- --wave=K",
+        "selainhyväksyntä: luonti, muokkaus, poisto, säilyvyys sivun latauksen yli",
+        "supabase/acceptance/verify_0003_0008_post_activation.sql"
+      ],
+      "rationale": "Kymmenen uutta taulua (0014) eikä yhtään muutosta olemassa olevaan tauluun tai sarakeporttia. calendar_events ja exercise_sessions viittaavat goals-tauluun yhdistelmävierasavaimella (aalto B on tuotannossa); muut viitteet ovat aallon omien taulujen välisiä. Viimeisenä, koska 0014 edellyttää 0013:n (verify_0013 = 0 poikkeavaa): juna etenee järjestyksessä. Riski on matala — vain uusia tyhjiä tauluja, joten tuore varmuuskopio ei ole pakollinen."
     }
   ]
 }

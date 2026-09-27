@@ -53,7 +53,11 @@ const PORTIT = ['routines', 'routineExceptions', 'goals', 'projects',
                 'travelPlans', 'locationRules',
                 'lifeAreas', 'weeklyCapacities', 'timeEntries', 'alignmentReviews',
                 // Migraatio 0013 (aalto J).
-                'runningTimers', 'alignmentItemSettings'];
+                'runningTimers', 'alignmentItemSettings',
+                // Migraatio 0014 (aalto K): arjen käyttöjärjestelmä.
+                'savedPlaces', 'placeAliases', 'calendarEvents', 'commuteObservations',
+                'lifeSettings', 'sleepLogs', 'habitPlans', 'habitEvents',
+                'exerciseSessions', 'wellbeingCheckins'];
 
 // =====================================================================
 // PORTTIEN LÄHTÖTILA
@@ -85,7 +89,7 @@ test('KRIITTINEN: porttien joukko vastaa migraatioiden tauluja', () => {
   // taulua, kaataisi jokaisen tallennuksen aktivoinnin jälkeen.
   const taulut = new Set();
   for (const nimi of fs.readdirSync(path.join(ROOT, 'supabase/migrations'))
-                       .filter(n => /^00(0[3-9]|1[0-3])/.test(n))) {
+                       .filter(n => /^00(0[3-9]|1[0-4])/.test(n))) {
     for (const m of read(`supabase/migrations/${nimi}`)
       .matchAll(/create table public\.(\w+)/g)) {
       taulut.add(m[1]);
@@ -93,9 +97,10 @@ test('KRIITTINEN: porttien joukko vastaa migraatioiden tauluja', () => {
   }
 
   // 0013 toi kaksi taulua: running_timers ja alignment_item_settings.
-  assert.equal(taulut.size, 24,
-    `migraatiot 0003-0013 luovat ${taulut.size} taulua, portteja on ${PORTIT.length}`);
-  assert.equal(Object.keys(TABLES).length, 24,
+  // 0014 toi kymmenen: arjen käyttöjärjestelmän taulut (aalto K).
+  assert.equal(taulut.size, 34,
+    `migraatiot 0003-0014 luovat ${taulut.size} taulua, portteja on ${PORTIT.length}`);
+  assert.equal(Object.keys(TABLES).length, 34,
     'porttien määrä ei vastaa migraatioiden taulujen määrää');
   assert.deepEqual(Object.keys(TABLES).sort(), [...PORTIT].sort());
 });
@@ -435,7 +440,7 @@ test('KRIITTINEN: tilannedokumentti luettelee jokaisen migraation', () => {
 
   const migraatiot = fs.readdirSync(path.join(ROOT, 'supabase/migrations'))
     .filter(n => n.endsWith('.sql')).sort();
-  assert.equal(migraatiot.length, 13, `migraatioita on ${migraatiot.length}`);
+  assert.equal(migraatiot.length, 14, `migraatioita on ${migraatiot.length}`);
 
   for (const nimi of migraatiot) {
     assert.ok(doc.includes(nimi),

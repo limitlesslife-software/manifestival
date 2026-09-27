@@ -1,4 +1,4 @@
-// Migraatioiden 0009–0013 taulut RLS-hyväksyntätestissä (CRIT-07).
+// Migraatioiden 0009–0014 taulut RLS-hyväksyntätestissä (CRIT-07).
 //
 // MIKSI TÄMÄ ON OLEMASSA
 //
@@ -211,6 +211,108 @@ export const TABLE_SPECS = Object.freeze([
       estimate_approximate: false
     }),
     patch: { energy_demand: 3 }, patchField: 'energy_demand', patchValue: 3
+  }),
+
+  // --- 0014 (aalto K): arjen käyttöjärjestelmä -------------------------
+  // Järjestys on tärkeä: vanhemmat (paikat SP, tapojen suunnitelmat HP)
+  // ennen lapsia. Lapsirivin vanhempi on saman roolin rivi
+  // (ctx.parents.placeA/B, planA/B); väärennös osoittaa A:n vanhempaan,
+  // jotta RLS:n WITH CHECK on ainoa este.
+  // Paikan nimi on uniikki käyttäjää kohti (lower(name)): nimi johdetaan
+  // ajon tunnisteesta. Osoite ja muistiinpano jäävät nulliksi.
+  spec({
+    code: 'SP', table: 'saved_places', label: 'tallennetun paikan',
+    row: id => ({
+      id, name: nameFrom(id), address: null, provider_place_id: null, area: null,
+      travel_mode: 'driving', usual_travel_minutes: null, preparation_minutes: null,
+      arrival_buffer_minutes: null, overhead_minutes: null, use_learned: false, note: null
+    }),
+    patch: { travel_mode: 'walking' }, patchField: 'travel_mode', patchValue: 'walking'
+  }),
+  spec({
+    code: 'PA', table: 'place_aliases', label: 'paikan lisänimen',
+    row: (id, variant, { parents }) => ({
+      id, place_id: variant === 'b' ? parents.placeB : parents.placeA,
+      alias: `rls ${String(id).slice(-40).toLowerCase()}`, confirmations: 1, last_confirmed_at: null
+    }),
+    patch: { confirmations: 2 }, patchField: 'confirmations', patchValue: 2
+  }),
+  spec({
+    code: 'CE', table: 'calendar_events', label: 'menon',
+    row: (id, variant, { today }) => ({
+      id, title: nameFrom(id), event_date: today, start_time: '10:00', end_time: null,
+      duration_minutes: 30, all_day: false, category: 'muu', location_text: null, place_id: null,
+      travel_mode: null, travel_minutes: null, preparation_minutes: null, arrival_buffer_minutes: null,
+      overhead_minutes: null, recurrence_weekdays: [], recurrence_until: null, skip_dates: [],
+      goal_id: null, notes: null
+    }),
+    patch: { duration_minutes: 45 }, patchField: 'duration_minutes', patchValue: 45
+  }),
+  spec({
+    code: 'CO', table: 'commute_observations', label: 'matkahavainnon',
+    row: (id, variant, { parents }) => ({
+      id, place_id: variant === 'b' ? parents.placeB : parents.placeA, event_id: null,
+      observed_on: MONDAYS[variant], weekday: 1, planned_departure: null, actual_departure: null,
+      arrival_at: null, travel_minutes: 30, provider_minutes: null, preparation_minutes: null,
+      overhead_minutes: null, arrival_result: null, source: 'user_confirmed'
+    }),
+    patch: { travel_minutes: 35 }, patchField: 'travel_minutes', patchValue: 35
+  }),
+  // YKSI RIVI KÄYTTÄJÄÄ KOHTI (life_settings_one_per_user). Siksi ajo
+  // pysähtyy lähtötilaan (P4), jos A:lla on jo arjen asetukset, ja
+  // väärennös (B:n rivi A:n nimiin) kaatuu RLS:ään ennen rajoitetta.
+  spec({
+    code: 'LS', table: 'life_settings', label: 'arjen asetusten',
+    row: id => ({
+      id, weekend_wake_shift_max_minutes: 60, weekend_bed_shift_max_minutes: 60, wind_down_minutes: 30,
+      bedtime_target: null, arrival_buffer_minutes: 10, guidance_style: 'rauhallinen',
+      speech_enabled: false, morning_brief_enabled: false, reminder_offset_minutes: 0,
+      digest_enabled: false, digest_time: '18:00', sleep_affects_capacity: false,
+      hourly_value_minor: null, currency: 'EUR', alarm: {}, morning_routine: [], meal_rhythm: {},
+      delivery: {}
+    }),
+    patch: { wind_down_minutes: 45 }, patchField: 'wind_down_minutes', patchValue: 45
+  }),
+  // Herätyspäivä on uniikki käyttäjää kohti: vuoden 1990 maanantait.
+  spec({
+    code: 'SL', table: 'sleep_logs', label: 'unikirjauksen',
+    row: (id, variant) => ({
+      id, wake_date: MONDAYS[variant], planned_bedtime: null, actual_bedtime: null, planned_wake: null,
+      actual_wake: null, source: 'user', kind: 'opportunity', note: null
+    }),
+    // Aika-arvo palaisi PostgRESTistä muodossa 07:00:00: vertailu tehdään
+    // tekstisarakkeella, jotta tulos ei riipu muotoilusta.
+    patch: { source: 'alarm' }, patchField: 'source', patchValue: 'alarm'
+  }),
+  spec({
+    code: 'HP', table: 'habit_plans', label: 'tapojen muutoksen suunnitelman',
+    row: id => ({
+      id, kind: 'generic', name: nameFrom(id), min_interval_minutes: null, daily_target: null,
+      baseline_per_day: null, steps: [], reminder_delivery: 'silent', unit_cost_minor: null, active: false
+    }),
+    patch: { daily_target: 3 }, patchField: 'daily_target', patchValue: 3
+  }),
+  spec({
+    code: 'HE', table: 'habit_events', label: 'tapakirjauksen',
+    row: (id, variant, { parents, today }) => ({
+      id, plan_id: variant === 'b' ? parents.planB : parents.planA,
+      occurred_at: `${today}T00:00:00Z`, action: 'skip', note: null
+    }),
+    patch: { action: 'delay' }, patchField: 'action', patchValue: 'delay'
+  }),
+  spec({
+    code: 'EX', table: 'exercise_sessions', label: 'liikuntakerran',
+    row: (id, variant, { today }) => ({
+      id, session_date: today, kind: 'RLS', planned_minutes: null, actual_minutes: 20, intensity: null,
+      recovery_demand: null, goal_id: null, note: null
+    }),
+    patch: { actual_minutes: 25 }, patchField: 'actual_minutes', patchValue: 25
+  }),
+  // Päivä on uniikki käyttäjää kohti: vuoden 1990 maanantait.
+  spec({
+    code: 'WK', table: 'wellbeing_checkins', label: 'voinnin kirjauksen',
+    row: (id, variant) => ({ id, date: MONDAYS[variant], motivation: null, control: null }),
+    patch: { motivation: 3 }, patchField: 'motivation', patchValue: 3
   })
 ]);
 
@@ -241,7 +343,13 @@ export const COMPOSITE_FK_PROBES = Object.freeze([
   ['0013', 'running_timers', 'goal_id', 'goals'],
   ['0013', 'running_timers', 'task_id', 'tasks'],
   ['0013', 'running_timers', 'project_id', 'projects'],
-  ['0013', 'running_timers', 'routine_id', 'routines']
+  ['0013', 'running_timers', 'routine_id', 'routines'],
+  ['0014', 'place_aliases', 'place_id', 'saved_places'],
+  ['0014', 'calendar_events', 'place_id', 'saved_places'],
+  ['0014', 'calendar_events', 'goal_id', 'goals'],
+  ['0014', 'commute_observations', 'place_id', 'saved_places'],
+  ['0014', 'habit_events', 'plan_id', 'habit_plans'],
+  ['0014', 'exercise_sessions', 'goal_id', 'goals']
 ].map(([migration, table, column, parent]) => Object.freeze({
   migration, wave: MIGRATION_WAVE[migration], table, column, parent,
   key: `${table}.${column}`
@@ -253,6 +361,10 @@ export const COMPOSITE_FK_PROBES = Object.freeze([
  * time_entries viittaavat niihin, ON DELETE SET NULL).
  */
 export const CLEANUP_ORDER = Object.freeze([
+  // 0014: lapset ennen vanhempia (lisänimet ja havainnot ennen paikkoja,
+  // tapakirjaukset ennen suunnitelmia).
+  'place_aliases', 'commute_observations', 'calendar_events', 'habit_events', 'exercise_sessions',
+  'life_settings', 'sleep_logs', 'wellbeing_checkins', 'saved_places', 'habit_plans',
   'running_timers', 'time_entries', 'alignment_item_settings', 'alignment_reviews',
   'weekly_capacities', 'travel_plans', 'location_rules', 'notices', 'reminders',
   'inbox_items', 'transactions', 'investments', 'milestones', 'life_areas'

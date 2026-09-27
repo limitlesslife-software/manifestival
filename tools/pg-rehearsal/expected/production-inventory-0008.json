@@ -26,6 +26,7 @@
     "20": { "value": "0", "source": "derived", "compare": "exact", "note": "0011 ajamatta" },
     "21": { "value": "0", "source": "derived", "compare": "exact", "note": "0012 ajamatta" },
     "22": { "value": "0", "source": "derived", "compare": "exact", "note": "0013 ajamatta" },
+    "23": { "value": "0", "source": "derived", "compare": "exact", "note": "0014 ajamatta (aalto K)" },
     "30": { "value": "0", "source": "derived", "compare": "exact", "note": "0013 ajamatta: korvaavaa lähderajoitetta ei ole" },
     "40": { "value": "1", "source": "owner", "compare": "exact", "note": "hyväksytty omistaja 2cc00622-... on auth.users-taulussa" },
     "41": { "value": "1", "source": "owner", "compare": "exact", "note": "yksi auth-käyttäjä (omistaja)" },
@@ -65,6 +66,16 @@
     "86": { "value": "puuttuu", "source": "derived", "compare": "exact", "note": "alignment_reviews (0012)" },
     "87": { "value": "puuttuu", "source": "derived", "compare": "exact", "note": "running_timers (0013)" },
     "88": { "value": "puuttuu", "source": "derived", "compare": "exact", "note": "alignment_item_settings (0013)" },
-    "89": { "value": "0", "source": "owner", "compare": "exact", "note": "tehtäviä, joilla kesto > 0: 0 (omistaja: 'tasks with duration = 0'; rivi 62 = 0 kattaa myös tämän, rivi lisättiin inventaarioon yhteenvedon jälkeen)" }
+    "89": { "value": "0", "source": "owner", "compare": "exact", "note": "tehtäviä, joilla kesto > 0: 0 (omistaja: 'tasks with duration = 0'; rivi 62 = 0 kattaa myös tämän, rivi lisättiin inventaarioon yhteenvedon jälkeen)" },
+    "90": { "value": "puuttuu", "source": "derived", "compare": "exact", "note": "saved_places (0014)" },
+    "91": { "value": "puuttuu", "source": "derived", "compare": "exact", "note": "place_aliases (0014)" },
+    "92": { "value": "puuttuu", "source": "derived", "compare": "exact", "note": "calendar_events (0014)" },
+    "93": { "value": "puuttuu", "source": "derived", "compare": "exact", "note": "commute_observations (0014)" },
+    "94": { "value": "puuttuu", "source": "derived", "compare": "exact", "note": "life_settings (0014)" },
+    "95": { "value": "puuttuu", "source": "derived", "compare": "exact", "note": "sleep_logs (0014)" },
+    "96": { "value": "puuttuu", "source": "derived", "compare": "exact", "note": "habit_plans (0014)" },
+    "97": { "value": "puuttuu", "source": "derived", "compare": "exact", "note": "habit_events (0014)" },
+    "98": { "value": "puuttuu", "source": "derived", "compare": "exact", "note": "exercise_sessions (0014)" },
+    "99": { "value": "puuttuu", "source": "derived", "compare": "exact", "note": "wellbeing_checkins (0014)" }
   }
 }
