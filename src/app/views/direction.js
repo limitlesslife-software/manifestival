@@ -71,6 +71,7 @@ import {
   renderDirectionSetup, initDirectionSetup, resetDirectionSetup, openDirectionSetup,
   dismissDirectionSetup, currentLegacySummary, legacyNoticeText
 } from './directionSetup.js';
+import { openSundayReset, resetSundayReset } from './sundayReset.js';
 
 /** Näytettävä viikko (maanantai). null = tämä viikko. Näkymän oma tila. */
 let viewWeek = null;
@@ -2432,6 +2433,8 @@ export function initDirection() {
   on('dirQuickLog', 'click', () => openGeneralLog());
   on('dirOpenEstimate', 'click', () => openWorkflow('estimate'));
   on('dirOpenUnassigned', 'click', () => openWorkflow('assign'));
+  // Sunnuntain nollaus: viikon sulkeminen omassa dialogissaan (aalto L).
+  on('dirSundayResetBtn', 'click', () => openSundayReset());
   on('dirTimePresets', 'click', event => {
     const preset = event.target.closest('[data-preset-minutes]');
     if (preset) el('dirTimeMinutes').value = preset.dataset.presetMinutes;
@@ -2525,6 +2528,7 @@ export function resetDirectionView() {
   estimateQueue = null;
   timeListUnassignedOnly = false;
   resetDirectionSetup();
+  resetSundayReset();
   unassignedOpen = false;
   skippedUnassigned = new Set();
   explanations = new Map();

@@ -100,6 +100,7 @@ const SHELL = [
   '/src/app/views/travel.js',
   '/src/app/views/direction.js',
   '/src/app/views/directionSetup.js',
+  '/src/app/views/sundayReset.js',
   '/src/app/views/timeLog.js',
   '/src/app/views/week.js',
   '/src/app/views/loadNotice.js',
@@ -265,6 +266,8 @@ const SHELL = [
   '/src/app/views/purchaseCheck.js',
   '/src/app/views/setupChecklist.js',
   '/src/app/views/discretionaryLimit.js',
+  // Sunnuntain nollaus (aalto L): mielen kuorman tallennustoiminnot.
+  '/src/app/mentalLoadActions.js',
   '/src/styles.css',
   '/src/ui/confirm.js',
   '/src/ui/dom.js',

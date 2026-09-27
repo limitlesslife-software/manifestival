@@ -1041,3 +1041,32 @@ a.cal-inline-btn { display:inline-flex; align-items:center; }
 .discretionary-limit { margin-top:16px; }
 .discretionary-limit input[type="text"] { width:100%; max-width:220px; min-height:44px; }
 .discretionary-limit .dl-status { margin:8px 0 10px; overflow-wrap:anywhere; }
+
+/* ============================================================
+   SUNNUNTAIN NOLLAUS (views/sundayReset.js).
+   Lyhyt vaihe kerrallaan; valinta näkyy merkkinä (✓/+), ei vain värinä.
+   Kaikki kohteet vähintään 44 px; kapealla näytöllä rivitys.
+   ============================================================ */
+.sunday-reset-dialog { max-width:min(520px, calc(100vw - 24px)); width:100%; box-sizing:border-box; max-height:calc(100vh - 32px); overflow-y:auto; }
+.sunday-reset-head { display:flex; align-items:flex-start; justify-content:space-between; gap:8px; }
+.sunday-reset-head .dir-setup-step { flex:1 1 auto; min-width:0; overflow-wrap:anywhere; margin-top:12px; }
+.sunday-reset-close { appearance:none; -webkit-appearance:none; background:none; border:none; color:var(--text-3); cursor:pointer;
+  min-width:44px; min-height:44px; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+.sunday-reset-close:focus-visible { outline:2px solid var(--gold); outline-offset:2px; border-radius:8px; }
+.sunday-reset-dump { width:100%; box-sizing:border-box; min-height:132px; font-family:'Manrope',sans-serif; font-size:14px;
+  border:1px solid var(--border); border-radius:10px; padding:9px 11px; resize:vertical; }
+.sunday-reset-dialog input[type="text"], .sunday-reset-dialog input[type="number"], .sunday-reset-dialog input[type="time"], .sunday-reset-dialog select {
+  font-family:'Manrope',sans-serif; font-size:13.5px; border:1px solid var(--border); border-radius:10px; padding:9px 11px;
+  min-height:44px; box-sizing:border-box; max-width:100%; }
+.sunday-reset-dialog .dir-setup-inline select, .sunday-reset-dialog .dir-setup-inline input { flex:1 1 120px; min-width:0; }
+.sunday-reset-number { font-size:15px; color:var(--forest); margin:6px 0 10px; }
+.sunday-reset-list { margin:4px 0 8px; }
+.sunday-reset-list li, .sunday-reset-breakdown li { overflow-wrap:anywhere; }
+.sunday-reset-reason { font-weight:600; color:var(--text-3); }
+.sunday-reset-limit { font-weight:700; color:var(--forest); }
+.sunday-reset-final-title { font-size:22px; }
+.sunday-reset-final { font-size:15px; line-height:1.5; color:var(--text-1); margin:4px 0 8px; }
+.sunday-reset-resume { position:fixed; left:50%; transform:translateX(-50%); bottom:calc(88px + env(safe-area-inset-bottom, 0px));
+  z-index:60; box-shadow:0 10px 30px -12px rgba(0,0,0,.45); }
+.sunday-reset-resume[hidden] { display:none; }
+.sunday-reset-entry .assist-btn { min-height:44px; }
