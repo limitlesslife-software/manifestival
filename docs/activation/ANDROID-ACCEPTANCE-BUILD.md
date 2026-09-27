@@ -84,7 +84,9 @@ kirjaimilla. verify-apk lukee sen silti.
   | herätysliitännäisen commitit (`feat(android): ManifestivalAlarm-liitännäinen…`) | herätysluvat, `<queries>` (`android.intent.action.TTS_SERVICE`), AlarmPlugin ja sen rekisteröinti MainActivityssä | `manifest.source` |
 
   Aaltoja C–J vastaavat vanhemmat ehdokkaat eivät sisällä herätystä: niiden
-  APK ei läpäise nykyistä verify-apk-joukkoa ilman näitä committeja.
+  APK ei läpäise nykyistä verify-apk-joukkoa ilman näitä committeja. Aallon
+  K lukittu ehdokas (`d11d8b4`, tuotehaaran päälle leikattu) sisältää jo
+  puhe- ja herätysliitännäiset (`SpeechPlugin`, `AlarmPlugin`).
 
   Ilman versiointicommitia Gradle ohittaa `-P`-arvot hiljaa, ja APK saa arvot
   1 / `1.0`. Ilman manifestimuutoksia APK kaatuisi vasta verify-apk:ssa

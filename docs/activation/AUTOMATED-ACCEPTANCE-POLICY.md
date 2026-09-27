@@ -1,4 +1,4 @@
-# Automaattinen tekninen hyväksyntä — junan C–J hyväksyntäpolitiikka
+# Automaattinen tekninen hyväksyntä — junan C–K hyväksyntäpolitiikka
 
 **Omistajan päätös 2026-09-26, sitova.** Tämä dokumentti **korvaa aiemman
 aaltokohtaisen selainhyväksyntäportin** (`docs/acceptance/WAVE-X.md` kohta 4 ja
@@ -19,15 +19,15 @@ aaltokohtaisen selainhyväksyntäportin** (`docs/acceptance/WAVE-X.md` kohta 4 j
   PASSiksi**. Jos oikeassa käytössä löytyy vika, se on vikailmoitus ja
   peruutuspäätös (WAVE-X.md kohta 6), ei hyväksyntäportti.
 - Omistajan hyväksyntä vaaditaan **vain**:
-  1. jokainen tuotantomigraatio 0009–0013 (**0010 erikseen + tilannekuva ensin**),
-  2. jokainen tuotantodeploy D–J,
+  1. jokainen tuotantomigraatio 0009–0014 (**0010 erikseen + tilannekuva ensin**),
+  2. jokainen tuotantodeploy D–K,
   3. valinnainen T-2-varmuuskopion kuivaharjoitus tuotannossa
      (`docs/activation/0010-BACKUP-AND-RECOVERY.md`),
   4. AI-selityksen käyttöönotto (`EXPLAIN_ENABLED`, `AI_EXPLAIN_ENABLED`),
   5. Androidin versionCode-politiikka.
 - Omistaja hyväksyy lyhyellä viestillä: **"hyväksyn D"**, **"hyväksyn E"**,
   **"hyväksyn 0009/F"**, **"hyväksyn 0010/G"**, **"hyväksyn 0011/H"**,
-  **"hyväksyn 0012/I"**, **"hyväksyn 0013/J"**. Migraatioaallon viesti kattaa
+  **"hyväksyn 0012/I"**, **"hyväksyn 0013/J"**, **"hyväksyn 0014/K"**. Migraatioaallon viesti kattaa
   migraation JA deployn; deploy tehdään vasta, kun `verify_00XX.sql` = 0
   poikkeavaa.
 - **Fail closed:** puuttuva, epäselvä tai toisen commitin kirjaus = ei
@@ -44,7 +44,7 @@ aaltokohtaisen selainhyväksyntäportin** (`docs/acceptance/WAVE-X.md` kohta 4 j
 | 3 | Ehdokkaan oma täysi testipatteristo vihreä (`candidateTests`) | `node --test` ehdokkaan omassa työpuussa (`.claude/worktrees/rc-X-test`), sitten `npm run activation:orchestrate -- --record-candidate-tests=X --sha=<deployTarget> --tests-result=<tuloste>` — vain `fail 0`, `cancelled 0` kirjataan | päiväkirjan `candidate-tests`-rivi |
 | 4 | Tietoturva (`security`) | `git grep` ehdokkaasta: ei AI-avaimia (`sk-ant-`), ei `service_role`-viittauksia selaimeen päätyvissä poluissa (`src`, `tools/rls-acceptance`) | päiväkirjan rivi |
 | 5 | Julkaisun esitarkistus (`repoPreflight`) | `repoChecks` (portit, välimuisti, sarakeportit, tilannedokumentti, perustiedostot, migraatio- ja SQL-tiedostot): orkestroijan `PREFLIGHT_REPO`; käsin `npm run activation:preflight -- --wave=X --sha=<deployTarget>` → `PASS (testejä/koontia ei ajettu)` | päiväkirjan rivi |
-| 6 | Migraation varmistus (`migrationVerify`) | F–J: omistaja ajaa `supabase/verify/verify_00XX.sql` (vain luku) ja liittää → `node tools/activation/score-sql-result.mjs --sql=supabase/verify/verify_00XX.sql <tulos>` = GO (0 poikkeavaa, kaikki rivit) → orkestroijalle `--verify-result=<tulos>` | päiväkirjan rivi |
+| 6 | Migraation varmistus (`migrationVerify`) | F–K: omistaja ajaa `supabase/verify/verify_00XX.sql` (vain luku) ja liittää → `node tools/activation/score-sql-result.mjs --sql=supabase/verify/verify_00XX.sql <tulos>` = GO (0 poikkeavaa, kaikki rivit) → orkestroijalle `--verify-result=<tulos>` | päiväkirjan rivi |
 | 7 | Live-tiedostot = ehdokkaan sormenjälki (`liveAssets`) | orkestroijan `VERIFY_LIVE` (vain GET); käsin `npm run production:verify-assets -- --wave=X --sha=<deployTarget>` | päiväkirjan rivi |
 | 8 | Välimuisti ja porttimatriisi sarakeportteineen (`cacheAndGates`) | ehdokkaan `sw.js`/`schema.js` (git show) JA tuotanto: `vNN`, taulumatriisi ja `COLUMN_GATES` täsmälleen aallon mukaiset | päiväkirjan rivi |
 | 9 | Ehdokkaan käynnistyssavu omalla koodilla ja porteilla (`bootSmoke`) | `npm run e2e:boot-smoke` ehdokkaan koskemattomassa työpuussa (`.claude/worktrees/rc-X-smoke`, `--expect-sha <deployTarget>`), sitten `npm run activation:orchestrate -- --record-boot-smoke=X --sha=<deployTarget> --smoke-result=<tuloste>` — vain `KÄYNNISTYSSAVU [X]: PASS (n/n; …)` nollalaskureilla samalle SHA:lle kirjataan (alla) | päiväkirjan `boot-smoke`-rivi |
@@ -102,7 +102,7 @@ uuden ajon.)
 
 ---
 
-## Aallot C–J
+## Aallot C–K
 
 Jokaisen aallon taulukossa on **kaksi eri asiaa**: `AUTOMATED PASS`
 (koneellinen, estää junan, kirjataan) ja `LIVE USE VALIDATION PENDING`
@@ -212,6 +212,19 @@ Paketti: [`docs/acceptance/WAVE-J.md`](../acceptance/WAVE-J.md). Omistajan viest
 | AUTOMATED PASS | tietoturva: AI-selitys suljettu (`GET /api/explain` 405, `POST` ilman tokenia 503, `OPTIONS` 204) | `WAVE-J.md` kohta 3 (curl, ei tunnuksia, ei maksullista kutsua; orkestroija ei kutsu `/api/`-polkuja) | J:n hyväksyntäraportti omistajalle |
 | LIVE USE VALIDATION PENDING | ajastin jatkuu F5:n yli, yksi ajastin, ei kaksoiskirjausta; kuormittavuus; ei "Selitä tekoälyllä" -painiketta | `WAVE-J.md` kohta 4 | ei kirjausta — ei estä, ei PASS |
 | LIVE USE VALIDATION PENDING | Day 1 puhelimella: APK asennetaan **vasta kun `verify_0013` = 0 ja J on tuotannossa** | `docs/activation/ANDROID-ACCEPTANCE-BUILD.md`, `docs/SUUNTA-DAY1-ACCEPTANCE.md` | ei kirjausta — ei estä, ei PASS |
+
+### Aalto K (v24) — Arjen käyttöjärjestelmä, migraatio 0014
+
+Paketti: [`docs/acceptance/WAVE-K.md`](../acceptance/WAVE-K.md). Omistajan viesti: **"hyväksyn 0014/K"** (migraatio + deploy). K v1 (`d11d8b4`) on leikattu J v2:n päälle ja lukittu; se on lukon SQL-lähde (0009–0014; 0009–0013 tavu tavulta J v2:n tiedostot). Riski matala: kymmenen uutta tyhjää taulua, ei sarakeportteja, tilannekuva ei pakollinen. Migraatio 0014 ajetaan vasta, kun J on tuotannossa teknisesti hyväksyttynä ja `verify_0013` = 0.
+
+| Laji | Tarkistus | Komento | Kirjataan |
+|---|---|---|---|
+| AUTOMATED PASS | edellytys: `verify_0013.sql` = 0 poikkeavaa (ajettu J:n jälkeen); tuore inventaario ja `preflight_0014.sql` 0 FAIL | kuten F | orkestroijan `PREFLIGHT_DB` |
+| AUTOMATED PASS | ehto 3: K:n oma testipatteristo | `node --test` ehdokkaassa + `--record-candidate-tests=K` | `candidate-tests`-rivi |
+| AUTOMATED PASS | ehto 9: K:n käynnistyssavu omalla koodilla ja porteilla | `npm run e2e:boot-smoke` ehdokkaassa + `--record-boot-smoke=K` | `boot-smoke`-rivi |
+| AUTOMATED PASS | ehto 6: `verify_0014.sql` = 0 poikkeavaa (rivi 13: ei koordinaattisaraketta) | `score-sql-result.mjs --sql=supabase/verify/verify_0014.sql` | `deploy`-rivi |
+| AUTOMATED PASS | ehdot 1, 2, 4, 5, 7, 8 | `npm run activation:orchestrate -- --execute-deploy --approved-sha=<K:n deployTarget> --verify-result=<tulos>` | `deploy`-rivi |
+| LIVE USE VALIDATION PENDING | meno ja esiintymän ohitus säilyvät; paikka ja vahvistettu nimitys, ei kahta samannimistä paikkaa; arjen asetukset (puuttuva = oletus); uni-, tapa-, liikunta- ja motivaatiokirjaukset, tyhjä ei muutu nollaksi | `WAVE-K.md` kohta 4 | ei kirjausta — ei estä, ei PASS |
 
 ---
 

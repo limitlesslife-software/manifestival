@@ -42,16 +42,20 @@ export const PAUSES = Object.freeze([
 /**
  * Junan aallot: avoimet taulut (TABLES-avaimet) ja auki olevat sarakeportit.
  *
- * Lukitut aallot (C–J) luetaan lukkotiedostosta sellaisenaan. Aalto, jota
- * lukko ei vielä tunne (K: aaltocommit rakennetaan J v2:n päälle vasta
- * myöhemmin, eikä lukkoa kirjoiteta ilman sitä), JOHDETAAN
+ * Lukitut aallot (C–K) luetaan lukkotiedostosta sellaisenaan. Aalto, jota
+ * lukko ei vielä tunne (julkaisuaalto, jonka ehdokasta ei ole leikattu —
+ * K oli sellainen ennen K v1:n lukitsemista), JOHDETAAN
  * tools/release/waves.mjs:stä: kumulatiiviset tauluportit ja sarakeportit,
  * jotka ovat auenneet viimeistään tässä aallossa. `locked: false` kertoo
  * raportissa, ettei aaltoa ole vielä lukittu.
  */
 export function trainWaves(file = TRAIN_FILE) {
-  const raw = JSON.parse(readFileSync(join(ROOT, file), 'utf8'));
-  const waves = Array.isArray(raw.waves) ? raw.waves : null;
+  return trainWavesFrom(JSON.parse(readFileSync(join(ROOT, file), 'utf8')), file);
+}
+
+/** Sama kuin trainWaves(), jäsennetystä lukosta (testit: lukko ilman uusinta aaltoa). */
+export function trainWavesFrom(raw, file = TRAIN_FILE) {
+  const waves = raw && Array.isArray(raw.waves) ? raw.waves : null;
   if (!waves) throw new Error(`${file}: waves-lista puuttuu`);
   const out = {};
   for (const w of waves) {

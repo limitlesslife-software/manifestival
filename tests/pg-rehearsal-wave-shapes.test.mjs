@@ -10,7 +10,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { read } from './helpers/sources.mjs';
-import { PAUSES, trainWaves, shapeKeys, waveWrites } from '../tools/pg-rehearsal/waves.mjs';
+import { PAUSES, trainWaves, trainWavesFrom, shapeKeys, waveWrites } from '../tools/pg-rehearsal/waves.mjs';
 import { patchSchemaSource, KNOWN_GATES } from '../tools/pg-rehearsal/app-gate-hooks.mjs';
 
 const train = trainWaves();
@@ -100,11 +100,11 @@ test('taukopisteet vastaavat junaa: tauon jälkeen deployataan juuri sen migraat
 const K_TABLES = ['saved_places', 'place_aliases', 'calendar_events', 'commute_observations', 'life_settings',
   'sleep_logs', 'habit_plans', 'habit_events', 'exercise_sessions', 'wellbeing_checkins'];
 
-test('KRIITTINEN: aalto K johdetaan julkaisuaalloista, kun lukko ei vielä tunne sitä', async () => {
+test('KRIITTINEN: aalto K luetaan lukosta (locked: true), ja muoto vastaa julkaisuaaltoja', async () => {
   const { cumulativeGates, WAVES } = await import('../tools/release/waves.mjs');
-  // Lukitut C–J luetaan lukosta sellaisenaan; K on lukitsematon.
-  for (const w of ['C', 'D', 'E', 'F', 'G', 'H', 'I', 'J']) assert.equal(train[w].locked, true, w);
-  assert.equal(train.K.locked, false);
+  // Lukitut C–K luetaan lukosta sellaisenaan; yhtäkään aaltoa ei johdeta.
+  for (const w of ['C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K']) assert.equal(train[w].locked, true, w);
+  assert.equal(Object.values(train).some(w => !w.locked), false, 'lukitsematon aalto junassa');
   assert.equal(train.K.migration, '0014_daily_life.sql');
   assert.deepEqual([...train.K.tables].sort(), [...cumulativeGates('K')].sort());
   // K = J:n taulut + 0014:n kymmenen porttia, EI uusia sarakeportteja.
@@ -114,6 +114,19 @@ test('KRIITTINEN: aalto K johdetaan julkaisuaalloista, kun lukko ei vielä tunne
   assert.deepEqual(train.K.gates, train.J.gates);
   // Lukitun aallon johdettu muoto täsmää lukkoon (johtaminen on oikein).
   assert.deepEqual([...cumulativeGates('J')].sort(), [...train.J.tables].sort());
+});
+
+test('KRIITTINEN: aalto, jota lukko ei vielä tunne, johdetaan julkaisuaalloista (locked: false) täsmälleen lukon muotoon', async () => {
+  // Sama tilanne kuin ennen K v1:n lukitsemista: lukko ilman K:ta.
+  const lock = JSON.parse(read('docs/activation/release-train-c-j.json'));
+  const withoutK = trainWavesFrom({ ...lock, waves: lock.waves.filter(w => w.wave !== 'K') });
+  for (const w of ['C', 'D', 'E', 'F', 'G', 'H', 'I', 'J']) assert.equal(withoutK[w].locked, true, w);
+  assert.equal(withoutK.K.locked, false);
+  // Johdettu K on sama kuin lukittu K: johtaminen ja lukko ovat samaa mieltä.
+  assert.equal(withoutK.K.migration, train.K.migration);
+  assert.deepEqual([...withoutK.K.tables].sort(), [...train.K.tables].sort());
+  assert.deepEqual(withoutK.K.gates, train.K.gates);
+  assert.throws(() => trainWavesFrom({}), /waves-lista puuttuu/);
 });
 
 test('aallon K rivimuodot: kaikki kymmenen taulua sovelluksen omalla toRow:lla, J ei kirjoita niihin', async () => {

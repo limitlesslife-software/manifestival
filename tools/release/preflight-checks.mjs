@@ -18,11 +18,11 @@
 //
 // SQL-TIEDOSTOT
 //
-// Migraatioaaltojen (F–J) esitarkistus- ja varmistustiedostot ovat vain
-// lukon SQL-lähteessä (aallon J kärki) ja tuotehaarassa — eivät F:n,
-// G:n, H:n tai I:n omassa kärjessä. Siksi migraatiotiedosto tarkistetaan
-// sekä ehdokkaasta että SQL-lähteestä (samat tavut), ja preflight/verify
-// SQL-lähteestä.
+// Migraatioaaltojen (F–K) esitarkistus- ja varmistustiedostot ovat vain
+// lukon SQL-lähteessä (aallon K kärki; ennen K:n lukitsemista J:n) ja
+// tuotehaarassa — eivät F:n, G:n, H:n tai I:n omassa kärjessä. Siksi
+// migraatiotiedosto tarkistetaan sekä ehdokkaasta että SQL-lähteestä
+// (samat tavut), ja preflight/verify SQL-lähteestä.
 
 import { createHash } from 'node:crypto';
 

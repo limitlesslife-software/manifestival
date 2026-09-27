@@ -4,9 +4,9 @@
   "note": "LUKKO: push-kohde on aina waves[].deployTarget (40 merkkiä). ref on vain alias, jolla lukko kirjoitettiin.",
   "production": {
     "source": "origin/main (paikallinen, luettu --write-hetkellä; ei osa lukkoa)",
-    "sha": "cf259d0ef755f7e875cc9cd9c15405eba632e408",
-    "cacheVersion": "v16",
-    "wave": "C"
+    "sha": "2c8e230f8864ce0df1529718fb17ae265fb5d82b",
+    "cacheVersion": "v19",
+    "wave": "F"
   },
   "requiredPatches": [
     {
@@ -26,9 +26,9 @@
     }
   ],
   "sqlSource": {
-    "wave": "J",
-    "ref": "rehearsal/wave-j-v2",
-    "sha": "cba9463155c823a24d0fdb4632ab18a1fcbd01d0",
+    "wave": "K",
+    "ref": "rehearsal/wave-k-v1",
+    "sha": "d11d8b4661bc84c2e90b668132c11104db4cf203",
     "files": {
       "supabase/migrations/0009_finance_2.sql": "7a7d605de64616711ac0f63676c1822821dadfe9a10f6ebd31196cac0c61bd8c",
       "supabase/preflight/preflight_0009.sql": "be1eb6092a43690bd707f315f88f052ea432087733430bab4709a935444c214c",
@@ -44,7 +44,10 @@
       "supabase/verify/verify_0012.sql": "5859fedb6dbddb284e4e541264dc889352837f596d6d5b761f1213a161a3d514",
       "supabase/migrations/0013_alignment_reality.sql": "b6d1a14468b096baf779c39248c6e24d2d12d3990f443f56e3b17710f38d802a",
       "supabase/preflight/preflight_0013.sql": "3624909f1b6b2ea0fee6fab9aac925849f1afd55805da9f00c11385b59ec3eda",
-      "supabase/verify/verify_0013.sql": "d4716ef31fe44fde78b1fb65ee8e6e4a64018b1a4b9bc78763963a8ddb1887bc"
+      "supabase/verify/verify_0013.sql": "d4716ef31fe44fde78b1fb65ee8e6e4a64018b1a4b9bc78763963a8ddb1887bc",
+      "supabase/migrations/0014_daily_life.sql": "c7dc34380e9a18f05cae8d076adfffe148a6d311ecc1e554fcab0b26ede4c2a5",
+      "supabase/preflight/preflight_0014.sql": "895ee138585553ad3a0d9a0879f38ae66d787b1dcb3faf157f9fe99bcb3eadb5",
+      "supabase/verify/verify_0014.sql": "8cc14dfdaaa17d91a26ba61c1fc71fb734216c51494a071853eed73418ef1308"
     }
   },
   "waves": [
@@ -494,6 +497,85 @@
       "verify": "supabase/verify/verify_0013.sql",
       "acceptance": "docs/acceptance/WAVE-J.md",
       "rollbackTarget": "I",
+      "risk": "low",
+      "backupRequired": false,
+      "columnGates": {
+        "BILL_PAYMENT_FIELDS": {
+          "actual": true,
+          "expected": true
+        },
+        "GOAL_PLANNING_FIELDS": {
+          "actual": true,
+          "expected": true
+        },
+        "GOAL_MAINTENANCE_MODE": {
+          "actual": true,
+          "expected": true
+        },
+        "GOAL_LIFE_AREA_FIELD": {
+          "actual": true,
+          "expected": true
+        },
+        "ALIGNMENT_REALITY_FIELDS": {
+          "actual": true,
+          "expected": true
+        }
+      },
+      "missingPatches": [],
+      "consistent": true,
+      "problem": null
+    },
+    {
+      "wave": "K",
+      "deployTarget": "d11d8b4661bc84c2e90b668132c11104db4cf203",
+      "ref": "rehearsal/wave-k-v1",
+      "waveCommit": "d11d8b4661bc84c2e90b668132c11104db4cf203",
+      "parentWave": "J",
+      "descendsFromParent": true,
+      "cacheVersion": "v24",
+      "expectedCacheVersion": "v24",
+      "gateMatrixResolvesTo": "K",
+      "gatesCumulative": [
+        "notificationPreferences",
+        "wellbeing",
+        "goals",
+        "projects",
+        "routines",
+        "routineExceptions",
+        "recurringExpenses",
+        "savingsGoals",
+        "bills",
+        "aiAudit",
+        "transactions",
+        "investments",
+        "milestones",
+        "inboxItems",
+        "reminders",
+        "notices",
+        "travelPlans",
+        "locationRules",
+        "lifeAreas",
+        "weeklyCapacities",
+        "timeEntries",
+        "alignmentReviews",
+        "runningTimers",
+        "alignmentItemSettings",
+        "savedPlaces",
+        "placeAliases",
+        "calendarEvents",
+        "commuteObservations",
+        "lifeSettings",
+        "sleepLogs",
+        "habitPlans",
+        "habitEvents",
+        "exerciseSessions",
+        "wellbeingCheckins"
+      ],
+      "migration": "0014_daily_life.sql",
+      "preflight": "supabase/preflight/preflight_0014.sql",
+      "verify": "supabase/verify/verify_0014.sql",
+      "acceptance": "docs/acceptance/WAVE-K.md",
+      "rollbackTarget": "J",
       "risk": "low",
       "backupRequired": false,
       "columnGates": {

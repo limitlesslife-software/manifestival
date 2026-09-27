@@ -21,14 +21,19 @@ import { acceptanceEntry, shaOf, smokeEntry, smokeOutput, testOutput, testsEntry
 
 const lf = text => text.replace(/\r\n/g, '\n');
 const flat = text => lf(text).replace(/\s+/g, ' ');
-const TRAIN = ['C', 'D', 'E', 'F', 'G', 'H', 'I', 'J'];
+const TRAIN = ['C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K'];
+const OWNER_MESSAGES = ['hyväksyn D', 'hyväksyn E', 'hyväksyn 0009/F', 'hyväksyn 0010/G', 'hyväksyn 0011/H', 'hyväksyn 0012/I',
+  'hyväksyn 0013/J', 'hyväksyn 0014/K'];
 const lock = JSON.parse(read('docs/activation/release-train-c-j.json'));
 
 // ------------------------------------------------------------------ moduuli
 
-test('omistajan viestit: "hyväksyn D", "hyväksyn E", "hyväksyn 0009/F" … "hyväksyn 0013/J"', () => {
-  assert.deepEqual(['D', 'E', 'F', 'G', 'H', 'I', 'J'].map(ownerMessageFor),
-    ['hyväksyn D', 'hyväksyn E', 'hyväksyn 0009/F', 'hyväksyn 0010/G', 'hyväksyn 0011/H', 'hyväksyn 0012/I', 'hyväksyn 0013/J']);
+test('juna = lukon aallot: politiikan testit kattavat jokaisen lukitun aallon (K viimeisenä)', () => {
+  assert.deepEqual(lock.waves.map(w => w.wave), TRAIN);
+});
+
+test('omistajan viestit: "hyväksyn D", "hyväksyn E", "hyväksyn 0009/F" … "hyväksyn 0014/K"', () => {
+  assert.deepEqual(TRAIN.slice(1).map(ownerMessageFor), OWNER_MESSAGES);
   assert.equal(ownerMessageFor('BASE'), null);
 });
 
@@ -147,7 +152,7 @@ test('KRIITTINEN: käynnistyssavun kirjaus kelpaa vain PASSina samalle aallolle 
   assert.equal(bootSmokeOf([smokeEntry('D'), smokeEntry('D', shaOf('D'), { result: 'FAIL', pass: 20 })], D).ok, false);
 });
 
-test('käyttötodennuksen lista kattaa C–J, ja jokainen dokumentti on olemassa', () => {
+test('käyttötodennuksen lista kattaa C–K, ja jokainen dokumentti on olemassa', () => {
   assert.deepEqual(Object.keys(LIVE_USE_VALIDATION), TRAIN);
   for (const [wave, { doc, items }] of Object.entries(LIVE_USE_VALIDATION)) {
     assert.ok(fs.existsSync(path.join(ROOT, doc)), `${wave}: ${doc}`);
@@ -165,7 +170,7 @@ test('KRIITTINEN: politiikkadokumentti: korvaa selainportin, omistajan hyväksyn
   const doc = lf(read(POLICY_DOC));
   const f = flat(doc);
   assert.match(f, /korvaa aiemman aaltokohtaisen selainhyväksyntäportin/);
-  for (const needed of ['jokainen tuotantomigraatio 0009–0013', 'jokainen tuotantodeploy D–J', 'T-2-varmuuskopion kuivaharjoitus',
+  for (const needed of ['jokainen tuotantomigraatio 0009–0014', 'jokainen tuotantodeploy D–K', 'T-2-varmuuskopion kuivaharjoitus',
     'AI-selityksen käyttöönotto', 'versionCode-politiikka']) {
     assert.ok(f.includes(needed), `omistajan hyväksyntä puuttuu: ${needed}`);
   }
@@ -184,9 +189,11 @@ test('KRIITTINEN: politiikkadokumentti: korvaa selainportin, omistajan hyväksyn
   }
   assert.match(doc, /### Aalto G[\s\S]*snapshot_state_0009\.sql[\s\S]*restore-snapshot\.mjs check/);
   assert.match(doc, /### Aalto J[\s\S]*vasta kun `verify_0013` = 0 ja J on tuotannossa/);
+  assert.match(doc, /### Aalto K[\s\S]*edellytys: `verify_0013\.sql` = 0 poikkeavaa[\s\S]*`preflight_0014\.sql` 0 FAIL/);
+  assert.match(doc, /### Aalto K[\s\S]*ehto 6: `verify_0014\.sql` = 0 poikkeavaa/);
 });
 
-test('KRIITTINEN: jokainen WAVE-C..J.md linkittää politiikkaan ja merkitsee selainosion LIVE_USE_VALIDATION_PENDING:ksi', () => {
+test('KRIITTINEN: jokainen WAVE-C..K.md linkittää politiikkaan ja merkitsee selainosion LIVE_USE_VALIDATION_PENDING:ksi', () => {
   for (const wave of TRAIN) {
     const doc = lf(read(`docs/acceptance/WAVE-${wave}.md`));
     assert.ok(doc.includes('(../activation/AUTOMATED-ACCEPTANCE-POLICY.md)'), `WAVE-${wave}.md: linkki politiikkaan`);
@@ -212,15 +219,15 @@ test('KRIITTINEN: GO/NO-GO: uusi politiikka, askel 1 odottaa DEPLOY D:tä, linki
   assert.equal(/Odotettu: \*GO, seuraava migraatio 0009\*/.test(doc), false, 'vanha odotus (migraatio 0009) jäi');
   assert.equal(/Hyväksyntä ~10 min|5 min UI|UI-hyväksyntä\./.test(doc), false, 'käsin tehtävä UI-hyväksyntä on yhä askel');
   assert.match(f, /\| LIVE_USE_VALIDATION_PENDING \| .*ei estä junaa, ei koskaan PASS/);
-  for (const msg of ['hyväksyn D', 'hyväksyn E', 'hyväksyn 0009/F', 'hyväksyn 0010/G', 'hyväksyn 0011/H', 'hyväksyn 0012/I', 'hyväksyn 0013/J']) {
+  for (const msg of OWNER_MESSAGES) {
     assert.ok(doc.includes(`"${msg}"`), msg);
   }
   assert.equal(/--accepted=/.test(doc), false, 'poistettu --accepted-lippu dokumentissa');
 });
 
-test('KRIITTINEN: nopea polku: jokainen askel C–J ja APK, omistajan viesti, TILA/KOMENTO/ODOTUS/STOP JOS/SEURAAVA', () => {
+test('KRIITTINEN: nopea polku: jokainen askel C–K ja APK, omistajan viesti, TILA/KOMENTO/ODOTUS/STOP JOS/SEURAAVA', () => {
   const doc = lf(read(FAST_ACTIVATION_DOC));
-  const steps = ['C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'APK'];
+  const steps = [...TRAIN, 'APK'];
   let last = -1;
   for (const step of steps) {
     const start = doc.indexOf(`\n## Askel ${step} `);
@@ -232,7 +239,7 @@ test('KRIITTINEN: nopea polku: jokainen askel C–J ja APK, omistajan viesti, TI
       assert.ok(section.includes(key), `askel ${step}: ${key}`);
     }
     if (!['C', 'APK'].includes(step)) assert.ok(section.includes(`**OMISTAJAN VIESTI:** **"${ownerMessageFor(step)}"**`), `askel ${step}: omistajan viesti`);
-    const meta = { F: '0009', G: '0010', H: '0011', I: '0012', J: '0013' }[step];
+    const meta = { F: '0009', G: '0010', H: '0011', I: '0012', J: '0013', K: '0014' }[step];
     if (meta) {
       for (const file of [`supabase/preflight/preflight_${meta}.sql`, `supabase/verify/verify_${meta}.sql`]) {
         assert.ok(section.includes(`git show ${lock.sqlSource.sha}:${file}`), `askel ${step}: ${file} lukon lähteestä`);
@@ -246,10 +253,18 @@ test('KRIITTINEN: nopea polku: jokainen askel C–J ja APK, omistajan viesti, TI
   assert.match(g, /restore-snapshot\.mjs check <vienti> --save/);
   const apk = doc.slice(doc.indexOf('\n## Askel APK '));
   assert.match(flat(apk), /`verify_0013` ≠ 0 tai J ei ole tuotannossa: \*\*älä asenna\*\*/);
+  // K: 0014 vasta J:n jälkeen, verify_0013 edellytyksenä; viimeinen aalto -> GO: DONE.
+  const j = doc.slice(doc.indexOf('\n## Askel J '), doc.indexOf('\n## Askel K '));
+  const k = doc.slice(doc.indexOf('\n## Askel K '), doc.indexOf('\n## Askel APK '));
+  assert.equal(/GO: DONE/.test(j), false, 'J ei ole enää junan viimeinen aalto');
+  assert.match(flat(j), /\*\*SEURAAVA:\*\* askel K/);
+  assert.match(flat(k), /\*\*TILA:\*\* J teknisesti hyväksytty; kanta 0013; `verify_0013` = 0 poikkeavaa/);
+  assert.match(k, /score-sql-result\.mjs --sql=supabase\/verify\/verify_0013\.sql/, 'askel K: 0013:n varmistus edellytyksenä');
+  assert.match(k, /dry-run `GO: DONE`/);
   assert.ok(doc.includes(`SQL-lähde (lukon sqlSource): \`${lock.sqlSource.ref}\` @ \`${lock.sqlSource.sha}\``));
 });
 
-test('KRIITTINEN: käynnistyssavu on koneellinen ehto 9: politiikka kertoo kirjauskomennon, nopea polku ajaa ja kirjaa sen D–J', () => {
+test('KRIITTINEN: käynnistyssavu on koneellinen ehto 9: politiikka kertoo kirjauskomennon, nopea polku ajaa ja kirjaa sen D–K', () => {
   const policy = lf(read(POLICY_DOC));
   const f = flat(policy);
   assert.match(policy, /^\| 9 \| Ehdokkaan käynnistyssavu omalla koodilla ja porteilla \(`bootSmoke`\) \|/m);

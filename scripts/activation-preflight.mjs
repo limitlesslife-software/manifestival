@@ -141,7 +141,7 @@ tarkista('haara', 'HEAD-tila on tunnistettu',
 // =====================================================================
 //
 // `--wave=`-parametri on operaattorin VÄITE. Jos commit kantaa
-// `Release-Wave:`-trailerin (A–J, ks. RELEASE_WAVE_TRAILER), sen on
+// `Release-Wave:`-trailerin (A–K, ks. RELEASE_WAVE_TRAILER), sen on
 // täsmättävä. Commit ilman traileria ei ole virhe (deploykohteen kärki
 // on usein dokumentti- tai työkalucommit aaltocommitin jälkeen).
 // AMBIGUITEETTI on sitä vastoin AINA este.
