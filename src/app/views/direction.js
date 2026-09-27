@@ -61,8 +61,11 @@ import {
   currentDailyAlignment, explainSignalOptionally, aiExplanationAvailable, pendingTimeEntryCount,
   pendingTimeEntryOperations, isAdjustmentDone, failedTimeEntries, failedTimeEntryOperations,
   retryFailedTimeEntries, discardFailedTimeEntries, analysisLoadProblems, editTimeEntry, clockNow,
-  timeEntrySaving
+  timeEntrySaving, currentDriftSignals
 } from '../alignment.js';
+import { DRIFT_ADJUSTMENT, DRIFT_SEVERITY } from '../../domain/driftSignals.js';
+import { TASK_HORIZON } from '../../domain/task.js';
+import { setTaskHorizon, archiveTask } from '../mentalLoadActions.js';
 import { showError } from '../../ui/toast.js';
 import { saveItemSettings, itemSettingsFor, currentTimer, newOperationId } from '../timeTracking.js';
 import { editTask, editRoutine } from '../actions.js';
@@ -497,6 +500,125 @@ function signalsHtml(analysis, areas) {
     : analysis.signals.map(signal => signalHtml(signal, areas)).join('');
   return sparseNoticeHtml(analysis) + list + qualityHtml(analysis);
 }
+
+// ------------------------------------------- todellisuus / ajautuminen v2
+
+/**
+ * Ajautumisen havainnot (src/domain/driftSignals.js) Suunnan havaintojen
+ * alla. Vain kuluvalle viikolle: ne kertovat, mitä nyt kannattaa säätää
+ * seuraavaan suunnitelmaan. Jokaisella on säätö, ja säätö on toiminto
+ * vain, kun olemassa oleva toiminto sen tekee (Ei vielä, Myöhemmin,
+ * Arkistoi, Avaa, kapasiteetti vahvistuksen kautta). Sävy on toteava.
+ */
+let lastDrift = Object.freeze([]);
+
+/** Tehtävän avaus muokkaukseen: main.js kytkee (ei tuontia tasks.js:ään, joka tuo tämän). */
+let driftTaskOpener = null;
+
+export function setDriftTaskOpener(fn) {
+  driftTaskOpener = typeof fn === 'function' ? fn : null;
+}
+
+const DRIFT_SEVERITY_LABELS = Object.freeze({
+  [DRIFT_SEVERITY.INFO]: SEVERITY_LABELS.info,
+  [DRIFT_SEVERITY.ATTENTION]: SEVERITY_LABELS.attention
+});
+
+/** Tehtäväkohtaiset toiminnot säädön lajin mukaan (olemassa olevat toiminnot). */
+const DRIFT_ITEM_ACTIONS = Object.freeze({
+  [DRIFT_ADJUSTMENT.REVIEW_BACKLOG]: ['not_yet', 'archive', 'open'],
+  [DRIFT_ADJUSTMENT.DECIDE_ONCE]: ['not_yet', 'later', 'archive', 'open'],
+  [DRIFT_ADJUSTMENT.MOVE_AFTER_VACATION]: ['later', 'open'],
+  [DRIFT_ADJUSTMENT.MOVE_ITEMS]: ['open'],
+  [DRIFT_ADJUSTMENT.PROTECT_EVENING]: ['open']
+});
+
+const DRIFT_ACTION_LABELS = Object.freeze({
+  not_yet: 'Ei vielä', later: 'Myöhemmin', archive: 'Arkistoi', open: 'Avaa'
+});
+
+function driftItemHtml(item, actions) {
+  const task = findTask(item.id);
+  const buttons = task && !task.completed
+    ? actions.map(action => `<button class="assist-btn" type="button" data-drift-action="${action}" `
+      + `data-task="${escapeHtml(item.id)}" aria-label="${escapeHtml(`${DRIFT_ACTION_LABELS[action]}: ${item.title}`)}">`
+      + `${escapeHtml(DRIFT_ACTION_LABELS[action])}</button>`).join('')
+    : '';
+  const when = item.date ? ` · ${escapeHtml(shortDate(item.date))}` : '';
+  return `<li class="dir-drift-item"><span>${escapeHtml(item.title)}${when}</span>${buttons}</li>`;
+}
+
+function driftSignalHtml(signal) {
+  const adjustment = signal.adjustment || {};
+  const taskIds = new Set(Array.isArray(adjustment.payload && adjustment.payload.taskIds) ? adjustment.payload.taskIds : []);
+  const actions = DRIFT_ITEM_ACTIONS[adjustment.type] || [];
+  const items = actions.length > 0 ? (signal.items || []).filter(item => taskIds.has(item.id)) : [];
+  const capacity = adjustment.type === DRIFT_ADJUSTMENT.SET_CAPACITY && adjustment.payload
+    && Number.isInteger(adjustment.payload.availableMinutes)
+    ? `<button class="assist-btn" type="button" data-drift-action="capacity">${escapeHtml(adjustment.label)}</button>`
+    : '';
+  return `
+    <div class="dir-signal dir-drift ${signal.severity === DRIFT_SEVERITY.ATTENTION ? 'dir-attention' : 'dir-info'}">
+      <div class="dir-signal-head">
+        <span class="dir-severity">${escapeHtml(DRIFT_SEVERITY_LABELS[signal.severity] || '')}</span>
+        <span class="dir-signal-title">${escapeHtml(signal.title)}</span>
+      </div>
+      <div class="dir-signal-text">${escapeHtml(signal.reason)}</div>
+      <p class="dir-line"><strong>Ensi suunnitelmaan:</strong> ${escapeHtml(capacity ? adjustment.detail : `${adjustment.label}. ${adjustment.detail}`)}</p>
+      ${capacity}
+      ${items.length > 0 ? `<ul class="dir-drift-items">${items.map(item => driftItemHtml(item, actions)).join('')}</ul>` : ''}
+      <details class="dir-why">
+        <summary>Miksi tämä näkyy?</summary>
+        <p>${escapeHtml(signal.why)}</p>
+      </details>
+    </div>`;
+}
+
+function driftHtml(analysis) {
+  if (!analysis || analysis.weekStart !== currentWeekStart()) {
+    lastDrift = Object.freeze([]);
+    return '';
+  }
+  lastDrift = currentDriftSignals(analysis.weekStart);
+  if (lastDrift.length === 0) return '';
+  return `<div class="dir-drift-section" role="group" aria-labelledby="dirDriftTitle">
+      <h3 class="add-form-title" id="dirDriftTitle">Suunnitelma ja todellisuus</h3>
+      <p class="hint">Havainnot säätävät seuraavaa suunnitelmaa. Mitään ei muuteta ilman valintaasi.</p>
+      ${lastDrift.map(driftSignalHtml).join('')}
+    </div>`;
+}
+
+const onDriftAction = singleFlight(async button => {
+  const action = button.dataset.driftAction;
+  const id = button.dataset.task || null;
+  if (action === 'open') {
+    if (id && driftTaskOpener) driftTaskOpener(id);
+    else switchTab('screen-tasks');
+    return;
+  }
+  if (action === 'capacity') {
+    const signal = lastDrift.find(entry => entry.adjustment && entry.adjustment.type === DRIFT_ADJUSTMENT.SET_CAPACITY);
+    if (!signal) return;
+    const payload = signal.adjustment.payload;
+    await applyAdjustment({
+      id: `${ADJUSTMENT.SET_CAPACITY}:drift:${payload.weekStart}`,
+      type: ADJUSTMENT.SET_CAPACITY,
+      label: signal.adjustment.label,
+      detail: `${signal.reason} ${signal.adjustment.detail}`,
+      payload: { weekStart: payload.weekStart, availableMinutes: payload.availableMinutes }
+    });
+    return;
+  }
+  if (!id) return;
+  setBusy(button, true, 'Tallennetaan…');
+  try {
+    if (action === 'later') await setTaskHorizon(id, TASK_HORIZON.LATER, { todayIso: clockNow().todayIso });
+    else if (action === 'not_yet') await setTaskHorizon(id, TASK_HORIZON.NOT_YET);
+    else if (action === 'archive') await archiveTask(id);
+  } finally {
+    setBusy(button, false);
+  }
+});
 
 /** Palkki: suunniteltu vs. kapasiteetti. Tekstivastine on aina näkyvissä. */
 function barHtml({ value, max, label }) {
@@ -1615,7 +1737,8 @@ export function renderDirection() {
   });
   // Ei tyhjän tilan kehotusta ("aloita elämänalueista"), kun alueita ei
   // saatu ladattua: niitä voi olla kannassa.
-  paint(el('dirSignals'), incomplete ? analysisLoadNoticeHtml() : areasUnknown ? '' : signalsHtml(analysis, areas));
+  paint(el('dirSignals'), incomplete ? analysisLoadNoticeHtml()
+    : (areasUnknown ? '' : signalsHtml(analysis, areas)) + driftHtml(analysis));
   const quality = maybe('dirQuality');
   if (quality) paint(quality, areas.length > 0 && !incomplete ? qualityActionsHtml(analysis) : '');
   paint(el('dirWeekSummary'), weekSummaryHtml(analysis));
@@ -2456,6 +2579,12 @@ export function initDirection() {
     const quality = event.target.closest('[data-quality-action]');
     if (quality) {
       onQualityAction(quality.dataset.qualityAction);
+      return;
+    }
+    // Ajautumisen säätö: olemassa oleva toiminto (Ei vielä, Myöhemmin, Arkistoi, Avaa, kapasiteetti).
+    const drift = event.target.closest('[data-drift-action]');
+    if (drift) {
+      if (!drift.disabled) onDriftAction(drift);
       return;
     }
     const button = event.target.closest('[data-explain]');

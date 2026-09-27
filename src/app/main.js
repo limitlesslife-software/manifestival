@@ -35,7 +35,7 @@ import { renderSetupChecklist, initSetupChecklist } from './views/setupChecklist
 import { initDiscretionaryLimit, resetDiscretionaryLimit } from './views/discretionaryLimit.js';
 import { renderWeek, initWeekNavigation } from './views/week.js';
 import { initCalendar, renderCalendar, resetCalendarView } from './views/calendar.js';
-import { renderTasks, initTaskForm, closeForm } from './views/tasks.js';
+import { renderTasks, initTaskForm, closeForm, openEditForm } from './views/tasks.js';
 import { initRoutineForm, closeRoutineForm } from './views/routines.js';
 import { renderGoals, initGoalForm, closeGoalForm, refreshGoalPicker } from './views/goals.js';
 import { renderProjects, initProjectForm, closeProjectForm } from './views/projects.js';
@@ -78,7 +78,7 @@ import { initTravelForms, closeTravelForm, closeLocationRuleForm }
   from './views/travel.js';
 import { renderNotices, initNotices, closeNoticeCenter } from './views/notices.js';
 import {
-  renderDirection, renderTodayDirection, initDirection, closeAreaForm, resetDirectionView
+  renderDirection, renderTodayDirection, initDirection, closeAreaForm, resetDirectionView, setDriftTaskOpener
 } from './views/direction.js';
 import { resetAppliedAdjustments } from './alignment.js';
 import {
@@ -599,6 +599,8 @@ async function start() {
   initTravelForms();
   initNotices();
   initDirection();
+  // Ajautumisen "Avaa" avaa tehtävän muokkauksen (ei tuontia direction.js -> tasks.js: sykli).
+  setDriftTaskOpener(openEditForm);
   initTimeLog();
   initVoice();
   initSearch();
