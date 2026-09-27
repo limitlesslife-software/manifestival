@@ -104,16 +104,38 @@ export function normalizeMinor(value) {
 }
 
 /**
+ * Etumerkillinen summa näyttämistä varten.
+ *
+ * Tallennettava summa (normalizeMinor) ei ole koskaan negatiivinen, mutta
+ * JOHDETTU luku voi olla: kuukauden erotus, ennuste tai salkun tuotto.
+ * Aiemmin formatMoney kulki normalizeMinor-funktion kautta ja palautti
+ * negatiiviselle luvulle tyhjän merkkijonon — "Erotus" ja "Jäljellä"
+ * näkyivät tyhjinä juuri silloin, kun ne olivat tärkeimpiä.
+ *
+ * Itseisarvon yläraja on sama MAX_MINOR kuin tallennettavalla summalla.
+ * Negatiivinen nolla (-0,4 senttiä pyöristettynä) on nolla.
+ */
+function signedMinorForDisplay(value) {
+  if (value === null || value === undefined || value === '' || typeof value === 'boolean') return null;
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  const rounded = Math.round(n);
+  if (Math.abs(rounded) > MAX_MINOR) return null;
+  return rounded === 0 ? 0 : rounded;
+}
+
+/**
  * Muotoile sentit näytettäväksi.
  *
  * Käyttää Suomen muotoilua: pilkku desimaalierottimena, välilyönti
  * tuhaterottimena. `Intl` hoitaa sen oikein myös muille valuutoille.
+ * Negatiivinen summa näytetään miinusmerkillä (esim. "−129,95 €").
  *
- * @param {number} minor sentteinä
+ * @param {number} minor sentteinä, myös negatiivinen johdettu luku
  * @param {string} currency ISO-koodi
  */
 export function formatMoney(minor, currency = DEFAULT_CURRENCY) {
-  const amount = normalizeMinor(minor);
+  const amount = signedMinorForDisplay(minor);
   if (amount === null) return '';
 
   const code = normalizeCurrency(currency);
