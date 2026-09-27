@@ -114,6 +114,8 @@ h1.title { font-family:'Fraunces',serif; font-weight:500; font-size:24px; line-h
 .search-command-btn { display:block; width:100%; text-align:left; appearance:none; -webkit-appearance:none; background:var(--sage-soft); border:1px solid var(--sage); border-radius:12px; padding:11px 13px; margin-top:10px; font-family:'Manrope',sans-serif; font-size:13px; font-weight:700; color:var(--forest); cursor:pointer; }
 .search-command-btn:hover, .search-command-btn:focus-visible { border-color:var(--gold); }
 .search-command-btn:disabled { opacity:.6; cursor:default; }
+.search-command-btn[hidden] { display:none; }
+#searchInboxBtn { background:var(--cream-card); border-color:var(--border); color:var(--text-1); }
 
 .tab-bar { position:absolute; left:0; right:0; bottom:0; background:rgba(253,251,246,.92); backdrop-filter:blur(10px); border-top:1px solid var(--border); display:flex; align-items:center; justify-content:space-around; padding:10px 0 calc(10px + env(safe-area-inset-bottom)); z-index:25; }
 .tab-btn { background:none; border:none; display:flex; flex-direction:column; align-items:center; gap:4px; color:var(--text-3); font-family:'Manrope',sans-serif; font-size:10.5px; font-weight:700; cursor:pointer; padding:6px 14px; border-radius:12px; }
@@ -522,14 +524,19 @@ body.is-offline .offline-banner { display:block; }
 
 /* Kirjauspalkki. Ensimmäinen asia päivänäkymässä, koska kirjaus on
    se teko joka tapahtuu useimmin ja jonka pitää onnistua nopeimmin. */
-.capture-bar { display:flex; gap:8px; align-items:center; margin:4px 0 6px; }
-.capture-bar input {
+.capture-bar { display:flex; gap:8px; align-items:flex-end; margin:4px 0 6px; }
+.capture-bar input, .capture-bar textarea {
   flex:1; min-width:0; appearance:none; -webkit-appearance:none;
   background:var(--cream-card); border:1.5px solid var(--border);
   border-radius:14px; padding:12px 14px; font-family:'Manrope',sans-serif;
   font-size:14px; color:var(--text-1);
 }
-.capture-bar input:focus-visible { outline:2px solid var(--gold); outline-offset:1px; }
+.capture-bar input:focus-visible, .capture-bar textarea:focus-visible { outline:2px solid var(--gold); outline-offset:1px; }
+/* Brain dump: kenttä kasvaa sisällön mukaan noin kuuteen riviin asti (views/inbox.js autoGrow). */
+.capture-bar textarea {
+  resize:none; line-height:1.45; min-height:46px; max-height:calc(1.45em * 6 + 24px);
+  overflow-y:auto; display:block;
+}
 .capture-mic, .capture-send {
   appearance:none; -webkit-appearance:none; border:none; cursor:pointer;
   font-family:'Manrope',sans-serif; font-weight:700; font-size:13px;
@@ -597,6 +604,38 @@ body.is-offline .offline-banner { display:block; }
 .assist-tag.tone-warn { background:var(--gold-soft); color:var(--gold-ink); }
 .assist-tag.tone-late { background:var(--clay-soft); color:var(--clay-ink); }
 .assist-unknown { color:var(--text-3); font-style:italic; }
+
+/* Saapuvien erä-käsittely: valinta, ehdotus, alue ja yhteiset päätökset. */
+.triage-bar {
+  background:var(--cream-card); border:1.5px solid var(--border); border-radius:14px;
+  padding:10px 12px; margin-bottom:12px;
+}
+.triage-bar-head { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+.triage-all { display:flex; align-items:center; gap:8px; min-height:44px; font-size:13px; font-weight:700; color:var(--text-1); cursor:pointer; }
+.triage-all input, .triage-row-head input { width:20px; height:20px; flex-shrink:0; margin:0; }
+.triage-count { font-size:12px; color:var(--text-2); }
+.triage-actions { margin-top:6px; }
+.triage-actions .assist-btn[disabled] { opacity:.45; cursor:not-allowed; }
+.triage-prompt {
+  background:var(--cream-card); border:1.5px solid var(--gold); border-radius:14px;
+  padding:10px 12px; margin-bottom:12px; font-size:13px; color:var(--text-1);
+}
+.triage-prompt input {
+  display:block; width:100%; box-sizing:border-box; margin-top:6px; min-height:44px;
+  border:1.5px solid var(--border); border-radius:10px; padding:8px 10px;
+  font-family:'Manrope',sans-serif; font-size:14px; background:var(--cream); color:var(--text-1);
+}
+.triage-row-head { display:flex; gap:10px; align-items:flex-start; }
+.triage-row-head label { cursor:pointer; flex:1; min-width:0; padding-top:1px; }
+.triage-proposal { color:var(--text-2); }
+.triage-area { display:flex; align-items:center; gap:8px; margin-top:6px; font-size:12px; color:var(--text-2); }
+.triage-area select {
+  min-height:36px; max-width:100%; border:1px solid var(--border); border-radius:8px;
+  background:var(--cream); color:var(--text-1); font-family:'Manrope',sans-serif; font-size:12px; padding:4px 8px;
+}
+.triage-area select:focus-visible, .triage-prompt input:focus-visible, .triage-all input:focus-visible, .triage-row-head input:focus-visible {
+  outline:2px solid var(--gold); outline-offset:2px;
+}
 
 /* Tyhjä lista on vastaus, ei virhe. */
 .assist-empty {

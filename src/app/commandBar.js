@@ -31,6 +31,10 @@ import { reconcileTemporal } from '../ai/temporalReconcile.js';
 // (src/app/localCommands.js): sama vahvistus, ei verkkoa, ei arvausta.
 import { runLocalCommand } from './localCommands.js';
 import { sessionSnapshot, isSameSession } from '../data/session.js';
+// Tallenna saapuviin (aalto L): komento, jota ei tunnistettu tai jota ei
+// haluta tulkita, menee Saapuviin sellaisenaan (monirivisenä brain dumpina).
+import { captureBrainDump } from './capture.js';
+import { CAPTURE_SOURCE } from '../domain/inbox.js';
 
 /** Vaiheraportti (onPhase) on valinnainen: ilman sitä vaiheista ei kerrota kenellekään. */
 const NO_PHASE = () => {};
@@ -199,4 +203,36 @@ export async function runTypedCommand(text, {
     risk: proposal.command ? proposal.command.risk : null
   });
   return handleProposal(proposal, trimmed, { confirmFn, chooseFn, phase });
+}
+
+/**
+ * Tarjotaanko "Tallenna saapuviin" komennon jälkeen? Kun komentoa ei
+ * ymmärretty, tarvittiin lisätietoa tai suoritus epäonnistui, lause ei saa
+ * kadota: se tallennetaan Saapuviin päättämättä mitään. Peruttu, tyhjä ja
+ * jo suoritettu komento eivät tarvitse tarjousta.
+ */
+export function canOfferInbox(result) {
+  if (!result || result.ok) return false;
+  return !['cancelled', 'empty', 'discarded', 'duplicate'].includes(result.status);
+}
+
+/**
+ * Tallenna komentopalkin (tai puheen) teksti Saapuviin sellaisenaan.
+ *
+ * EI TULKINTAA, EI TEKOÄLYÄ, EI VAHVISTUSTA: mitään ei luoda, rivi vain
+ * syntyy Saapuviin (monirivinen teksti = monta riviä, captureBrainDump).
+ * Luokittelu tapahtuu myöhemmin erässä. Ääntä ei tallenneta: puheesta
+ * tallentuu vain litterointi, jonka käyttäjä on nähnyt.
+ *
+ * @param {string} text
+ * @param {{source?: 'text'|'voice'}} [options]
+ */
+export async function saveCommandToInbox(text, { source = 'text' } = {}) {
+  const clean = String(text ?? '').trim();
+  if (!clean) return { ok: false, status: 'empty', items: [] };
+  const result = await captureBrainDump(clean, {
+    source: source === 'voice' ? CAPTURE_SOURCE.VOICE : CAPTURE_SOURCE.TEXT
+  });
+  logEvent('command.inbox', { source, ok: Boolean(result.ok), count: result.items ? result.items.length : 0 });
+  return { ...result, status: result.ok ? 'saved' : 'error' };
 }

@@ -154,8 +154,12 @@
            verkkokatko ei saa syoda kayttajan ajatusta. -->
       <div class="capture-bar" id="captureBar">
         <label class="visually-hidden" for="captureInput">Kirjaa jotain</label>
-        <input type="text" id="captureInput" autocomplete="off"
-               maxlength="1000" placeholder="Kirjaa jotain — järjestä myöhemmin">
+        <!-- Brain dump (aalto L): monta asiaa kerralla, yksi per rivi. Enter
+             kirjaa, Shift+Enter tekee uuden rivin. Kirjaus ei kysy mitään. -->
+        <textarea id="captureInput" rows="1" autocomplete="off" maxlength="8000"
+                  aria-describedby="captureHint"
+                  placeholder="Kirjaa jotain — tai monta asiaa, yksi per rivi"></textarea>
+        <span class="visually-hidden" id="captureHint">Enter kirjaa. Shift ja Enter tekee uuden rivin. Jokaisesta rivistä tulee oma asia Saapuviin.</span>
         <button class="capture-mic" id="captureMicBtn" type="button" aria-label="Sanele">
           <svg class="icon" aria-hidden="true"><use href="#i-mic"/></svg>
         </button>
@@ -826,9 +830,12 @@
       <!-- ---- Saapuvat ---- -->
       <div id="inboxSection" style="display:none;">
         <p class="hint" id="inboxIntro">
-          Kirjaa asiat sitä mukaa kuin ne tulevat mieleen. Tulkinta on
-          <strong>ehdotus</strong>: mitään ei synny ennen kuin hyväksyt sen.
+          Kirjaa asiat sitä mukaa kuin ne tulevat mieleen — vaikka monta
+          kerralla. Kaikki on tallessa täällä. Kun ehdit, valitse rivit ja
+          päätä niistä kerralla. Jokaisella rivillä on <strong>ehdotus</strong>:
+          mitään ei synny ennen kuin valitset.
         </p>
+        <div id="inboxStatus" role="status" class="capture-status"></div>
         <!-- Tarkistuskortti myös täällä (L0): "Käsittele" Saapuvissa avasi
              kortin vain Tänään-näkymään, jossa sitä ei nähnyt. -->
         <div id="inboxPending"></div>
