@@ -52,6 +52,28 @@ function tasksNear(tasks, from, to) {
   return listOf(tasks).filter(task => task && task.date && task.date >= start && task.date <= end);
 }
 
+/**
+ * Kalenterin syötteet (menot, lähdöt, uni, suojattu aika) eivät riipu
+ * tehtävistä. Muistetaan viimeisimmät tulokset lähdekokoelmien identiteetin
+ * mukaan, jotta tehtävän tallennus ei laske koko viikon kalenteria uudelleen
+ * (Suunta- ja Tänään-piirto). Tila vaihtuu uutena oliona, joten vanha
+ * tulos ei voi jäädä voimaan muuttuneelle lähteelle.
+ */
+const CALENDAR_MEMO_SIZE = 6;
+const calendarMemo = [];
+function memoCalendar(state, options) {
+  const sources = [state.calendarEvents, state.protectedPeriods, state.profile, state.sleepLogs,
+    state.lifeSettings, state.savedPlaces, state.commuteObservations];
+  const key = [options.from, options.to, options.todayIso, options.nowMinutes, options.offsetMinutesFn].join('|');
+  const hit = calendarMemo.find(entry => entry.key === key && entry.offsetFn === options.offsetMinutesFn
+    && entry.sources.every((source, index) => source === sources[index]));
+  if (hit) return hit.value;
+  const value = calendarForPlanning(state, options);
+  calendarMemo.unshift({ key, offsetFn: options.offsetMinutesFn, sources, value });
+  if (calendarMemo.length > CALENDAR_MEMO_SIZE) calendarMemo.length = CALENDAR_MEMO_SIZE;
+  return value;
+}
+
 function datesBetween(from, to) {
   const dates = [];
   for (let date = from; date && date <= to && dates.length < MAX_DAYS; date = addDaysIso(date, 1)) dates.push(date);
@@ -107,7 +129,7 @@ export function brakeInputs(state, { from, to, todayIso = from, nowMinutes = nul
   if (!state || !isIsoDate(from) || !isIsoDate(to) || to < from) return empty;
   const weekFrom = weekStartOf(from);
   const weekTo = addDaysIso(weekStartOf(to), 6);
-  const calendar = calendarForPlanning(state, { from: weekFrom, to: weekTo, todayIso, nowMinutes, offsetMinutesFn });
+  const calendar = memoCalendar(state, { from: weekFrom, to: weekTo, todayIso, nowMinutes, offsetMinutesFn });
   const bufferRatio = planningBufferRatio(state);
   const sleepShortfalls = sleepShortfallsFor(state, datesBetween(from, to));
   const reserves = new Map();

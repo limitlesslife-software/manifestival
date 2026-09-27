@@ -255,6 +255,9 @@ export function currentCapacityBias(weekStart = null, clock = clockNow(), state 
 function weekOverflowMinutes(state, inputs, { monday, sunday, todayIso }) {
   const from = todayIso && todayIso > monday ? todayIso : monday;
   if (!from || from > sunday) return 0;
+  // Ylivuoto kuluttaa vain viikon vähimmäisvapaa-ajan varausta: ilman
+  // tavoitetta sitä ei tarvita (säästää kapasiteettilaskennan piirrossa).
+  if (!(state.protectedPeriods || []).some(period => period && period.active !== false && period.recurrence === 'weekly_target')) return 0;
   const context = schedulingContext({ goals: state.goals, projects: state.projects, todayIso });
   const flexible = task => Boolean(task) && !task.completed && isMovable(task) && isSchedulable(task, context);
   let flexibleMinutes = 0;
