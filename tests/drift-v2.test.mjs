@@ -21,6 +21,13 @@ import {
   resetState, setTasks, setProtectedPeriods, setWeeklyPlans, setTimeEntries, setDomainLoadStatus
 } from '../src/app/state.js';
 import { currentDriftSignals, currentCapacityBias, resetDriftCacheForTests } from '../src/app/alignment.js';
+import { findTask } from '../src/app/state.js';
+import { renderDirection, initDirection, resetDirectionView } from '../src/app/views/direction.js';
+import { setUser, clearUser } from '../src/data/session.js';
+import { setClient } from '../src/data/client.js';
+import { fakeClient } from './helpers/gates.mjs';
+import { read } from './helpers/sources.mjs';
+import { freezeLocalDate } from './helpers/clock.mjs';
 
 const MONDAY = '2026-09-28';
 const TODAY = '2026-09-30'; // keskiviikko
@@ -508,4 +515,94 @@ test('sovellus: currentCapacityBias lukee suljetut viikkosuunnitelmat ja kirjauk
   const bias = currentCapacityBias(MONDAY, { todayIso: TODAY, nowMinutes: 0 });
   assert.equal(bias.kind, DRIFT_SIGNAL.CAPACITY_BIAS);
   assert.equal(bias.adjustment.payload.availableMinutes, 900);
+});
+
+// =====================================================================
+// SUUNTA-NÄKYMÄ
+// =====================================================================
+
+const HTML_IDS = new Set([...read('index.html').matchAll(/\bid="([^"]+)"/g)].map(m => m[1]));
+
+function stubElement(id = null) {
+  const listeners = {};
+  const attributes = {};
+  return {
+    id, innerHTML: '', textContent: '', value: '', checked: false, disabled: false, style: {}, dataset: {},
+    classList: { add() {}, remove() {}, contains: () => false, toggle() {} },
+    setAttribute: (k, v) => { attributes[k] = String(v); },
+    getAttribute: k => attributes[k] ?? null,
+    removeAttribute: k => { delete attributes[k]; },
+    addEventListener: (type, fn) => { (listeners[type] ||= []).push(fn); },
+    removeEventListener: () => {},
+    dispatch: (type, event) => (listeners[type] || []).forEach(fn => fn(event)),
+    focus() { globalThis.document.activeElement = this; },
+    querySelector: () => null, querySelectorAll: () => [], appendChild: () => {}, remove: () => {}, closest: () => null
+  };
+}
+
+function installDom() {
+  const elements = new Map();
+  globalThis.document = {
+    activeElement: null,
+    getElementById(id) {
+      if (!HTML_IDS.has(id)) return null;
+      if (!elements.has(id)) elements.set(id, stubElement(id));
+      return elements.get(id);
+    },
+    createElement: () => stubElement(),
+    querySelectorAll: () => [],
+    body: { appendChild: () => {} }
+  };
+  globalThis.CSS = { escape: value => String(value) };
+}
+
+test('Suunta-näkymä: ajautuminen näkyy havaintojen alla ja "Ei vielä" käyttää olemassa olevaa toimintoa', async (t) => {
+  freezeLocalDate(t, TODAY);
+  setUser({ id: 'aaaaaaaa-7777-4777-8777-000000000077', email: 'drift@example.com' });
+  setClient(fakeClient({ data: [], error: null }));
+  installDom();
+  try {
+    resetDirectionView();
+    initDirection();
+    setTasks([{ id: 'churn', title: 'Pesukone', date: TODAY, rescheduleCount: 6 }]);
+    renderDirection();
+    const markup = document.getElementById('dirSignals').innerHTML;
+    assert.match(markup, /Suunnitelma ja todellisuus/);
+    assert.match(markup, /Samoja asioita siirretään uudelleen/);
+    assert.match(markup, /data-drift-action="not_yet" data-task="churn"/);
+    assert.match(markup, /Ensi suunnitelmaan:/);
+    for (const word of SHAMING) assert.equal(markup.toLocaleLowerCase('fi').includes(word), false, word);
+
+    const button = stubElement();
+    button.dataset = { driftAction: 'not_yet', task: 'churn' };
+    document.getElementById('dirSignals').dispatch('click', {
+      target: { closest: selector => (selector === '[data-drift-action]' ? button : null) }
+    });
+    for (let i = 0; i < 10; i++) await new Promise(resolve => setImmediate(resolve));
+    assert.equal(findTask('churn').horizon, 'NOT_YET');
+  } finally {
+    delete globalThis.document;
+    delete globalThis.CSS;
+    clearUser();
+  }
+});
+
+test('Suunta-näkymä: mennyt viikko ei näytä ajautumista (vain kuluva viikko)', (t) => {
+  freezeLocalDate(t, TODAY);
+  installDom();
+  try {
+    resetDirectionView();
+    initDirection();
+    setTasks([{ id: 'churn', title: 'Pesukone', date: TODAY, rescheduleCount: 6 }]);
+    renderDirection();
+    assert.match(document.getElementById('dirSignals').innerHTML, /Suunnitelma ja todellisuus/);
+    document.getElementById('dirSignals').innerHTML = '';
+    // Edellinen viikko: nuoli taaksepäin (näkymän oma tila) -> ei osiota.
+    document.getElementById('dirPrev').dispatch('click', {});
+    renderDirection();
+    assert.doesNotMatch(document.getElementById('dirSignals').innerHTML, /Suunnitelma ja todellisuus/);
+  } finally {
+    delete globalThis.document;
+    delete globalThis.CSS;
+  }
 });
