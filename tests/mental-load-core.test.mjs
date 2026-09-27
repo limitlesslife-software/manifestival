@@ -515,3 +515,20 @@ test('ei kaksoisesiintymistä: myös automaatin ajastama tehtävä on aikajanall
   assert.deepEqual(load.fixedToday.map(e => e.id), ['auto']);
   assert.deepEqual(load.now.map(e => e.id), ['free']);
 });
+
+test('NYT/SEURAAVA fokuksen rinnalla: ei fokuksen asioita eikä kaukaisia menoja (ei kaksoisesiintymistä)', async () => {
+  const { nowNext } = await import('../src/domain/assistant.js');
+  const tasks = [
+    task('f1', { date: MON, durationMinutes: 20 }),
+    task('old', { date: '2026-10-01', durationMinutes: 20 }),
+    task('near', { date: MON, time: '10:30', endTime: '11:00' }),
+    task('far', { date: MON, time: '16:00', endTime: '17:00' })
+  ];
+  const result = nowNext({ tasks, todayIso: MON, nowMinutes: 600, focusTaskIds: new Set(['f1', 'old']) });
+  const ids = result.all.map(entry => entry.id);
+  assert.ok(!ids.includes('f1') && !ids.includes('old'), 'fokuksen asiat vain fokuslohkossa');
+  assert.ok(ids.includes('near'), 'tunnin sisällä alkava meno on aikakriittinen');
+  assert.ok(!ids.includes('far'), 'kaukainen meno on aikajanalla');
+  const legacy = nowNext({ tasks, todayIso: MON, nowMinutes: 600 });
+  assert.ok(legacy.all.some(entry => entry.id === 'f1'), 'ilman fokusta vanha käytös');
+});
