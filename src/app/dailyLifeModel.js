@@ -97,13 +97,22 @@ export function firstCommitmentOn(dateIso, options = {}) {
   };
 }
 
-/** Aamusuunnitelma päivälle (ensimmäinen sitoumus + aamurutiini + uni). */
+/**
+ * Aamusuunnitelma päivälle (ensimmäinen sitoumus + aamurutiini + uni).
+ *
+ * Valinnaiset `wakeTimeLimit` ('HH:MM', aikaisin herätys ilman käyttäjän
+ * valintaa, esim. jo mennyt hetki) ja `steps` (tämän aamun oma vaihejoukko)
+ * kulkevat suoraan aamusuunnittelijalle: Tänään-näkymän valinnat lasketaan
+ * samaa polkua, eivät omalla laskennallaan.
+ */
 export function morningPlanOn(dateIso, options = {}) {
   const state = options.state || getState();
   const settings = currentLifeSettings(state);
   const commitment = firstCommitmentOn(dateIso, options);
   return planMorning({
     dateIso, firstCommitment: commitment, profile: state.profile || {}, settings,
+    wakeTimeLimit: options.wakeTimeLimit ?? null,
+    steps: Array.isArray(options.steps) ? options.steps : undefined,
     offsetMinutesFn: deviceOffsetMinutes
   });
 }
