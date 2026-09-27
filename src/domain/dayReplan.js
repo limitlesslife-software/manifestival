@@ -320,8 +320,9 @@ function overflowChange(item, dateIso) {
  * järjestyksessä ja kiinteiden esteiden yli. Heti kun väljyys riittää,
  * loput jäävät ennalleen.
  */
-function ripple({ pending, cursor, place, dayEnd, dateIso, changes, reasonFor }) {
+function ripple({ pending, cursor, place, dayEnd, dateIso, changes, reasonFor, leadReason = null }) {
   let current = cursor;
+  let first = true;
   for (const item of pending) {
     if (item.start >= current) continue;
     const { start, jumped } = place(current, item.duration);
@@ -329,9 +330,12 @@ function ripple({ pending, cursor, place, dayEnd, dateIso, changes, reasonFor })
       changes.push(overflowChange(item, dateIso));
       continue;
     }
+    // Ensimmäisen siirron syy on keskeytys itse, ei edellinen kohde.
+    const reason = first && leadReason ? leadReason(item, start, jumped) : reasonFor(item, start, jumped);
     changes.push(change(REPLAN_CHANGE.SHIFT, item, slot(dateIso, item.start, item.end),
-      slot(dateIso, start, start + item.duration), reasonFor(item, start, jumped)));
+      slot(dateIso, start, start + item.duration), reason));
     current = start + item.duration;
+    first = false;
   }
   return current;
 }
@@ -399,7 +403,10 @@ function runningLate(ctx) {
   }
 
   const pending = flexibleTimed.filter(item => item !== anchor && item.start >= now);
-  ripple({ pending, cursor, place, dayEnd, dateIso, changes, reasonFor: rippleReason });
+  ripple({
+    pending, cursor, place, dayEnd, dateIso, changes, reasonFor: rippleReason,
+    leadReason: anchor ? null : (item, start) => `Aikataulu on ${minutes} min jäljessä: alkaa klo ${clockOf(start)}.`
+  });
 
   const readyAt = addRealMinutes(dateIso, now, minutes, offsetMinutesFn).minutes;
   for (const item of fixedStartingWithin(items, now, readyAt)) warnings.push(warningForFixed(item));
@@ -437,7 +444,10 @@ function extendCurrent(ctx) {
       if (newEnd.minutes > dayEnd) warnings.push(`${current.title} venyy lepoon asti.`);
       for (const item of fixedStartingWithin(items, current.end, newEnd.minutes)) warnings.push(warningForFixed(item));
     } else {
+      // Varattu aika riittää jo: mitään ei tarvitse siirtää.
       warnings.push(`${current.title} on varattu klo ${clockOf(current.end)} asti, joten aikaa on jo tarpeeksi.`);
+      for (const item of items) if (inProgress(item, now)) preserved.add(item.id);
+      return {};
     }
   } else if (current) {
     preserved.add(current.id);
@@ -445,7 +455,13 @@ function extendCurrent(ctx) {
     for (const item of fixedStartingWithin(items, now, newEnd.minutes)) if (item !== current) warnings.push(warningForFixed(item));
   }
 
-  ripple({ pending, cursor: newEnd.minutes, place, dayEnd, dateIso, changes, reasonFor: rippleReason });
+  const busyUntil = clockOf(newEnd.minutes);
+  ripple({
+    pending, cursor: newEnd.minutes, place, dayEnd, dateIso, changes, reasonFor: rippleReason,
+    leadReason: current && current.flexible
+      ? null
+      : (item, start) => `Olet varattu klo ${busyUntil} asti: alkaa klo ${clockOf(start)}.`
+  });
   for (const item of items) if (inProgress(item, now) && item !== current) preserved.add(item.id);
   return {};
 }
