@@ -15,16 +15,17 @@
 //     muuten DEFAULT_DELIVERY. Puhe vain, jos käyttäjä on sallinut sen.
 //   - Taso rajaa voimakkuuden: Tieto ei koskaan pidä ääntä, eikä mikään
 //     muu kuin Kriittinen saa voimistuvaa hälytystä.
-//   - Rauhoitusaikana läpi pääsevät vain kriittiset sekä herätykseen ja
-//     lähtöön sidotut muistutukset. Nukkumaanmenon muistutukset näytetään
-//     rauhoitusaikana äänettömästi (ks. quietDecision).
+//   - Rauhoitusaikana läpi pääsevät vain kriittiset, herätykseen ja
+//     lähtöön sidotut muistutukset sekä oman yön alku (iltarauhoittuminen
+//     ja nukkumaanmeno, NIGHT_START_TYPES) valitulla tavalla (ks. quietDecision).
 //   - Ohjaustyyli muuttaa vain sanamuotoa, ennakkoa ja toistoja — EI
 //     KOSKAAN rauhoitusaikaa, toimitustapaa, puheen lupaa eikä yksityisyyttä.
 //   - Kooste yhdistää vähäiset (taso ≤ Muistutus) muistutukset yhdeksi
 //     päivässä. Hetkeen sidotut (lähtö, uni, ateria, tehtävän alku) eivät
 //     mene koosteeseen: myöhästetty "lähde nyt" olisi vaarallinen.
 //   - Kuitattua, torkutettua tai hylättyä ei toisteta.
-//   - Päiväraja karsii ensin vähäisimmät. Kriittistä ei karsita koskaan.
+//   - Päiväraja karsii ensin vähäisimmät (capValue: vesitauko ennen
+//     nukkumaanmenoa). Kriittistä ei karsita koskaan.
 
 import {
   REMINDER_TOPIC, REMINDER_TOPICS, DELIVERY, DELIVERIES, DEFAULT_DELIVERY,
@@ -37,6 +38,7 @@ import {
 import { ackIndex, entryHandled } from './notificationAck.js';
 import { spokenPhrase } from './spokenPhrases.js';
 import { isIsoDate, isTimeOfDay, toMinutes, fromMinutes } from './task.js';
+import { MEAL_ITEM_KIND } from './mealRhythm.js';
 
 const LEVEL_VALUES = Object.freeze(Object.values(LEVEL));
 
@@ -114,7 +116,9 @@ const TOPIC_BY_TYPE = Object.freeze({
   // Illan katsaus huomiseen kuuluu aamun valmisteluun: oletuksena hiljainen.
   [NOTIFICATION_TYPE.EVENING_BEFORE]: REMINDER_TOPIC.MORNING,
   [NOTIFICATION_TYPE.MORNING_BRIEF]: REMINDER_TOPIC.MORNING,
-  [NOTIFICATION_TYPE.DIGEST]: null
+  [NOTIFICATION_TYPE.DIGEST]: null,
+  // Menon alku ilman lähtöketjua: valmistaudu menoon (Valmistautuminen-valinta).
+  [NOTIFICATION_TYPE.EVENT_START]: REMINDER_TOPIC.PREPARATION
 });
 
 /** Ilmoitustyypin aihe (REMINDER_TOPIC) tai null. */
@@ -168,11 +172,31 @@ function overrideFor(settings, topic) {
   return DELIVERIES.includes(value) ? value : null;
 }
 
-/** Tyypit, jotka läpäisevät rauhoitusajan: herätykseen ja lähtöön sidotut. */
+/**
+ * Tyypit, jotka läpäisevät rauhoitusajan: herätykseen ja lähtöön sidotut
+ * sekä käyttäjän itse kalenteriin kirjaaman menon alku (kuten lähtöketju:
+ * sovittu aika, jolloin käyttäjä on hereillä).
+ */
 export const QUIET_PASS_TYPES = Object.freeze([
   NOTIFICATION_TYPE.DEPARTURE_REMINDER,
   ...DEPARTURE_CHAIN_TYPES,
-  NOTIFICATION_TYPE.MORNING_BRIEF
+  NOTIFICATION_TYPE.MORNING_BRIEF,
+  NOTIFICATION_TYPE.EVENT_START
+]);
+
+/**
+ * Oman yön alku: iltarauhoittuminen ja nukkumaanmeno.
+ *
+ * SÄÄNTÖ: nämä kaksi läpäisevät rauhoitusajan käyttäjän valitsemalla
+ * toimitustavalla (myös puheena). Rauhoitusaika suojaa käyttäjän yötä, ja
+ * juuri nämä muistutukset aloittavat sen: kun rauhoitusaika alkaa ennen
+ * nukkumaanmenoa tai samaan aikaan (oletus 22.00, nukkumaan 22.30),
+ * valittu "Puhe" ei saa hiljentyä. Muistutuksia tulee vain, kun käyttäjä
+ * on kertonut rytminsä, eikä oletustapa puhu.
+ */
+export const NIGHT_START_TYPES = Object.freeze([
+  NOTIFICATION_TYPE.WIND_DOWN,
+  NOTIFICATION_TYPE.BEDTIME
 ]);
 
 export const QUIET_DECISION = Object.freeze({
@@ -188,16 +212,17 @@ export const QUIET_DECISION = Object.freeze({
  * Mitä rauhoitusaika tekee muistutukselle.
  *
  * Kriittinen, lähtö ja aamun kooste (herätyksen jälkeen) läpäisevät:
- * käyttäjä on silloin hereillä tai hänen pitää olla. Nukkumaanmenon ja
- * iltarauhoittumisen muistutus osuu luonnostaan rauhoitusajan alkuun —
- * se näytetään, mutta äänettömästi, koska sen tarkoitus on suojata unta,
- * ei herättää. Kaikki muu odottaa.
+ * käyttäjä on silloin hereillä tai hänen pitää olla. Iltarauhoittuminen ja
+ * nukkumaanmeno (NIGHT_START_TYPES) läpäisevät myös: ne aloittavat käyttäjän
+ * oman yön, jota rauhoitusaika suojaa, joten valittu toimitustapa pätee.
+ * Muu nukkumaanmenon aiheen muistutus näytetään äänettömästi. Kaikki muu odottaa.
  */
 export function quietDecision(intent, quietHours) {
   const { level, type, topic, time } = safeObject(intent) || {};
   if (!isTimeOfDay(time) || !isQuietTime(time, quietHours)) return QUIET_DECISION.PASS;
   if (level === LEVEL.CRITICAL) return QUIET_DECISION.PASS;
   if (QUIET_PASS_TYPES.includes(type) || topic === REMINDER_TOPIC.DEPARTURE) return QUIET_DECISION.PASS;
+  if (NIGHT_START_TYPES.includes(type)) return QUIET_DECISION.PASS;
   if (topic === REMINDER_TOPIC.BEDTIME) return QUIET_DECISION.SILENT;
   return QUIET_DECISION.DROP;
 }
@@ -253,9 +278,12 @@ export function resolveDelivery(input) {
   if (isTimeOfDay(time) && isQuietTime(time, quietHours)) {
     quiet = true;
     if (decision === QUIET_DECISION.PASS) {
-      reason = lvl === LEVEL.CRITICAL
-        ? 'Kriittinen muistutus tulee myös rauhoitusaikana.'
-        : 'Lähtöön tai herätykseen liittyvä muistutus tulee myös rauhoitusaikana.';
+      if (lvl === LEVEL.CRITICAL) reason = 'Kriittinen muistutus tulee myös rauhoitusaikana.';
+      else if (NIGHT_START_TYPES.includes(type)) {
+        reason = 'Iltarauhoittuminen ja nukkumaanmeno aloittavat oman yösi: ne tulevat valitsemallasi tavalla myös rauhoitusaikana.';
+      } else if (type === NOTIFICATION_TYPE.EVENT_START) {
+        reason = 'Kalenteriin kirjaamasi menon alku tulee myös rauhoitusaikana.';
+      } else reason = 'Lähtöön tai herätykseen liittyvä muistutus tulee myös rauhoitusaikana.';
     } else if (decision === QUIET_DECISION.SILENT) {
       delivery = DELIVERY.SILENT;
       speak = false;
@@ -425,6 +453,9 @@ export const DIGEST_BYPASS_TYPES = Object.freeze([
   NOTIFICATION_TYPE.MEAL,
   NOTIFICATION_TYPE.HABIT,
   NOTIFICATION_TYPE.MORNING_BRIEF,
+  // Illan ennakko on hyödytön iltarauhoittumisen jälkeen: ei koosteeseen.
+  NOTIFICATION_TYPE.EVENING_BEFORE,
+  NOTIFICATION_TYPE.EVENT_START,
   NOTIFICATION_TYPE.DIGEST
 ]);
 
@@ -637,10 +668,53 @@ export function applyAcks(intents, ackLog, options) {
 // =====================================================================
 
 /**
- * Enintään `maxPerDay` muistutusta päivää kohden. Tärkeimmät säilyvät
- * (taso, sitten aikaisin). KRIITTISTÄ EI KARSITA KOSKAAN: jos kriittisiä on
- * enemmän kuin raja, kaikki ne säilyvät ja muut karsitaan. Myöhästyminen
- * on vahinko, ylimääräinen ilmoitus vain haitta.
+ * Muistutuksen arvo päivärajassa (suurempi säilyy ensin).
+ *
+ *   PROTECTED  aikaan sidotut sitoumukset ja yön suoja: lähtöketju ja
+ *              matkan lähtö, iltarauhoittuminen ja nukkumaanmeno,
+ *              määräaika, menon alku, illan ennakko ja aamun kooste
+ *   NORMAL     tavallinen muistutus: tehtävä, rutiini, ateria, tapa, kooste
+ *   LOW        vähäinen: vesitauko, päivän suunnitelma, illan katsaus ja
+ *              kaikki Tieto-tason muistutukset
+ *
+ * Herätys ei ole tässä putkessa (oma laitemerkintänsä, ei koskaan karsita),
+ * ja kriittinen säilyy aina (capPerDay).
+ */
+export const CAP_VALUE = Object.freeze({ LOW: 1, NORMAL: 2, PROTECTED: 3 });
+
+const PROTECTED_TYPES = Object.freeze([
+  NOTIFICATION_TYPE.DEPARTURE_REMINDER,
+  ...DEPARTURE_CHAIN_TYPES,
+  NOTIFICATION_TYPE.WIND_DOWN,
+  NOTIFICATION_TYPE.BEDTIME,
+  NOTIFICATION_TYPE.DEADLINE_WARNING,
+  NOTIFICATION_TYPE.EVENING_BEFORE,
+  NOTIFICATION_TYPE.MORNING_BRIEF,
+  NOTIFICATION_TYPE.EVENT_START
+]);
+
+const LOW_VALUE_TYPES = Object.freeze([
+  NOTIFICATION_TYPE.DAILY_PLAN,
+  NOTIFICATION_TYPE.EVENING_REVIEW
+]);
+
+/** Aikomuksen arvo päivärajassa (CAP_VALUE). */
+export function capValue(intent) {
+  const source = safeObject(intent) || {};
+  if (PROTECTED_TYPES.includes(source.type)) return CAP_VALUE.PROTECTED;
+  if (LOW_VALUE_TYPES.includes(source.type) || source.level === LEVEL.INFO) return CAP_VALUE.LOW;
+  if (source.type === NOTIFICATION_TYPE.MEAL && source.mealKind === MEAL_ITEM_KIND.WATER) return CAP_VALUE.LOW;
+  return CAP_VALUE.NORMAL;
+}
+
+/**
+ * Enintään `maxPerDay` muistutusta päivää kohden. Arvokkaimmat säilyvät:
+ * ensin arvo (capValue: lähtö, nukkumaanmeno ja määräaika ennen vesitaukoa),
+ * sitten taso, sitten aikaisin. Näin aamun vesitauot eivät vie illan
+ * nukkumaanmenoa eikä iltapäivän lähdön valmistautumista.
+ * KRIITTISTÄ EI KARSITA KOSKAAN: jos kriittisiä on enemmän kuin raja,
+ * kaikki ne säilyvät ja muut karsitaan. Myöhästyminen on vahinko,
+ * ylimääräinen ilmoitus vain haitta.
  */
 export function capPerDay(intents, maxPerDay) {
   const max = Number.isInteger(maxPerDay) && maxPerDay >= 1 ? Math.min(maxPerDay, 50) : DEFAULT_PREFERENCES.maxPerDay;
@@ -653,6 +727,8 @@ export function capPerDay(intents, maxPerDay) {
   for (const group of byDate.values()) {
     const critical = group.filter(intent => intent.level === LEVEL.CRITICAL);
     const others = group.filter(intent => intent.level !== LEVEL.CRITICAL).sort((a, b) => {
+      const value = capValue(b) - capValue(a);
+      if (value !== 0) return value;
       if (a.level !== b.level) return b.level - a.level;
       if (a.atMinutes !== b.atMinutes) return (a.atMinutes ?? 0) - (b.atMinutes ?? 0);
       return String(a.id).localeCompare(String(b.id), 'fi');

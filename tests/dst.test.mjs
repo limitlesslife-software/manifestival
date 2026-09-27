@@ -102,13 +102,25 @@ test('muistutushorisontti lasketaan kalenterissa, ei millisekunteina', () => {
   // ansan ennen kuin horisonttia kasvatetaan.
   //
   // Tama testi vartioi juuri sita - ettei millisekuntilasku palaa.
+  //
+  // Yksi muistutusputki: planUpcoming ja ajastus kayttavat samaa
+  // suunnitelmaa (alarmSync.dailyLifeReminderPlan), jonka horisontti on
+  // alarmSync.horizonDates -> dailyLifeModel.shiftIso -> addDays.
   const source = readCode('src/app/notifications.js'); // kommentit pois
-  const horizon = source.slice(source.indexOf('export function planUpcoming'));
+  const upcoming = source.slice(source.indexOf('export function planUpcoming'));
+  assert.equal(/getTime\(\)\s*[+-]/.test(upcoming), false,
+    'horisontti lasketaan taas millisekunteina — kesäajan yli se menee pieleen');
 
+  const sync = readCode('src/app/alarmSync.js');
+  const horizon = sync.slice(sync.indexOf('export function horizonDates'), sync.indexOf('export function intentMoment'));
   assert.equal(/getTime\(\)\s*[+-]/.test(horizon), false,
     'horisontti lasketaan taas millisekunteina — kesäajan yli se menee pieleen');
-  assert.ok(horizon.includes('addDays('),
-    'horisontti ei käytä kalenterilaskentaa');
+  assert.ok(horizon.includes('shiftIso('), 'horisontti ei käytä kalenterilaskentaa');
+  const model = readCode('src/app/dailyLifeModel.js');
+  const shift = model.slice(model.indexOf('export function shiftIso'));
+  assert.ok(shift.slice(0, 200).includes('addDays('), 'horisontti ei käytä kalenterilaskentaa');
+  const legacy = sync.slice(sync.indexOf('export function legacyReminderIntents'));
+  assert.equal(/getTime\(\)\s*[+-]/.test(legacy.slice(0, 2000)), false);
 });
 
 test('yksikään moduuli ei LISÄÄ päiviä millisekunteina', () => {

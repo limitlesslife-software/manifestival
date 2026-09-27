@@ -18,8 +18,9 @@ import { setClient } from '../src/data/client.js';
 import { lifeSettingsRepo } from '../src/data/collectionsRepo.js';
 import {
   resetState, getState, subscribe, setTasks, setProfile, setProfileSegment, setLifeSettings, currentLifeSettings,
-  setSavedPlaces, setCalendarEvents, setCommuteObservations
+  setSavedPlaces, setCalendarEvents, setCommuteObservations, setNotificationPreferences
 } from '../src/app/state.js';
+import { renderNotificationSettings } from '../src/app/views/notificationSettings.js';
 import { morningPlanOn } from '../src/app/dailyLifeModel.js';
 import { clearLocalUserData } from '../src/app/actions.js';
 import { resetDailyLifeActions, saveLifeSettings } from '../src/app/dailyLifeActions.js';
@@ -792,6 +793,41 @@ test('ohjaus ja puhe: oletukset, tallennus ja kooste; virhe näkyy role=alert', 
   $('gsSave').click();
   await flush();
   assert.equal(currentLifeSettings(getState()).delivery.departure, DEFAULT_DELIVERY.departure);
+});
+
+// ================================================================ muistutukset pois päältä
+
+test('muistutukset pois (oletus): Arki ja Ohjaus kertovat, missä ne kytketään päälle, ja painike vie sinne', async () => {
+  const { $ } = mount();
+  const daily = $('dailyLifeNotice');
+  assert.match(text(daily), /Arjen muistutukset ovat pois päältä\./);
+  assert.match(text(daily), /nukkumaanmeno-, ateria-, lähtö- ja tapamuistutukset eivät tule/);
+  assert.match(text(daily), /Profiili → Asetukset → Muistutukset → Käytä muistutuksia/);
+  assert.deepEqual(alertsIn(daily), [], 'vihje ei ole virhe');
+  const go = daily.querySelector('[data-open-reminders]');
+  assert.equal(accessibleName(go), 'Siirry muistutuksiin');
+
+  go.click();
+  assert.equal(getState().profileSegment, 'settings', 'painike avaa Asetukset-osion');
+  const guidance = $('gsRemindersOff');
+  assert.ok(guidance && isRendered(guidance), 'Ohjaus ja puhe kertoo saman');
+  assert.match(text(guidance), /Alla valitut toimitustavat eivät vielä tee mitään\./);
+  assert.match(text(guidance), /Muistutukset → Käytä muistutuksia/);
+
+  // Muistutusten pääkytkin piirrettynä: painike vie fokuksen siihen (ei kytke itse).
+  // Testiympäristössä ilmoituksia ei tueta, joten kytkin on estetty; tuetulla
+  // alustalla se on käytettävissä.
+  renderNotificationSettings();
+  $('nfEnabled').removeAttribute('disabled');
+  guidance.querySelector('[data-open-reminders]').click();
+  assert.ok(mounted.doc.activeElement === $('nfEnabled'), 'fokus Käytä muistutuksia -kytkimessä');
+  assert.equal(getState().notificationPreferences.enabled, false, 'painike ei kytke muistutuksia');
+
+  // Päällä: vihjeet poistuvat.
+  setNotificationPreferences({ ...getState().notificationPreferences, enabled: true });
+  assert.ok(!$('gsRemindersOff'), 'päällä: ei vihjettä Ohjauksessa');
+  $('segmentProfileDaily').click();
+  assert.doesNotMatch(text($('dailyLifeNotice')), /pois päältä/);
 });
 
 // ================================================================ uloskirjautuminen

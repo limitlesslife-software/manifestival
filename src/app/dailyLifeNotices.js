@@ -65,7 +65,7 @@ function eveningAdvice({ state, now }) {
   if (nowMinutes < EVENING_NOTICE_FROM_MINUTES) return null;
   const tomorrow = shiftIso(todayIso, 1);
   const plan = sleepPlanOn(tomorrow, { state, now });
-  const advice = eveningBefore({ tomorrowSchedule: plan.schedule, usualSchedule: plan.usual, cause: 'commitment' });
+  const advice = eveningBeforeAdvice(tomorrow, { state, now, plan });
   const note = plan.alarmNote ? `${plan.alarmNote} ${FIXED_ALARM_HINT}` : null;
   let current = null;
   if (advice || note) {
@@ -79,6 +79,22 @@ function eveningAdvice({ state, now }) {
     });
   }
   return { tomorrow, notice: current };
+}
+
+/**
+ * Illan ennakon neuvo herätyspäivälle `wakeDateIso` (sleepRhythm.eveningBefore)
+ * tai null, kun päivä ei vaadi tavallista aiempaa herätystä. Ei kellonaika-
+ * rajaa: YKSI laskenta (dailyLifeModel.sleepPlanOn, kiinteä herätys mukaan
+ * lukien) sekä ilmoituskeskuksen merkinnälle että laitteelle ajastettavalle
+ * illan ennakko -muistutukselle (alarmSync).
+ *
+ * @param {{state?:object, now?:Date, plan?:object}} [options] plan: valmiiksi
+ *   laskettu sleepPlanOn-tulos, jolloin toista laskentaa ei tehdä
+ */
+export function eveningBeforeAdvice(wakeDateIso, { state = getState(), now = new Date(), plan = null } = {}) {
+  const sleepPlan = plan || sleepPlanOn(wakeDateIso, { state, now });
+  if (!sleepPlan || !sleepPlan.schedule) return null;
+  return eveningBefore({ tomorrowSchedule: sleepPlan.schedule, usualSchedule: sleepPlan.usual, cause: 'commitment' });
 }
 
 /** Illan ennakko: huominen vaatii aiemman herätyksen -> iltarutiini aiemmin. */

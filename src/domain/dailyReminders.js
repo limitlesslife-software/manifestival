@@ -330,8 +330,12 @@ export const DAILY_REMINDER_KIND = Object.freeze({
   MEAL: NOTIFICATION_TYPE.MEAL,
   HABIT: NOTIFICATION_TYPE.HABIT,
   EVENING_BEFORE: NOTIFICATION_TYPE.EVENING_BEFORE,
-  MORNING_BRIEF: NOTIFICATION_TYPE.MORNING_BRIEF
+  MORNING_BRIEF: NOTIFICATION_TYPE.MORNING_BRIEF,
+  EVENT_START: NOTIFICATION_TYPE.EVENT_START
 });
+
+/** Menon alun ennakon yläraja (minuuttia), sama kuin tehtävän ennakolla. */
+export const MAX_EVENT_LEAD_MINUTES = 240;
 
 export const DAILY_REMINDER_KINDS = Object.freeze(Object.values(DAILY_REMINDER_KIND));
 
@@ -341,7 +345,8 @@ const DISPLAY_TOPIC = Object.freeze({
   [DAILY_REMINDER_KIND.MEAL]: REMINDER_TOPIC.MEAL,
   [DAILY_REMINDER_KIND.HABIT]: REMINDER_TOPIC.HABIT,
   [DAILY_REMINDER_KIND.EVENING_BEFORE]: REMINDER_TOPIC.MORNING,
-  [DAILY_REMINDER_KIND.MORNING_BRIEF]: REMINDER_TOPIC.MORNING
+  [DAILY_REMINDER_KIND.MORNING_BRIEF]: REMINDER_TOPIC.MORNING,
+  [DAILY_REMINDER_KIND.EVENT_START]: REMINDER_TOPIC.PREPARATION
 });
 
 /** Rakenna yhden merkinnän aikomus, tai null. */
@@ -436,11 +441,49 @@ function dailyIntent(entry, { settings, style, today }) {
     }
     case DAILY_REMINDER_KIND.EVENING_BEFORE: {
       const firstLeave = isTimeOfDay(source.firstLeave) ? source.firstLeave : null;
-      title = 'Huomisen suunnitelma';
-      body = firstLeave ? `Huomenna ensimmäinen lähtö klo ${firstLeave}.` : 'Huomenna ei ole sovittuja lähtöjä.';
-      reason = 'Illan katsaus huomiseen, jotta aamu sujuu ilman kiirettä.';
+      // Illan ennakko (sleepRhythm.eveningBefore): huominen vaatii aiemman
+      // herätyksen. Teksti on sovelluksen oma neuvo (ei käyttäjän tekstiä),
+      // puheeseen menevät vain kellonajat (spokenPhrases).
+      const advice = cleanText(source.message, 300);
+      const windDown = isTimeOfDay(source.windDownStart) ? source.windDownStart : null;
+      if (advice) {
+        title = 'Huominen alkaa aiemmin';
+        body = firstLeave ? `${advice} Ensimmäinen lähtö klo ${firstLeave}.` : advice;
+        reason = cleanText(source.detail, 200) || 'Illan ennakko: huominen vaatii tavallista aiemman herätyksen.';
+      } else {
+        title = 'Huomisen suunnitelma';
+        body = firstLeave ? `Huomenna ensimmäinen lähtö klo ${firstLeave}.` : 'Huomenna ei ole sovittuja lähtöjä.';
+        reason = 'Illan katsaus huomiseen, jotta aamu sujuu ilman kiirettä.';
+      }
       targetId = 'huominen';
-      phraseContext = { style, firstLeave };
+      phraseContext = { style, firstLeave, windDown: advice ? windDown : null };
+      if (advice) {
+        extra.windDownStart = windDown;
+        extra.wakeDate = isIsoDate(source.wakeDate) ? source.wakeDate : null;
+      }
+      break;
+    }
+    case DAILY_REMINDER_KIND.EVENT_START: {
+      // Kalenterin meno, jolle ei ole lähtöketjua: ei paikkaa tai
+      // tiedossa olevaa matka-aikaa. Muistutus alku − ennakko; lähtöaikaa ei
+      // arvata eikä alkua kutsuta lähdöksi.
+      const occurrenceId = cleanId(source.id);
+      if (!occurrenceId) return null;
+      const lead = Number.isInteger(source.leadMinutes) && source.leadMinutes >= 0
+        && source.leadMinutes <= MAX_EVENT_LEAD_MINUTES ? source.leadMinutes : 0;
+      const startAt = at;
+      at = atAbs(startAt.abs - lead);
+      if (!at) return null;
+      title = cleanText(source.title, MAX_TITLE_LENGTH) || 'Meno';
+      body = source.needsTravel === true
+        ? `Alkaa klo ${startAt.time}. Matka-aikaa ei ole tiedossa, joten lähtöaikaa ei laskettu.`
+        : `Alkaa klo ${startAt.time}.`;
+      reason = lead > 0 ? `${lead} min ennen alkua.` : 'Alkamisaika.';
+      targetId = occurrenceId;
+      phraseContext = { style, time: startAt.time };
+      extra.occurrenceId = occurrenceId;
+      extra.eventStart = startAt.time;
+      extra.eventDate = startAt.date;
       break;
     }
     case DAILY_REMINDER_KIND.MORNING_BRIEF: {
@@ -490,9 +533,12 @@ function dailyIntent(entry, { settings, style, today }) {
  *   meal            { id, date, time (ateria), prepMinutes?, name? }
  *                   -> muistutus klo time − prepMinutes ("aloita valmistus")
  *   habit           { id (suunnitelma), date, time, habitKind? }
- *   evening_before  { date, time, firstLeave? }
+ *   evening_before  { date, time, firstLeave?, message?, detail?, windDownStart?, wakeDate? }
+ *                   message = illan ennakon neuvo (sleepRhythm.eveningBefore)
  *   morning_brief   { date, time, firstLeave? } — vain jos
  *                   settings.morningBriefEnabled === true
+ *   event_start     { id (esiintymä), date, time (menon alku), leadMinutes, title?, needsTravel? }
+ *                   -> muistutus klo time − leadMinutes ("alkaa klo")
  *
  * Kaikki ovat tasoa Muistutus. Toimitustapa tulee aiheen asetuksesta, ja
  * puhe vain luvalla. Kelvoton merkintä ohitetaan hiljaa.

@@ -212,6 +212,16 @@ const BUILDERS = Object.freeze({
   },
 
   [NOTIFICATION_TYPE.EVENING_BEFORE]: (style, ctx) => {
+    // Illan ennakko: huominen vaatii aiemman herätyksen -> iltarutiini aiemmin.
+    if (ctx.windDown) {
+      return pick(style, {
+        [CALM]: `Huominen alkaa tavallista aiemmin. Iltarutiini kannattaa aloittaa kello ${ctx.windDown}.`,
+        [BRISK]: `Huomenna aiemmin. Iltarutiini kello ${ctx.windDown}.`,
+        [ACTIVE]: ctx.firstLeave
+          ? `Huominen alkaa aiemmin: lähtö kello ${ctx.firstLeave}. Aloita iltarutiini kello ${ctx.windDown}.`
+          : `Huominen alkaa tavallista aiemmin. Aloita iltarutiini jo kello ${ctx.windDown}.`
+      });
+    }
     if (!ctx.firstLeave) {
       return pick(style, {
         [CALM]: 'Huomenna ei ole sovittuja lähtöjä.',
@@ -266,6 +276,23 @@ const BUILDERS = Object.freeze({
     });
   },
 
+  // Kalenterin meno ilman lähtöketjua: vain alkamisaika, ei lähtöä eikä
+  // menon nimeä (nimi on käyttäjän tekstiä, eikä se kuulu huoneeseen).
+  [NOTIFICATION_TYPE.EVENT_START]: (style, ctx) => {
+    if (!ctx.time) {
+      return pick(style, {
+        [CALM]: 'Seuraava meno alkaa pian.',
+        [BRISK]: 'Meno pian.',
+        [ACTIVE]: 'Seuraava meno alkaa pian. Nyt on hyvä hetki valmistautua.'
+      });
+    }
+    return pick(style, {
+      [CALM]: `Seuraava meno alkaa kello ${ctx.time}.`,
+      [BRISK]: `Meno kello ${ctx.time}.`,
+      [ACTIVE]: `Seuraava meno alkaa kello ${ctx.time}. Nyt on hyvä hetki valmistautua.`
+    });
+  },
+
   [NOTIFICATION_TYPE.ROUTINE_REMINDER]: (style, ctx) => pick(style, {
     [CALM]: ctx.time ? `Seuraava rutiini alkaa kello ${ctx.time}.` : 'Seuraava rutiini alkaa pian.',
     [BRISK]: 'Rutiinin aika.',
@@ -298,6 +325,7 @@ export const PHRASE_KINDS = Object.freeze(Object.keys(BUILDERS));
  * @param {string} [context.bedtime]    'HH:MM' iltarauhoittumiseen
  * @param {string} [context.wake]       'HH:MM' nukkumaanmenoon
  * @param {string} [context.firstLeave] 'HH:MM' tai null (illan ja aamun kooste)
+ * @param {string} [context.windDown]   'HH:MM' illan ennakon iltarutiinin alku
  * @param {string} [context.habitKind]  HABIT_KIND
  * @param {boolean}[context.prep]       ateria: false = ruoka-aika, muuten valmistus
  * @param {number} [context.count]      koosteen muistutusten määrä
@@ -326,6 +354,8 @@ function buildPhrase(kind, context) {
     bedtime: spokenTime(raw.bedtime),
     wake: spokenTime(raw.wake),
     firstLeave: spokenTime(raw.firstLeave),
+    // Illan ennakko: iltarutiinin (aiempi) alku.
+    windDown: spokenTime(raw.windDown),
     habitKind: raw.habitKind === HABIT_KIND.NICOTINE ? HABIT_KIND.NICOTINE : HABIT_KIND.GENERIC,
     prep: raw.prep !== false,
     count: Number.isInteger(raw.count) ? raw.count : null

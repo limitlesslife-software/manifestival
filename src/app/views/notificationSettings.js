@@ -11,7 +11,7 @@
 import { escapeHtml } from '../../lib/format.js';
 import { summarizeIntents, levelLabel } from '../../domain/notification.js';
 import { el, maybe, setBusy, singleFlight } from '../../ui/dom.js';
-import { getState } from '../state.js';
+import { getState, setProfileSegment } from '../state.js';
 import {
   planUpcoming, syncNotifications, enableNotifications,
   disableNotifications, updatePreferences, SYNC_HORIZON_DAYS
@@ -25,6 +25,57 @@ const TOGGLES = [
   ['eveningReviewEnabled', 'Illan katsaus'],
   ['deadlineWarningsEnabled', 'Määräaikavaroitukset']
 ];
+
+// ------------------------------------------------------------ vihje muille osioille
+
+/**
+ * Missä arjen muistutukset kytketään päälle. Muistutukset ovat oletuksena
+ * pois päältä (notificationPreferences.enabled = false), eikä silloin
+ * ajasteta lähtö-, nukkumaanmeno-, ateria- eikä tapamuistutuksia lainkaan
+ * (alarmSync.dailyLifeReminderPlan). Arjen asetukset ja toimitustavat
+ * näyttävät silti valmiilta, joten Arki ja Ohjaus ja puhe kertovat tämän
+ * suoraan ja painike vie Muistutukset-kohtaan.
+ */
+const REMINDERS_OFF_TEXT = Object.freeze({
+  daily: 'Herätys soi omien asetustensa mukaan, mutta nukkumaanmeno-, ateria-, lähtö- ja tapamuistutukset '
+    + 'eivät tule, ennen kuin kytket muistutukset päälle: Profiili → Asetukset → Muistutukset → Käytä muistutuksia.',
+  guidance: 'Alla valitut toimitustavat eivät vielä tee mitään. Kytke muistutukset päälle yllä: '
+    + 'Muistutukset → Käytä muistutuksia.'
+});
+
+/** Ovatko arjen muistutukset päällä (tallennettu asetus, ei oletusta). */
+export function remindersEnabled(state = getState()) {
+  const preferences = state && state.notificationPreferences;
+  return Boolean(preferences) && preferences.enabled === true;
+}
+
+/**
+ * Vihje "Arjen muistutukset ovat pois päältä" tai '' (päällä).
+ * @param {'daily'|'guidance'} where kumman osion sanamuoto
+ */
+export function remindersOffHintHtml(where, state = getState()) {
+  if (remindersEnabled(state)) return '';
+  const key = where === 'guidance' ? 'guidance' : 'daily';
+  const id = key === 'guidance' ? 'gsRemindersOff' : 'dsRemindersOff';
+  return `<div class="notice tone-gold" id="${id}">
+      <strong>Arjen muistutukset ovat pois päältä.</strong> ${escapeHtml(REMINDERS_OFF_TEXT[key])}
+      <div class="form-actions"><button type="button" class="form-btn secondary" data-open-reminders>Siirry muistutuksiin</button></div>
+    </div>`;
+}
+
+/**
+ * Vie Muistutukset-kohtaan: Asetukset-osio auki ja fokus pääkytkimeen
+ * "Käytä muistutuksia". Ei kytke mitään eikä pyydä lupaa: kytkin on
+ * käyttäjän oma ele (enableNotifications).
+ */
+export function openReminderSettings() {
+  if ((getState().profileSegment || 'daily') !== 'settings') setProfileSegment('settings');
+  const master = maybe('nfEnabled');
+  if (!master) return false;
+  if (typeof master.scrollIntoView === 'function') master.scrollIntoView({ block: 'center' });
+  if (typeof master.focus === 'function') master.focus();
+  return true;
+}
 
 /** Tuen kuvaus värikoodattuna. */
 function supportNotice() {
@@ -105,7 +156,7 @@ export function renderNotificationSettings() {
       ${preferences.enabled ? `
         <div class="form-row">
           <div>
-            <label class="field-label" for="nfTaskLead">Tehtävä (min ennen)</label>
+            <label class="field-label" for="nfTaskLead">Tehtävä tai meno (min ennen)</label>
             <input type="number" id="nfTaskLead" min="0" max="240" step="5"
                    value="${preferences.taskLeadMinutes}">
           </div>
@@ -134,8 +185,10 @@ export function renderNotificationSettings() {
 
         <div class="add-form-title" style="margin-top:6px;">Rauhoitusaika</div>
         <div class="hint">
-          Rauhoitusaikana ei tule muistutuksia. Vain kriittiset läpäisevät sen.
-          Väli saa ylittää keskiyön.
+          Rauhoitusaikana tulevat vain kriittiset, lähtöön ja herätykseen liittyvät
+          muistutukset sekä oma iltarauhoittumisesi ja nukkumaanmenosi (ne aloittavat
+          yösi). Muut jäävät tulematta, tai kooste kokoaa ne, jos se on päällä. Väli saa
+          ylittää keskiyön.
         </div>
         <div class="form-row">
           <div>

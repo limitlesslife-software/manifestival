@@ -66,7 +66,13 @@ export const NOTIFICATION_TYPE = Object.freeze({
   /** Aamun lyhyt kooste herätyksen jälkeen (vain jos käyttäjä on kytkenyt sen). */
   MORNING_BRIEF: 'morning_brief',
   /** Päivän kooste, johon vähäiset muistutukset on yhdistetty (notificationPolicy.mergeDigest). */
-  DIGEST: 'digest'
+  DIGEST: 'digest',
+  /**
+   * Kalenterin menon alku, kun lähtöketjua ei ole (ei paikkaa tai tiedossa
+   * olevaa matka-aikaa): muistutus ennakolla ennen alkua. Ei lähtöaikaa eikä
+   * arvattua matkaa, vain "alkaa klo". (dailyReminders.js)
+   */
+  EVENT_START: 'event_start'
 });
 
 export const NOTIFICATION_TYPES = Object.freeze(Object.values(NOTIFICATION_TYPE));
@@ -399,6 +405,10 @@ export function compareIntents(a, b) {
  * @param {Function} [args.offsetMinutesFn]  Laitteen vyöhyke (wallClock.js). Matkojen lähtö
  *        lasketaan sillä todellisina minuutteina, jotta kesäaikaan siirtymisen yönä muistutus
  *        ei tule tuntia myöhässä. Ilman sitä puhdas seinäkello.
+ * @param {boolean} [args.limits=true]  false = rauhoitusaikaa ja päivärajaa EI sovelleta
+ *        tässä. Sovelluksen ajastuspolku antaa false: sama toimituspolitiikka
+ *        (notificationPolicy.applyNotificationPolicy) rajaa silloin kaikki
+ *        muistutukset yhdessä, eikä kaksi erillistä kattoa kaksinkertaista hälyä.
  * @returns {Array} NotificationIntent[]
  */
 export function planNotifications({
@@ -408,7 +418,8 @@ export function planNotifications({
   dateIso,
   todayIso = null,
   preferences = {},
-  offsetMinutesFn = null
+  offsetMinutesFn = null,
+  limits = true
 } = {}) {
   const prefs = normalizePreferences(preferences);
   if (!prefs.enabled) return [];
@@ -547,6 +558,9 @@ export function planNotifications({
     }));
   }
 
+  // Yksi putki: ilman rajoja raaka suunnitelma (järjestettynä), jonka
+  // toimituspolitiikka rajaa yhdessä arjen muistutusten kanssa.
+  if (limits === false) return [...intents].sort(compareIntents);
   return applyLimits(intents, prefs);
 }
 
@@ -620,10 +634,11 @@ export function summarizeIntents(intents) {
 /**
  * Ilmoitukset useammalle päivälle.
  * Käytetään esimerkiksi silloin, kun natiivikerros ajastaa etukäteen.
- * `offsetMinutesFn` (laitteen vyöhyke) kulkee planNotificationsille.
+ * `offsetMinutesFn` (laitteen vyöhyke) ja `limits` kulkevat planNotificationsille.
  */
 export function planRange({
-  tasks, routineOccurrences, travelPlans = [], from, days = 1, todayIso, preferences, offsetMinutesFn = null
+  tasks, routineOccurrences, travelPlans = [], from, days = 1, todayIso, preferences, offsetMinutesFn = null,
+  limits = true
 }) {
   if (!isIsoDate(from)) return [];
   const limit = Math.max(1, Math.min(days, 14));
@@ -632,7 +647,8 @@ export function planRange({
   for (let i = 0; i < limit; i++) {
     const dateIso = fmtISO(addDays(parseISO(from), i));
     all.push(...planNotifications({
-      tasks, routineOccurrences, travelPlans, dateIso, todayIso: todayIso || from, preferences, offsetMinutesFn
+      tasks, routineOccurrences, travelPlans, dateIso, todayIso: todayIso || from, preferences, offsetMinutesFn,
+      limits
     }));
   }
   return all;

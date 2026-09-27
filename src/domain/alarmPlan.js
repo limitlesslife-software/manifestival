@@ -669,13 +669,21 @@ export function morningBrief(input) {
   let sentences = 2;
   const optional = [];
   const hasLeave = isTimeOfDay(leaveTime);
-  if (hasLeave) {
+  // Meno ilman paikkaa ja matkaa alkaa siellä missä olet: sen "lähtö" on
+  // sama kuin alku (calendarPlan.commitmentsOn), eikä sitä kutsuta
+  // lähtötavoitteeksi. Lähtö, joka ei kuulu millekään annetulle menolle,
+  // on edelleen lähtötavoite.
+  const leaving = hasLeave ? todays.filter(item => item.leaveTime === leaveTime) : [];
+  const startsInPlace = leaving.length > 0 && leaving.every(item => item.leaveTime === item.startTime);
+  if (hasLeave && !startsInPlace) {
     const work = first && first.category === 'tyo';
     optional.push(`${work ? 'Työmatkan lähtötavoite' : 'Lähtötavoite'} on ${clockText(leaveTime)}.`);
   }
   const title = titlesAllowed && first ? briefTitle(first.title) : null;
   if (title) {
     optional.push(`Ensimmäinen meno on ${title} kello ${clockText(first.startTime)}.`);
+  } else if (startsInPlace) {
+    optional.push(`Ensimmäinen meno alkaa kello ${clockText(leaveTime)}.`);
   } else if (todays.length > 0 && !hasLeave) {
     optional.push(todays.length === 1 ? 'Tänään on yksi meno.' : `Tänään on ${todays.length} menoa.`);
   }

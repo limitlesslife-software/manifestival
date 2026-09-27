@@ -151,7 +151,10 @@ export const DEFAULT_DELIVERY = Object.freeze({
   [REMINDER_TOPIC.DEPARTURE]: DELIVERY.SOUND,
   [REMINDER_TOPIC.PREPARATION]: DELIVERY.SOUND,
   [REMINDER_TOPIC.BEDTIME]: DELIVERY.VIBRATE,
-  [REMINDER_TOPIC.MORNING]: DELIVERY.SILENT,
+  // Aamurutiinin aiheeseen kuuluu illan ennakko ("Huominen alkaa aiemmin"):
+  // se on toimintaa vaativa neuvo, joten oletus värisee eikä jää huomaamatta.
+  // Päivän suunnitelma on Tieto-tasoa ja pysyy silti hiljaisena (tasoraja).
+  [REMINDER_TOPIC.MORNING]: DELIVERY.VIBRATE,
   [REMINDER_TOPIC.MEAL]: DELIVERY.VIBRATE,
   [REMINDER_TOPIC.HABIT]: DELIVERY.SILENT,
   [REMINDER_TOPIC.DEADLINE]: DELIVERY.SOUND,

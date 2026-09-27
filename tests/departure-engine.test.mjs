@@ -501,8 +501,9 @@ test('sovelluskerroksen matkalähdöt (lähtökierros, matkanäkymä, NYT/SEURAA
     ['src/app/assistantActions.js', /departureState\(plan, \{[^}]*offsetMinutesFn: deviceOffsetMinutes/],
     ['src/app/views/travel.js', /departureState\(plan, \{[^}]*offsetMinutesFn: deviceOffsetMinutes/],
     ['src/app/views/today.js', /nowNext\(\{[^}]*offsetMinutesFn: deviceOffsetMinutes/],
-    // Natiivit matkan lähtöilmoitukset (planUpcoming -> planRange).
-    ['src/app/notifications.js', /planRange\(\{[^}]*offsetMinutesFn: deviceOffsetMinutes/]
+    // Natiivit matkan lähtöilmoitukset: yksi muistutusputki
+    // (alarmSync.legacyReminderIntents -> planRange; notifications.planUpcoming käyttää samaa).
+    ['src/app/alarmSync.js', /planRange\(\{[^}]*offsetMinutesFn: deviceOffsetMinutes/]
   ]) assert.match(read(file), call, file);
 });
 

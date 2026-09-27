@@ -369,7 +369,10 @@ test('illan ja aamun kooste; aamun kooste vain luvalla', () => {
   assert.equal(on[0].topic, REMINDER_TOPIC.MORNING);
 });
 
-test('aamun kooste läpäisee rauhoitusajan (herätys), iltarauhoittuminen näkyy äänettömästi', () => {
+test('aamun kooste (herätys) ja oman yön alku (iltarauhoittuminen) läpäisevät rauhoitusajan; muu odottaa', () => {
+  // Sääntö (notificationPolicy.NIGHT_START_TYPES): iltarauhoittuminen ja
+  // nukkumaanmeno aloittavat käyttäjän oman yön, joten valittu puhe ei
+  // hiljene, vaikka rauhoitusaika (22.00) alkaisi ennen niitä.
   const intents = daily([
     { kind: 'morning_brief', date: DAY, time: '06:05', firstLeave: '07:00' },
     { kind: 'wind_down', date: DAY, time: '22:30' },
@@ -380,9 +383,47 @@ test('aamun kooste läpäisee rauhoitusajan (herätys), iltarauhoittuminen näky
   });
   assert.deepEqual(result.map(i => [i.type, i.delivery]), [
     [T.MORNING_BRIEF, DELIVERY.SPEECH],
-    [T.WIND_DOWN, DELIVERY.SILENT]
+    [T.WIND_DOWN, DELIVERY.SPEECH]
   ]);
-  assert.equal(result[1].speech, null, 'rauhoitusaikana ei puhuta');
+  assert.ok(result[1].speech, 'valittu puhe kuuluu myös rauhoitusaikana');
+});
+
+test('menon alku ilman lähtöketjua: alku − ennakko, "alkaa klo", ei lähtöä eikä nimeä ääneen', () => {
+  const [start] = daily([{
+    kind: 'event_start', id: `event:e9:${DAY}`, date: DAY, time: '16:00', leadMinutes: 10, title: 'Hammaslääkäri keskustassa'
+  }], { settings: SPEAK_ALL });
+  assert.equal(start.type, T.EVENT_START);
+  assert.deepEqual([start.date, start.time], [DAY, '15:50']);
+  assert.equal(start.level, LEVEL.REMINDER);
+  assert.equal(start.topic, REMINDER_TOPIC.PREPARATION, 'Valmistautuminen-valinta koskee menon alkua');
+  assert.equal(start.title, 'Hammaslääkäri keskustassa');
+  assert.equal(start.body, 'Alkaa klo 16:00.');
+  assert.equal(start.reason, '10 min ennen alkua.');
+  assert.equal(start.id, `event_start:event:e9:${DAY}:${DAY}`);
+  assert.equal(start.speech, 'Seuraava meno alkaa kello 16.00.');
+  assert.doesNotMatch(start.title + start.body + start.reason + start.speech, /[Ll]ähtö|[Ll]ähde/,
+    'alkua ei kutsuta lähdöksi');
+  assert.doesNotMatch(start.speech, /Hammaslääkäri/, 'menon nimi ei kuulu huoneeseen');
+
+  const [travel] = daily([{
+    kind: 'event_start', id: 'event:e8:' + DAY, date: DAY, time: '09:00', leadMinutes: 0, needsTravel: true
+  }]);
+  assert.equal(travel.time, '09:00', 'ennakko 0 = alkamisaika');
+  assert.equal(travel.title, 'Meno');
+  assert.match(travel.body, /Matka-aikaa ei ole tiedossa, joten lähtöaikaa ei laskettu\./,
+    'paikka ilman matka-aikaa: kerrotaan, ettei lähtöä arvattu');
+  assert.equal(travel.delivery, DELIVERY.SOUND, 'oletus: Valmistautuminen tulee äänimerkkinä');
+
+  // Ennakko keskiyön yli ja kelvottomat ennakot.
+  const [night] = daily([{ kind: 'event_start', id: 'x', date: DAY, time: '00:05', leadMinutes: 10 }],
+    { todayIso: '2026-09-27' });
+  assert.deepEqual([night.date, night.time], ['2026-09-27', '23:55']);
+  for (const leadMinutes of [-5, 1.5, 241, '10', null]) {
+    const [plain] = daily([{ kind: 'event_start', id: 'y', date: DAY, time: '12:00', leadMinutes }]);
+    assert.equal(plain.time, '12:00', String(leadMinutes));
+  }
+  assert.deepEqual(daily([{ kind: 'event_start', date: DAY, time: '12:00', leadMinutes: 10 }]), [],
+    'ilman esiintymän tunnistetta ei muistutusta');
 });
 
 test('arjen merkinnät: roska ohitetaan, ei heitä, ei muuta syötettä', () => {

@@ -55,6 +55,7 @@ import { sleepScheduleFor, MIN_SLEEP_TARGET_HOURS, MAX_SLEEP_TARGET_HOURS } from
 import { shortDateLabel } from '../../domain/calendar.js';
 import { firstCommitmentOn } from '../dailyLifeModel.js';
 import { clockText, durationText, shiftDateIso, epochToWallClock } from '../../domain/wallClock.js';
+import { remindersOffHintHtml, openReminderSettings } from './notificationSettings.js';
 
 // ------------------------------------------------------------ säiliöt
 
@@ -1335,7 +1336,8 @@ export function renderDailySettings() {
   if ((state.profileSegment || 'daily') !== 'daily') return;
   const settings = currentLifeSettings(state);
   const today = todayWall();
-  render('notice', noticeHtml());
+  // Muistutukset pois (oletus): kerrotaan, missä ne kytketään päälle.
+  render('notice', noticeHtml() + remindersOffHintHtml('daily', state));
   renderSleep(state, settings, today.date);
   renderRoutine(state, settings);
   renderAlarmNext(state, settings);
@@ -1404,6 +1406,7 @@ function onClick(event) {
   else if (button.hasAttribute('data-sup-remove')) removeSupplement(dataIndex(button, 'data-sup-remove'));
   else if (id === 'dsMealCancel') cancelMeals();
   else if (id === 'dsMealSave') submitMeals();
+  else if (button.hasAttribute('data-open-reminders')) openReminderSettings();
 }
 
 /** Enter tekstikentässä tallentaa oman osionsa (kuten muut lomakkeet). */
