@@ -481,11 +481,10 @@ public class AlarmService extends Service {
 
         String text = AlarmMath.cleanText(entry.optString("speech", ""), AlarmMath.MAX_SPEECH_LENGTH);
         if (text == null) text = AlarmMath.cleanText(entry.optString("title", ""), AlarmMath.MAX_TITLE_LENGTH);
+        // Ennen ensimmaista lukituksen avausta tekstit ovat kayttajan salaamassa
+        // tallessa (AlarmStore): muistutus puhutaan yleisnimella, ei jateta hiljaiseksi.
+        if (text == null) text = getString(R.string.reminder_default_label);
         initTts();
-        if (text == null) {
-            finishSpoken(id);
-            return;
-        }
         speak(text, entry, () -> finishSpoken(id));
         later(SPOKEN_MAX_MS, () -> finishSpoken(id));
     }

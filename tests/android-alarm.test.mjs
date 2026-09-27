@@ -278,6 +278,61 @@ test('REGRESSIO: soinutta herätystä ei ajasteta uudelleen kellon taaksepäin s
   assert.equal(/AlarmStore\.(putEntry|removeEntry|entry)\(/.test(onFire), false, 'onFire kirjoittaa talteen lukon ohi');
 });
 
+test('REGRESSIO: suora käynnistys: herätys palautuu ja soi, vaikka puhelinta ei avata uudelleenkäynnistyksen jälkeen', () => {
+  // native-no-direct-boot: BOOT_COMPLETED tulee vasta ensimmäisen lukituksen
+  // avauksen jälkeen, eikä käyttäjän salaamaa tallennusta voi lukea sitä
+  // ennen. Yöllinen uudelleenkäynnistys (automaattinen, kaatuminen, akku)
+  // ilman avausta = klo 7 herätys ei soinut, ja avauksen jälkeen se
+  // kirjattiin "missed". Laitteella todentamatta (ei ADB:tä).
+  for (const [tag, name] of [['receiver', 'AlarmReceiver'], ['receiver', 'BootReceiver'],
+    ['service', 'AlarmService'], ['activity', 'AlarmActivity']]) {
+    assert.match(component(tag, name), /android:directBootAware="true"/, name);
+  }
+  // Muu sovellus (WebView ja kaikki käyttäjän tiedot) ei käynnisty lukittuna.
+  assert.equal(/directBootAware/.test(component('activity', 'MainActivity')), false);
+  assert.equal([...manifest.matchAll(/android:directBootAware="true"/g)].length, 4);
+  const receiver = manifest.slice(manifest.indexOf('android:name=".BootReceiver"'),
+    manifest.indexOf('</receiver>', manifest.indexOf('android:name=".BootReceiver"')));
+  assert.ok(receiver.includes('<action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />'));
+  assert.ok(javaCode('BootReceiver.java').includes('Intent.ACTION_LOCKED_BOOT_COMPLETED'));
+
+  // Tila laitesuojatussa; tekstit vain käyttäjän salaamassa, joka luetaan vain avattuna.
+  const store = javaCode('AlarmStore.java');
+  assert.match(methodBody(store, 'private static SharedPreferences devicePrefs('),
+    /createDeviceProtectedStorageContext\(\)\.getSharedPreferences\(DEVICE_PREFS, /);
+  assert.match(methodBody(store, 'private static SharedPreferences prefs('), /return devicePrefs\(app\);/);
+  const textPrefs = methodBody(store, 'private static SharedPreferences textPrefs(');
+  assert.match(textPrefs, /if \(!UserManagerCompat\.isUserUnlocked\(app\)\) return null;/);
+  assert.equal([...store.matchAll(/getSharedPreferences\(PREFS,/g)].length, 1, 'käyttäjän salaama avataan ohi lukitustarkistuksen');
+  assert.match(textPrefs, /getSharedPreferences\(PREFS,/);
+  // Tallennus jakaa jokaisen merkinnän: tekstit (AlarmMath.isPrivateField) erikseen.
+  assert.match(methodBody(store, 'static synchronized void saveEntries('), /split\(item\.getValue\(\), rest, text\)/);
+  assert.match(methodBody(store, 'private static void split('), /\(AlarmMath\.isPrivateField\(key\) \? text : rest\)\.put\(/);
+  // Vanha tiedosto siirretään kerran avauksen jälkeen, keskeytyksen kestävässä järjestyksessä.
+  const migrate = methodBody(store, 'private static void migrate(');
+  assert.match(migrate, /if \(legacy == null\) return;/);
+  const textsSaved = migrate.indexOf('if (!legacy.edit().putString(KEY_TEXTS, texts.toString()).commit()) return;');
+  const marked = migrate.indexOf('.putBoolean(KEY_MIGRATED, true)');
+  const committed = migrate.indexOf('if (!edit.commit()) return;');
+  const cleaned = migrate.indexOf('.remove(KEY_ENTRIES)');
+  assert.ok(textsSaved > -1 && textsSaved < marked && marked < committed && committed < cleaned,
+    'siirron järjestys: tekstit talteen, laitesuojattu + merkintä, vasta sitten vanhat pois');
+});
+
+test('laitesuojattuun menee vain soittoon tarvittava: jokainen merkinnän kenttä on luokiteltu', () => {
+  const privateFields = [...methodBody(javaCode('AlarmMath.java'), 'static boolean isPrivateField(')
+    .matchAll(/"(\w+)"\.equals\(key\)/g)].map(m => m[1]).sort();
+  assert.deepEqual(privateFields, ['body', 'routeDestination', 'routeMode', 'speech', 'title']);
+  const parse = methodBody(javaCode('AlarmPlugin.java'), 'static JSONObject parseEntry(');
+  const fields = [...new Set([...parse.matchAll(/AlarmScheduler\.put\(entry, "(\w+)"/g)].map(m => m[1]))];
+  // Uusi kenttä luokitellaan tietoisesti: joko tähän (laitesuojattu) tai isPrivateFieldiin.
+  assert.deepEqual(fields.filter(f => !privateFields.includes(f)).sort(),
+    ['date', 'escalation', 'id', 'kind', 'maxSnoozes', 'mode', 'snoozeMinutes', 'time']);
+  // Lukittuna (ei tekstejä) puhuttu muistutus puhuu yleisnimen eikä jää hiljaiseksi.
+  assert.match(methodBody(javaCode('AlarmService.java'), 'private void startSpoken('),
+    /if \(text == null\) text = getString\(R\.string\.reminder_default_label\);/);
+});
+
 test('KRIITTINEN: tarkkojen herätysten ja koko näytön asetukset avataan vain omista metodeistaan', () => {
   let exactCount = 0;
   let fullCount = 0;

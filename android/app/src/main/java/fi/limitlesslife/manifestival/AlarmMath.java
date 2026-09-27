@@ -273,6 +273,21 @@ final class AlarmMath {
             calendar.get(Calendar.HOUR_OF_DAY), calendar.get(Calendar.MINUTE));
     }
 
+    // ------------------------------------------------------------ tallennus
+
+    /**
+     * Henkilokohtaiset tekstit, jotka pysyvat kayttajan salaamassa
+     * tallennuksessa (AlarmStore). Laitesuojattuun tiedostoon, joka on
+     * luettavissa jo ennen ensimmaista lukituksen avausta, menee vain se,
+     * mita soittoon ja uudelleenajastukseen tarvitaan (tunniste, laji, aika,
+     * tapa, vaiheet, torkku- ja laukeamistieto). Ennen avausta heratys soi
+     * yleisnimella.
+     */
+    static boolean isPrivateField(String key) {
+        return "title".equals(key) || "body".equals(key) || "speech".equals(key)
+            || "routeDestination".equals(key) || "routeMode".equals(key);
+    }
+
     // ------------------------------------------------------------ syotteet
 
     static boolean isKind(String kind) {

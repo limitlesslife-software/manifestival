@@ -208,6 +208,20 @@ public class AlarmMathTest {
     }
 
     @Test
+    public void onlyPersonalTextsStayInCredentialStorage() {
+        // REGRESSIO (native-no-direct-boot): laitesuojattu tallennus on luettavissa jo
+        // ennen ensimmaista lukituksen avausta. Sinne menee kaikki soittoon ja
+        // uudelleenajastukseen tarvittava, mutta ei henkilokohtaisia teksteja.
+        for (String key : new String[] { "title", "body", "speech", "routeDestination", "routeMode" }) {
+            assertTrue(key, AlarmMath.isPrivateField(key));
+        }
+        for (String key : new String[] { "id", "kind", "date", "time", "epoch", "mode", "escalation", "snoozeMinutes",
+            "maxSnoozes", "snoozeCount", "snoozeUntil", "autoSnoozed", "firedAt", "exact" }) {
+            assertFalse(key, AlarmMath.isPrivateField(key));
+        }
+    }
+
+    @Test
     public void cleanTextStripsControlsAndBoundsLength() {
         assertEquals("Lahde nyt", AlarmMath.cleanText("Lahde\u0000 \t nyt\u0007", 50));
         assertNull(AlarmMath.cleanText("​‎", 50));

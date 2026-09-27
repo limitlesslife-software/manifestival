@@ -18,6 +18,13 @@ import java.util.TimeZone;
  * uudelleen. Hetki sitten eraantynyt, soimaton heratys ajastetaan heti
  * (AlarmMath.MAX_LATE_MS); vanhemmat kirjataan "missed" ja poistetaan.
  *
+ * SUORA KAYNNISTYS: vastaanotin on directBootAware ja kuuntelee myos
+ * LOCKED_BOOT_COMPLETEDia. BOOT_COMPLETED tulee vasta ensimmaisen
+ * lukituksen avauksen jalkeen: jos puhelin kaynnistyy yolla uudelleen eika
+ * sita avata, klo 7 heratys ei muuten soisi. Tallessa oleva tila on
+ * laitesuojattu (AlarmStore), joten sen voi lukea lukittuna. Avauksen jalkeen tuleva
+ * BOOT_COMPLETED ajastaa samat uudelleen (sama tunniste korvaa, ei tuplia).
+ *
  * TAMA VASTAANOTIN EI KOSKAAN KAYNNISTA PALVELUA. Android 15 kieltaa
  * BOOT_COMPLETED-vastaanottimelta mediaPlayback-tyyppisen etualapalvelun,
  * eika sita tarvita: soitto alkaa vasta, kun AlarmManager laukaisee
@@ -32,7 +39,8 @@ public class BootReceiver extends BroadcastReceiver {
     public void onReceive(Context context, Intent intent) {
         if (intent == null || intent.getAction() == null) return;
         String action = intent.getAction();
-        boolean known = Intent.ACTION_BOOT_COMPLETED.equals(action)
+        boolean known = Intent.ACTION_LOCKED_BOOT_COMPLETED.equals(action)
+            || Intent.ACTION_BOOT_COMPLETED.equals(action)
             || Intent.ACTION_MY_PACKAGE_REPLACED.equals(action)
             || Intent.ACTION_TIME_CHANGED.equals(action)
             || Intent.ACTION_TIMEZONE_CHANGED.equals(action)
