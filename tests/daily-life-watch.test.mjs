@@ -80,6 +80,21 @@ test('KRIITTINEN: lähtö pian ja lähde nyt ovat eri merkinnät; siirretyn meno
   assert.equal(noticesWith('departure-change|').length, 0, 'omaa muokkausta ei kerrota muutoksena');
 });
 
+test('myöhässä-merkinnän raja lasketaan menon alusta, ei lähtöajasta (pitkä matka)', async () => {
+  // Juhlat klo 18.00, matka 120 + etuaika 10 -> lähtö 15.50. Avaus klo 16.31:
+  // lähtö meni 41 min sitten, mutta menon alkuun on vielä 89 min.
+  setSavedPlaces([{ id: 'p1', name: 'Juhlapaikka', usualTravelMinutes: 120, overheadMinutes: 0, preparationMinutes: 0 }]);
+  setCalendarEvents([{ id: 'e3', title: 'Juhlat', date: TODAY, startTime: '18:00', durationMinutes: 60, placeId: 'p1' }]);
+  assert.equal((await runEventDepartureSweep({ now: at(2026, 9, 29, 16, 31) })).created, 1, 'vielä ehtii: myöhässä-merkintä');
+  assert.equal(noticesWith('departure|event:e3:')[0].level, 'urgent');
+
+  resetDepartureWatch();
+  setCalendarEvents([{ id: 'e4', title: 'Juhlat', date: TODAY, startTime: '18:00', durationMinutes: 60, placeId: 'p1' }]);
+  assert.equal((await runEventDepartureSweep({ now: at(2026, 9, 29, 18, 30) })).created, 1, '30 min alusta: vielä');
+  setCalendarEvents([{ id: 'e5', title: 'Juhlat', date: TODAY, startTime: '18:00', durationMinutes: 60, placeId: 'p1' }]);
+  assert.equal((await runEventDepartureSweep({ now: at(2026, 9, 29, 18, 31) })).created, 0, 'yli 30 min alusta: ei enää');
+});
+
 test('liikennetiedon minuutin heilahtelu samassa vaiheessa ei tee uutta lähtömerkintää', async () => {
   const id = 'event:e1:2026-09-29';
   const t1 = at(2026, 9, 29, 17, 6);

@@ -34,6 +34,21 @@ export function resetDepartureWatch() {
   lastAnnounced.clear();
 }
 
+/**
+ * Minuutteja menon alusta (negatiivinen = alkuun on vielä aikaa).
+ *
+ * Myöhässä-raja mitataan menon ALUSTA, ei lähtöajasta: pitkällä matkalla
+ * lähtö voi olla mennyt 40 min sitten, vaikka menon alkuun on vielä puolitoista
+ * tuntia ja lähtemällä nyt ehtii. Lähdöstä alkuun on matka + pysäköinti ja
+ * kävely + etuaika (lähtömoottori laskee ne todellisina minuutteina myös
+ * kesäajan yönä), joten erotus on todellinen aika menon alusta.
+ */
+function minutesSinceStart(departure) {
+  if (departure.minutesLate === null || departure.minutesLate === undefined) return -Infinity;
+  const parts = departure.parts || {};
+  return departure.minutesLate - (parts.travel || 0) - (parts.overhead || 0) - (parts.early || 0);
+}
+
 /** Vaihe merkinnän avaimeen: jokaisella vaiheella oma merkintänsä. */
 const DUE_PHASE_KEYS = new Map([
   [DEPARTURE_PHASE.LEAVE_IN_5, 'soon'],
@@ -128,8 +143,7 @@ export async function runEventDepartureSweep({ now = new Date(), state = getStat
 
     // 2. Lähtövaihe: 5 min, nyt, myöhässä (ei enää puolen tunnin jälkeen).
     if (!DUE_PHASE_KEYS.has(departure.phase)) continue;
-    if (departure.phase === DEPARTURE_PHASE.LATE && departure.minutesLate !== null
-      && departure.minutesLate > LATE_NOTICE_MAX_MINUTES + (departure.parts.early || 0)) continue;
+    if (departure.phase === DEPARTURE_PHASE.LATE && minutesSinceStart(departure) > LATE_NOTICE_MAX_MINUTES) continue;
     const notice = dueNotice(item, lastAnnounced.get(occurrence.id) || next, todayIso);
     if (!validateNotice(notice).valid) continue;
     if (!addNoticeToState(notice)) continue;
