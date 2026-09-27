@@ -21,7 +21,15 @@
 // vahvistuksessa. Jäsennin ei koskaan arvaa.
 //
 // Käyttö: src/app/commandBar.js vertaa mallin päivää ja kelloa tähän ja
-// korjaa vain silloin, kun jäsennin on yksiselitteinen.
+// korjaa vain silloin, kun jäsennin on yksiselitteinen. Paikallinen
+// tapahtumajäsennin (eventParse.js) käyttää samaa jäsennintä ilman mallia.
+//
+// PELKKÄ TUNTISANA ("lauantaina seitsemältä", "klo seitsemän"): 1-11
+// ilman vuorokaudenaikaa on EPÄSELVÄ (07 vai 19?), ja tulos kertoo
+// molemmat vaihtoehdot (options), jotta kysymys voidaan esittää.
+// 12-23 on selvä. Sana tulkitaan kellonajaksi vain klo-sanan perässä tai
+// päivän tai vuorokaudenajan vieressä: "osta seitsemän munaa" ja "yhdeltä
+// asiakkaalta" eivät ole kellonaikoja.
 //
 // KAAVA: viikko alkaa maanantaista (ISO), laskenta on UTC-kalenteria,
 // joten kesäajan vaihtopäivät eivät vaikuta.
@@ -137,9 +145,71 @@ function clock(hour, minute, part) {
   if ((part === 'evening' || part === 'afternoon') && h >= 1 && h < 12) h += 12;
   else if (part === 'night' && h >= 9 && h <= 11) h += 12;
   else if (part === 'morning' && h > 12) return { time: null, ambiguous: true, reason: 'daypart_conflict' };
-  else if (part === null && h >= 1 && h <= 6) return { time: null, ambiguous: true, reason: 'ambiguous_hour' };
+  else if (part === null && h >= 1 && h <= 6) {
+    return { time: null, ambiguous: true, reason: 'ambiguous_hour', options: twelveHourOptions(h, minute) };
+  }
 
   return { time: `${pad2(h)}:${pad2(minute)}`, ambiguous: false, reason: '' };
+}
+
+/** Aamu- ja iltavaihtoehto samalle tunnille: 7 -> ['07:00', '19:00']. */
+function twelveHourOptions(hour, minute) {
+  return [`${pad2(hour)}:${pad2(minute)}`, `${pad2(hour + 12)}:${pad2(minute)}`];
+}
+
+// ------------------------------------------------------ pelkkä tuntisana
+
+/**
+ * Tuntisanat 13-23. Puheessa harvinaisia ("kello kolmetoista"), mutta
+ * yksiselitteisiä. Erillään HOUR_FORMS-taulusta, jotta "puoli"- ja
+ * "vaille/yli"-säännöt (1-12) pysyvät täsmälleen ennallaan.
+ */
+const LATE_HOUR_FORMS = Object.freeze({
+  13: ['kolmetoista', 'kolmentoista', 'kolmeltatoista'],
+  14: ['neljätoista', 'neljäntoista', 'neljältätoista'],
+  15: ['viisitoista', 'viidentoista', 'viideltätoista'],
+  16: ['kuusitoista', 'kuudentoista', 'kuudeltatoista'],
+  17: ['seitsemäntoista', 'seitsemältätoista'],
+  18: ['kahdeksantoista', 'kahdeksaltatoista'],
+  19: ['yhdeksäntoista', 'yhdeksältätoista'],
+  20: ['kaksikymmentä', 'kahdeltakymmeneltä'],
+  21: ['kaksikymmentäyksi'],
+  22: ['kaksikymmentäkaksi'],
+  23: ['kaksikymmentäkolme']
+});
+
+const BARE_HOUR_LOOKUP = new Map(HOUR_LOOKUP);
+for (const [hour, forms] of Object.entries(LATE_HOUR_FORMS)) {
+  for (const form of forms) BARE_HOUR_LOOKUP.set(form, Number(hour));
+}
+// Pisimmät ensin: "kolmeltatoista" ennen "kolmelta".
+const BARE_HOUR_WORDS = [...BARE_HOUR_LOOKUP.keys()].sort((a, b) => b.length - a.length).join('|');
+/** Ablatiivi ("seitsemältä", "kahdeksalta", "kolmeltatoista") = "kello N". */
+const ABLATIVE_HOUR_WORDS = [...BARE_HOUR_LOOKUP.keys()]
+  .filter(word => /(?:lta|ltä)(?:toista|kymmeneltä)?$/.test(word))
+  .sort((a, b) => b.length - a.length)
+  .join('|');
+
+// Päivä- ja vuorokaudenaikasanat, joiden vieressä pelkkä tuntisana on
+// kellonaika. Tarkistus katsoo vain lyhyen ikkunan sanan ympäriltä, joten
+// työ pysyy lineaarisena pitkässäkin tekstissä.
+const CONTEXT_WINDOW = 48;
+const DATE_WORD = `(?:tänään|huomenna|ylihuomenna|huomis[a-zäö]*|ylihuomis[a-zäö]*|(?:${Object.keys(WEEKDAY_NUMBER).join('|')})[a-zäö]{0,4}|\\d{1,2}\\.\\d{1,2}\\.(?:\\d{4})?|\\d{4}-\\d{2}-\\d{2})`;
+const DAY_PART_WORD = '(?:aamulla|aamupäivällä|aamusta|aamuun|iltapäivällä|iltapäivästä|illalla|illasta|iltaan|yöllä|yöstä|aamuyöllä)';
+const CONTEXT_BEFORE = new RegExp(`(?<![a-zäö])(?:${DATE_WORD}|${DAY_PART_WORD})(?:\\s+${DAY_PART_WORD})?[\\s,]*$`);
+const CONTEXT_AFTER = new RegExp(`^[\\s,]*(?:${DATE_WORD}|${DAY_PART_WORD})(?![a-zäö])`);
+
+/**
+ * Pelkän tuntisanan kellonaika.
+ *
+ * 1-11 ilman vuorokaudenaikaa: epäselvä, vaihtoehdot aamu ja ilta.
+ * 12-23: selvä. Vuorokaudenaika ratkaisee kuten clock().
+ */
+function bareHourClock(hour, part) {
+  if (part === null && hour >= 1 && hour <= 11) {
+    return { time: null, ambiguous: true, reason: 'ambiguous_hour_word', options: twelveHourOptions(hour, 0) };
+  }
+  return clock(hour, 0, part);
 }
 
 /**
@@ -154,8 +224,10 @@ function parseTimes(lower) {
   const take = (regex, build) => {
     masked = masked.replace(regex, (...args) => {
       const groups = args.slice(1, -2);
-      const result = build(groups, args[0]);
-      if (result) times.push({ ...result, expr: args[0].trim() });
+      const offset = args[args.length - 2];
+      const result = build(groups, args[0], offset, args[args.length - 1]);
+      if (result === SKIP) return args[0];
+      if (result) times.push({ ...result, expr: args[0].trim(), ...spanOf(args[0], offset) });
       return ' '.repeat(args[0].length);
     });
   };
@@ -183,7 +255,31 @@ function parseTimes(lower) {
   // 8:30 ilman klo-sanaa
   take(/(?<![\d.])(\d{1,2}):(\d{2})(?!\d)/g, ([hour, minute]) => clock(Number(hour), Number(minute), part));
 
+  // klo seitsemän, kello kahdeksalta, klo kolmetoista
+  take(new RegExp(`(?<![a-zäö])(?:klo|kello)\\s+(${BARE_HOUR_WORDS})(?![a-zäö])`, 'g'), ([word]) =>
+    bareHourClock(BARE_HOUR_LOOKUP.get(word), part));
+
+  // lauantaina seitsemältä, seitsemältä illalla -- vain päivän tai
+  // vuorokaudenajan vieressä; muualla ablatiivi on usein muuta
+  // ("yhdeltä asiakkaalta").
+  take(new RegExp(`(?<![a-zäö])(${ABLATIVE_HOUR_WORDS})(?![a-zäö])`, 'g'), ([word], whole, offset, source) => {
+    const before = source.slice(Math.max(0, offset - CONTEXT_WINDOW), offset);
+    const after = source.slice(offset + whole.length, offset + whole.length + CONTEXT_WINDOW);
+    if (!CONTEXT_BEFORE.test(before) && !CONTEXT_AFTER.test(after)) return SKIP;
+    return bareHourClock(BARE_HOUR_LOOKUP.get(word), part);
+  });
+
   return { times, masked };
+}
+
+/** take()-säännön merkki: osuma ei ollut kellonaika, teksti jää ennalleen. */
+const SKIP = Symbol('skip');
+
+/** Ilmauksen kohta tekstissä ilman reunojen välilyöntejä. */
+function spanOf(whole, offset) {
+  const lead = whole.length - whole.trimStart().length;
+  const start = offset + lead;
+  return { start, end: start + whole.trim().length };
 }
 
 // ---------------------------------------------------------- päivämäärät
@@ -205,7 +301,7 @@ function parseDates(masked, todayIso) {
     text = text.replace(regex, (...args) => {
       const groups = args.slice(1, -2);
       const built = build(groups, args[0]);
-      if (built) push({ ...built, expr: args[0].trim() });
+      if (built) push({ ...built, expr: args[0].trim(), ...spanOf(args[0], args[args.length - 2]) });
       return ' '.repeat(args[0].length);
     });
   };
@@ -300,6 +396,10 @@ function parseDates(masked, todayIso) {
 /**
  * Jäsennä päivä- ja kellonaikailmaisut tekstistä.
  *
+ * Jokaisella ilmauksella on `expr` sekä `start`/`end`: kohta NFC-muotoisessa,
+ * pienaakkosiksi muutetussa tekstissä. Epäselvällä tunnilla (1-6 numerona,
+ * 1-11 sanana) on `options`: aamu- ja iltavaihtoehto.
+ *
  * @param {string} text
  * @param {string} todayIso YYYY-MM-DD
  * @returns {{dates: Array, times: Array}}
@@ -309,6 +409,22 @@ export function parseFinnishTemporal(text, todayIso) {
   const lower = text.normalize('NFC').toLocaleLowerCase('fi');
   const { times, masked } = parseTimes(lower);
   return { dates: parseDates(masked, todayIso), times };
+}
+
+/**
+ * Kellonaika tunnista ja minuuteista samoilla säännöillä kuin jäsennin:
+ * tekstin vuorokaudenaika ("illalla") ratkaisee, 1-6 ilman sitä on
+ * epäselvä. Paikallinen tapahtumajäsennin käyttää tätä muodoille, joita
+ * tämä jäsennin ei itse tulkitse (esim. "9.30" ilman klo-sanaa).
+ *
+ * @param {number} hour
+ * @param {number} minute
+ * @param {string} [text] lause, josta vuorokaudenaika luetaan
+ * @returns {{time:string|null, ambiguous:boolean, reason:string, options?:string[]}}
+ */
+export function clockFromParts(hour, minute, text = '') {
+  const lower = typeof text === 'string' ? text.normalize('NFC').toLocaleLowerCase('fi') : '';
+  return clock(hour, minute, dayPart(lower));
 }
 
 /**
