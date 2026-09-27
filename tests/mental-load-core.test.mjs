@@ -506,3 +506,12 @@ test('suorituskyky: kuormamoottori ja jarru 10 000 tehtävällä pysyvät piirro
   assert.ok(engineMs < 1000, `moottori ${engineMs.toFixed(0)} ms`);
   assert.ok(fullMs < 2000, `jarru + moottori ${fullMs.toFixed(0)} ms`);
 });
+
+test('ei kaksoisesiintymistä: myös automaatin ajastama tehtävä on aikajanalla, ei fokuksessa', () => {
+  const load = computeLifeLoad({
+    tasks: [task('auto', { date: MON, time: '10:00', durationMinutes: 30, schedulingState: 'auto' }), task('free', { date: MON })],
+    todayIso: MON
+  });
+  assert.deepEqual(load.fixedToday.map(e => e.id), ['auto']);
+  assert.deepEqual(load.now.map(e => e.id), ['free']);
+});

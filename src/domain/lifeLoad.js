@@ -41,7 +41,7 @@
 //   - hyvinvointi, ilo ja vapaa-aika pääsevät fokukseen vain, kun käyttäjä on
 //     valinnut ne (fokus, viikon prioriteetti tai korkea prioriteetti)
 //   - rutiinit eivät ole koskaan fokusta
-//   - kiinteästi ajastettu tehtävä kuuluu aikajanalle, ei fokukseen
+//   - tänään ajastettu tehtävä (itse tai automaatin) kuuluu aikajanalle, ei fokukseen
 //     (sama asia ei näy kahdesti)
 //   - laskun ja siihen liitetyn tehtävän kaksoisesiintyminen estetään
 
@@ -318,7 +318,9 @@ export function computeLifeLoad({
       score: 0, fits: true, pinned: Boolean(where.pinned)
     };
 
-    if (where.horizon === LOAD_HORIZON.NOW && isFixedTimed(task) && task.date === todayIso) {
+    // Tänään AJASTETTU (itse tai hyväksyttynä ehdotuksena) kuuluu aikajanalle:
+    // sama asia ei näy fokuksessa ja aikajanalla (Rauhallinen tänään).
+    if (where.horizon === LOAD_HORIZON.NOW && task.time && task.date === todayIso) {
       fixedToday.push(freezeEntry({ ...base, reasons: [`Klo ${task.time}`] }));
       continue;
     }

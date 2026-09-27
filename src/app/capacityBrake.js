@@ -160,7 +160,9 @@ export function loadCapacity(state, { todayIso, nowMinutes = null } = {}) {
   }
   const weekEnd = weekEndOf(todayIso);
   const context = schedulingContext({ goals: state.goals, projects: state.projects, todayIso });
-  const fixedOnly = listOf(state.tasks).filter(task => !(task && !task.completed && isMovable(task)
+  // Fokuksen ehdokkaat ovat ajattomia, sijoitettavia tehtäviä; ajastetut
+  // (myös automaatin sijoittamat) ovat jo varattua aikaa.
+  const fixedOnly = listOf(state.tasks).filter(task => !(task && !task.completed && !task.time && isMovable(task)
     && isSchedulable(task, context)));
   const { capacity } = brakedHorizonCapacity(state, { from: todayIso, to: weekEnd, todayIso, nowMinutes, tasks: fixedOnly });
   const today = capacity.days.find(day => day.dateIso === todayIso) || null;
