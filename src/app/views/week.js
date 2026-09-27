@@ -1,4 +1,5 @@
-// Viikkonäkymä.
+// Viikkonäkymä (Kalenteri-välilehden Viikko-osio; osiot ja viikon menot
+// ovat calendar.js:ssä, tämä piirtää vanhan viikkonäkymän ennallaan).
 //
 // Viikko vastaa eri kysymykseen kuin päivä. Päivä kysyy "mitä nyt", viikko
 // kysyy "onko tämä realistista". Siksi näkymä näyttää kuormituksen, määräajat,
@@ -8,7 +9,7 @@
 // jotta rajatapaukset — sunnuntai, kuukauden vaihde, vuodenvaihde — voidaan
 // testata ilman selainta.
 
-import { fmtISO, addDays, sameDay, todayMidnight, parseISO, loadClass } from '../../lib/datetime.js';
+import { fmtISO, addDays, sameDay, todayMidnight, loadClass } from '../../lib/datetime.js';
 import { escapeHtml, WD_SHORT, formatTimeRange } from '../../lib/format.js';
 import { categoryLabel } from '../../domain/categories.js';
 import { priorityLabel, priorityTone } from '../../domain/priority.js';
@@ -18,11 +19,10 @@ import {
 } from '../../domain/week.js';
 import { expandRoutines } from '../../domain/routine.js';
 import { buildWeeklyReview, summarizeReview } from '../../domain/review.js';
-import { el, maybe, setText } from '../../ui/dom.js';
-import { getState, setWeekStart, setViewDate } from '../state.js';
+import { el, maybe } from '../../ui/dom.js';
+import { getState, setWeekStart, showCalendarDay } from '../state.js';
 import { toggleComplete } from '../actions.js';
 import { openEditForm } from './tasks.js';
-import { switchTab } from '../navigation.js';
 import { loadFailureHtml } from './loadNotice.js';
 
 // ------------------------------------------------------------ viikkonauha
@@ -56,12 +56,24 @@ function renderStrip(container, state, routineOccurrences) {
     </button>`;
   }).join('');
 
+  // Päivän napautus avaa kalenterin Päivä-osion samalle päivälle: ollaan
+  // jo Kalenteri-välilehdellä, joten päivän aikataulu näkyy tässä, samalla
+  // suunnitelmalla kuin Tänään-näkymässä.
   container.querySelectorAll('.day-col').forEach(node => {
     node.addEventListener('click', () => {
-      setViewDate(parseISO(node.dataset.date));
-      switchTab('screen-today');
+      showCalendarDay(node.dataset.date);
+      const title = maybe('calTitle');
+      if (title && typeof title.focus === 'function') title.focus();
     });
   });
+}
+
+/** ISO-viikon numero maanantaista: viikko kuuluu vuodelle, jolla sen torstai on. */
+export function isoWeekNumber(monday) {
+  const thursday = addDays(monday, 3);
+  const firstOfYear = new Date(thursday.getFullYear(), 0, 1);
+  // Pyöristys: kesäaika tekee vuorokaudesta 23 tai 25 tuntia.
+  return Math.floor(Math.round((thursday - firstOfYear) / 86400000) / 7) + 1;
 }
 
 // ------------------------------------------------------------ yhteenveto
@@ -267,7 +279,11 @@ export function renderWeek() {
   const isoDays = weekDayIsoList(state.weekStart);
   const todayIso = fmtISO(todayMidnight());
 
-  setText('weekRangeLabel', weekRangeLabel(state.weekStart));
+  // Otsikko on live-alue (Kalenteri-välilehti): kirjoitetaan vain muuttuessa,
+  // ettei sama viikko kuulu ruudunlukijalla jokaisella piirrolla.
+  const title = maybe('weekRangeLabel');
+  const label = `Viikko ${isoWeekNumber(state.weekStart)} · ${weekRangeLabel(state.weekStart).replace(' – ', '–')}`;
+  if (title && title.textContent !== label) title.textContent = label;
 
   const routineOccurrences = expandRoutines({
     routines: state.routines,
