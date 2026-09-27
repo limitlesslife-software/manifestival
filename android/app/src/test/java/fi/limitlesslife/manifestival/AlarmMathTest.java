@@ -1,0 +1,138 @@
+package fi.limitlesslife.manifestival;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
+
+import java.util.TimeZone;
+
+import org.junit.Test;
+
+/**
+ * Heratysten puhtaat apufunktiot ilman laitetta (gradlew testDebugUnitTest).
+ *
+ * Odotusarvot on laskettu Nodessa: pyyntokoodit samalla FNV-1a:lla kuin
+ * src/platform/nativeNotifications.js numericId(), hetket Date.UTC:lla.
+ */
+public class AlarmMathTest {
+
+    private static final TimeZone HELSINKI = TimeZone.getTimeZone("Europe/Helsinki");
+    private static final TimeZone NEW_YORK = TimeZone.getTimeZone("America/New_York");
+
+    @Test
+    public void requestCodeMatchesJsNumericId() {
+        assertEquals(51680497, AlarmMath.requestCode("wake:2026-09-28"));
+        assertEquals(500151075, AlarmMath.requestCode("departure|plan-1|2026-09-28|leave_now"));
+        assertEquals(1913001110, AlarmMath.requestCode("a"));
+        assertEquals(1083068130, AlarmMath.requestCode(""));
+        assertEquals(133481106, AlarmMath.requestCode("task_reminder:t1:2026-01-05"));
+        assertTrue(AlarmMath.requestCode("wake:2026-09-28") > 0);
+    }
+
+    @Test
+    public void ordinaryWallClockInWinterAndSummer() {
+        assertEquals(1768455000000L, AlarmMath.wallClockToEpoch("2026-01-15", "07:30", HELSINKI));
+        assertEquals(1790568000000L, AlarmMath.wallClockToEpoch("2026-09-28", "07:00", HELSINKI));
+    }
+
+    @Test
+    public void springForwardGapMovesToNextValidMinute() {
+        // 29.3.2026 klo 03.00 -> 04.00: 03.30 ei ole olemassa -> 04.00 kesaaikaa (01.00 UTC).
+        assertEquals(1774746000000L, AlarmMath.wallClockToEpoch("2026-03-29", "03:30", HELSINKI));
+        assertEquals(1774746000000L, AlarmMath.wallClockToEpoch("2026-03-29", "03:00", HELSINKI));
+        // New York 8.3.2026 klo 02.30 ei ole olemassa -> 03.00 EDT = 07.00 UTC.
+        assertEquals(1772953200000L, AlarmMath.wallClockToEpoch("2026-03-08", "02:30", NEW_YORK));
+    }
+
+    @Test
+    public void fallBackRepeatedHourUsesFirstOccurrence() {
+        // 25.10.2026 klo 03.30 esiintyy kahdesti: ensimmainen (kesaaika, UTC+3) = 00.30 UTC.
+        assertEquals(1792888200000L, AlarmMath.wallClockToEpoch("2026-10-25", "03:30", HELSINKI));
+    }
+
+    @Test
+    public void invalidWallClockIsRejectedNotRolledOver() {
+        assertEquals(-1L, AlarmMath.wallClockToEpoch("2026-02-30", "07:00", HELSINKI));
+        assertEquals(-1L, AlarmMath.wallClockToEpoch("2026-09-28", "24:00", HELSINKI));
+        assertEquals(-1L, AlarmMath.wallClockToEpoch("2026-09-28", "7:00", HELSINKI));
+        assertEquals(-1L, AlarmMath.wallClockToEpoch("28.9.2026", "07:00", HELSINKI));
+        assertEquals(-1L, AlarmMath.wallClockToEpoch("2026-09-28", "07:00", null));
+        assertTrue(AlarmMath.isValidDate("2028-02-29"));
+        assertFalse(AlarmMath.isValidDate("2027-02-29"));
+        assertFalse(AlarmMath.isValidTime("23:60"));
+        assertTrue(AlarmMath.isValidTime("00:00"));
+    }
+
+    @Test
+    public void idsArePlainAsciiAndBounded() {
+        assertTrue(AlarmMath.isValidId("wake:2026-09-28"));
+        assertTrue(AlarmMath.isValidId("departure|p1|2026-09-28|leave_now"));
+        assertFalse(AlarmMath.isValidId("wake 2026"));
+        assertFalse(AlarmMath.isValidId(""));
+        assertFalse(AlarmMath.isValidId(null));
+        assertFalse(AlarmMath.isValidId(new String(new char[121]).replace('\0', 'a')));
+        assertFalse(AlarmMath.isValidId("../etc"));
+    }
+
+    @Test
+    public void destinationMustBePlainText() {
+        assertEquals("Fleminginkatu 1, Helsinki", AlarmMath.sanitizeDestination("  Fleminginkatu 1,\n Helsinki "));
+        assertNull(AlarmMath.sanitizeDestination("https://evil.example/x"));
+        assertNull(AlarmMath.sanitizeDestination("javascript:alert(1)"));
+        assertNull(AlarmMath.sanitizeDestination("intent://maps#Intent;end"));
+        assertNull(AlarmMath.sanitizeDestination("geo:60.1,24.9"));
+        assertNull(AlarmMath.sanitizeDestination("www.example.com"));
+        assertNull(AlarmMath.sanitizeDestination("<script>"));
+        assertNull(AlarmMath.sanitizeDestination("   "));
+        assertNull(AlarmMath.sanitizeDestination(null));
+        // Nakymattomat suuntaohjaimet pois.
+        assertEquals("Koti", AlarmMath.sanitizeDestination("‮Koti​"));
+        // "Hotel:" ei ole skeema.
+        assertEquals("Hotel: Kamp", AlarmMath.sanitizeDestination("Hotel: Kamp"));
+        assertEquals(200, AlarmMath.sanitizeDestination(new String(new char[400]).replace('\0', 'x')).length());
+    }
+
+    @Test
+    public void navigationLinksAreBuiltHereFromEncodedText() {
+        assertEquals("google.navigation:q=Fleminginkatu%201&mode=d", AlarmMath.navigationUri("Fleminginkatu 1", "driving"));
+        assertEquals("google.navigation:q=X&mode=w", AlarmMath.navigationUri("X", "walking"));
+        assertEquals("google.navigation:q=X&mode=b", AlarmMath.navigationUri("X", "cycling"));
+        assertEquals("google.navigation:q=X&mode=d", AlarmMath.navigationUri("X", null));
+        assertNull("julkisilla ei navigointitilaa", AlarmMath.navigationUri("X", "transit"));
+        assertEquals("https://www.google.com/maps/dir/?api=1&destination=Katu%201%20%26%202%23osa%3Fx%3Dy&travelmode=driving",
+            AlarmMath.webDirectionsUrl("Katu 1 & 2#osa?x=y", "driving"));
+        assertEquals("https://www.google.com/maps/dir/?api=1&destination=X&travelmode=transit", AlarmMath.webDirectionsUrl("X", "transit"));
+        assertEquals("https://www.google.com/maps/dir/?api=1&destination=X&travelmode=bicycling", AlarmMath.webDirectionsUrl("X", "cycling"));
+        assertEquals("%C3%84%C3%A4ni%C3%B6", AlarmMath.encodeComponent("Ääniö"));
+        assertNull(AlarmMath.webDirectionsUrl("https://evil.example", "driving"));
+    }
+
+    @Test
+    public void escalationVolumeNeverDecreasesAndCapsAtFull() {
+        assertEquals(0.3f, AlarmMath.stepVolume("soft"), 0.0001f);
+        assertEquals(1.0f, AlarmMath.stepVolume("loud"), 0.0001f);
+        assertEquals(0.5f, AlarmMath.nextVolume(0.3f, "soft"), 0.0001f);
+        assertEquals(1.0f, AlarmMath.nextVolume(0.3f, "loud"), 0.0001f);
+        assertEquals(1.0f, AlarmMath.nextVolume(1.0f, "soft"), 0.0001f);
+    }
+
+    @Test
+    public void limitsMatchTheDomain() {
+        // src/domain/dailyLife.js ja alarmPlan.js: 10 min, 30 min, 3 torkkua, 4 vaihetta.
+        assertEquals(10, AlarmMath.MAX_RING_MINUTES);
+        assertEquals(30, AlarmMath.MAX_SNOOZE_MINUTES);
+        assertEquals(3, AlarmMath.MAX_SNOOZES);
+        assertEquals(4, AlarmMath.MAX_ESCALATION_STEPS);
+        assertEquals(9, AlarmMath.DEFAULT_SNOOZE_MINUTES);
+    }
+
+    @Test
+    public void cleanTextStripsControlsAndBoundsLength() {
+        assertEquals("Lahde nyt", AlarmMath.cleanText("Lahde\u0000 \t nyt\u0007", 50));
+        assertNull(AlarmMath.cleanText("​‎", 50));
+        assertEquals("abc", AlarmMath.cleanText("abcdef", 3));
+        assertEquals("fi-FI", AlarmMath.langOrDefault("bad lang!"));
+        assertEquals("sv-FI", AlarmMath.langOrDefault("sv-FI"));
+    }
+}

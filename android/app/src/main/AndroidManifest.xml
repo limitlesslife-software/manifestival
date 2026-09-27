@@ -52,6 +52,47 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths"></meta-data>
         </provider>
+
+        <!--
+            HERATYKSET JA PUHUTUT MUISTUTUKSET (AlarmPlugin.java, JS:
+            src/platform/alarms.js). Kaikki komponentit ovat suljettuja
+            (exported="false"): muut sovellukset eivat voi laukaista,
+            sammuttaa eika torkuttaa heratysta. Jarjestelma toimittaa silti
+            suojatut lahetykset (kaynnistys, kellon ja vyohykkeen vaihto).
+        -->
+        <receiver
+            android:name=".AlarmReceiver"
+            android:exported="false" />
+
+        <!-- Vain uudelleenajastus: ei koskaan kaynnista palvelua (Android 15). -->
+        <receiver
+            android:name=".BootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+                <action android:name="android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Soiva heratys ja puhe: etualapalvelu, tyyppi mediaPlayback (vain toisto, ei mikrofonia). -->
+        <service
+            android:name=".AlarmService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+
+        <!-- Pieni natiivi heratysnakyma lukitulle naytolle: ei WebViewta. -->
+        <activity
+            android:name=".AlarmActivity"
+            android:exported="false"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTop"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar" />
     </application>
 
     <!-- Permissions -->
@@ -79,6 +120,33 @@
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
 
     <!--
+        HERATYKSET (AlarmPlugin.java). Muistutusliitannainen yhdistaa osan
+        naista jo nyt; ne julistetaan tassa itse, koska heratys tarvitsee
+        ne omana ominaisuutenaan.
+
+        - Kaynnistyksen jalkeinen palautus: vain uudelleenajastus.
+        - Tarkat heratykset: kayttaja antaa oikeuden Asetuksista (Android
+          14+ ei anna sita oletuksena). Sovellus avaa asetuksen vain
+          kayttajan napautuksesta. Automaattisesti myonnettavaa
+          heratyskellon lupaa EI julisteta: se on varattu sovelluksille,
+          joiden paatehtava on heratyskello (Play-kaupan ehto).
+        - Koko nayton ilmoitus: Android 14+ myontaa sen vain heratys- ja
+          puhelusovelluksille; ilman sita heratys nakyy nousevana
+          ilmoituksena (canUseFullScreenIntent).
+        - Etualapalvelu vain tyyppia mediaPlayback: aanen ja puheen toisto.
+          Mikrofonin, sijainnin tai muun tyyppista etualapalvelua ei ole.
+        - Heratyslukko: rajattu (aikaraja) ja vapautetaan aina.
+        Varinaa ei kayteta, joten sen lupaa ei julisteta.
+    -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!--
         SIJAINTI: lupaa ei julisteta, koska mikaan toteutettu ominaisuus ei
         kayta sijaintia (src/platform/capabilities.js NATIVE_LOCATION_ENABLED
         = false). Jos sijainti joskus palaa (reittipalvelu, WP11), vain
@@ -94,5 +162,11 @@
         <intent>
             <action android:name="android.speech.RecognitionService" />
         </intent>
+        <!-- Puhesynteesi (TextToSpeech): Android 11+ ei muuten nayta puhemoottoria. -->
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+        <!-- "Avaa reitti" -painike tarkistaa, onko Google Maps asennettu (muuten https-linkki). -->
+        <package android:name="com.google.android.apps.maps" />
     </queries>
 </manifest>
