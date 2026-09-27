@@ -174,3 +174,48 @@ Säilyy: OVERLOAD, NEGLECT, MISALIGNMENT, TARGET_TENSION, ENERGY_OVERLOAD.
 Uudet deterministiset: BACKLOG_GROWTH, CAPACITY_BIAS, OWN_TIME_EROSION,
 FREE_TIME_EROSION, VACATION_INTRUSION, PLAN_CHURN. Ei syyllistävää kieltä;
 vastaus on seuraavan suunnitelman säätö.
+
+Toteutus: `src/domain/driftSignals.js` (puhdas), kynnykset
+`alignmentPolicy.DRIFT_RULES`. Havainnot EIVÄT ole osa `analyzeWeek`-tulosta
+eivätkä tallennu katsauksen tilannekuvaan, joten `POLICY_VERSION` pysyy 3:na.
+Sovelluskerros: `currentDriftSignals(weekStart, clock)` (suojatut lohkot ja
+menot `brakeInputs`-polusta, mahtumaton joustava työ jarrun jäännöksestä) ja
+`currentCapacityBias`, joka syöttää `proposeAdjustments({ capacityBias })`
+ensi viikon kapasiteettiehdotuksen. Suunta-näkymä: "Suunnitelma ja
+todellisuus" (vain kuluva viikko); säätö on toiminto vain olemassa olevan
+toiminnon kautta (Ei vielä, Myöhemmin, Arkistoi, Avaa, kapasiteetti
+vahvistuksen kautta).
+
+| Havainto | Ehto (kynnys) | Taso | Säätö |
+|---|---|---|---|
+| BACKLOG_GROWTH | 7 pv: uudet − ratkenneet ≥ 5 ja avoimia ≥ 15 | huomio ≥ 10 | 5 vanhinta: Ei vielä / arkistoi, tai kevennä ensi viikkoa |
+| CAPACITY_BIAS | ≥ 3 suljettua viikkoa (enint. 4), suunnitelma ≥ 1,25 × toteuma ≥ 3 viikolla ja yhteensä, ero ≥ 120 min/vko | huomio ≥ 1,5 × | "Pienennetäänkö ensi viikon kapasiteetiksi noin X?" (keskim. toteuma, 30 min tarkkuus, väh. 60) |
+| OWN_TIME_EROSION | omaan aikaan osunut muu kuin hyvinvointi/ilo/vapaa-aika ≥ 30 min (soft: vain automaatin sijoittama) | huomio ≥ 25 % omasta ajasta | siirrä joustavat pois / pidä vapaana |
+| FREE_TIME_EROSION | velvoitteita vapaa-ajan lohkossa ≥ 30 min, tai vähimmäisvapaa-ajan vaje ≥ 30 min | huomio: vaje tai ≥ 25 % | siirrä aiemmaksi / suojaa ilta |
+| VACATION_INTRUSION | joustava, ei-välttämätön tehtävä lomalla (28 pv viikon alusta, tästä päivästä) ≥ 1; kiinteä meno ei ole tunkeutumista | huomio ≥ 3 | loman jälkeen / Myöhemmin |
+| PLAN_CHURN | siirretty ≥ 3 kertaa, tai tällä viikolla ≥ 5 siirrettyä | huomio ≥ 5 siirtoa tai ≥ 3 asiaa | päätä kerran: pilko, Ei vielä, Myöhemmin, arkistoi |
+
+Toteuma (CAPACITY_BIAS) = kirjattu aika tai valmiiksi merkittyjen
+arvioitujen tehtävien kesto, suurempi. Viikko ilman toteumaa ei ole
+vertailukelpoinen (tuntematon ei ole nolla).
+
+## Hyvinvoinnin kuorman kevennys (sama muistutusputki)
+
+Ei toista hyvinvointimoduulia: kaikki kulkee
+`notificationPolicy.applyNotificationPolicy` / `alarmSync.dailyLifeReminderPlan`
+-putken läpi.
+
+- Valinnaisen aiheen voi kytkeä kokonaan pois: `life_settings.delivery[aihe] = 'off'`
+  (ateriat, vesi, lisäravinteet, tavat; liikunta ja kirjauskehotteet ovat
+  politiikassa valmiina, mutta niille ei vielä synny muistutuksia). Vain se
+  aihe poistuu. Lähtöä, herätystä, nukkumaanmenoa, määräaikoja ja laskuja ei
+  voi kytkeä pois tätä kautta. Valinnat: Profiili → Asetukset → Ohjaus ja puhe.
+- Vesi ja lisäravinteet kelpaavat päivän koosteeseen (eivät ohita sitä).
+- Korkea kuorma (`reminderLoadLevel`: päivän stressi ≥ 4 tai energia ≤ 2 →
+  tämä päivä; viikon OVERLOAD → viikon päivät; kapasiteetin ylivuoto → tämä
+  päivä): vesi, lisäravinteet, tavat, liikunta ja kirjauskehotteet siirtyvät
+  koosteeseen (jos päällä) tai jäävät pois. Ateriat, välttämättömät ja
+  `essential: true` -aikomukset ennallaan.
+- Tänään-näkymän tapakortti näyttää enintään 2 riviä (ajankohtaiset ensin),
+  loput "Näytä loput (N)" -osion takana (`wellbeing.boundWellnessRows`).
+  Rutiinimuistutukset eivät vie Rauhallisen tänään -fokuspaikkoja.
