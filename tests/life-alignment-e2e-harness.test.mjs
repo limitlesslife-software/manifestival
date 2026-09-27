@@ -102,9 +102,17 @@ test('J-porttitila: haaran schema.js saa aallon J portit; ajonaikainen skeemaker
     'export function writeRefusal', 'export function noteSchemaError']) {
     assert.ok(patched.includes(name), name);
   }
-  // Vain porttiliteraalit muuttuvat.
+  // Vain porttiliteraalit muuttuvat. Kiinni olevan haaran lähteessä ne
+  // aukeavat (true); aallon K lähteessä (kaikki auki) K:n portit sulkeutuvat
+  // J-tilaa varten (false). Kummassakin muuttuu vain literaali.
   const changed = patched.split('\n').filter((line, i) => line !== SCHEMA.split('\n')[i]);
-  assert.ok(changed.every(line => /:\s*true,?\s*$|^export const [A-Z_]+ = true;/.test(line.trim())), changed.join('\n'));
+  assert.ok(changed.length > 0, 'J-tila ei muuttanut yhtään porttiliteraalia');
+  assert.ok(changed.every(line => /:\s*(true|false),?\s*$|^export const [A-Z_]+ = (true|false);/.test(line.trim())), changed.join('\n'));
+  const branchTables = parseGates(SCHEMA);
+  for (const line of changed) {
+    const gate = /^(\w+):/.exec(line.trim());
+    if (gate) assert.notEqual(tables[gate[1]], branchTables[gate[1]], `${gate[1]}: rivi muuttui ilman porttimuutosta`);
+  }
 });
 
 test('J-porttitila: import map vain J-tilassa; ohjaa jokaisen schema.js-importin', () => {

@@ -19,12 +19,15 @@ import {
   normalizeNotice, NOTICE_KIND, NOTICE_ACTION, NOTICE_STATUS, actionsFor, reminderIdOfNotice
 } from '../src/domain/notificationCenter.js';
 import { normalizeReminder, REMINDER_STATUS } from '../src/domain/reminder.js';
+import { resetTestStore, storedRow } from './helpers/gateAwareStore.mjs';
 
 const USER = { id: 'b0a0b0a0-1111-4111-8111-00000000b0a0', email: 'kuittaus@example.invalid' };
 
 async function seed({ reminderStatus = REMINDER_STATUS.DELIVERED, key = null } = {}) {
   resetState();
   clearAllCollections();
+  // Portin ollessa auki siemen ja muutokset kulkevat kantaa jäljittelevälle palvelimelle.
+  resetTestStore();
   setUser(USER);
   const reminder = normalizeReminder({
     id: 'r1', title: 'Soita neuvolaan', targetType: 'task', targetId: 't1',
@@ -70,6 +73,9 @@ test('KRIITTINEN: Kuittaa kuittaa muistutuksen (seuraava porras ei tule) ja merk
   assert.deepEqual(result, { ok: true, reminderId: 'r1' });
   assert.equal(reminderStatus(), REMINDER_STATUS.ACKNOWLEDGED);
   assert.equal(noticeStatus(), NOTICE_STATUS.ACTED);
+  // Sama tallennuksessa: seuraava lataus ei tuo porrasta takaisin.
+  assert.equal((await storedRow(remindersRepo, 'r1')).status, REMINDER_STATUS.ACKNOWLEDGED);
+  assert.equal((await storedRow(noticesRepo, 'n1')).status, NOTICE_STATUS.ACTED);
 });
 
 test('Hoidettu merkitsee muistutuksen hoidetuksi', async () => {

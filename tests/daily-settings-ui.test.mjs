@@ -13,6 +13,7 @@ import { read, readCode } from './helpers/sources.mjs';
 import { createDocument, installDocument, accessibleName, press, type, choose, isRendered } from './helpers/a11yDom.mjs';
 import { echoClient, flush, USER } from './helpers/a11ySuunta.mjs';
 import { freezeLocalDate } from './helpers/clock.mjs';
+import { isGateOpen } from './helpers/gates.mjs';
 import { setUser, clearUser } from '../src/data/session.js';
 import { setClient } from '../src/data/client.js';
 import { lifeSettingsRepo } from '../src/data/collectionsRepo.js';
@@ -258,7 +259,12 @@ test('Arki oletuksilla: kentät nimetty, rajat, ei virheitä, selain kertoo her�
   assert.equal($('dsAlarmEscalation').value, 'normal', 'oletusvoimistus tunnistetaan Tavalliseksi');
   assert.equal($('dsMorningBrief').checked, false, 'puhe ja katsaus eivät ole oletuksena päällä');
   // Portti kiinni: kerrotaan, että asetukset säilyvät vain istunnon ajan.
-  assert.match(text($('dailyLifeNotice')), /säilyvät toistaiseksi vain tämän istunnon ajan/);
+  // Portti auki: asetukset tallentuvat, eikä istuntohuomautusta saa näkyä.
+  if (isGateOpen('lifeSettings')) {
+    assert.doesNotMatch(text($('dailyLifeNotice')), /säilyvät toistaiseksi vain tämän istunnon ajan/);
+  } else {
+    assert.match(text($('dailyLifeNotice')), /säilyvät toistaiseksi vain tämän istunnon ajan/);
+  }
 });
 
 test('Arkea ei lasketa, kun osio on piilossa; osion vaihto piirtää sen', async () => {

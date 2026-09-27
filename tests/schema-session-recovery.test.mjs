@@ -17,7 +17,7 @@
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createSchemaServer, memoryStorage, migrationsThrough } from './helpers/schemaServer.mjs';
+import { createSchemaServer, memoryStorage, migrationsThrough, ALL_MIGRATIONS } from './helpers/schemaServer.mjs';
 import { importAtWave, WAVE_GRAPH_SUPPORTED } from './helpers/waveGraph.mjs';
 import {
   classifyProbeError, probeSchema, ensureSchemaCompatibility, scheduleSchemaReprobe,
@@ -39,7 +39,10 @@ import { retrySchemaCheck, initSchemaStatus, setSchemaStatusActive } from '../sr
 
 const USER = { id: 'aaaaaaaa-7171-4171-8171-000000000071', email: 's@example.com' };
 const ONLINE = () => true;
-const ALL = migrationsThrough('0013');
+// Ajan tasalla oleva kanta = jokainen repon migraatio. Kiinteä raja (ennen
+// '0013') jäi jälkeen aallosta K, jonka portit vaativat 0014:n: "korjattu"
+// kanta oli silloin yhä rajoitettu, eikä testi todistanut palautumista.
+const ALL = ALL_MIGRATIONS;
 const graphTest = WAVE_GRAPH_SUPPORTED ? test : test.skip;
 
 beforeEach(() => {
@@ -131,7 +134,7 @@ test('KRIITTINEN: huoltotila -> lista PGRST205 -> kanta korjattu -> "Yritä uude
   assert.equal(retried.recovered, true);
   assert.equal(schemaSnapshot().status, SCHEMA_STATUS.OK, 'tila jäi rajoitetuksi huoltokatkon jälkeen');
   assert.equal(isColumnGateLowered('TASK_EXTENDED_FIELDS'), false);
-  // Täysi = käännösaikaiset sarakeportit (kanta on 0013 asti), ei vain
+  // Täysi = käännösaikaiset sarakeportit (kanta on ajan tasalla), ei vain
   // TASK_EXTENDED_FIELDS: aallosta G alkaen suunnittelu- ja liitossarakkeet
   // kuuluvat tehtävään.
   const full = [...taskColumns(name => COMPILE_COLUMN_GATES[name] === true)];

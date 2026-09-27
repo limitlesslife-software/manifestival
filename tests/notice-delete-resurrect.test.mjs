@@ -23,17 +23,20 @@ import assert from 'node:assert/strict';
 
 import { setUser, clearUser } from '../src/data/session.js';
 import * as S from '../src/app/state.js';
-import { clearAllCollections, noticesRepo } from '../src/data/collectionsRepo.js';
+import { clearAllCollections, noticesRepo, remindersRepo } from '../src/data/collectionsRepo.js';
 import { runReminderSweep, deleteNotice } from '../src/app/assistantActions.js';
 import { runDailyLifeNotices } from '../src/app/dailyLifeNotices.js';
 import { normalizeNotice, NOTICE_KIND } from '../src/domain/notificationCenter.js';
 import { fmtISO } from '../src/lib/datetime.js';
+import { resetTestStore, storedRows } from './helpers/gateAwareStore.mjs';
 
 const USER = { id: 'aaaaaaaa-0000-0000-0000-00000000000a', email: 'a@example.com' };
 
 beforeEach(() => {
   mock.restoreAll();
   clearAllCollections();
+  // Portin ollessa auki ilmoitukset kulkevat kantaa jäljittelevälle palvelimelle.
+  resetTestStore();
   clearUser();
   S.resetState();
   setUser(USER);
@@ -62,9 +65,12 @@ function seedLateness() {
 // =============================================================== muistutus
 
 test('REGRESSIO: poistettu muistutusilmoitus ei palaa seuraavalla kierroksella', async () => {
-  S.setReminders([{
+  const reminder = {
     id: 'r1', title: 'Lääkkeet', dueDate: fmtISO(new Date()), dueTime: '08:00', status: 'scheduled'
-  }]);
+  };
+  // Muistutus on tallennettu (muisti tai kanta porttitilan mukaan) ja ladattu.
+  assert.equal((await remindersRepo.insert(reminder)).ok, true);
+  S.setReminders([reminder]);
 
   await runReminderSweep({ now: at(8, 1) });
   const [created] = noticesWith('r1|');
@@ -78,8 +84,8 @@ test('REGRESSIO: poistettu muistutusilmoitus ei palaa seuraavalla kierroksella',
 
   assert.deepEqual(noticesWith('r1|').map(n => `${n.key} ${n.status}`), [],
     'poistettu ilmoitus palasi lukemattomana');
-  const stored = await noticesRepo.memory.list();
-  assert.equal(stored.value.filter(n => n.key === created.key).length, 0, 'kantaan kirjoitettiin uusi rivi');
+  const stored = await storedRows(noticesRepo);
+  assert.equal(stored.filter(n => n.key === created.key).length, 0, 'kantaan kirjoitettiin uusi rivi');
 });
 
 // ======================================================== arjen ilmoitus

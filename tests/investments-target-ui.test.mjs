@@ -16,6 +16,7 @@ import { read } from './helpers/sources.mjs';
 import { clearToasts } from '../src/ui/toast.js';
 import { setUser, clearUser } from '../src/data/session.js';
 import { clearAllCollections, investmentsRepo } from '../src/data/collectionsRepo.js';
+import { resetTestStore, storedRow } from './helpers/gateAwareStore.mjs';
 import { resetState, getState, subscribe, setInvestments } from '../src/app/state.js';
 import {
   renderInvestments, initInvestmentForms, openInvestmentForm, closeInvestmentForm
@@ -34,6 +35,8 @@ const flush = async (rounds = 12) => {
 function mount(t) {
   clearUser();
   clearAllCollections();
+  // Portin ollessa auki omistukset kulkevat kantaa jäljittelevälle palvelimelle.
+  resetTestStore();
   resetState();
   const doc = createDocument(`<main>${MARKUP}</main>`);
   const uninstall = installDocument(doc);
@@ -73,6 +76,7 @@ test('tavoitearvo tallentuu, näkyy suhteena omaan tavoitteeseen ja kulkee kanna
   assert.equal(holding.targetValueMinor, 500000);
   assert.match(view.list(), /Arvo on 60 % tavoitearvostasi 5\s000,00\s€\./);
   assert.equal(investmentsRepo.mapping.toRow(holding, USER.id).target_value_minor, 500000);
+  assert.equal((await storedRow(investmentsRepo, holding.id)).targetValueMinor, 500000, 'tavoite ei tallentunut');
 
   // Muokkaus näyttää tallennetun tavoitteen, ja saavutettu tavoite sanotaan.
   openInvestmentForm(holding.id);
@@ -101,6 +105,7 @@ test('lukematon tavoitearvo on virhe eikä poista vanhaa; tyhjä poistaa tavoitt
   view.byId('ifSave').click();
   await flush();
   assert.equal(getState().investments[0].targetValueMinor, null);
+  assert.equal((await storedRow(investmentsRepo, 'h1')).targetValueMinor, null, 'tyhjä ei poistanut tallennettua tavoitetta');
   assert.doesNotMatch(view.list(), /tavoitearvo/i);
 });
 

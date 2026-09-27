@@ -71,6 +71,18 @@ function valeasiakas(vastaus = { data: [], error: null }) {
         merkinta.maybeSingle = true;
         return q;
       },
+      // Sivutettu lataus (collectionsRepo selectOwnedRows, arjen taulut 0014):
+      // järjestys ja rajaus kirjataan. Vastaus on aina yksi sivu, joten vajaa
+      // sivu päättää latauksen. Ilman näitä aallon K avoin portti kaatui
+      // valeasiakkaaseen eikä sovelluksen lukupolkuun.
+      order(sarake) {
+        merkinta.jarjestys = sarake;
+        return q;
+      },
+      range(alku, loppu) {
+        merkinta.rajaus = [alku, loppu];
+        return q;
+      },
       then(res, rej) {
         if (vastaus.throws) return Promise.reject(vastaus.throws).then(res, rej);
         return Promise.resolve({
