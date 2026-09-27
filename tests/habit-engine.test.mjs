@@ -362,6 +362,37 @@ test('edistyminen: kokonaiset päivät, tämä päivä erikseen, keskiarvo ja l�
   assert.ok(Object.isFrozen(r) && Object.isFrozen(r.byDay) && Object.isFrozen(r.byDay[0]) && Object.isFrozen(r.today));
 });
 
+test('REGRESSIO: edistymisteksti taipuu luvun mukaan (yksi päivä, yksi kerta)', () => {
+  // Suunnitelma luotiin eilen: seurannassa on vain yksi kokonainen päivä.
+  // Aiemmin: "Viimeiset 1 päivää: keskimäärin 1 kertaa päivässä".
+  const createdAt = isoZ(summer('2026-09-28', '08:00'));
+  const oneDay = uses => progress({
+    plan: plan({ createdAt, baselinePerDay: 10 }),
+    events: uses.map(time => ev(summer('2026-09-28', time))),
+    todayIso: '2026-09-29',
+    days: 14
+  });
+
+  const once = oneDay(['09:00']);
+  assert.equal(once.trackedDays, 1);
+  assert.match(once.text, /^Eilen: 1 kerta, lähtötaso 10\./);
+  assert.doesNotMatch(once.text, /Viimeiset 1 päivää|1 kertaa|keskimäärin/);
+
+  assert.match(oneDay(['09:00', '11:00', '15:00']).text, /^Eilen: 3 kertaa, lähtötaso 10\./);
+  assert.match(oneDay([]).text, /^Eilen: 0 kertaa, lähtötaso 10\./);
+
+  // Useampi päivä, keskiarvo tasan yksi: yksikkö, ei monikon partitiivi.
+  const twoDays = progress({
+    plan: plan({ createdAt: isoZ(summer('2026-09-27', '08:00')), baselinePerDay: 10 }),
+    events: [ev(summer('2026-09-27', '09:00')), ev(summer('2026-09-28', '09:00'))],
+    todayIso: '2026-09-29',
+    days: 14
+  });
+  assert.equal(twoDays.trackedDays, 2);
+  assert.equal(twoDays.usesPerDay, 1);
+  assert.match(twoDays.text, /^Viimeiset 2 päivää: keskimäärin 1 kerta päivässä, lähtötaso 10\./);
+});
+
 test('edistyminen: seurantaa edeltävät päivät ovat tuntemattomia, eivät nollia', () => {
   const events = [ev(summer('2026-06-08', '09:00')), ev(summer('2026-06-09', '09:00'))];
   const r = progress({ plan: plan({ createdAt: '2026-06-07T12:00:00+03:00' }), events, todayIso: '2026-06-10' });

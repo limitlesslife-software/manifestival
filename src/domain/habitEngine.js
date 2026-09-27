@@ -306,6 +306,14 @@ function formatDecimalFi(value) {
   return String(value).replace('.', ',');
 }
 
+/**
+ * "1 kerta", muuten "N kertaa" (myös 0 ja desimaalit: "0,5 kertaa").
+ * Sama muoto kuin Hyvinvointi-näkymän omassa tekstissä (wellbeingHub.js).
+ */
+function timesFi(value) {
+  return value === 1 ? '1 kerta' : `${formatDecimalFi(value)} kertaa`;
+}
+
 function nextTimeText(nextAtMs, todayIso, zone) {
   const parts = zonedParts(nextAtMs, zone);
   if (!parts) return null;
@@ -519,7 +527,12 @@ export function progress(input) {
   if (usesPerDay === null) {
     text = 'Edistymisestä ei ole vielä tietoa.';
   } else {
-    text = `Viimeiset ${trackedDays} päivää: keskimäärin ${formatDecimalFi(usesPerDay)} kertaa päivässä`;
+    // LUKU TAIPUU. Yksi seurattu päivä on aina eilinen (ikkuna päättyy
+    // eiliseen), eikä yhden päivän "keskimäärin ... päivässä" ole
+    // keskiarvo: "Viimeiset 1 päivää ... 1 kertaa" oli väärää suomea.
+    text = trackedDays === 1
+      ? `Eilen: ${timesFi(uses)}`
+      : `Viimeiset ${trackedDays} päivää: keskimäärin ${timesFi(usesPerDay)} päivässä`;
     text += read.baselinePerDay !== null ? `, lähtötaso ${read.baselinePerDay}.` : '.';
     if (moneySavedMinor !== null && moneySavedMinor > 0) {
       text += ` Säästöä lähtötasoon verrattuna noin ${formatMoney(moneySavedMinor, code)}.`;
