@@ -789,11 +789,47 @@ Aseta testiherätykset 2–3 minuutin päähän.
 - [P0] **Ilmoitukset estetty (Android 13+):** herätys soi silti; sovelluksen
       avaaminen soiton aikana näyttää herätysnäkymän, josta soiton saa
       sammutettua
+- [P0] **Oma herätysmusiikki:** Profiili → Arki → Herätyksen tila →
+      **Valitse musiikki** avaa järjestelmän tiedostovalitsimen ilman
+      lupadialogia (ei tallennustilan lupaa). Valitse puhelimen muistissa
+      oleva kappale → tila näyttää sen nimen. Tapa "Oma musiikki" → herätys
+      soittaa valitun kappaleen herätyksen äänenvoimakkuudella, voimistuen
+      kuten herätysääni; Sammuta lopettaa sen heti. Kirjaa tiedostomuoto
+      (mp3, m4a, ogg)
+- [P0] **Aamukatsaus oletustavalla:** "Aamukatsaus puheena" päällä ja tapa
+      "Herätysääni" (ei puhevaihetta) → Sammuta lopettaa soiton, ja puhelin
+      lukee **kerran** "Hyvää huomenta. Kello on …" sekä lähtöajan ja
+      ensimmäisen menon; katsauksen ajan ilmoitusalueella näkyy
+      "Aamukatsausta luetaan ääneen" ilman Sammuta- ja Torku-painikkeita;
+      puhe loppuu viimeistään minuutissa. **Torku** ei lue katsausta.
+      Katsaus pois päältä → Sammuta ei lue mitään
 
 ### P1
 
 - [P1] Oma herätysääni (järjestelmän äänivalitsin) soi; poistettu tai
       lukukelvoton ääni vaihtuu oletusääneen (`sound_fallback`)
+- [P1] Oma musiikki, tapa "Ääni ja puhe": soi valittu kappale, ja se
+      hiljenee puheen ajaksi; tapa "Herätysääni" ei soita musiikkia, vaikka
+      se on valittu
+- [P1] Oman musiikin varavaihtoehto: poista tai siirrä valittu tiedosto →
+      herätys soittaa herätysäänen (ei hiljaisuutta), ja `sound_fallback`
+      kirjautuu koodilla `music-unavailable`; sovelluksen tila näyttää
+      "ei enää käytettävissä", jos lukuoikeus on poistunut
+- [P1] Oma musiikki ja suora käynnistys: käynnistä puhelin uudelleen
+      avaamatta sitä → herätys soi herätysäänellä; avauksen jälkeen seuraava
+      herätys soittaa taas valitun kappaleen (pysyvä lukuoikeus säilyi)
+- [P1] Musiikin valitsin: pilvitiedosto (esim. Drive) ei tule valituksi
+      herätykseksi, tai sovellus kertoo, ettei tiedostoa voi käyttää;
+      valitsimen sulkeminen ei muuta aiempaa valintaa eikä näytä virhettä
+- [P1] Aamukatsaus puhetavalla ("Puhe" tai "Ääni ja puhe"): soiton aikana
+      puhe on tervehdys ja kellonaika (ei katsausta); katsaus luetaan vasta
+      Sammuta-painalluksen jälkeen. Torkun jälkeen sanottu kellonaika on
+      todellinen, ei alkuperäinen herätysaika
+- [P1] Aamukatsaus uudelleenkäynnistyksen jälkeen avaamatta puhelinta:
+      Sammuta lukee vain tervehdyksen ja kellonajan (menon nimeä ei lueta
+      ennen lukituksen avausta)
+- [P1] Aamukatsaus ilman suomenkielistä puhetta: Sammuta lopettaa soiton,
+      eikä merkkiääntä soi; `speech_fallback` kirjautuu
 - [P1] Voimistuminen: pehmeä alku, kova vaihe vaiheen ajassa, äänenvoimakkuus
       ei laske soiton aikana
 - [P1] Kaksi herätystä samaan aikaan: uudempi soi, vanhempi kirjautuu

@@ -553,6 +553,28 @@ test('uni: tuleva heräämispäivä on virhe; vain toinen kellonaika -> vuoteess
   assert.match(view.q('[data-sleep-row="2026-09-27"]').textContent, /vuoteessa oloaika ei tiedossa/);
 });
 
+test('uni: herätyksen sammutuksesta kirjattu herääminen kerrotaan; käyttäjän muokkaus tekee siitä oman', async t => {
+  // Aukko trace-sleep-no-alarm-derived-wake: herätys kirjaa heräämisen itse
+  // (src/app/alarmEvents.js). Käyttäjä näkee, mistä aika tuli, eikä sitä
+  // esitetä hänen omana kirjauksenaan.
+  const view = mount(t);
+  const { sleepLogsRepo } = await import('../src/data/collectionsRepo.js');
+  await seed(sleepLogsRepo, setSleepLogs, [
+    { id: 'a1', wakeDate: TODAY, plannedWake: '06:30', actualWake: '06:41', source: 'alarm', kind: 'opportunity' }
+  ]);
+  const row = () => view.q(`[data-sleep-row="${TODAY}"]`).textContent.replace(/\s+/g, ' ');
+  assert.match(row(), /heräsi 6\.41 \(herätyksen sammutus\)/);
+
+  clickAction(view, 'sleep-edit', TODAY);
+  type(view.byId('wbhSleepBedtime'), '23:05');
+  clickAction(view, 'sleep-save');
+  await flush();
+  const [log] = getState().sleepLogs;
+  assert.deepEqual([log.actualBedtime, log.actualWake, log.source], ['23:05', '06:41', 'user'],
+    'käyttäjän tallentama rivi on käyttäjän');
+  assert.doesNotMatch(row(), /herätyksen sammutus/);
+});
+
 test('rytmin siirtymä: toistuva viikonlopun siirtymä kerrotaan, väljyyden sisällä ei hälytetä', t => {
   const view = mount(t);
   setProfile({ defaultWakeTime: '07:00', sleepTargetHours: 8 });

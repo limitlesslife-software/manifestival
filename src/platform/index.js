@@ -180,6 +180,8 @@ export const alarms = Object.freeze({
   openExactAlarmSettings: alarmPlatform.openExactAlarmSettings,
   openFullScreenSettings: alarmPlatform.openFullScreenSettings,
   pickAlarmSound: alarmPlatform.pickAlarmSound,
+  /** Oma herätysmusiikki järjestelmän tiedostovalitsimella (ei tallennustilan lupaa). VAIN napautuksesta. */
+  pickAlarmMusic: alarmPlatform.pickAlarmMusic,
   /** Puhu nyt. Selaimessa vain sivun ollessa auki (foregroundOnly). */
   speak: alarmPlatform.speak,
   stopSpeaking: alarmPlatform.stopSpeaking,

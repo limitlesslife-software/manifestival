@@ -48,6 +48,10 @@ import java.util.Set;
  *   handled   lyhyt muisti jo kuitatuista esiintymista (id|paiva|aika), jotta
  *             kuitattu heratys ei ajastu uudelleen seuraavassa synkronoinnissa.
  *   sound     kayttajan valitseman heratysaanen content-URI.
+ *   music     kayttajan valitseman heratysmusiikin content-URI ja nimi
+ *             (pickAlarmMusic). KAYTTAJAN SALAAMASSA: tiedosto itse on
+ *             luettavissa vasta avauksen jalkeen, joten ennen ensimmaista
+ *             avausta soi heratysaani (AlarmMath.soundSources).
  *
  * Tapahtumissa on vain tunniste, laji ja aikaleimat: EI otsikoita eika
  * puhuttua tekstia. Mitaan tasta ei kirjoiteta lokiin.
@@ -71,6 +75,9 @@ final class AlarmStore {
     private static final String KEY_HANDLED = "handled";
     private static final String KEY_SOUND = "sound_uri";
     private static final String KEY_TTS = "tts_status";
+    /** Oma heratysmusiikki (kayttajan salaamassa): content-URI ja tiedoston nimi. */
+    private static final String KEY_MUSIC = "music_uri";
+    private static final String KEY_MUSIC_NAME = "music_name";
 
     /** Tapahtumajonon ylaraja: vanhin putoaa ensin. */
     static final int MAX_EVENTS = 200;
@@ -409,6 +416,40 @@ final class AlarmStore {
         editor.apply();
     }
 
+    /**
+     * Oma heratysmusiikki, tai null: ei valittu TAI puhelin on lukittu
+     * kaynnistyksen jalkeen (kayttajan salaama tallennus ei ole luettavissa).
+     * Silloin soi heratysaani.
+     */
+    static synchronized String musicUri(Context context) {
+        SharedPreferences text = textPrefs(appContext(context));
+        return text == null ? null : text.getString(KEY_MUSIC, null);
+    }
+
+    /** Valitun musiikkitiedoston nimi (nayttoteksti), tai null. */
+    static synchronized String musicName(Context context) {
+        SharedPreferences text = textPrefs(appContext(context));
+        return text == null || !text.contains(KEY_MUSIC) ? null : text.getString(KEY_MUSIC_NAME, null);
+    }
+
+    /**
+     * Tallenna oma heratysmusiikki (null = pois). false, jos puhelin on
+     * lukittu tai tallennus epaonnistui (valinta ei jaa puolitiehen).
+     */
+    static synchronized boolean setMusic(Context context, String uri, String name) {
+        SharedPreferences text = textPrefs(appContext(context));
+        if (text == null) return false;
+        SharedPreferences.Editor editor = text.edit();
+        if (uri == null) {
+            editor.remove(KEY_MUSIC).remove(KEY_MUSIC_NAME);
+        } else {
+            editor.putString(KEY_MUSIC, uri);
+            if (name == null) editor.remove(KEY_MUSIC_NAME);
+            else editor.putString(KEY_MUSIC_NAME, name);
+        }
+        return editor.commit();
+    }
+
     /** "available" | "missing" | "unknown": viimeksi havaittu suomenkielisen puheen tila. */
     static synchronized String ttsStatus(Context context) {
         return prefs(context).getString(KEY_TTS, "unknown");
@@ -420,7 +461,7 @@ final class AlarmStore {
 
     /**
      * Unohda kaikki heratykset, tapahtumat ja kuittaukset (uloskirjautuminen,
-     * tilin poisto). Heratysaanen valinta on laiteasetus ja sailyy.
+     * tilin poisto). Heratysaanen ja -musiikin valinta on laiteasetus ja sailyy.
      */
     static synchronized void clearAll(Context context) {
         prefs(context).edit()

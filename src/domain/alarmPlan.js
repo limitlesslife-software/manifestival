@@ -501,7 +501,11 @@ export function desiredAlarms(input) {
       shortfallMinutes: plan ? plan.shortfallMinutes : 0,
       leaveTime: plan ? plan.leaveTime : null,
       reason,
-      briefText: brief ? brief.text : null
+      briefText: brief ? brief.text : null,
+      // Katsaus ilman ensimmäistä virkettä (tervehdys ja SUUNNITELTU kellonaika):
+      // laite lukee sen herätyksen sammutuksen jälkeen ja sanoo tervehdyksen ja
+      // kellonajan itse puhehetkellä, joten torkun jälkeen aika ei ole vanhentunut.
+      briefDetail: brief ? brief.lines.slice(1).join(' ') || null : null
     });
   }
   return deepFreeze([...alarms.values()].sort((a, b) => a.forDate.localeCompare(b.forDate)));

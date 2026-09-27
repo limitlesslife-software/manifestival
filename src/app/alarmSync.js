@@ -592,7 +592,14 @@ function wakeEntry(alarm) {
       time: alarm.time,
       title: clip(alarm.label, MAX_TITLE) || 'Herätys',
       body: clip(alarm.reason, MAX_BODY),
-      speech: clip(alarm.briefText, MAX_SPEECH),
+      // Herätyksen puhe (puhetavat ja puhevaiheet) on laitteen oma tervehdys ja
+      // kellonaika puhehetkellä. Aamukatsaus EI korvaa sitä: se luetaan kerran
+      // Sammuta-painalluksen jälkeen tavasta riippumatta (§34 "TTS after waking"),
+      // myös oletustavalla "Herätysääni". Laite lisää katsaukseen tervehdyksen ja
+      // sammutushetken kellonajan; tässä on vain loppuosa (briefDetail).
+      speech: null,
+      brief: clip(alarm.briefDetail, MAX_SPEECH),
+      briefOnDismiss: Boolean(alarm.briefText),
       mode: alarm.mode,
       escalation: listOf(alarm.escalation).map(step => ({ afterSeconds: step.afterSeconds, step: step.step })),
       snoozeMinutes: alarm.snoozeMinutes,
@@ -600,7 +607,8 @@ function wakeEntry(alarm) {
       routeDestination: null,
       routeMode: null
     },
-    target: { id: nativeIdFor(alarm.id), ackKey: alarm.id, kind: 'wake', type: 'wake', date: alarm.forDate }
+    // time: suunniteltu herätysaika; sammutuksesta kirjattava unirivi saa sen (alarmEvents).
+    target: { id: nativeIdFor(alarm.id), ackKey: alarm.id, kind: 'wake', type: 'wake', date: alarm.forDate, time: alarm.time }
   };
 }
 

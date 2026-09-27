@@ -18,6 +18,13 @@
 //   - tilin poisto poistaa poistetun käyttäjän avaimen
 //   - tallennus voi epäonnistua (yksityinen ikkuna, kiintiö): silloin muisti
 //     elää vain tämän istunnon ajan. Pahin seuraus on yksi toisto.
+//
+// HERÄÄMISET (wakes): herätyksen sammutus kirjataan unikirjaukseen
+// (src/app/alarmEvents.js). Kirjaus voi joutua odottamaan (unikirjauksia ei
+// vielä ladattu, ei yhteyttä), joten odottava herääminen (päivä ja
+// kellonaika) on täällä, kunnes se on tallennettu, ja sen jälkeen vain
+// päivä (sama sammutus ei kirjaudu toiseen kertaan). Molemmat listat ovat
+// lyhyitä (MAX_WAKE_RECORDS), eikä kellonaikaa kirjoiteta lokiin.
 
 import { normalizeAckLog, emptyAckLog } from '../domain/notificationAck.js';
 
@@ -69,7 +76,49 @@ export function normalizeAckTarget(raw) {
     eventId: idOrNull(raw.eventId),
     placeId: idOrNull(raw.placeId),
     date: typeof raw.date === 'string' && DATE_PATTERN.test(raw.date) ? raw.date : null,
-    leaveTime: typeof raw.leaveTime === 'string' && TIME_PATTERN.test(raw.leaveTime) ? raw.leaveTime : null
+    leaveTime: typeof raw.leaveTime === 'string' && TIME_PATTERN.test(raw.leaveTime) ? raw.leaveTime : null,
+    // Herätyksen suunniteltu kellonaika: sammutuksesta kirjattava unirivi saa sen (plannedWake).
+    time: typeof raw.time === 'string' && TIME_PATTERN.test(raw.time) ? raw.time : null
+  });
+}
+
+/** Odottavia ja kirjattuja heräämisiä enintään (kaksi viikkoa aamuja). */
+export const MAX_WAKE_RECORDS = 14;
+
+const EMPTY_WAKES = Object.freeze({ pending: Object.freeze([]), recorded: Object.freeze([]) });
+
+/** Yksi odottava herääminen {date, time, plannedWake} luotettavaksi, tai null. */
+export function normalizeWakeRecord(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const date = typeof raw.date === 'string' && DATE_PATTERN.test(raw.date) ? raw.date : null;
+  const time = typeof raw.time === 'string' && TIME_PATTERN.test(raw.time) ? raw.time : null;
+  if (!date || !time) return null;
+  const plannedWake = typeof raw.plannedWake === 'string' && TIME_PATTERN.test(raw.plannedWake) ? raw.plannedWake : null;
+  return Object.freeze({ date, time, plannedWake });
+}
+
+/**
+ * Heräämismuisti luotettavaksi: odottavat (yksi per päivä, uusimmat
+ * MAX_WAKE_RECORDS) ja kirjattujen päivät (uusimmat MAX_WAKE_RECORDS).
+ */
+export function normalizeWakes(raw) {
+  if (!raw || typeof raw !== 'object') return EMPTY_WAKES;
+  const pending = [];
+  const seen = new Set();
+  for (const item of Array.isArray(raw.pending) ? raw.pending : []) {
+    const record = normalizeWakeRecord(item);
+    if (!record || seen.has(record.date)) continue;
+    seen.add(record.date);
+    pending.push(record);
+  }
+  const recorded = [];
+  for (const date of Array.isArray(raw.recorded) ? raw.recorded : []) {
+    if (typeof date !== 'string' || !DATE_PATTERN.test(date) || recorded.includes(date)) continue;
+    recorded.push(date);
+  }
+  return Object.freeze({
+    pending: Object.freeze(pending.slice(-MAX_WAKE_RECORDS)),
+    recorded: Object.freeze(recorded.slice(-MAX_WAKE_RECORDS))
   });
 }
 
@@ -87,13 +136,13 @@ function normalizeTargets(list) {
   return Object.freeze(out);
 }
 
-const EMPTY_STATE = Object.freeze({ log: emptyAckLog(), targets: Object.freeze([]) });
+const EMPTY_STATE = Object.freeze({ log: emptyAckLog(), targets: Object.freeze([]), wakes: EMPTY_WAKES });
 
 /**
  * Lue käyttäjän kuittausmuisti. Ei koskaan heitä: puuttuva, rikkinäinen tai
  * toisen muotoinen sisältö on tyhjä muisti.
  *
- * @returns {{log:object, targets:ReadonlyArray<object>}}
+ * @returns {{log:object, targets:ReadonlyArray<object>, wakes:{pending:Array, recorded:Array}}}
  */
 export function loadAckState(userId) {
   const key = ackStoreKey(userId);
@@ -110,7 +159,10 @@ export function loadAckState(userId) {
   try {
     const parsed = JSON.parse(text);
     if (!parsed || typeof parsed !== 'object' || parsed.v !== STORE_VERSION) return EMPTY_STATE;
-    return Object.freeze({ log: normalizeAckLog(parsed.log), targets: normalizeTargets(parsed.targets) });
+    // wakes puuttuu vanhasta muodosta: tyhjä heräämismuisti (sama versio, lisäkenttä).
+    return Object.freeze({
+      log: normalizeAckLog(parsed.log), targets: normalizeTargets(parsed.targets), wakes: normalizeWakes(parsed.wakes)
+    });
   } catch {
     return EMPTY_STATE;
   }
@@ -120,12 +172,14 @@ export function loadAckState(userId) {
  * Tallenna käyttäjän kuittausmuisti.
  * @returns {{ok:boolean, persistent:boolean}}
  */
-export function saveAckState(userId, { log, targets } = {}) {
+export function saveAckState(userId, { log, targets, wakes } = {}) {
   const key = ackStoreKey(userId);
   if (!key) return { ok: false, persistent: false };
   let text;
   try {
-    text = JSON.stringify({ v: STORE_VERSION, log: normalizeAckLog(log), targets: normalizeTargets(targets) });
+    text = JSON.stringify({
+      v: STORE_VERSION, log: normalizeAckLog(log), targets: normalizeTargets(targets), wakes: normalizeWakes(wakes)
+    });
   } catch {
     return { ok: false, persistent: false };
   }

@@ -28,7 +28,8 @@ import { renderProfileSegments, initProfileSegments } from '../src/app/views/pro
 import {
   renderDailySettings, initDailySettings, resetDailySettings, setAlarmPlatformForTests,
   ESCALATION_PRESETS, escalationFor, presetOf, validateSleepDraft, validateRoutineDraft, routineFromDraft,
-  validateAlarmDraft, alarmFromDraft, validateMealDraft, mealRhythmFromDraft, readAlarmStatus, nextAlarmFor
+  validateAlarmDraft, alarmFromDraft, validateMealDraft, mealRhythmFromDraft, readAlarmStatus, nextAlarmFor,
+  alarmModeHint, musicPickNotice
 } from '../src/app/views/dailySettings.js';
 import {
   renderGuidanceSettings, initGuidanceSettings, resetGuidanceSettings, validateGuidanceDraft, guidanceChangesFrom
@@ -188,7 +189,14 @@ test('luonnosten tarkistukset: rajat, tyhjä ei ole nolla, kelvollinen läpäise
 
 test('herätyksen tila luetaan varovasti: tuntematon on null, ei "kyllä"', () => {
   assert.deepEqual({ ...readAlarmStatus({ exactAllowed: true, fullScreenAllowed: false, soundName: ' Aamu ' }) },
-    { supported: null, exact: true, fullScreen: false, soundName: 'Aamu', soundPicked: null, reason: null });
+    {
+      supported: null, exact: true, fullScreen: false, soundName: 'Aamu', soundPicked: null,
+      musicPicked: null, musicName: null, musicLost: null, reason: null
+    });
+  // Oma herätysmusiikki: laite kertoo valinnan, nimen ja menetetyn valinnan.
+  assert.equal(readAlarmStatus({ musicPicked: true, musicName: ' Aamulaulu.mp3 ' }).musicName, 'Aamulaulu.mp3');
+  assert.equal(readAlarmStatus({ musicPicked: false, musicLost: true }).musicLost, true);
+  assert.equal(readAlarmStatus({ musicPicked: 'true' }).musicPicked, null, 'vain tosi boolean');
   // ManifestivalAlarm.status() kertoo vain soundPicked-lipun: valittu ääni ei näy oletusäänenä.
   assert.equal(readAlarmStatus({ supported: true, exact: true, fullScreen: true, soundPicked: true }).soundPicked, true);
   assert.equal(readAlarmStatus({ canScheduleExactAlarms: false }).exact, false);
@@ -664,9 +672,93 @@ test('oikea alusta Nodessa: ei natiivikuorta eikä herätysliitäntää -> selai
   assert.match(text($('dailyAlarmStatus')), /Herätys toimii vain Android-sovelluksessa/);
 });
 
+function musicAlarms({ status, pick }) {
+  const alarms = fakeAlarms({ status });
+  alarms.calls.pickAlarmMusic = 0;
+  let outcome = pick;
+  alarms.pickResult = next => { outcome = next; };
+  alarms.pickAlarmMusic = async () => { alarms.calls.pickAlarmMusic += 1; return outcome; };
+  return alarms;
+}
+
+test('oma musiikki: "Valitse musiikki" avaa valitsimen vain napautuksesta; tila kertoo valinnan rehellisesti', async () => {
+  // trace-alarm-music-mode-fake: "Oma musiikki" oli valittavissa, mutta
+  // musiikkia ei voinut valita, ja soi herätysääni.
+  const base = { exactAllowed: true, fullScreenAllowed: true };
+  const alarms = musicAlarms({ status: { ...base, musicPicked: false }, pick: { ok: true, picked: true, title: 'Aamulaulu.mp3' } });
+  const { $ } = mount({ alarmPlatform: { native: true, alarms } });
+  await flush();
+  assert.equal(alarms.calls.pickAlarmMusic, 0, 'piirto ja tilan luku eivät avaa valitsinta');
+  assert.equal(accessibleName($('dsAlarmMusicBtn')).startsWith('Valitse musiikki'), true);
+  assert.match(text($('dailyAlarmStatus')), /Oma herätysmusiikki: ei valittu/);
+  assert.match(text($('dsAlarmMusicHint')), /Ilman valittua musiikkia tapa Oma musiikki soi herätysäänellä/);
+
+  // Valinta onnistuu: nimi tulee laitteen tilasta, ei valitsimen vastauksesta.
+  alarms.set({ ...base, musicPicked: true, musicName: 'Aamulaulu.mp3' });
+  $('dsAlarmMusicBtn').click();
+  await flush();
+  assert.equal(alarms.calls.pickAlarmMusic, 1);
+  assert.equal(alarms.calls.pickAlarmSound, 0, 'musiikki ei avaa herätysäänen valitsinta');
+  assert.match(text($('dailyAlarmStatus')), /Oma herätysmusiikki: Aamulaulu\.mp3/);
+  assert.match(text($('dsAlarmMusicHint')), /Soi tavoilla Oma musiikki ja Ääni ja puhe/);
+  assert.equal($('dsAlarmMusicNotice'), null);
+  assert.match(text($('toastHost')), /Herätysmusiikki valittu/);
+
+  // Tiedostoon ei saatu pysyvää oikeutta: selitys, aiempi valinta pysyy.
+  alarms.pickResult({ ok: false, supported: true, picked: false, title: null, code: 'not-persistable' });
+  $('dsAlarmMusicBtn').click();
+  await flush();
+  assert.match(text($('dsAlarmMusicNotice')), /ei anna sovellukselle pysyvää lupaa lukea sitä.*Aiempi valinta on ennallaan/);
+  assert.match(text($('dailyAlarmStatus')), /Oma herätysmusiikki: Aamulaulu\.mp3/);
+
+  // Käyttäjä sulki valitsimen itse: ei virheilmoitusta.
+  alarms.pickResult({ ok: false, supported: true, picked: false, title: null, code: 'cancelled' });
+  $('dsAlarmMusicBtn').click();
+  await flush();
+  assert.equal($('dsAlarmMusicNotice'), null);
+
+  // Tiedosto tai lukuoikeus hävisi: ei väitetä valituksi.
+  alarms.set({ ...base, musicPicked: false, musicLost: true });
+  $('dsAlarmStatusRefresh').click();
+  await flush();
+  assert.match(text($('dailyAlarmStatus')), /Oma herätysmusiikki: ei enää käytettävissä/);
+  assert.match(text($('dsAlarmMusicHint')), /herätys soi herätysäänellä\. Valitse musiikki uudelleen/);
+  assert.equal(alarms.calls.pickAlarmMusic, 3, 'vain kolme napautusta');
+});
+
+test('oma musiikki: vanhassa sovellusversiossa (ei pickAlarmMusicia) ei painiketta eikä väitettä', async () => {
+  const alarms = fakeAlarms({ status: { exactAllowed: true, fullScreenAllowed: true } });
+  const { $ } = mount({ alarmPlatform: { native: true, alarms } });
+  await flush();
+  assert.equal($('dsAlarmMusicBtn'), null);
+  assert.doesNotMatch(text($('dailyAlarmStatus')), /Oma herätysmusiikki/);
+});
+
+test('herätyksen tapa kertoo, mitä soi: Oma musiikki ilman valintaa on herätysääni', async () => {
+  assert.equal(alarmModeHint(ALARM_MODE.SOUND), null);
+  assert.equal(alarmModeHint(ALARM_MODE.SPEECH), null);
+  const { $ } = mount();
+  assert.equal($('dsAlarmModeHint'), null, 'oletustapa ei tarvitse selitystä');
+  choose($('dsAlarmMode'), ALARM_MODE.MUSIC);
+  assert.match(text($('dsAlarmModeHint')), /valitse kappale kohdasta "Valitse musiikki"\. Jos musiikkia ei ole valittu tai sitä ei voi soittaa, soi herätysääni\./);
+  assert.equal($('dsAlarmMode').getAttribute('aria-describedby'), 'dsAlarmModeHint');
+  choose($('dsAlarmMode'), ALARM_MODE.COMBINATION);
+  assert.match(text($('dsAlarmModeHint')), /oma musiikki, jos olet valinnut sen, muuten herätysääni/);
+});
+
+test('musiikin valinnan tulos: epäonnistuminen selitetään, onnistuminen ja peruutus eivät', () => {
+  assert.equal(musicPickNotice({ ok: true, picked: true }), null);
+  assert.equal(musicPickNotice({ ok: false, code: 'cancelled' }), null);
+  assert.match(musicPickNotice({ ok: false, code: 'not-persistable' }), /pysyvää lupaa/);
+  assert.match(musicPickNotice({ ok: false, code: 'unsupported' }), /Tätä tiedostoa ei voi käyttää herätyksenä/);
+  for (const outcome of [null, undefined, { ok: false, code: 'timeout' }, { ok: false, code: 'unavailable' }]) {
+    assert.match(musicPickNotice(outcome), /Musiikin valinta ei onnistunut\. Aiempi valinta on ennallaan\./);
+  }
+});
+
 test('näkymä ei kutsu asetusten avausta tai äänen valintaa muualta kuin napautuksesta', () => {
   const source = readCode('src/app/views/dailySettings.js');
-  for (const method of ['openExactAlarmSettings', 'openFullScreenSettings', 'pickAlarmSound']) {
+  for (const method of ['openExactAlarmSettings', 'openFullScreenSettings', 'pickAlarmSound', 'pickAlarmMusic']) {
     const uses = [...source.matchAll(new RegExp(`'${method}'`, 'g'))].length;
     assert.equal(uses, 1, `${method} mainitaan vain napautuksen käsittelijässä`);
   }
@@ -674,6 +766,18 @@ test('näkymä ei kutsu asetusten avausta tai äänen valintaa muualta kuin napa
 });
 
 // ================================================================ Arki: aamukatsaus
+
+test('aamukatsauksen teksti vastaa laitteen toimintaa: sammutuksen jälkeen, tavasta riippumatta, ei torkussa', () => {
+  // claims-morning-brief-silent: teksti lupasi katsauksen sammutuksen
+  // jälkeen, mutta oletustavalla (herätysääni) mitään ei kuulunut.
+  const { $ } = mount();
+  const hint = text($('dsMorningBriefHint'));
+  assert.match(hint, /Kun sammutat herätyksen Sammuta-painikkeella, puhelin lukee kerran lyhyen katsauksen/);
+  assert.match(hint, /tavasta riippumatta, myös pelkällä herätysäänellä/);
+  assert.match(hint, /Torkku ei lue katsausta/);
+  assert.match(hint, /ilman tekoälyä/);
+  assert.equal($('dsMorningBrief').getAttribute('aria-describedby'), 'dsMorningBriefHint');
+});
 
 test('aamukatsaus tallentuu heti; epäonnistuminen palauttaa ruudun tallennettuun', async () => {
   const { $ } = mount();

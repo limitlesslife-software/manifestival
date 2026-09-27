@@ -45,9 +45,14 @@ import java.util.TimeZone;
  *     (Android 14+: vain jos canUseFullScreenIntent(), muuten tavallinen
  *     nouseva ilmoitus), painikkeet Sammuta ja Torku.
  *   - Aani: USAGE_ALARM, kayttajan valitsema aani tai jarjestelman
- *     oletusheratysaani. Puhe: TextToSpeech fi-FI, USAGE_ALARM. Jos
- *     suomenkielista puhetta ei ole, soitetaan aani ja kirjataan
- *     varavaihtoehto (speech_fallback).
+ *     oletusheratysaani. Tavoilla "Oma musiikki" ja "Aani ja puhe" ensin
+ *     kayttajan valitsema musiikki (pickAlarmMusic), samoin voimistuen;
+ *     jos sita ei voi soittaa, heratysaani (AlarmMath.soundSources).
+ *     Puhe: TextToSpeech fi-FI, USAGE_ALARM. Jos suomenkielista puhetta ei
+ *     ole, soitetaan aani ja kirjataan varavaihtoehto (speech_fallback).
+ *   - Aamukatsaus: kun kayttaja on ottanut sen kayttoon, Sammuta lopettaa
+ *     soiton ja katsaus luetaan KERRAN (tervehdys, kellonaika ja
+ *     katsaus), enintaan minuutti, tavasta riippumatta. Torkku ei lue sita.
  *   - Voimistuminen: vaiheet (soft, speech, loud, repeat_speech) omina
  *     hetkinaan; aani ei koskaan hiljene soiton aikana.
  *   - KOVA RAJA: 10 minuuttia. Sitten automaattinen torkku KERRAN ja sen
@@ -139,6 +144,17 @@ public class AlarmService extends Service {
         AlarmService service = running;
         if (service == null || id == null) return;
         service.main.post(() -> service.stopFor(id));
+    }
+
+    /**
+     * Heratyksen Sammuta, kun aamukatsaus on kaytossa: soitto seis ja
+     * katsaus luetaan kerran. Jos heratys ei soi tassa palvelussa (esim.
+     * varailmoitus), toimii kuten stopRinging. Mista tahansa saikeesta.
+     */
+    static void stopRingingWithBrief(String id) {
+        AlarmService service = running;
+        if (service == null || id == null) return;
+        service.main.post(() -> service.dismissWithBrief(id));
     }
 
     /**
@@ -334,7 +350,7 @@ public class AlarmService extends Service {
         acquireWakeLock(AlarmMath.MAX_RING_MS + WAKE_LOCK_MARGIN_MS);
         AlarmStore.recordEvent(this, AlarmStore.EVENT_DELIVERED, id, entry.optString("kind"), null);
 
-        String mode = AlarmMath.isMode(entry.optString("mode")) ? entry.optString("mode") : AlarmMath.MODE_SOUND;
+        String mode = AlarmMath.modeOrDefault(entry.optString("mode"));
         List<Object[]> steps = escalationOf(entry);
         boolean needsSpeech = AlarmMath.modeSpeaks(mode);
         for (Object[] step : steps) if (AlarmMath.isSpeechStep((String) step[1])) needsSpeech = true;
@@ -408,9 +424,67 @@ public class AlarmService extends Service {
 
     private void speakRingText(JSONObject entry) {
         String text = AlarmMath.cleanText(entry.optString("speech", ""), AlarmMath.MAX_SPEECH_LENGTH);
+        // Heratys ilman omaa puhetta: tervehdys ja kellonaika puhehetkella (oikein
+        // myos torkun jalkeen ja lukittuna). Aamukatsaus EI korvaa tata: se luetaan
+        // Sammuta-painalluksen jalkeen (dismissWithBrief).
+        if (text == null && AlarmMath.KIND_WAKE.equals(entry.optString("kind"))) text = greeting(System.currentTimeMillis());
         if (text == null) text = AlarmMath.cleanText(entry.optString("title", ""), AlarmMath.MAX_TITLE_LENGTH);
         if (text == null) text = getString(R.string.alarm_default_label);
         speak(text, entry, null);
+    }
+
+    /** "Hyvaa huomenta. Kello on 6.48." vuorokaudenajan mukaan (resursseista). */
+    private String greeting(long nowMs) {
+        TimeZone zone = TimeZone.getDefault();
+        int index = AlarmMath.greetingIndex(nowMs, zone);
+        int res = index == 0 ? R.string.alarm_greeting_morning
+            : index == 1 ? R.string.alarm_greeting_day : R.string.alarm_greeting_evening;
+        return getString(res, AlarmMath.spokenClock(nowMs, zone));
+    }
+
+    // ------------------------------------------------------------ aamukatsaus
+
+    /**
+     * Sammuta + aamukatsaus: soitto seis, nakyma kiinni ja katsaus kerran.
+     * Vain, jos juuri tama heratys soi tassa palvelussa; muuten kuten
+     * stopFor (ei soittoa, jonka jalkeen puhua).
+     */
+    private void dismissWithBrief(String id) {
+        JSONObject entry = id != null && id.equals(ringingId) ? ringing : null;
+        if (entry == null) {
+            stopFor(id);
+            return;
+        }
+        haltRing();
+        AlarmActivity.closeFor(id);
+        if (!startBrief(entry)) stopIfIdle();
+    }
+
+    /**
+     * Lue aamukatsaus kerran: tervehdys ja kellonaika nyt + katsauksen
+     * loppuosa (jos luettavissa; ennen ensimmaista lukituksen avausta vain
+     * tervehdys ja kellonaika). Enintaan SPOKEN_MAX_MS. Etualan ilmoitus
+     * vaihtuu hiljaiseksi palveluilmoitukseksi: soivan heratyksen Sammuta- ja
+     * Torku-painikkeet eivat jaa nakyviin. Jos puhetta ei ole, kirjataan
+     * speech_fallback ilman aanta (soitto on jo sammutettu).
+     *
+     * @return true, jos katsaus alkoi (palvelu jaa kayntiin sen ajaksi)
+     */
+    private boolean startBrief(JSONObject ringEntry) {
+        if (!enterForeground(serviceNotification(this, R.string.alarm_brief_running))) return false;
+        String id = ringEntry.optString("id");
+        JSONObject brief = new JSONObject();
+        AlarmScheduler.put(brief, "id", id);
+        AlarmScheduler.put(brief, "kind", ringEntry.optString("kind"));
+        AlarmScheduler.put(brief, "brief", true);
+        speaking = brief;
+        speechFallbackRecorded = false;
+        acquireWakeLock(SPOKEN_MAX_MS + WAKE_LOCK_MARGIN_MS);
+        String text = AlarmMath.briefSpeech(greeting(System.currentTimeMillis()), ringEntry.optString("brief", ""));
+        initTts();
+        speak(text, brief, () -> finishSpoken(id));
+        later(SPOKEN_MAX_MS, () -> finishSpoken(id));
+        return true;
     }
 
     /** 10 minuuttia soittoa ilman kuittausta: automaattinen torkku kerran, sitten loppu. */
@@ -621,7 +695,8 @@ public class AlarmService extends Service {
         }
         if (entry != null && entry == ringing) {
             if (player == null) startSound(entry, AlarmMath.stepVolume(AlarmMath.STEP_SOFT));
-        } else if (entry != null && entry == speaking) {
+        } else if (entry != null && entry == speaking && !entry.optBoolean("brief", false)) {
+            // Aamukatsaus ei soita merkkiaanta: heratys on juuri sammutettu (tapahtuma riittaa).
             playShortTone();
         }
         if (done != null) done.run();
@@ -649,15 +724,25 @@ public class AlarmService extends Service {
             .build();
     }
 
-    private List<Uri> soundCandidates(JSONObject entry) {
+    /** Musiikki heratyksena: USAGE_ALARM (heratyksen aanenvoimakkuus ja ohitukset), sisaltona musiikki. */
+    private static AudioAttributes alarmMusicAudio() {
+        return new AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_ALARM)
+            .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+            .build();
+    }
+
+    /** Lahteen (AlarmMath.SOURCE_*) osoitteet soittojarjestyksessa. */
+    private List<Uri> urisFor(String source, String music, String picked) {
         List<Uri> list = new ArrayList<>();
-        String picked = AlarmStore.soundUri(this);
-        if (picked != null) {
+        String single = AlarmMath.SOURCE_MUSIC.equals(source) ? music : AlarmMath.SOURCE_PICKED.equals(source) ? picked : null;
+        if (single != null) {
             try {
-                list.add(Uri.parse(picked));
+                list.add(Uri.parse(single));
             } catch (RuntimeException ignored) {
-                // rikkinainen URI: oletus alla
+                // rikkinainen URI: seuraava lahde
             }
+            return list;
         }
         for (int type : new int[] { RingtoneManager.TYPE_ALARM, RingtoneManager.TYPE_NOTIFICATION, RingtoneManager.TYPE_RINGTONE }) {
             try {
@@ -671,41 +756,64 @@ public class AlarmService extends Service {
         return list;
     }
 
+    /**
+     * Aani soimaan: tavan mukaan oma musiikki, valittu heratysaani tai
+     * oletusaani (AlarmMath.soundSources), sama voimistuminen kaikille.
+     * Musiikki, jota ei voi soittaa (poistettu, oikeus menetetty, puhelin
+     * lukittu kaynnistyksen jalkeen), vaihtuu heratysaaneen ja kirjataan
+     * (sound_fallback, AlarmMath.soundFallbackCode).
+     */
     private void startSound(JSONObject entry, float level) {
         if (player != null) {
             setVolume(Math.max(volume, level));
             return;
         }
-        List<Uri> candidates = soundCandidates(entry);
-        boolean pickedFirst = AlarmStore.soundUri(this) != null;
-        for (int index = 0; index < candidates.size(); index++) {
-            MediaPlayer candidate = new MediaPlayer();
-            try {
-                candidate.setAudioAttributes(alarmAudio());
-                candidate.setDataSource(this, candidates.get(index));
-                candidate.setLooping(true);
-                candidate.prepare();
-                player = candidate;
-                volume = 0f;
-                setVolume(level);
-                candidate.start();
-                if (index > 0 && pickedFirst) {
-                    // Valittu aani ei soinut (poistettu tai ei luettavissa): oletusaani.
-                    AlarmStore.recordEvent(this, AlarmStore.EVENT_SOUND_FALLBACK, entry.optString("id"), entry.optString("kind"), null);
+        String mode = AlarmMath.modeOrDefault(entry.optString("mode"));
+        String music = AlarmMath.modePrefersMusic(mode) ? AlarmStore.musicUri(this) : null;
+        String picked = AlarmStore.soundUri(this);
+        String[] sources = AlarmMath.soundSources(mode, music != null, picked != null);
+        String played = null;
+        for (String source : sources) {
+            for (Uri uri : urisFor(source, music, picked)) {
+                if (tryPlay(uri, level, AlarmMath.SOURCE_MUSIC.equals(source))) {
+                    played = source;
+                    break;
                 }
-                return;
-            } catch (java.io.IOException | RuntimeException failed) {
-                try {
-                    candidate.release();
-                } catch (RuntimeException ignored) {
-                    // jo vapautettu
-                }
-                player = null;
             }
+            if (played != null) break;
         }
-        JSONObject extra = new JSONObject();
-        AlarmScheduler.put(extra, "code", "no-sound");
+        String code = AlarmMath.soundFallbackCode(mode, sources, played);
+        if (code == null) return;
+        JSONObject extra = null;
+        if (!code.isEmpty()) {
+            extra = new JSONObject();
+            AlarmScheduler.put(extra, "code", code);
+        }
         AlarmStore.recordEvent(this, AlarmStore.EVENT_SOUND_FALLBACK, entry.optString("id"), entry.optString("kind"), extra);
+    }
+
+    /** Yksi osoite soimaan (silmukka, tason voimakkuus). false = ei soinut, soitin vapautettu. */
+    private boolean tryPlay(Uri uri, float level, boolean music) {
+        MediaPlayer candidate = new MediaPlayer();
+        try {
+            candidate.setAudioAttributes(music ? alarmMusicAudio() : alarmAudio());
+            candidate.setDataSource(this, uri);
+            candidate.setLooping(true);
+            candidate.prepare();
+            player = candidate;
+            volume = 0f;
+            setVolume(level);
+            candidate.start();
+            return true;
+        } catch (java.io.IOException | RuntimeException failed) {
+            try {
+                candidate.release();
+            } catch (RuntimeException ignored) {
+                // jo vapautettu
+            }
+            player = null;
+            return false;
+        }
     }
 
     private void setVolume(float level) {
@@ -938,9 +1046,14 @@ public class AlarmService extends Service {
 
     /** Hiljainen palveluilmoitus puhumisen ajaksi. */
     static Notification serviceNotification(Context context) {
+        return serviceNotification(context, R.string.alarm_service_running);
+    }
+
+    /** Hiljainen palveluilmoitus annetulla tekstilla (esim. aamukatsausta luetaan). */
+    static Notification serviceNotification(Context context, int textRes) {
         return new NotificationCompat.Builder(context, SERVICE_CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_popup_reminder)
-            .setContentTitle(context.getString(R.string.alarm_service_running))
+            .setContentTitle(context.getString(textRes))
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setOngoing(true)
