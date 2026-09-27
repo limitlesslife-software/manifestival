@@ -22,7 +22,7 @@ import {
   projectFiles, shaOf, smokeEntry, smokeOutput, stubFetch, stubFs, stubGit, testOutput, testsEntry
 } from './helpers/activation-history.mjs';
 import {
-  appendJournal, bootSmokeCommand, planNext, readJournal, readState, recordBootSmoke, recordCandidateTests,
+  acceptancePack, appendJournal, bootSmokeCommand, planNext, readJournal, readState, recordBootSmoke, recordCandidateTests,
   recordTechnicalAcceptance, resolveJournalPath, rollbackPack, runOrchestrator, technicalAcceptance, verifyRollback
 } from '../tools/activation/orchestrate.mjs';
 import { TECHNICAL_REQUIREMENTS } from '../tools/activation/acceptance-policy.mjs';
@@ -732,7 +732,7 @@ test('KRIITTINEN: käynnistyssavun kirjaus: vain PASS n/n nollalaskureilla, sama
     ['E:n savu D:n kirjauksena', { wave: 'E', sha: d, smokeText: smokeOutput({ label: 'E', sha: d }) }, /ei ole aallon E lukittu deployTarget/],
     ['E:n SHA D:lle', { wave: 'D', sha: shaOf('E'), smokeText: smokeOutput({ label: 'D', sha: shaOf('E') }) }, /ei ole aallon D lukittu deployTarget/],
     ['lyhyt SHA', { wave: 'D', sha: '0202020', smokeText: text }, /40-merkkisen/],
-    ['ei junan aalto', { wave: 'B', sha: d, smokeText: text }, /ei ole junan C–J aalto/]
+    ['ei junan aalto', { wave: 'B', sha: d, smokeText: text }, /ei ole junan C–K aalto/]
   ]) {
     const result = recordBootSmoke(s.deps, opts);
     assert.equal(result.ok, false, name);
@@ -837,6 +837,16 @@ test('peruutuspaketti junan viimeiselle aallolle K: tila J, v25, ei seuraavan aa
   assert.match(pack, new RegExp(`git switch --detach ${shaOf('K')}`));
   assert.match(pack, /nosta CACHE_VERSION v24 -> v25/);
   assert.match(pack, /v25 on aallon - varattu versio/);
+});
+
+test('hyväksyntäpaketti: APK J:n jälkeen (verify_0013), ei siirry junan viimeisen aallon K taakse', () => {
+  const lock = lockFrom(stubGit());
+  const of = wave => acceptancePack(wave, lock.waves.find(w => w.wave === wave)).join('\n');
+  assert.match(of('J'), /J:n jälkeen: APK \(docs\/activation\/ANDROID-ACCEPTANCE-BUILD\.md; vasta kun verify_0013 = 0 ja J on tuotannossa\)/);
+  assert.equal(/APK/.test(of('K')), false, 'APK-ehto siirtyi K:hon');
+  assert.match(of('K'), /K on junan viimeinen aalto/);
+  assert.match(of('K'), /supabase\/verify\/verify_0014\.sql \(vain luku\) = 0 poikkeavaa/);
+  assert.equal(/APK|viimeinen aalto/.test(of('I')), false);
 });
 
 // =====================================================================
