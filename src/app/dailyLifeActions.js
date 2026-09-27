@@ -45,6 +45,9 @@ import { normalizeWellbeingCheckin, validateWellbeingCheckin } from '../domain/w
 import { MAX_OBSERVATIONS_PER_PLACE } from '../domain/dailyLife.js';
 import { showError, notify } from '../ui/toast.js';
 import { confirmAction } from '../ui/confirm.js';
+// Lähtökori (rooli W): menon tallennus ja tapakirjaus odottavat verkkoa
+// laitteella eivätkä peru näkyvästi. Ks. src/app/dailyLifeOutbox.js.
+import { shouldSkipNetwork, enqueueAfterFailure, forgetDailyLifeEntity } from './dailyLifeOutbox.js';
 
 /** Kerran istunnossa ja taulua kohti: "säilyy vain tämän istunnon ajan". */
 const volatileWarningsShown = new Set();
@@ -66,10 +69,15 @@ const DISCARDED = Object.freeze({ ok: false, discarded: true });
  * Kirjoita kantaan ja peru epäonnistuessa. `undo` ajetaan vain, jos
  * istunto on yhä sama; muuten tila on jo tyhjennetty eikä sitä kosketa.
  */
-async function persist(write, undo, startedIn) {
-  const result = await write();
+async function persist(write, undo, startedIn, outboxOp = null) {
+  // Tiedossa oleva offline-tila: lähtökoriin kelpaava tallennus ei odota
+  // verkkokutsun aikakatkaisua (sama kuin tehtävien createTask).
+  const skipped = outboxOp && shouldSkipNetwork(outboxOp.table);
+  const result = skipped ? { ok: false, error: null, skipped: true } : await write();
   if (!isSameSession(startedIn)) return DISCARDED;
   if (!result || !result.ok) {
+    // Verkko tai istunto: tallennus jää laitteelle eikä tilaa peruta.
+    if (outboxOp && enqueueAfterFailure(outboxOp, result)) return { ok: true, queued: true };
     undo();
     showError(result && result.error);
     return { ok: false, error: result && result.error };
@@ -102,8 +110,9 @@ export async function saveCalendarEvent(input = {}) {
   const result = await persist(
     () => (previous ? calendarEventsRepo.update(safe) : calendarEventsRepo.insert(safe)),
     () => (previous ? replaceCalendarEventInState(safe.id, previous) : removeCalendarEventFromState(safe.id)),
-    startedIn);
-  return result.ok ? { ok: true, event: safe } : result;
+    startedIn,
+    { table: 'calendarEvents', operation: previous ? 'update' : 'create', entity: safe, base: previous });
+  return result.ok ? { ok: true, event: safe, queued: result.queued === true } : result;
 }
 
 function withOwnPlace(event) {
@@ -127,7 +136,10 @@ export async function deleteCalendarEvent(id, { confirm = confirmAction } = {}) 
 
   const startedIn = sessionSnapshot();
   removeCalendarEventFromState(id);
-  return persist(() => calendarEventsRepo.remove(id), () => addCalendarEventToState(previous), startedIn);
+  const result = await persist(() => calendarEventsRepo.remove(id), () => addCalendarEventToState(previous), startedIn);
+  // Poistettu meno ei saa palata lähtökorin toistossa.
+  if (result.ok) forgetDailyLifeEntity('calendarEvents', id);
+  return result;
 }
 
 /** Ohita toistuvan menon yksi kerta (idempotentti). */
@@ -393,8 +405,9 @@ export async function logHabitEvent({ planId, action, occurredAt = null, note = 
   addHabitEventToState(event);
   warnIfVolatile(habitEventsRepo, 'Tapakirjaukset');
   const result = await persist(() => habitEventsRepo.insert(event),
-    () => removeHabitEventFromState(event.id), startedIn);
-  return result.ok ? { ok: true, event } : result;
+    () => removeHabitEventFromState(event.id), startedIn,
+    { table: 'habitEvents', operation: 'create', entity: event });
+  return result.ok ? { ok: true, event, queued: result.queued === true } : result;
 }
 
 /** Poista yksi tapakirjaus (esim. vahingossa napautettu). */
@@ -403,7 +416,9 @@ export async function deleteHabitEvent(id) {
   if (!previous) return { ok: false };
   const startedIn = sessionSnapshot();
   removeHabitEventFromState(id);
-  return persist(() => habitEventsRepo.remove(id), () => addHabitEventToState(previous), startedIn);
+  const result = await persist(() => habitEventsRepo.remove(id), () => addHabitEventToState(previous), startedIn);
+  if (result.ok) forgetDailyLifeEntity('habitEvents', id);
+  return result;
 }
 
 // ------------------------------------------------------------ liikunta

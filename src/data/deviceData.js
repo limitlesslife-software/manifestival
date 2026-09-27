@@ -25,6 +25,8 @@ import { purgeQueue } from './offlineQueueStore.js';
 import { purgeTimerData } from './timerStore.js';
 import { clearDevicePreferences, purgeUserPreferences } from './preferences.js';
 import { clearSchemaCache } from './schemaProbe.js';
+import { purgeAckState } from './alarmAckStore.js';
+import { purgeOutbox } from './dailyLifeOutboxStore.js';
 
 /** Mitä merkinnälle tapahtuu. */
 export const DEVICE_ACTION = Object.freeze({
@@ -79,6 +81,24 @@ export const DEVICE_STORAGE = Object.freeze([
     prefix: 'manifestival.timerPending.v1.',
     owner: 'src/data/timerStore.js',
     contains: 'Kirjaamattomat ajastimet, jotka jäivät odottamaan toisen laitteen ajastimen vuoksi',
+    onSignOut: DEVICE_ACTION.KEEP,
+    onDelete: DEVICE_ACTION.PURGE
+  }),
+  entry({
+    prefix: 'manifestival.alarmAcks.v1.',
+    owner: 'src/data/alarmAckStore.js',
+    contains: 'Herätysten ja puhuttujen muistutusten kuittaukset, torkut ja hylkäykset (avain ja '
+      + 'aikaleimat) sekä laitteelle ajastettujen merkintöjen tunnisteet (menon ja paikan tunniste, '
+      + 'päivä, lähtöaika). Ei otsikoita, osoitteita eikä sijaintia',
+    // Uloskirjautuminen perii laitteen herätykset: kuittauksilla ei ole enää kohdetta.
+    onSignOut: DEVICE_ACTION.CLEAR,
+    onDelete: DEVICE_ACTION.PURGE
+  }),
+  entry({
+    prefix: 'manifestival.dailyLifeOutbox.v1.',
+    owner: 'src/data/dailyLifeOutboxStore.js',
+    contains: 'Lähettämättömät menojen tallennukset ja tapakirjaukset (kentät, ei tokeneita). '
+      + 'Lähetetään, kun sama käyttäjä on taas verkossa',
     onSignOut: DEVICE_ACTION.KEEP,
     onDelete: DEVICE_ACTION.PURGE
   }),
@@ -143,6 +163,8 @@ export const DEVICE_STORAGE = Object.freeze([
  */
 export function purgeDeviceDataForUser(userId) {
   purgeQueue(userId);
+  purgeAckState(userId);
+  purgeOutbox(userId);
   purgeTimerData(userId);
   purgeUserPreferences(userId);
   clearDevicePreferences();

@@ -17,8 +17,10 @@
 
 import { fmtISO, todayMidnight, addDays } from '../lib/datetime.js';
 import { planRange, summarizeIntents, normalizePreferences } from '../domain/notification.js';
+import { capPerDay } from '../domain/notificationPolicy.js';
 import { expandRoutines } from '../domain/routine.js';
-import { notifications as platformNotifications, PERMISSION } from '../platform/index.js';
+import { notifications as platformNotifications, alarms as platformAlarms, PERMISSION } from '../platform/index.js';
+import { dailyLifeLocalIntents, resetAlarmSync } from './alarmSync.js';
 import { getState, setNotificationPreferences } from './state.js';
 import { savePreferences, isPersistent } from '../data/notificationPrefsRepo.js';
 import { sessionSnapshot, isSameSession } from '../data/session.js';
@@ -125,7 +127,19 @@ export async function syncNotifications() {
       return { ok: false, ...lastSync };
     }
 
-    const { intents } = planUpcoming();
+    const { intents: legacy } = planUpcoming();
+    // Arjen muistutukset (lähtöketju, uni, ateriat, tavat), jotka EIVÄT
+    // mene herätysliitännäiselle: sama jako kuin src/app/alarmSync.js:n
+    // laiteajastuksessa, joten sama muistutus ei tule kahdesti. Päiväraja
+    // koskee molempia yhdessä: kaksi erillistä kattoa kaksinkertaistaisi hälyn.
+    const daily = safeDailyLifeIntents();
+    const intents = daily.length > 0 ? capPerDay([...legacy, ...daily], preferences.maxPerDay) : legacy;
+
+    // Tarkka hälytys vain, kun laite on jo sallinut sen: muuten
+    // ilmoitusliitännäinen avaisi "Hälytykset ja muistutukset" -asetuksen
+    // kesken ajastuksen ilman käyttäjän elettä. Asetus avataan vain
+    // napautuksesta (Profiili → Arki → Salli täsmälliset herätykset).
+    const exactAllowed = await exactAlarmsAllowed();
 
     // Vanhat perutaan ennen uusien ajastusta. Ilman tätä poistetun tehtävän
     // muistutus jäisi elämään laitteelle: käyttäjää muistutettaisiin
@@ -154,7 +168,7 @@ export async function syncNotifications() {
       return { ok: true, ...lastSync };
     }
 
-    const result = await platformNotifications.schedule(intents);
+    const result = await platformNotifications.schedule(intents, { exactAllowed });
     lastSync = {
       at: Date.now(),
       scheduled: result.scheduled || 0,
@@ -164,6 +178,26 @@ export async function syncNotifications() {
     return { ok: Boolean(result.ok), ...lastSync };
   } finally {
     syncing = false;
+  }
+}
+
+/** Arjen muistutukset tavallisiksi ilmoituksiksi; laskennan virhe ei estä muita muistutuksia. */
+function safeDailyLifeIntents() {
+  try {
+    return dailyLifeLocalIntents({ state: getState() });
+  } catch (error) {
+    logFailure('notifications.daily_life_failed', error);
+    return [];
+  }
+}
+
+/** Onko laite jo sallinut tarkat hälytykset? EI pyydä lupaa eikä avaa asetuksia. */
+async function exactAlarmsAllowed() {
+  try {
+    const status = await platformAlarms.status();
+    return Boolean(status) && status.supported === true && status.exact === true;
+  } catch {
+    return false;
   }
 }
 
@@ -295,7 +329,11 @@ export async function cancelDeviceNotifications({ timeoutMs = DEVICE_CANCEL_TIME
   const settle = task => Promise.resolve().then(task).catch(() => null);
   const work = Promise.all([
     settle(() => platformNotifications.cancel()),
-    settle(() => platformNotifications.removeAllDelivered())
+    settle(() => platformNotifications.removeAllDelivered()),
+    // Herätykset ja puhutut muistutukset (Android-liitännäinen): ajastus
+    // lopetetaan tälle käyttäjälle ja laitteen joukko perutaan. Muuten
+    // poistetun tilin "Lähde nyt" voisi vielä soida.
+    settle(() => resetAlarmSync())
   ]).then(([cancelled, delivered]) => ({
     timedOut: false,
     cancelled: (cancelled && cancelled.cancelled) || 0,

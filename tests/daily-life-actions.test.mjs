@@ -250,9 +250,13 @@ test('KRIITTINEN: istunnon vaihto kesken tallennuksen ei kirjoita toisen käytt�
   }
 });
 
-test('moduuli ei käytä offline-jonoa eikä tekoälyä, ja jokainen poisto kysyy vahvistuksen', () => {
+test('moduuli ei käytä tehtävien offline-jonoa eikä tekoälyä, ja jokainen poisto kysyy vahvistuksen', () => {
   const code = readCode('src/app/dailyLifeActions.js');
   assert.equal(/offline|queueOffline|\/ai\//.test(code), false);
+  // Arjen lähtökori (rooli W) vain menon tallennukselle ja tapakirjaukselle:
+  // poisto ei koskaan jää odottamaan laitteelle.
+  const queued = [...code.matchAll(/table: '(\w+)', operation: ([^,]+),/g)].map(m => `${m[1]}:${m[2]}`);
+  assert.deepEqual(queued.sort(), ["calendarEvents:previous ? 'update' : 'create'", "habitEvents:'create'"]);
   for (const fn of ['deleteCalendarEvent', 'deletePlace', 'resetPlaceLearning', 'deleteHabitPlan', 'deleteExerciseSession']) {
     const body = code.slice(code.indexOf(`export async function ${fn}`));
     const end = body.indexOf('\nexport ', 10);
