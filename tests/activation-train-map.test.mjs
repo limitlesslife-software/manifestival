@@ -8,13 +8,19 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 
 import { ROOT, read } from './helpers/sources.mjs';
-import { cacheVersionOf, cumulativeGates, WAVE_IDS } from '../tools/release/waves.mjs';
+import { COLUMN_GATES, cacheVersionOf, cumulativeGates, waveById, WAVE_IDS } from '../tools/release/waves.mjs';
+import { candidateChecks } from '../tools/activation/orchestrate.mjs';
+import { parseColumnGates } from '../tools/release/live-assets.mjs';
 import { versionNumber } from '../tools/release/lineage.mjs';
 import { createGit } from '../tools/release/git-layer.mjs';
 import {
-  REQUIRED_PATCHES, SQL_SOURCE_WAVE, TRAIN, buildTrainMap, checkTrainMap, pushLineDocs, sqlSourceFiles, syncDoc
+  LOCK_V2_COLUMN_GATES, REQUIRED_PATCHES, SQL_SOURCE_WAVE, TRAIN, buildTrainMap, checkTrainMap, columnGateProblems,
+  pushLineDocs, recordHasColumnGate, sqlSourceFiles, syncDoc
 } from '../tools/activation/train-map.mjs';
 import {
   deployLinesIn, goNoGoTableRows, pushLineProblems, pushLinesIn, sqlSourceProblems, stopLinesIn, syncPushLines,
@@ -27,12 +33,18 @@ const SHA40 = /^[0-9a-f]{40}$/;
 const realGit = createGit({ cwd: ROOT });
 const refsPresent = () => TRAIN.every(e => realGit.revParse(e.ref));
 
-test('kartta kattaa aallot C–K järjestyksessä; K on viimeinen', () => {
+test('kartta kattaa aallot C–K järjestyksessä; K on viimeinen lukittu', () => {
   assert.deepEqual(map.waves.map(w => w.wave), ['C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K']);
   for (const w of map.waves) assert.ok(WAVE_IDS.includes(w.wave));
-  // Lukon viimeinen aalto on julkaisuaaltojen viimeinen: yhtäkään
-  // julkaisuaaltoa ei ole jätetty lukitsematta junan loppuun.
-  assert.equal(map.waves.at(-1).wave, WAVE_IDS.at(-1));
+  // Lukon jälkeiset julkaisuaallot ovat vain ne, joiden ehdokasta ei ole
+  // vielä leikattu (L: migraatio 0015 EI AJETTU, pääkehittäjä leikkaa
+  // ehdokkaan). Yhtäkään leikattua aaltoa ei ole jätetty lukitsematta.
+  const after = WAVE_IDS.slice(WAVE_IDS.indexOf(map.waves.at(-1).wave) + 1);
+  assert.deepEqual(after, ['L']);
+  for (const id of after) {
+    assert.ok(waveById(id).blockedBy, `${id}: leikkaamaton aalto on yhä kannan estämä`);
+    assert.equal(TRAIN.some(e => e.wave === id), false, `${id}: alias lisätään vasta leikkauksessa`);
+  }
 });
 
 test('KRIITTINEN: välimuistiversio nousee joka aallossa eikä törmää', () => {
@@ -495,4 +507,150 @@ test('KRIITTINEN: WAVE-K.md: lukon SHA, ei "ei vielä leikattu" -tilaa, ja testi
   assert.ok(s1.includes('npm test && npm run check'), 'kohdan 1 testiajo puuttuu');
   assert.ok(s1.includes(`${tests}\n${smoke}\n${record}\n`), 'testiajon ja käynnistyssavun kirjaus puuttuu kohdasta 1');
   assert.ok(doc.includes(`git push origin ${k.deployTarget}:refs/heads/main`), 'viitteellinen push-rivi lukon SHA:han puuttuu');
+});
+
+// =====================================================================
+// AALTO L: MYÖHEMMIN LISÄTTY SARAKEPORTTI (MENTAL_LOAD_FIELDS) EI
+// KIRJOITA LUKITTUJA C–K-TIETUEITA UUDELLEEN
+// =====================================================================
+
+/** LF-normalisoidun C–K-lukon sha256 (f784530, K v1 d11d8b4). */
+const LOCK_C_K_SHA256 = '83756e293c9b0f7fc121eab1ce29edc0fa00fbdf5f6eb9a08b85a24c6356b089';
+
+test('KRIITTINEN: C–K-lukko on tavu tavulta ennallaan (aalto L ei kirjoita sitä)', () => {
+  const text = readFileSync(join(ROOT, 'docs/activation/release-train-c-j.json'), 'utf8').replace(/\r\n/g, '\n');
+  assert.equal(createHash('sha256').update(text).digest('hex'), LOCK_C_K_SHA256,
+    'lukko muuttui: C–K-tietueet on pidettävä ennallaan, vain uusi aalto (L) saa uuden avaimen');
+  for (const w of map.waves) {
+    assert.deepEqual(Object.keys(w.columnGates), [...LOCK_V2_COLUMN_GATES], `${w.wave}: sarakeporttien avaimet`);
+    assert.equal('MENTAL_LOAD_FIELDS' in w.columnGates, false, w.wave);
+  }
+});
+
+test('KRIITTINEN: MENTAL_LOAD_FIELDS on aallon L sarakeportti, eikä se kuulu C–K-tietueisiin', () => {
+  assert.equal(COLUMN_GATES.MENTAL_LOAD_FIELDS, 'L');
+  for (const wave of ['C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K']) {
+    assert.equal(recordHasColumnGate('MENTAL_LOAD_FIELDS', wave), false, wave);
+    for (const gate of LOCK_V2_COLUMN_GATES) assert.equal(recordHasColumnGate(gate, wave), true, `${wave} ${gate}`);
+  }
+  assert.equal(recordHasColumnGate('MENTAL_LOAD_FIELDS', 'L'), true);
+});
+
+test('KRIITTINEN: lukittu C–K-tietue todentuu ilman MENTAL_LOAD_FIELDSiä, kun portti on ehdokkaassa kiinni', () => {
+  const closedSchema = 'export const MENTAL_LOAD_FIELDS = false;\n';
+  for (const w of map.waves) {
+    const schema = Object.entries(w.columnGates).map(([g, v]) => `export const ${g} = ${v.actual};`).join('\n');
+    // Literaali puuttuu (C–K:n oma schema.js) tai on false: molemmat = kiinni.
+    assert.deepEqual(columnGateProblems(w, schema, w.wave), [], `${w.wave}: literaali puuttuu`);
+    assert.deepEqual(columnGateProblems(w, schema + '\n' + closedSchema, w.wave), [], `${w.wave}: literaali false`);
+  }
+});
+
+test('KRIITTINEN: tynkä: --write tuottaa C–K-tietueet ilman uutta avainta ja lukko todentuu', () => {
+  const git = stubGit();
+  const lock = buildTrainMap({ git });
+  for (const w of lock.waves) {
+    assert.deepEqual(Object.keys(w.columnGates), [...LOCK_V2_COLUMN_GATES], w.wave);
+    assert.equal(w.consistent, true, w.wave);
+  }
+  assert.deepEqual(checkTrainMap(lock, { git }).problems, []);
+});
+
+/** Tynkä, jossa K:n schema.js väittää MENTAL_LOAD_FIELDS = true. */
+function gitWithKSchema(transform) {
+  const git = stubGit();
+  const show = git.show.bind(git);
+  git.show = (sha, file) => {
+    const text = show(sha, file);
+    return file === 'src/data/schema.js' && sha === shaOf('K') && text !== null ? transform(text) : text;
+  };
+  return git;
+}
+
+test('KRIITTINEN: K-ehdokas, jossa MENTAL_LOAD_FIELDS = true, on epäjohdonmukainen ja lukon tarkistus kaatuu', () => {
+  const lock = buildTrainMap({ git: stubGit() });
+  const open = text => text.replace('export const MENTAL_LOAD_FIELDS = false;', 'export const MENTAL_LOAD_FIELDS = true;');
+  const git = gitWithKSchema(open);
+  assert.match(git.show(shaOf('K'), 'src/data/schema.js'), /MENTAL_LOAD_FIELDS = true/);
+  const rebuilt = buildTrainMap({ git });
+  const k = rebuilt.waves.find(w => w.wave === 'K');
+  assert.equal(k.consistent, false, 'K ei saa olla johdonmukainen, kun aallon L portti on auki');
+  assert.equal('MENTAL_LOAD_FIELDS' in k.columnGates, false, 'tietue ei silti saa uutta avainta');
+  const check = checkTrainMap(lock, { git });
+  assert.equal(check.ok, false);
+  assert.ok(check.problems.some(p => /^K: sarakeportti MENTAL_LOAD_FIELDS puuttuu lukitusta tietueesta, mutta ehdokkaassa auki/.test(p)),
+    check.problems.join('; '));
+});
+
+test('KRIITTINEN: lukittu K-tietue, joka väittää MENTAL_LOAD_FIELDS auki, kaatuu', () => {
+  const git = stubGit();
+  const lock = JSON.parse(JSON.stringify(buildTrainMap({ git })));
+  lock.waves.find(w => w.wave === 'K').columnGates.MENTAL_LOAD_FIELDS = { actual: true, expected: true };
+  const check = checkTrainMap(lock, { git });
+  assert.equal(check.ok, false);
+  assert.ok(check.problems.includes('K: columnGates eroaa lukosta'), check.problems.join('; '));
+  // Tuntematon tai puuttuva vanha portti on yhä virhe.
+  const unknown = JSON.parse(JSON.stringify(buildTrainMap({ git })));
+  unknown.waves.find(w => w.wave === 'J').columnGates.MADE_UP_FIELDS = { actual: false, expected: false };
+  assert.ok(checkTrainMap(unknown, { git }).problems.some(p => /^J: columnGates eroaa lukosta/.test(p)));
+  const dropped = JSON.parse(JSON.stringify(buildTrainMap({ git })));
+  delete dropped.waves.find(w => w.wave === 'F').columnGates.BILL_PAYMENT_FIELDS;
+  assert.ok(checkTrainMap(dropped, { git }).problems.some(p => /^F: columnGates puuttuu lukosta: BILL_PAYMENT_FIELDS/.test(p)));
+});
+
+test('KRIITTINEN: tynkä: train-map voi myöhemmin lisätä L-tietueen, joka kantaa MENTAL_LOAD_FIELDSin', () => {
+  const base = stubGit();
+  const lSha = 'ee'.repeat(20);
+  const lRef = 'rehearsal/wave-l-v1';
+  const kSchema = base.show(shaOf('K'), 'src/data/schema.js');
+  const lSchema = kSchema
+    .replace('  protectedPeriods: false,', '  protectedPeriods: true,')
+    .replace('  weeklyPlans: false,', '  weeklyPlans: true,')
+    .replace('export const MENTAL_LOAD_FIELDS = false;', 'export const MENTAL_LOAD_FIELDS = true;');
+  const git = {
+    ...base,
+    revParse: ref => (ref === lRef || ref === lSha ? lSha : base.revParse(ref)),
+    show: (sha, file) => {
+      if (sha !== lSha) return base.show(sha, file);
+      if (file === 'src/data/schema.js') return lSchema;
+      if (file === 'sw.js') return `const CACHE_VERSION = '${cacheVersionOf('L')}';\n`;
+      return base.show(shaOf('K'), file);
+    },
+    isAncestor: (a, b) => (b === lSha ? true : base.isAncestor(a, b)),
+    log: (from, to) => (to === lSha ? [{ sha: lSha, body: 'aalto\n\nRelease-Wave: L\n' }] : base.log(from, to)),
+    containsPatch: (target, commit) => (target === lSha ? true : base.containsPatch(target, commit))
+  };
+  const train = [...TRAIN, Object.freeze({ wave: 'L', ref: lRef, acceptance: 'docs/acceptance/WAVE-L.md' })];
+  const built = buildTrainMap({ git, train });
+  const l = built.waves.find(w => w.wave === 'L');
+  assert.equal(l.consistent, true, JSON.stringify(l));
+  assert.equal(l.cacheVersion, 'v25');
+  assert.equal(l.gateMatrixResolvesTo, 'L');
+  assert.equal(l.migration, '0015_mental_load.sql');
+  assert.equal(l.backupRequired, true);
+  assert.equal(l.risk, 'medium');
+  assert.deepEqual(l.columnGates.MENTAL_LOAD_FIELDS, { actual: true, expected: true });
+  assert.deepEqual(Object.keys(l.columnGates), [...LOCK_V2_COLUMN_GATES, 'MENTAL_LOAD_FIELDS']);
+  // C–K-tietueet ovat samat kuin ilman L:ää.
+  const withoutL = buildTrainMap({ git: stubGit() });
+  assert.deepEqual(built.waves.slice(0, -1), withoutL.waves);
+  assert.deepEqual(checkTrainMap(built, { git, train }).problems, []);
+  // L-tietue ilman uutta avainta ei todennu.
+  const stale = JSON.parse(JSON.stringify(built));
+  delete stale.waves.find(w => w.wave === 'L').columnGates.MENTAL_LOAD_FIELDS;
+  assert.ok(checkTrainMap(stale, { git, train }).problems.some(p => /^L: columnGates puuttuu lukosta: MENTAL_LOAD_FIELDS/.test(p)));
+});
+
+test('muut porttitarkistukset (orkestroija, esitarkistus, live-tarkistus) pitävät puuttuvaa MENTAL_LOAD_FIELDSiä kiinni-tilana', () => {
+  const git = stubGit();
+  const kSchema = git.show(shaOf('K'), 'src/data/schema.js').replace(/^export const MENTAL_LOAD_FIELDS = false;\n/m, '');
+  assert.equal(/MENTAL_LOAD_FIELDS/.test(kSchema), false);
+  const noLiteral = { ...git, show: (sha, file) => (file === 'src/data/schema.js' && sha === shaOf('K') ? kSchema : git.show(sha, file)) };
+  const checks = candidateChecks(noLiteral, 'K', shaOf('K'));
+  assert.equal(checks.columnGates.ok, true, checks.columnGates.differences.join(', '));
+  assert.equal(checks.columnGates.expected.MENTAL_LOAD_FIELDS, false);
+  assert.equal(parseColumnGates(kSchema).MENTAL_LOAD_FIELDS, false);
+  const opened = git.show(shaOf('K'), 'src/data/schema.js').replace('MENTAL_LOAD_FIELDS = false', 'MENTAL_LOAD_FIELDS = true');
+  const bad = candidateChecks({ ...git, show: (sha, file) => (file === 'src/data/schema.js' ? opened : git.show(sha, file)) }, 'K', shaOf('K'));
+  assert.deepEqual(bad.columnGates.differences, ['MENTAL_LOAD_FIELDS']);
 });
