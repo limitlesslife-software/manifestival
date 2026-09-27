@@ -25,7 +25,7 @@ import {
 } from '../src/app/alarmSync.js';
 import {
   activateAlarmEvents, resetAlarmEvents, consumeAlarmEvents, handleAlarmEvents, currentAckLog, ackTypesFor,
-  targetFor
+  targetFor, acknowledgeRecordedDepartures
 } from '../src/app/alarmEvents.js';
 import { isHandled } from '../src/domain/notificationAck.js';
 import { deviceOffsetMinutes } from '../src/app/deviceTime.js';
@@ -468,6 +468,24 @@ test('"Lähdin": koko lähtöketju kuitataan ja matka kirjataan kerran (kaksoisp
   assert.equal(observations[0].actualDeparture, '17:07');
   const ids = desiredNativeEntries({ now: at(2026, 9, 29, 17, 8), nativeSupported: true }).entries.map(e => e.id);
   assert.equal(ids.some(id => id.startsWith('departure')), false, 'lähtenyt ei saa "lähde nyt" -muistutusta');
+});
+
+test('sovelluksessa kirjattu lähtö ("Lähdin nyt") kuittaa laitteen lähtöketjun; vanha havainto ei', async () => {
+  installShell({ alarm: fakeAlarmPlugin() });
+  signIn();
+  seedDay();
+  const nowMs = at(2026, 9, 29, 17, 2).getTime();
+  setCommuteObservations([
+    { id: 'o-old', placeId: 'p1', eventId: 'e1', observedOn: '2026-09-22', actualDeparture: '17:10', source: 'user_confirmed' },
+    { id: 'o-now', placeId: 'p1', eventId: 'e1', observedOn: TODAY, actualDeparture: '17:02', source: 'user_confirmed' }
+  ]);
+  const count = acknowledgeRecordedDepartures(getState().commuteObservations, { nowMs });
+  assert.equal(count, 3, 'valmistaudu, 5 min ja nyt');
+  assert.equal(acknowledgeRecordedDepartures(getState().commuteObservations, { nowMs }), 0, 'toinen kerta ei kirjaa uudelleen');
+  assert.equal(isHandled(currentAckLog(), 'departure_leave_now:event:e1:2026-09-22:2026-09-22'), false);
+  const ids = desiredNativeEntries({ now: new Date(nowMs), nativeSupported: true }).entries.map(e => e.id);
+  assert.equal(ids.includes(LEAVE_NOW_ID), false);
+  assert.equal(ids.includes(LEAVE_SOON_ID), false);
 });
 
 test('"Lähdin" ilman tallennettua paikkaa: ketju kuitataan, havaintoa ei keksitä', async () => {

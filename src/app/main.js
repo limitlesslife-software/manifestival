@@ -62,7 +62,9 @@ import { resetDailyLifeActions } from './dailyLifeActions.js';
 import {
   activateAlarmSync, resetAlarmSync, syncAlarms, scheduleAlarmSync, alarmRelevantChanged, alarmDayRolled
 } from './alarmSync.js';
-import { activateAlarmEvents, consumeAlarmEvents, resetAlarmEvents } from './alarmEvents.js';
+import {
+  activateAlarmEvents, consumeAlarmEvents, resetAlarmEvents, acknowledgeRecordedDepartures
+} from './alarmEvents.js';
 import {
   activateDailyLifeOutbox, deactivateDailyLifeOutbox, replayDailyLifeOutbox, overlayDailyLifeOutbox,
   dailyLifeOutboxStatus
@@ -330,10 +332,17 @@ async function refreshDailyLifeDevice() {
   await syncAlarms();
 }
 
-/** Tilamuutos, joka voi siirtää herätystä tai arjen muistutusta. */
+/**
+ * Tilamuutos, joka voi siirtää herätystä tai arjen muistutusta. Sovelluksessa
+ * kirjattu lähtö ("Lähdin nyt") kuittaa saman menon lähtöketjun ennen
+ * uudelleenajastusta: lähteneelle ei soi "Lähde nyt".
+ */
 function watchDailyLifeChanges() {
   if (!signedIn) return;
-  if (alarmRelevantChanged(getState())) requestDailyLifeResync();
+  const state = getState();
+  if (!alarmRelevantChanged(state)) return;
+  acknowledgeRecordedDepartures(state.commuteObservations);
+  requestDailyLifeResync();
 }
 
 /** Uloskirjautuminen: laitteen herätykset pois, kuittausmuisti pois, kori muistista. */

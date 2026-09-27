@@ -29,7 +29,7 @@ import { alarms } from '../platform/index.js';
 import { getState } from './state.js';
 import { sessionSnapshot, isSameSession } from '../data/session.js';
 import { loadAckState, saveAckState, clearAllAckStates, normalizeAckTarget, MAX_ACK_TARGETS } from '../data/alarmAckStore.js';
-import { emptyAckLog, buildAckLog, normalizeAckLog, ACK_EVENT } from '../domain/notificationAck.js';
+import { emptyAckLog, buildAckLog, normalizeAckLog, ackIndex, ACK_EVENT } from '../domain/notificationAck.js';
 import { DEPARTURE_CHAIN_TYPES, intentId } from '../domain/notification.js';
 import { OBSERVATION_SOURCE } from '../domain/dailyLife.js';
 import { epochToWallClock } from '../domain/wallClock.js';
@@ -275,6 +275,43 @@ export async function consumeAlarmEvents() {
   // Toinen käyttäjä ehti kirjautua: edellisen herätysten tapahtumat eivät kuulu hänelle.
   if (!isSameSession(session)) return { recorded: 0, departures: 0 };
   return handleAlarmEvents(result.events, { session });
+}
+
+/**
+ * Sovelluksessa kirjattu lähtö ("Lähdin nyt" Tänään-näkymässä tai muualla)
+ * kuittaa saman menon lähtöketjun: laitteen "Lähde nyt" ei saa soida
+ * lähteneelle. Vain havainnot, joissa on menon tunniste, päivä ja
+ * toteutunut lähtö tai perilläolo. Ei muuta sovelluksen tilaa.
+ *
+ * @returns {number} uusien kuittausten määrä
+ */
+export function acknowledgeRecordedDepartures(observations, { nowMs = Date.now() } = {}) {
+  if (!activeUserId || !Array.isArray(observations) || observations.length === 0) return 0;
+  // Vain tämän päivän lähdöt: vanhempien ketjut ovat jo menneet, eikä
+  // loki saa täyttyä historiasta.
+  const today = epochToWallClock(nowMs, deviceOffsetMinutes);
+  if (!today) return 0;
+  const index = ackIndex(ackLog);
+  const events = [];
+  for (const observation of observations) {
+    if (!observation || !observation.eventId || observation.observedOn !== today.date) continue;
+    if (!observation.actualDeparture && !observation.arrivalAt) continue;
+    const target = normalizeAckTarget({
+      id: `departure:${observation.eventId}`,
+      ackKey: `departure:${observation.eventId}`,
+      departureId: `event:${observation.eventId}:${observation.observedOn}`,
+      date: observation.observedOn
+    });
+    for (const key of chainKeys(target)) {
+      const entry = index.get(key);
+      if (entry && entry.acknowledgedAt !== null) continue;
+      events.push({ type: ACK_EVENT.ACKNOWLEDGED, key, atMs: nowMs });
+    }
+  }
+  if (events.length === 0) return 0;
+  ackLog = buildAckLog(events, ackLog);
+  persist();
+  return events.length;
 }
 
 /** Testejä varten: onko kuittausavain käsitelty (kuitattu tai hylätty)? */
