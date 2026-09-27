@@ -1,7 +1,7 @@
 // Harjoitusskenaario `backup`: looginen tilannekuva ja palautus oikealla
 // PostgreSQL:llä — EI TUOTANTOA.
 //
-// Jokaiselle migraatiolle N = 0009…0014 ja molemmille lähtötiloille
+// Jokaiselle migraatiolle N = 0009…0015 ja molemmille lähtötiloille
 // (tasks.date/time tekstinä / omina tyyppeinään), P = N-1:
 //
 //   B1  snapshot_state_P.sql READ ONLY -transaktiossa: yksi lause, katalogi ennallaan
@@ -48,8 +48,10 @@ import {
   parseExport, parseSnapshot, buildRestoreSql, buildCompareSql, OWNER as CORE_OWNER
 } from '../activation/snapshot-core.mjs';
 
-export const BACKUP_NUMBERS = Object.freeze(['0009', '0010', '0011', '0012', '0013', '0014']);
+export const BACKUP_NUMBERS = Object.freeze(['0009', '0010', '0011', '0012', '0013', '0014', '0015']);
 const SNAPSHOT_TZ = 'UTC';
+/** 0015:n peruutuksen esiehto: toinen samaa kategoriaa jakava alue irti kategoriasta. */
+const SHARED_CATEGORY_FIX = `update public.life_areas set category_key = null where id like '%-la-music'`;
 const OTHER_TZ = 'America/Sao_Paulo';
 
 if (CORE_OWNER !== OWNER) throw new Error('snapshot-core ja harjoittelu eri omistajalla');
@@ -126,6 +128,18 @@ async function awkwardFor(c, n) {
     }
     if (n === '0012') {
       await c.query(`update public.goals set life_area_id = 'a-la' where id = 'p-goal'`);
+    }
+    if (n === '0015') {
+      // Odotuksen erikoismerkit, aikavyöhykkeellinen arkistointi, time- ja
+      // smallint[]-sarakkeet, jsonb-prioriteetit ja päivätön tehtävä.
+      await c.query(`update public.tasks set waiting_on = 'Matti "Ä" <x> ''y'' 😀', follow_up_date = '2026-10-01',
+                            archived_at = '2026-09-26T23:30:00+03:00', reschedule_count = 3, original_date = '2026-09-18'
+                      where id = 'a-wait'`);
+      await c.query(`update public.protected_periods set start_time = '17:30', end_time = '22:15', weekdays = '{1,3,5}',
+                            note = E'rivi1\\nrivi2 $mv0$' where id = 'a-own'`);
+      await c.query(`update public.weekly_plans set priorities = '[{"ref": "text", "title": "Ä \\"lainaus\\" 😀"}, {"ref": "task:a-later", "title": "Myöhemmin"}]'
+                      where id = 'a-wp'`);
+      await c.query(`update public.life_areas set kind = 'VACATION' where id = 'a-la'`);
     }
     if (n === '0014') {
       // Erikoismerkit, jsonb-rakenteet, taulukot (smallint[], date[]) ja
@@ -497,6 +511,16 @@ export async function backupScenario({ fixtureDir = null, variants = ['text', 't
             refused.error?.message || 'meni läpi');
           await c.query(`update public.goals set status = 'active' where status = 'maintenance'`);
         }
+        if (n === '0015') {
+          // Siemenissä kaksi aluetta jakaa kategorian (0015 salli sen):
+          // ROLLBACK-osion vartija kieltäytyy ennen yhtäkään DDL:ää.
+          const fpm = await catalogFingerprint(c);
+          const refused = await runSql(c, rollbackSql);
+          check('B9', '0015:n ROLLBACK:n vartija kieltäytyy, kun kaksi aluetta jakaa kategorian, katalogi ennallaan',
+            !refused.ok && /jakaa kategorian/.test(refused.error.message) && fpm.hash === (await catalogFingerprint(c)).hash,
+            refused.error?.message || 'meni läpi');
+          await c.query(SHARED_CATEGORY_FIX);
+        }
         const rolled = await runSql(c, rollbackSql);
         out = await runSql(c, buildRestoreSql(snap2, { prune: true }));
         const fp1 = await catalogFingerprint(c);
@@ -513,6 +537,7 @@ export async function backupScenario({ fixtureDir = null, variants = ['text', 't
         await awkwardFor(c, n);
         const snapN = parseSnapshot((await takeSnapshot(c, n)).rows);
         if (n === '0010') await c.query(`update public.goals set status = 'active' where status = 'maintenance'`);
+        if (n === '0015') await c.query(SHARED_CATEGORY_FIX);
         const rolled2 = await runSql(c, rollbackSql);
         const fpg = await catalogFingerprint(c);
         const dataG = await contentFingerprint(c);

@@ -32,7 +32,7 @@ Yksi luettelo ohjaa kaikkea: `EXPORTED_COLLECTIONS`
 (`supabase/functions/_shared/accountInventory.js`) kattavat täsmälleen
 saman listan — testi vaatii sen.
 
-Tili kattaa **36 tietotyyppiä**, jokainen omassa taulussaan:
+Tili kattaa **38 tietotyyppiä**, jokainen omassa taulussaan:
 
 | Kokoelma | Taulu | Omistajasarake | Luotu |
 |---|---|---|---|
@@ -72,12 +72,19 @@ Tili kattaa **36 tietotyyppiä**, jokainen omassa taulussaan:
 | `habitEvents` | `habit_events` | `user_id` | 0014 |
 | `exerciseSessions` | `exercise_sessions` | `user_id` | 0014 |
 | `wellbeingCheckins` | `wellbeing_checkins` | `user_id` | 0014 |
+| `protectedPeriods` | `protected_periods` | `user_id` | 0015 |
+| `weeklyPlans` | `weekly_plans` | `user_id` | 0015 |
 
 0014:n taulut (arjen käyttöjärjestelmä) eivät sisällä koordinaatteja eikä
 sijaintihistoriaa: paikka on nimi ja osoite tekstinä, ja matka-aika on
 käyttäjän itse kuittaama. Lisänimet, matkahavainnot ja tapojen kirjaukset
 poistuvat lisäksi vanhempansa mukana (paikka, suunnitelma), mutta tilin
 poistossa jokainen taulu kaskadoituu suoraan omistajasarakkeestaan.
+
+0015:n taulut (suojattu aika, viikkosuunnitelma) viittaavat vain
+omistajaansa. Viikon prioriteetti on viittaus (`task:<id>`), ei
+vierasavain. 0015:n uudet tasks- ja life_areas-sarakkeet (horisontti,
+odotus, arkistointi, alueen laji) poistuvat rivinsä mukana.
 
 Tallennettuja tiedostoja ei ole (`STORED_FILE_CATEGORIES = []`): kuitin
 kuvaa ei tallenneta minnekään.
@@ -99,7 +106,7 @@ versioidun vientiolion.
 }
 ```
 
-Kattaa kaikki 36 tietotyyppiä **nimenomaisena listana** eikä johdettuna
+Kattaa kaikki 38 tietotyyppiä **nimenomaisena listana** eikä johdettuna
 tilasta: uusi tilakenttä ei päädy vientiin vahingossa.
 
 - Profiili viedään vain, jos käyttäjä on tallentanut sen (`profileExists`).
@@ -198,7 +205,7 @@ selain:  1. offline.purge                 offline-jonon muistikopio
 Aiempi suunnitelma (rivikohtaiset DELETE-lauseet järjestyksessä) on
 **korvattu**. Jokaisen käyttäjätaulun omistajasarake viittaa
 `auth.users(id)` ... `on delete cascade`, joten yksi `auth.admin.deleteUser`
-poistaa kaikki **36 taulua** yhdessä tietokantatransaktiossa. Erilliset
+poistaa kaikki **38 taulua** yhdessä tietokantatransaktiossa. Erilliset
 PostgREST-DELETE:t olisivat ei-atomisia ja jättäisivät puolikkaan tilin,
 jos yksi epäonnistuisi. Taulujen väliset viiteet ovat CASCADE
 (`routine_exceptions` → `routines`, `milestones` → `goals`) tai SET NULL;
@@ -237,7 +244,7 @@ Kaskadi **todistetaan kahdesti**, ei oleteta:
    luokiteltu — poistokartassa tai perustellusti vapautettu
    (`NON_USER_TABLES`: vain 0001:n ja 0002:n väliaikaiset parametritaulut),
    (3) jokainen viittaus `auth.users`-tauluun on `ON DELETE CASCADE` ja
-   (4) kaskadoituvat taulut ovat täsmälleen kartan 36 taulua
+   (4) kaskadoituvat taulut ovat täsmälleen kartan 38 taulua
    omistajasarakkeineen. Jäsennin tunnistaa myös muut kirjoitustavat
    (isot kirjaimet, `if not exists`, taulutason FOREIGN KEY, ALTER-viite),
    ja negatiiviset näytteet lukitsevat sen.

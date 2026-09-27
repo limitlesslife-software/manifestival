@@ -104,7 +104,37 @@ export const SEEDS = Object.freeze([
     sql: p => `insert into public.exercise_sessions (id, session_date, kind, planned_minutes, intensity, goal_id)
                values ('${p}-ex', '2026-09-24', 'juoksu', 30, 3, '${p}-goal')` },
   { table: 'wellbeing_checkins', since: '0014',
-    sql: p => `insert into public.wellbeing_checkins (id, date, motivation, control) values ('${p}-wbc', '2026-09-24', 4, 3)` }
+    sql: p => `insert into public.wellbeing_checkins (id, date, motivation, control) values ('${p}-wbc', '2026-09-24', 4, 3)` },
+  // 0015 (aalto L): suojattu aika (sunnuntai pääosin vapaa, loma ja viikon
+  // vähimmäisvapaa-aika), viikkosuunnitelma ja tasks-taulun uudet sarakkeet:
+  // odottava, päivätön ja arkistoitu tehtävä. Viikon prioriteetti viittaa
+  // käyttäjän OMAAN tehtävään (viittaus, ei vierasavain).
+  { table: 'protected_periods', since: '0015',
+    sql: p => `insert into public.protected_periods (id, kind, recurrence, title, weekdays, strength) values
+               ('${p}-pp', 'FREE_TIME', 'weekly', 'Sunnuntai', '{7}', 'soft'),
+               ('${p}-own', 'OWN_TIME', 'weekly', 'Oma ilta', '{2,4}', 'firm')` },
+  { table: 'protected_periods', since: '0015',
+    sql: p => `insert into public.protected_periods (id, kind, recurrence, title, start_date, end_date) values
+               ('${p}-vac', 'VACATION', 'once', 'Joululoma', '2026-12-20', '2027-01-06')` },
+  { table: 'protected_periods', since: '0015',
+    sql: p => `insert into public.protected_periods (id, kind, recurrence, target_minutes) values
+               ('${p}-target', 'FREE_TIME', 'weekly_target', 900)` },
+  { table: 'weekly_plans', since: '0015',
+    sql: p => `insert into public.weekly_plans (id, week_start, priorities, planned_minutes, closed_at) values
+               ('${p}-wp', '2026-09-28', '[{"ref": "task:${p}-task", "title": "Synteettinen"}]', 600, '2026-09-27T18:00:00Z')` },
+  { table: 'tasks', since: '0015',
+    sql: p => `insert into public.tasks (id, date, title, category, horizon, waiting_on, follow_up_date) values
+               ('${p}-wait', '2026-09-25', 'Odottaa vastausta', 'tyo', 'WAITING', 'Matti', '2026-10-01')` },
+  { table: 'tasks', since: '0015',
+    sql: p => `insert into public.tasks (id, date, title, category, horizon) values
+               ('${p}-later', null, 'Joskus myöhemmin', 'koti', 'LATER')` },
+  { table: 'tasks', since: '0015',
+    sql: p => `insert into public.tasks (id, date, title, category, archived_at, reschedule_count, original_date) values
+               ('${p}-arch', '2026-09-20', 'Arkistoitu', 'muu', '2026-09-26T10:00:00Z', 2, '2026-09-18')` },
+  { table: 'life_areas', since: '0015',
+    sql: p => `insert into public.life_areas (id, name, category_key, kind) values
+               ('${p}-la-own', 'Oma aika', 'harrastus', 'OWN_TIME'),
+               ('${p}-la-music', 'Musiikki', 'harrastus', 'ENJOYMENT')` }
 ]);
 
 /** Taulut, joissa omistajasarake on `id` eikä `user_id`. */

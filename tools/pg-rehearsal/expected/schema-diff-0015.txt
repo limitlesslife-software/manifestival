@@ -1,0 +1,91 @@
+- con:life_areas:life_areas_category_unique:UNIQUE (user_id, category_key):validated=true
+- idx:life_areas_category_unique:CREATE UNIQUE INDEX life_areas_category_unique ON public.life_areas USING btree (user_id, category_key)
+- rel:life_areas_category_unique:i:rls=false:force=false:owner=postgres:acl=
++ col:life_areas.kind:text:notnull=true:default='STANDARD'::text:identity=:generated=:acl=
++ col:protected_periods.active:boolean:notnull=true:default=true:identity=:generated=:acl=
++ col:protected_periods.created_at:timestamp with time zone:notnull=true:default=now():identity=:generated=:acl=
++ col:protected_periods.end_date:date:notnull=false:default=:identity=:generated=:acl=
++ col:protected_periods.end_time:time without time zone:notnull=false:default=:identity=:generated=:acl=
++ col:protected_periods.id:text:notnull=true:default=:identity=:generated=:acl=
++ col:protected_periods.kind:text:notnull=true:default=:identity=:generated=:acl=
++ col:protected_periods.note:text:notnull=false:default=:identity=:generated=:acl=
++ col:protected_periods.recurrence:text:notnull=true:default=:identity=:generated=:acl=
++ col:protected_periods.start_date:date:notnull=false:default=:identity=:generated=:acl=
++ col:protected_periods.start_time:time without time zone:notnull=false:default=:identity=:generated=:acl=
++ col:protected_periods.strength:text:notnull=true:default='firm'::text:identity=:generated=:acl=
++ col:protected_periods.target_minutes:integer:notnull=false:default=:identity=:generated=:acl=
++ col:protected_periods.title:text:notnull=false:default=:identity=:generated=:acl=
++ col:protected_periods.updated_at:timestamp with time zone:notnull=true:default=now():identity=:generated=:acl=
++ col:protected_periods.user_id:uuid:notnull=true:default=auth.uid():identity=:generated=:acl=
++ col:protected_periods.weekdays:smallint[]:notnull=false:default=:identity=:generated=:acl=
++ col:tasks.archived_at:timestamp with time zone:notnull=false:default=:identity=:generated=:acl=
++ col:tasks.follow_up_date:date:notnull=false:default=:identity=:generated=:acl=
++ col:tasks.horizon:text:notnull=false:default=:identity=:generated=:acl=
++ col:tasks.original_date:date:notnull=false:default=:identity=:generated=:acl=
++ col:tasks.reschedule_count:integer:notnull=true:default=0:identity=:generated=:acl=
++ col:tasks.waiting_on:text:notnull=false:default=:identity=:generated=:acl=
++ col:weekly_plans.closed_at:timestamp with time zone:notnull=false:default=:identity=:generated=:acl=
++ col:weekly_plans.created_at:timestamp with time zone:notnull=true:default=now():identity=:generated=:acl=
++ col:weekly_plans.id:text:notnull=true:default=:identity=:generated=:acl=
++ col:weekly_plans.note:text:notnull=false:default=:identity=:generated=:acl=
++ col:weekly_plans.planned_minutes:integer:notnull=false:default=:identity=:generated=:acl=
++ col:weekly_plans.priorities:jsonb:notnull=true:default='[]'::jsonb:identity=:generated=:acl=
++ col:weekly_plans.updated_at:timestamp with time zone:notnull=true:default=now():identity=:generated=:acl=
++ col:weekly_plans.user_id:uuid:notnull=true:default=auth.uid():identity=:generated=:acl=
++ col:weekly_plans.week_start:date:notnull=true:default=:identity=:generated=:acl=
++ con:life_areas:life_areas_kind_check:CHECK ((kind = ANY (ARRAY['STANDARD'::text, 'WELLBEING'::text, 'ENJOYMENT'::text, 'OWN_TIME'::text, 'FREE_TIME'::text, 'VACATION'::text]))):validated=true
++ con:protected_periods:protected_periods_dates_check:CHECK (((start_date IS NULL) OR (end_date IS NULL) OR (end_date >= start_date))):validated=true
++ con:protected_periods:protected_periods_kind_check:CHECK ((kind = ANY (ARRAY['OWN_TIME'::text, 'FREE_TIME'::text, 'VACATION'::text]))):validated=true
++ con:protected_periods:protected_periods_note_check:CHECK (((note IS NULL) OR (length(note) <= 500))):validated=true
++ con:protected_periods:protected_periods_once_check:CHECK (((recurrence <> 'once'::text) OR ((start_date IS NOT NULL) AND (weekdays IS NULL)))):validated=true
++ con:protected_periods:protected_periods_owner_row_key:UNIQUE (user_id, id):validated=true
++ con:protected_periods:protected_periods_pkey:PRIMARY KEY (id):validated=true
++ con:protected_periods:protected_periods_recurrence_check:CHECK ((recurrence = ANY (ARRAY['once'::text, 'weekly'::text, 'weekly_target'::text]))):validated=true
++ con:protected_periods:protected_periods_span_check:CHECK (((recurrence <> 'once'::text) OR (end_date IS NULL) OR (start_date IS NULL) OR ((end_date - start_date) < 366))):validated=true
++ con:protected_periods:protected_periods_strength_check:CHECK ((strength = ANY (ARRAY['firm'::text, 'soft'::text]))):validated=true
++ con:protected_periods:protected_periods_target_check:CHECK (((target_minutes IS NULL) OR ((target_minutes >= 0) AND (target_minutes <= 10080)))):validated=true
++ con:protected_periods:protected_periods_times_check:CHECK ((((end_time IS NULL) OR (start_time IS NOT NULL)) AND ((start_time IS NULL) OR (end_time IS NULL) OR (start_time < end_time)))):validated=true
++ con:protected_periods:protected_periods_title_check:CHECK (((title IS NULL) OR ((length(btrim(title)) > 0) AND (length(title) <= 60)))):validated=true
++ con:protected_periods:protected_periods_user_id_fkey:FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE:validated=true
++ con:protected_periods:protected_periods_vacation_check:CHECK (((kind <> 'VACATION'::text) OR ((recurrence = 'once'::text) AND (start_time IS NULL) AND (end_time IS NULL)))):validated=true
++ con:protected_periods:protected_periods_weekdays_check:CHECK (((weekdays IS NULL) OR (((cardinality(weekdays) >= 1) AND (cardinality(weekdays) <= 7)) AND (weekdays <@ '{1,2,3,4,5,6,7}'::smallint[])))):validated=true
++ con:protected_periods:protected_periods_weekly_check:CHECK (((recurrence <> 'weekly'::text) OR ((weekdays IS NOT NULL) AND (cardinality(weekdays) >= 1)))):validated=true
++ con:protected_periods:protected_periods_weekly_target_check:CHECK ((((recurrence = 'weekly_target'::text) AND (kind = 'FREE_TIME'::text) AND (target_minutes IS NOT NULL) AND (start_time IS NULL) AND (end_time IS NULL) AND (weekdays IS NULL)) OR ((recurrence <> 'weekly_target'::text) AND (target_minutes IS NULL)))):validated=true
++ con:tasks:tasks_horizon_check:CHECK (((horizon IS NULL) OR (horizon = ANY (ARRAY['NOW'::text, 'THIS_WEEK'::text, 'LATER'::text, 'NOT_YET'::text, 'WAITING'::text])))):validated=true
++ con:tasks:tasks_reschedule_count_check:CHECK (((reschedule_count >= 0) AND (reschedule_count <= 10000))):validated=true
++ con:tasks:tasks_waiting_on_check:CHECK (((waiting_on IS NULL) OR ((length(btrim(waiting_on)) > 0) AND (length(waiting_on) <= 200)))):validated=true
++ con:tasks:tasks_waiting_on_horizon_check:CHECK (((waiting_on IS NULL) OR ((horizon IS NOT NULL) AND (horizon = 'WAITING'::text)))):validated=true
++ con:weekly_plans:weekly_plans_note_check:CHECK (((note IS NULL) OR (length(note) <= 1000))):validated=true
++ con:weekly_plans:weekly_plans_owner_row_key:UNIQUE (user_id, id):validated=true
++ con:weekly_plans:weekly_plans_pkey:PRIMARY KEY (id):validated=true
++ con:weekly_plans:weekly_plans_planned_minutes_check:CHECK (((planned_minutes IS NULL) OR ((planned_minutes >= 0) AND (planned_minutes <= 10080)))):validated=true
++ con:weekly_plans:weekly_plans_priorities_check:CHECK (((jsonb_typeof(priorities) = 'array'::text) AND (jsonb_array_length(priorities) <= 5))):validated=true
++ con:weekly_plans:weekly_plans_user_id_fkey:FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE:validated=true
++ con:weekly_plans:weekly_plans_week_start_check:CHECK ((EXTRACT(isodow FROM week_start) = (1)::numeric)):validated=true
++ con:weekly_plans:weekly_plans_week_unique:UNIQUE (user_id, week_start):validated=true
++ idx:life_areas_user_category_idx:CREATE INDEX life_areas_user_category_idx ON public.life_areas USING btree (user_id, category_key)
++ idx:protected_periods_owner_row_key:CREATE UNIQUE INDEX protected_periods_owner_row_key ON public.protected_periods USING btree (user_id, id)
++ idx:protected_periods_pkey:CREATE UNIQUE INDEX protected_periods_pkey ON public.protected_periods USING btree (id)
++ idx:protected_periods_user_active_idx:CREATE INDEX protected_periods_user_active_idx ON public.protected_periods USING btree (user_id, active)
++ idx:weekly_plans_owner_row_key:CREATE UNIQUE INDEX weekly_plans_owner_row_key ON public.weekly_plans USING btree (user_id, id)
++ idx:weekly_plans_pkey:CREATE UNIQUE INDEX weekly_plans_pkey ON public.weekly_plans USING btree (id)
++ idx:weekly_plans_week_unique:CREATE UNIQUE INDEX weekly_plans_week_unique ON public.weekly_plans USING btree (user_id, week_start)
++ pol:protected_periods:protected_periods_delete_own:PERMISSIVE:DELETE:(auth.uid() = user_id)::authenticated
++ pol:protected_periods:protected_periods_insert_own:PERMISSIVE:INSERT::(auth.uid() = user_id):authenticated
++ pol:protected_periods:protected_periods_select_own:PERMISSIVE:SELECT:(auth.uid() = user_id)::authenticated
++ pol:protected_periods:protected_periods_update_own:PERMISSIVE:UPDATE:(auth.uid() = user_id):(auth.uid() = user_id):authenticated
++ pol:weekly_plans:weekly_plans_delete_own:PERMISSIVE:DELETE:(auth.uid() = user_id)::authenticated
++ pol:weekly_plans:weekly_plans_insert_own:PERMISSIVE:INSERT::(auth.uid() = user_id):authenticated
++ pol:weekly_plans:weekly_plans_select_own:PERMISSIVE:SELECT:(auth.uid() = user_id)::authenticated
++ pol:weekly_plans:weekly_plans_update_own:PERMISSIVE:UPDATE:(auth.uid() = user_id):(auth.uid() = user_id):authenticated
++ rel:life_areas_user_category_idx:i:rls=false:force=false:owner=postgres:acl=
++ rel:protected_periods:r:rls=true:force=false:owner=postgres:acl=postgres=arwdDxtm/postgres,service_role=arwdDxtm/postgres,authenticated=arwd/postgres
++ rel:protected_periods_owner_row_key:i:rls=false:force=false:owner=postgres:acl=
++ rel:protected_periods_pkey:i:rls=false:force=false:owner=postgres:acl=
++ rel:protected_periods_user_active_idx:i:rls=false:force=false:owner=postgres:acl=
++ rel:weekly_plans:r:rls=true:force=false:owner=postgres:acl=postgres=arwdDxtm/postgres,service_role=arwdDxtm/postgres,authenticated=arwd/postgres
++ rel:weekly_plans_owner_row_key:i:rls=false:force=false:owner=postgres:acl=
++ rel:weekly_plans_pkey:i:rls=false:force=false:owner=postgres:acl=
++ rel:weekly_plans_week_unique:i:rls=false:force=false:owner=postgres:acl=
++ trg:protected_periods:protected_periods_touch_updated_at:enabled=O:CREATE TRIGGER protected_periods_touch_updated_at BEFORE UPDATE ON public.protected_periods FOR EACH ROW EXECUTE FUNCTION touch_updated_at()
++ trg:weekly_plans:weekly_plans_touch_updated_at:enabled=O:CREATE TRIGGER weekly_plans_touch_updated_at BEFORE UPDATE ON public.weekly_plans FOR EACH ROW EXECUTE FUNCTION touch_updated_at()

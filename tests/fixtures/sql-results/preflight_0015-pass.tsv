@@ -1,0 +1,22 @@
+check_no	section	check_name	status	details	poikkeavia_yhteensa
+01	0001	Omistajasarake tasks.user_id on olemassa	PASS	odotus 1, toteutui 1	0
+02	0001	RLS on päällä taulussa tasks	PASS	odotus 1, toteutui 1	0
+03	esiehto	Hyväksytty omistaja löytyy auth.users-taulusta	PASS	odotus 1, toteutui 1	0
+04	esiehto	PostgreSQL 15 tai uudempi	PASS	odotus true, toteutui true	0
+05	esiehto	touch_updated_at on INVOKER ja search_path kiinnitetty	PASS	odotus 1, toteutui 1	0
+06	järjestys	Edellinen migraatio 0014 on ajettu kokonaan (153 objektia)	PASS	odotus 153, toteutui 153	0
+07	0015	life_areas_category_unique on olemassa (0015 poistaa sen)	PASS	odotus 1, toteutui 1	0
+08	0015	tasks ja life_areas: RLS päällä (uudet sarakkeet kuuluvat olemassa oleviin politiikkoihin)	PASS	odotus 2, toteutui 2	0
+09	kirjattavat	tasks.date NOT NULL ennen 0015:tä (kirjaa: peruutus palauttaa ehdon vain jos kyllä)	INFO	ei	0
+10	kirjattavat	tasks.date-sarakkeen tyyppi	INFO	text	0
+11	kirjattavat	Elämänalueita (saavat kind = STANDARD, ei uudelleenkirjoitusta)	INFO	0	0
+12	0015	tasks, goals, projects, routines, 0012:n, 0013:n ja 0014:n taulut: 80 politiikkaa (0015 vaatii ennen committia)	PASS	odotus 80, toteutui 80	0
+13	0015	Migraation 0015 objekteja ei vielä ole (0/47)	PASS	odotus 0, toteutui 0	0
+14	esteet	Avoimia idle in transaction -istuntoja ei ole	PASS	odotus 0, toteutui 0	0
+15	esteet	Yli minuutin kestäneitä kyselyitä ei ole käynnissä	PASS	odotus 0, toteutui 0	0
+16	esteet	Odottavia lukkoja ei ole	PASS	odotus 0, toteutui 0	0
+17	esteet	Muut istunnot eivät lukitse tauluja, joita 0015 muuttaa tai joihin se viittaa (public.tasks, public.life_areas, auth.users)	PASS	odotus 0, toteutui 0	0
+18	kirjattavat	Tehtävien lukumäärä	INFO	36	0
+19	kirjattavat	Tietokanta	INFO	mv_rehearsal_sqlres_0014	0
+20	kirjattavat	Palvelimen versio	INFO	17.10	0
+21	kirjattavat	Tarkistuksen hetki (UTC)	INFO	2026-09-27 18:13:16	0

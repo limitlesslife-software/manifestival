@@ -30,9 +30,10 @@ test('KRIITTINEN: jokaisella aallolla on aktivointimetatiedot', () => {
   }
 });
 
-test('KRIITTINEN: migraatiot 0009–0014 kuuluvat aalloille F–K järjestyksessä ja tiedostot ovat olemassa', () => {
-  assert.deepEqual(TRAIN_MIGRATIONS, ['0009', '0010', '0011', '0012', '0013', '0014']);
-  assert.deepEqual(MIGRATION_WAVE, { '0009': 'F', '0010': 'G', '0011': 'H', '0012': 'I', '0013': 'J', '0014': 'K' });
+test('KRIITTINEN: migraatiot 0009–0015 kuuluvat aalloille F–L järjestyksessä ja tiedostot ovat olemassa', () => {
+  assert.deepEqual(TRAIN_MIGRATIONS, ['0009', '0010', '0011', '0012', '0013', '0014', '0015']);
+  assert.deepEqual(MIGRATION_WAVE,
+    { '0009': 'F', '0010': 'G', '0011': 'H', '0012': 'I', '0013': 'J', '0014': 'K', '0015': 'L' });
   for (const wave of WAVES.filter(w => w.migration)) {
     assert.ok(fs.existsSync(path.join(ROOT, wave.migrationFile)), wave.migrationFile);
     assert.ok(wave.migrationFile.includes(`/${wave.migration}_`), wave.migrationFile);
@@ -42,16 +43,18 @@ test('KRIITTINEN: migraatiot 0009–0014 kuuluvat aalloille F–K järjestyksess
   for (const wave of WAVES.filter(w => !w.migration)) assert.equal(wave.migrationFile, null, wave.id);
 });
 
-test('varmuuskopio vain 0010:lle, verify_0012 0013:n ja verify_0013 0014:n edellytys, puhelinhyväksyntä vain J:lle', () => {
-  assert.deepEqual(WAVES.filter(w => w.backupRequired).map(w => w.id), ['G']);
+test('varmuuskopio 0010:lle ja 0015:lle, verify_0012/0013/0014 seuraavan edellytys, puhelinhyväksyntä vain J:lle', () => {
+  // 0015 muuttaa tuotannossa auki olevaa tasks-taulua: tuore tilannekuva on pakollinen.
+  assert.deepEqual(WAVES.filter(w => w.backupRequired).map(w => w.id), ['G', 'L']);
   assert.deepEqual(WAVES.filter(w => w.verifyPrerequisite).map(w => [w.id, w.verifyPrerequisite]),
-    [['J', '0012'], ['K', '0013']]);
+    [['J', '0012'], ['K', '0013'], ['L', '0014']]);
+  assert.equal(waveById('L').risk, 'medium');
   assert.deepEqual(WAVES.filter(w => w.ownerGates.includes('PHONE_ACCEPTANCE_REQUIRED')).map(w => w.id), ['J']);
 });
 
 test('KRIITTINEN: GO/NO-GO-taulukko vastaa metatietoja (migraatio, riski, varmuuskopio)', () => {
   const rows = goNoGoTableRows(read(GO_NOGO));
-  for (const id of ['C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K']) {
+  for (const id of ['C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L']) {
     const wave = waveById(id);
     const row = rows[id];
     assert.ok(row, `taulukosta puuttuu aalto ${id}`);
@@ -82,12 +85,14 @@ test('apufunktiot: kanta -> aalto, naapurit, junan lattia', () => {
   assert.equal(schemaWaveOfMigration('0008'), 'E');
   assert.equal(schemaWaveOfMigration('0013'), 'J');
   assert.equal(schemaWaveOfMigration('0014'), 'K');
+  assert.equal(schemaWaveOfMigration('0015'), 'L');
   assert.equal(schemaWaveOfMigration('0007'), null);
   assert.equal(DB_FLOOR.wave, 'E');
   assert.equal(TRAIN_FLOOR_WAVE, 'C');
   assert.equal(nextWaveId('C'), 'D');
   assert.equal(nextWaveId('J'), 'K');
-  assert.equal(nextWaveId('K'), null);
+  assert.equal(nextWaveId('K'), 'L');
+  assert.equal(nextWaveId('L'), null);
   assert.equal(previousWaveId('A'), 'BASE');
   assert.equal(previousWaveId('F'), 'E');
 });

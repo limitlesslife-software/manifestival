@@ -117,6 +117,7 @@ kertoo deployn jälkeen, että rivi kannattaa päivittää.
 | I | `v22` | estetty (migraatio 0012 ajamatta) |
 | J | `v23` | estetty (migraatio 0013 ajamatta; riippuu aallosta I) |
 | K | `v24` | estetty (migraatio 0014 ajamatta — `supabase/migrations/0014_daily_life.sql — EI AJETTU`; riippuu aallosta J; näkymät rakenteilla) |
+| L | `v25` | estetty (migraatio 0015 ajamatta — `supabase/migrations/0015_mental_load.sql — EI AJETTU`; riippuu aallosta K; ehdokas leikkaamatta; varmuuskopio pakollinen) |
 
 **Aalto C:n deployaus EI ole sama asia kuin sen hyväksyntä.** Rivi
 yllä kertoo vain, mitä `origin/main` sisältää -- ei sitä, että Panu
@@ -323,6 +324,7 @@ Aalto B  v15  (deployattu ddfc356)
               -> I  v22   Suunta (Life Alignment) -- migraatio 0012
                 -> J  v23   Suunta 2: ajastin ja kuormittavuus -- migraatio 0013
                   -> K  v24   Arjen käyttöjärjestelmä -- migraatio 0014
+                    -> L  v25   Mielen kuorman keventäminen -- migraatio 0015
 ```
 
 **Feature-haarat EIVÄT ole tuotantojulkaisulinjan luotettava kuva.**
@@ -379,7 +381,17 @@ Migraatioita EI koskaan pakata samaan tuotantoikkunaan/transaktioon:
    varmuuskopio ei ole pakollinen. Este: `0014_daily_life.sql — EI AJETTU`
    ja näkymät rakenteilla (aalto K ESTETTY).
 
-Kukaan ei saa niputtaa 0009+0010+0011+0012+0013+0014 yhteen tuotantoajoon. Jokainen
+7. **0015** (Mielen kuorman keventäminen, aalto L, `v25`) luo kaksi uutta
+   taulua (`protected_periods`, `weekly_plans`) ja MUUTTAA tuotannossa
+   auki olevaa `tasks`-taulua (horisontti, odotus, arkistointi, siirtojen
+   seuranta; `date` saa olla NULL) sekä `life_areas`-taulua (`kind`,
+   kategorian uniikkius poistuu). Sarakkeilla on oma portti
+   `MENTAL_LOAD_FIELDS`. Se RIIPPUU 0014:stä (`verify_0014.sql` = 0
+   poikkeavaa ennen sitä). Riski keski, **tuore varmuuskopio pakollinen**
+   (`docs/MIGRATION-0015-RECOVERY.md`). Este:
+   `0015_mental_load.sql — EI AJETTU` (aalto L ESTETTY).
+
+Kukaan ei saa niputtaa 0009+0010+0011+0012+0013+0014+0015 yhteen tuotantoajoon. Jokainen
 saa oman `supabase/verify/verify_00XX.sql`-todennuksensa ja oman
 `docs/acceptance/WAVE-*.md`-hyväksyntäpakettinsa.
 

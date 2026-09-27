@@ -50,7 +50,9 @@
     "habitPlans": [],
     "habitEvents": [],
     "exerciseSessions": [],
-    "wellbeingCheckins": []
+    "wellbeingCheckins": [],
+    "protectedPeriods": [],
+    "weeklyPlans": []
   },
   "waves": [
     {
@@ -99,7 +101,9 @@
         "habitPlans",
         "habitEvents",
         "exerciseSessions",
-        "wellbeingCheckins"
+        "wellbeingCheckins",
+        "protectedPeriods",
+        "weeklyPlans"
       ],
       "tables": [
         "notification_preferences",
@@ -164,7 +168,9 @@
         "habitPlans",
         "habitEvents",
         "exerciseSessions",
-        "wellbeingCheckins"
+        "wellbeingCheckins",
+        "protectedPeriods",
+        "weeklyPlans"
       ],
       "tables": [
         "goals",
@@ -229,7 +235,9 @@
         "habitPlans",
         "habitEvents",
         "exerciseSessions",
-        "wellbeingCheckins"
+        "wellbeingCheckins",
+        "protectedPeriods",
+        "weeklyPlans"
       ],
       "tables": [
         "routines",
@@ -297,7 +305,9 @@
         "habitPlans",
         "habitEvents",
         "exerciseSessions",
-        "wellbeingCheckins"
+        "wellbeingCheckins",
+        "protectedPeriods",
+        "weeklyPlans"
       ],
       "tables": [
         "recurring_expenses",
@@ -362,7 +372,9 @@
         "habitPlans",
         "habitEvents",
         "exerciseSessions",
-        "wellbeingCheckins"
+        "wellbeingCheckins",
+        "protectedPeriods",
+        "weeklyPlans"
       ],
       "tables": [
         "ai_action_audit"
@@ -426,7 +438,9 @@
         "habitPlans",
         "habitEvents",
         "exerciseSessions",
-        "wellbeingCheckins"
+        "wellbeingCheckins",
+        "protectedPeriods",
+        "weeklyPlans"
       ],
       "tables": [
         "transactions",
@@ -490,7 +504,9 @@
         "habitPlans",
         "habitEvents",
         "exerciseSessions",
-        "wellbeingCheckins"
+        "wellbeingCheckins",
+        "protectedPeriods",
+        "weeklyPlans"
       ],
       "tables": [
         "milestones"
@@ -557,7 +573,9 @@
         "habitPlans",
         "habitEvents",
         "exerciseSessions",
-        "wellbeingCheckins"
+        "wellbeingCheckins",
+        "protectedPeriods",
+        "weeklyPlans"
       ],
       "tables": [
         "inbox_items",
@@ -627,7 +645,9 @@
         "habitPlans",
         "habitEvents",
         "exerciseSessions",
-        "wellbeingCheckins"
+        "wellbeingCheckins",
+        "protectedPeriods",
+        "weeklyPlans"
       ],
       "tables": [
         "life_areas",
@@ -694,7 +714,9 @@
         "habitPlans",
         "habitEvents",
         "exerciseSessions",
-        "wellbeingCheckins"
+        "wellbeingCheckins",
+        "protectedPeriods",
+        "weeklyPlans"
       ],
       "tables": [
         "running_timers",
@@ -767,7 +789,10 @@
         "exerciseSessions",
         "wellbeingCheckins"
       ],
-      "gatesDisabled": [],
+      "gatesDisabled": [
+        "protectedPeriods",
+        "weeklyPlans"
+      ],
       "tables": [
         "saved_places",
         "place_aliases",
@@ -792,6 +817,72 @@
         "supabase/acceptance/verify_0003_0008_post_activation.sql"
       ],
       "rationale": "Kymmenen uutta taulua (0014) eikä yhtään muutosta olemassa olevaan tauluun tai sarakeporttia. calendar_events ja exercise_sessions viittaavat goals-tauluun yhdistelmävierasavaimella (aalto B on tuotannossa); muut viitteet ovat aallon omien taulujen välisiä. Viimeisenä, koska 0014 edellyttää 0013:n (verify_0013 = 0 poikkeavaa): juna etenee järjestyksessä. Riski on matala — vain uusia tyhjiä tauluja, joten tuore varmuuskopio ei ole pakollinen."
+    },
+    {
+      "id": "L",
+      "title": "Mielen kuorman keventäminen: horisontit, odotus, suojattu aika ja sunnuntain nollaus",
+      "commitSha": null,
+      "cacheVersion": "v25",
+      "readiness": "READY",
+      "gatesEnabled": [
+        "protectedPeriods",
+        "weeklyPlans"
+      ],
+      "gatesCumulative": [
+        "notificationPreferences",
+        "wellbeing",
+        "goals",
+        "projects",
+        "routines",
+        "routineExceptions",
+        "recurringExpenses",
+        "savingsGoals",
+        "bills",
+        "aiAudit",
+        "transactions",
+        "investments",
+        "milestones",
+        "inboxItems",
+        "reminders",
+        "notices",
+        "travelPlans",
+        "locationRules",
+        "lifeAreas",
+        "weeklyCapacities",
+        "timeEntries",
+        "alignmentReviews",
+        "runningTimers",
+        "alignmentItemSettings",
+        "savedPlaces",
+        "placeAliases",
+        "calendarEvents",
+        "commuteObservations",
+        "lifeSettings",
+        "sleepLogs",
+        "habitPlans",
+        "habitEvents",
+        "exerciseSessions",
+        "wellbeingCheckins",
+        "protectedPeriods",
+        "weeklyPlans"
+      ],
+      "gatesDisabled": [],
+      "tables": [
+        "protected_periods",
+        "weekly_plans"
+      ],
+      "dependencies": [],
+      "rollbackTarget": "K",
+      "rollbackSha": null,
+      "acceptancePack": "docs/acceptance/WAVE-L.md",
+      "requiredAcceptance": [
+        "npm run activation:verify-wave -- L",
+        "npm run activation:preflight -- --wave=L",
+        "npm run production:verify-assets -- --wave=L",
+        "selainhyväksyntä: luonti, muokkaus, poisto, säilyvyys sivun latauksen yli",
+        "supabase/acceptance/verify_0003_0008_post_activation.sql"
+      ],
+      "rationale": "Kaksi uutta taulua (protected_periods, weekly_plans) ja sarakeportti MENTAL_LOAD_FIELDS: tasks-taulun horisontti, odotus, arkistointi ja siirtojen seuranta sekä life_areas.kind. Uudet taulut eivät viittaa yhteenkään sovellustauluun. Viimeisenä, koska 0015 edellyttää 0014:n (verify_0014 = 0 poikkeavaa): juna etenee järjestyksessä. Riski on keski — tasks on tuotannossa auki — joten tuore varmuuskopio on pakollinen."
     }
   ]
 }

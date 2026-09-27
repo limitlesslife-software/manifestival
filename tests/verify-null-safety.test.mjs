@@ -13,11 +13,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { read } from './helpers/sources.mjs';
-import { MIGRATION_TABLES, ACCOUNT_TABLES_THROUGH_0014 } from '../tools/activation/build-preflights.mjs';
+import { MIGRATION_TABLES, ACCOUNT_TABLES_THROUGH_0014, ACCOUNT_TABLES_THROUGH_0015 } from '../tools/activation/build-preflights.mjs';
 import { ACCOUNT_DATA_MAP } from '../src/domain/accountLifecycle.js';
 import { waveById } from '../tools/release/waves.mjs';
 
-const NUMBERS = ['0009', '0010', '0011', '0012', '0013', '0014'];
+const NUMBERS = ['0009', '0010', '0011', '0012', '0013', '0014', '0015'];
 const FILES = [
   ...NUMBERS.map(n => `supabase/verify/verify_${n}.sql`),
   ...NUMBERS.map(n => `supabase/preflight/preflight_${n}.sql`)
@@ -75,10 +75,10 @@ test('KRIITTINEN: verify_0013 rivit 26–28 rajaavat tilin poiston tarkistukset 
   const c = code('supabase/verify/verify_0013.sql');
   const expected = [...MIGRATION_TABLES].sort();
   assert.equal(expected.length, 26);
-  // Lista on jäädytetty 0013:n aikaiseksi: kartta ilman aallon K (0014)
-  // tauluja. Muuten jo lukittu verify_0013/preflight_0009 muuttuisi.
-  const kTables = new Set(waveById('K').tables);
-  assert.deepEqual(expected, Object.values(ACCOUNT_DATA_MAP).map(e => e.table).filter(t => !kTables.has(t)).sort());
+  // Lista on jäädytetty 0013:n aikaiseksi: kartta ilman aaltojen K (0014)
+  // ja L (0015) tauluja. Muuten jo lukittu verify_0013/preflight_0009 muuttuisi.
+  const later = new Set([...waveById('K').tables, ...waveById('L').tables]);
+  assert.deepEqual(expected, Object.values(ACCOUNT_DATA_MAP).map(e => e.table).filter(t => !later.has(t)).sort());
   for (const no of ['26', '27', '28']) {
     const m = new RegExp(`select '${no}'[\\s\\S]*?(?=\\n\\s*union all|\\n\\) c)`).exec(c);
     assert.ok(m, `tarkistus ${no} puuttuu`);
@@ -91,11 +91,14 @@ test('KRIITTINEN: verify_0013 rivit 26–28 rajaavat tilin poiston tarkistukset 
   assert.match(c, /c\.relname not in \(/);
 });
 
-test('KRIITTINEN: verify_0014 rivit 34–36 kattavat koko tilin poiston kartan (36 taulua)', () => {
+test('KRIITTINEN: verify_0014 rivit 34–36 kattavat migraatioiden 0001–0014 36 taulua (jäädytetty)', () => {
   const c = code('supabase/verify/verify_0014.sql');
   const expected = [...ACCOUNT_TABLES_THROUGH_0014].sort();
   assert.equal(expected.length, 36);
-  assert.deepEqual(expected, Object.values(ACCOUNT_DATA_MAP).map(e => e.table).sort());
+  // Jäädytetty 0014:n aikaiseksi: kartta ilman aallon L (0015) tauluja.
+  // verify_0014.sql on lukon SQL-lähteessä (K) eikä saa muuttua.
+  const lTables = new Set(waveById('L').tables);
+  assert.deepEqual(expected, Object.values(ACCOUNT_DATA_MAP).map(e => e.table).filter(t => !lTables.has(t)).sort());
   for (const no of ['34', '35', '36']) {
     const m = new RegExp(`select '${no}'[\\s\\S]*?(?=\\n\\s*union all|\\n\\) c)`).exec(c);
     assert.ok(m, `tarkistus ${no} puuttuu`);
@@ -104,6 +107,22 @@ test('KRIITTINEN: verify_0014 rivit 34–36 kattavat koko tilin poiston kartan (
     const tables = [...list[1].matchAll(/'(\w+)'/g)].map(x => x[1]).sort();
     assert.deepEqual(tables, expected, `tarkistus ${no}: lista ≠ kartan taulut`);
   }
+});
+
+test('KRIITTINEN: verify_0015 rivit 31–33 kattavat koko tilin poiston kartan (38 taulua)', () => {
+  const c = code('supabase/verify/verify_0015.sql');
+  const expected = [...ACCOUNT_TABLES_THROUGH_0015].sort();
+  assert.equal(expected.length, 38);
+  assert.deepEqual(expected, Object.values(ACCOUNT_DATA_MAP).map(e => e.table).sort());
+  for (const no of ['31', '32', '33']) {
+    const m = new RegExp(`select '${no}'[\\s\\S]*?(?=\\n\\s*union all|\\n\\) c)`).exec(c);
+    assert.ok(m, `tarkistus ${no} puuttuu`);
+    const list = /(?:relname (?:not )?in \(|array\[)((?:\s*'\w+',?)+)\s*[)\]]/.exec(m[0]);
+    assert.ok(list, `tarkistus ${no}: taululista puuttuu`);
+    const tables = [...list[1].matchAll(/'(\w+)'/g)].map(x => x[1]).sort();
+    assert.deepEqual(tables, expected, `tarkistus ${no}: lista ≠ kartan taulut`);
+  }
+  assert.match(c, /select '33', 'omistajuus', [^\n]*'INFO',/);
 });
 
 test('KRIITTINEN: preflight_0009 tarkistaa tilin poiston oletukset jo ennen junaa', () => {
@@ -121,7 +140,7 @@ test('KRIITTINEN: preflight_0009 tarkistaa tilin poiston oletukset jo ennen juna
   assert.match(cascade.sql, /f\.confdeltype <> 'c'/);
   assert.match(cascade.sql, /f\.connamespace = 'public'::regnamespace/);
   // Vain junan alussa: muut esitarkistukset eivät toista rivejä.
-  for (const n of ['0010', '0011', '0012', '0013', '0014']) {
+  for (const n of ['0010', '0011', '0012', '0013', '0014', '0015']) {
     assert.equal(/'junan alku'/.test(read(`supabase/preflight/preflight_${n}.sql`)), false, n);
   }
 });

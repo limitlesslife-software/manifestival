@@ -41,7 +41,7 @@ import { loadFailureMessage } from '../src/app/actions.js';
 
 const USER = { id: 'aaaaaaaa-2222-4222-8222-000000000001', email: 'p@example.com' };
 const ONLINE = () => true;
-const ALL = migrationsThrough('0014');
+const ALL = migrationsThrough('0015');
 
 beforeEach(() => {
   resetSchemaRuntimeForTests();

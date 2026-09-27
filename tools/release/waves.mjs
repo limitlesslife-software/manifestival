@@ -48,7 +48,8 @@ export const ALL_GATES = Object.freeze([
   'lifeAreas', 'weeklyCapacities', 'timeEntries', 'alignmentReviews',
   'runningTimers', 'alignmentItemSettings',
   'savedPlaces', 'placeAliases', 'calendarEvents', 'commuteObservations', 'lifeSettings',
-  'sleepLogs', 'habitPlans', 'habitEvents', 'exerciseSessions', 'wellbeingCheckins'
+  'sleepLogs', 'habitPlans', 'habitEvents', 'exerciseSessions', 'wellbeingCheckins',
+  'protectedPeriods', 'weeklyPlans'
 ]);
 
 /**
@@ -387,6 +388,37 @@ export const WAVES = Object.freeze([
     tables: Object.freeze(['saved_places', 'place_aliases', 'calendar_events', 'commute_observations',
                            'life_settings', 'sleep_logs', 'habit_plans', 'habit_events',
                            'exercise_sessions', 'wellbeing_checkins'])
+  }),
+  Object.freeze({
+    id: 'L',
+    cacheVersion: 'v25',
+    // Aktivoinnin metatiedot (ACT-12): ks. "AKTIVOINNIN METATIEDOT" alla.
+    migration: '0015',
+    migrationFile: 'supabase/migrations/0015_mental_load.sql',
+    // KESKI: 0015 muuttaa tuotannossa auki olevaa tasks-taulua (ALTER
+    // TABLE, ACCESS EXCLUSIVE -lukko, uudet CHECK-rajoitteet) ja poistaa
+    // life_areas-taulun kategorian uniikkiuden. Ei uudelleenkirjoitusta.
+    risk: 'medium',
+    ownerGates: Object.freeze(['OWNER_PRODUCTION_MIGRATION_APPROVAL_REQUIRED', 'OWNER_DEPLOY_APPROVAL_REQUIRED']),
+    // PAKOLLINEN varmuuskopio: tasks on käyttäjän dataa, ja peruutus
+    // pudottaa sarakkeita (docs/MIGRATION-0015-RECOVERY.md).
+    backupRequired: true,
+    verifyPrerequisite: '0014',
+
+    // READY koskee käyttöliittymää, `blockedBy` kantaa. Ks. aalto F.
+    readiness: 'READY',
+    blockedBy: 'supabase/migrations/0015_mental_load.sql — EI AJETTU',
+    gates: Object.freeze(['protectedPeriods', 'weeklyPlans']),
+    title: 'Mielen kuorman keventäminen: horisontit, odotus, suojattu aika ja sunnuntain nollaus',
+    rationale:
+      'Kaksi uutta taulua (protected_periods, weekly_plans) ja sarakeportti '
+      + 'MENTAL_LOAD_FIELDS: tasks-taulun horisontti, odotus, arkistointi ja '
+      + 'siirtojen seuranta sekä life_areas.kind. Uudet taulut eivät viittaa '
+      + 'yhteenkään sovellustauluun. Viimeisenä, koska 0015 edellyttää 0014:n '
+      + '(verify_0014 = 0 poikkeavaa): juna etenee järjestyksessä. Riski on '
+      + 'keski — tasks on tuotannossa auki — joten tuore varmuuskopio on '
+      + 'pakollinen.',
+    tables: Object.freeze(['protected_periods', 'weekly_plans'])
   })
 ]);
 
@@ -410,7 +442,14 @@ export const COLUMN_GATES = Object.freeze({
   /** goals.life_area_id (migraatio 0012). */
   GOAL_LIFE_AREA_FIELD: 'I',
   /** 0012:n taulujen uudet sarakkeet (migraatio 0013). */
-  ALIGNMENT_REALITY_FIELDS: 'J'
+  ALIGNMENT_REALITY_FIELDS: 'J',
+  /**
+   * tasks-taulun horisontti, odotus, arkisto ja siirrot sekä
+   * life_areas.kind (migraatio 0015). Lukitut C–K-tietueet eivät tunne
+   * tätä porttia: train-map vertaa vain tietueessa olevat portit ja
+   * vaatii puuttuvan olevan kiinni (docs/MENTAL-LOAD-CORE.md).
+   */
+  MENTAL_LOAD_FIELDS: 'L'
 });
 
 /**
@@ -592,7 +631,7 @@ export const TRAIN_FLOOR_WAVE = 'C';
  */
 export const DB_FLOOR = Object.freeze({ migration: '0008', wave: 'E' });
 
-/** Junan migraatiot järjestyksessä ('0009' … '0014'). */
+/** Junan migraatiot järjestyksessä ('0009' … '0015'). */
 export const TRAIN_MIGRATIONS = Object.freeze(
   WAVES.filter(w => w.migration).map(w => w.migration));
 
@@ -603,7 +642,7 @@ export const MIGRATION_WAVE = Object.freeze(Object.fromEntries(
 /** Riskiluokan suomenkielinen nimi (GO/NO-GO-taulukon sanasto). */
 export const RISK_LABEL_FI = Object.freeze({ low: 'matala', medium: 'keski', high: 'KORKEA' });
 
-/** Seuraava aalto, tai null (K on viimeinen). BASE -> A. */
+/** Seuraava aalto, tai null (L on viimeinen). BASE -> A. */
 export function nextWaveId(id) {
   const index = waveIndex(id);
   if (index === null) return null;
@@ -619,7 +658,7 @@ export function previousWaveId(id) {
 
 /**
  * Minkä aallon koodia kanta tukee, kun `lastMigration` on viimeisin
- * täysin ajettu migraatio? 0008 -> E, 0009 -> F … 0014 -> K.
+ * täysin ajettu migraatio? 0008 -> E, 0009 -> F … 0015 -> L.
  */
 export function schemaWaveOfMigration(lastMigration) {
   if (lastMigration === DB_FLOOR.migration) return DB_FLOOR.wave;

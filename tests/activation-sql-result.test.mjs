@@ -133,15 +133,15 @@ test('poikkeavia_yhteensa puuttuu -> STOP (ei oleteta nollaksi)', () => {
 // =====================================================================
 
 const REAL_DIR = path.join(ROOT, 'tests/fixtures/sql-results');
-const NUMBERS = ['0009', '0010', '0011', '0012', '0013', '0014'];
+const NUMBERS = ['0009', '0010', '0011', '0012', '0013', '0014', '0015'];
 const REAL = NUMBERS.flatMap(n => ['preflight', 'verify'].flatMap(kind => ['pass', 'fail'].map(outcome => ({
   n, kind, outcome, name: `${kind}_${n}-${outcome}.tsv`, sql: `supabase/${kind}/${kind}_${n}.sql`
 }))));
 const realText = name => fs.readFileSync(path.join(REAL_DIR, name), 'utf8');
 const MANIFEST = JSON.parse(fs.readFileSync(path.join(REAL_DIR, 'manifest.json'), 'utf8'));
 
-test('oikean kannan tuloksia on 24: preflight ja verify 0009–0014, PASS ja FAIL', () => {
-  assert.equal(REAL.length, 24);
+test('oikean kannan tuloksia on 28: preflight ja verify 0009–0015, PASS ja FAIL', () => {
+  assert.equal(REAL.length, 28);
   for (const f of REAL) assert.ok(fs.existsSync(path.join(REAL_DIR, f.name)), `${f.name} puuttuu`);
   assert.deepEqual(Object.keys(MANIFEST.files).sort(), REAL.map(f => f.name).sort());
   assert.match(MANIFEST.server.version, /^PostgreSQL 17\./);
@@ -204,8 +204,9 @@ test('oikean kannan tulokset eivät sisällä käyttäjän sisältöä', () => {
     const parsed = parseCheckTable(realText(f.name));
     for (const r of parsed.rows) {
       if (r.status === 'INFO') {
-        // Lukumäärä, tunnisteen muotoinen nimi, versio tai hetki.
-        assert.match(r.details, /^(\d+(: [a-z_, ]+)?|puuttuu|mv_rehearsal_\w+|17\.\d+|\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})$/, `${f.name} ${r.no}: ${r.details}`);
+        // Lukumäärä, tunnisteen muotoinen nimi, versio tai hetki; preflight_0015:
+        // tasks.date-sarakkeen NOT NULL -tila (kyllä/ei) ja tietotyyppi.
+        assert.match(r.details, /^(\d+(: [a-z_, ]+)?|puuttuu|mv_rehearsal_\w+|17\.\d+|\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}|kyllä|ei|text|date)$/, `${f.name} ${r.no}: ${r.details}`);
       } else {
         assert.match(r.details, /^odotus .*, toteutui .*$/, `${f.name} ${r.no}`);
       }

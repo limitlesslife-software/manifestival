@@ -1,4 +1,4 @@
-// Generoi supabase/backup/snapshot_state_00NN.sql tiloille 0008–0014.
+// Generoi supabase/backup/snapshot_state_00NN.sql tiloille 0008–0015.
 //
 //   node tools/activation/build-snapshots.mjs          kirjoita tiedostot
 //   node tools/activation/build-snapshots.mjs --check  vertaa levyyn (testit)
@@ -69,11 +69,23 @@ function whenText(state) {
       '--          (migraatiot 0001–0013 ajettu).'
     ];
   }
+  // 0014: aallon L varmuuskopio on PAKOLLINEN (backupRequired), koska
+  // 0015 muuttaa tasks-taulua (docs/MIGRATION-0015-RECOVERY.md).
+  if (state === '0014') {
+    return [
+      '-- MILLOIN: juuri ENNEN migraatiota 0015 (PAKOLLINEN, aalto L),',
+      '--          sovellus suljettuna: preflight_0015.sql -> 0 FAIL -> TÄMÄ',
+      '--          -> check -> 0015. Samoin ennen mitä tahansa peruutusta tai',
+      '--          palautusta tilassa 0014 (esim. aallon K revertti tai 0014:n',
+      '--          ROLLBACK-osio).'
+    ];
+  }
   if (state === LAST_STATE) {
     return [
       `-- MILLOIN: ennen mitä tahansa peruutusta tai palautusta tilassa ${state}`,
-      `--          (migraatiot 0001–${state} ajettu), esim. ennen aallon K`,
-      `--          revertiä tai migraation ${state} ROLLBACK-osiota.`
+      `--          (migraatiot 0001–${state} ajettu), esim. ennen aallon L`,
+      `--          revertiä tai migraation ${state} ROLLBACK-osiota`,
+      '--          (docs/MIGRATION-0015-RECOVERY.md).'
     ];
   }
   return [

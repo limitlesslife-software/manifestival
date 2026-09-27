@@ -1,9 +1,10 @@
-# Migraatiopaketit 0009–0014
+# Migraatiopaketit 0009–0015
 
 Jokainen migraatio on **oma pakettinsa ja oma hyväksyntänsä**. Niitä ei
 koskaan niputeta yhteen SQL-ajoon. Järjestys on 0009 → 0010 → 0011 → 0012 →
-0013 → 0014, ja jokaisen välissä on sen aallon deploy ja hyväksyntä
-(`docs/SUUNTA-ACTIVATION-GO-NOGO.md`; aalto K: `docs/acceptance/WAVE-K.md`).
+0013 → 0014 → 0015, ja jokaisen välissä on sen aallon deploy ja hyväksyntä
+(`docs/SUUNTA-ACTIVATION-GO-NOGO.md`; aalto K: `docs/acceptance/WAVE-K.md`;
+aalto L: `docs/acceptance/WAVE-L.md`).
 
 Kaikki alla on harjoiteltu **oikealla PostgreSQL 17:llä** (17.10; tuotanto
 17.6) tuotannon muotoisesta tilasta 0008, joka vastaa omistajan
@@ -11,7 +12,7 @@ inventaariota 2026-09-26 täsmälleen (1 auth-käyttäjä = omistaja, 36
 tehtävää `date`/`time` tekstinä, 1 profiili, 1 tavoite, 1 projekti, 1
 muistutusasetus, 1 hyvinvointimerkintä, muut taulut tyhjiä):
 `tools/pg-rehearsal`, tulokset `docs/activation/REHEARSAL-REPORT.md`,
-skeemaerot `docs/activation/SCHEMA-DIFFS-0009-0014.md`.
+skeemaerot `docs/activation/SCHEMA-DIFFS-0009-0015.md`.
 
 ## Lähde: mistä SQL kopioidaan
 
@@ -33,8 +34,9 @@ verify-tiedostot puuttuvat niistä tai ovat vanhempia. Vanhat leikkaukset
 0012:n ja 0013:n vanhemman version (blobit `7e16f52d…`, `59061f2e…`,
 `b7ae23e9…`). Aallon *sovelluskoodi* deployataan ehdokashaarasta; SQL
 ajetaan aina tästä taulukosta. 0014 on tuotehaarassa
-`feature/daily-life-operating-system` (aaltoa K ei ole vielä lukittu:
-lukon SQL-lähde on yhä J).
+`feature/daily-life-operating-system` (aalto K on lukittu, lukon SQL-lähde
+on K). 0015 on tuotehaarassa `feature/mental-load-core` (aaltoa L ei ole
+vielä leikattu eikä lukittu: lukon SQL-lähde on yhä K).
 
 <!-- blob-taulukko:alku (node tools/pg-rehearsal/bundle-hashes.mjs --write) -->
 | Migraatio | Tiedosto | git-blob (`git hash-object <polku>`) |
@@ -57,6 +59,9 @@ lukon SQL-lähde on yhä J).
 | 0014 | `supabase/preflight/preflight_0014.sql` | `590ccb549225151cc13418cbe594e1280cab6778` |
 | 0014 | `supabase/migrations/0014_daily_life.sql` | `457150dfa00b3f008d55c2ece454a2323fb69f35` |
 | 0014 | `supabase/verify/verify_0014.sql` | `4db67930ccffd779d26cedf66e48d94d244b1156` |
+| 0015 | `supabase/preflight/preflight_0015.sql` | `6b06b2a5b25ca79f0809c0cdfe4d8f84b1465df4` |
+| 0015 | `supabase/migrations/0015_mental_load.sql` | `f45ae940c9acdb4f4eb2e4907eb7ef8f8084e9df` |
+| 0015 | `supabase/verify/verify_0015.sql` | `6bcde496a7a20f3aebf7d92174e8e4fb9e423e23` |
 <!-- blob-taulukko:loppu -->
 
 ## Yhteiset säännöt
@@ -73,7 +78,7 @@ lukon SQL-lähde on yhä J).
 | Vanha data | Jokaisen vanhan rivin arvot vanhoissa sarakkeissa, rivin `xmin` (ei UPDATEa) ja taulun `relfilenode` (ei uudelleenkirjoitusta) ennallaan jokaisen migraation yli. 0010: kaikki 5 tavoitteen tilaa × projekti kytketty/irti |
 | Taaksepäin yhteensopivuus | Jokainen migraatio ajetaan edellisen aallon koodin ollessa tuotannossa. Jokaisessa tauossa elävän ja seuraavan aallon **oikeat** rivimuodot (sovelluksen omat rivimuunnokset, insert/update/upsert) menivät läpi, ja verify + seuraava preflight antoivat 0 FAIL |
 | Verify-luku | `poikkeavia_yhteensa` laskee myös NULL-tuloksen (puuttuva objekti), ja details kertoo `toteutui null` |
-| Peruutus | **Peruutus aina käänteisessä järjestyksessä: 0014 → 0013 → 0012 → 0011 → 0010 → 0009.** Jokaisen migraation oma ROLLBACK-osio (tiedoston lopussa) palauttaa katalogin täsmälleen — todennettu myös datan kanssa ja koko ketjuna (0014…0009 → katalogi = tuotannon 0008, vanhat rivit ennallaan). 0012 kieltäytyy, jos 0013 on yhä ajettu; **0013:lla ei ole vastaavaa vartijaa 0014:ää vastaan** (0013 on lukittu) — sen peruutus menee läpi 0014:n ollessa ajettu, joten järjestyksestä on huolehdittava itse (inventaario pysäyttää sellaisen tilan); 0010 kieltäytyy, jos jokin tavoite on tilassa `maintenance`. **Peruutus poistaa uusien taulujen rivit**: sulje portit ensin (edellisen aallon deploy) |
+| Peruutus | **Peruutus aina käänteisessä järjestyksessä: 0015 → 0014 → 0013 → 0012 → 0011 → 0010 → 0009.** Jokaisen migraation oma ROLLBACK-osio (tiedoston lopussa) palauttaa katalogin täsmälleen — todennettu myös datan kanssa ja koko ketjuna (0014…0009 → katalogi = tuotannon 0008, vanhat rivit ennallaan). 0012 kieltäytyy, jos 0013 on yhä ajettu; **0013:lla ei ole vastaavaa vartijaa 0014:ää vastaan** (0013 on lukittu) — sen peruutus menee läpi 0014:n ollessa ajettu, joten järjestyksestä on huolehdittava itse (inventaario pysäyttää sellaisen tilan); 0010 kieltäytyy, jos jokin tavoite on tilassa `maintenance`. **Peruutus poistaa uusien taulujen rivit**: sulje portit ensin (edellisen aallon deploy) |
 
 **PYSÄYTYSEHDOT (kaikille):** preflight antaa yhdenkin FAIL-rivin ·
 migraatio päättyy virheeseen (ei ole vaarallista — mikään ei muuttunut —
@@ -185,7 +190,24 @@ tulostaa ajettavat tiedostot tiivisteineen.
 | 3 Verify | `supabase/verify/verify_0014.sql` → 0 (harjoitus: 39 PASS / 0 FAIL, 11 INFO; rivit 34–35 = migraatioiden 36 taulun tilin poiston cascade, rivi 36 INFO muut taulut) |
 | 4 Deploy | aalto K (v24; ehdokashaara rakennetaan J v2:n `cba9463` päälle) |
 | Hyväksyntädata | 1 paikka + lisänimi, 1 toistuva meno paikalla ja tavoitteella, 1 koko päivän meno, 1 kuitattu matka, arjen asetukset, 1 unikirjaus, 1 tapasuunnitelma + kirjaus, 1 liikuntakerta, 1 motivaatio/hallinta → F5 → säilyy |
-| Peruutus | ROLLBACK-osio, **aina ensimmäisenä** (ennen 0013:a): pudottaa kymmenen taulua lapsista vanhempiin ilman cascadea. **Poistaa arjen rivit pysyvästi** — sulje portit ensin (aallon K revert aaltoon J) ja ota tilannekuva `supabase/backup/snapshot_state_0014.sql`. Todennettu aallon K datalla: katalogi = tila 0013, vanhat rivit ennallaan, `verify_0013` 0 FAIL, uusi ajo läpi |
+| Peruutus | ROLLBACK-osio, **aina ensimmäisenä** (ennen 0013:a): pudottaa kymmenen taulua lapsista vanhempiin ilman cascadea. **Poistaa arjen rivit pysyvästi** — sulje portit ensin (aallon K revert aaltoon J) ja ota tilannekuva `supabase/backup/snapshot_state_0014.sql`. Todennettu aallon K datalla: katalogi = tila 0013, vanhat rivit ennallaan, `verify_0013` 0 FAIL, uusi ajo läpi. **Vasta kun 0015 on peruttu**: 0014:llä ei ole 0015-vartijaa (0014 on lukittu), ja inventaario pysäyttää väärän järjestyksen (todennettu) |
+
+## 0015 — Mielen kuorman keventäminen (aalto L, v25)
+
+| | |
+|---|---|
+| Tekee | 2 uutta taulua (`protected_periods`, `weekly_plans`); **MUUTTAA `tasks`-taulua** (6 saraketta: `horizon`, `waiting_on`, `follow_up_date`, `archived_at`, `reschedule_count` not null default 0, `original_date`; `date` drop not null) ja `life_areas`-taulua (`kind` not null default 'STANDARD'; `life_areas_category_unique` pois, tilalle ei-uniikki `life_areas_user_category_idx`). Sarakeportti `MENTAL_LOAD_FIELDS`. 47 objektia |
+| Elävät taulut | `tasks` (tuotannossa auki) ja `life_areas` (0012). **Ei yhtäkään rivin uudelleenkirjoitusta** (vakio-oletukset; `xmin` ja `relfilenode` ennallaan, todennettu molemmilla lähtötiloilla) |
+| Lukot | `tasks` ja `life_areas` ACCESS EXCLUSIVE **kerralla ennen yhtäkään muutosta**: jo sovelluksen lukukysely estää → 5 s ja kokonainen peruutus, 0 DDL-komentoa ennen odotusta. `auth.users` SHARE ROW EXCLUSIVE viimeisenä (uusien taulujen omistaja-avain): vain kirjoitus estää (harjoitus: estäjämatriisi 6/6) |
+| Uudelleenajo | "JO AJETTU" (47 objektia) katalogista ennen lukitusta — heti myös sovelluksen `tasks`-kirjoituksen aikana. HUOM. 0012:n uudelleenajo 0015:n jälkeen sanoo "kesken: 56/58" (0015 poisti 0012:n rajoitteen) ja kaatuu kiinni; inventaario tuntee luvun |
+| Riski | Keski. **Tuore varmuuskopio pakollinen** (`snapshot_state_0014.sql`) |
+| Omistajuus | Ei uusia viitteitä sovellustauluihin; uusien taulujen omistaja-avain auth.usersiin on CASCADE. Viikon prioriteetti on viittaus (`task:<id>`), ei vierasavain: toisen käyttäjän tunniste ei avaa hänen riviään (RLS, todennettu liitoskyselyllä) |
+| 1 Preflight | `supabase/preflight/preflight_0015.sql` → 0 FAIL (sisältää: 0014 kokonaan ajettu (153), `life_areas_category_unique` olemassa, RLS tasks/life_areas, vanhojen 20 taulun 80 politiikkaa, 0/47 omaa objektia, lukitut taulut `tasks`/`life_areas`/`auth.users`; INFO: `tasks.date` NOT NULL ennen 0015:tä ja tyyppi) |
+| 2 Ajo | `supabase/migrations/0015_mental_load.sql` — omistajan hyväksyntä "hyväksyn 0015/L" |
+| 3 Verify | `supabase/verify/verify_0015.sql` → 0 (harjoitus: 34 PASS / 0 FAIL, 6 INFO; rivit 31–32 = migraatioiden 38 taulun tilin poiston cascade, rivi 33 INFO muut taulut) |
+| 4 Deploy | aalto L (v25; ehdokashaara rakennetaan K v1:n `d11d8b4` päälle) |
+| Hyväksyntädata | 1 päivätön "myöhemmin"-tehtävä, 1 odottava (kenen varassa + tarkistuspäivä), 1 arkistoitu, suojattu ilta + loma + viikon vähimmäisvapaa-aika, 1 viikkosuunnitelma (≤ 3 prioriteettia, suljettu), 2 aluetta samalla kategorialla → F5 → säilyy |
+| Peruutus | ROLLBACK-osio, **aina ensimmäisenä** (ennen 0014:ää): vartija kaatuu kiinni, jos kaksi aluetta jakaa kategorian (todennettu); pudottaa kaksi taulua ja seitsemän saraketta, palauttaa `life_areas_category_unique`. `tasks.date`-sarakkeen NOT NULL -ehtoa **ei** palauteta (`docs/MIGRATION-0015-RECOVERY.md` §4). Todennettu aallon L datalla: katalogi = tila 0014, vanhat rivit ennallaan, `verify_0014` 0 FAIL, uusi ajo läpi |
 
 ---
 
