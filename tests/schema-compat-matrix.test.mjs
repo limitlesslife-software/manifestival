@@ -574,7 +574,10 @@ graphTest('KRIITTINEN aalto J: sarakeportin nousu herättää odottavan kentän,
   // puuttuvat: nousu koskee PELKKÄÄ sarakeporttia (ei yhtään taulua).
   const { g, server } = await start('J', { ...DB_STATES['+0013'], drop: { tasks: ['milestone_id', 'depends_on'] } });
   assert.equal(g.schema.columnGateOpen('GOAL_PLANNING_FIELDS'), false, 'lähtötilanne: portti laskettu');
-  assert.deepEqual(Object.keys(g.schema.TABLES).filter(key => !g.schema.isTableAvailable(key)), [],
+  // Vain aallossa J auki olevat taulut: myöhemmän aallon (K) taulut ovat
+  // käännösaikaisesti kiinni eivätkä ole "laskettuja".
+  assert.deepEqual(Object.keys(g.schema.TABLES)
+    .filter(key => g.schema.TABLES[key] === true && !g.schema.isTableAvailable(key)), [],
     'lähtötilanne: yksikään taulu ei ole laskettu');
   const task = normalizeTask({ id: 'wk-1', title: 'Tehtävä', date: '2026-09-26' });
   assert.equal((await g.tasksRepo.insertTask(task)).ok, true);
@@ -691,7 +694,9 @@ graphTest('KRIITTINEN aalto J: ydin puuttuu -> huoltotila, nolla kirjoitusta, jo
     await g.tasksRepo.setCompleted(task.id, true), await g.tasksRepo.deleteTask(task.id),
     await g.profileRepo.saveProfile({ age: 1 }), await g.prefs.savePreferences({ enabled: true })
   ];
-  for (const repo of g.collections.ALL_REPOSITORIES) {
+  // Kannan repositoriot (aallossa J auki). Myöhemmän aallon (K) portti on
+  // kiinni, joten sen repositorio kirjoittaa istunnon muistiin eikä kantaan.
+  for (const repo of g.collections.ALL_REPOSITORIES.filter(r => r.isPersistent())) {
     results.push(await repo.insert(example(repo)), await repo.update(example(repo)), await repo.remove('x'));
   }
   assert.ok(results.every(result => !result.ok && result.error.code === 'persistence_unavailable'));

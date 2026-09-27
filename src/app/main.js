@@ -10,9 +10,8 @@
 //        - kirjautunut   -> lataa data, näytä sovellus
 //        - kirjautumaton -> näytä kirjautumisportti
 
-import { todayMidnight, startOfWeek } from '../lib/datetime.js';
 import { getDevicePreference, clearDevicePreferences } from '../data/preferences.js';
-import { subscribe, resetState, setViewDate, setWeekStart, getState, batch } from './state.js';
+import { subscribe, resetState, resetDatesToToday, getState, batch } from './state.js';
 import { loadUserData, clearLocalUserData } from './actions.js';
 import { renderTimerBar, initTimeLog, closeTimeLogDialog } from './views/timeLog.js';
 import { restoreLocalTimer, initTimerCrossTabSync, stopTimerCrossTabSync, resetTimerSync } from './timerState.js';
@@ -26,11 +25,16 @@ import {
   initNavigation, restoreLastScreen, setScreenRenderers, markScreensDirty, renderVisible,
   renderEveryScreen, forgetRenderedScreens
 } from './navigation.js';
-import { initVoice } from './voice.js';
+import { initVoice, resetVoice } from './voice.js';
 import { initSearch, closeSearch } from './search.js';
 import { initOnboarding, maybeShowOnboarding } from './onboarding.js';
 import { renderToday, initTodayNavigation } from './views/today.js';
+import { resetTodayDailyLife } from './views/todayDailyLife.js';
+import { initPurchaseCheck, resetPurchaseCheck } from './views/purchaseCheck.js';
+import { renderSetupChecklist, initSetupChecklist } from './views/setupChecklist.js';
+import { initDiscretionaryLimit, resetDiscretionaryLimit } from './views/discretionaryLimit.js';
 import { renderWeek, initWeekNavigation } from './views/week.js';
+import { initCalendar, renderCalendar, resetCalendarView } from './views/calendar.js';
 import { renderTasks, initTaskForm, closeForm } from './views/tasks.js';
 import { initRoutineForm, closeRoutineForm } from './views/routines.js';
 import { renderGoals, initGoalForm, closeGoalForm, refreshGoalPicker } from './views/goals.js';
@@ -48,6 +52,26 @@ import { initPlanning, resetPlanning } from './views/planning.js';
 import { clearIdempotencyKeys } from './planning.js';
 import { renderProfile, initProfileForm, fillProfileForm } from './views/profile.js';
 import { renderNotificationSettings } from './views/notificationSettings.js';
+// Arjen käyttöjärjestelmä (aalto K): profiilin osiot ja niiden näkymät.
+import { renderProfileSegments, initProfileSegments } from './views/profileSegments.js';
+import { renderDailySettings, initDailySettings, resetDailySettings } from './views/dailySettings.js';
+import { renderGuidanceSettings, initGuidanceSettings, resetGuidanceSettings } from './views/guidanceSettings.js';
+import { renderWellbeingHub, initWellbeingHub, resetWellbeingHub } from './views/wellbeingHub.js';
+import { renderPlacesSettings, initPlacesSettings, resetPlacesSettings } from './views/placesSettings.js';
+import { runEventDepartureSweep, resetDepartureWatch } from './departureWatch.js';
+import { runDailyLifeNotices } from './dailyLifeNotices.js';
+import { resetDailyLifeActions } from './dailyLifeActions.js';
+// Arjen herätykset, laitteen kuittaukset ja lähtökori (aalto K, rooli W).
+import {
+  activateAlarmSync, resetAlarmSync, syncAlarms, scheduleAlarmSync, alarmRelevantChanged, alarmDayRolled
+} from './alarmSync.js';
+import {
+  activateAlarmEvents, consumeAlarmEvents, resetAlarmEvents, acknowledgeRecordedDepartures
+} from './alarmEvents.js';
+import {
+  activateDailyLifeOutbox, deactivateDailyLifeOutbox, replayDailyLifeOutbox, overlayDailyLifeOutbox,
+  dailyLifeOutboxStatus
+} from './dailyLifeOutbox.js';
 import { initInbox, closeCaptureReview, renderInbox } from './views/inbox.js';
 import { initReminderForm, closeReminderForm } from './views/reminders.js';
 import { initTravelForms, closeTravelForm, closeLocationRuleForm }
@@ -62,7 +86,7 @@ import {
 } from './assistantActions.js';
 import {
   refreshNotificationPermission, syncNotifications,
-  scheduleNotificationResync, cancelScheduledResync, cancelDeviceNotifications
+  scheduleNotificationResync, cancelScheduledResync, cancelDeviceNotifications, startNotificationActions
 } from './notifications.js';
 import { lifecycle, location as platformLocation, speech } from '../platform/index.js';
 import { logFailure, LOG_LEVEL } from '../lib/logger.js';
@@ -108,6 +132,8 @@ async function sendPending() {
     // Suunnan lähettämättömät aikakirjaukset (vain aikakirjaukset; uusinta
     // on idempotentti operaatiotunnisteen ansiosta).
     await flushTimeOutbox();
+    // Arjen lähtökori (menot, tapakirjaukset): sama periaate, yksi lähetys kerrallaan.
+    await replayDailyLifeOutbox();
   } catch (error) {
     logFailure('offline.replay_failed', error);
   } finally {
@@ -129,7 +155,8 @@ async function loadFresh() {
   const mark = beginDataLoad();
   const result = await loadUserData();
   // Palautetut tallennukset yhtenä ilmoituksena (loadUserData on jo yksi).
-  if (!result.discarded) batch(() => keepWritesSince(mark));
+  // Lähtökorin odottavat menot ja kirjaukset pysyvät näkyvissä latauksen yli.
+  if (!result.discarded) batch(() => { keepWritesSince(mark); overlayDailyLifeOutbox(); });
   return result;
 }
 
@@ -200,11 +227,15 @@ function registerServiceWorker() {
 const SCREEN_RENDERERS = Object.freeze({
   'screen-today': () => { renderToday(); renderInbox(); renderNotices(); },
   'screen-direction': () => { renderDirection(); },
-  'screen-week': () => { renderWeek(); },
+  'screen-week': () => { renderWeek(); renderCalendar(); },
   'screen-tasks': () => { renderTasks(); refreshGoalPicker(); },
   'screen-goals': () => { renderGoals(); renderProjects(); },
   'screen-finance': () => { renderFinance(); },
-  'screen-profile': () => { renderProfile(); renderNotificationSettings(); }
+  'screen-profile': () => {
+    renderSetupChecklist(); renderProfileSegments(); renderProfile(); renderNotificationSettings();
+    renderDailySettings(); renderGuidanceSettings();
+    renderWellbeingHub(maybe('profileWellbeingSection')); renderPlacesSettings(maybe('profilePlacesSection'));
+  }
 });
 
 /** Joka tilamuutoksessa: ajastinpalkki ja päivän Suunta-kortti (kevyt, välimuistista). */
@@ -270,10 +301,67 @@ function watchNotifiableChanges() {
  * sovelluksen kayttoa: kierros yritetaan uudelleen kolmenkymmenen
  * sekunnin paasta, ja siihen asti kayttoliittyma toimii normaalisti.
  */
+// ================================================================
+// ARJEN HERÄTYKSET, LAITTEEN KUITTAUKSET JA LÄHTÖKORI (aalto K, rooli W)
+// ================================================================
+//
+// Kaikki laitteelle menevä (herätykset, puhutut muistutukset) lasketaan
+// src/app/alarmSync.js:ssä; tavalliset ilmoitukset ajastaa edelleen
+// notifications.js samasta jaosta. Näiden kytkentä on koottu tähän:
+//   kirjautuminen  -> startDailyLifeDevice (kori, kuittausmuisti, ajastus sallittu)
+//   latauksen jälkeen ja etualalle palatessa -> refreshDailyLifeDevice
+//                    (laitteen kuittaukset ENSIN, sitten ajastus)
+//   tilamuutos     -> watchDailyLifeChanges (viive 2 s, sama kuin muistutuksissa)
+//   kellon tikki   -> päivän vaihtuessa uusi päivä ajastetaan
+//   uloskirjautuminen -> stopDailyLifeDevice (laitteen herätykset perutaan)
+
+/** Herätykset ja tavalliset muistutukset uudelleen (viiveellä, peräkkäiset yhdistyvät). */
+function requestDailyLifeResync() {
+  scheduleAlarmSync();
+  scheduleNotificationResync();
+}
+
+/** Kirjautuminen: käyttäjän lähtökori ja kuittausmuisti käyttöön. */
+function startDailyLifeDevice(userId) {
+  activateDailyLifeOutbox(userId);
+  activateAlarmSync(userId);
+  activateAlarmEvents(userId, { changed: requestDailyLifeResync });
+}
+
+/** Laitteen kuittaukset ensin, sitten ajastus: kuitattua ei ajasteta uudelleen. */
+async function refreshDailyLifeDevice() {
+  await consumeAlarmEvents();
+  if (!signedIn) return;
+  await syncAlarms();
+}
+
+/**
+ * Tilamuutos, joka voi siirtää herätystä tai arjen muistutusta. Sovelluksessa
+ * kirjattu lähtö ("Lähdin nyt") kuittaa saman menon lähtöketjun ennen
+ * uudelleenajastusta: lähteneelle ei soi "Lähde nyt".
+ */
+function watchDailyLifeChanges() {
+  if (!signedIn) return;
+  const state = getState();
+  if (!alarmRelevantChanged(state)) return;
+  acknowledgeRecordedDepartures(state.commuteObservations);
+  requestDailyLifeResync();
+}
+
+/** Uloskirjautuminen: laitteen herätykset pois, kuittausmuisti pois, kori muistista. */
+function stopDailyLifeDevice() {
+  resetAlarmSync().catch(() => {});
+  resetAlarmEvents();
+  deactivateDailyLifeOutbox();
+}
+
 function runAssistantSweeps() {
   Promise.all([
     runReminderSweep(),
     runDepartureSweep(),
+    // Kalenterin menojen lähdöt ja arjen huomautukset (aalto K).
+    runEventDepartureSweep(),
+    runDailyLifeNotices(),
     runReplanCheck(),
     pruneNoticeHistory()
   ]).catch(error => {
@@ -291,6 +379,8 @@ async function onSignedIn() {
   // koskaan osu tähän (avain on käyttäjäkohtainen).
   const current = getUser();
   offline.activate(current && current.id ? current.id : null);
+  // Arjen lähtökori ja laitteen kuittausmuisti samalla periaatteella (rooli W).
+  startDailyLifeDevice(current && current.id ? String(current.id) : null);
 
   // Käyttäjän oma ajastin laitteelta ENNEN latausta: uudelleenlataus ei
   // hukkaa kulunutta aikaa, eikä toisen käyttäjän ajastin osu tähän
@@ -309,10 +399,10 @@ async function onSignedIn() {
   await ensureSchemaCompatibility({ timeoutMs: SCHEMA_PROBE_TIMEOUT_MS });
   if (!signedIn || !isSameSession(probeSession)) return;
 
-  // Päivä ja viikko nollataan kirjautuessa: sovellus avautuu aina tähän
-  // päivään, ei siihen mihin edellinen istunto jäi.
-  setViewDate(todayMidnight());
-  setWeekStart(startOfWeek(todayMidnight()));
+  // Päivä, viikko ja Kalenterin päivä nollataan kirjautuessa: sovellus
+  // avautuu aina tähän päivään, ei siihen mihin edellinen istunto jäi
+  // (ks. state.js resetDatesToToday: Kalenterin päivä jäi aiemmin pois).
+  resetDatesToToday();
 
   restoreLastScreen(getDevicePreference('lastScreen'));
 
@@ -325,7 +415,9 @@ async function onSignedIn() {
   // heti perään ei lataa uudelleen, mutta lähetyksen aikana palannut verkko
   // ajaa vielä oman kierroksensa.
   reconnect.noteRefreshStarted();
-  if (offline.status().total > 0 || pendingTimeEntryCount() > 0) await sendPending();
+  if (offline.status().total > 0 || pendingTimeEntryCount() > 0 || dailyLifeOutboxStatus().total > 0) {
+    await sendPending();
+  }
   if (!isSameSession(session)) return;
 
   // Lataus voi kestää, ja käyttäjä ehtii sinä aikana kirjautua ulos tai
@@ -366,6 +458,12 @@ async function onSignedIn() {
   // voidaan ajaa niin usein kuin halutaan.
   runAssistantSweeps();
 
+  // Herätykset ja puhutut muistutukset laitteelle, kun data on ladattu
+  // (rooli W). Selaimessa tämä ei ajasta mitään: herätystä ei teeskennellä.
+  refreshDailyLifeDevice().catch(error => {
+    logFailure('alarm.refresh_failed', error);
+  });
+
   maybeShowOnboarding();
 }
 
@@ -401,6 +499,9 @@ function onSignedOut() {
   closeCaptureReview();
   closeNoticeCenter();
   closeSearch();
+  // Puhepaneelin tarkistettava sanelu säilyy piilotuksen yli; seuraava
+  // käyttäjä ei saa nähdä sitä eikä lähettää sitä omilla tunnuksillaan.
+  resetVoice();
 
   // Muistissa oleva sijainti unohtuu uloskirjautuessa (ei koskaan levylle).
   platformLocation.forget();
@@ -408,6 +509,9 @@ function onSignedOut() {
   // Offline-jono vapautetaan muistista; tallennus säilyy käyttäjäkohtaisella
   // avaimella eikä koskaan lähetetä toisen käyttäjän tilillä.
   offline.deactivate();
+  // Laitteen herätykset ja puhutut muistutukset perutaan, kuittausmuisti
+  // tyhjennetään ja arjen lähtökori vapautetaan muistista (rooli W).
+  stopDailyLifeDevice();
 
   // Nollaa myös kesken olevan kuvan luennan ja tyhjentää
   // tiedostovalitsimen. Seuraava käyttäjä samalla selaimella ei saa
@@ -418,6 +522,18 @@ function onSignedOut() {
   // Avain viittaa ehdotukseen, joka ei sekään elä uloskirjautumisen
   // yli — jäänyt avain estäisi seuraavaa käyttäjää tallentamasta.
   resetPlanning();
+  // Arjen näkymien luonnokset ja muistissa olevat lähdöt eivät vuoda
+  // seuraavalle käyttäjälle.
+  resetDailySettings();
+  resetGuidanceSettings();
+  resetWellbeingHub();
+  resetPlacesSettings();
+  resetDepartureWatch();
+  resetDailyLifeActions();
+  // Tänään-korttien avoin valitsin, keskeytyksen esikatselu ja aamuvalinta.
+  resetTodayDailyLife();
+  resetPurchaseCheck();
+  resetDiscretionaryLimit();
   closeAreaForm();
   closeTimeLogDialog();
   stopTimerCrossTabSync();
@@ -430,6 +546,7 @@ function onSignedOut() {
   // jäänyt pyyntö pidättele seuraavan käyttäjän kirjoituksia.
   resetTimerSync();
   resetDirectionView();
+  resetCalendarView();
   resetAppliedAdjustments();
   resetAlignmentSession();
   clearIdempotencyKeys();
@@ -440,6 +557,11 @@ function onSignedOut() {
   clearLocalUserData();
   clearDevicePreferences();
   resetState();
+  // Profiilin kentät (ikä, paino, pituus, uni) kirjoittaa vain
+  // fillProfileForm, ja kirjautuessa vasta latauksen jälkeen. Nollatusta
+  // tilasta täytetty lomake on oletuksissa: seuraava käyttäjä ei näe
+  // edellisen terveystietoja, eikä "Tallenna" kirjoita niitä hänelle.
+  fillProfileForm();
   showAuthGate();
 }
 
@@ -453,16 +575,25 @@ async function start() {
   initNavigation();
   initTodayNavigation();
   initWeekNavigation();
+  initCalendar();
   initTaskForm();
   initRoutineForm();
   initGoalForm();
   initProjectForm();
   initFinanceForms();
+  initPurchaseCheck();
+  initDiscretionaryLimit();
   initTransactionForms();
   initInvestmentForms();
   initGoalDetail();
   initPlanning();
   initProfileForm();
+  initProfileSegments();
+  initSetupChecklist();
+  initDailySettings();
+  initGuidanceSettings();
+  initWellbeingHub(maybe('profileWellbeingSection'));
+  initPlacesSettings(maybe('profilePlacesSection'));
   initInbox();
   initReminderForm();
   initTravelForms();
@@ -472,11 +603,16 @@ async function start() {
   initVoice();
   initSearch();
   initOnboarding();
+  // Lähtöilmoituksen "Avaa reitti" (Android) ENNEN istunnon palautusta:
+  // kylmäkäynnistyksen painallus odottaa liitännäisessä kuuntelijaa.
+  startNotificationActions();
 
   // 2. Näkymät seuraavat tilaa: avoin näyttö heti, muut ennen näyttämistä.
   setScreenRenderers(SCREEN_RENDERERS, { always: ALWAYS_RENDERED, enabled: () => signedIn });
   subscribe(renderAll);
   subscribe(watchNotifiableChanges);
+  // Herätyksiin ja arjen muistutuksiin vaikuttavat kokoelmat (rooli W).
+  subscribe(watchDailyLifeChanges);
   // Skeematarkistuksen tila (rajoitettu / huoltokatko) ENNEN istunnon
   // palautusta: palautettu istunto ajaa tarkistuksen jo initAuthin aikana.
   // Palautuminen lähettää odottavat muutokset ja lataa tiedot samalla
@@ -505,6 +641,9 @@ async function start() {
     markScreensDirty();
     renderToday();
     runAssistantSweeps();
+    // Päivä vaihtui sovelluksen ollessa auki: herätysten ja muistutusten
+    // kolmen päivän ikkuna siirtyy (rooli W).
+    if (alarmDayRolled()) requestDailyLifeResync();
     // Lähettämättömät aikakirjaukset uudelleen (F16): heikko kenttä tai
     // kirjautumissivu ei välttämättä koskaan laukaise offline/online-
     // tapahtumaa. Tyhjällä korilla ei tehdä mitään; epäonnistuminen
@@ -535,6 +674,11 @@ async function start() {
       runAssistantSweeps();
       syncNotifications().catch(error => {
         logFailure('notifications.resume_sync_failed', error);
+      });
+      // Sovelluksen ollessa kiinni kirjatut kuittaukset ja "Lähdin"-painallukset
+      // ensin, sitten herätykset uudelleen (rooli W).
+      refreshDailyLifeDevice().catch(error => {
+        logFailure('alarm.resume_refresh_failed', error);
       });
       // Sovellus on voinut olla taustalla pitkään: data on voinut vanhentua
       // (esim. muokattu toisella laitteella). refreshNow() on limitelty

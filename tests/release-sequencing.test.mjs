@@ -262,10 +262,11 @@ test('dokumentti ohjaa lukkoon ja orkestroijaan eikä pidä vanhaa harjoittelua 
   assert.equal(/Aalto B\s+v15\s+\(tuotannon nykytila/.test(doc), false);
 });
 
-test('aalto J on junan viimeisenä, heti aallon I jälkeen', () => {
-  // Sen migraatio (0013) on ajamatta ja riippuu 0012:sta (aalto I).
-  // Aalto, jonka kanta puuttuu, ei saa olla minkään toisen edellä, eikä
-  // J voi tulla ennen I:tä.
-  assert.equal(WAVE_IDS[WAVE_IDS.length - 1], 'J');
-  assert.equal(WAVE_IDS[WAVE_IDS.length - 2], 'I');
+test('aalto K on junan viimeisenä, heti aallon J jälkeen, ja J heti I:n jälkeen', () => {
+  // J:n migraatio (0013) riippuu 0012:sta (aalto I), ja K:n migraatio
+  // (0014) edellyttää 0013:n (verify_0013 = 0). Aalto, jonka kanta
+  // puuttuu, ei saa olla minkään toisen edellä.
+  assert.equal(WAVE_IDS[WAVE_IDS.length - 1], 'K');
+  assert.equal(WAVE_IDS[WAVE_IDS.length - 2], 'J');
+  assert.equal(WAVE_IDS[WAVE_IDS.length - 3], 'I');
 });

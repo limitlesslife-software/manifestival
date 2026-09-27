@@ -6,7 +6,7 @@
 //      SQL-tiedoston tarkistusmäärästä: muodot (sarkain, CSV, putki),
 //      vajaa liitos, kahdesti liitetty rivi.
 //   2. OIKEAN KANNAN tulokset tests/fixtures/sql-results/: jokainen
-//      preflight_0009…0013 ja verify_0009…0013 ajettuna paikallisessa
+//      preflight_0009…0014 ja verify_0009…0014 ajettuna paikallisessa
 //      PostgreSQL 17:ssä tuotannon muotoisella synteettisellä datalla
 //      (node tools/pg-rehearsal/sql-result-fixtures.mjs): PASS-tila ja
 //      yksi FAIL-tila kustakin. Ei käyttäjän sisältöä.
@@ -133,15 +133,15 @@ test('poikkeavia_yhteensa puuttuu -> STOP (ei oleteta nollaksi)', () => {
 // =====================================================================
 
 const REAL_DIR = path.join(ROOT, 'tests/fixtures/sql-results');
-const NUMBERS = ['0009', '0010', '0011', '0012', '0013'];
+const NUMBERS = ['0009', '0010', '0011', '0012', '0013', '0014'];
 const REAL = NUMBERS.flatMap(n => ['preflight', 'verify'].flatMap(kind => ['pass', 'fail'].map(outcome => ({
   n, kind, outcome, name: `${kind}_${n}-${outcome}.tsv`, sql: `supabase/${kind}/${kind}_${n}.sql`
 }))));
 const realText = name => fs.readFileSync(path.join(REAL_DIR, name), 'utf8');
 const MANIFEST = JSON.parse(fs.readFileSync(path.join(REAL_DIR, 'manifest.json'), 'utf8'));
 
-test('oikean kannan tuloksia on 20: preflight ja verify 0009–0013, PASS ja FAIL', () => {
-  assert.equal(REAL.length, 20);
+test('oikean kannan tuloksia on 24: preflight ja verify 0009–0014, PASS ja FAIL', () => {
+  assert.equal(REAL.length, 24);
   for (const f of REAL) assert.ok(fs.existsSync(path.join(REAL_DIR, f.name)), `${f.name} puuttuu`);
   assert.deepEqual(Object.keys(MANIFEST.files).sort(), REAL.map(f => f.name).sort());
   assert.match(MANIFEST.server.version, /^PostgreSQL 17\./);

@@ -27,6 +27,10 @@ import { fmtISO, todayMidnight } from '../lib/datetime.js';
 import { AUDIT_RESULT } from '../domain/audit.js';
 import { logEvent } from '../lib/logger.js';
 import { reconcileTemporal } from '../ai/temporalReconcile.js';
+// Menon luonti ja päivän keskeytys tunnistetaan laitteella ENNEN tekoälyä
+// (src/app/localCommands.js): sama vahvistus, ei verkkoa, ei arvausta.
+import { runLocalCommand } from './localCommands.js';
+import { sessionSnapshot, isSameSession } from '../data/session.js';
 
 /** Vaiheraportti (onPhase) on valinnainen: ilman sitä vaiheista ei kerrota kenellekään. */
 const NO_PHASE = () => {};
@@ -138,15 +142,30 @@ async function handleProposal(proposal, inputText, ui) {
  * @param {Function} [options.fetchImpl] testejä varten
  * @param {(phase:string) => void} [options.onPhase] vaiheraportti: 'classifying' | 'review' |
  *   'target_selection' | 'confirmation' | 'executing' (puheen tilakone käyttää; ei muuta käyttäytymistä)
+ * @param {Date} [options.now] testejä varten; paikallisten komentojen "tänään"
  */
 export async function runTypedCommand(text, {
-  source = 'text', confirmFn = confirmProposal, chooseFn = chooseTarget, fetchImpl, onPhase
+  source = 'text', confirmFn = confirmProposal, chooseFn = chooseTarget, fetchImpl, onPhase, now
 } = {}) {
   const trimmed = String(text ?? '').trim();
   if (!trimmed) return { ok: false, status: 'empty' };
+  // Komento kuuluu sille, joka sen antoi. Tekoälyn vastaus voi viipyä 15 s;
+  // jos tili vaihtuu sillä välin, A:n lause ei saa päätyä B:n
+  // tarkistusdialogiin, B:n auditointiin eikä B:n tietoihin.
+  const startedIn = sessionSnapshot();
 
   const phase = typeof onPhase === 'function' ? onPhase : NO_PHASE;
   phase('classifying');
+
+  // PAIKALLINEN ENSIN: "lisää parturi huomenna klo 16" ja "olen 10 min
+  // myöhässä" eivät tarvitse tekoälyä. Tunnistamaton lause (null) jatkaa
+  // tekoälyn putkeen täsmälleen kuten ennenkin.
+  const local = await runLocalCommand(trimmed, { confirmFn, chooseFn, phase },
+    now instanceof Date ? { now } : {});
+  if (local) {
+    logEvent('command.classified', { source, ok: true, code: null, chars: trimmed.length, local: local.kind });
+    return local;
+  }
 
   const today = fmtISO(todayMidnight());
   const weekday = weekdayName(new Date());
@@ -158,6 +177,10 @@ export async function runTypedCommand(text, {
   logEvent('command.classified', {
     source, ok: classified.ok, code: classified.ok ? null : classified.error.code, chars: trimmed.length
   });
+  if (!isSameSession(startedIn)) {
+    logEvent('command.discarded', { source, code: 'session_changed' });
+    return { ok: false, status: 'discarded' };
+  }
   if (!classified.ok) {
     showError(classified.error);
     return { ok: false, status: 'error', reason: classified.error.userMessage };

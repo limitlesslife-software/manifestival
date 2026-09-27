@@ -13,6 +13,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import path from 'node:path';
 
@@ -23,7 +24,7 @@ import {
 } from '../tools/pg-rehearsal/lib.mjs';
 
 const MIGRATIONS = ['0009_finance_2', '0010_goal_to_action', '0011_personal_assistant',
-  '0012_life_alignment', '0013_alignment_reality'];
+  '0012_life_alignment', '0013_alignment_reality', '0014_daily_life'];
 
 test('KRIITTINEN: harjoittelumoduulien importti ei avaa yhteyttä eikä aja mitään', () => {
   // pg-ajurin hakemisto osoittaa olemattomaan paikkaan: jos yksikin moduuli
@@ -89,7 +90,8 @@ test('compareDigests: lisätty, poistettu, muuttunut ja uudelleen kirjoitettu ri
 });
 
 test('KRIITTINEN: jokaisen ROLLBACK-osion poiminta: begin, lock_timeout, commit', () => {
-  const executable = { '0009': 11, '0010': 39, '0011': 8, '0012': 19, '0013': 19 };
+  // 0014: begin, lock_timeout, kymmenen taulun pudotus lapsista vanhempiin, commit.
+  const executable = { '0009': 11, '0010': 39, '0011': 8, '0012': 19, '0013': 19, '0014': 13 };
   for (const name of MIGRATIONS) {
     const rb = extractRollback(read(`supabase/migrations/${name}.sql`));
     assert.ok(rb, `${name}: ROLLBACK-osiota ei löytynyt`);
@@ -100,6 +102,56 @@ test('KRIITTINEN: jokaisen ROLLBACK-osion poiminta: begin, lock_timeout, commit'
     assert.equal(lines.length, executable[name.slice(0, 4)], `${name}: suoritettavien rivien määrä muuttui`);
     assert.equal(dryRunRollback(rb).trim().endsWith('rollback;'), true);
   }
+});
+
+test('KRIITTINEN: 0014:n peruutus pudottaa täsmälleen omat taulunsa, lapset ennen vanhempia, ilman cascadea', () => {
+  const src = read('supabase/migrations/0014_daily_life.sql');
+  const rb = extractRollback(src);
+  const drops = [...rb.matchAll(/^drop table public\.(\w+);$/gm)].map(m => m[1]);
+  const created = [...src.replace(/\r\n/g, '\n').matchAll(/^create table public\.(\w+) \(/gm)].map(m => m[1]);
+  assert.equal(created.length, 10);
+  assert.deepEqual([...drops].sort(), [...created].sort(), 'peruutus ei pudota täsmälleen 0014:n tauluja');
+  const at = t => drops.indexOf(t);
+  for (const [child, parent] of [['place_aliases', 'saved_places'], ['commute_observations', 'saved_places'],
+    ['calendar_events', 'saved_places'], ['habit_events', 'habit_plans']]) {
+    assert.ok(at(child) < at(parent), `${child} pudotetaan vasta ${parent}:n jälkeen`);
+  }
+  // Ilman cascadea vieras riippuvuus (esim. Dashboardista luotu näkymä)
+  // kaataa peruutuksen kiinni eikä poista hiljaa muuta.
+  assert.equal(/\bcascade\b/i.test(rb), false);
+  // Ei ALTERia olemassa olevaan tauluun: 0014 ei muuttanut yhtäkään.
+  assert.equal(/\balter\b/i.test(rb), false);
+});
+
+test('KRIITTINEN: 0014 lukitsee goals-taulun uudelleenajon tunnistuksen jälkeen ja ennen ensimmäistä DDL:ää', () => {
+  // Harjoittelun löydös 2026-09-27: ilman tätä 0014 loi kaksi taulua ja
+  // piti auth.users-lukkoa odottaessaan goals-lukkoa — kirjautuminen jumissa
+  // 4 981 ms (failure:0010-locks, authStall0014).
+  const src = read('supabase/migrations/0014_daily_life.sql').replace(/\r\n/g, '\n');
+  const body = src.slice(src.indexOf('\nbegin;'), src.indexOf('\ncommit;'))
+    .split('\n').filter(l => !l.trim().startsWith('--')).join('\n');
+  const lock = 'lock table public.goals in share row exclusive mode;';
+  assert.equal(body.split(lock).length - 1, 1, 'goals-lukitus puuttuu tai toistuu');
+  assert.equal((body.match(/^lock table /gm) || []).length, 1, 'useampi lukituslause');
+  const at = body.indexOf(lock);
+  assert.ok(body.indexOf("set local lock_timeout = '5s';") < at, 'lock_timeout ennen lukitusta');
+  assert.ok(body.indexOf('JO AJETTU') < at, 'uudelleenajon tunnistus ennen lukitusta ("JO AJETTU" heti)');
+  assert.ok(body.indexOf('touch_updated_at() on SECURITY DEFINER') < at);
+  for (const ddl of ['create table', 'alter table', 'create index', 'create policy', 'create trigger', 'revoke ', 'grant ']) {
+    const first = body.indexOf(ddl);
+    if (first !== -1) assert.ok(at < first, `"${ddl}" ennen goals-lukitusta`);
+  }
+  // auth.usersia ei lukita erikseen: LOCK TABLE vaatisi Supabasessa oikeuden,
+  // jota postgres-roolilla ei välttämättä ole auth-skeeman tauluun.
+  assert.equal(/lock table auth\./.test(body), false);
+});
+
+test('harjoittelun ketju = supabase/migrations (0001–0014)', async () => {
+  const { MIGRATIONS: CHAIN } = await import('../tools/pg-rehearsal/chain.mjs');
+  const files = fs.readdirSync(path.join(ROOT, 'supabase/migrations'))
+    .filter(f => /^\d{4}_\w+\.sql$/.test(f)).map(f => f.replace(/\.sql$/, '')).sort();
+  assert.deepEqual([...CHAIN], files);
+  assert.equal(CHAIN.at(-1), '0014_daily_life');
 });
 
 test('0013:n ROLLBACK-osion ennakkokysely on yksi vain lukeva SELECT; muilla sitä ei ole', () => {

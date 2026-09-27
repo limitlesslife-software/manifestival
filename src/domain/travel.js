@@ -45,6 +45,7 @@
 import { isIsoDate, isTimeOfDay, toMinutes, fromMinutes, MAX_TITLE_LENGTH }
   from './task.js';
 import { fmtISO, parseISO, addDays } from '../lib/datetime.js';
+import { wallClockToEpoch, epochToWallClock } from './wallClock.js';
 
 /** Mistä matka-arvio on peräisin. */
 export const TRAVEL_SOURCE = Object.freeze({
@@ -732,11 +733,20 @@ function dayNumber(iso) {
   return Math.round(date.getTime() / 86400000);
 }
 
-function absoluteMinutes(dateIso, minutes) {
+/**
+ * Seinäkellon absoluuttiset minuutit: päivän järjestysluku * 1440 + minuutit.
+ *
+ * SEINÄKELLOA, EI KULUNUTTA AIKAA. Luku kertoo, mitä kello näyttää, joten
+ * se rullaa keskiyön, kuukauden ja vuoden yli oikein eikä riipu laitteen
+ * aikavyöhykkeestä. Kesäajan yön erikoistapaukset hoitavat `minusMinutes`
+ * ja `minutesBetween` alla.
+ */
+export function absoluteMinutes(dateIso, minutes) {
   return dayNumber(dateIso) * 1440 + minutes;
 }
 
-function fromAbsolute(abs) {
+/** Seinäkellon absoluuttiset minuutit -> { date, time, abs }. */
+export function fromAbsolute(abs) {
   const day = Math.floor(abs / 1440);
   const minutes = ((abs % 1440) + 1440) % 1440;
   const date = new Date(day * 86400000);
@@ -748,15 +758,87 @@ function fromAbsolute(abs) {
   };
 }
 
+// =====================================================================
+// KESÄAJAN YÖT: VAROVAINEN VÄHENNYSLASKU, LAITTEEN OMALLA VYÖHYKKEELLÄ
+// =====================================================================
+//
+// Seinäkellolaskenta on oikein kaikkina muina öinä kuin kesäajan
+// vaihtoöinä. Vaihtoyönä:
+//
+//   KEVÄT: tunti puuttuu. Saapuminen 04:30 miinus 60 min matkaa on
+//   seinäkellolla "03:30", jota ei ole olemassa -- ja laite tulkitsisi
+//   sen ajaksi 04:30, eli lähtömuistutus tulisi saapumisaikaan. Oikea
+//   lähtö on 02:30.
+//
+//   SYKSY: tunti toistuu. Seinäkellolla laskettu lähtö on enintään tunnin
+//   TURHAN AIKAISIN -- ei koskaan myöhässä.
+//
+// Sääntö on siksi yksipuolinen: lähtö, valmistautuminen ja muistutus
+// lasketaan sekä seinäkellolla että todellisina kuluneina minuutteina, ja
+// AIKAISEMPI voittaa. Muina öinä molemmat antavat saman luvun.
+//
+// VYÖHYKETTÄ EI KOVAKOODATA. Kulunut aika lasketaan kutsujan antamalla
+// `offsetMinutesFn`-funktiolla (hetki ms -> minuutteja UTC:stä itään;
+// ks. src/domain/wallClock.js). Sovelluskerros antaa laitteen oman
+// vyöhykkeen, joten Suomessa korjaus osuu Suomen vaihtoöihin, Tokiossa ei
+// mihinkään ja Yhdysvalloissa niiden omiin öihin. Ilman funktiota
+// laskenta on puhdasta seinäkelloa (vanha käytös): tulos on sama joka
+// koneella, eikä yhdenkään maan sääntö vuoda toiseen.
+
+/** Seinäkellon hetki -> todellinen hetki (ms) funktiolla `fn`, tai null. */
+function epochOfWall(wallAbs, fn) {
+  const { date, time } = fromAbsolute(wallAbs);
+  const result = wallClockToEpoch(date, time, fn);
+  return result ? result.epochMs : null;
+}
+
+/** Todellinen hetki (ms) -> seinäkellon absoluuttiset minuutit, tai null. */
+function wallOfEpoch(epochMs, fn) {
+  const wall = epochToWallClock(epochMs, fn);
+  return wall ? absoluteMinutes(wall.date, toMinutes(wall.time)) : null;
+}
+
+const isOffsetFn = fn => typeof fn === "function";
+
+/**
+ * Seinäkellon hetki `minutes` minuuttia ennen hetkeä `wallAbs`, varovaisesti:
+ * aikaisempi seinäkellon ja kuluneen ajan tuloksista (kun vyöhyke annetaan).
+ * Tulos ei koskaan osu kevään puuttuvaan tuntiin.
+ */
+export function minusMinutes(wallAbs, minutes, offsetMinutesFn = null) {
+  const naive = wallAbs - minutes;
+  if (!isOffsetFn(offsetMinutesFn)) return naive;
+  const epochMs = epochOfWall(wallAbs, offsetMinutesFn);
+  if (epochMs === null) return naive;
+  const corrected = wallOfEpoch(epochMs - minutes * 60000, offsetMinutesFn);
+  return corrected === null ? naive : Math.min(naive, corrected);
+}
+
+/**
+ * Minuutteja hetkestä `fromAbs` hetkeen `toAbs`, varovaisesti: pienempi
+ * seinäkellon ja kuluneen ajan erotuksista (kun vyöhyke annetaan).
+ * Pienempi ero tarkoittaa aikaisempaa muistutusta -- ei koskaan myöhäisempää.
+ */
+export function minutesBetween(fromAbs, toAbs, offsetMinutesFn = null) {
+  const naive = toAbs - fromAbs;
+  if (!isOffsetFn(offsetMinutesFn)) return naive;
+  const a = epochOfWall(fromAbs, offsetMinutesFn);
+  const b = epochOfWall(toAbs, offsetMinutesFn);
+  if (a === null || b === null) return naive;
+  return Math.min(naive, Math.round((b - a) / 60000));
+}
+
 /** Hetki `minutes` minuuttia ennen lähtöä: { date, time }. Kalenteripäivä rullaa oikein keskiyön yli. */
-export function leaveAtMinus(schedule, minutes) {
+export function leaveAtMinus(schedule, minutes, { offsetMinutesFn = null } = {}) {
   if (!schedule || !schedule.known) return null;
-  const { date, time } = fromAbsolute(schedule.leave.abs - minutes);
+  const { date, time } = fromAbsolute(minusMinutes(schedule.leave.abs, minutes, offsetMinutesFn));
   return { date, time };
 }
 
 function unknownSchedule(reason) {
-  return Object.freeze({ known: false, reason, arrive: null, leave: null, prepare: null, parts: null, source: null });
+  return Object.freeze({
+    known: false, reason, start: null, arrive: null, leave: null, prepare: null, parts: null, source: null
+  });
 }
 
 const SOURCE_LABELS = Object.freeze({
@@ -764,12 +846,24 @@ const SOURCE_LABELS = Object.freeze({
   [TRAVEL_SOURCE.PROVIDER]: 'reittipalvelusta'
 });
 
+/** Pisin etuajassa olo (min). Sama yläraja kuin muilla puskureilla. */
+const MAX_EARLY_ARRIVAL_MINUTES = 480;
+
 /**
  * Lähtöaikataulu. `known: false`, ellei kestoa tiedetä.
  *
  * Ilman päivää saapuminen tulkitaan annetuksi päiväksi `todayIso`.
+ *
+ *   alku          = arrivalTime (tapahtuman alku)
+ *   saapuminen    = alku - etuajassa olo (earlyArrivalMinutes, oletus 0)
+ *   lähtö         = saapuminen - pysäköinti ja kävely - matka
+ *   valmistautuminen alkaa = lähtö - valmistautuminen
+ *
+ * `earlyArrivalMinutes` on valinnainen, transientti kenttä (lähtömoottori
+ * v2 antaa sen tapahtumalle, paikalle tai asetuksista). Tallennetulla
+ * matkasuunnitelmalla sitä ei ole, joten vanha käytös ei muutu.
  */
-export function departureSchedule(plan, { todayIso } = {}) {
+export function departureSchedule(plan, { todayIso, offsetMinutesFn = null } = {}) {
   if (!plan || !isTimeOfDay(plan.arrivalTime)) return unknownSchedule('Saapumisaikaa ei ole annettu.');
 
   const minutes = plan.travelMinutes;
@@ -780,19 +874,22 @@ export function departureSchedule(plan, { todayIso } = {}) {
   const arrivalDate = plan.arrivalDate || todayIso;
   if (!isIsoDate(arrivalDate)) return unknownSchedule('Saapumispäivää ei tiedetä.');
 
-  const arriveAbs = absoluteMinutes(arrivalDate, toMinutes(plan.arrivalTime));
+  const startAbs = absoluteMinutes(arrivalDate, toMinutes(plan.arrivalTime));
+  const earlyArrival = positiveInt(plan.earlyArrivalMinutes, MAX_EARLY_ARRIVAL_MINUTES) ?? 0;
   const arrivalBuffer = plan.arrivalBufferMinutes ?? 0;
   const preparation = plan.preparationMinutes ?? 0;
-  const leaveAbs = arriveAbs - minutes - arrivalBuffer;
-  const prepareAbs = leaveAbs - preparation;
+  const arriveAbs = minusMinutes(startAbs, earlyArrival, offsetMinutesFn);
+  const leaveAbs = minusMinutes(arriveAbs, minutes + arrivalBuffer, offsetMinutesFn);
+  const prepareAbs = minusMinutes(leaveAbs, preparation, offsetMinutesFn);
 
   return Object.freeze({
     known: true,
     reason: '',
+    start: fromAbsolute(startAbs),
     arrive: fromAbsolute(arriveAbs),
     leave: fromAbsolute(leaveAbs),
     prepare: fromAbsolute(prepareAbs),
-    parts: Object.freeze({ travel: minutes, arrivalBuffer, preparation }),
+    parts: Object.freeze({ travel: minutes, arrivalBuffer, preparation, earlyArrival }),
     source: plan.travelSource
   });
 }
@@ -804,8 +901,10 @@ export function departureSchedule(plan, { todayIso } = {}) {
  *            minutesLate:number|null, minutesToArrival:number|null,
  *            schedule:object, message:string, detail:string}}
  */
-export function departureState(plan, { todayIso, nowMinutes, soonMinutes = LEAVE_SOON_MINUTES } = {}) {
-  const schedule = departureSchedule(plan, { todayIso });
+export function departureState(plan, {
+  todayIso, nowMinutes, soonMinutes = LEAVE_SOON_MINUTES, offsetMinutesFn = null
+} = {}) {
+  const schedule = departureSchedule(plan, { todayIso, offsetMinutesFn });
 
   if (!schedule.known || !isIsoDate(todayIso) || !Number.isFinite(nowMinutes)) {
     return Object.freeze({
@@ -815,7 +914,8 @@ export function departureState(plan, { todayIso, nowMinutes, soonMinutes = LEAVE
   }
 
   const nowAbs = absoluteMinutes(todayIso, nowMinutes);
-  const delta = schedule.leave.abs - nowAbs;
+  // Varovainen erotus: kesäajan yönä pienempi (aikaisempi) tulkinta, muulloin sama kuin seinäkello.
+  const delta = minutesBetween(nowAbs, schedule.leave.abs, offsetMinutesFn);
   const destination = plan.destination || 'perille';
 
   const where = schedule.leave.date === todayIso ? '' : `${schedule.leave.date} `;
@@ -824,6 +924,7 @@ export function departureState(plan, { todayIso, nowMinutes, soonMinutes = LEAVE
     + (SOURCE_LABELS[schedule.source] ? ` (${SOURCE_LABELS[schedule.source]})` : '')
     + (schedule.parts.arrivalBuffer > 0 ? `, pysäköinti ja kävely ${schedule.parts.arrivalBuffer} min` : '')
     + (schedule.parts.preparation > 0 ? `, valmistautuminen ${schedule.parts.preparation} min` : '')
+    + (schedule.parts.earlyArrival > 0 ? `, perillä ${schedule.parts.earlyArrival} min etuajassa` : '')
     + '.';
 
   let state;
@@ -834,7 +935,7 @@ export function departureState(plan, { todayIso, nowMinutes, soonMinutes = LEAVE
   if (delta < -LEAVE_NOW_GRACE_MINUTES) {
     state = DEPARTURE_STATE.LATE;
     minutesLate = -delta;
-    message = nowAbs > schedule.arrive.abs
+    message = minutesBetween(nowAbs, schedule.start.abs, offsetMinutesFn) < 0
       ? `Saapumisaika klo ${plan.arrivalTime} kohteeseen ${destination} on jo mennyt.`
       : `Olet ${minutesLate} min myöhässä: lähtöaika kohteeseen ${destination} oli klo ${leaveText}.`;
   } else if (delta <= 0) {
@@ -845,7 +946,7 @@ export function departureState(plan, { todayIso, nowMinutes, soonMinutes = LEAVE
     state = DEPARTURE_STATE.LEAVE_SOON;
     minutesUntilLeave = delta;
     message = `Lähde noin ${leaveText} (${delta} min kuluttua), jotta ehdit klo ${plan.arrivalTime}.`;
-  } else if (nowAbs >= schedule.prepare.abs) {
+  } else if (minutesBetween(nowAbs, schedule.prepare.abs, offsetMinutesFn) <= 0) {
     state = DEPARTURE_STATE.PREPARE;
     minutesUntilLeave = delta;
     message = `Aloita valmistautuminen: lähde noin ${leaveText}, jotta ehdit klo ${plan.arrivalTime}.`;
@@ -858,9 +959,196 @@ export function departureState(plan, { todayIso, nowMinutes, soonMinutes = LEAVE
   return Object.freeze({
     state, known: true, minutesUntilLeave, minutesLate,
     /** Minuutteja saapumiseen; negatiivinen, kun saapumisaika on mennyt. */
-    minutesToArrival: schedule.arrive.abs - nowAbs,
+    minutesToArrival: minutesBetween(nowAbs, schedule.arrive.abs, offsetMinutesFn),
     schedule, message, detail
   });
+}
+
+// =====================================================================
+// LÄHTÖMOOTTORI V2: TARKEMMAT VAIHEET
+// =====================================================================
+//
+// DEPARTURE_STATE pysyy ennallaan (näkymät, avustaja ja ilmoitukset
+// nojaavat sen merkkijonoihin ja rajoihin). Vaiheet JOHDETAAN siitä ja
+// sen aikataulusta -- aikoja ei lasketa toiseen kertaan.
+//
+// UNKNOWN_TRAVEL  lähtöaikaa ei voi laskea (kesto tai saapumisaika puuttuu)
+// NOT_YET         valmistautumiseen on yli PREPARE_SOON_MINUTES
+// PREPARE_SOON    valmistautuminen alkaa enintään PREPARE_SOON_MINUTES päästä
+// PREPARE_NOW     valmistautumisen aika on alkanut
+// LEAVE_IN_5      lähtöön on enintään LEAVE_IN_MINUTES
+// LEAVE_NOW       lähtöaika on nyt (tai meni alle LEAVE_NOW_GRACE_MINUTES sitten)
+// LATE            lähtöaika on mennyt
+//
+// Ilman valmistautumista (0 min) valmistautumisen alku = lähtö, joten
+// PREPARE_SOON tarkoittaa silloin "lähtö lähestyy" eikä PREPARE_NOW:ta tule.
+
+export const DEPARTURE_PHASE = Object.freeze({
+  UNKNOWN_TRAVEL: 'unknown_travel',
+  NOT_YET: 'not_yet',
+  PREPARE_SOON: 'prepare_soon',
+  PREPARE_NOW: 'prepare_now',
+  LEAVE_IN_5: 'leave_in_5',
+  LEAVE_NOW: 'leave_now',
+  LATE: 'late'
+});
+
+export const DEPARTURE_PHASES = Object.freeze(Object.values(DEPARTURE_PHASE));
+
+export const PREPARE_SOON_MINUTES = 15;
+export const LEAVE_IN_MINUTES = 5;
+const MAX_PREPARE_SOON_MINUTES = 240;
+
+const PHASE_LABELS = Object.freeze({
+  [DEPARTURE_PHASE.UNKNOWN_TRAVEL]: 'Matka-aika puuttuu',
+  [DEPARTURE_PHASE.NOT_YET]: 'Ei vielä',
+  [DEPARTURE_PHASE.PREPARE_SOON]: 'Valmistautuminen pian',
+  [DEPARTURE_PHASE.PREPARE_NOW]: 'Valmistaudu nyt',
+  [DEPARTURE_PHASE.LEAVE_IN_5]: 'Lähtö pian',
+  [DEPARTURE_PHASE.LEAVE_NOW]: 'Lähde nyt',
+  [DEPARTURE_PHASE.LATE]: 'Lähtöaika meni'
+});
+
+export function departurePhaseLabel(phase) {
+  return PHASE_LABELS[phase] || PHASE_LABELS[DEPARTURE_PHASE.UNKNOWN_TRAVEL];
+}
+
+function soonWindow(value) {
+  const n = positiveInt(value, MAX_PREPARE_SOON_MINUTES);
+  return n === null ? PREPARE_SOON_MINUTES : n;
+}
+
+/**
+ * Vaihe kahdesta erotuksesta. Yksi paikka rajoille, jotta suunnitelma-
+ * ja tapahtumapohjainen lähtö eivät voi erota toisistaan.
+ *
+ * @param {{minutesUntilLeave:number, minutesUntilPrepare:number, prepareSoonMinutes?:number}} input
+ * @returns {string|null} DEPARTURE_PHASE-arvo, tai null kelvottomalla syötteellä
+ */
+export function classifyDeparturePhase({ minutesUntilLeave, minutesUntilPrepare, prepareSoonMinutes } = {}) {
+  if (!Number.isFinite(minutesUntilLeave) || !Number.isFinite(minutesUntilPrepare)) return null;
+  if (minutesUntilLeave < -LEAVE_NOW_GRACE_MINUTES) return DEPARTURE_PHASE.LATE;
+  if (minutesUntilLeave <= 0) return DEPARTURE_PHASE.LEAVE_NOW;
+  if (minutesUntilLeave <= LEAVE_IN_MINUTES) return DEPARTURE_PHASE.LEAVE_IN_5;
+  if (minutesUntilPrepare <= 0) return DEPARTURE_PHASE.PREPARE_NOW;
+  if (minutesUntilPrepare <= soonWindow(prepareSoonMinutes)) return DEPARTURE_PHASE.PREPARE_SOON;
+  return DEPARTURE_PHASE.NOT_YET;
+}
+
+/**
+ * Lähdön vaihe hetkellä `nowMinutes` (päivänä `todayIso`).
+ *
+ * Johdettu `departureState`:sta: LATE ja LEAVE_NOW vastaavat sen tiloja
+ * täsmälleen, ja muut vaiheet tarkentavat sen NOT_YET/PREPARE/LEAVE_SOON-
+ * tiloja saman aikataulun hetkillä.
+ *
+ * @returns {{phase:string, known:boolean, minutesUntilLeave:number|null,
+ *            minutesUntilPrepare:number|null, minutesLate:number|null,
+ *            label:string, message:string, departure:object}}
+ */
+export function departurePhase(plan, {
+  todayIso, nowMinutes, prepareSoonMinutes = PREPARE_SOON_MINUTES, offsetMinutesFn = null
+} = {}) {
+  const departure = departureState(plan, { todayIso, nowMinutes, offsetMinutesFn });
+
+  if (departure.state === DEPARTURE_STATE.UNKNOWN) {
+    return Object.freeze({
+      phase: DEPARTURE_PHASE.UNKNOWN_TRAVEL, known: false,
+      minutesUntilLeave: null, minutesUntilPrepare: null, minutesLate: null,
+      label: departurePhaseLabel(DEPARTURE_PHASE.UNKNOWN_TRAVEL), message: departure.message, departure
+    });
+  }
+
+  const { schedule } = departure;
+  const nowAbs = absoluteMinutes(todayIso, nowMinutes);
+  const untilLeave = minutesBetween(nowAbs, schedule.leave.abs, offsetMinutesFn);
+  const untilPrepare = minutesBetween(nowAbs, schedule.prepare.abs, offsetMinutesFn);
+  const phase = classifyDeparturePhase({
+    minutesUntilLeave: untilLeave, minutesUntilPrepare: untilPrepare, prepareSoonMinutes
+  });
+
+  const prepareText = schedule.prepare.date === todayIso
+    ? schedule.prepare.time : `${schedule.prepare.date} ${schedule.prepare.time}`;
+  const message = phase === DEPARTURE_PHASE.PREPARE_SOON && schedule.parts.preparation > 0
+    ? `Valmistautuminen alkaa klo ${prepareText} (${untilPrepare} min kuluttua). ${departure.message}`
+    : departure.message;
+
+  return Object.freeze({
+    phase,
+    known: true,
+    minutesUntilLeave: untilLeave > 0 ? untilLeave : (phase === DEPARTURE_PHASE.LEAVE_NOW ? 0 : null),
+    minutesUntilPrepare: untilPrepare > 0 ? untilPrepare : 0,
+    minutesLate: departure.minutesLate,
+    label: departurePhaseLabel(phase),
+    message,
+    departure
+  });
+}
+
+// =====================================================================
+// UUDELLEENLASKENNAN HYSTEREESI
+// =====================================================================
+//
+// Liikennetieto heiluu minuutin tai kaksi joka haulla. Jos jokainen heilahdus
+// siirtäisi näytettyä lähtöaikaa ja muistutusta, käyttäjä saisi ilmoitus-
+// myrskyn eikä voisi luottaa mihinkään lukuun. Siksi aiemmin kerrottu
+// lähtöaika pidetään, kunnes muutos on merkittävä:
+//
+//   AIKAISEMMAKSI  vähintään 5 min   (myöhästymisen vaara: kynnys matala)
+//   MYÖHEMMÄKSI    vähintään 10 min  (vain mukavuutta: kynnys korkea)
+//
+// Pieni aikaistus (< 5 min) jää kertomatta, koska perillä on etuajassa
+// oloa varten oma varansa. Tuntemattomaksi muuttunut kesto kerrotaan AINA:
+// vanhaa lukua ei jätetä näkyviin ikään kuin se olisi yhä voimassa.
+
+export const LEAVE_EARLIER_TOLERANCE_MINUTES = 5;
+export const LEAVE_LATER_TOLERANCE_MINUTES = 10;
+
+/** Lähtöhetki absoluuttisina seinäkellominuutteina: luku, {abs} tai {date, time}. Muuten null. */
+export function leaveAbsOf(value) {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (!value || typeof value !== 'object') return null;
+  if (typeof value.abs === 'number' && Number.isFinite(value.abs)) return value.abs;
+  if (isIsoDate(value.date) && isTimeOfDay(value.time)) return absoluteMinutes(value.date, toMinutes(value.time));
+  return null;
+}
+
+function tolerance(value, fallback) {
+  const n = positiveInt(value, 1440);
+  return n === null ? fallback : n;
+}
+
+/**
+ * Pidä aiemmin kerrottu lähtöaika, ellei muutos ole merkittävä.
+ *
+ * @param {number|{abs?:number,date?:string,time?:string}|null} previous aiemmin kerrottu
+ * @param {number|{abs?:number,date?:string,time?:string}|null} next uusi laskettu
+ * @returns {{leave:any, changed:boolean, direction:'initial'|'earlier'|'later'|'same'|'unknown',
+ *            deltaMinutes:number|null}} `leave` on se arvo (previous tai next), joka näytetään;
+ *            deltaMinutes = uusi - aiempi (negatiivinen = aikaisemmaksi).
+ */
+export function stabilizeLeave(previous, next, {
+  earlierToleranceMinutes = LEAVE_EARLIER_TOLERANCE_MINUTES,
+  laterToleranceMinutes = LEAVE_LATER_TOLERANCE_MINUTES
+} = {}) {
+  const prevAbs = leaveAbsOf(previous);
+  const nextAbs = leaveAbsOf(next);
+
+  if (nextAbs === null) {
+    return Object.freeze({ leave: null, changed: prevAbs !== null, direction: 'unknown', deltaMinutes: null });
+  }
+  if (prevAbs === null) {
+    return Object.freeze({ leave: next, changed: true, direction: 'initial', deltaMinutes: null });
+  }
+
+  const delta = nextAbs - prevAbs;
+  if (delta < 0 && -delta >= tolerance(earlierToleranceMinutes, LEAVE_EARLIER_TOLERANCE_MINUTES)) {
+    return Object.freeze({ leave: next, changed: true, direction: 'earlier', deltaMinutes: delta });
+  }
+  if (delta > 0 && delta >= tolerance(laterToleranceMinutes, LEAVE_LATER_TOLERANCE_MINUTES)) {
+    return Object.freeze({ leave: next, changed: true, direction: 'later', deltaMinutes: delta });
+  }
+  return Object.freeze({ leave: previous, changed: false, direction: 'same', deltaMinutes: delta });
 }
 
 // =====================================================================

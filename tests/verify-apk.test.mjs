@@ -8,11 +8,18 @@
 //                            badging/permissions/xmltree, apksigner verify
 //                            --print-certs -v, capacitor.plugins.json ja
 //                            capacitor.config.json. Rivinvaihdot LF.
-//   speech-manifest.*        Samat, muokattuina UUTTA lähdemanifestia
-//                            vastaaviksi: sijaintiluvat pois, RECORD_AUDIO
-//                            ja <queries> android.speech.RecognitionService
-//                            lisätty, versionCode 23069141 ja versionName
-//                            1.0.0-waveJ.v23+5df40b2-debug.
+//   speech-manifest.*        Samat, muokattuina puhemuutoksen mukaisiksi:
+//                            sijaintiluvat pois, RECORD_AUDIO ja <queries>
+//                            android.speech.RecognitionService lisätty,
+//                            versionCode 23069141 ja versionName
+//                            1.0.0-waveJ.v23+5df40b2-debug. EI enää kelpaa
+//                            (herätyksen luvat ja puhemoottori puuttuvat).
+//   alarm-manifest.*         speech-manifest + herätys (NYKYINEN
+//                            lähdemanifesti): USE_FULL_SCREEN_INTENT,
+//                            FOREGROUND_SERVICE, FOREGROUND_SERVICE_MEDIA_PLAYBACK,
+//                            <queries> TTS_SERVICE + Google Maps -paketti,
+//                            suljetut AlarmReceiver, BootReceiver,
+//                            AlarmService (mediaPlayback) ja AlarmActivity.
 //   legacy-waveJ-5df40b2.apk.json  käsin tehty metatieto (BOM, ei-ISO-aika).
 //
 // Yksikään testi ei aja aapt2:ta, apksigneria, gitiä eikä Gradlea: tarkastus
@@ -27,11 +34,12 @@ import path from 'node:path';
 import { ROOT, read } from './helpers/sources.mjs';
 import { ALL_GATES, expectedMatrix } from '../tools/release/waves.mjs';
 import {
-  APK_DECLARED_PERMISSIONS, APK_FORBIDDEN_PERMISSIONS, APK_PERMISSION_ALLOWLIST, APP_ID,
+  APK_DECLARED_PERMISSIONS, APK_FORBIDDEN_FOREGROUND_SERVICE_TYPES, APK_FORBIDDEN_PERMISSIONS,
+  APK_PERMISSION_ALLOWLIST, APP_ID,
   CAPACITOR_EXTRA_ASSETS, EXPECTED_CAPACITOR_PLUGINS, EXPECTED_SIGNER_CERT_SHA256,
   REQUIRED_QUERY_INTENT_ACTIONS, WEB_ROOT_FILES, WEB_DIRECTORIES,
   checkBadging, checkCapacitorConfig, checkManifest, checkPermissions, checkPlugins, checkSigner,
-  checkWebPayload, compareAssetTrees, expectedPermissions, isWebBuildPath, manifestFacts,
+  checkWebPayload, compareAssetTrees, expectedPermissions, isForbiddenPermission, isWebBuildPath, manifestFacts,
   parseApksigner, parseBadging, parsePermissionsDump, parseVariablesGradle, parseXmlTree
 } from '../tools/android/apk.mjs';
 import {
@@ -62,6 +70,12 @@ const SPEECH = Object.freeze({
   xmltree: fixture('speech-manifest.xmltree.txt'),
   apksigner: J.apksigner
 });
+const ALARM = Object.freeze({
+  badging: fixture('alarm-manifest.badging.txt'),
+  permissions: fixture('alarm-manifest.permissions.txt'),
+  xmltree: fixture('alarm-manifest.xmltree.txt'),
+  apksigner: J.apksigner
+});
 const NEW_NAME = '1.0.0-waveJ.v23+5df40b2-debug';
 const NEW_EXPECT = Object.freeze({ versionCode: 23069141, versionName: NEW_NAME });
 
@@ -70,19 +84,22 @@ const byId = (checks, id) => checks.find(c => c.id === id);
 
 // ---------------------------------------------------------------- odotukset
 
-test('sallittu lupajoukko: INTERNET + RECORD_AUDIO + yhdistyvät kirjastoluvat, ei sijaintia', () => {
+test('sallittu lupajoukko: INTERNET + RECORD_AUDIO + herätys + yhdistyvät kirjastoluvat, ei sijaintia', () => {
   assert.deepEqual(expectedPermissions(), [
     'android.permission.ACCESS_NETWORK_STATE',
+    'android.permission.FOREGROUND_SERVICE',
+    'android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK',
     'android.permission.INTERNET',
     'android.permission.POST_NOTIFICATIONS',
     'android.permission.RECEIVE_BOOT_COMPLETED',
     'android.permission.RECORD_AUDIO',
     'android.permission.SCHEDULE_EXACT_ALARM',
+    'android.permission.USE_FULL_SCREEN_INTENT',
     'android.permission.WAKE_LOCK',
     'fi.limitlesslife.manifestival.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION'
   ]);
   assert.equal(expectedPermissions().some(p => /LOCATION/.test(p)), false);
-  assert.deepEqual([...REQUIRED_QUERY_INTENT_ACTIONS], ['android.speech.RecognitionService']);
+  assert.deepEqual([...REQUIRED_QUERY_INTENT_ACTIONS], ['android.speech.RecognitionService', 'android.intent.action.TTS_SERVICE']);
   assert.deepEqual([...EXPECTED_CAPACITOR_PLUGINS], ['@capacitor/app', '@capacitor/geolocation', '@capacitor/local-notifications']);
 });
 
@@ -94,9 +111,19 @@ test('kielletty ja sallittu eivät leikkaa (etuliitesääntö mukaan lukien)', (
     }
   }
   for (const name of ['ACCESS_BACKGROUND_LOCATION', 'ACCESS_COARSE_LOCATION', 'ACCESS_FINE_LOCATION',
-    'FOREGROUND_SERVICE*', 'CAMERA', 'MODIFY_AUDIO_SETTINGS', 'READ_EXTERNAL_STORAGE', 'READ_CONTACTS']) {
+    'USE_EXACT_ALARM', 'CAMERA', 'MODIFY_AUDIO_SETTINGS', 'READ_EXTERNAL_STORAGE', 'READ_CONTACTS']) {
     assert.ok(APK_FORBIDDEN_PERMISSIONS.includes('android.permission.' + name), name);
   }
+  // Etualapalvelu: vain toisto (mediaPlayback) on sallittu; jokainen muu tyyppi on nimetty kielletyksi.
+  for (const type of ['MICROPHONE', 'LOCATION', 'CAMERA', 'DATA_SYNC', 'SPECIAL_USE', 'MEDIA_PROJECTION',
+    'PHONE_CALL', 'CONNECTED_DEVICE', 'HEALTH', 'REMOTE_MESSAGING', 'SYSTEM_EXEMPTED']) {
+    assert.ok(APK_FORBIDDEN_FOREGROUND_SERVICE_TYPES.includes('android.permission.FOREGROUND_SERVICE_' + type), type);
+    assert.equal(isForbiddenPermission('android.permission.FOREGROUND_SERVICE_' + type), true, type);
+  }
+  assert.equal(isForbiddenPermission('android.permission.FOREGROUND_SERVICE'), false);
+  assert.equal(isForbiddenPermission('android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK'), false);
+  assert.equal(APK_FORBIDDEN_PERMISSIONS.some(rule => rule.endsWith('*')), false,
+    'etuliitesääntö FOREGROUND_SERVICE* korvattiin nimetyllä listalla');
 });
 
 test('scripts/verify-apk.mjs vie saman sallitun joukon (yksi vakio) ja on tuotavissa ilman ajoa', () => {
@@ -163,17 +190,47 @@ test('apksigner: oikea J-APK on v2-allekirjoitettu nykyisellä debug-avaimella',
 // ------------------------------------ uusi manifesti vs. vanha J-APK
 
 test('uuden manifestin mukainen APK läpäisee badging-, lupa- ja manifestitarkistukset', () => {
-  assert.deepEqual(failed(checkBadging(parseBadging(SPEECH.badging), NEW_EXPECT)), []);
-  assert.deepEqual(failed(checkPermissions(parsePermissionsDump(SPEECH.permissions))), []);
-  const facts = manifestFacts(parseXmlTree(SPEECH.xmltree));
-  assert.deepEqual(facts.queryIntentActions, ['android.speech.RecognitionService']);
+  assert.deepEqual(failed(checkBadging(parseBadging(ALARM.badging), NEW_EXPECT)), []);
+  assert.deepEqual(failed(checkPermissions(parsePermissionsDump(ALARM.permissions))), []);
+  const facts = manifestFacts(parseXmlTree(ALARM.xmltree));
+  assert.deepEqual(facts.queryIntentActions, ['android.speech.RecognitionService', 'android.intent.action.TTS_SERVICE']);
   assert.deepEqual(failed(checkManifest(facts)), []);
+  // Herätyksen komponentit ovat mukana mutta suljettuja: avoimia on yhä vain kaksi.
+  assert.deepEqual(facts.exported.map(c => c.name), [
+    'fi.limitlesslife.manifestival.MainActivity', 'androidx.profileinstaller.ProfileInstallReceiver'
+  ]);
+  for (const name of ['AlarmReceiver', 'BootReceiver', 'AlarmService', 'AlarmActivity']) {
+    assert.ok(ALARM.xmltree.includes(`"fi.limitlesslife.manifestival.${name}"`), name);
+  }
+});
+
+test('herätyskomponentti avoimena kaatuu (esim. BootReceiver ilman exported=false)', () => {
+  const open = ALARM.xmltree.replace(
+    'BootReceiver")\n            A: http://schemas.android.com/apk/res/android:exported(0x01010010)=false\n',
+    'BootReceiver")\n');
+  assert.notEqual(open, ALARM.xmltree);
+  const checks = checkManifest(manifestFacts(parseXmlTree(open)));
+  assert.deepEqual(failed(checks), ['manifest.exported']);
+  assert.match(byId(checks, 'manifest.exported').detail, /BootReceiver on avoin \(intent-filter ilman android:exported\)/);
+});
+
+test('puhe-manifestin APK (ennen herätystä) EI enää kelpaa: herätysluvat ja puhemoottori puuttuvat', () => {
+  const perms = checkPermissions(parsePermissionsDump(SPEECH.permissions));
+  assert.deepEqual(failed(perms), ['permissions.allowlist']);
+  assert.match(byId(perms, 'permissions.allowlist').detail,
+    /puuttuu: android\.permission\.FOREGROUND_SERVICE, android\.permission\.FOREGROUND_SERVICE_MEDIA_PLAYBACK, android\.permission\.USE_FULL_SCREEN_INTENT/);
+  const manifest = checkManifest(manifestFacts(parseXmlTree(SPEECH.xmltree)));
+  assert.deepEqual(failed(manifest), ['manifest.permissions', 'manifest.queries']);
+  assert.match(byId(manifest, 'manifest.queries').detail, /android\.intent\.action\.TTS_SERVICE/);
+  // USE_EXACT_ALARM lisättynä kaatuu kiellettynä, vaikka muu olisi kunnossa.
+  const exact = ALARM.permissions + "uses-permission: name='android.permission.USE_EXACT_ALARM'\n";
+  assert.deepEqual(failed(checkPermissions(parsePermissionsDump(exact))), ['permissions.allowlist', 'permissions.forbidden']);
 });
 
 test('vanha J-APK (5df40b2) EI läpäise uutta sallittua joukkoa: sijainti mukana, mikrofoni ja <queries> puuttuvat', () => {
   const perms = checkPermissions(parsePermissionsDump(J.permissions));
   assert.deepEqual(failed(perms), ['permissions.allowlist', 'permissions.forbidden']);
-  assert.match(byId(perms, 'permissions.allowlist').detail, /puuttuu: android\.permission\.RECORD_AUDIO/);
+  assert.match(byId(perms, 'permissions.allowlist').detail, /puuttuu: [^;]*android\.permission\.RECORD_AUDIO/);
   assert.match(byId(perms, 'permissions.allowlist').detail, /ACCESS_COARSE_LOCATION, android\.permission\.ACCESS_FINE_LOCATION/);
   assert.deepEqual(failed(checkManifest(manifestFacts(parseXmlTree(J.xmltree)))), ['manifest.permissions', 'manifest.queries']);
   assert.deepEqual(failed(checkBadging(parseBadging(J.badging), NEW_EXPECT)),
@@ -183,21 +240,21 @@ test('vanha J-APK (5df40b2) EI läpäise uutta sallittua joukkoa: sijainti mukan
 // --------------------------------------------------------------- mutaatiot
 
 test('ylimääräinen lupa (CAMERA) ja FOREGROUND_SERVICE_* kaatavat', () => {
-  const camera = SPEECH.permissions + "uses-permission: name='android.permission.CAMERA'\n";
+  const camera = ALARM.permissions + "uses-permission: name='android.permission.CAMERA'\n";
   assert.deepEqual(failed(checkPermissions(parsePermissionsDump(camera))), ['permissions.allowlist', 'permissions.forbidden']);
-  const fgs = SPEECH.permissions + "uses-permission: name='android.permission.FOREGROUND_SERVICE_MICROPHONE'\n";
+  const fgs = ALARM.permissions + "uses-permission: name='android.permission.FOREGROUND_SERVICE_MICROPHONE'\n";
   assert.match(byId(checkPermissions(parsePermissionsDump(fgs)), 'permissions.forbidden').detail, /FOREGROUND_SERVICE_MICROPHONE/);
-  const declared = SPEECH.permissions + 'permission: fi.limitlesslife.manifestival.EXTRA\n';
+  const declared = ALARM.permissions + 'permission: fi.limitlesslife.manifestival.EXTRA\n';
   assert.deepEqual(failed(checkPermissions(parsePermissionsDump(declared))), ['permissions.declared']);
 });
 
 test('väärä paketti (debug-pääte) kaatuu', () => {
-  const b = parseBadging(SPEECH.badging.replace("name='fi.limitlesslife.manifestival'", "name='fi.limitlesslife.manifestival.debug'"));
+  const b = parseBadging(ALARM.badging.replace("name='fi.limitlesslife.manifestival'", "name='fi.limitlesslife.manifestival.debug'"));
   assert.deepEqual(failed(checkBadging(b, NEW_EXPECT)), ['badging.package']);
 });
 
 test('versionCode: väärä arvo, 0 ja yli 2100000000 kaatuvat; sallittujen joukko kelpaa', () => {
-  const withCode = code => parseBadging(SPEECH.badging.replace("versionCode='23069141'", `versionCode='${code}'`));
+  const withCode = code => parseBadging(ALARM.badging.replace("versionCode='23069141'", `versionCode='${code}'`));
   assert.deepEqual(failed(checkBadging(withCode(1), NEW_EXPECT)), ['badging.versionCode']);
   assert.deepEqual(failed(checkBadging(withCode(0), { versionName: NEW_NAME })), ['badging.versionCode']);
   assert.deepEqual(failed(checkBadging(withCode(2100000001), { versionName: NEW_NAME })), ['badging.versionCode']);
@@ -205,45 +262,45 @@ test('versionCode: väärä arvo, 0 ja yli 2100000000 kaatuvat; sallittujen jouk
 });
 
 test('versionName ilman sha:ta kaatuu, vaikka täsmällistä nimeä ei annettaisi', () => {
-  const b = parseBadging(SPEECH.badging.replace(NEW_NAME, '1.0.0-debug'));
+  const b = parseBadging(ALARM.badging.replace(NEW_NAME, '1.0.0-debug'));
   assert.deepEqual(failed(checkBadging(b, { versionCode: 23069141 })), ['badging.versionName']);
-  const other = parseBadging(SPEECH.badging.replace(NEW_NAME, '1.0.0-waveJ.v23+1234567-debug'));
+  const other = parseBadging(ALARM.badging.replace(NEW_NAME, '1.0.0-waveJ.v23+1234567-debug'));
   assert.deepEqual(failed(checkBadging(other, NEW_EXPECT)), ['badging.versionName']);
 });
 
 test('debuggable: debugissa pakollinen, releasessa kielletty', () => {
-  const noDebug = parseBadging(SPEECH.badging.replace('application-debuggable\n', ''));
+  const noDebug = parseBadging(ALARM.badging.replace('application-debuggable\n', ''));
   assert.deepEqual(failed(checkBadging(noDebug, NEW_EXPECT)), ['badging.debuggable']);
-  assert.deepEqual(failed(checkBadging(parseBadging(SPEECH.badging), { ...NEW_EXPECT, buildType: 'release' })),
+  assert.deepEqual(failed(checkBadging(parseBadging(ALARM.badging), { ...NEW_EXPECT, buildType: 'release' })),
     ['badging.debuggable']);
-  const facts = manifestFacts(parseXmlTree(SPEECH.xmltree));
+  const facts = manifestFacts(parseXmlTree(ALARM.xmltree));
   assert.deepEqual(failed(checkManifest(facts, { buildType: 'release' })), ['manifest.debuggable']);
 });
 
 test('avoin FileProvider, DUMP-suojaton ProfileInstallReceiver ja allowBackup=true kaatavat', () => {
-  const openProvider = SPEECH.xmltree.replace(
+  const openProvider = ALARM.xmltree.replace(
     'android:exported(0x01010010)=false\n            A: http://schemas.android.com/apk/res/android:authorities(0x01010018)="fi.limitlesslife.manifestival.fileprovider"',
     'android:exported(0x01010010)=true\n            A: http://schemas.android.com/apk/res/android:authorities(0x01010018)="fi.limitlesslife.manifestival.fileprovider"');
-  assert.notEqual(openProvider, SPEECH.xmltree);
+  assert.notEqual(openProvider, ALARM.xmltree);
   const exported = checkManifest(manifestFacts(parseXmlTree(openProvider)));
   assert.deepEqual(failed(exported), ['manifest.exported']);
   assert.match(byId(exported, 'manifest.exported').detail, /androidx\.core\.content\.FileProvider on avoin/);
 
-  const noDump = SPEECH.xmltree.replace(/\n\s*A: [^\n]*android:permission\(0x01010006\)="android\.permission\.DUMP"[^\n]*/, '');
-  assert.notEqual(noDump, SPEECH.xmltree);
+  const noDump = ALARM.xmltree.replace(/\n\s*A: [^\n]*android:permission\(0x01010006\)="android\.permission\.DUMP"[^\n]*/, '');
+  assert.notEqual(noDump, ALARM.xmltree);
   assert.deepEqual(failed(checkManifest(manifestFacts(parseXmlTree(noDump)))), ['manifest.exported']);
 
-  const backup = SPEECH.xmltree.replace('android:allowBackup(0x01010280)=false', 'android:allowBackup(0x01010280)=true');
+  const backup = ALARM.xmltree.replace('android:allowBackup(0x01010280)=false', 'android:allowBackup(0x01010280)=true');
   assert.deepEqual(failed(checkManifest(manifestFacts(parseXmlTree(backup)))), ['manifest.allowBackup']);
 });
 
 test('android:exported: vain kirjaimellinen false sulkee (fail closed), intent-filter-oletus säilyy', () => {
   // Resurssiviittaus (esim. @bool/-arvo) ei ole kirjaimellinen false. Ennen
   // korjausta FileProvider tulkittiin suljetuksi ja tarkastus meni läpi.
-  const refProvider = SPEECH.xmltree.replace(
+  const refProvider = ALARM.xmltree.replace(
     'android:exported(0x01010010)=false\n            A: http://schemas.android.com/apk/res/android:authorities(0x01010018)="fi.limitlesslife.manifestival.fileprovider"',
     'android:exported(0x01010010)=@0x7f050001\n            A: http://schemas.android.com/apk/res/android:authorities(0x01010018)="fi.limitlesslife.manifestival.fileprovider"');
-  assert.notEqual(refProvider, SPEECH.xmltree);
+  assert.notEqual(refProvider, ALARM.xmltree);
   const facts = manifestFacts(parseXmlTree(refProvider));
   assert.ok(facts.exported.some(c => c.name === 'androidx.core.content.FileProvider' && c.exportedValue === '@0x7f050001'));
   const checks = checkManifest(facts);
@@ -252,25 +309,25 @@ test('android:exported: vain kirjaimellinen false sulkee (fail closed), intent-f
   assert.match(byId(checks, 'manifest.exported').detail, /androidx\.core\.content\.FileProvider on avoin/);
 
   // Sallittukin komponentti kaatuu, jos arvo ei ole kirjaimellinen.
-  const refMain = SPEECH.xmltree.replace(
+  const refMain = ALARM.xmltree.replace(
     'android:exported(0x01010010)=true\n            A: http://schemas.android.com/apk/res/android:launchMode',
     'android:exported(0x01010010)=@0x7f050002\n            A: http://schemas.android.com/apk/res/android:launchMode');
-  assert.notEqual(refMain, SPEECH.xmltree);
+  assert.notEqual(refMain, ALARM.xmltree);
   const mainChecks = checkManifest(manifestFacts(parseXmlTree(refMain)));
   assert.deepEqual(failed(mainChecks), ['manifest.exported']);
   assert.match(byId(mainChecks, 'manifest.exported').detail, /MainActivity: android:exported=@0x7f050002/);
 
   // Ei attribuuttia + intent-filter = avoin (Androidin oletus).
-  const implicit = SPEECH.xmltree.replace(
+  const implicit = ALARM.xmltree.replace(
     'LocalNotificationRestoreReceiver")\n            A: http://schemas.android.com/apk/res/android:exported(0x01010010)=false\n',
     'LocalNotificationRestoreReceiver")\n');
-  assert.notEqual(implicit, SPEECH.xmltree);
+  assert.notEqual(implicit, ALARM.xmltree);
   const implicitChecks = checkManifest(manifestFacts(parseXmlTree(implicit)));
   assert.deepEqual(failed(implicitChecks), ['manifest.exported']);
   assert.match(byId(implicitChecks, 'manifest.exported').detail, /LocalNotificationRestoreReceiver on avoin \(intent-filter ilman android:exported\)/);
 
   // Kirjaimellinen false ja attribuutiton komponentti ilman intent-filteriä ovat suljettuja.
-  assert.deepEqual(manifestFacts(parseXmlTree(SPEECH.xmltree)).exported.map(c => c.exportedValue), ['true', 'true']);
+  assert.deepEqual(manifestFacts(parseXmlTree(ALARM.xmltree)).exported.map(c => c.exportedValue), ['true', 'true']);
 });
 
 test('ACCESS_NETWORK_STATE: apk.mjs ja dokumentti nimeävät saman lähteen (iongeolocation-android)', () => {
@@ -286,7 +343,7 @@ test('ACCESS_NETWORK_STATE: apk.mjs ja dokumentti nimeävät saman lähteen (ion
 });
 
 test('<queries> ilman RecognitionServicea kaatuu', () => {
-  const other = SPEECH.xmltree.replace('"android.speech.RecognitionService" (Raw: "android.speech.RecognitionService")',
+  const other = ALARM.xmltree.replace('"android.speech.RecognitionService" (Raw: "android.speech.RecognitionService")',
     '"android.intent.action.VIEW" (Raw: "android.intent.action.VIEW")');
   assert.deepEqual(failed(checkManifest(manifestFacts(parseXmlTree(other)))), ['manifest.queries']);
 });
@@ -504,7 +561,7 @@ test('KOKONAISUUS: uuden manifestin APK läpäisee kaikki tarkistukset', () => {
   assert.equal(assets.publicFiles.size, web.size + 2);
 
   const result = verifyApkContents({
-    apkBytes, wave: 'J', outputs: SPEECH, expect: NEW_EXPECT,
+    apkBytes, wave: 'J', outputs: ALARM, expect: NEW_EXPECT,
     dist: web, git: lfOnly(web), repoCapacitorConfig: read('capacitor.config.json')
   });
   assert.deepEqual(failed(result.checks), []);
@@ -537,27 +594,27 @@ test('valinnainen mikrofoni (uses-feature-not-required) kelpaa: badging, manifes
   // android:required="false"/>, aapt2 näyttää sen feature-groupissa
   // julistettuna ja valinnaisena, eikä implisiittistä pakollista
   // mikrofonia enää ole (vrt. oikean J-APK:n location.gps-rivi).
-  const badgingText = SPEECH.badging.replace(
+  const badgingText = ALARM.badging.replace(
     "feature-group: label=''\n",
     "feature-group: label=''\n  uses-feature-not-required: name='android.hardware.microphone'\n").replace(
     "  uses-feature: name='android.hardware.microphone'\n"
       + "  uses-implied-feature: name='android.hardware.microphone' reason='requested android.permission.RECORD_AUDIO permission'\n", '');
-  assert.notEqual(badgingText, SPEECH.badging);
+  assert.notEqual(badgingText, ALARM.badging);
   assert.doesNotMatch(badgingText, /uses-implied-feature: name='android\.hardware\.microphone'/);
-  const xmltree = SPEECH.xmltree.replace(
+  const xmltree = ALARM.xmltree.replace(
     '      E: queries (line=24)\n',
     '      E: uses-feature (line=23)\n'
       + '        A: http://schemas.android.com/apk/res/android:name(0x01010003)="android.hardware.microphone" (Raw: "android.hardware.microphone")\n'
       + '        A: http://schemas.android.com/apk/res/android:required(0x0101028e)=false\n'
       + '      E: queries (line=24)\n');
-  assert.notEqual(xmltree, SPEECH.xmltree);
+  assert.notEqual(xmltree, ALARM.xmltree);
 
   const badging = parseBadging(badgingText);
   assert.deepEqual(badging.features, [
     { name: 'android.hardware.microphone', required: false },
     { name: 'android.hardware.faketouch', required: true }
   ]);
-  assert.deepEqual(parseBadging(SPEECH.badging).features, [
+  assert.deepEqual(parseBadging(ALARM.badging).features, [
     { name: 'android.hardware.faketouch', required: true },
     { name: 'android.hardware.microphone', required: true }
   ], 'nykyinen manifesti: mikrofoni on RECORD_AUDIOn implisiittisesti vaatima');
@@ -571,7 +628,7 @@ test('valinnainen mikrofoni (uses-feature-not-required) kelpaa: badging, manifes
 
   const web = webPayload('J', 'v23');
   const result = verifyApkContents({
-    apkBytes: apkFor({ web }), wave: 'J', outputs: { ...SPEECH, badging: badgingText, xmltree }, expect: NEW_EXPECT,
+    apkBytes: apkFor({ web }), wave: 'J', outputs: { ...ALARM, badging: badgingText, xmltree }, expect: NEW_EXPECT,
     dist: web, git: lfOnly(web), repoCapacitorConfig: read('capacitor.config.json')
   });
   assert.deepEqual(failed(result.checks), []);
@@ -584,7 +641,7 @@ test('KOKONAISUUS: väärä SHA-256, käsin muokattu assetti ja ylimääräinen 
   tampered.set('index.html', bytes('<!doctype html>\r\n<title>muokattu</title>\r\n'));
   const plugins = JSON.stringify([...JSON.parse(J.plugins), { pkg: '@capacitor/camera', classpath: 'x' }]);
   const result = verifyApkContents({
-    apkBytes: apkFor({ web: tampered, plugins }), wave: 'J', outputs: SPEECH,
+    apkBytes: apkFor({ web: tampered, plugins }), wave: 'J', outputs: ALARM,
     expect: { ...NEW_EXPECT, sha256: '0'.repeat(64) },
     dist: web, git: lfOnly(web), repoCapacitorConfig: read('capacitor.config.json')
   });

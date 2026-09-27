@@ -1,4 +1,4 @@
-// Generoi supabase/backup/snapshot_state_00NN.sql tiloille 0008–0013.
+// Generoi supabase/backup/snapshot_state_00NN.sql tiloille 0008–0014.
 //
 //   node tools/activation/build-snapshots.mjs          kirjoita tiedostot
 //   node tools/activation/build-snapshots.mjs --check  vertaa levyyn (testit)
@@ -40,6 +40,8 @@ export function snapshotTables(state) {
 }
 
 const next = state => String(Number(state) + 1).padStart(4, '0');
+/** Viimeisin tila: sen jälkeen ei ole vielä migraatiota. */
+const LAST_STATE = SNAPSHOT_STATES[SNAPSHOT_STATES.length - 1];
 
 function whenText(state) {
   if (state === '0009') {
@@ -58,10 +60,20 @@ function whenText(state) {
       '--          (nykytila talteen). Ennen migraatiota 0011 samoin.'
     ];
   }
+  // 0013:n teksti on jäädytetty: tiedosto on junan lukitussa SQL-lähteessä
+  // (J), ja sen on pysyttävä tavulleen samana. Se kelpaa sellaisenaan myös
+  // vapaaehtoiseksi kuvaksi ennen migraatiota 0014.
   if (state === '0013') {
     return [
       '-- MILLOIN: ennen mitä tahansa peruutusta tai palautusta tilassa 0013',
       '--          (migraatiot 0001–0013 ajettu).'
+    ];
+  }
+  if (state === LAST_STATE) {
+    return [
+      `-- MILLOIN: ennen mitä tahansa peruutusta tai palautusta tilassa ${state}`,
+      `--          (migraatiot 0001–${state} ajettu), esim. ennen aallon K`,
+      `--          revertiä tai migraation ${state} ROLLBACK-osiota.`
     ];
   }
   return [
@@ -92,7 +104,7 @@ export function buildSnapshotFile(state) {
     '-- GENEROITU: node tools/activation/build-snapshots.mjs. ÄLÄ MUOKKAA',
     '-- KÄSIN — testi vertaa tiedostoa generaattoriin.',
     '--',
-    `-- TÄMÄ TIEDOSTO ON TILALLE ${state}: migraatiot 0001–${state} ajettu${state === '0013' ? '.' : `, ${next(state)} ei.`}`,
+    `-- TÄMÄ TIEDOSTO ON TILALLE ${state}: migraatiot 0001–${state} ajettu${state === '0013' || state === LAST_STATE ? '.' : `, ${next(state)} ei.`}`,
     ...whenText(state),
     '--',
     '-- Ohje: docs/activation/0010-BACKUP-AND-RECOVERY.md',

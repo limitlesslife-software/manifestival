@@ -148,14 +148,14 @@ hyväksynnän, ehdokkaan kirjatun testiajon ja käynnistyssavun sekä julkaisun 
 tekee compare-and-swapin, pushaa ja todentaa tuotannon:
 
 ```
-# STOP I — TRAIN_RECUT_REQUIRED: lukon deployTarget 4cfb4bc ei sisällä pakollista korjausta 5aa0d53; ei push- eikä deploy-komentoa ennen uudelleenleikkausta (leikkaa, sitten node tools/activation/train-map.mjs --write ja --sync-docs) [deploy --verify-result=<verify_0012-tulos>]
+npm run activation:orchestrate -- --execute-deploy --approved-sha=4a24fdf3e2cb74473c4066329a0b693862a0e019 --verify-result=<verify_0012-tulos>
 ```
 
 Viitteeksi (älä aja käsin): orkestroija ajaa compare-and-swapin jälkeen
 täsmälleen tämän — ei koskaan forcea:
 
 ```
-# STOP I — TRAIN_RECUT_REQUIRED: lukon deployTarget 4cfb4bc ei sisällä pakollista korjausta 5aa0d53; ei push- eikä deploy-komentoa ennen uudelleenleikkausta (leikkaa, sitten node tools/activation/train-map.mjs --write ja --sync-docs) [push]
+git push origin 4a24fdf3e2cb74473c4066329a0b693862a0e019:refs/heads/main
 ```
 
 ---

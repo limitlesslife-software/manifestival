@@ -119,7 +119,30 @@ export const EXPORTED_COLLECTIONS = Object.freeze([
   // käynnissä oleva ajastin (0 tai 1 riviä). Ajastin on käyttäjän
   // omaa, vielä kirjaamatonta toteumaa, joten se kuuluu vientiin.
   'alignmentItemSettings',
-  'runningTimers'
+  'runningTimers',
+
+  // Arjen käyttöjärjestelmä (0014). Kaikki käyttäjän itse kirjaamaa tai
+  // asettamaa: paikat ja niiden lisänimet, menot, kuitatut matkat, arjen
+  // asetukset, unikirjaukset, tapojen suunnitelmat ja kirjaukset,
+  // liikuntakerrat sekä motivaatio ja hallinnan tunne.
+  //
+  // TÄSSÄ EI OLE KOORDINAATTEJA EIKÄ SIJAINTIHISTORIAA, koska niitä ei
+  // ole missään: paikka on nimi ja osoite tekstinä, ja matkahavainto on
+  // käyttäjän kuittaama lähtö- ja perilläoloaika. Toistuvan menon
+  // esiintymiä ei viedä: ne lasketaan, eivätkä ole toinen totuus.
+  //
+  // `lifeSettings` on 0 tai 1 riviä. Oletuksia ei viedä rivinä: puuttuva
+  // rivi tarkoittaa, ettei käyttäjä ole muuttanut mitään.
+  'savedPlaces',
+  'placeAliases',
+  'calendarEvents',
+  'commuteObservations',
+  'lifeSettings',
+  'sleepLogs',
+  'habitPlans',
+  'habitEvents',
+  'exerciseSessions',
+  'wellbeingCheckins'
 ]);
 
 /**

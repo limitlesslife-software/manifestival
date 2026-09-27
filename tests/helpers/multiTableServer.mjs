@@ -9,7 +9,7 @@
 // enää todistaisi mitään latauslogiikasta, vain puuttuvasta kannasta.
 //
 // Tämä palvelin toteuttaa ne kyselyt, joita src/data/ käyttää (select, eq,
-// neq, maybeSingle, insert, update, upsert, delete) ja jäljittelee
+// neq, order, range, maybeSingle, insert, update, upsert, delete) ja jäljittelee
 // omistajuutta: rivi saa user_id:n (tai id:n, jos taulu on id-omisteinen)
 // kirjautuneelta käyttäjältä kuten DEFAULT auth.uid() tekisi.
 //
@@ -31,6 +31,9 @@ export function createMultiTableServer(currentUserId) {
     let op = 'select';
     let payload = null;
     let single = false;
+    let order = null;
+    let range = null;
+    let count = null;
 
     const matches = row => filters.every(([kind, column, value]) =>
       (kind === 'eq' ? String(row[column]) === String(value) : String(row[column]) !== String(value)));
@@ -39,8 +42,17 @@ export function createMultiTableServer(currentUserId) {
       const rows = table(name);
       const uid = currentUserId();
       if (op === 'select') {
-        const found = rows.filter(matches).map(row => ({ ...row }));
-        return { data: single ? (found[0] || null) : found, error: null };
+        // Sivutettu lataus (collectionsRepo selectOwnedRows): järjestys,
+        // rajaus ja kokonaismäärä kuten PostgRESTissä.
+        let found = rows.filter(matches).map(row => ({ ...row }));
+        if (order) {
+          const { column, ascending } = order;
+          found.sort((a, b) => (String(a[column]) < String(b[column]) ? -1 : String(a[column]) > String(b[column]) ? 1 : 0)
+            * (ascending ? 1 : -1));
+        }
+        const total = found.length;
+        if (range) found = found.slice(range[0], range[1] + 1);
+        return { data: single ? (found[0] || null) : found, error: null, count: count === 'exact' ? total : null };
       }
       if (op === 'insert' || op === 'upsert') {
         const list = Array.isArray(payload) ? payload : [payload];
@@ -71,10 +83,11 @@ export function createMultiTableServer(currentUserId) {
     }
 
     const q = {
-      select() { return q; },
+      select(columns, options) { if (options && options.count) count = options.count; return q; },
       eq(column, value) { filters.push(['eq', column, value]); return q; },
       neq(column, value) { filters.push(['neq', column, value]); return q; },
-      order() { return q; },
+      order(column, { ascending = true } = {}) { order = { column, ascending }; return q; },
+      range(from, to) { range = [from, to]; return q; },
       maybeSingle() { single = true; return q; },
       single() { single = true; return q; },
       insert(value) { op = 'insert'; payload = value; return q; },

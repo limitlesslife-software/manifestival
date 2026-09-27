@@ -1,5 +1,9 @@
 # Kehityspolku
 
+> **Tilataulukko on siirtynyt:** koko tuotteen kanoninen ominaisuusluettelo tiloineen ja
+> prioriteetteineen on `docs/MANIFESTIVAL-MASTER-ROADMAP.md` (27.9.2026). Tämä tiedosto on
+> historiallinen kuvaus 1.9.2026 tilanteesta.
+
 Perustuu 31.8.2026 tehtyyn tilannekartoitukseen ja konseptidokumenttiin
 "MANIFESTIVAL – KOKONAISKUVAUS" (v1.0, 23.7.2026). Päivitetty 1.9.2026 (WP2).
 

@@ -1,6 +1,6 @@
 {
   "generatedBy": "node tools/pg-rehearsal/sql-result-fixtures.mjs",
-  "generatedAt": "2026-09-26T16:23:05.099Z",
+  "generatedAt": "2026-09-27T08:50:50.080Z",
   "server": {
     "version": "PostgreSQL 17.10 on x86_64-windows, compiled by msvc-19.44.35226, 64-bit",
     "versionNum": 170010
@@ -258,6 +258,99 @@
         "2 FAIL: 02 running_timers: viisitoista odotettua saraketta; 10 Kaikki 24 uutta rajoitetta ovat olemassa",
         "poikkeavia_yhteensa = 2, odotus 0"
       ]
+    },
+    "preflight_0014-pass.tsv": {
+      "sql": "supabase/preflight/preflight_0014.sql",
+      "state": "0013",
+      "outcome": "pass",
+      "rows": 18,
+      "fail": 0,
+      "poikkeavia": 0,
+      "decision": "GO",
+      "reasons": []
+    },
+    "preflight_0014-fail.tsv": {
+      "sql": "supabase/preflight/preflight_0014.sql",
+      "state": "0014",
+      "outcome": "fail",
+      "rows": 18,
+      "fail": 1,
+      "poikkeavia": 1,
+      "decision": "STOP",
+      "reasons": [
+        "1 FAIL: 10 Migraation 0014 objekteja ei vielä ole (0/153)",
+        "poikkeavia_yhteensa = 1, odotus 0"
+      ]
+    },
+    "verify_0014-pass.tsv": {
+      "sql": "supabase/verify/verify_0014.sql",
+      "state": "0014",
+      "outcome": "pass",
+      "rows": 50,
+      "fail": 0,
+      "poikkeavia": 0,
+      "decision": "GO",
+      "reasons": []
+    },
+    "verify_0014-fail.tsv": {
+      "sql": "supabase/verify/verify_0014.sql",
+      "state": "0014",
+      "outcome": "fail",
+      "sabotage": "alter table public.wellbeing_checkins drop constraint wellbeing_checkins_date_unique",
+      "rows": 50,
+      "fail": 2,
+      "poikkeavia": 2,
+      "decision": "STOP",
+      "reasons": [
+        "2 FAIL: 20 Kaikki 88 uutta rajoitetta ovat olemassa; 24 Yksi motivaatio- ja hallintakirjaus paivaa kohti (user_id, date)",
+        "poikkeavia_yhteensa = 2, odotus 0"
+      ]
     }
-  }
+  },
+  "runs": [
+    {
+      "generatedAt": "2026-09-26T16:23:05.099Z",
+      "server": {
+        "version": "PostgreSQL 17.10 on x86_64-windows, compiled by msvc-19.44.35226, 64-bit",
+        "versionNum": 170010
+      },
+      "git": {
+        "head": "b6423bc173e84e774fea468b72f59a6d200a7256",
+        "branch": "worktree-agent-a1148589afe387fe5",
+        "uncommittedReadFiles": [],
+        "sqlBlobs": {
+          "supabase/preflight/preflight_0009.sql": "5818030a69b0d2b61a4f5bd1a922da86050092f2",
+          "supabase/preflight/preflight_0010.sql": "b9279498e587bdb6609941d28c338415ee5205af",
+          "supabase/preflight/preflight_0011.sql": "3dac36aebaf33c5a57534750531bd6571eaa06d0",
+          "supabase/preflight/preflight_0012.sql": "b4ea1b810b2ab43b3716e4406383849399a9e9c8",
+          "supabase/preflight/preflight_0013.sql": "04aaf286a0e87da2129f330c4ddcfca31891a5d1",
+          "supabase/verify/verify_0009.sql": "470176835858356ecbafd0cef5653fd60ce29961",
+          "supabase/verify/verify_0010.sql": "75cc526992c22b35b03071d1acd00d7b9946d3e3",
+          "supabase/verify/verify_0011.sql": "2f1b8c43f91aa0d44d7bc15a2437b51e9808452f",
+          "supabase/verify/verify_0012.sql": "3d511f251ed96ebb87118a9b5f17e889d7a07b14",
+          "supabase/verify/verify_0013.sql": "7b5b7fdb0c07d250bb523d1794080e3e11974783"
+        }
+      },
+      "numbers": null
+    },
+    {
+      "generatedAt": "2026-09-27T08:50:50.080Z",
+      "server": {
+        "version": "PostgreSQL 17.10 on x86_64-windows, compiled by msvc-19.44.35226, 64-bit",
+        "versionNum": 170010
+      },
+      "git": {
+        "head": "af4cd4900c52fdf6f170637382dba0d4af085f0a",
+        "branch": "worktree-wf_b55fe57d-0e5-3",
+        "uncommittedReadFiles": [],
+        "sqlBlobs": {
+          "supabase/preflight/preflight_0014.sql": "590ccb549225151cc13418cbe594e1280cab6778",
+          "supabase/verify/verify_0014.sql": "4db67930ccffd779d26cedf66e48d94d244b1156"
+        }
+      },
+      "numbers": [
+        "0014"
+      ]
+    }
+  ]
 }

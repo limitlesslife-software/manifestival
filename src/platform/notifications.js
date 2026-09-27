@@ -118,12 +118,17 @@ export async function showNow(intent) {
  * silloin kun sovellus sattuu olemaan auki, kerromme rehellisesti ettei
  * tätä vielä ole.
  *
+ * `options.exactAllowed`: vain arvo true pyytää natiivilta tarkan
+ * hälytyksen (ks. nativeNotifications.schedule). Muuten ajastus on
+ * epätarkka, eikä hälytysasetuksia koskaan avata ilman käyttäjän elettä.
+ *
  * @returns {Promise<{ok:false, reason:string, planned:true}>}
  */
-export async function schedule(intents = []) {
+export async function schedule(intents = [], options = {}) {
   const list = Array.isArray(intents) ? intents : [];
+  const exactAllowed = Boolean(options) && typeof options === 'object' && options.exactAllowed === true;
 
-  if (isNativeShell() && native.isAvailable()) return native.schedule(list);
+  if (isNativeShell() && native.isAvailable()) return native.schedule(list, new Date(), { exactAllowed });
 
   return {
     ok: false,
@@ -171,6 +176,20 @@ export async function removeAllDelivered() {
 export async function refreshPermission() {
   if (isNativeShell() && native.isAvailable()) return native.refreshPermission();
   return permission();
+}
+
+/**
+ * Kuuntele lähtöilmoituksen "Avaa reitti" -painalluksia.
+ *
+ * Vain natiivikuoressa: selaimen ilmoituksissa ei ole toimintoja, joten
+ * lopetusfunktio ei tee mitään. `handler` saa { destination, mode,
+ * intentId, type, ackKey } -- kohde on tekstiä, ei koskaan linkkiä.
+ *
+ * @returns {Function} lopetusfunktio; ei koskaan heitä
+ */
+export function onRouteAction(handler) {
+  if (isNativeShell() && native.isAvailable()) return native.onRouteAction(handler);
+  return () => {};
 }
 
 /**

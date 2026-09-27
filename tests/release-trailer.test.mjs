@@ -21,7 +21,7 @@ test('KRIITTINEN: trailer tunnistaa jokaisen määritellyn aallon ja perustilan'
 });
 
 test('tuntematon tai osittainen tunniste ei kelpaa', () => {
-  for (const bad of ['Release-Wave: K', 'Release-Wave: FG', 'Release-Wave: f',
+  for (const bad of ['Release-Wave: L', 'Release-Wave: FG', 'Release-Wave: f',
                      'Release-Wave:', 'Release-Wave: J (harjoittelu)']) {
     assert.equal(RELEASE_WAVE_TRAILER.test(`x\n\n${bad}\n`), false, bad);
   }

@@ -143,6 +143,39 @@ test('verkkovirhe ei koskaan tuota arvattua komentoa', async () => {
   assert.equal(result.status, 'error');
 });
 
+test('menolause käsitellään laitteella: /api/commandia ei kutsuta, vahvistus kysytään silti', async t => {
+  freezeLocalDate(t, '2026-09-28');
+  let called = 0;
+  let confirmed = null;
+  const result = await runTypedCommand('lisää parturi keskiviikkona klo 16', {
+    now: new Date(2026, 8, 28, 12, 0),
+    fetchImpl: async () => { called += 1; throw new Error('ei pitäisi kutsua'); },
+    confirmFn: async proposal => { confirmed = proposal; return true; },
+    chooseFn: async () => null
+  });
+  assert.equal(called, 0);
+  assert.equal(result.ok, true);
+  assert.equal(result.local, true);
+  assert.equal(confirmed.preview.destructive, false);
+  assert.equal(getState().calendarEvents[0].date, '2026-09-30');
+  assert.equal(getState().tasks.length, 0, 'meno ei ole tehtävä');
+});
+
+test('KRIITTINEN: epäselvä menolause ilman valintaa ei tallenna eikä siirry tekoälylle arvattavaksi', async t => {
+  freezeLocalDate(t, '2026-09-28');
+  let called = 0;
+  const result = await runTypedCommand('teatteri lauantaina seitsemältä', {
+    now: new Date(2026, 8, 28, 12, 0),
+    fetchImpl: async () => { called += 1; throw new Error('verkko poikki'); },
+    confirmFn: async () => true,
+    chooseFn: async () => null
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 'cancelled');
+  assert.equal(called, 0);
+  assert.deepEqual(getState().calendarEvents, []);
+});
+
 test('kohde jota ei löydy ei tarjoa tyhjää valitsinta', async () => {
   const result = await runTypedCommand('merkitse olematon tehtävä tehdyksi', {
     fetchImpl: fetchReturning('{"intent":"complete_task","targetName":"Olematon"}'),
@@ -150,4 +183,28 @@ test('kohde jota ei löydy ei tarjoa tyhjää valitsinta', async () => {
     chooseFn: async () => { throw new Error('ei pitäisi kutsua tyhjällä ehdokaslistalla'); }
   });
   assert.equal(result.ok, false);
+});
+
+test('KRIITTINEN: tilin vaihto tekoälyn vastausta odotellessa hylkää komennon (ei B:n dialogia, auditointia eikä riviä)', async () => {
+  // Bugijahti 2026-09-27: A:n komento päätyi B:n vahvistusdialogiin ja
+  // B:n auditointiin, kun tili vaihtui 15 s:n odotuksen aikana.
+  const OTHER = { id: 'bbbbbbbb-8888-0000-0000-00000000000b', email: 'b@example.com' };
+  let confirmCalled = false;
+  const result = await runTypedCommand('muistuta varaamaan aika psykiatrille torstaina', {
+    fetchImpl: async () => {
+      // Tili vaihtuu kesken pyynnön: uloskirjautuminen ja toisen kirjautuminen.
+      clearUser();
+      clearLocalUserData();
+      resetState();
+      setUser(OTHER);
+      return fetchReturning('{"intent":"create_task","title":"Varaa aika psykiatrille","date":"2026-09-24"}')();
+    },
+    confirmFn: async () => { confirmCalled = true; return true; },
+    chooseFn: async () => null
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 'discarded');
+  assert.equal(confirmCalled, false, 'A:n komentoa ei näytetä B:lle');
+  assert.equal(getState().tasks.length, 0);
+  assert.deepEqual(getState().aiAudit || [], [], 'A:n lause ei päädy B:n auditointiin');
 });

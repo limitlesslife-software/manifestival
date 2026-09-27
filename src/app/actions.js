@@ -24,6 +24,9 @@ import {
   inboxRepo, remindersRepo, noticesRepo, travelPlansRepo, locationRulesRepo,
   lifeAreasRepo, weeklyCapacitiesRepo, timeEntriesRepo, alignmentReviewsRepo,
   alignmentItemSettingsRepo, runningTimersRepo,
+  savedPlacesRepo, placeAliasesRepo, calendarEventsRepo, commuteObservationsRepo,
+  lifeSettingsRepo, sleepLogsRepo, habitPlansRepo, habitEventsRepo,
+  exerciseSessionsRepo, wellbeingCheckinsRepo,
   clearAllCollections
 } from '../data/collectionsRepo.js';
 import { newTaskId } from '../lib/rows.js';
@@ -51,6 +54,8 @@ import {
   markReached, markOpen, markSkipped
 } from '../domain/milestone.js';
 import { buildReplanProposal } from '../domain/replan.js';
+import { horizonEnd } from '../domain/capacity.js';
+import { calendarForPlanning } from './calendarPlan.js';
 import {
   EXTRACTION_SUBJECT, validateExtraction, approveExtraction,
   toTransaction as extractionToTransaction, toBill as extractionToBill
@@ -64,7 +69,7 @@ import {
   clearOtherWakeFlagsInState,
   setRoutines, addRoutineToState, replaceRoutineInState, removeRoutineFromState, findRoutine,
   setRoutineExceptions, addRoutineExceptionToState, removeRoutineExceptionFromState,
-  setGoals, addGoalToState, replaceGoalInState, removeGoalFromState, findGoal,
+  setGoals, addGoalToState, replaceGoalInState, removeGoalFromState, restoreGoalInState, findGoal,
   setProjects, addProjectToState, replaceProjectInState, removeProjectFromState,
   findProject,
   setWellbeing, upsertWellbeingEntry, setNotificationPreferences,
@@ -84,9 +89,13 @@ import {
   setInboxItems, setReminders, setNotices, setTravelPlans, setLocationRules,
   setAiAudit, setDomainLoadStatus, batch,
   setLifeAreas, setWeeklyCapacities, setTimeEntries, setAlignmentReviews,
-  setAlignmentItemSettings, removeItemSettingsFromState
+  setAlignmentItemSettings, removeItemSettingsFromState,
+  setSavedPlaces, setPlaceAliases, setCalendarEvents, setCommuteObservations,
+  setLifeSettings, setSleepLogs, setHabitPlans, setHabitEvents,
+  setExerciseSessions, setWellbeingCheckins
 } from './state.js';
 import { adoptLoadedTimers, timerMutationSeq } from './timerState.js';
+import { dailyLifeWriteMark, keepDailyLifeWritesSince } from './dailyLifeActions.js';
 import {
   loadPreferences as loadNotificationPreferences,
   clearPreferences as clearNotificationPreferences
@@ -196,6 +205,10 @@ export async function loadUserData() {
   // Ajastimen muutos kesken latauksen (esim. pysäytys paluun päivityksen
   // aikana): ennen sitä luettu lista ei saa herättää ajastinta henkiin.
   const timerSeq = timerMutationSeq();
+  // Sama arjen tallennuksille (dailyLifeActions.js): latauksen aikana
+  // valmistunut meno, unikirjaus tai asetus ei saa kadota vanhemman listan
+  // alle, eikä sen aikana poistettu meno palata.
+  const dailyLifeMark = dailyLifeWriteMark();
 
   const loaded = await Promise.all([
     tasksRepo.listTasks(),
@@ -223,7 +236,19 @@ export async function loadUserData() {
     timeEntriesRepo.list(),
     alignmentReviewsRepo.list(),
     alignmentItemSettingsRepo.list(),
-    runningTimersRepo.list()
+    runningTimersRepo.list(),
+    // Arjen käyttöjärjestelmä (0014). LOPPUUN: purku on paikkasidonnainen,
+    // ja applyLoadedData lukee samat paikat samassa järjestyksessä.
+    savedPlacesRepo.list(),
+    placeAliasesRepo.list(),
+    calendarEventsRepo.list(),
+    commuteObservationsRepo.list(),
+    lifeSettingsRepo.list(),
+    sleepLogsRepo.list(),
+    habitPlansRepo.list(),
+    habitEventsRepo.list(),
+    exerciseSessionsRepo.list(),
+    wellbeingCheckinsRepo.list()
   ]);
 
   // Istunto on voinut vaihtua odotuksen aikana.
@@ -233,18 +258,21 @@ export async function loadUserData() {
 
   // Koko tulos tilaan YHDELLÄ ilmoituksella (state.js batch): muuten
   // jokainen kokoelma ja sen latausstatus piirsi näkymät erikseen (CRIT-01).
-  return batch(() => applyLoadedData(loaded, timerSeq));
+  return batch(() => applyLoadedData(loaded, timerSeq, dailyLifeMark));
 }
 
 /** loadUserData():n hakutulokset tilaan. Synkroninen: ajetaan batchissa. */
-function applyLoadedData(loaded, timerSeq) {
+function applyLoadedData(loaded, timerSeq, dailyLifeMark) {
   const [tasksResult, profileResult, routinesResult, exceptionsResult,
     goalsResult, projectsResult, wellbeingResult, preferencesResult,
     billsResult, expensesResult, savingsResult, transactionsResult,
     investmentsResult, milestonesResult, auditResult,
     inboxResult, remindersResult, noticesResult, travelResult,
     locationResult, areasResult, capacitiesResult, entriesResult,
-    reviewsResult, itemSettingsResult, timersResult] = loaded;
+    reviewsResult, itemSettingsResult, timersResult,
+    placesResult, aliasesResult, eventsResult, observationsResult,
+    lifeSettingsResult, sleepLogsResult, habitPlansResult, habitEventsResult,
+    exerciseResult, checkinsResult] = loaded;
 
   // Jokainen kokoelma kulkee applyLoadResult():n läpi: onnistunut haku
   // korvaa kokoelman (myös tyhjällä listalla — se on kelvollinen tulos),
@@ -300,8 +328,25 @@ function applyLoadedData(loaded, timerSeq) {
     // Suunta 2 (0013). Ajastin: kannan rivi voittaa laitteen kopion
     // (src/app/timeTracking.js adoptTimer), joten lataus vain asettaa listan.
     applyLoadResult('alignmentItemSettings', itemSettingsResult, setAlignmentItemSettings),
-    applyLoadResult('runningTimers', timersResult, timers => adoptLoadedTimers(timers, { sinceSeq: timerSeq }))
+    applyLoadResult('runningTimers', timersResult, timers => adoptLoadedTimers(timers, { sinceSeq: timerSeq })),
+    // Arjen käyttöjärjestelmä (0014). Ladataan vaikka näkymä ei vielä
+    // käyttäisi kaikkia: muuten tieto katoaisi näkymän rakentamisen hetkellä.
+    applyLoadResult('savedPlaces', placesResult, setSavedPlaces),
+    applyLoadResult('placeAliases', aliasesResult, setPlaceAliases),
+    applyLoadResult('calendarEvents', eventsResult, setCalendarEvents),
+    applyLoadResult('commuteObservations', observationsResult, setCommuteObservations),
+    applyLoadResult('lifeSettings', lifeSettingsResult, setLifeSettings),
+    applyLoadResult('sleepLogs', sleepLogsResult, setSleepLogs),
+    applyLoadResult('habitPlans', habitPlansResult, setHabitPlans),
+    applyLoadResult('habitEvents', habitEventsResult, setHabitEvents),
+    applyLoadResult('exerciseSessions', exerciseResult, setExerciseSessions),
+    applyLoadResult('wellbeingCheckins', checkinsResult, setWellbeingCheckins)
   ];
+
+  // Latauksen alun jälkeen valmistuneet arjen tallennukset ladatun listan
+  // päälle (samassa batchissa): muuten juuri tallennettu meno katosi,
+  // poistettu palasi ja seuraava tallennus loi toisen rivin.
+  keepDailyLifeWritesSince(dailyLifeMark);
 
   // Aikakirjausten haku epäonnistui (F6): lähtökorin kirjaukset näkyvät
   // silti. Muuten offline-kylmäkäynnistyksessä odottava kirjaus puuttui
@@ -830,12 +875,12 @@ export async function setGoalStatus(id, status) {
  * Tehtäviä EI koskaan poisteta tavoitteen mukana — niiden yhteys vain
  * katkeaa. Työ, joka on jo tehty, ei katoa siksi että tavoite poistuu.
  */
-export async function deleteGoal(id) {
+export async function deleteGoal(id, { confirm = confirmAction } = {}) {
   const goal = findGoal(id);
   if (!goal) return false;
 
   const linked = getState().tasks.filter(task => task.goalId === id);
-  const confirmed = await confirmAction({
+  const confirmed = await confirm({
     title: 'Poistetaanko tavoite?',
     message: linked.length
       ? `"${goal.title}" poistetaan. ${linked.length} tehtävää säilyy, mutta niiden yhteys tavoitteeseen katkeaa.`
@@ -846,11 +891,23 @@ export async function deleteGoal(id) {
   });
   if (!confirmed) return false;
 
-  removeGoalFromState(id);
+  // Tila luetaan UUDELLEEN vahvistuksen jälkeen (kuten deleteLifeArea):
+  // dialogin aikana ehtinyt lataus tai muutos jäisi muuten peruutuksen
+  // ulkopuolelle.
+  const current = findGoal(id);
+  if (!current) return false;
+  const startedIn = sessionSnapshot();
+  const unlinked = removeGoalFromState(id);
 
   const result = await goalsRepo.remove(id);
+  // Uloskirjautuminen tai tilin vaihto odotuksen aikana: tila on jo
+  // tyhjennetty, eikä edellisen käyttäjän tavoitetta palauteta seuraavalle.
+  if (!isSameSession(startedIn)) return false;
   if (!result.ok) {
-    addGoalToState(goal); // peruutus
+    // Kanta ei muuttunut: tavoite JA liitokset takaisin. Pelkkä tavoite
+    // jätti liitetyt rivit irrallisiksi, ja seuraava muokkaus olisi
+    // tallentanut goal_id = null kantaan.
+    restoreGoalInState(current, unlinked);
     showError(result.error);
     return false;
   }
@@ -1449,8 +1506,16 @@ export async function deleteInvestment(id) {
  * tarkistettavaksi, ja vasta `approveReceipt` tai `approveScannedBill`
  * kirjoittaa mitään. Kuva vapautetaan `extractFromImage`-funktiossa
  * riippumatta lopputuloksesta.
+ *
+ * ISTUNTO OTETAAN TALTEEN ENNEN LUENTAA. Luenta kestää sekunteja, ja sinä
+ * aikana istunto voi päättyä. Ilman tarkistusta A:n kuitti tai lasku
+ * (kauppias, summa, viite) päätyisi B:n tarkistettavaksi — tai jäisi
+ * uloskirjautuneeseen tilaan seuraavaa kirjautujaa odottamaan — ja
+ * hyväksyntä kirjaisi sen B:n tilille. Vaihtunut istunto palauttaa
+ * `discarded: true` eikä virhettä.
  */
 export async function scanImage({ file, subject }) {
+  const startedIn = sessionSnapshot();
   const result = await extractFromImage({
     file,
     subject,
@@ -1458,6 +1523,7 @@ export async function scanImage({ file, subject }) {
     id: newTaskId()
   });
 
+  if (!isSameSession(startedIn)) return { ok: false, discarded: true };
   if (result.ok) setPendingExtraction(result.extraction);
   return result;
 }
@@ -1778,6 +1844,16 @@ export async function deleteMilestone(id) {
  */
 export function proposeReplan(trigger = 'manual', options = {}) {
   const state = getState();
+  const todayIso = fmtISO(todayMidnight());
+
+  // KALENTERI MUKAAN (§42): menot pysyvät kiinteinä, valmistautuminen ja
+  // matka ovat varattuja ja suojattu uni on suojattu. Ilman niitä
+  // myöhästyneet siirtyivät täyteen buukatulle päivälle. Sama kalenteri
+  // kuin Suunnittelu-näkymässä ja myöhästyneiden ilmoituksessa.
+  const horizonDays = Number.isInteger(options.horizonDays) && options.horizonDays > 0 ? options.horizonDays : 14;
+  const calendar = calendarForPlanning(state, {
+    from: todayIso, to: horizonEnd(todayIso, horizonDays), todayIso
+  });
 
   const proposal = buildReplanProposal({
     trigger,
@@ -1786,8 +1862,10 @@ export function proposeReplan(trigger = 'manual', options = {}) {
     routines: state.routines,
     exceptions: state.routineExceptions,
     profile: state.profile,
-    todayIso: fmtISO(todayMidnight()),
+    todayIso,
     automationLevel: state.automationLevel,
+    events: calendar.events,
+    blocks: calendar.blocks,
     ...options
   });
 

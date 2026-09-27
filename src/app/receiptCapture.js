@@ -37,6 +37,7 @@
 
 import { parseExtractionResponse } from '../domain/receipts.js';
 import { currentAccessToken } from './auth.js';
+import { sessionSnapshot, isSameSession } from '../data/session.js';
 import { apiUrl } from '../platform/index.js';
 import { API } from '../data/config.js';
 import { logError } from '../lib/result.js';
@@ -183,6 +184,9 @@ export function fitWithin(width, height, max = MAX_DIMENSION) {
  * @returns {Promise<{ok: boolean, extraction?: object, error?: string}>}
  */
 export async function extractFromImage({ file, subject, todayIso, id }) {
+  // Kuva kuuluu sille, joka sen valitsi. Jos tili vaihtuu kuvan valmistelun
+  // tai tunnuksen haun aikana, A:n kuvaa ei lähetetä B:n tunnuksella.
+  const startedIn = sessionSnapshot();
   let prepared;
   try {
     prepared = await prepareImage(file);
@@ -192,6 +196,7 @@ export async function extractFromImage({ file, subject, todayIso, id }) {
 
   try {
     const token = await currentAccessToken();
+    if (!isSameSession(startedIn)) return { ok: false, discarded: true, error: null };
     if (!token) return { ok: false, error: 'Kirjaudu sisään ennen kuvan lukemista.' };
 
     const response = await fetch(apiUrl(API.extract), {

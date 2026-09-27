@@ -37,7 +37,11 @@ const RENAMES = Object.freeze({
   'reminders.trigger_type': 'trigger',
   'notices.notice_key': 'key',
   'location_rules.trigger_type': 'trigger',
-  'ai_action_audit.occurred_at': 'timestamp'
+  'ai_action_audit.occurred_at': 'timestamp',
+  // 0014: päivä on domainissa `date` (kuten hyvinvoinnissa), kannassa
+  // nimetty tarkemmin, koska `date` on myös tyypin nimi.
+  'calendar_events.event_date': 'date',
+  'exercise_sessions.session_date': 'date'
 });
 
 /**

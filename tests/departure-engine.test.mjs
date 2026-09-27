@@ -7,7 +7,9 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { read } from './helpers/sources.mjs';
+import { execFileSync } from 'node:child_process';
+
+import { read, ROOT } from './helpers/sources.mjs';
 import { createTestRouteProvider } from './helpers/routeProvider.mjs';
 import {
   normalizeTravelPlan, departureSchedule, departureState, leaveAtMinus,
@@ -20,6 +22,8 @@ import {
   DEPARTURE_ALERT_LEAD_MINUTES
 } from '../src/domain/notification.js';
 import { intentAt } from '../src/platform/nativeNotifications.js';
+import { collectCandidates } from '../src/domain/assistant.js';
+import { helsinkiOffset } from './helpers/helsinkiOffset.mjs';
 
 const TODAY = '2026-09-20';
 const PREFS = normalizePreferences({ enabled: true, maxPerDay: 50, dailyPlanEnabled: false, eveningReviewEnabled: false });
@@ -403,6 +407,31 @@ test('planRange: horisontin sisällä huomisen matka ajastuu, sen ulkopuolinen e
   assert.deepEqual(intents.filter(i => i.type === 'departure_reminder').map(i => i.targetId), ['p2']);
 });
 
+test('KRIITTINEN: kesäaikaan siirtymisen yönä lähtömuistutus laitteen vyöhykkeellä ei tule tuntia myöhässä', () => {
+  // Perillä su 29.3. klo 4.30, matka 120 min. Klo 3.00-3.59 ei ole olemassa:
+  // todellinen lähtö on 1.30, muistutus 1.20 (seinäkellolla 2.30 / 2.20).
+  const spring = plan({ id: 'dst', arrivalDate: '2026-03-29', arrivalTime: '04:30', travelMinutes: 120, arrivalBufferMinutes: 0 });
+  const naive = departureIntents([spring], { dateIso: '2026-03-29', todayIso: '2026-03-28' });
+  assert.equal(naive[0].time, '02:20', 'ilman vyöhykettä puhdas seinäkello (ennallaan)');
+
+  const [intent] = departureIntents([spring], { dateIso: '2026-03-29', todayIso: '2026-03-28', offsetMinutesFn: helsinkiOffset });
+  assert.deepEqual([intent.date, intent.time], ['2026-03-29', '01:20']);
+  assert.match(intent.body, /Lähde noin 01:30 /);
+
+  const ranged = planRange({
+    tasks: [], routineOccurrences: [], travelPlans: [spring], from: '2026-03-28', days: 2, todayIso: '2026-03-28',
+    preferences: PREFS, offsetMinutesFn: helsinkiOffset
+  }).filter(i => i.type === 'departure_reminder');
+  assert.deepEqual(ranged.map(i => [i.date, i.time]), [['2026-03-29', '01:20']]);
+
+  // NOW/NEXT: klo 1.40 lähtö on jo mennyt, ei "lähde noin 2.30".
+  const [candidate] = collectCandidates({ travelPlans: [spring], todayIso: '2026-03-29', nowMinutes: 100, offsetMinutesFn: helsinkiOffset });
+  assert.equal(candidate.late, true);
+  assert.match(candidate.reason, /myöhässä.*01:30/);
+  const [unzoned] = collectCandidates({ travelPlans: [spring], todayIso: '2026-03-29', nowMinutes: 100 });
+  assert.equal(unzoned.late, false, 'ilman vyöhykettä seinäkello väittäisi lähdön olevan vasta 2.30');
+});
+
 test('PLANNED_TYPES on tyhjä: lähtömuistutus on toteutettu', () => {
   assert.deepEqual([...PLANNED_TYPES], []);
 });
@@ -437,6 +466,45 @@ test('sovelluskerros: planUpcoming ottaa matkasuunnitelmat tilasta', async () =>
   assert.deepEqual(departures.map(i => i.targetId), ['app1'], 'tuntematon kesto ei ajastu');
   assert.equal(departures[0].date, tomorrowIso);
   resetState();
+});
+
+test('KRIITTINEN: sovelluskerros antaa matkan lähdölle laitteen vyöhykkeen (kesäaikaan siirtymisen yö)', () => {
+  // Vyöhyke luetaan prosessin käynnistyessä, joten ajo omassa lapsiprosessissaan Helsingin ajassa.
+  const code = `
+    import { setUser } from './src/data/session.js';
+    import { resetState, setTravelPlans, getState } from './src/app/state.js';
+    import { clearAllCollections } from './src/data/collectionsRepo.js';
+    import { runDepartureSweep } from './src/app/assistantActions.js';
+    import { normalizeTravelPlan } from './src/domain/travel.js';
+    clearAllCollections();
+    resetState();
+    setUser({ id: 'aaaaaaaa-0000-0000-0000-00000000000a', email: 'a@example.com' });
+    setTravelPlans([normalizeTravelPlan({
+      id: 'dst', title: 'Lento', destination: 'Lentokenttä', arrivalDate: '2026-03-29', arrivalTime: '04:30',
+      mode: 'driving', travelMinutes: 120, travelSource: 'manual', preparationMinutes: 0, arrivalBufferMinutes: 0
+    })]);
+    const created = await runDepartureSweep({ now: new Date(2026, 2, 29, 1, 40) });
+    console.log(JSON.stringify({ created, notices: getState().notices.map(n => [n.key, n.level, n.reason]) }));
+  `;
+  const output = execFileSync(process.execPath, ['--input-type=module', '-e', code], {
+    cwd: ROOT, env: { ...process.env, TZ: 'Europe/Helsinki' }, encoding: 'utf8'
+  }).trim().split('\n').pop();
+  const { created, notices } = JSON.parse(output);
+  // Todellinen lähtö oli 1.30 (klo 3-4 ei ole olemassa): klo 1.40 ollaan 10 min myöhässä.
+  assert.equal(created, 1);
+  assert.deepEqual(notices.map(([key, level]) => [key, level]), [['departure|dst|2026-03-29|late', 'urgent']]);
+  assert.match(notices[0][2], /myöhässä.*01:30/);
+});
+
+test('sovelluskerroksen matkalähdöt (lähtökierros, matkanäkymä, NYT/SEURAAVAKSI) saavat laitteen vyöhykkeen', () => {
+  for (const [file, call] of [
+    ['src/app/assistantActions.js', /departureState\(plan, \{[^}]*offsetMinutesFn: deviceOffsetMinutes/],
+    ['src/app/views/travel.js', /departureState\(plan, \{[^}]*offsetMinutesFn: deviceOffsetMinutes/],
+    ['src/app/views/today.js', /nowNext\(\{[^}]*offsetMinutesFn: deviceOffsetMinutes/],
+    // Natiivit matkan lähtöilmoitukset: yksi muistutusputki
+    // (alarmSync.legacyReminderIntents -> planRange; notifications.planUpcoming käyttää samaa).
+    ['src/app/alarmSync.js', /planRange\(\{[^}]*offsetMinutesFn: deviceOffsetMinutes/]
+  ]) assert.match(read(file), call, file);
 });
 
 // ----------------------------------------------- paikkaehdotukset (ei historiaa)

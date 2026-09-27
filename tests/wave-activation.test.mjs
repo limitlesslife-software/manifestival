@@ -179,7 +179,22 @@ const FIXTUURIT = Object.freeze({
   },
   alignmentItemSettings: {
     id: 'w-ais-1', itemKind: 'task', itemId: 'w-task-1', energyDemand: 4
-  }
+  },
+  // Migraatio 0014 (aalto K): arjen käyttöjärjestelmä.
+  savedPlaces: { id: 'w-place-1', name: 'Työ', travelMode: 'driving', usualTravelMinutes: 35 },
+  placeAliases: { id: 'w-alias-1', placeId: 'w-place-1', alias: 'duuni', confirmations: 2 },
+  calendarEvents: {
+    id: 'w-event-1', title: 'Parturi', date: '2026-09-29', startTime: '16:00', durationMinutes: 45
+  },
+  commuteObservations: {
+    id: 'w-obs-1', placeId: 'w-place-1', observedOn: '2026-09-28', weekday: 1, travelMinutes: 38
+  },
+  lifeSettings: { id: 'w-life-1', windDownMinutes: 30, arrivalBufferMinutes: 10 },
+  sleepLogs: { id: 'w-sleep-1', wakeDate: '2026-09-28', actualBedtime: '22:45', actualWake: '06:10' },
+  habitPlans: { id: 'w-habit-1', kind: 'nicotine', name: 'Nikotiini', minIntervalMinutes: 120 },
+  habitEvents: { id: 'w-hev-1', planId: 'w-habit-1', occurredAt: '2026-09-28T08:00:00.000Z', action: 'use' },
+  exerciseSessions: { id: 'w-ex-1', date: '2026-09-28', kind: 'Juoksu', actualMinutes: 30, intensity: 3 },
+  wellbeingCheckins: { id: 'w-wc-1', date: '2026-09-28', motivation: 4, control: 3 }
 });
 
 /** Repositorio porttiavaimella. */

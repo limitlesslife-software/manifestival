@@ -548,6 +548,6 @@ Yksikkötestit ilman kantaa: `tests/activation-backup.test.mjs` ja
 - `tools/pg-rehearsal/backup-scenario.mjs`, `tools/pg-rehearsal/rehearse-backup.mjs` — harjoittelu B1–B15
 - `tests/activation-backup.test.mjs`, `tests/activation-backup-docs.test.mjs`
 - `docs/acceptance/WAVE-G.md` — aalto G ja sen peruutus (§6)
-- `docs/activation/MIGRATION-BUNDLES.md` — migraatiopaketit 0009–0013
+- `docs/activation/MIGRATION-BUNDLES.md` — migraatiopaketit 0009–0014
 - `docs/MIGRATION-0004-RECOVERY.md` — CASE B2 (kesken-tila)
 - `docs/PRODUCTION-STATUS.md` — tuotannon tila

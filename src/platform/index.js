@@ -22,6 +22,7 @@ import * as notificationPlatform from './notifications.js';
 import { bindLifecycle, isNativeLifecycleAvailable } from './lifecycle.js';
 import * as geolocation from './geolocation.js';
 import * as speechPlatform from './speech.js';
+import * as alarmPlatform from './alarms.js';
 
 export {
   CAPABILITY, CAPABILITIES, PERMISSION, NATIVE_REQUIRED,
@@ -88,7 +89,12 @@ export const notifications = Object.freeze({
   removeAllDelivered: notificationPlatform.removeAllDelivered,
   describeSupport: notificationPlatform.describeSupport,
   /** Montako ilmoitusta on tällä hetkellä ajastettuna laitteelle. */
-  pendingCount: notificationPlatform.pendingCount
+  pendingCount: notificationPlatform.pendingCount,
+  /**
+   * Lähtöilmoituksen "Avaa reitti" -painallukset (Android). Palauttaa
+   * lopetusfunktion; selaimessa ei tee mitään.
+   */
+  onRouteAction: notificationPlatform.onRouteAction
 });
 
 // ------------------------------------------------------------- sijainti
@@ -147,6 +153,47 @@ export const speech = Object.freeze({
   }
 });
 
+// ------------------------------------------- herätys ja puhutut muistutukset
+
+/**
+ * Herätys, puhutut muistutukset, puhe ja reitin avaus
+ * (src/platform/alarms.js). Android-sovelluksessa oma
+ * ManifestivalAlarm-liitännäinen; selaimessa rehellinen "toimii vain
+ * Android-sovelluksessa" -- ei herätystä avoimeen välilehteen.
+ *
+ * Asetusnäkymät (tarkat herätykset, koko näytön ilmoitus) ja äänivalitsin
+ * avataan VAIN käyttäjän napautuksesta.
+ */
+export const alarms = Object.freeze({
+  capability: () => capability(CAPABILITY.ALARMS),
+  /** Soiko herätys myös sovelluksen ollessa kiinni: vain Android-sovelluksessa. */
+  supportsBackgroundAlarms: alarmPlatform.supportsBackgroundAlarms,
+  /** Laitteen tila (tarkat herätykset, koko näyttö, ilmoitukset, puhe). EI pyydä lupia. */
+  status: alarmPlatform.alarmStatus,
+  validate: alarmPlatform.validateAlarmEntry,
+  /** Korvaa laitteen koko herätysjoukko (sama tunniste = yksi herätys). */
+  schedule: alarmPlatform.scheduleAlarms,
+  cancel: alarmPlatform.cancelAlarms,
+  /** Kaikki pois: uloskirjautuminen ja tilin poisto. */
+  cancelAll: alarmPlatform.cancelAllAlarms,
+  list: alarmPlatform.listAlarms,
+  openExactAlarmSettings: alarmPlatform.openExactAlarmSettings,
+  openFullScreenSettings: alarmPlatform.openFullScreenSettings,
+  pickAlarmSound: alarmPlatform.pickAlarmSound,
+  /** Oma herätysmusiikki järjestelmän tiedostovalitsimella (ei tallennustilan lupaa). VAIN napautuksesta. */
+  pickAlarmMusic: alarmPlatform.pickAlarmMusic,
+  /** Puhu nyt. Selaimessa vain sivun ollessa auki (foregroundOnly). */
+  speak: alarmPlatform.speak,
+  stopSpeaking: alarmPlatform.stopSpeaking,
+  /** Avaa reitti (Android) tai palauta sallittu https-linkki (selain). */
+  openNavigation: alarmPlatform.openNavigation,
+  navigationUrl: alarmPlatform.navigationUrl,
+  /** Laitteen kirjaamat kuittaukset, torkut ja "Lähdin"-painallukset (jono tyhjenee). */
+  consumeEvents: alarmPlatform.consumeEvents,
+  /** Elävät tapahtumat sovelluksen ollessa auki. Palauttaa lopetusfunktion. */
+  onEvent: alarmPlatform.onEvent
+});
+
 // ------------------------------------------------------- taustatoiminta
 
 export const background = Object.freeze({
@@ -189,6 +236,7 @@ export function capabilities() {
     notifications: notifications.capability(),
     location: location.capability(),
     speech: speech.capability(),
-    background: background.capability()
+    background: background.capability(),
+    alarms: alarms.capability()
   };
 }

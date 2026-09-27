@@ -174,7 +174,7 @@ Valinnainen T-2-kuivaharjoitus tuotannossa on oma omistajan hyväksyntänsä.
 
 ### Aalto H (v21) — Henkilökohtainen avustaja, migraatio 0011
 
-Paketti: [`docs/acceptance/WAVE-H.md`](../acceptance/WAVE-H.md). Omistajan viesti: **"hyväksyn 0011/H"**. Ehdokas leikataan uudelleen (lukon `missingPatches`): orkestroija pysähtyy `TRAIN_RECUT_REQUIRED` siihen asti.
+Paketti: [`docs/acceptance/WAVE-H.md`](../acceptance/WAVE-H.md). Omistajan viesti: **"hyväksyn 0011/H"**. Ehdokas on leikattu uudelleen (H v5, `388cd99`) ja lukittu; lukon `missingPatches` on tyhjä. Jos se ei ole, orkestroija pysähtyy `TRAIN_RECUT_REQUIRED`.
 
 | Laji | Tarkistus | Komento | Kirjataan |
 |---|---|---|---|
@@ -187,7 +187,7 @@ Paketti: [`docs/acceptance/WAVE-H.md`](../acceptance/WAVE-H.md). Omistajan viest
 
 ### Aalto I (v22) — Suunta 1, migraatio 0012
 
-Paketti: [`docs/acceptance/WAVE-I.md`](../acceptance/WAVE-I.md). Omistajan viesti: **"hyväksyn 0012/I"**. Leikataan uudelleen kuten H.
+Paketti: [`docs/acceptance/WAVE-I.md`](../acceptance/WAVE-I.md). Omistajan viesti: **"hyväksyn 0012/I"**. Leikattu uudelleen (I v3, `4a24fdf`) ja lukittu kuten H.
 
 | Laji | Tarkistus | Komento | Kirjataan |
 |---|---|---|---|
@@ -200,7 +200,7 @@ Paketti: [`docs/acceptance/WAVE-I.md`](../acceptance/WAVE-I.md). Omistajan viest
 
 ### Aalto J (v23) — Suunta 2, migraatio 0013
 
-Paketti: [`docs/acceptance/WAVE-J.md`](../acceptance/WAVE-J.md). Omistajan viesti: **"hyväksyn 0013/J"**. Leikataan uudelleen kuten H.
+Paketti: [`docs/acceptance/WAVE-J.md`](../acceptance/WAVE-J.md). Omistajan viesti: **"hyväksyn 0013/J"**. Leikattu uudelleen (J v2, `cba9463`, lukon SQL-lähde) ja lukittu kuten H.
 
 | Laji | Tarkistus | Komento | Kirjataan |
 |---|---|---|---|

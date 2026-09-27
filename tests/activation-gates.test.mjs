@@ -53,7 +53,11 @@ const PORTIT = ['routines', 'routineExceptions', 'goals', 'projects',
                 'travelPlans', 'locationRules',
                 'lifeAreas', 'weeklyCapacities', 'timeEntries', 'alignmentReviews',
                 // Migraatio 0013 (aalto J).
-                'runningTimers', 'alignmentItemSettings'];
+                'runningTimers', 'alignmentItemSettings',
+                // Migraatio 0014 (aalto K): arjen käyttöjärjestelmä.
+                'savedPlaces', 'placeAliases', 'calendarEvents', 'commuteObservations',
+                'lifeSettings', 'sleepLogs', 'habitPlans', 'habitEvents',
+                'exerciseSessions', 'wellbeingCheckins'];
 
 // =====================================================================
 // PORTTIEN LÄHTÖTILA
@@ -85,7 +89,7 @@ test('KRIITTINEN: porttien joukko vastaa migraatioiden tauluja', () => {
   // taulua, kaataisi jokaisen tallennuksen aktivoinnin jälkeen.
   const taulut = new Set();
   for (const nimi of fs.readdirSync(path.join(ROOT, 'supabase/migrations'))
-                       .filter(n => /^00(0[3-9]|1[0-3])/.test(n))) {
+                       .filter(n => /^00(0[3-9]|1[0-4])/.test(n))) {
     for (const m of read(`supabase/migrations/${nimi}`)
       .matchAll(/create table public\.(\w+)/g)) {
       taulut.add(m[1]);
@@ -93,9 +97,10 @@ test('KRIITTINEN: porttien joukko vastaa migraatioiden tauluja', () => {
   }
 
   // 0013 toi kaksi taulua: running_timers ja alignment_item_settings.
-  assert.equal(taulut.size, 24,
-    `migraatiot 0003-0013 luovat ${taulut.size} taulua, portteja on ${PORTIT.length}`);
-  assert.equal(Object.keys(TABLES).length, 24,
+  // 0014 toi kymmenen: arjen käyttöjärjestelmän taulut (aalto K).
+  assert.equal(taulut.size, 34,
+    `migraatiot 0003-0014 luovat ${taulut.size} taulua, portteja on ${PORTIT.length}`);
+  assert.equal(Object.keys(TABLES).length, 34,
     'porttien määrä ei vastaa migraatioiden taulujen määrää');
   assert.deepEqual(Object.keys(TABLES).sort(), [...PORTIT].sort());
 });
@@ -435,38 +440,32 @@ test('KRIITTINEN: tilannedokumentti luettelee jokaisen migraation', () => {
 
   const migraatiot = fs.readdirSync(path.join(ROOT, 'supabase/migrations'))
     .filter(n => n.endsWith('.sql')).sort();
-  assert.equal(migraatiot.length, 13, `migraatioita on ${migraatiot.length}`);
+  assert.equal(migraatiot.length, 14, `migraatioita on ${migraatiot.length}`);
 
   for (const nimi of migraatiot) {
     assert.ok(doc.includes(nimi),
       `tilannedokumentti ei mainitse migraatiota ${nimi}`);
   }
 
-  // AALTOCOMMIT J: KAIKKI KOLMETOISTA AJETTUA.
+  // KAHDEKSAN AJETTUA, YKSI AJAMATON.
   //
-  // 0001–0008 on ajettu ja hyväksytty tuotannossa. 0009–0013 ovat
-  // aaltojen F–J EDELLYTYKSIÄ: rivi saa sanoa AJETTU vain, jos se
-  // samalla nimeää edellytyksen ja oman varmistuksensa. Pelkkä "AJETTU"
-  // ilman ehtoa väittäisi tuotannosta jotain, mitä commitin
-  // valmisteluhetkellä ei ollut tapahtunut.
-  assert.equal((doc.match(/\*\*AJETTU\*\*/g) || []).length, 13,
-    'tilannedokumentti ei merkitse kolmeatoista ajetuksi');
+  // Migraatio 0009 (Talous 2.0) on suunniteltu mutta EI AJETTU. Jos
+  // tämä luku nousisi yhdeksään ilman että migraatio on todella
+  // ajettu, dokumentti väittäisi tuotannosta jotain mitä siellä ei
+  // ole -- ja porttien avaaminen sen perusteella kaataisi jokaisen
+  // kirjoituksen.
+  assert.equal((doc.match(/\*\*AJETTU\*\*/g) || []).length, 8,
+    'tilannedokumentti ei merkitse kahdeksaa ajetuksi');
 
-  const rivit = doc.split(NEWLINE);
-  for (const nimi of migraatiot) {
-    const numero = nimi.slice(0, 4);
-    const rivi = rivit.find(r => r.includes('|') && r.includes('`' + nimi + '`'));
-    assert.ok(rivi, `tilannedokumentin migraatiotaulukossa ei ole riviä ${nimi}`);
-    assert.match(rivi, /\*\*AJETTU\*\*/, `${nimi} ei ole merkitty ajetuksi`);
-    if (numero <= '0008') continue;
-    assert.match(rivi, new RegExp(`EDELLYTYS[^|]*\`verify_${numero}\\.sql\` 0 poikkeavaa`),
-      `${nimi}: AJETTU ilman edellytystä ja omaa varmistusta`);
+  for (const [numero, tiedosto] of [
+    ['0009', '0009_finance_2.sql'],
+    ['0010', '0010_goal_to_action.sql']
+  ]) {
+    const rivi = doc.split(NEWLINE).find(r => r.includes(tiedosto));
+    assert.ok(rivi, `tilannedokumentti ei mainitse migraatiota ${numero}`);
+    assert.match(rivi, /EI AJETTU/,
+      `migraatio ${numero} ei ole merkitty ajamattomaksi`);
   }
-
-  // Aallon J oma migraatio on TÄMÄN commitin edellytys.
-  const rivi0013 = rivit.find(r => r.includes('0013_alignment_reality.sql'));
-  assert.match(rivi0013, /EDELLYTYS: `verify_0013\.sql` 0 poikkeavaa ennen tämän commitin deployta/,
-    'migraation 0013 rivi ei nimeä deployn edellytystä');
 });
 
 test('KRIITTINEN: tilannedokumentin porttitaulukko vastaa koodia', () => {

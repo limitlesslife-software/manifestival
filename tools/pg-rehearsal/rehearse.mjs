@@ -2,7 +2,7 @@
 //
 // Käyttö:
 //   node tools/pg-rehearsal/rehearse.mjs [--json=raportti.json] [--only=upgrade,rls,failure]
-//                                        [--write-golden] [--fixtures=DIR]
+//                                        [--write-golden] [--fixtures=DIR] [--fixture-states=0014,...]
 //
 // Vaatii paikallisen PostgreSQL 17 -klusterin osoitteessa 127.0.0.1
 // (portti PG_REHEARSAL_PORT, oletus 54349), jonka data-hakemisto on
@@ -10,24 +10,24 @@
 // ja pg-ajurin, ks. README.md.
 //
 // Skenaariot (--only hyväksyy nimen tai etuliitteen, esim. prodshape):
-//   upgrade:text   lähtötila (date/time tekstinä) -> 0001..0013, siemennys joka välissä;
+//   upgrade:text   lähtötila (date/time tekstinä) -> 0001..0014, siemennys joka välissä;
 //                  vanhat rivit (vanhat sarakkeet, xmin, relfilenode) ennallaan 0003:sta alkaen
 //   upgrade:typed  sama, date/time omina tyyppeinään
 //   rls            eristysmatriisi kaikille tauluille lopputilassa
 //   lifecycle      poistosäännöt: alue/tavoite/tehtävä/käyttäjä
 //   failure        uudelleenajo, puuttuva esiehto, osittainen tila, lukon aikakatkaisu
 //   rollback       jokaisen ROLLBACK-osion ajo tyhjillä uusilla objekteilla
-//   preflight      jokainen preflight jokaisessa tilassa 0007..0013
+//   preflight      jokainen preflight jokaisessa tilassa 0007..0014
 //   inventory      aktivoinnin inventaario + pisteytys jokaisessa tilassa
 //   prodshape:fixture      tuotannon 0008-tila = omistajan inventaario (prodshape.mjs)
 //   values:0010            0010 säilyttää jokaisen vanhan arvon (5 tilaa × projekti)
-//   prodshape:chain        0009..0013 tuotannon datalla + kultaiset skeemaerot
+//   prodshape:chain        0009..0014 tuotannon datalla + kultaiset skeemaerot
 //   prodshape:pause        taukopisteet: aaltojen oikeat kirjoitukset, verify, preflight
-//   failure:0010-locks     estäjämatriisi, myöhäinen virhe, jumi, lukkiutuminen (+0009, 0011)
+//   failure:0010-locks     estäjämatriisi, myöhäinen virhe, jumi, lukkiutuminen (+0009, 0011, 0014)
 //   verify:null            poikkeavia_yhteensa = FAIL-rivit myös NULL-tuloksilla
 //   preflight:blockers     lukitut taulut ja politiikkamäärät havaitaan etukäteen
-//   rollback:data          peruutukset datan kanssa (0010, 0012, 0013)
-//   rollback:reverse-chain 0013..0009 käänteisessä järjestyksessä -> tuotannon 0008
+//   rollback:data          peruutukset datan kanssa (0010, 0012, 0013, 0014)
+//   rollback:reverse-chain 0014..0009 käänteisessä järjestyksessä -> tuotannon 0008
 //   role:nonsuper          migraatiot NOSUPERUSER-omistajana, preflightin näkyvyys
 //
 // Vain nimenomaisesti (--only=backup; ei kuulu oletusajoon, OPT_IN_SCENARIOS):
@@ -227,17 +227,33 @@ async function rlsScenario(client) {
     if (t === 'wellbeing_entries') copy.date = '2026-06-02';
     if (t === 'routine_exceptions') copy.date = '2026-06-03';
     if (t === 'alignment_item_settings') copy.item_id = 'forged-item';
+    // 0014: käyttäjäkohtaiset uniikkiavaimet (B:llä on jo sama päivä,
+    // nimi ja asetusrivi) vaihdetaan, jotta kokeiltavaksi jää vain RLS.
+    if (t === 'saved_places') copy.name = 'Väärennetty paikka';
+    if (t === 'place_aliases') copy.alias = 'väärennetty';
+    if (t === 'sleep_logs') copy.wake_date = '2026-06-05';
+    if (t === 'wellbeing_checkins') copy.date = '2026-06-06';
     // Viittaukset A:n riveihin nollataan, jotta vierasavain ei kaada ensin.
+    // NOT NULL -viitteet (rutiini, tavoite, 0014:n paikka ja suunnitelma)
+    // jätetään: nollaus kaatuisi NOT NULLiin eikä RLS:ään.
+    const keepFk = new Set(['routine_exceptions.routine_id', 'milestones.goal_id', 'place_aliases.place_id',
+      'commute_observations.place_id', 'habit_events.plan_id']);
     const fks = (await client.query(
       `select a.attname from pg_constraint c
          join lateral unnest(c.conkey) k(n) on true
          join pg_attribute a on a.attrelid = c.conrelid and a.attnum = k.n
         where c.conrelid = $1::regclass and c.contype = 'f' and a.attname not in ('user_id', 'id')`,
       [`public.${t}`])).rows.map(x => x.attname);
-    for (const f of fks) if (f in copy && !(t === 'routine_exceptions' && f === 'routine_id')
-                              && !(t === 'milestones' && f === 'goal_id')) copy[f] = null;
+    for (const f of fks) if (f in copy && !keepFk.has(`${t}.${f}`)) copy[f] = null;
     const placeholders = cols.map((_, i) => `$${i + 1}`).join(', ');
-    const values = cols.map(c => copy[c]);
+    // jsonb-arvot JSON-tekstinä: pg-ajuri muuttaisi JS-taulukon PostgreSQL-
+    // taulukoksi, ja ei-tyhjä jsonb-taulukko (0014: aamurutiini, portaat)
+    // kaatuisi tyyppimuunnokseen ennen RLS:ää.
+    const jsonCols = new Set((await client.query(
+      `select column_name from information_schema.columns
+        where table_schema = 'public' and table_name = $1 and data_type in ('json', 'jsonb')`, [t])).rows
+      .map(x => x.column_name));
+    const values = cols.map(c => (jsonCols.has(c) && copy[c] !== null ? JSON.stringify(copy[c]) : copy[c]));
     const ins = await tryAs(client, OWNER,
       `insert into public.${t} (${cols.join(', ')}) values (${placeholders})`, values);
     record('A_cannot_insert_as_other', !ins.ok && ins.code === '42501', JSON.stringify(ins));
@@ -373,11 +389,14 @@ async function lifecycleScenario(client) {
     `insert into public.time_entries (id, entry_date, minutes, started_at, ended_at) values ('a-te-rev', '2026-09-23', 5, '2026-09-23T10:00Z', '2026-09-23T09:00Z')`);
   check('timer_end_before_start_rejected', !timerEnds.ok && timerEnds.code === '23514', JSON.stringify(timerEnds));
 
+  // 0014 (aalto K): poistosäännöt ja rajat oikealla kannalla.
+  await lifecycle0014(client, check);
+
   // Taaksepäin yhteensopivuus: migraatio ajetaan aina SILLOIN kun
   // edellisen aallon koodi on tuotannossa (0010 ajetaan aallon F aikana
   // jne.). Vanhan koodin rivimuoto — ilman yhtäkään myöhemmän
   // migraation saraketta — on siis voitava kirjoittaa ja päivittää
-  // 0013:n jälkeenkin. Muodot vastaavat src/lib/rows.js:n ja
+  // koko ketjun (0014) jälkeenkin. Muodot vastaavat src/lib/rows.js:n ja
   // collectionsRepo.js:n sarakejoukkoja kunkin aallon aikaan.
   const legacyShapes = [
     ['tasks (aalto C, 0002-sarakkeet)', `insert into public.tasks (id, date, time, end_time, title, category, note, completed, is_wake, description, duration_minutes, priority, scheduling_state)
@@ -394,7 +413,7 @@ async function lifecycleScenario(client) {
   ];
   for (const [label, sql] of legacyShapes) {
     const r = await tryAs(client, OWNER, sql);
-    check(`legacy_shape_after_0013: ${label}`, r.ok && r.rowCount === 1, JSON.stringify(r));
+    check(`legacy_shape_after_0014: ${label}`, r.ok && r.rowCount === 1, JSON.stringify(r));
   }
 
   // Tilin poisto: kaikki B:n rivit kaikista tauluista katoavat (cascade).
@@ -418,6 +437,104 @@ async function lifecycleScenario(client) {
   const aStill = Number(await scalar(client, `select count(*) from public.tasks where user_id = $1`, [OWNER]));
   check('account_delete_leaves_other_user', aStill >= 36, aStill);
   return out;
+}
+
+/**
+ * 0014:n poistosäännöt ja rajat. Ajetaan lifecycleScenarion sisällä sen
+ * jälkeen, kun A:n tavoite 'a-goal' on poistettu: meno ja liikuntakerta
+ * viittasivat siihen.
+ */
+async function lifecycle0014(client, check) {
+  const row = async sql => (await client.query(sql)).rows[0];
+  // Tavoitteen poisto nollasi VAIN viitesarakkeen (on delete set null
+  // (goal_id)). Ilman sarakelistaa PostgreSQL nollaisi myös NOT NULL
+  // -sarakkeen user_id, ja jokainen tavoitteen poisto kaatuisi.
+  const ev = await row(`select user_id::text as owner, goal_id, place_id from public.calendar_events where id = 'a-event'`);
+  check('0014_goal_delete_detaches_event_keeps_owner',
+    ev && ev.owner === OWNER && ev.goal_id === null && ev.place_id === 'a-place', JSON.stringify(ev));
+  const ex = await row(`select user_id::text as owner, goal_id, kind from public.exercise_sessions where id = 'a-ex'`);
+  check('0014_goal_delete_detaches_exercise_keeps_owner',
+    ex && ex.owner === OWNER && ex.goal_id === null && ex.kind === 'juoksu', JSON.stringify(ex));
+  const bEv = await row(`select goal_id, place_id from public.calendar_events where id = 'b-event'`);
+  check('0014_goal_delete_leaves_other_user_links', bEv && bEv.goal_id === 'b-goal' && bEv.place_id === 'b-place',
+    JSON.stringify(bEv));
+
+  // Paikan poisto: lisänimet ja havainnot (kaskadi) lähtevät, meno jää
+  // omistajalleen ilman paikkaa.
+  await asUser(client, OWNER, () => client.query(`delete from public.saved_places where id = 'a-place'`));
+  const after = await row(`select
+      (select count(*) from public.place_aliases where id = 'a-alias')::int as aliases,
+      (select count(*) from public.commute_observations where id = 'a-commute')::int as commutes,
+      (select count(*) from public.place_aliases where id = 'b-alias')::int as b_aliases,
+      (select count(*) from public.commute_observations where id = 'b-commute')::int as b_commutes,
+      (select place_id from public.calendar_events where id = 'a-event') as event_place,
+      (select user_id::text from public.calendar_events where id = 'a-event') as event_owner`);
+  check('0014_place_delete_cascades_aliases_and_observations',
+    after.aliases === 0 && after.commutes === 0 && after.b_aliases === 1 && after.b_commutes === 1, JSON.stringify(after));
+  check('0014_place_delete_detaches_event_keeps_owner', after.event_place === null && after.event_owner === OWNER,
+    JSON.stringify(after));
+
+  // Suunnitelman poisto vie sen kirjaukset.
+  await asUser(client, OWNER, () => client.query(`delete from public.habit_plans where id = 'a-habit'`));
+  const hev = Number(await scalar(client, `select count(*) from public.habit_events where id = 'a-hevent'`));
+  const bHev = Number(await scalar(client, `select count(*) from public.habit_events where id = 'b-hevent'`));
+  check('0014_plan_delete_cascades_events', hev === 0 && bHev === 1, `a=${hev} b=${bHev}`);
+
+  // Ainutkertaisuudet: yksi asetusrivi käyttäjää kohti, yksi unikirjaus
+  // heräämispäivää ja yksi tuntemus päivää kohti, paikan nimi
+  // kirjainkoosta riippumatta — kaikki käyttäjäkohtaisia.
+  const code = r => (r.ok ? 'ok' : r.code);
+  const settings2 = await tryAs(client, OWNER, `insert into public.life_settings (id) values ('a-life-2')`);
+  check('0014_one_life_settings_row_per_user', code(settings2) === '23505', JSON.stringify(settings2));
+  const sleep2 = await tryAs(client, OWNER, `insert into public.sleep_logs (id, wake_date) values ('a-sleep-2', '2026-09-24')`);
+  check('0014_one_sleep_log_per_wake_date', code(sleep2) === '23505', JSON.stringify(sleep2));
+  const wbc2 = await tryAs(client, OWNER, `insert into public.wellbeing_checkins (id, date, motivation) values ('a-wbc-2', '2026-09-24', 2)`);
+  check('0014_one_checkin_per_date', code(wbc2) === '23505', JSON.stringify(wbc2));
+  const place1 = await tryAs(client, OWNER, `insert into public.saved_places (id, name) values ('a-place-2', 'Kuntosali')`);
+  check('0014_place_name_unique_is_per_user', place1.ok, JSON.stringify(place1));
+  const place2 = await tryAs(client, OWNER, `insert into public.saved_places (id, name) values ('a-place-3', 'KUNTOSALI')`);
+  check('0014_place_name_unique_ignores_case', code(place2) === '23505', JSON.stringify(place2));
+
+  // Rajat (23514).
+  await asUser(client, OWNER, () => client.query(`insert into public.habit_plans (id, name) values ('a-habit-2', 'Kahvi')`));
+  const limits = [
+    ['all_day_with_start_time', `insert into public.calendar_events (id, title, event_date, start_time, all_day) values ('a-ev-x1', 'x', '2026-09-25', '10:00', true)`],
+    ['timed_event_without_start', `insert into public.calendar_events (id, title, event_date, all_day) values ('a-ev-x2', 'x', '2026-09-25', false)`],
+    ['end_time_without_start', `insert into public.calendar_events (id, title, event_date, end_time, all_day) values ('a-ev-x3', 'x', '2026-09-25', '11:00', true)`],
+    ['weekday_8', `insert into public.calendar_events (id, title, event_date, all_day, recurrence_weekdays) values ('a-ev-x4', 'x', '2026-09-25', true, '{1,8}')`],
+    ['weekday_null_element', `insert into public.calendar_events (id, title, event_date, all_day, recurrence_weekdays) values ('a-ev-x5', 'x', '2026-09-25', true, '{1,NULL}')`],
+    ['skip_date_null_element', `insert into public.calendar_events (id, title, event_date, all_day, skip_dates) values ('a-ev-x6', 'x', '2026-09-25', true, '{2026-10-01,NULL}')`],
+    ['until_before_first', `insert into public.calendar_events (id, title, event_date, all_day, recurrence_weekdays, recurrence_until) values ('a-ev-x7', 'x', '2026-09-25', true, '{5}', '2026-09-24')`],
+    ['travel_minutes_zero', `insert into public.saved_places (id, name, usual_travel_minutes) values ('a-place-x', 'Nolla', 0)`],
+    ['motivation_6', `insert into public.wellbeing_checkins (id, date, motivation) values ('a-wbc-x', '2026-09-25', 6)`],
+    ['control_0', `insert into public.wellbeing_checkins (id, date, control) values ('a-wbc-y', '2026-09-26', 0)`],
+    ['habit_action_unknown', `insert into public.habit_events (id, plan_id, occurred_at, action) values ('a-hev-x', 'a-habit-2', now(), 'relapse')`],
+    ['alarm_not_object', `update public.life_settings set alarm = '[]' where id = 'a-life'`],
+    ['alarm_over_8192_bytes', `update public.life_settings set alarm = jsonb_build_object('x', repeat('x', 9000)) where id = 'a-life'`],
+    ['morning_routine_not_array', `update public.life_settings set morning_routine = '{}' where id = 'a-life'`],
+    ['currency_lowercase', `update public.life_settings set currency = 'eur' where id = 'a-life'`],
+    ['sleep_kind_unknown', `update public.sleep_logs set kind = 'deep' where id = 'a-sleep'`]
+  ];
+  for (const [label, sql] of limits) {
+    const r = await tryAs(client, OWNER, sql);
+    check(`0014_rejects_${label}`, code(r) === '23514', JSON.stringify(r));
+  }
+
+  // Havainnon event_id EI ole vierasavain: olemattomaan menoon viittaava
+  // havainto kelpaa, ja menon poisto ei vie toteutunutta matkaa.
+  const obs = await tryAs(client, OWNER,
+    `insert into public.commute_observations (id, place_id, event_id, observed_on, weekday, travel_minutes)
+     values ('a-commute-2', 'a-place-2', 'event:ei-ole:2026-09-25', '2026-09-25', 5, 20)`);
+  check('0014_observation_event_id_is_not_a_foreign_key', obs.ok, JSON.stringify(obs));
+  await asUser(client, OWNER, () => client.query(`delete from public.calendar_events where id = 'a-event'`));
+  const obsLeft = Number(await scalar(client, `select count(*) from public.commute_observations where id = 'a-commute-2'`));
+  check('0014_event_delete_keeps_observation', obsLeft === 1, obsLeft);
+  // Tuntematon on tyhjä, ei nolla: kirjaus ilman matka-aikaa kelpaa.
+  const unknown = await tryAs(client, OWNER,
+    `insert into public.commute_observations (id, place_id, observed_on, weekday) values ('a-commute-3', 'a-place-2', '2026-09-26', 6)`);
+  check('0014_observation_unknown_travel_is_null', unknown.ok
+    && (await scalar(client, `select travel_minutes from public.commute_observations where id = 'a-commute-3'`)) === null,
+    JSON.stringify(unknown));
 }
 
 // ---------------------------------------------------------------------
@@ -471,7 +588,8 @@ async function failureScenario() {
   }
   {
     const db = 'mv_rehearsal_fail_rerun';
-    const client = await freshAt(db, '0013');
+    // Koko ketju (nyt 0014 asti): jokainen 0009+ uudelleen sanoo "JO AJETTU".
+    const client = await freshAt(db, numberOf(MIGRATIONS.at(-1)));
     try {
       for (const name of MIGRATIONS.filter(m => numberOf(m) >= '0009')) {
         results.push(await expectClosedFailure(client, `toinen ajo koko ketjun jälkeen ${numberOf(name)}`, name, /JO AJETTU/));
@@ -479,13 +597,22 @@ async function failureScenario() {
     } finally { await client.end(); await dropDatabase(db); }
   }
 
-  // B. Puuttuva esiehto: 0013 ennen 0012:ta, 0012/0011/0010/0009 ennen 0007:ää.
+  // B. Puuttuva esiehto: 0013 ennen 0012:ta, 0014 ennen 0013:a ja 0012:ta,
+  //    0012/0011/0010/0009 ennen 0007:ää.
   {
     const db = 'mv_rehearsal_fail_prereq';
     const client = await freshAt(db, '0011');
     try {
       results.push(await expectClosedFailure(client, '0013 ilman 0012:ta', '0013_alignment_reality', null));
+      results.push(await expectClosedFailure(client, '0014 ilman 0012:ta ja 0013:a', '0014_daily_life', /Migraatio 0013 pitaa ajaa ensin/));
     } finally { await client.end(); await dropDatabase(db); }
+    const db12 = 'mv_rehearsal_fail_prereq12';
+    const c12 = await freshAt(db12, '0012');
+    try {
+      // Juna etenee järjestyksessä: 0014 ei ohita 0013:a, vaikka sen
+      // omat taulut eivät viittaa 0013:n objekteihin.
+      results.push(await expectClosedFailure(c12, '0014 ilman 0013:a', '0014_daily_life', /Migraatio 0013 pitaa ajaa ensin/));
+    } finally { await c12.end(); await dropDatabase(db12); }
     const db2 = 'mv_rehearsal_fail_prereq6';
     const c2 = await freshAt(db2, '0006');
     try {
@@ -523,7 +650,12 @@ async function failureScenario() {
       ['0012', '0013_alignment_reality', 'alter table public.time_entries add column operation_id text'],
       ['0009', '0010_goal_to_action', 'alter table public.tasks add column depends_on text[]'],
       ['0010', '0011_personal_assistant', 'create table public.reminders (id text primary key)'],
-      ['0008', '0009_finance_2', 'alter table public.bills add column iban text']
+      ['0008', '0009_finance_2', 'alter table public.bills add column iban text'],
+      // 0014: taulu, indeksin nimi toisessa taulussa ja rajoitteen nimi
+      // toisessa taulussa — tunnistus laskee nimet, ei vain tauluja.
+      ['0013', '0014_daily_life', 'create table public.saved_places (id text primary key)'],
+      ['0013', '0014_daily_life', 'create index calendar_events_user_date_idx on public.tasks (user_id)'],
+      ['0013', '0014_daily_life', 'alter table public.tasks add constraint life_settings_one_per_user unique (id)']
     ];
     let i = 0;
     for (const [at, name, sql] of cases) {
@@ -540,17 +672,25 @@ async function failureScenario() {
   //    goals-taulussa (kuten PostgRESTin pitkä pyyntö tai unohtunut
   //    SQL-editorin välilehti). Migraation on luovuttava 5 s:ssa ja
   //    perututtava KAIKKI.
-  for (const [at, name, table] of [['0009', '0010_goal_to_action', 'goals'],
-                                   ['0011', '0012_life_alignment', 'goals'],
-                                   ['0012', '0013_alignment_reality', 'time_entries']]) {
-    const db = `mv_rehearsal_fail_lock_${numberOf(name)}`;
+  //    0014 ei muuta olemassa olevaa taulua: vierasavaimet ottavat goals-
+  //    ja auth.users-tauluihin SHARE ROW EXCLUSIVE -lukon, jonka estää
+  //    sovelluksen KIRJOITUS (ROW EXCLUSIVE) mutta ei lukukysely (G alla).
+  const LOCK_CASES = [
+    ['0009', '0010_goal_to_action', 'public.goals', 'access share'],
+    ['0011', '0012_life_alignment', 'public.goals', 'access share'],
+    ['0012', '0013_alignment_reality', 'public.time_entries', 'access share'],
+    ['0013', '0014_daily_life', 'public.goals', 'row exclusive'],
+    ['0013', '0014_daily_life', 'auth.users', 'row exclusive']
+  ];
+  for (const [at, name, table, mode] of LOCK_CASES) {
+    const db = `mv_rehearsal_fail_lock_${numberOf(name)}_${table.replace(/\W/g, '_')}`;
     const client = await freshAt(db, at);
     const blocker = await connect(db);
     try {
       await blocker.query('begin');
-      await blocker.query(`select count(*) from public.${table}`);
+      await blocker.query(`lock table ${table} in ${mode} mode`);
       const t0 = Date.now();
-      const r = await expectClosedFailure(client, `${numberOf(name)} kun ${table} on avoimen transaktion lukitsema`, name, /lock|lukko/i);
+      const r = await expectClosedFailure(client, `${numberOf(name)} kun ${table} on avoimen transaktion lukitsema (${mode.toUpperCase()})`, name, /lock|lukko/i);
       r.waitedMs = Date.now() - t0;
       results.push(r);
       await blocker.query('rollback');
@@ -584,6 +724,39 @@ async function failureScenario() {
     } finally { await client.end(); await dropDatabase(db); }
   }
 
+  // G. 0014: lukukysely goals-taulussa EI estä (ACCESS SHARE ei ole
+  //    ristiriidassa SHARE ROW EXCLUSIVEn kanssa) — sovellus voi lukea
+  //    koko ajon ajan.
+  {
+    const db = 'mv_rehearsal_fail_read_0014';
+    const client = await freshAt(db, '0013');
+    const blocker = await connect(db);
+    try {
+      await blocker.query('begin');
+      await blocker.query('select count(*) from public.goals');
+      const t0 = Date.now();
+      const out = await runSql(client, readSql('supabase/migrations/0014_daily_life.sql'));
+      const waitedMs = Date.now() - t0;
+      const pass = out.ok && waitedMs < 4500;
+      results.push({ label: '0014 kun goals on avoimen lukukyselyn lukitsema (ACCESS SHARE): ei estä', pass, waitedMs,
+                     error: out.error?.message });
+      if (!pass) fail('failure', `0014 lukukyselyn aikana: ${out.ok ? `odotti ${waitedMs} ms` : out.error.message}`);
+    } finally { await blocker.query('rollback').catch(() => {}); await blocker.end(); await client.end(); await dropDatabase(db); }
+  }
+
+  // H. 0014: myöhäinen virhe VAIHEESSA 11 (invarianttien todistus ennen
+  //    committia) — kaikki kymmenen taulua on jo luotu, kun ylimääräinen
+  //    politiikka vanhassa taulussa kaataa ajon. Kaikki perutaan.
+  {
+    const db = 'mv_rehearsal_fail_late_0014';
+    const client = await freshAt(db, '0013');
+    try {
+      await client.query('create policy mv_rehearsal_extra on public.running_timers for select to authenticated using (false)');
+      results.push(await expectClosedFailure(client, '0014 kun vanhan taulun politiikkamäärä on muuttunut (vaihe 11)', '0014_daily_life',
+        /politiikat muuttuivat: 41/));
+    } finally { await client.end(); await dropDatabase(db); }
+  }
+
   return results;
 }
 
@@ -594,7 +767,17 @@ async function failureScenario() {
 // runInventory (prodshape.mjs): vain luku todennetaan kannalla, ei
 // lupauksena — READ ONLY -transaktio kaataa minkä tahansa kirjoituksen.
 
-async function inventoryScenario(fixtureDir) {
+/**
+ * `fixtureStates` rajaa, minkä tilojen tulokset kirjoitetaan
+ * `--fixtures`-hakemistoon (`--fixture-states=0014,0013-partial-0014`).
+ * Oletus (null) = kaikki, kuten ennen. Vanhojen tilojen fixtureja ei
+ * kirjoiteta uudelleen turhaan: orkestroijan ikätestit käyttävät niiden
+ * aikaleimoja.
+ */
+async function inventoryScenario(fixtureDir, fixtureStates = null) {
+  const writeFixture = (key, file, text) => {
+    if (fixtureDir && (!fixtureStates || fixtureStates.has(key))) fs.writeFileSync(path.join(fixtureDir, file), text);
+  };
   const { parseInventory, scoreInventory } = await import('../activation/score-inventory.mjs');
   const results = [];
   const check = (label, pass, detail) => {
@@ -603,7 +786,7 @@ async function inventoryScenario(fixtureDir) {
   };
   const cases = [
     ['0008', 'GO', '0009'], ['0009', 'GO', '0010'], ['0010', 'GO', '0011'],
-    ['0011', 'GO', '0012'], ['0012', 'GO', '0013'], ['0013', 'GO', null]
+    ['0011', 'GO', '0012'], ['0012', 'GO', '0013'], ['0013', 'GO', '0014'], ['0014', 'GO', null]
   ];
   for (const variant of ['text', 'typed']) {
     for (const [state, decision, next] of cases) {
@@ -622,9 +805,7 @@ async function inventoryScenario(fixtureDir) {
         check(`${variant}@${state}: taulukkosyöte = tiivistesyöte`,
           fromTable.decision === scored.decision && fromTable.nextMigration === scored.nextMigration,
           JSON.stringify(fromTable.stops));
-        if (fixtureDir && variant === 'text') {
-          fs.writeFileSync(path.join(fixtureDir, `state-${state}.json`), inv.cell + '\n');
-        }
+        if (variant === 'text') writeFixture(state, `state-${state}.json`, inv.cell + '\n');
       } finally { await client.end(); await dropDatabase(db); }
     }
   }
@@ -638,7 +819,20 @@ async function inventoryScenario(fixtureDir) {
       const scored = scoreInventory(parseInventory(inv.cell));
       check('keskeneräinen 0012: STOP', scored.decision === 'STOP' && scored.facts.migrations['0012'] === 'partial',
         JSON.stringify(scored));
-      if (fixtureDir) fs.writeFileSync(path.join(fixtureDir, 'state-0011-partial-0012.json'), inv.cell + '\n');
+      writeFixture('0011-partial-0012', 'state-0011-partial-0012.json', inv.cell + '\n');
+    } finally { await client.end(); await dropDatabase(db); }
+  }
+  // Keskeneräinen 0014 (yksi taulu käsin) -> STOP: rivi 23 = partial.
+  {
+    const db = 'mv_rehearsal_inv_partial14';
+    const client = await freshAt(db, '0013');
+    try {
+      await client.query('create table public.saved_places (id text primary key)');
+      const inv = await runInventory(client);
+      const scored = scoreInventory(parseInventory(inv.cell));
+      check('keskeneräinen 0014: STOP', scored.decision === 'STOP' && scored.facts.migrations['0014'] === 'partial',
+        JSON.stringify({ decision: scored.decision, m: scored.facts.migrations, stops: scored.stops }));
+      writeFixture('0013-partial-0014', 'state-0013-partial-0014.json', inv.cell + '\n');
     } finally { await client.end(); await dropDatabase(db); }
   }
   // Omistaja puuttuu (väärä projekti) -> STOP.
@@ -654,7 +848,7 @@ async function inventoryScenario(fixtureDir) {
       const scored = scoreInventory(parseInventory(inv.cell));
       check('omistaja puuttuu: STOP', scored.decision === 'STOP' && scored.facts.ownerPresent === false,
         JSON.stringify(scored.stops));
-      if (fixtureDir) fs.writeFileSync(path.join(fixtureDir, 'state-0008-no-owner.json'), inv.cell + '\n');
+      writeFixture('0008-no-owner', 'state-0008-no-owner.json', inv.cell + '\n');
     } finally { await client.end(); await dropDatabase(db); }
   }
   return results;
@@ -703,8 +897,8 @@ async function rollbackScenario() {
 
 async function preflightScenario() {
   const results = [];
-  const numbers = ['0009', '0010', '0011', '0012', '0013'];
-  for (const state of ['0007', '0008', '0009', '0010', '0011', '0012', '0013']) {
+  const numbers = ['0009', '0010', '0011', '0012', '0013', '0014'];
+  for (const state of ['0007', '0008', '0009', '0010', '0011', '0012', '0013', '0014']) {
     const db = `mv_rehearsal_pre_${state}`;
     const client = await freshAt(db, state);
     try {
@@ -755,10 +949,11 @@ function summarize(name, value) {
     case 'verify:null': return `verify:null: ${passCount(value)}`;
     case 'preflight:blockers': return `preflight:blockers: ${passCount(value)}`;
     case 'rollback:data': return `rollback:data: ${passCount(value)}`;
-    case 'rollback:reverse-chain': return `rollback:reverse-chain: ${value.pass ? 'PASS' : 'FAIL'} (0013..0009 -> katalogi = tuotannon 0008)`;
+    case 'rollback:reverse-chain': return `rollback:reverse-chain: ${value.pass ? 'PASS' : 'FAIL'} (0014..0009 -> katalogi = tuotannon 0008)`;
     case 'failure:0010-locks': {
       const m = value.matrix || [];
-      const parts = [value.late, ...(value.stall || []), ...(value.deadlock || []), value.aborted, value.rerunBlocked].filter(Boolean);
+      const parts = [value.late, ...(value.stall || []), ...(value.deadlock || []), value.aborted, value.rerunBlocked,
+        value.rerunBlocked0014, value.authStall0014].filter(Boolean);
       return `failure:0010-locks: estäjämatriisi ${passCount(m)}, muut ${passCount(parts)}`;
     }
     case 'role:nonsuper': return `role:nonsuper: ${passCount(value.migrations || [])} migraatiota NOSUPERUSER-roolina`;
@@ -810,7 +1005,8 @@ export async function main(argv = process.argv.slice(2), { guard = guardBackupRe
     if (want('inventory')) {
       const dir = args.fixtures ? String(args.fixtures) : null;
       if (dir) fs.mkdirSync(dir, { recursive: true });
-      await runScenario('inventory', () => inventoryScenario(dir));
+      const states = args['fixture-states'] ? new Set(String(args['fixture-states']).split(',')) : null;
+      await runScenario('inventory', () => inventoryScenario(dir, states));
     }
     for (const variant of ['text', 'typed']) {
       if (want(`upgrade:${variant}`) || (variant === 'text' && (want('rls') || want('lifecycle')))) {

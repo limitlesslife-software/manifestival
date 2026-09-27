@@ -36,7 +36,10 @@
 
 import { isIsoDate, durationOf } from './task.js';
 import { priorityWeight } from './priority.js';
-import { DEFAULT_TASK_MINUTES } from './scheduler.js';
+import {
+  DEFAULT_TASK_MINUTES, findCalendarCollisions, indexEventOccurrences, indexCalendarBlocks
+} from './scheduler.js';
+import { clockText } from './wallClock.js';
 import { horizonCapacity, DEFAULT_BUFFER_RATIO } from './capacity.js';
 import { AUTOMATION_LEVEL, normalizeAutomationLevel, canMoveTo } from './automation.js';
 
@@ -147,7 +150,9 @@ export function planHorizon({
   routines = [],
   exceptions = [],
   automationLevel = AUTOMATION_LEVEL.SUGGEST_ONLY,
-  bufferRatio = DEFAULT_BUFFER_RATIO
+  bufferRatio = DEFAULT_BUFFER_RATIO,
+  events = null,
+  blocks = null
 } = {}) {
   const level = normalizeAutomationLevel(automationLevel);
 
@@ -155,8 +160,10 @@ export function planHorizon({
     return { placements: [], unplaced: [], days: [], moves: [] };
   }
 
+  // Tapahtumat ja suojatut lohkot (valinnaiset) pienentävät päivien
+  // kapasiteettia; ks. capacity.js dayCapacity.
   const capacity = horizonCapacity({
-    tasks, profile, fromIso, toIso, routines, exceptions, bufferRatio
+    tasks, profile, fromIso, toIso, routines, exceptions, bufferRatio, events, blocks
   });
 
   // Kulutettava kopio. Alkuperäistä ei muteta.
@@ -190,6 +197,20 @@ export function planHorizon({
   const unplaced = [];
   const moves = [];
 
+  // KELLONAIKA KULKEE PÄIVÄN MUKANA. Automaatin ajastama tehtävä pitää
+  // kellonaikansa, kun sen päivä vaihtuu (toimintokerros vaihtaa vain
+  // päivän). Päivä, jolla se aika osuu menoon, valmistautumiseen, matkaan
+  // tai suojattuun lepoon, ei siksi kelpaa UUDEKSI päiväksi. Tehtävän
+  // nykyistä päivää ei arvioida tässä: sen päällekkäisyys on
+  // CONFLICT-laukaisimen asia (replan.detectReplanTriggers). Vain kun
+  // kalenteri on annettu; ilman sitä tulos on sama kuin ennen.
+  const calendarGiven = Array.isArray(events) || Array.isArray(blocks);
+  const eventIndex = calendarGiven ? indexEventOccurrences(Array.isArray(events) ? events : []) : null;
+  const blockIndex = calendarGiven ? indexCalendarBlocks(Array.isArray(blocks) ? blocks : []) : null;
+  const timeCollides = (task, dateIso) => calendarGiven
+    && task.time && task.schedulingState === 'auto' && task.date !== dateIso
+    && findCalendarCollisions({ tasks: [{ ...task, date: dateIso }], events: eventIndex, blocks: blockIndex, dateIso }).length > 0;
+
   // Riippuvuuden sijoituspäivä: seuraaja ei saa mennä sitä ennen.
   const placedDate = new Map();
 
@@ -209,15 +230,24 @@ export function planHorizon({
     // mitä käyttäjä pyysi. Ennemmin `unplaced` ja näkyvä ristiriita.
     const latest = task.date && task.date <= toIso ? task.date : toIso;
 
-    const dayIndex = days.findIndex(day =>
-      day.dateIso >= earliest
-      && day.dateIso <= latest
-      && day.remainingMinutes >= candidate.needed);
+    // Päivät, joille aika riittäisi mutta kellonaika osuisi kalenteriin.
+    let timeBlocked = 0;
+    const dayIndex = days.findIndex(day => {
+      if (day.dateIso < earliest || day.dateIso > latest || day.remainingMinutes < candidate.needed) return false;
+      if (timeCollides(task, day.dateIso)) {
+        timeBlocked += 1;
+        return false;
+      }
+      return true;
+    });
 
     if (dayIndex === -1) {
       unplaced.push({
         task,
-        reason: buildUnplacedReason(task, candidate, earliest, latest)
+        reason: timeBlocked > 0
+          ? `Ei sijoitettavissa: klo ${clockLabel(task.time)} osuu välillä ${earliest}–${latest} jokaisena `
+            + 'päivänä, jolla aikaa olisi, menoon, matkaan tai lepoon.'
+          : buildUnplacedReason(task, candidate, earliest, latest)
       });
       continue;
     }
@@ -228,6 +258,9 @@ export function planHorizon({
     placedDate.set(task.id, day.dateIso);
 
     const kept = task.date === day.dateIso;
+    const timeNote = timeBlocked > 0
+      ? `klo ${clockLabel(task.time)} osuisi aiemmin menoon, matkaan tai lepoon`
+      : null;
 
     placements.push({
       taskId: task.id,
@@ -237,7 +270,7 @@ export function planHorizon({
       minutes: candidate.needed,
       result: kept ? PLACEMENT.KEPT : PLACEMENT.PLACED,
       goalId: task.goalId || null,
-      reason: buildPlacementReason(task, candidate, day, kept)
+      reason: buildPlacementReason(task, candidate, day, kept, timeNote)
     });
 
     // SIIRTO ON ERI ASIA KUIN SIJOITUS.
@@ -252,7 +285,7 @@ export function planHorizon({
         fromDateIso: task.date,
         toDateIso: day.dateIso,
         allowed: canMoveTo(level, task.date, day.dateIso, { horizonEndIso: toIso }),
-        reason: buildPlacementReason(task, candidate, day, false)
+        reason: buildPlacementReason(task, candidate, day, false, timeNote)
       });
     }
   }
@@ -279,7 +312,12 @@ export function isMovable(task) {
   return true;
 }
 
-function buildPlacementReason(task, candidate, day, kept) {
+/** '09:30' -> '9.30' (sama kuin muualla näkyvissä kellonajoissa). */
+function clockLabel(time) {
+  return clockText(time) || String(time ?? '');
+}
+
+function buildPlacementReason(task, candidate, day, kept, timeNote = null) {
   const parts = [];
 
   if (kept) {
@@ -294,7 +332,10 @@ function buildPlacementReason(task, candidate, day, kept) {
     parts.push('odottaa edeltävää tehtävää');
   }
 
-  if (task.date && task.date < day.dateIso) {
+  // Kellonajan osuma kalenteriin kertoo syyn tarkemmin kuin "ei tilaa".
+  if (timeNote) {
+    parts.push(timeNote);
+  } else if (task.date && task.date < day.dateIso) {
     parts.push('aikaisemmilla päivillä ei ollut tilaa');
   }
 

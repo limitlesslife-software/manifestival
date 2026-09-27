@@ -47,6 +47,7 @@ tarjoaa JS-sillan natiivirajapintoihin.
 | Ilmoitukset | `@capacitor/local-notifications` — natiivi ajastus, toimii sovellus kiinni |
 | Taustasijainti | `@capgo/background-geolocation` |
 | Puheentunnistus | Oma liitännäinen `SpeechPlugin.java` (`ManifestivalSpeech`), järjestelmän `SpeechRecognizer` — ks. vaihe 6 |
+| Herätys ja puhutut muistutukset | Oma liitännäinen `AlarmPlugin.java` (`ManifestivalAlarm`): `AlarmManager`, etualapalvelu (`mediaPlayback`), `TextToSpeech`, lukitusnäkymä — ks. vaihe 8 |
 | APK / AAB | `cap sync android` + Gradle |
 | Play Store | Normaali julkaisu |
 | Ylläpito | Yksi koodikanta, natiivisilta vain sitä vaativille toiminnoille |
@@ -156,10 +157,16 @@ android/                   ← Capacitorin generoima kuori. Ei sovelluslogiikkaa
 Jos Android-versioon tulee liiketoimintalogiikkaa, se on virhe.
 
 Natiivipuolen lähdetiedostot on lueteltu täsmällisesti
-(`tests/android.test.mjs`): `MainActivity.java` ja `SpeechPlugin.java`.
+(`tests/android.test.mjs`): `MainActivity.java`, `SpeechPlugin.java` ja
+herätyksen tiedostot `AlarmPlugin.java`, `AlarmScheduler.java`,
+`AlarmStore.java`, `AlarmMath.java`, `AlarmReceiver.java`,
+`BootReceiver.java`, `AlarmService.java` ja `AlarmActivity.java`.
 Puheliitännäinen on alustarajapinta (mikrofoni → teksti), ei
-sovelluslogiikkaa; sen ainoa kuluttaja on `src/platform/speech.js`. Jokainen
-uusi natiivitiedosto on omistajan päätös.
+sovelluslogiikkaa; sen ainoa kuluttaja on `src/platform/speech.js`.
+Herätysliitännäinen on samoin alustarajapinta (soita tämä tähän aikaan):
+mitä ja milloin herätetään, päättää domain (`src/domain/alarmPlan.js`), ja
+ainoa kuluttaja on `src/platform/alarms.js`. Jokainen uusi natiivitiedosto on
+omistajan päätös.
 
 ### Sovittimen valinta ajon aikana
 
@@ -180,6 +187,64 @@ kutsupaikkoja tarvitse muuttaa.
 | 5 | Taustasijainti ja lähtöajan ennakointi | PLANNED (WP11–12) |
 | 6 | Natiivi puheentunnistus | **KOODI TEHTY** (käännetty; ei laitetestattu) |
 | 7 | Allekirjoitettu release-AAB ja Play Store | PLANNED |
+| 8 | Natiivi herätys, puhutut muistutukset ja reitin avaus | **KOODI TEHTY** (käännetty, JUnit; ei laitetestattu) |
+
+### Vaihe 8: herätys ja puhutut muistutukset — päätös (27.9.2026)
+
+**Miksi oma liitännäinen.** `@capacitor/local-notifications` hoitaa
+tavalliset muistutukset, mutta ei soivaa herätystä: se ei käytä
+`setAlarmClock`ia, ei soita ääntä etualapalvelussa, ei puhu eikä näytä
+lukitusnäkymää. Selaimessa herätystä ei ole lainkaan: ajastin avoimessa
+välilehdessä lupaisi herätyksen, joka jää soimatta. Siksi
+`android/app/src/main/java/fi/limitlesslife/manifestival/AlarmPlugin.java`
+(`@CapacitorPlugin(name = "ManifestivalAlarm")`, rekisteröidään
+`MainActivity.onCreate`:ssa ennen `super.onCreate`a) ja sen JS-puoli
+`src/platform/alarms.js`. Selain ja PWA kertovat rehellisesti: "toimii vain
+Android-sovelluksessa".
+
+**Ratkaisut:**
+
+- **Tarkka herätys vain käyttäjän luvalla.** `SCHEDULE_EXACT_ALARM`
+  (käyttäjä myöntää Asetuksista; Android 14+ ei anna sitä oletuksena).
+  Automaattisesti myönnettyä herätyskellon lupaa ei julisteta (Play varaa sen
+  herätyskellosovelluksille; verify-apk kieltää sen). Herätys:
+  `setAlarmClock`; puhuttu ja kriittinen muistutus:
+  `setExactAndAllowWhileIdle`. Ilman oikeutta `setAndAllowWhileIdle`, ja
+  tulos kertoo "inexact". Asetus avataan vain napautuksesta
+  (`openExactAlarmSettings`).
+- **Seinäkello on totuus.** JS antaa päivän ja kellonajan; laite laskee
+  hetken omassa aikavyöhykkeessään (`AlarmMath.wallClockToEpoch`: kevään
+  olematon aika → seuraava minuutti, syksyn toistuva tunti → ensimmäinen) ja
+  laskee sen uudelleen käynnistyksessä, päivityksessä, kellon tai vyöhykkeen
+  vaihtuessa ja oikeuden muuttuessa (`BootReceiver`, joka EI käynnistä
+  palvelua: Android 15 kieltää sen).
+- **Soitto on rajattu.** Etualapalvelu `mediaPlayback` (ei mikrofonia, ei
+  sijaintia), `USAGE_ALARM`-ääni, suomenkielinen puhe (`TextToSpeech`,
+  varavaihtoehtona ääni ja teksti), voimistuminen vaiheittain, kova raja
+  10 minuuttia → automaattinen torkku kerran → loppu. Herätyslukko on
+  aikarajattu.
+- **Lukitusnäkymä on pieni natiivinäkymä** (`AlarmActivity`): kellonaika,
+  nimi, Sammuta ja Torku. WebView'tä ei avata lukitun näytön päälle. Koko
+  näytön ilmoitus vain, jos Android 14+ sallii (`canUseFullScreenIntent`),
+  muuten nouseva ilmoitus.
+- **Puhuttu muistutus** luetaan kerran; ilmoituksessa Kuittaa (tai Lähdin,
+  kun mukana on reitin kohde), Torku 5 min ja Avaa reitti (suoraan
+  karttasovellukseen, ei trampoliinia).
+- **Reitti kootaan aina itse.** `openNavigation` ottaa vain kohteen tekstin
+  ja kulkutavan: `google.navigation:q=…&mode=…` Google Mapsiin, muuten
+  https-reittiohje. Linkkiä ei koskaan oteta vastaan JS:ltä.
+- **Kuittaukset talteen.** Laite kirjaa soinnin, kuittauksen, torkun,
+  hylkäyksen, "Lähdin"-painalluksen ja varavaihtoehdot jonoon
+  (`consumeEvents`), jonka sovellus lukee avautuessaan. Tapahtumissa ei ole
+  otsikoita eikä puhuttua tekstiä.
+- **Yksi järjestelmä per muistutus.** Herätystason muistutukset kulkevat
+  tämän liitännäisen kautta, tavalliset `@capacitor/local-notifications`in;
+  sama muistutus ei saa olla molemmissa (sovelluskerroksen reititys).
+
+**Todennettu:** `gradlew compileDebugJavaWithJavac` ja
+`gradlew testDebugUnitTest` (`AlarmMathTest`) menevät läpi (JDK 21,
+Capacitor 8.5). **Ei todennettu:** toiminta puhelimessa — ks.
+`docs/DEVICE-ACCEPTANCE-BACKLOG.md`, kohta "Herätys ja puhutut muistutukset".
 
 ### Vaihe 6: puheentunnistus — päätös (26.9.2026)
 
@@ -368,6 +433,10 @@ jälkeen. Muoto noudattaa käänteistä verkkotunnusta ja organisaatiota.
 | Web ja Android eri julkaisutahdissa | Käyttäjällä voi olla vanha APK | Supabase-skeeman pitää olla taaksepäin yhteensopiva |
 | Play Store -tarkistus | Taustasijainti vaatii perustelun | Kuvataan hakemuksessa; ominaisuus on vapaaehtoinen |
 | Sijaintilupa | Ei julisteta lainkaan: mikään toteutettu ominaisuus ei käytä sijaintia (`NATIVE_LOCATION_ENABLED = false`) | Lisätään vain likimääräisenä ja `android.hardware.location required="false"` -rivin kanssa, kun reittipalvelu (WP11) sitä tarvitsee |
+| Tarkkojen herätysten oikeus | Android 14+ ei anna sitä oletuksena; oikeuden peruminen poistaa herätykset ja sulkee sovelluksen | Epätarkka varavaihtoehto kerrotaan ("inexact"); asetus avataan napautuksesta; herätykset ajastetaan uudelleen sovelluksen avautuessa |
+| Koko näytön ilmoitus | Android 14+ myöntää sen vain herätys- ja puhelusovelluksille (Play-ilmoitus) | Nouseva ilmoitus Sammuta/Torku-painikkein; sovelluksen avaus soiton aikana näyttää herätysnäkymän |
+| Suomenkielinen puhe | Laitteessa ei välttämättä ole suomen puhedataa | Ääni ja ilmoituksen teksti; tapahtuma `speech_fallback`; `status().tts = "missing"` |
+| Valmistajien virransäästö | Osa valmistajista viivästää tai estää taustaherätyksiä (Doze ja omat rajoitukset) | `setAlarmClock` ohittaa Dozen; laitehyväksynnässä testataan; `status().batteryOptimized` kertoo tilan |
 
 ---
 

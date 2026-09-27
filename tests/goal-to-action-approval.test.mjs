@@ -159,8 +159,9 @@ test('KRIITTINEN: ehdotusta ei tallenneta mihinkään pysyvään', () => {
   // kayttajan itse kirjaama matka, jolla on oma porttinsa, oma
   // nakymansa ja oma taulunsa. Se luetellaan NIMELTA -- laveampi
   // hahmo pysyy voimassa, ja mika tahansa muu plan-niminen taulu
-  // kaataa taman yha.
-  const SALLITUT_PLAN_TAULUT = ['travel_plans'];
+  // kaataa taman yha. `habit_plans` (0014) on samoin kayttajan oma
+  // tapojen muutoksen suunnitelma, ei tekoalyn ehdotus.
+  const SALLITUT_PLAN_TAULUT = ['travel_plans', 'habit_plans'];
   const ehdotusRepot = ALL_REPOSITORIES
     .filter(repo => /plan/i.test(repo.table))
     .map(repo => repo.table)
@@ -201,55 +202,54 @@ test('KRIITTINEN: ehdotus ei päädy vientiin', () => {
 // PORTIT
 // =====================================================================
 
-test('KRIITTINEN: aallossa G tavoitesuunnittelun portit ovat auki', () => {
-  // Aaltocommit G. Migraatio 0010 on tämän commitin EDELLYTYS: deploy
-  // vasta kun verify_0010.sql antaa 0 poikkeavaa. Ennen sitä nämä
-  // kaataisivat myös tänään toimivat tavoitteet ja tehtävät (42703/23514).
-  assert.equal(TABLES.milestones, true);
-  assert.equal(GOAL_PLANNING_FIELDS, true);
-  assert.equal(GOAL_MAINTENANCE_MODE, true);
-  assert.equal(pendingTables().includes('milestones'), false);
+test('KRIITTINEN: Tavoitesuunnittelun portit ovat kiinni', () => {
+  assert.equal(TABLES.milestones, false);
+  assert.equal(GOAL_PLANNING_FIELDS, false);
+  assert.equal(GOAL_MAINTENANCE_MODE, false);
+  assert.ok(pendingTables().includes('milestones'));
 });
 
-test('KRIITTINEN: mittarikentät lähetetään portin ollessa auki', () => {
-  // Sarakkeet syntyvät migraatiossa 0010, joka on aallon G edellytys.
-  assert.equal(GOAL_PLANNING_FIELDS, true, 'testi olettaa portin olevan auki');
+test('KRIITTINEN: mittarikenttiä EI lähetetä portin ollessa kiinni', () => {
+  // `goals` on TUOTANNOSSA AUKI ja siinä on käyttäjän dataa. Näiden
+  // lähettäminen — NULLINAKIN — kaataisi jokaisen tavoitteen
+  // tallennuksen koodilla 42703, myös niiden jotka toimivat tänään.
+  assert.equal(GOAL_PLANNING_FIELDS, false, 'testi olettaa portin olevan kiinni');
 
   const row = goalsRepo.mapping.toRow(goalsRepo.mapping.normalize({
     id: 'g1', title: 'X', metric: 'paino', unit: 'kg',
     baselineValue: 90, currentValue: 82, targetValue: 75,
-    measuredOn: '2026-09-10'
+    measuredOn: '2026-09-10', savingsGoalId: 's1'
   }));
 
   for (const kentta of ['metric', 'unit', 'baseline_value', 'current_value',
     'target_value', 'measured_on', 'savings_goal_id']) {
-    assert.ok(kentta in row, `mittarikenttä ${kentta} ei lähde kantaan`);
+    assert.equal(kentta in row, false,
+      `mittarikenttä ${kentta} lähetettiin vaikka saraketta ei ole`);
   }
-  assert.equal(row.metric, 'paino');
-  assert.equal(row.target_value, 75);
 });
 
-test('KRIITTINEN: tehtävän suunnittelukentät lähetetään portin ollessa auki', () => {
+test('KRIITTINEN: tehtävän suunnittelukenttiä EI lähetetä portin ollessa kiinni', () => {
   const columns = taskColumns();
-  assert.ok(columns.includes('milestone_id'), 'milestone_id ei lähde kantaan');
-  assert.ok(columns.includes('depends_on'));
+  assert.equal(columns.includes('milestone_id'), false,
+    'milestone_id lähetettiin vaikka saraketta ei ole');
+  assert.equal(columns.includes('depends_on'), false);
 
   const row = toRow({
     id: 't1', title: 'X', milestoneId: 'm1', dependsOn: ['a']
   }, columns);
-  assert.equal(row.milestone_id, 'm1');
-  assert.deepEqual(row.depends_on, ['a']);
+  assert.equal('milestone_id' in row, false);
+  assert.equal('depends_on' in row, false);
 
   // Ja portin auettua ne olisivat mukana.
   assert.ok(TASK_COLUMNS_PLANNING.includes('milestone_id'));
   assert.ok(TASK_COLUMNS_PLANNING.includes('depends_on'));
 });
 
-test('KRIITTINEN: projektin välitavoiteliitos lähetetään portin ollessa auki', () => {
+test('KRIITTINEN: projektin välitavoiteliitosta EI lähetetä portin ollessa kiinni', () => {
   const row = projectsRepo.mapping.toRow(projectsRepo.mapping.normalize({
     id: 'p1', name: 'X', milestoneId: 'm1'
   }));
-  assert.equal(row.milestone_id, 'm1');
+  assert.equal('milestone_id' in row, false);
 });
 
 test('domain säilyttää suunnittelukentät vaikkei niitä lähetetä', () => {
@@ -267,9 +267,12 @@ test('domain säilyttää suunnittelukentät vaikkei niitä lähetetä', () => {
   assert.equal(project.milestoneId, 'm1');
 });
 
-test('käyttöliittymä kertoo mitkä kentät eivät säily (aallossa G: ei yhtään)', () => {
-  assert.deepEqual(volatileGoalFields(), []);
-  assert.deepEqual(volatileTaskPlanningFields(), []);
+test('käyttöliittymä kertoo mitkä kentät eivät säily', () => {
+  assert.deepEqual(volatileGoalFields(), [
+    'metric', 'unit', 'baselineValue', 'currentValue', 'targetValue',
+    'measuredOn', 'savingsGoalId'
+  ]);
+  assert.deepEqual(volatileTaskPlanningFields(), ['milestoneId', 'dependsOn']);
 
   const view = read('src/app/views/goals.js');
   assert.ok(view.includes('volatileGoalFields'),
@@ -303,14 +306,17 @@ test('KRIITTINEN: välitavoitteen rivimuunnos vastaa migraatiota 0010', () => {
   }
 });
 
-test('KRIITTINEN: auki oleva portti ei kirjoita hiljaa muistivarastoon', async () => {
-  // Ei tietokantayhteyttä eikä istuntoa. Jos kirjoitus silti onnistuisi,
-  // se olisi mennyt muistiin ja käyttäjä luulisi tiedon tallentuneen.
+test('KRIITTINEN: kiinni oleva portti käyttää muistivarastoa', async () => {
+  // Ei tietokantayhteyttä: getClient() heittäisi. Jos tämä menee läpi,
+  // tietokantapolkua ei ajettu.
   const result = await milestonesRepo.insert({
     id: 'ap-m-1', goalId: 'g1', title: 'X', orderIndex: 0
   });
-  assert.equal(result.ok, false, 'kirjoitus onnistui ilman kantaa');
-  assert.equal(milestonesRepo.isPersistent(), true);
+  assert.equal(result.ok, true);
+  assert.equal(milestonesRepo.isPersistent(), false);
+
+  const list = await milestonesRepo.list();
+  assert.ok(list.value.some(row => row.id === 'ap-m-1'));
   milestonesRepo.clear();
 });
 
@@ -348,10 +354,10 @@ test('taso 4 sanotaan ääneen käyttöliittymässä', () => {
 // YLLÄPITOTILA
 // =====================================================================
 
-test('KRIITTINEN: ylläpitotila on auki aallossa G', () => {
-  // goals_status_check sallii 'maintenance':n vasta migraation 0010 jälkeen.
+test('KRIITTINEN: ylläpito on olemassa mutta portti on kiinni', () => {
   assert.ok(Object.values(GOAL_STATUS).includes('maintenance'));
-  assert.equal(GOAL_MAINTENANCE_MODE, true);
+  assert.equal(GOAL_MAINTENANCE_MODE, false,
+    'ylläpitotila avattiin ennen migraatiota — tallennus kaatuisi koodilla 23514');
 });
 
 test('ylläpito ei kilpaile kalenteriajasta', async () => {

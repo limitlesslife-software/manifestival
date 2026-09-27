@@ -33,7 +33,7 @@ function gateBlocks() {
 test('KRIITTINEN: jokainen sarakeportti lähtee rivimuotoon täsmälleen portin ollessa auki', async () => {
   const blocks = gateBlocks().filter(b => KNOWN_GATES.includes(b.gate));
   assert.ok(blocks.length >= 6, `porttilohkoja löytyi vain ${blocks.length}`);
-  for (const wave of ['E', 'F', 'G', 'H', 'I', 'J']) {
+  for (const wave of ['E', 'F', 'G', 'H', 'I', 'J', 'K']) {
     const keys = await shapeKeys(wave, train);
     for (const b of blocks) {
       if (!keys[b.table]) continue; // taulu ei ole auki tässä aallossa
@@ -75,7 +75,7 @@ test('aaltojen rivimuodot: laskun maksutiedot F:stä, suunnittelukentät G:stä,
 });
 
 test('rivimuodoissa ei ole palvelimen omistamia kenttiä eikä undefined-arvoja', async () => {
-  for (const wave of ['E', 'G', 'J']) {
+  for (const wave of ['E', 'G', 'J', 'K']) {
     for (const op of await waveWrites(wave, { prefix: 't', train })) {
       if (!op.payload) continue;
       for (const k of ['user_id', 'created_at', 'updated_at']) assert.equal(k in op.payload, false, `${op.label}: ${k}`);
@@ -86,7 +86,7 @@ test('rivimuodoissa ei ole palvelimen omistamia kenttiä eikä undefined-arvoja'
 });
 
 test('taukopisteet vastaavat junaa: tauon jälkeen deployataan juuri sen migraation aalto', () => {
-  assert.deepEqual(PAUSES.map(p => p.after), ['0008', '0009', '0010', '0011', '0012', '0013']);
+  assert.deepEqual(PAUSES.map(p => p.after), ['0008', '0009', '0010', '0011', '0012', '0013', '0014']);
   for (const p of PAUSES) {
     assert.ok(train[p.live], `elävä aalto ${p.live}`);
     if (!p.next) continue;
@@ -95,6 +95,64 @@ test('taukopisteet vastaavat junaa: tauon jälkeen deployataan juuri sen migraat
   for (let i = 1; i < PAUSES.length; i++) {
     if (PAUSES[i - 1].next) assert.equal(PAUSES[i].live, PAUSES[i - 1].next, `${PAUSES[i].after}: elävä aalto`);
   }
+});
+
+const K_TABLES = ['saved_places', 'place_aliases', 'calendar_events', 'commute_observations', 'life_settings',
+  'sleep_logs', 'habit_plans', 'habit_events', 'exercise_sessions', 'wellbeing_checkins'];
+
+test('KRIITTINEN: aalto K johdetaan julkaisuaalloista, kun lukko ei vielä tunne sitä', async () => {
+  const { cumulativeGates, WAVES } = await import('../tools/release/waves.mjs');
+  // Lukitut C–J luetaan lukosta sellaisenaan; K on lukitsematon.
+  for (const w of ['C', 'D', 'E', 'F', 'G', 'H', 'I', 'J']) assert.equal(train[w].locked, true, w);
+  assert.equal(train.K.locked, false);
+  assert.equal(train.K.migration, '0014_daily_life.sql');
+  assert.deepEqual([...train.K.tables].sort(), [...cumulativeGates('K')].sort());
+  // K = J:n taulut + 0014:n kymmenen porttia, EI uusia sarakeportteja.
+  const kGates = WAVES.find(w => w.id === 'K').gates;
+  assert.equal(kGates.length, 10);
+  assert.deepEqual([...train.K.tables].sort(), [...train.J.tables, ...kGates].sort());
+  assert.deepEqual(train.K.gates, train.J.gates);
+  // Lukitun aallon johdettu muoto täsmää lukkoon (johtaminen on oikein).
+  assert.deepEqual([...cumulativeGates('J')].sort(), [...train.J.tables].sort());
+});
+
+test('aallon K rivimuodot: kaikki kymmenen taulua sovelluksen omalla toRow:lla, J ei kirjoita niihin', async () => {
+  const K = await shapeKeys('K', train);
+  const J = await shapeKeys('J', train);
+  for (const t of K_TABLES) {
+    assert.ok(K[t], `aalto K ei kirjoita tauluun ${t}`);
+    assert.equal(J[t], undefined, `aalto J kirjoittaisi tauluun ${t} ennen 0014:ää`);
+  }
+  // Sarakkeet ovat 0014:n sarakkeita (ei koordinaatteja, ei palvelimen kenttiä).
+  assert.deepEqual(K.saved_places, ['address', 'area', 'arrival_buffer_minutes', 'id', 'name', 'note', 'overhead_minutes',
+    'preparation_minutes', 'provider_place_id', 'travel_mode', 'use_learned', 'usual_travel_minutes']);
+  assert.deepEqual(K.wellbeing_checkins, ['control', 'date', 'id', 'motivation']);
+  assert.ok(K.calendar_events.includes('event_date') && K.calendar_events.includes('recurrence_weekdays'));
+  assert.ok(K.exercise_sessions.includes('session_date') && K.exercise_sessions.includes('goal_id'));
+  for (const [table, cols] of Object.entries(K)) {
+    if (!K_TABLES.includes(table)) continue;
+    for (const c of cols) assert.equal(/(^|_)(lat|lng|lon|latitude|longitude|geo|gps|coord|point)(_|$)/.test(c), false, `${table}.${c}`);
+  }
+  const ops = await waveWrites('K', { prefix: 't', train });
+  // Vierasavainjärjestys: vanhempi ennen lasta.
+  const first = t => ops.findIndex(o => o.table === t && o.method === 'insert');
+  for (const [child, parent] of [['place_aliases', 'saved_places'], ['calendar_events', 'saved_places'],
+    ['commute_observations', 'saved_places'], ['habit_events', 'habit_plans'], ['calendar_events', 'goals'],
+    ['exercise_sessions', 'goals']]) {
+    assert.ok(first(parent) !== -1 && first(parent) < first(child), `${parent} ennen ${child}`);
+  }
+  // Yksi asetusrivi: K kirjoittaa sen kerran (insert + update), ei toista.
+  assert.equal(ops.filter(o => o.table === 'life_settings' && o.method === 'insert').length, 1);
+  // Koko päivän meno lähtee ilman alkuaikaa (calendar_events_all_day_check).
+  const allDay = ops.find(o => o.table === 'calendar_events' && o.payload?.all_day === true);
+  assert.ok(allDay && allDay.payload.start_time === null && allDay.payload.end_time === null);
+});
+
+test('WAVE_INDEX: jokaisella junan aallolla oma järjestysnumero (uniikit päivät ja viikot)', async () => {
+  const { WAVE_INDEX } = await import('../tools/pg-rehearsal/waves.mjs');
+  assert.deepEqual(Object.keys(WAVE_INDEX), Object.keys(train));
+  assert.equal(new Set(Object.values(WAVE_INDEX)).size, Object.keys(WAVE_INDEX).length);
+  assert.equal(WAVE_INDEX.K, 8);
 });
 
 test('schema.js-korvaus: tuntematon tai puuttuva portti kaataa latauksen', () => {

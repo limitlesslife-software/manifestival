@@ -333,7 +333,7 @@ test('ERR-06: kokoelmarepositorion nollan rivin päivitys kantapolulla', {
 
 test('ERR-06: kokoelmarepositorion päivitys ketjuttaa .select(\'id\'):n ja tunnistaa nollan rivin', () => {
   const source = read('src/data/collectionsRepo.js');
-  const update = source.slice(source.indexOf('    async update(entity) {'), source.indexOf('    async remove(id) {'));
+  const update = source.slice(source.indexOf('    async update(entity'), source.indexOf('    async remove(id) {'));
   assert.match(update, /\.eq\('id', normalized\.id\)\s*\.select\('id'\)/);
   assert.match(update, /data\.length === 0\)[\s\S]*failWith\(ERROR_CODE\.NOT_FOUND, NOT_FOUND_MESSAGE/);
 });

@@ -70,7 +70,41 @@ export const SEEDS = Object.freeze([
     sql: p => `insert into public.alignment_item_settings (id, item_kind, item_id, energy_demand) values ('${p}-ais', 'task', '${p}-task', 4)` },
   { table: 'time_entries', since: '0013', extra: true,
     sql: p => `insert into public.time_entries (id, entry_date, minutes, life_area_id, project_id, routine_id, occurrence_date, operation_id, source, started_at, ended_at)
-               values ('${p}-te2', '2026-09-23', 25, '${p}-la', '${p}-proj', '${p}-rout', '2026-09-23', 'op:${p}:1', 'timer', '2026-09-23T07:00:00Z', '2026-09-23T07:25:00Z')` }
+               values ('${p}-te2', '2026-09-23', 25, '${p}-la', '${p}-proj', '${p}-rout', '2026-09-23', 'op:${p}:1', 'timer', '2026-09-23T07:00:00Z', '2026-09-23T07:25:00Z')` },
+  // 0014 (aalto K): kymmenen uutta taulua. Järjestys noudattaa
+  // yhdistelmävierasavaimia: paikka ennen lisänimeä, menoa ja havaintoa;
+  // suunnitelma ennen kirjausta. Meno ja liikuntakerta viittaavat 0004:n
+  // tavoitteeseen, joten rls-skenaarion ristiviittauskoe kattaa myös
+  // viitteen vanhaan tauluun. Havainnon event_id EI ole vierasavain.
+  { table: 'saved_places', since: '0014',
+    sql: p => `insert into public.saved_places (id, name, address, area, travel_mode, usual_travel_minutes, preparation_minutes, overhead_minutes)
+               values ('${p}-place', 'Kuntosali', 'Keskuskatu 1', 'Keskusta', 'walking', 15, 10, 5)` },
+  { table: 'place_aliases', since: '0014',
+    sql: p => `insert into public.place_aliases (id, place_id, alias, confirmations, last_confirmed_at)
+               values ('${p}-alias', '${p}-place', 'sali', 2, '2026-09-22T08:00:00Z')` },
+  { table: 'calendar_events', since: '0014',
+    sql: p => `insert into public.calendar_events (id, title, event_date, start_time, end_time, all_day, place_id, goal_id, recurrence_weekdays, recurrence_until, skip_dates)
+               values ('${p}-event', 'Salivuoro', '2026-09-24', '17:00', '18:00', false, '${p}-place', '${p}-goal', '{4}', '2026-12-31', '{2026-10-01}')` },
+  { table: 'commute_observations', since: '0014',
+    sql: p => `insert into public.commute_observations (id, place_id, event_id, observed_on, weekday, planned_departure, actual_departure, arrival_at, travel_minutes, arrival_result)
+               values ('${p}-commute', '${p}-place', 'event:${p}-event:2026-09-24', '2026-09-24', 4, '16:30', '16:33', '16:50', 17, 'on_time')` },
+  { table: 'life_settings', since: '0014',
+    sql: p => `insert into public.life_settings (id, bedtime_target, alarm, morning_routine, meal_rhythm, delivery)
+               values ('${p}-life', '22:30', '{"enabled": false}', '[{"id": "r1", "name": "Aamupala", "minutes": 15}]', '{}', '{"wake": "critical_escalation"}')` },
+  { table: 'sleep_logs', since: '0014',
+    sql: p => `insert into public.sleep_logs (id, wake_date, planned_bedtime, actual_bedtime, planned_wake, actual_wake)
+               values ('${p}-sleep', '2026-09-24', '22:30', '23:05', '06:30', '06:40')` },
+  { table: 'habit_plans', since: '0014',
+    sql: p => `insert into public.habit_plans (id, kind, name, min_interval_minutes, daily_target, baseline_per_day, steps)
+               values ('${p}-habit', 'nicotine', 'Nuuska', 90, 8, 10, '[{"from": "2026-09-21", "intervalMinutes": 90, "dailyTarget": 8}]')` },
+  { table: 'habit_events', since: '0014',
+    sql: p => `insert into public.habit_events (id, plan_id, occurred_at, action)
+               values ('${p}-hevent', '${p}-habit', '2026-09-24T08:00:00Z', 'use')` },
+  { table: 'exercise_sessions', since: '0014',
+    sql: p => `insert into public.exercise_sessions (id, session_date, kind, planned_minutes, intensity, goal_id)
+               values ('${p}-ex', '2026-09-24', 'juoksu', 30, 3, '${p}-goal')` },
+  { table: 'wellbeing_checkins', since: '0014',
+    sql: p => `insert into public.wellbeing_checkins (id, date, motivation, control) values ('${p}-wbc', '2026-09-24', 4, 3)` }
 ]);
 
 /** Taulut, joissa omistajasarake on `id` eikä `user_id`. */

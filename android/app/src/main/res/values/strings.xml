@@ -4,4 +4,30 @@
     <string name="title_activity_main">Manifestival</string>
     <string name="package_name">fi.limitlesslife.manifestival</string>
     <string name="custom_url_scheme">fi.limitlesslife.manifestival</string>
+
+    <!-- Herätykset ja puhutut muistutukset (AlarmService, AlarmActivity). -->
+    <string name="alarm_channel_name">Herätykset ja puhutut muistutukset</string>
+    <string name="alarm_channel_description">Soiva herätys ja ääneen luettavat muistutukset, kuten lähtöaika.</string>
+    <string name="alarm_service_channel_name">Muistutusta luetaan</string>
+    <string name="alarm_service_running">Muistutusta luetaan ääneen</string>
+    <string name="alarm_fallback_channel_name">Herätykset (varakanava)</string>
+    <string name="alarm_fallback_channel_description">Käytössä vain, jos herätys ei voi soida tavalliseen tapaan: ilmoitus soittaa herätysäänen kerran.</string>
+    <string name="alarm_default_label">Herätys</string>
+    <string name="reminder_default_label">Muistutus</string>
+    <string name="alarm_dismiss">Sammuta</string>
+    <string name="alarm_dismiss_description">Sammuta herätys</string>
+    <string name="alarm_snooze">Torku</string>
+    <string name="alarm_snooze_minutes">Torku %1$d min</string>
+    <string name="alarm_snooze_description">Torku %1$d minuuttia</string>
+    <string name="alarm_time_description">Kello on %1$s</string>
+    <string name="reminder_ack">Kuittaa</string>
+    <string name="reminder_departed">Lähdin</string>
+    <string name="reminder_snooze">Torku 5 min</string>
+    <string name="reminder_route">Avaa reitti</string>
+    <string name="alarm_sound_picker_title">Herätysääni</string>
+    <!-- Herätyksen puhe ja aamukatsaus: tervehdys ja kellonaika puhehetkellä (AlarmService). -->
+    <string name="alarm_greeting_morning">Hyvää huomenta. Kello on %1$s.</string>
+    <string name="alarm_greeting_day">Hyvää päivää. Kello on %1$s.</string>
+    <string name="alarm_greeting_evening">Hyvää iltaa. Kello on %1$s.</string>
+    <string name="alarm_brief_running">Aamukatsausta luetaan ääneen</string>
 </resources>

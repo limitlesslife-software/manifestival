@@ -46,6 +46,17 @@ test('KRIITTINEN: "puoli yhdeksältä" korjataan 08:30:ksi vaikka malli sanoisi 
   assert.deepEqual(corrections, ['time']);
 });
 
+test('KRIITTINEN: "puoli yksi yöllä" ei korjaa mallin oikeaa 00:30:tä keskipäiväksi', () => {
+  const input = { intent: 'create_task', title: 'Soita äidille', date: '2026-03-03', time: '00:30' };
+  const { raw, corrections } = reconcileTemporal(input, 'soita äidille huomenna puoli yksi yöllä', MON);
+  assert.equal(raw.time, '00:30');
+  assert.deepEqual(corrections, []);
+  // Mallin väärä keskipäivä korjataan keskiyöksi.
+  const wrong = reconcileTemporal({ ...input, time: '12:30' }, 'soita äidille huomenna puoli yksi yöllä', MON);
+  assert.equal(wrong.raw.time, '00:30');
+  assert.deepEqual(wrong.corrections, ['time']);
+});
+
 test('oikea vastaus ei muutu eikä tuota korjauksia', () => {
   const input = { intent: 'create_task', title: 'X', date: '2026-03-03', time: '08:00' };
   const { raw, corrections } = reconcileTemporal(input, 'huomenna klo 8', MON);

@@ -37,13 +37,61 @@ export const NOTIFICATION_TYPE = Object.freeze({
    */
   DEPARTURE_REMINDER: 'departure_reminder',
   DAILY_PLAN: 'daily_plan',
-  EVENING_REVIEW: 'evening_review'
+  EVENING_REVIEW: 'evening_review',
+
+  // ---- Arjen käyttöjärjestelmä (src/domain/dailyReminders.js) ----
+  //
+  // Nämä EIVÄT synny planNotifications-funktiossa: niiden lähtötiedot
+  // (kalenterin lähdöt, uni, ateriat, tavat) tulevat omista moottoreistaan,
+  // ja dailyReminders.js rakentaa aikomukset createIntent-funktiolla.
+  // Tavallinen ilmoitus riittää niiden toimittamiseen, joten mikään niistä
+  // ei ole PLANNED_TYPES-listalla.
+
+  /** Lähtöketju 1/3: valmistautuminen alkaa (taso Muistutus). */
+  DEPARTURE_PREPARE: 'departure_prepare',
+  /** Lähtöketju 2/3: lähtöön viisi minuuttia (taso Toiminta nyt). */
+  DEPARTURE_LEAVE_IN_5: 'departure_leave_in_5',
+  /** Lähtöketju 3/3: lähde nyt (taso Kriittinen). */
+  DEPARTURE_LEAVE_NOW: 'departure_leave_now',
+  /** Iltarauhoittumisen alku (nukkumaanmeno − rauhoittumisaika). */
+  WIND_DOWN: 'wind_down',
+  /** Nukkumaanmenoaika. */
+  BEDTIME: 'bedtime',
+  /** Aterian valmistuksen alku tai ruoka-aika. */
+  MEAL: 'meal',
+  /** Tapojen muutoksen seuraava suunniteltu aika. */
+  HABIT: 'habit',
+  /** Edellisen illan katsaus huomiseen. */
+  EVENING_BEFORE: 'evening_before',
+  /** Aamun lyhyt kooste herätyksen jälkeen (vain jos käyttäjä on kytkenyt sen). */
+  MORNING_BRIEF: 'morning_brief',
+  /** Päivän kooste, johon vähäiset muistutukset on yhdistetty (notificationPolicy.mergeDigest). */
+  DIGEST: 'digest',
+  /**
+   * Kalenterin menon alku, kun lähtöketjua ei ole (ei paikkaa tai tiedossa
+   * olevaa matka-aikaa): muistutus ennakolla ennen alkua. Ei lähtöaikaa eikä
+   * arvattua matkaa, vain "alkaa klo". (dailyReminders.js)
+   */
+  EVENT_START: 'event_start'
 });
 
 export const NOTIFICATION_TYPES = Object.freeze(Object.values(NOTIFICATION_TYPE));
 
-/** Tyypit, joita ei vielä voi toteuttaa millään alustalla. */
+/**
+ * Tyypit, joita ei vielä voi toteuttaa millään alustalla.
+ *
+ * TYHJÄ TARKOITUKSELLA: jokainen tyyppi toimitetaan tavallisena ajastettuna
+ * ilmoituksena. Puhe ja voimistuva hälytys ovat TOIMITUSTAPOJA (delivery),
+ * eivät tyyppejä — jos niitä ei laitteella ole, ilmoitus näkyy silti.
+ */
 export const PLANNED_TYPES = Object.freeze([]);
+
+/** Lähtöketjun tyypit järjestyksessä. Alusta sallii nämä lepotilassa (Doze). */
+export const DEPARTURE_CHAIN_TYPES = Object.freeze([
+  NOTIFICATION_TYPE.DEPARTURE_PREPARE,
+  NOTIFICATION_TYPE.DEPARTURE_LEAVE_IN_5,
+  NOTIFICATION_TYPE.DEPARTURE_LEAVE_NOW
+]);
 
 /** Kuinka monta minuuttia ennen lähtöä lähtömuistutus näytetään. */
 export const DEPARTURE_ALERT_LEAD_MINUTES = 10;
@@ -215,8 +263,9 @@ export function intentId(type, targetId, dateIso) {
 }
 
 function makeIntent({ type, level, dateIso, time, title, body, targetId, reason, extra = {} }) {
+  const id = intentId(type, targetId, dateIso);
   return {
-    id: intentId(type, targetId, dateIso),
+    id,
     type,
     level,
     channel: channelForLevel(level),
@@ -228,8 +277,110 @@ function makeIntent({ type, level, dateIso, time, title, body, targetId, reason,
     body,
     targetId: targetId || null,
     reason,
+    // Arjen käyttöjärjestelmän kentät. Perinteiset aikomukset eivät itse
+    // tiedä aihettaan eivätkä toimitustapaansa: ne täydentää
+    // notificationPolicy.applyNotificationPolicy käyttäjän asetuksista.
+    // null tarkoittaa "ei vielä päätetty", EI hiljaista.
+    topic: null,
+    delivery: null,
+    speech: null,
+    /** Kuittausavain: sama avain = sama muistutus, vaikka kellonaika muuttuisi. */
+    ackKey: id,
+    anchor: null,
     ...extra
   };
+}
+
+/** Kelvolliset tasot. Muu arvo ei ole taso vaan virhe. */
+const LEVEL_VALUES = Object.freeze(Object.values(LEVEL));
+
+/** Aikomuksen hetken ankkurin suurin sallittu siirtymä (minuuttia). */
+export const MAX_ANCHOR_OFFSET_MINUTES = 2 * 1440;
+
+function freezeExtraValue(value) {
+  if (Array.isArray(value)) return Object.freeze([...value]);
+  if (value && typeof value === 'object') return Object.freeze({ ...value });
+  return value;
+}
+
+/**
+ * Rakenna JÄÄDYTETTY aikomus (arjen muistutukset, kooste, torkku).
+ *
+ * Sama muoto kuin planNotifications-aikomuksilla, jotta alusta ja
+ * käytännöt käsittelevät kaikkia samalla tavalla. Ero: kelvoton syöte
+ * palauttaa null — tämä funktio ei koskaan arvaa päivää, kellonaikaa eikä
+ * tasoa.
+ *
+ * `anchor` = { date, time, offsetMinutes }: hetki, josta ilmoitus lasketaan
+ * TODELLISENA kestona (alusta: intentAt(anchor) + offsetMinutes). Tarvitaan
+ * kesäajan vaihtoyönä: "5 min ennen lähtöä" on viisi oikeaa minuuttia,
+ * vaikka seinäkelloaika hyppäisi tunnin. `date`/`time` ovat silti
+ * seinäkelloaika järjestämistä, rauhoitusaikaa ja näyttöä varten.
+ *
+ * @returns {object|null}
+ */
+export function createIntent(input) {
+  const {
+    id = null, type, level, date, time, title, body = '', targetId = null, reason = '',
+    topic = null, delivery = null, speech = null, ackKey = null, anchor = null, extra = {}
+  } = input && typeof input === 'object' ? input : {};
+  if (!NOTIFICATION_TYPES.includes(type)) return null;
+  if (!LEVEL_VALUES.includes(level)) return null;
+  if (!isIsoDate(date) || !isTimeOfDay(time)) return null;
+  if (typeof title !== 'string' || !title.trim()) return null;
+
+  const finalId = typeof id === 'string' && id ? id : intentId(type, targetId, date);
+  let frozenAnchor = null;
+  if (anchor && isIsoDate(anchor.date) && isTimeOfDay(anchor.time)
+    && Number.isInteger(anchor.offsetMinutes)
+    && Math.abs(anchor.offsetMinutes) <= MAX_ANCHOR_OFFSET_MINUTES) {
+    frozenAnchor = Object.freeze({ date: anchor.date, time: anchor.time, offsetMinutes: anchor.offsetMinutes });
+  }
+
+  // Lisäkentät ENSIN: ne eivät saa ylikirjoittaa ydinkenttiä (tunniste,
+  // taso, aika), joiden varassa kuittaus ja ajastus toimivat.
+  const extras = {};
+  if (extra && typeof extra === 'object') {
+    for (const [key, value] of Object.entries(extra)) extras[key] = freezeExtraValue(value);
+  }
+
+  return Object.freeze({
+    ...extras,
+    id: finalId,
+    type,
+    level,
+    channel: channelForLevel(level),
+    date,
+    time,
+    atMinutes: toMinutes(time),
+    title,
+    body: typeof body === 'string' ? body : '',
+    targetId: targetId === null || targetId === undefined ? null : String(targetId),
+    reason: typeof reason === 'string' ? reason : '',
+    topic: typeof topic === 'string' ? topic : null,
+    delivery: typeof delivery === 'string' ? delivery : null,
+    speech: typeof speech === 'string' && speech ? speech : null,
+    ackKey: typeof ackKey === 'string' && ackKey ? ackKey : finalId,
+    anchor: frozenAnchor
+  });
+}
+
+/**
+ * Aikomusten vakiojärjestys: päivä, kellonaika, taso (kiireellisin ensin),
+ * tunniste. Sama järjestys kaikkialla, jotta sama syöte tuottaa aina
+ * saman listan riippumatta syötteen järjestyksestä.
+ */
+export function compareIntents(a, b) {
+  const dateA = typeof a.date === 'string' ? a.date : '';
+  const dateB = typeof b.date === 'string' ? b.date : '';
+  if (dateA !== dateB) return dateA < dateB ? -1 : 1;
+  const minutesA = Number.isFinite(a.atMinutes) ? a.atMinutes : Number.MAX_SAFE_INTEGER;
+  const minutesB = Number.isFinite(b.atMinutes) ? b.atMinutes : Number.MAX_SAFE_INTEGER;
+  if (minutesA !== minutesB) return minutesA - minutesB;
+  const levelA = Number.isFinite(a.level) ? a.level : 0;
+  const levelB = Number.isFinite(b.level) ? b.level : 0;
+  if (levelA !== levelB) return levelB - levelA;
+  return String(a.id).localeCompare(String(b.id), 'fi');
 }
 
 /**
@@ -251,6 +402,13 @@ function makeIntent({ type, level, dateIso, time, title, body, targetId, reason,
  * @param {string} args.dateIso              Päivä, jolle suunnitellaan
  * @param {string} [args.todayIso]           Nykyinen päivä (kiireellisyyteen)
  * @param {object} [args.preferences]
+ * @param {Function} [args.offsetMinutesFn]  Laitteen vyöhyke (wallClock.js). Matkojen lähtö
+ *        lasketaan sillä todellisina minuutteina, jotta kesäaikaan siirtymisen yönä muistutus
+ *        ei tule tuntia myöhässä. Ilman sitä puhdas seinäkello.
+ * @param {boolean} [args.limits=true]  false = rauhoitusaikaa ja päivärajaa EI sovelleta
+ *        tässä. Sovelluksen ajastuspolku antaa false: sama toimituspolitiikka
+ *        (notificationPolicy.applyNotificationPolicy) rajaa silloin kaikki
+ *        muistutukset yhdessä, eikä kaksi erillistä kattoa kaksinkertaista hälyä.
  * @returns {Array} NotificationIntent[]
  */
 export function planNotifications({
@@ -259,7 +417,9 @@ export function planNotifications({
   travelPlans = [],
   dateIso,
   todayIso = null,
-  preferences = {}
+  preferences = {},
+  offsetMinutesFn = null,
+  limits = true
 } = {}) {
   const prefs = normalizePreferences(preferences);
   if (!prefs.enabled) return [];
@@ -362,10 +522,10 @@ export function planNotifications({
   // hiljaisuus. Käsin annettu kesto kelpaa.
   for (const plan of travelPlans) {
     if (!plan || !plan.arrivalDate) continue;
-    const schedule = departureSchedule(plan, { todayIso: reference });
+    const schedule = departureSchedule(plan, { todayIso: reference, offsetMinutesFn });
     if (!schedule.known) continue;
 
-    const alert = leaveAtMinus(schedule, DEPARTURE_ALERT_LEAD_MINUTES);
+    const alert = leaveAtMinus(schedule, DEPARTURE_ALERT_LEAD_MINUTES, { offsetMinutesFn });
     if (!alert || alert.date !== dateIso) continue;
 
     const source = plan.travelSource === TRAVEL_SOURCE.MANUAL ? 'itse arvioitu'
@@ -398,6 +558,9 @@ export function planNotifications({
     }));
   }
 
+  // Yksi putki: ilman rajoja raaka suunnitelma (järjestettynä), jonka
+  // toimituspolitiikka rajaa yhdessä arjen muistutusten kanssa.
+  if (limits === false) return [...intents].sort(compareIntents);
   return applyLimits(intents, prefs);
 }
 
@@ -471,8 +634,12 @@ export function summarizeIntents(intents) {
 /**
  * Ilmoitukset useammalle päivälle.
  * Käytetään esimerkiksi silloin, kun natiivikerros ajastaa etukäteen.
+ * `offsetMinutesFn` (laitteen vyöhyke) ja `limits` kulkevat planNotificationsille.
  */
-export function planRange({ tasks, routineOccurrences, travelPlans = [], from, days = 1, todayIso, preferences }) {
+export function planRange({
+  tasks, routineOccurrences, travelPlans = [], from, days = 1, todayIso, preferences, offsetMinutesFn = null,
+  limits = true
+}) {
   if (!isIsoDate(from)) return [];
   const limit = Math.max(1, Math.min(days, 14));
   const all = [];
@@ -480,7 +647,8 @@ export function planRange({ tasks, routineOccurrences, travelPlans = [], from, d
   for (let i = 0; i < limit; i++) {
     const dateIso = fmtISO(addDays(parseISO(from), i));
     all.push(...planNotifications({
-      tasks, routineOccurrences, travelPlans, dateIso, todayIso: todayIso || from, preferences
+      tasks, routineOccurrences, travelPlans, dateIso, todayIso: todayIso || from, preferences, offsetMinutesFn,
+      limits
     }));
   }
   return all;

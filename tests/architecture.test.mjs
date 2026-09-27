@@ -315,6 +315,13 @@ test('tunnistegeneraattori pysyy sovelluskerroksessa', () => {
     // Ajanseuranta luo tunnisteet ajastimille ja kohdeasetuksille.
     // Domain (timer.js) ottaa ajastimen tunnisteen parametrina.
     'src/app/timeTracking.js',
+    // Arjen käyttöjärjestelmä luo tunnisteet menoille, paikoille,
+    // havainnoille, asetuksille ja kirjauksille. Domain (calendarEvent.js,
+    // savedPlace.js ...) ei tuota niitä.
+    'src/app/dailyLifeActions.js',
+    // Lähtöjen seuranta ja arjen huomautukset luovat ilmoituskeskuksen
+    // merkintöjen tunnisteet (kuten assistantActions).
+    'src/app/departureWatch.js', 'src/app/dailyLifeNotices.js',
     'src/data/schema.js', 'src/data/tasksRepo.js', 'src/lib/rows.js'
   ]);
 

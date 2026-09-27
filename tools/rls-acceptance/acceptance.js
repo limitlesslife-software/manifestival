@@ -658,6 +658,18 @@ export async function runAcceptance(options) {
       'kertakäyttöisellä tilillä ei ole omaa dataa'));
   }
 
+  // YKSI ARJEN ASETUSRIVI KÄYTTÄJÄÄ KOHTI (life_settings_one_per_user).
+  // A:n oikeat asetukset estäisivät testirivin (23505): aja testi ennen
+  // kuin asetuksia on tallennettu, tai testitilillä.
+  if (specs.some(entry => entry.table === 'life_settings')) {
+    push(row('P4', 'A:lla ei ole arjen asetuksia',
+      '0 riviä', expectRows(await call(() => a.from('life_settings').select('id')), 0),
+      'aja ennen ensimmäistä asetusten tallennusta (life_settings_one_per_user)'));
+    push(row('P5', 'B:llä ei ole arjen asetuksia',
+      '0 riviä', expectRows(await call(() => b.from('life_settings').select('id')), 0),
+      'kertakäyttöisellä tilillä ei ole omaa dataa'));
+  }
+
   if (critical) {
     return finish(rows, { runId, ids: id, ...scope, aborted: 'lähtötila ei ollut odotettu' });
   }
@@ -1590,9 +1602,18 @@ export async function runAcceptance(options) {
   // hyökkäyksen yksikäsitteisyyteen (23505) eikä vierasavain pääsisi
   // koskaan sanomaan mitään — sama virhe kuin E4:ssä tuotantoajossa.
   const specResults = {};
+  // 0014: lapsitaulujen (lisänimet, matkahavainnot, tapakirjaukset)
+  // vanhemmat ovat saman ajon omia rivejä. Tunnisteet ovat
+  // deterministisiä, ja TABLE_SPECS ajaa vanhemmat ennen lapsia.
+  const place = specIdsFor(runId, 'SP');
+  const plan = specIdsFor(runId, 'HP');
   const specCtx = {
     today,
-    parents: { goalA: id.goalA, goalB: id.goalB }
+    parents: {
+      goalA: id.goalA, goalB: id.goalB,
+      placeA: place.a, placeB: place.b,
+      planA: plan.a, planB: plan.b
+    }
   };
   const runSpec = async entry => {
     const sid = specIdsFor(runId, entry.code);
@@ -1617,7 +1638,9 @@ export async function runAcceptance(options) {
     tasks: baitExists ? id.baitA : null,
     routines: routineAExists ? id.routineA : null,
     life_areas: exists('life_areas') ? specIdsFor(runId, 'LA').a : null,
-    milestones: exists('milestones') ? specIdsFor(runId, 'MS').a : null
+    milestones: exists('milestones') ? specIdsFor(runId, 'MS').a : null,
+    saved_places: exists('saved_places') ? place.a : null,
+    habit_plans: exists('habit_plans') ? plan.a : null
   };
   // B:n OMAT rivit, joiden viitteen B yrittää kääntää A:han.
   const ownB = table => {

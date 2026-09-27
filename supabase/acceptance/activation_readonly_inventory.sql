@@ -1,5 +1,5 @@
 -- =====================================================================
--- Manifestival — aktivoinnin inventaario 0001–0013 (VAIN LUKU)
+-- Manifestival — aktivoinnin inventaario 0001–0014 (VAIN LUKU)
 -- =====================================================================
 --
 -- GENEROITU: node tools/activation/build-inventory.mjs. ÄLÄ MUOKKAA
@@ -19,7 +19,7 @@
 -- Migraatioiden tunnistuslistat on poimittu migraatioiden omista
 -- esitarkistuksista, joten luku tarkoittaa samaa kuin migraation oma
 -- viesti: 0 = ajamaton, täysi = ajettu, muu = kesken.
--- Täydet luvut: 0002=12 0003=25 0004=36|37 0005=9 0006=10 0007=39 0008=11 0009=39 0010=38 0011=72 0012=58 0013=46
+-- Täydet luvut: 0002=12 0003=25 0004=36|37 0005=9 0006=10 0007=39 0008=11 0009=39 0010=38 0011=72 0012=58 0013=46 0014=153
 --   (0004: 37 jos routines on olemassa. 0012: 57 kun 0013 on ajettu,
 --    koska 0013 korvaa rajoitteen time_entries_source_check.)
 
@@ -462,10 +462,92 @@ with rivit as (
         and tablename in ('running_timers', 'alignment_item_settings')
       ) kaikki)::text as arvo
   union all
+  select '23'::text as nro, 'migraatio'::text as osio, '0014 objekteja'::text as tarkistus,
+         (select count(*) from (
+        select 1 from pg_tables
+        where schemaname = 'public'
+        and tablename in ('saved_places', 'place_aliases', 'calendar_events',
+        'commute_observations', 'life_settings', 'sleep_logs',
+        'habit_plans', 'habit_events', 'exercise_sessions',
+        'wellbeing_checkins')
+        union all
+        select 1 from pg_constraint
+        where conname in (
+        'saved_places_name_check', 'saved_places_address_check',
+        'saved_places_provider_place_check', 'saved_places_area_check',
+        'saved_places_travel_mode_check', 'saved_places_usual_travel_check',
+        'saved_places_preparation_check', 'saved_places_arrival_buffer_check',
+        'saved_places_overhead_check', 'saved_places_note_check',
+        'saved_places_owner_row_key',
+        'place_aliases_alias_check', 'place_aliases_confirmations_check',
+        'place_aliases_owner_row_key', 'place_aliases_alias_unique',
+        'place_aliases_place_fkey',
+        'calendar_events_title_check', 'calendar_events_all_day_check',
+        'calendar_events_end_time_check', 'calendar_events_duration_check',
+        'calendar_events_category_check', 'calendar_events_location_check',
+        'calendar_events_travel_mode_check', 'calendar_events_travel_check',
+        'calendar_events_preparation_check', 'calendar_events_arrival_buffer_check',
+        'calendar_events_overhead_check', 'calendar_events_weekdays_check',
+        'calendar_events_until_check', 'calendar_events_skip_dates_check',
+        'calendar_events_notes_check', 'calendar_events_owner_row_key',
+        'calendar_events_place_fkey', 'calendar_events_goal_fkey',
+        'commute_observations_event_id_check', 'commute_observations_weekday_check',
+        'commute_observations_travel_check', 'commute_observations_provider_check',
+        'commute_observations_preparation_check', 'commute_observations_overhead_check',
+        'commute_observations_result_check', 'commute_observations_source_check',
+        'commute_observations_owner_row_key', 'commute_observations_place_fkey',
+        'life_settings_one_per_user', 'life_settings_weekend_wake_check',
+        'life_settings_weekend_bed_check', 'life_settings_wind_down_check',
+        'life_settings_arrival_buffer_check', 'life_settings_guidance_check',
+        'life_settings_reminder_offset_check', 'life_settings_hourly_value_check',
+        'life_settings_currency_check', 'life_settings_alarm_check',
+        'life_settings_morning_routine_check', 'life_settings_meal_rhythm_check',
+        'life_settings_delivery_check', 'life_settings_owner_row_key',
+        'sleep_logs_wake_date_unique', 'sleep_logs_source_check',
+        'sleep_logs_kind_check', 'sleep_logs_note_check', 'sleep_logs_owner_row_key',
+        'habit_plans_kind_check', 'habit_plans_name_check',
+        'habit_plans_min_interval_check', 'habit_plans_daily_target_check',
+        'habit_plans_baseline_check', 'habit_plans_steps_check',
+        'habit_plans_delivery_check', 'habit_plans_unit_cost_check',
+        'habit_plans_owner_row_key',
+        'habit_events_action_check', 'habit_events_note_check',
+        'habit_events_owner_row_key', 'habit_events_plan_fkey',
+        'exercise_sessions_kind_check', 'exercise_sessions_planned_check',
+        'exercise_sessions_actual_check', 'exercise_sessions_intensity_check',
+        'exercise_sessions_recovery_check', 'exercise_sessions_note_check',
+        'exercise_sessions_owner_row_key', 'exercise_sessions_goal_fkey',
+        'wellbeing_checkins_motivation_check', 'wellbeing_checkins_control_check',
+        'wellbeing_checkins_date_unique', 'wellbeing_checkins_owner_row_key')
+        union all
+        select 1 from pg_indexes
+        where schemaname = 'public'
+        and indexname in (
+        'saved_places_user_name_idx', 'calendar_events_user_date_idx',
+        'commute_observations_user_place_idx', 'habit_events_user_plan_idx',
+        'exercise_sessions_user_date_idx')
+        union all
+        select 1 from pg_trigger
+        where not tgisinternal
+        and tgname in ('saved_places_touch_updated_at', 'place_aliases_touch_updated_at',
+        'calendar_events_touch_updated_at',
+        'commute_observations_touch_updated_at',
+        'life_settings_touch_updated_at', 'sleep_logs_touch_updated_at',
+        'habit_plans_touch_updated_at', 'habit_events_touch_updated_at',
+        'exercise_sessions_touch_updated_at',
+        'wellbeing_checkins_touch_updated_at')
+        union all
+        select 1 from pg_policies
+        where schemaname = 'public'
+        and tablename in ('saved_places', 'place_aliases', 'calendar_events',
+        'commute_observations', 'life_settings', 'sleep_logs',
+        'habit_plans', 'habit_events', 'exercise_sessions',
+        'wellbeing_checkins')
+      ) kaikki)::text as arvo
+  union all
   select '30'::text as nro, 'migraatio'::text as osio, '0013 korvaava lähderajoite (time_entries_source_v2_check)'::text as tarkistus,
          ((select count(*) from pg_constraint where conname = 'time_entries_source_v2_check'))::text as arvo
   union all
-  select '40'::text as nro, 'esiehto'::text as osio, 'Hyväksytty omistaja auth.users-taulussa (0010–0013 vaativat)'::text as tarkistus,
+  select '40'::text as nro, 'esiehto'::text as osio, 'Hyväksytty omistaja auth.users-taulussa (0010–0014 vaativat)'::text as tarkistus,
          ((select count(*) from auth.users where id = '2cc00622-f927-4604-a518-361a4328481b'::uuid))::text as arvo
   union all
   select '41'::text as nro, 'esiehto'::text as osio, 'Auth-käyttäjiä (lukumäärä)'::text as tarkistus,
@@ -620,6 +702,46 @@ with rivit as (
          (case when (select count(*) from information_schema.columns
         where table_schema = 'public' and table_name = 'tasks' and column_name = 'duration_minutes') = 0 then 'puuttuu'
         else (xpath('/row/c/text()', query_to_xml('select count(*) as c from public.tasks where duration_minutes > 0', false, true, '')))[1]::text end)::text as arvo
+  union all
+  select '90'::text as nro, 'data'::text as osio, 'rivejä: saved_places'::text as tarkistus,
+         (case when to_regclass('public.saved_places') is null then 'puuttuu'
+              else (xpath('/row/c/text()', query_to_xml('select count(*) as c from public.saved_places', false, true, '')))[1]::text end)::text as arvo
+  union all
+  select '91'::text as nro, 'data'::text as osio, 'rivejä: place_aliases'::text as tarkistus,
+         (case when to_regclass('public.place_aliases') is null then 'puuttuu'
+              else (xpath('/row/c/text()', query_to_xml('select count(*) as c from public.place_aliases', false, true, '')))[1]::text end)::text as arvo
+  union all
+  select '92'::text as nro, 'data'::text as osio, 'rivejä: calendar_events'::text as tarkistus,
+         (case when to_regclass('public.calendar_events') is null then 'puuttuu'
+              else (xpath('/row/c/text()', query_to_xml('select count(*) as c from public.calendar_events', false, true, '')))[1]::text end)::text as arvo
+  union all
+  select '93'::text as nro, 'data'::text as osio, 'rivejä: commute_observations'::text as tarkistus,
+         (case when to_regclass('public.commute_observations') is null then 'puuttuu'
+              else (xpath('/row/c/text()', query_to_xml('select count(*) as c from public.commute_observations', false, true, '')))[1]::text end)::text as arvo
+  union all
+  select '94'::text as nro, 'data'::text as osio, 'rivejä: life_settings'::text as tarkistus,
+         (case when to_regclass('public.life_settings') is null then 'puuttuu'
+              else (xpath('/row/c/text()', query_to_xml('select count(*) as c from public.life_settings', false, true, '')))[1]::text end)::text as arvo
+  union all
+  select '95'::text as nro, 'data'::text as osio, 'rivejä: sleep_logs'::text as tarkistus,
+         (case when to_regclass('public.sleep_logs') is null then 'puuttuu'
+              else (xpath('/row/c/text()', query_to_xml('select count(*) as c from public.sleep_logs', false, true, '')))[1]::text end)::text as arvo
+  union all
+  select '96'::text as nro, 'data'::text as osio, 'rivejä: habit_plans'::text as tarkistus,
+         (case when to_regclass('public.habit_plans') is null then 'puuttuu'
+              else (xpath('/row/c/text()', query_to_xml('select count(*) as c from public.habit_plans', false, true, '')))[1]::text end)::text as arvo
+  union all
+  select '97'::text as nro, 'data'::text as osio, 'rivejä: habit_events'::text as tarkistus,
+         (case when to_regclass('public.habit_events') is null then 'puuttuu'
+              else (xpath('/row/c/text()', query_to_xml('select count(*) as c from public.habit_events', false, true, '')))[1]::text end)::text as arvo
+  union all
+  select '98'::text as nro, 'data'::text as osio, 'rivejä: exercise_sessions'::text as tarkistus,
+         (case when to_regclass('public.exercise_sessions') is null then 'puuttuu'
+              else (xpath('/row/c/text()', query_to_xml('select count(*) as c from public.exercise_sessions', false, true, '')))[1]::text end)::text as arvo
+  union all
+  select '99'::text as nro, 'data'::text as osio, 'rivejä: wellbeing_checkins'::text as tarkistus,
+         (case when to_regclass('public.wellbeing_checkins') is null then 'puuttuu'
+              else (xpath('/row/c/text()', query_to_xml('select count(*) as c from public.wellbeing_checkins', false, true, '')))[1]::text end)::text as arvo
 )
 select '00' as nro, 'tiiviste' as osio, 'KOPIOI TÄMÄ SOLU CLAUDELLE' as tarkistus,
        json_build_object('inventory', 'mv-activation-v1',

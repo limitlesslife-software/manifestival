@@ -41,8 +41,26 @@ const STEPS = [
   {
     title: 'Päivä rakentuu ympärille',
     body: 'Kun kerrot työaikasi, Manifestival laskee herätyksen ja nukkumaanmenon puolestasi. Näet ne heti Tänään-näkymässä.'
+  },
+  // Arjen käyttöjärjestelmä (aalto K): kaksi VALINNAISTA korttia. Ne vain
+  // kertovat, mistä asetukset löytyvät; mitään ei kytketä päälle
+  // puolesta, eikä kortin ohittaminen jätä mitään kesken.
+  {
+    title: 'Oma rytmi, jos haluat',
+    body: 'Valinnainen: Profiili → Arki. Aloitusasetukset-lista näyttää, mitä on jo kerrottu. Kerro ainakin unitavoite ja arkiherätys; aamurutiini, ateriat ja muut ovat valinnaisia, ja voit täydentää niitä myöhemmin.',
+    optional: true
+  },
+  {
+    title: 'Paikat ja lähtöajat, jos haluat',
+    body: 'Valinnainen: Profiili → Paikat. Tallenna usein käytetyt paikat ja oma arviosi matka-ajasta, niin menoille lasketaan lähtöaika ja valmistautuminen. Ilman arviota lähtöaikaa ei arvata.',
+    optional: true
   }
 ];
+
+/** Opastuksen kortit (vain luku). Testit ja ohjeet lukevat tätä. */
+export function onboardingSteps() {
+  return STEPS.map(step => Object.freeze({ ...step }));
+}
 
 let step = 0;
 /** Elementti, jossa fokus oli ennen opastusta: sinne palataan. */

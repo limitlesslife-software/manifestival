@@ -1,6 +1,6 @@
-# Käyttöliittymän tavoitettavuus — kahdeksantoista domainia
+# Käyttöliittymän tavoitettavuus — kolmekymmentäneljä domainia
 
-**Tila:** kaikki kahdeksantoista tavoitettavissa. Auditoitu ja korjattu.
+**Tila:** kaikki kolmekymmentäneljä tavoitettavissa (aallon K kymmenen mukaan lukien). Auditoitu ja korjattu.
 **Lähde:** `tools/release/reachability.mjs`, testattu
 `tests/ui-reachability.test.mjs`.
 
@@ -49,6 +49,24 @@ taloutta eikä löytänyt kumpaakaan.
 | `alignmentReviews` | **ON** | **Suunta** → Viikkokatsaus | Viikkokatsaus | luonti + luku + päivitys | I |
 | `runningTimers` | **ON** | Kaikki näkymät → **Ajanseuranta**-palkki (käynnistys Suunnasta, tehtävästä, projektista tai rutiinista) | Ajanseuranta | käynnistys + tauko + pysäytys + hylkäys | J |
 | `alignmentItemSettings` | **ON** | Tehtävä → **Kuormittavuus** (myös rutiini, projekti, Suunta → Arvioi tehtäviä) | Kuormittavuus | luonti + luku + muokkaus + poisto kohteen mukana | J |
+| `savedPlaces` | **ON** | **Profiili** → Paikat | Paikat | täysi + oletusetuaika | K |
+| `placeAliases` | **ON** | **Profiili** → Paikat → paikan Tunnetut nimitykset | Tunnetut nimitykset | luku + poisto + oppimisen nollaus; syntyy vahvistuksesta | K |
+| `calendarEvents` | **ON** | **Kalenteri** → Päivä / Viikko / Kuukausi → Uusi meno | Kalenteri | täysi + yhden kerran ohitus | K |
+| `commuteObservations` | **ON** | **Profiili** → Paikat → matkojen oppiminen; syntyy "Lähdin" / "Olin perillä" | Paikat | luku + nollaus | K |
+| `lifeSettings` | **ON** | **Profiili** → Arki (ja Asetukset → Ohjaus ja puhe) | Arki | luku + tallennus | K |
+| `sleepLogs` | **ON** | **Profiili** → Hyvinvointi → Uni | Uni | luonti + muokkaus | K |
+| `habitPlans` | **ON** | **Profiili** → Hyvinvointi → Tapojen muutos | Tapojen muutos | täysi | K |
+| `habitEvents` | **ON** | **Profiili** → Hyvinvointi → Tapojen muutos; **Tänään** → tapakortti | Tapojen muutos | kirjaus + edistyminen | K |
+| `exerciseSessions` | **ON** | **Profiili** → Hyvinvointi → Liikunta | Liikunta | täysi | K |
+| `wellbeingCheckins` | **ON** | **Tänään** → voinnin kortti; **Profiili** → Hyvinvointi (14 pv) | Motivaatio | kirjaus + historia | K |
+
+### Aallon K kymmenen domainia
+
+Näkymät on rakennettu (Kalenteri-välilehti, Profiilin osiot Arki,
+Hyvinvointi ja Paikat sekä Tänään-kortit), ja jokaisella rivillä on
+koneellisesti tarkistettava todiste (`tools/release/reachability.mjs`).
+Aalto K on estetty enää **vain kannan takia**: migraatiota `0014` ei ole
+ajettu.
 
 ### Aallon H viisi näkymää
 

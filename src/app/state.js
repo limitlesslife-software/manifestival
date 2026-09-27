@@ -9,7 +9,7 @@
 import { todayMidnight, startOfWeek, fmtISO } from '../lib/datetime.js';
 import { logFailure, LOG_LEVEL } from '../lib/logger.js';
 import { DEFAULT_PROFILE } from '../domain/scheduler.js';
-import { normalizeTask } from '../domain/task.js';
+import { normalizeTask, isIsoDate } from '../domain/task.js';
 import { normalizeRoutine, normalizeException } from '../domain/routine.js';
 import { normalizeGoal } from '../domain/goal.js';
 import { normalizeWellbeingEntry } from '../domain/wellbeing.js';
@@ -34,6 +34,14 @@ import { normalizeTimeEntry } from '../domain/timeEntry.js';
 import { normalizeAlignmentReview } from '../domain/alignmentReview.js';
 import { normalizeItemSettings } from '../domain/alignmentItemSettings.js';
 import { normalizeTimer } from '../domain/timer.js';
+import { normalizeSavedPlace, normalizePlaceAlias } from '../domain/savedPlace.js';
+import { normalizeCalendarEvent } from '../domain/calendarEvent.js';
+import { normalizeCommuteObservation } from '../domain/commuteObservation.js';
+import { normalizeLifeSettings, effectiveLifeSettings } from '../domain/lifeSettings.js';
+import { normalizeSleepLog } from '../domain/sleepLog.js';
+import { normalizeHabitPlan, normalizeHabitEvent } from '../domain/habit.js';
+import { normalizeExerciseSession } from '../domain/exerciseSession.js';
+import { normalizeWellbeingCheckin } from '../domain/wellbeingCheckin.js';
 import { getDevicePreference, setDevicePreference } from '../data/preferences.js';
 
 function initialState() {
@@ -106,6 +114,18 @@ function initialState() {
     /** Ilmoitushistoria. Ei säily ennen migraatiota 0011. */
     notices: [],
 
+    /**
+     * Käyttäjän poistamien ilmoitusten avaimet tämän istunnon ajan.
+     *
+     * "Poista" vie rivin tilasta ja kannasta, mutta kierros (30 s välein)
+     * loisi saman avaimen uudelleen lukemattomana niin kauan kuin ehto on
+     * voimassa. Kirjaus torjuu sen addNoticeToState-funktiossa, jonka
+     * kautta JOKAINEN luontipolku kulkee. Vain muistissa: kannassa ei ole
+     * saraketta piilotetulle riville, ja uloskirjautuminen (resetState)
+     * unohtaa kirjauksen.
+     */
+    deletedNoticeKeys: [],
+
     /** Matkasuunnitelmat. Ei säily ennen migraatiota 0011. */
     travelPlans: [],
 
@@ -120,6 +140,23 @@ function initialState() {
     /** Suunta 2 (0013): kohdeasetukset ja käynnissä oleva ajastin (0–1). */
     alignmentItemSettings: [],
     runningTimers: [],
+
+    /**
+     * Arjen käyttöjärjestelmä (0014). Ei säily ennen migraatiota 0014.
+     * `lifeSettings` on 0–1 riviä: puuttuva rivi = oletukset
+     * (currentLifeSettings). Uni-, motivaatio- ja tapakirjaukset ovat
+     * arkaluonteisia: ne eivät kulje tekoälylle eivätkä lokiin.
+     */
+    savedPlaces: [],
+    placeAliases: [],
+    calendarEvents: [],
+    commuteObservations: [],
+    lifeSettings: [],
+    sleepLogs: [],
+    habitPlans: [],
+    habitEvents: [],
+    exerciseSessions: [],
+    wellbeingCheckins: [],
 
     /**
      * Kirjaus, jonka tulkintaa käyttäjä parhaillaan tarkistaa.
@@ -164,6 +201,8 @@ function initialState() {
     weekStart: startOfWeek(today),
     profile: { ...DEFAULT_PROFILE },
     profileExists: false,
+    /** Profiilinäkymän osio. Ks. PROFILE_SEGMENTS alla. */
+    profileSegment: 'daily',
     editingId: null,
     /** Muokattavan rutiinin tai tavoitteen tunniste. */
     editingRoutineId: null,
@@ -188,6 +227,17 @@ function initialState() {
     budgetMonth: fmtISO(today).slice(0, 7),
     /** Tehtävänäkymän osio: 'tasks' tai 'routines'. */
     tasksSegment: 'tasks',
+    /**
+     * Kalenterin näkymä: 'day', 'week' tai 'month'. Oletus on päivä,
+     * koska kalenteri vastaa ensin kysymykseen "mitä tänään on".
+     */
+    calendarView: 'day',
+    /**
+     * Kalenterin katsottava päivä ISO-muodossa. Päivä- ja kuukausinäkymä
+     * lukevat tätä; viikkonäkymällä on oma `weekStart`, jotta vanha
+     * viikkonäkymä toimii täsmälleen kuten ennen.
+     */
+    calendarDate: fmtISO(today),
     /** Näkymä, joka on auki. */
     screen: 'screen-today',
     /** Onko ensimmäinen lataus vielä kesken. */
@@ -406,14 +456,51 @@ export function replaceGoalInState(id, goal) {
   commit({ goals: state.goals.map(g => (g.id === id ? normalizeGoal(goal) : g)) });
 }
 
+/**
+ * Poista tavoite kuten kanta: liitetyt rivit säilyvät, liitos katkeaa.
+ * Palauttaa irrotettujen rivien tunnisteet peruutusta varten
+ * (restoreGoalInState): epäonnistuneen poiston jälkeen irralliseksi jäänyt
+ * rivi olisi seuraavassa muokkauksessa lähettänyt goal_id = null ja
+ * pyyhkinyt kannassa yhä olevan liitoksen.
+ */
 export function removeGoalFromState(id) {
+  const linked = list => list.filter(item => item.goalId === id).map(item => item.id);
+  const unlinked = {
+    taskIds: linked(state.tasks),
+    entryIds: linked(state.timeEntries),
+    eventIds: linked(state.calendarEvents),
+    sessionIds: linked(state.exerciseSessions)
+  };
   commit({
     goals: state.goals.filter(g => g.id !== id),
     // Tehtävät säilyvät, mutta niiden tavoiteyhteys katkeaa — tehtävää ei
     // koskaan poisteta tavoitteen mukana.
     tasks: state.tasks.map(t => (t.goalId === id ? { ...t, goalId: null } : t)),
     // Kirjattu aika säilyy; tavoiteliitos katkeaa (time_entries_goal_fkey).
-    timeEntries: state.timeEntries.map(e => (e.goalId === id ? { ...e, goalId: null } : e))
+    timeEntries: state.timeEntries.map(e => (e.goalId === id ? { ...e, goalId: null } : e)),
+    // Menot ja liikuntakerrat säilyvät (0014: on delete set null (goal_id)).
+    calendarEvents: state.calendarEvents.map(e => (e.goalId === id ? { ...e, goalId: null } : e)),
+    exerciseSessions: state.exerciseSessions.map(s => (s.goalId === id ? { ...s, goalId: null } : s))
+  });
+  return unlinked;
+}
+
+/**
+ * Peruutus epäonnistuneelle poistolle: tavoite ja sen liitokset takaisin.
+ * Vain yhä irrallinen rivi liitetään: jos käyttäjä ehti odotuksen aikana
+ * liittää rivin toiseen tavoitteeseen, hänen valintansa säilyy.
+ */
+export function restoreGoalInState(goal, unlinked = {}) {
+  const relink = (list, ids) => {
+    const own = new Set(ids || []);
+    return list.map(item => (own.has(item.id) && item.goalId == null ? { ...item, goalId: goal.id } : item));
+  };
+  commit({
+    goals: [...state.goals.filter(g => g.id !== goal.id), normalizeGoal(goal)],
+    tasks: relink(state.tasks, unlinked.taskIds),
+    timeEntries: relink(state.timeEntries, unlinked.entryIds),
+    calendarEvents: relink(state.calendarEvents, unlinked.eventIds),
+    exerciseSessions: relink(state.exerciseSessions, unlinked.sessionIds)
   });
 }
 
@@ -849,6 +936,46 @@ export function setBudgetMonth(month) {
   commit({ budgetMonth: month });
 }
 
+/**
+ * Kalenterin näkymät. Järjestys on segmenttien järjestys: päivä ensin,
+ * koska se on useimmin avattu.
+ */
+export const CALENDAR_VIEWS = Object.freeze([
+  Object.freeze({ key: 'day', label: 'Päivä' }),
+  Object.freeze({ key: 'week', label: 'Viikko' }),
+  Object.freeze({ key: 'month', label: 'Kuukausi' })
+]);
+
+const CALENDAR_VIEW_KEYS = Object.freeze(CALENDAR_VIEWS.map(v => v.key));
+
+/** Kalenterin näkymä. Tuntematon arvo palautuu päivään. */
+export function setCalendarView(view) {
+  const next = CALENDAR_VIEW_KEYS.includes(view) ? view : 'day';
+  if (next === state.calendarView) return;
+  commit({ calendarView: next });
+}
+
+/**
+ * Kalenterin katsottava päivä. Kelvoton päivä jätetään huomiotta: väärä
+ * päivä näyttäisi tyhjää kalenteria, ja tyhjä kalenteri näyttää siltä
+ * kuin menoja ei olisi.
+ */
+export function setCalendarDate(dateIso) {
+  if (!isIsoDate(dateIso) || dateIso === state.calendarDate) return;
+  commit({ calendarDate: dateIso });
+}
+
+/**
+ * Avaa päivänäkymä annetulle päivälle YHDELLÄ muutoksella (kuukauden tai
+ * viikon päivän napautus): kaksi peräkkäistä muutosta piirtäisi näkymän
+ * välissä väärälle päivälle.
+ */
+export function showCalendarDay(dateIso) {
+  if (!isIsoDate(dateIso)) return;
+  if (state.calendarView === 'day' && state.calendarDate === dateIso) return;
+  commit({ calendarView: 'day', calendarDate: dateIso });
+}
+
 /** Siirry kuukausi eteen tai taakse. */
 export function shiftBudgetMonth(delta) {
   const [year, month] = state.budgetMonth.split('-').map(Number);
@@ -956,13 +1083,47 @@ export function setNotices(notices) {
  *
  * Kaksoiskappaleiden esto on tässä ensimmäinen este ja kannan
  * `notices_key_unique` toinen. Palauttaa `true`, jos rivi syntyi.
+ *
+ * Käyttäjän tässä istunnossa poistama avain lasketaan olemassa olevaksi:
+ * poistettu ilmoitus ei palaa lukemattomana, vaikka ehto olisi voimassa.
  */
 export function addNoticeToState(notice) {
   const normalized = normalizeNotice(notice);
   if (!normalized.key) return false;
   if (state.notices.some(n => n.key === normalized.key)) return false;
+  if (state.deletedNoticeKeys.includes(normalized.key)) return false;
   commit({ notices: [...state.notices, normalized] });
   return true;
+}
+
+/**
+ * Käyttäjän "Poista": rivi pois tilasta ja avain kirjatuksi poistetuksi.
+ *
+ * Yksi muutos, jotta mikään kierros ei ehdi väliin tilaan, jossa rivi on
+ * poissa mutta avain vapaana. Ei koske removeNoticeFromState-funktioon:
+ * sitä käytetään myös epäonnistuneen luonnin peruutukseen, jolloin avain
+ * EI ole käyttäjän poistama.
+ *
+ * @returns {object|null} poistettu ilmoitus palautusta varten
+ */
+export function deleteNoticeFromState(id) {
+  const notice = findNotice(id);
+  if (!notice) return null;
+  const keys = state.deletedNoticeKeys;
+  commit({
+    notices: state.notices.filter(n => n.id !== id),
+    deletedNoticeKeys: notice.key && !keys.includes(notice.key) ? [...keys, notice.key] : keys
+  });
+  return notice;
+}
+
+/** Kumoa deleteNoticeFromState: kannan poisto epäonnistui, rivi palaa. */
+export function restoreDeletedNotice(notice) {
+  const normalized = normalizeNotice(notice);
+  batch(() => {
+    commit({ deletedNoticeKeys: state.deletedNoticeKeys.filter(key => key !== normalized.key) });
+    addNoticeToState(normalized);
+  });
 }
 
 export function replaceNoticeInState(id, notice) {
@@ -1058,6 +1219,24 @@ export function setWeekStart(date) {
   commit({ weekStart: date });
 }
 
+/**
+ * Kirjautuminen: Tänään-näkymän päivä, viikko ja Kalenterin päivä tähän
+ * päivään YHDELLÄ ilmoituksella. Sovellus avautuu aina tähän päivään, ei
+ * siihen, mihin edellinen istunto jäi.
+ *
+ * KAIKKI KATSOTTAVAT PÄIVÄT YHDESSÄ PAIKASSA. Aiemmin kirjautuminen nollasi
+ * vain päivän ja viikon; Kalenterin päivä jäi uloskirjautumisen
+ * resetState()-kutsun päivään. Keskiyön yli odottanut kirjautumisnäkymä
+ * avasi Kalenterin eiliseen ("Eilen"), ja "Uusi meno" ehdotti eilistä.
+ */
+export function resetDatesToToday(today = todayMidnight()) {
+  batch(() => {
+    setViewDate(today);
+    setWeekStart(startOfWeek(today));
+    setCalendarDate(fmtISO(today));
+  });
+}
+
 export function setScreen(screen) {
   commit({ screen });
 }
@@ -1075,6 +1254,26 @@ export function viewDateIso() {
 
 export function setProfile(profile, exists = true) {
   commit({ profile: { ...DEFAULT_PROFILE, ...profile }, profileExists: exists });
+}
+
+/**
+ * Profiilinäkymän osiot. Arki on ensimmäinen, koska sitä säädetään
+ * useimmin (uni, herätys, aamu); tilin asetukset ovat harvoin tarvittuja.
+ */
+export const PROFILE_SEGMENTS = Object.freeze([
+  { key: 'daily', label: 'Arki' },
+  { key: 'wellbeing', label: 'Hyvinvointi' },
+  { key: 'places', label: 'Paikat' },
+  { key: 'settings', label: 'Asetukset' }
+]);
+
+const PROFILE_SEGMENT_KEYS = Object.freeze(PROFILE_SEGMENTS.map(s => s.key));
+
+/** Profiilinäkymän osio. Tuntematon arvo palautuu Arkeen. */
+export function setProfileSegment(segment) {
+  commit({
+    profileSegment: PROFILE_SEGMENT_KEYS.includes(segment) ? segment : 'daily'
+  });
 }
 
 // -------------------------------------------------------------- lataustila
@@ -1237,6 +1436,259 @@ export function setRunningTimerInState(timer) {
 
 export function replaceTimeEntryInState(id, entry) {
   commit({ timeEntries: state.timeEntries.map(e => (e.id === id ? normalizeTimeEntry(entry) : e)) });
+}
+
+// ---------------------------------------------- arjen käyttöjärjestelmä (0014)
+//
+// Tila noudattaa samoja poistosääntöjä kuin kanta (migraatio 0014):
+//   paikan poisto vie lisänimet ja matkahavainnot (kaskadi) ja katkaisee
+//   menojen paikkaliitoksen (set null); tavan poisto vie sen kirjaukset.
+// Näin muistitila ja kanta eivät ajaudu erilleen portin auettua.
+
+/** Tunnisteen mukainen korvaus: rivi, jota ei ole, EI synny (ei hiljaista lisäystä). */
+function replaceById(list, id, next) {
+  return list.map(item => (item.id === id ? next : item));
+}
+
+export function setSavedPlaces(places) {
+  commit({ savedPlaces: (places || []).map(normalizeSavedPlace) });
+}
+
+export function addSavedPlaceToState(place) {
+  commit({ savedPlaces: [...state.savedPlaces, normalizeSavedPlace(place)] });
+}
+
+export function replaceSavedPlaceInState(id, place) {
+  commit({ savedPlaces: replaceById(state.savedPlaces, id, normalizeSavedPlace(place)) });
+}
+
+/**
+ * Poista paikka kuten kanta: lisänimet ja matkahavainnot poistuvat,
+ * menot jäävät ilman paikkaa. Palauttaa poistetut osat peruutusta varten
+ * (restoreSavedPlaceInState), tai null jos paikkaa ei ollut.
+ */
+export function removeSavedPlaceFromState(id) {
+  const place = state.savedPlaces.find(p => p.id === id) || null;
+  if (!place) return null;
+  const removed = {
+    place,
+    aliases: state.placeAliases.filter(a => a.placeId === id),
+    observations: state.commuteObservations.filter(o => o.placeId === id),
+    eventIds: state.calendarEvents.filter(e => e.placeId === id).map(e => e.id)
+  };
+  commit({
+    savedPlaces: state.savedPlaces.filter(p => p.id !== id),
+    placeAliases: state.placeAliases.filter(a => a.placeId !== id),
+    commuteObservations: state.commuteObservations.filter(o => o.placeId !== id),
+    calendarEvents: state.calendarEvents.map(e => (e.placeId === id ? { ...e, placeId: null } : e))
+  });
+  return removed;
+}
+
+/** Peruutus epäonnistuneelle poistolle: paikka, sen lapsirivit ja menojen liitokset takaisin. */
+export function restoreSavedPlaceInState(removed) {
+  if (!removed || !removed.place) return;
+  const placeId = removed.place.id;
+  const eventIds = new Set(removed.eventIds || []);
+  const aliasIds = new Set((removed.aliases || []).map(a => a.id));
+  const observationIds = new Set((removed.observations || []).map(o => o.id));
+  commit({
+    savedPlaces: [...state.savedPlaces.filter(p => p.id !== placeId), normalizeSavedPlace(removed.place)],
+    placeAliases: [...state.placeAliases.filter(a => !aliasIds.has(a.id)),
+      ...(removed.aliases || []).map(normalizePlaceAlias)],
+    commuteObservations: [...state.commuteObservations.filter(o => !observationIds.has(o.id)),
+      ...(removed.observations || []).map(normalizeCommuteObservation)],
+    calendarEvents: state.calendarEvents.map(e => (eventIds.has(e.id) ? { ...e, placeId } : e))
+  });
+}
+
+export function findSavedPlace(id) {
+  return state.savedPlaces.find(p => p.id === id) || null;
+}
+
+export function setPlaceAliases(aliases) {
+  commit({ placeAliases: (aliases || []).map(normalizePlaceAlias) });
+}
+
+/** Sama lisänimi samalle paikalle kerran (kanta: place_aliases_alias_unique). */
+export function upsertPlaceAliasInState(alias) {
+  const normalized = normalizePlaceAlias(alias);
+  commit({
+    placeAliases: [
+      ...state.placeAliases.filter(a => a.id !== normalized.id
+        && !(a.alias === normalized.alias && a.placeId === normalized.placeId)),
+      normalized
+    ]
+  });
+}
+
+export function removePlaceAliasFromState(id) {
+  commit({ placeAliases: state.placeAliases.filter(a => a.id !== id) });
+}
+
+export function findPlaceAlias(id) {
+  return state.placeAliases.find(a => a.id === id) || null;
+}
+
+export function setCalendarEvents(events) {
+  commit({ calendarEvents: (events || []).map(normalizeCalendarEvent) });
+}
+
+export function addCalendarEventToState(event) {
+  commit({ calendarEvents: [...state.calendarEvents, normalizeCalendarEvent(event)] });
+}
+
+export function replaceCalendarEventInState(id, event) {
+  commit({ calendarEvents: replaceById(state.calendarEvents, id, normalizeCalendarEvent(event)) });
+}
+
+export function removeCalendarEventFromState(id) {
+  commit({ calendarEvents: state.calendarEvents.filter(e => e.id !== id) });
+}
+
+export function findCalendarEvent(id) {
+  return state.calendarEvents.find(e => e.id === id) || null;
+}
+
+export function setCommuteObservations(observations) {
+  commit({ commuteObservations: (observations || []).map(normalizeCommuteObservation) });
+}
+
+export function addCommuteObservationToState(observation) {
+  commit({ commuteObservations: [...state.commuteObservations, normalizeCommuteObservation(observation)] });
+}
+
+export function removeCommuteObservationFromState(id) {
+  commit({ commuteObservations: state.commuteObservations.filter(o => o.id !== id) });
+}
+
+/** Asetukset: 0–1 riviä. Lista, koska lataus ja vienti käsittelevät kokoelmia. */
+export function setLifeSettings(rows) {
+  commit({ lifeSettings: (rows || []).map(normalizeLifeSettings).slice(0, 1) });
+}
+
+/** YKSI RIVI KÄYTTÄJÄÄ KOHTI: uusi rivi korvaa aina edellisen. */
+export function upsertLifeSettingsInState(settings) {
+  commit({ lifeSettings: settings ? [normalizeLifeSettings(settings)] : [] });
+}
+
+/**
+ * Voimassa olevat asetukset: tallennettu rivi tai oletukset. Ei koskaan
+ * null — kutsujan ei tarvitse tietää, onko käyttäjä tallentanut mitään.
+ */
+export function currentLifeSettings(current = state) {
+  return effectiveLifeSettings(current && current.lifeSettings);
+}
+
+export function setSleepLogs(logs) {
+  commit({ sleepLogs: (logs || []).map(normalizeSleepLog) });
+}
+
+/** Yksi kirjaus heräämispäivää kohti (kanta: sleep_logs_wake_date_unique). */
+export function upsertSleepLogInState(log) {
+  const normalized = normalizeSleepLog(log);
+  commit({
+    sleepLogs: [
+      ...state.sleepLogs.filter(l => l.id !== normalized.id && l.wakeDate !== normalized.wakeDate),
+      normalized
+    ]
+  });
+}
+
+export function removeSleepLogFromState(id) {
+  commit({ sleepLogs: state.sleepLogs.filter(l => l.id !== id) });
+}
+
+export function setHabitPlans(plans) {
+  commit({ habitPlans: (plans || []).map(normalizeHabitPlan) });
+}
+
+export function addHabitPlanToState(plan) {
+  commit({ habitPlans: [...state.habitPlans, normalizeHabitPlan(plan)] });
+}
+
+export function replaceHabitPlanInState(id, plan) {
+  commit({ habitPlans: replaceById(state.habitPlans, id, normalizeHabitPlan(plan)) });
+}
+
+/**
+ * Poista suunnitelma kuten kanta: sen kirjaukset poistuvat (kaskadi).
+ * Palauttaa poistetut peruutusta varten (restoreHabitPlanInState).
+ */
+export function removeHabitPlanFromState(id) {
+  const plan = state.habitPlans.find(p => p.id === id) || null;
+  if (!plan) return null;
+  const removed = { plan, events: state.habitEvents.filter(e => e.planId === id) };
+  commit({
+    habitPlans: state.habitPlans.filter(p => p.id !== id),
+    habitEvents: state.habitEvents.filter(e => e.planId !== id)
+  });
+  return removed;
+}
+
+export function restoreHabitPlanInState(removed) {
+  if (!removed || !removed.plan) return;
+  const eventIds = new Set((removed.events || []).map(e => e.id));
+  commit({
+    habitPlans: [...state.habitPlans.filter(p => p.id !== removed.plan.id), normalizeHabitPlan(removed.plan)],
+    habitEvents: [...state.habitEvents.filter(e => !eventIds.has(e.id)),
+      ...(removed.events || []).map(normalizeHabitEvent)]
+  });
+}
+
+export function findHabitPlan(id) {
+  return state.habitPlans.find(p => p.id === id) || null;
+}
+
+export function setHabitEvents(events) {
+  commit({ habitEvents: (events || []).map(normalizeHabitEvent) });
+}
+
+export function addHabitEventToState(event) {
+  commit({ habitEvents: [...state.habitEvents, normalizeHabitEvent(event)] });
+}
+
+export function removeHabitEventFromState(id) {
+  commit({ habitEvents: state.habitEvents.filter(e => e.id !== id) });
+}
+
+export function setExerciseSessions(sessions) {
+  commit({ exerciseSessions: (sessions || []).map(normalizeExerciseSession) });
+}
+
+export function addExerciseSessionToState(session) {
+  commit({ exerciseSessions: [...state.exerciseSessions, normalizeExerciseSession(session)] });
+}
+
+export function replaceExerciseSessionInState(id, session) {
+  commit({ exerciseSessions: replaceById(state.exerciseSessions, id, normalizeExerciseSession(session)) });
+}
+
+export function removeExerciseSessionFromState(id) {
+  commit({ exerciseSessions: state.exerciseSessions.filter(s => s.id !== id) });
+}
+
+export function findExerciseSession(id) {
+  return state.exerciseSessions.find(s => s.id === id) || null;
+}
+
+export function setWellbeingCheckins(checkins) {
+  commit({ wellbeingCheckins: (checkins || []).map(normalizeWellbeingCheckin) });
+}
+
+/** Yksi kirjaus päivää kohti (kanta: wellbeing_checkins_date_unique). */
+export function upsertWellbeingCheckinInState(checkin) {
+  const normalized = normalizeWellbeingCheckin(checkin);
+  commit({
+    wellbeingCheckins: [
+      ...state.wellbeingCheckins.filter(c => c.id !== normalized.id && c.date !== normalized.date),
+      normalized
+    ]
+  });
+}
+
+export function removeWellbeingCheckinFromState(id) {
+  commit({ wellbeingCheckins: state.wellbeingCheckins.filter(c => c.id !== id) });
 }
 
 export function resetState() {

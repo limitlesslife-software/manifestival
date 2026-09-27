@@ -15,8 +15,8 @@ import assert from 'node:assert/strict';
 import { read } from './helpers/sources.mjs';
 import { APK_PERMISSION_ALLOWLIST, REQUIRED_QUERY_INTENT_ACTIONS } from '../tools/android/apk.mjs';
 import {
-  MAIN_ACTIVITY, SOURCE_MANIFEST, SPEECH_PERMISSION, parseManifestXml, registersSpeechPlugin,
-  sourceManifestFacts, sourceManifestProblems
+  MAIN_ACTIVITY, REQUIRED_PLUGIN_CLASSES, SOURCE_MANIFEST, SPEECH_PERMISSION, parseManifestXml,
+  registersAlarmPlugin, registersPlugin, registersSpeechPlugin, sourceManifestFacts, sourceManifestProblems
 } from '../tools/android/source-manifest.mjs';
 
 const LOCATION = /^android\.permission\.ACCESS_\w*LOCATION$/;
@@ -49,6 +49,19 @@ test('lähdemanifestin <queries> sisältää android.speech.RecognitionService',
 test('repon lähdemanifesti ja MainActivity läpäisevät esitarkistuksen manifest.source-ehdot', () => {
   assert.deepEqual(sourceManifestProblems({ manifest: MANIFEST, mainActivity: MAIN }), []);
   assert.equal(registersSpeechPlugin(MAIN), true);
+  assert.equal(registersAlarmPlugin(MAIN), true);
+  assert.deepEqual([...REQUIRED_PLUGIN_CLASSES], ['SpeechPlugin', 'AlarmPlugin']);
+});
+
+test('lähdemanifestin herätysluvat: vain käyttäjän myöntämä tarkka herätys ja toiston etualapalvelu', () => {
+  const { permissions, queryIntentActions } = sourceManifestFacts(MANIFEST);
+  for (const name of ['RECEIVE_BOOT_COMPLETED', 'SCHEDULE_EXACT_ALARM', 'USE_FULL_SCREEN_INTENT',
+    'FOREGROUND_SERVICE', 'FOREGROUND_SERVICE_MEDIA_PLAYBACK', 'POST_NOTIFICATIONS', 'WAKE_LOCK']) {
+    assert.ok(permissions.includes('android.permission.' + name), name + ' puuttuu');
+  }
+  assert.equal(permissions.includes('android.permission.USE_EXACT_ALARM'), false);
+  assert.deepEqual(permissions.filter(p => /FOREGROUND_SERVICE_/.test(p)), ['android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK']);
+  assert.ok(queryIntentActions.includes('android.intent.action.TTS_SERVICE'));
 });
 
 // -------------------------------------------------------------- jäsennin
@@ -61,10 +74,13 @@ const WRAP = body => '<?xml version="1.0" encoding="utf-8"?>\n'
 const PERM = name => `    <uses-permission android:name="android.permission.${name}" />\n`;
 const QUERIES = '    <queries>\n        <intent>\n'
   + '            <action android:name="android.speech.RecognitionService" />\n'
+  + '        </intent>\n        <intent>\n'
+  + '            <action android:name="android.intent.action.TTS_SERVICE" />\n'
   + '        </intent>\n    </queries>\n';
 const GOOD = WRAP(PERM('INTERNET') + PERM('RECORD_AUDIO') + QUERIES);
 const GOOD_MAIN = 'public class MainActivity extends BridgeActivity {\n'
   + '    protected void onCreate(Bundle s) {\n        registerPlugin(SpeechPlugin.class);\n'
+  + '        registerPlugin(AlarmPlugin.class);\n'
   + '        super.onCreate(s);\n    }\n}\n';
 const problems = (manifest, mainActivity = GOOD_MAIN) => sourceManifestProblems({ manifest, mainActivity });
 
@@ -102,6 +118,32 @@ test('puuttuva RECORD_AUDIO, puuttuva <queries>, kielletty tai tuntematon lupa k
   assert.deepEqual(camera, ['kielletty lupa: android.permission.CAMERA']);
   const vibrate = problems(WRAP(PERM('INTERNET') + PERM('RECORD_AUDIO') + PERM('VIBRATE') + QUERIES));
   assert.match(vibrate.join(' | '), /ei kuulu sallittuun joukkoon[^|]*VIBRATE/);
+});
+
+test('herätysluvat: USE_EXACT_ALARM ja muut kuin toiston etualapalvelut kaatuvat, toisto kelpaa', () => {
+  const alarm = PERM('RECEIVE_BOOT_COMPLETED') + PERM('SCHEDULE_EXACT_ALARM') + PERM('USE_FULL_SCREEN_INTENT')
+    + PERM('FOREGROUND_SERVICE') + PERM('FOREGROUND_SERVICE_MEDIA_PLAYBACK') + PERM('POST_NOTIFICATIONS') + PERM('WAKE_LOCK');
+  assert.deepEqual(problems(WRAP(PERM('INTERNET') + PERM('RECORD_AUDIO') + alarm + QUERIES)), []);
+  assert.deepEqual(problems(WRAP(PERM('INTERNET') + PERM('RECORD_AUDIO') + PERM('USE_EXACT_ALARM') + QUERIES)),
+    ['kielletty lupa: android.permission.USE_EXACT_ALARM']);
+  for (const type of ['MICROPHONE', 'LOCATION', 'DATA_SYNC', 'SPECIAL_USE', 'CAMERA']) {
+    assert.deepEqual(problems(WRAP(PERM('INTERNET') + PERM('RECORD_AUDIO') + PERM('FOREGROUND_SERVICE_' + type) + QUERIES)),
+      ['kielletty lupa: android.permission.FOREGROUND_SERVICE_' + type], type);
+  }
+  // Puhemoottorin näkyvyys puuttuu -> kaatuu.
+  const noTts = WRAP(PERM('INTERNET') + PERM('RECORD_AUDIO') + QUERIES.replace(
+    '        <intent>\n            <action android:name="android.intent.action.TTS_SERVICE" />\n        </intent>\n', ''));
+  assert.deepEqual(problems(noTts), ['<queries><intent><action> puuttuu: android.intent.action.TTS_SERVICE']);
+});
+
+test('MainActivity: AlarmPlugin puuttuu tai rekisteröidään super.onCreaten jälkeen -> kaatuu', () => {
+  assert.deepEqual(problems(GOOD, GOOD_MAIN.replace('registerPlugin(AlarmPlugin.class);\n', '')),
+    ['MainActivity ei rekisteröi AlarmPluginia ennen super.onCreatea']);
+  const late = GOOD_MAIN.replace('        registerPlugin(AlarmPlugin.class);\n', '')
+    .replace('super.onCreate(s);', 'super.onCreate(s);\n        registerPlugin(AlarmPlugin.class);');
+  assert.equal(registersAlarmPlugin(late), false);
+  assert.equal(registersSpeechPlugin(late), true);
+  assert.equal(registersPlugin(GOOD_MAIN, 'Alarm.*'), false, 'luokan nimi ei ole säännöllinen lauseke');
 });
 
 test('MainActivity: rekisteröinti puuttuu, on kommentissa tai super.onCreaten jälkeen -> kaatuu', () => {

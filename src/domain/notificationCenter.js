@@ -139,9 +139,37 @@ const ACTIONS_BY_KIND = Object.freeze({
 });
 
 /** Toiminnot, jotka tälle merkinnälle ovat mielekkäitä. */
-export function actionsFor(notice) {
+/** Muistutuksesta syntyvät lajit: niiden toiminnot kohdistuvat muistutukseen. */
+const REMINDER_KINDS = Object.freeze([NOTICE_KIND.REMINDER, NOTICE_KIND.OVERDUE]);
+
+/**
+ * Muistutusmerkinnän muistutuksen tunniste, tai null.
+ *
+ * Merkinnässä ei ole omaa saraketta muistutukselle: `targetId` on
+ * muistutuksen KOHDE (esim. tehtävä), ei muistutus. Muistutus on avaimen
+ * ensimmäinen osa (reminder.occurrenceKey: "<muistutus>|<porras>|<päivä>|<min>").
+ * Tunniste kelpaa vain, jos sellainen muistutus on olemassa: muu avain
+ * (lähtö, ilta, rytmi) ei koskaan osu muistutukseen.
+ */
+export function reminderIdOfNotice(notice, reminders) {
+  if (!notice || !REMINDER_KINDS.includes(notice.kind) || typeof notice.key !== 'string') return null;
+  const id = notice.key.split('|')[0];
+  if (!id || !Array.isArray(reminders)) return null;
+  return reminders.some(reminder => reminder && reminder.id === id) ? id : null;
+}
+
+/**
+ * @param {object} notice
+ * @param {{hasReminder?: boolean}} [options] muistutuslajille: onko takana
+ *   oikea muistutus. Ilman sitä "Torkuta" ja "Hoidettu" eivät tekisi mitään,
+ *   joten niitä ei tarjota.
+ */
+export function actionsFor(notice, { hasReminder } = {}) {
   if (!notice) return [];
-  const actions = ACTIONS_BY_KIND[notice.kind] || [NOTICE_ACTION.DISMISS];
+  let actions = ACTIONS_BY_KIND[notice.kind] || [NOTICE_ACTION.DISMISS];
+  if (hasReminder === false && REMINDER_KINDS.includes(notice.kind)) {
+    actions = actions.filter(action => action !== NOTICE_ACTION.SNOOZE && action !== NOTICE_ACTION.COMPLETE);
+  }
 
   // Käsitellylle ei tarjota toimintoja uudelleen — paitsi avaamista,
   // joka on aina harmiton.

@@ -18,6 +18,7 @@
 //   seed=legacy    siemen (tools/e2e/seeds.mjs); oletus tyhjä kanta
 //   clock=ISO      kellon alkuhetki (paikallinen aika), esim. keskiviikko 10.00
 //   gates=J        J-portit (ajaja tarjoilee import mapin); oletus haaran omat
+//   gates=K        K-portit, kaikki portit auki (arjen E2E, run-daily-life-e2e.mjs)
 //   onboarding=skip  ohita ensikäytön opastus käynnistyksessä
 // reset, seed ja clock poistetaan osoitteesta heti: uudelleenlataus ei nollaa.
 //
@@ -150,6 +151,10 @@ async function boot() {
   };
   if (gates.mode === 'J' && !(gates.tables.lifeAreas && gates.tables.runningTimers && gates.columns.ALIGNMENT_REALITY_FIELDS)) {
     throw new Error('J-portit eivät tulleet voimaan (import map)');
+  }
+  // Aalto K avaa kaikki portit: jokainen taulu- ja sarakeportti auki.
+  if (gates.mode === 'K' && !(Object.values(gates.tables).every(Boolean) && Object.values(gates.columns).every(Boolean))) {
+    throw new Error('K-portit eivät tulleet voimaan (import map)');
   }
 
   // OIKEA KÄYNNISTYS.

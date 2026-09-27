@@ -90,7 +90,7 @@ ollut julkaisupäätös.
 
 ### Julkaisujunan varaamat numerot
 
-<!-- LINEAGE-CHECK: origin/main sha=cf259d0ef755f7e875cc9cd9c15405eba632e408 cache=v16 -->
+<!-- LINEAGE-CHECK: origin/main sha=2c8e230f8864ce0df1529718fb17ae265fb5d82b cache=v19 -->
 
 `tests/production-lineage.test.mjs` lukee edellisen rivin ja vertaa sitä
 siihen, mitä `origin/main` PAIKALLISESTI (ei verkosta) on juuri nyt
@@ -108,14 +108,15 @@ kertoo deployn jälkeen, että rivi kannattaa päivittää.
 | Perustila | `v13` | valmis, ei deployattu |
 | A | `v14` | **deployattu** (`703c28f`) |
 | B | `v15` | **deployattu** (`ddfc356`) |
-| C | `v16` | **deployattu** (`cf259d0`) — tuotannon nykytila, EI VIELÄ hyväksytty käyttäjän toimesta |
-| D | `v17` | valmis, ei deployattu — commitoitu `release/activation-0003-0008`-haaraan (`091e73c`) |
-| E | `v18` | valmis, ei deployattu — sama haara (`2b947cc`), haaran kärki `86c4325` |
-| F | `v19` | estetty (migraatio 0009 ajamatta) |
+| C | `v16` | **deployattu** (`cf259d0`) — AUTOMATED_TECHNICAL_ACCEPTANCE; käyttötodennus LIVE_USE_VALIDATION_PENDING |
+| D | `v17` | **deployattu** (`091e73c`, 2026-09-26, omistajan "hyväksyn D") — AUTOMATED_TECHNICAL_ACCEPTANCE, käyttötodennus LIVE_USE_VALIDATION_PENDING |
+| E | `v18` | **deployattu** (`86c4325`, aaltocommit `2b947cc`, 2026-09-26, omistajan "hyväksyn E") — AUTOMATED_TECHNICAL_ACCEPTANCE, käyttötodennus LIVE_USE_VALIDATION_PENDING |
+| F | `v19` | **deployattu** (`2c8e230`, aaltocommit `e05c54b`, 2026-09-26; migraatio 0009 ajettu, verify_0009 34/34, omistajan "hyväksyn 0009/F") — tuotannon nykytila; AUTOMATED_TECHNICAL_ACCEPTANCE, käyttötodennus LIVE_USE_VALIDATION_PENDING |
 | G | `v20` | estetty (migraatio 0010 ajamatta) |
 | H | `v21` | estetty (migraatio 0011 ajamatta) |
 | I | `v22` | estetty (migraatio 0012 ajamatta) |
 | J | `v23` | estetty (migraatio 0013 ajamatta; riippuu aallosta I) |
+| K | `v24` | estetty (migraatio 0014 ajamatta — `supabase/migrations/0014_daily_life.sql — EI AJETTU`; riippuu aallosta J; näkymät rakenteilla) |
 
 **Aalto C:n deployaus EI ole sama asia kuin sen hyväksyntä.** Rivi
 yllä kertoo vain, mitä `origin/main` sisältää -- ei sitä, että Panu
@@ -181,7 +182,7 @@ ohjaa ajantasaisen tiedon luo.
 ### 1. Numerot on jo jaettu, mutta tuotanto on ohittanut osan niistä
 
 Kun tämä kohta kirjoitettiin, tuotanto oli `v15` (aalto B; nyt tuotannossa on
-aalto C, ks. LINEAGE-CHECK yllä). Aallot C–E ovat
+aalto F, ks. LINEAGE-CHECK yllä). Aallot C–E ovat
 `v16`–`v18` eikä niitä ole deployattu. Numerot siis **varaavat
 paikkoja**, joita kukaan ei ole vielä käyttänyt — ja tämä haara
 sanoo `v13`, joka on jo menneisyyttä.
@@ -313,14 +314,15 @@ yllä on TOSI. Linja on lineaarinen, ei haarautunut.
 
 ```
 Aalto B  v15  (deployattu ddfc356)
-  -> C  v16   routines + routineExceptions          (DEPLOYATTU cf259d0 = origin/main, ks. LINEAGE-CHECK)
-    -> D  v17   recurringExpenses + savingsGoals + bills  (lukittu, ei deployattu)
-      -> E  v18   aiAudit                            (lukittu, ei deployattu)
-        -> F  v19   Talous 2.0 -- migraatio 0009
+  -> C  v16   routines + routineExceptions          (DEPLOYATTU cf259d0)
+    -> D  v17   recurringExpenses + savingsGoals + bills  (DEPLOYATTU 091e73c 2026-09-26)
+      -> E  v18   aiAudit                            (DEPLOYATTU 86c4325 2026-09-26)
+        -> F  v19   Talous 2.0 -- migraatio 0009     (0009 AJETTU; DEPLOYATTU 2c8e230 = origin/main 2026-09-26, ks. LINEAGE-CHECK)
           -> G  v20   Tavoitteesta tekemiseksi -- migraatio 0010
             -> H  v21   Henkilökohtainen avustaja -- migraatio 0011
               -> I  v22   Suunta (Life Alignment) -- migraatio 0012
                 -> J  v23   Suunta 2: ajastin ja kuormittavuus -- migraatio 0013
+                  -> K  v24   Arjen käyttöjärjestelmä -- migraatio 0014
 ```
 
 **Feature-haarat EIVÄT ole tuotantojulkaisulinjan luotettava kuva.**
@@ -370,7 +372,14 @@ Migraatioita EI koskaan pakata samaan tuotantoikkunaan/transaktioon:
    tauluihin se ei koske; sarakkeilla on oma portti
    `ALIGNMENT_REALITY_FIELDS`.
 
-Kukaan ei saa niputtaa 0009+0010+0011+0012+0013 yhteen tuotantoajoon. Jokainen
+6. **0014** (Arjen käyttöjärjestelmä, aalto K, `v24`) luo kymmenen uutta
+   taulua eikä muuta yhtäkään olemassa olevaa taulua eikä tuo
+   sarakeportteja. Se RIIPPUU 0013:sta (`verify_0013.sql` = 0 poikkeavaa
+   ennen sitä). Riski on matala: vain uusia tyhjiä tauluja, joten tuore
+   varmuuskopio ei ole pakollinen. Este: `0014_daily_life.sql — EI AJETTU`
+   ja näkymät rakenteilla (aalto K ESTETTY).
+
+Kukaan ei saa niputtaa 0009+0010+0011+0012+0013+0014 yhteen tuotantoajoon. Jokainen
 saa oman `supabase/verify/verify_00XX.sql`-todennuksensa ja oman
 `docs/acceptance/WAVE-*.md`-hyväksyntäpakettinsa.
 
@@ -401,8 +410,8 @@ merkittyinä ei-tuotannoksi, pushaamatta mihinkään.
 > (ja työpuut `.claude/worktrees/mv-wave-f/g/h`, jotka osoittavat
 > `-candidate-v2`-haaroihin) EIVÄT ole nykyisiä ehdokkaita. Nykyiset
 > deploykohteet ovat junan lukossa `docs/activation/release-train-c-j.json`
-> (C `cf259d0`, D `091e73c`, E `86c4325`, F–J `rehearsal/wave-*-v3`/`-v1`), ja
-> H, I ja J leikataan vielä uudelleen (ks. "Lukko ja orkestroija" alla).
+> (C `cf259d0`, D `091e73c`, E `86c4325` ja F v4 `2c8e230` — nämä neljä
+> tuotannossa —, G v5, H v5, I v3 ja J v2; ks. "Lukko ja orkestroija" alla).
 
 Kolme paikallista haaraa, EI pushattu minnekaan, EI deployattu, EI
 lisätty `origin`iin. Jokainen on `origin/main`in (`ddfc356`, v15, Aalto

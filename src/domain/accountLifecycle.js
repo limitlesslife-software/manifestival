@@ -69,7 +69,17 @@ export const ACCOUNT_DATA_MAP = Object.freeze({
   timeEntries: { table: 'time_entries', ownerColumn: 'user_id' },
   alignmentReviews: { table: 'alignment_reviews', ownerColumn: 'user_id' },
   alignmentItemSettings: { table: 'alignment_item_settings', ownerColumn: 'user_id' },
-  runningTimers: { table: 'running_timers', ownerColumn: 'user_id' }
+  runningTimers: { table: 'running_timers', ownerColumn: 'user_id' },
+  savedPlaces: { table: 'saved_places', ownerColumn: 'user_id' },
+  placeAliases: { table: 'place_aliases', ownerColumn: 'user_id' },
+  calendarEvents: { table: 'calendar_events', ownerColumn: 'user_id' },
+  commuteObservations: { table: 'commute_observations', ownerColumn: 'user_id' },
+  lifeSettings: { table: 'life_settings', ownerColumn: 'user_id' },
+  sleepLogs: { table: 'sleep_logs', ownerColumn: 'user_id' },
+  habitPlans: { table: 'habit_plans', ownerColumn: 'user_id' },
+  habitEvents: { table: 'habit_events', ownerColumn: 'user_id' },
+  exerciseSessions: { table: 'exercise_sessions', ownerColumn: 'user_id' },
+  wellbeingCheckins: { table: 'wellbeing_checkins', ownerColumn: 'user_id' }
 });
 
 /**
@@ -103,7 +113,17 @@ export const ACCOUNT_DOMAIN_LABELS = Object.freeze({
   timeEntries: 'Kirjattu aika',
   alignmentReviews: 'Viikkokatsaukset',
   alignmentItemSettings: 'Kuormittavuus- ja Suunta-asetukset',
-  runningTimers: 'Käynnissä oleva ajastin'
+  runningTimers: 'Käynnissä oleva ajastin',
+  savedPlaces: 'Tallennetut paikat',
+  placeAliases: 'Paikkojen lisänimet',
+  calendarEvents: 'Kalenterin menot',
+  commuteObservations: 'Kirjatut matka-ajat',
+  lifeSettings: 'Arjen asetukset',
+  sleepLogs: 'Unikirjaukset',
+  habitPlans: 'Tapojen muutossuunnitelmat',
+  habitEvents: 'Tapojen kirjaukset',
+  exerciseSessions: 'Liikuntakerrat',
+  wellbeingCheckins: 'Motivaatio ja hallinnan tunne'
 });
 
 /** Kokoelman käyttäjälle näytettävä nimi. Tuntematon nimi näytetään sellaisenaan. */

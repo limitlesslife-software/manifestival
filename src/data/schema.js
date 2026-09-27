@@ -73,26 +73,26 @@ export function taskColumns(isOpen = columnGateOpen) {
  */
 export const TABLES = Object.freeze({
   /** Migraatio 0003 */
-  routines: true,
-  routineExceptions: true,
+  routines: false,
+  routineExceptions: false,
   /** Migraatio 0004 */
-  goals: true,
-  projects: true,
+  goals: false,
+  projects: false,
   /** Migraatio 0005 */
-  notificationPreferences: true,
+  notificationPreferences: false,
   /** Migraatio 0006 */
-  wellbeing: true,
+  wellbeing: false,
   /** Migraatio 0007 */
-  bills: true,
-  recurringExpenses: true,
-  savingsGoals: true,
+  bills: false,
+  recurringExpenses: false,
+  savingsGoals: false,
   /** Migraatio 0008 */
-  aiAudit: true,
+  aiAudit: false,
   /** Migraatio 0009 — EI AJETTU. Ks. supabase/migrations/0009_finance_2.sql. */
-  transactions: true,
-  investments: true,
+  transactions: false,
+  investments: false,
   /** Migraatio 0010 — EI AJETTU. Ks. supabase/migrations/0010_goal_to_action.sql. */
-  milestones: true,
+  milestones: false,
   /**
    * Migraatio 0011 — EI AJETTU.
    * Ks. supabase/migrations/0011_personal_assistant.sql.
@@ -101,11 +101,11 @@ export const TABLES = Object.freeze({
    * 0011 ei muuta yhtäkään olemassa olevaa taulua — se on siksi
    * selvästi vähemmän vaarallinen, ja se on syytä sanoa ääneen.
    */
-  inboxItems: true,
-  reminders: true,
-  notices: true,
-  travelPlans: true,
-  locationRules: true,
+  inboxItems: false,
+  reminders: false,
+  notices: false,
+  travelPlans: false,
+  locationRules: false,
   /**
    * Migraatio 0012 — EI AJETTU.
    * Ks. supabase/migrations/0012_life_alignment.sql.
@@ -114,10 +114,10 @@ export const TABLES = Object.freeze({
    * elämänalueet, kapasiteetti, kirjattu aika ja katsaukset elävät
    * istunnon muistissa, ja Suunta-näkymä kertoo sen käyttäjälle.
    */
-  lifeAreas: true,
-  weeklyCapacities: true,
-  timeEntries: true,
-  alignmentReviews: true,
+  lifeAreas: false,
+  weeklyCapacities: false,
+  timeEntries: false,
+  alignmentReviews: false,
   /**
    * Migraatio 0013 — EI AJETTU. Riippuu 0012:sta.
    * Ks. supabase/migrations/0013_alignment_reality.sql.
@@ -128,8 +128,28 @@ export const TABLES = Object.freeze({
    * ajastin säilyy laitteella (src/data/timerStore.js), asetukset
    * istunnon muistissa.
    */
-  runningTimers: true,
-  alignmentItemSettings: true
+  runningTimers: false,
+  alignmentItemSettings: false,
+  /**
+   * Migraatio 0014 — EI AJETTU. Riippuu 0013:sta.
+   * Ks. supabase/migrations/0014_daily_life.sql.
+   *
+   * Arjen käyttöjärjestelmä: kymmenen UUTTA TAULUA, ei yhtään muutosta
+   * olemassa olevaan tauluun eikä yhtään sarakeporttia. Kaikki kymmenen
+   * aukeavat yhdessä aallossa K. Portin ollessa kiinni paikat, menot,
+   * asetukset, uni-, tapa- ja liikuntakirjaukset elävät istunnon
+   * muistissa, ja käyttöliittymä kertoo sen käyttäjälle.
+   */
+  savedPlaces: false,
+  placeAliases: false,
+  calendarEvents: false,
+  commuteObservations: false,
+  lifeSettings: false,
+  sleepLogs: false,
+  habitPlans: false,
+  habitEvents: false,
+  exerciseSessions: false,
+  wellbeingCheckins: false
 });
 
 /**
@@ -149,7 +169,7 @@ export const TABLES = Object.freeze({
  *
  * Tämä saa mennä arvoon true VASTA kun migraatio 0009 on ajettu.
  */
-export const BILL_PAYMENT_FIELDS = true;
+export const BILL_PAYMENT_FIELDS = false;
 
 /**
  * Onko migraatio 0010 ajettu tavoitteiden ja tehtävien osalta?
@@ -175,7 +195,7 @@ export const BILL_PAYMENT_FIELDS = true;
  *
  * Tämä saa mennä arvoon true VASTA kun migraatio 0010 on ajettu.
  */
-export const GOAL_PLANNING_FIELDS = true;
+export const GOAL_PLANNING_FIELDS = false;
 
 /**
  * Onko `maintenance` sallittu tavoitteen tilaksi?
@@ -189,7 +209,7 @@ export const GOAL_PLANNING_FIELDS = true;
  * paikallaan. Sarakkeen puuttuminen ja arvon kieltäminen ovat eri
  * vikoja, ja niillä on eri oire.
  */
-export const GOAL_MAINTENANCE_MODE = true;
+export const GOAL_MAINTENANCE_MODE = false;
 
 /**
  * Onko migraatio 0012 ajettu `goals.life_area_id`-sarakkeen osalta?
@@ -203,7 +223,7 @@ export const GOAL_MAINTENANCE_MODE = true;
  * false = tavoitteen elämänalue elää istunnon muistissa.
  * true  = se tallentuu. Vasta kun 0012 on ajettu ja varmistettu.
  */
-export const GOAL_LIFE_AREA_FIELD = true;
+export const GOAL_LIFE_AREA_FIELD = false;
 
 /**
  * Onko migraatio 0013 ajettu 0012:n taulujen uusien sarakkeiden osalta?
@@ -225,7 +245,7 @@ export const GOAL_LIFE_AREA_FIELD = true;
  *
  * Tämä saa mennä arvoon true VASTA kun migraatio 0013 on ajettu.
  */
-export const ALIGNMENT_REALITY_FIELDS = true;
+export const ALIGNMENT_REALITY_FIELDS = false;
 
 /** Onko taulu käytettävissä tietokannassa? */
 export function hasTable(name) {
@@ -495,7 +515,47 @@ export const SCHEMA_REQUIREMENTS = Object.freeze([
   req({ id: '0013.weekly_capacities', migration: '0013', kind: 'column', table: 'weekly_capacities',
     gate: 'ALIGNMENT_REALITY_FIELDS', columns: ['energy_budget_minutes'] }),
   req({ id: '0013.alignment_reviews', migration: '0013', kind: 'column', table: 'alignment_reviews',
-    gate: 'ALIGNMENT_REALITY_FIELDS', columns: ['policy_version', 'reflection_answers'] })
+    gate: 'ALIGNMENT_REALITY_FIELDS', columns: ['policy_version', 'reflection_answers'] }),
+
+  // 0014: kymmenen uutta taulua, ei sarakeportteja. Sarakkeet = rivi-
+  // muunnoksen avaimet (src/data/collectionsRepo.js).
+  req({ id: '0014.saved_places', migration: '0014', kind: 'table', table: 'saved_places',
+    tableKey: 'savedPlaces',
+    columns: ['id', 'name', 'address', 'provider_place_id', 'area', 'travel_mode', 'usual_travel_minutes',
+      'preparation_minutes', 'arrival_buffer_minutes', 'overhead_minutes', 'use_learned', 'note'] }),
+  req({ id: '0014.place_aliases', migration: '0014', kind: 'table', table: 'place_aliases',
+    tableKey: 'placeAliases', columns: ['id', 'place_id', 'alias', 'confirmations', 'last_confirmed_at'] }),
+  req({ id: '0014.calendar_events', migration: '0014', kind: 'table', table: 'calendar_events',
+    tableKey: 'calendarEvents',
+    columns: ['id', 'title', 'event_date', 'start_time', 'end_time', 'duration_minutes', 'all_day', 'category',
+      'location_text', 'place_id', 'travel_mode', 'travel_minutes', 'preparation_minutes',
+      'arrival_buffer_minutes', 'overhead_minutes', 'recurrence_weekdays', 'recurrence_until', 'skip_dates',
+      'goal_id', 'notes'] }),
+  req({ id: '0014.commute_observations', migration: '0014', kind: 'table', table: 'commute_observations',
+    tableKey: 'commuteObservations',
+    columns: ['id', 'place_id', 'event_id', 'observed_on', 'weekday', 'planned_departure', 'actual_departure',
+      'arrival_at', 'travel_minutes', 'provider_minutes', 'preparation_minutes', 'overhead_minutes',
+      'arrival_result', 'source'] }),
+  req({ id: '0014.life_settings', migration: '0014', kind: 'table', table: 'life_settings',
+    tableKey: 'lifeSettings',
+    columns: ['id', 'weekend_wake_shift_max_minutes', 'weekend_bed_shift_max_minutes', 'wind_down_minutes',
+      'bedtime_target', 'arrival_buffer_minutes', 'guidance_style', 'speech_enabled', 'morning_brief_enabled',
+      'reminder_offset_minutes', 'digest_enabled', 'digest_time', 'sleep_affects_capacity',
+      'hourly_value_minor', 'currency', 'alarm', 'morning_routine', 'meal_rhythm', 'delivery'] }),
+  req({ id: '0014.sleep_logs', migration: '0014', kind: 'table', table: 'sleep_logs', tableKey: 'sleepLogs',
+    columns: ['id', 'wake_date', 'planned_bedtime', 'actual_bedtime', 'planned_wake', 'actual_wake', 'source',
+      'kind', 'note'] }),
+  req({ id: '0014.habit_plans', migration: '0014', kind: 'table', table: 'habit_plans', tableKey: 'habitPlans',
+    columns: ['id', 'kind', 'name', 'min_interval_minutes', 'daily_target', 'baseline_per_day', 'steps',
+      'reminder_delivery', 'unit_cost_minor', 'active'] }),
+  req({ id: '0014.habit_events', migration: '0014', kind: 'table', table: 'habit_events', tableKey: 'habitEvents',
+    columns: ['id', 'plan_id', 'occurred_at', 'action', 'note'] }),
+  req({ id: '0014.exercise_sessions', migration: '0014', kind: 'table', table: 'exercise_sessions',
+    tableKey: 'exerciseSessions',
+    columns: ['id', 'session_date', 'kind', 'planned_minutes', 'actual_minutes', 'intensity', 'recovery_demand',
+      'goal_id', 'note'] }),
+  req({ id: '0014.wellbeing_checkins', migration: '0014', kind: 'table', table: 'wellbeing_checkins',
+    tableKey: 'wellbeingCheckins', columns: ['id', 'date', 'motivation', 'control'] })
 ]);
 
 function req(spec) {

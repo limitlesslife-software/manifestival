@@ -54,11 +54,13 @@ import { normalizeTask } from '../domain/task.js';
 import { normalizeRoutine } from '../domain/routine.js';
 import { normalizeMilestone } from '../domain/milestone.js';
 import { horizonCapacity, horizonEnd } from '../domain/capacity.js';
+import { calendarForPlanning } from './calendarPlan.js';
 import {
   goalsRepo, projectsRepo, milestonesRepo, routinesRepo
 } from '../data/collectionsRepo.js';
 import * as tasksRepo from '../data/tasksRepo.js';
 import { currentAccessToken } from './auth.js';
+import { sessionSnapshot, isSameSession } from '../data/session.js';
 import { apiUrl } from '../platform/index.js';
 import { API } from '../data/config.js';
 import {
@@ -95,6 +97,9 @@ export function isAlreadyCommitted(key) {
 // EHDOTUKSEN PYYTÄMINEN
 // =====================================================================
 
+/** Istunto vaihtui kesken pyynnön: tulos kuului edelliselle käyttäjälle. */
+const DISCARDED = Object.freeze({ ok: false, discarded: true });
+
 /**
  * Pyydä suunnitelmaehdotus vapaasta tekstistä.
  *
@@ -108,8 +113,16 @@ export function isAlreadyCommitted(key) {
  * @param {object} input
  * @param {string} input.goalText
  * @param {string} [input.goalId]  olemassa oleva tavoite (uudelleensuunnittelu)
+ * ISTUNTO OTETAAN TALTEEN ENNEN ODOTUSTA. Mallin vastaus kestää sekunteja,
+ * ja sinä aikana istunto voi päättyä (uloskirjautuminen toisessa
+ * välilehdessä, tokenin vanheneminen, tilinvaihto). Ilman tarkistusta
+ * A:n tavoite ("lopeta tupakointi") päätyisi B:n tarkistettavaksi — tai
+ * jäisi uloskirjautuneeseen tilaan odottamaan seuraavaa kirjautujaa — ja
+ * hyväksyntä tallentaisi sen B:n tilille. Vaihtunut istunto palauttaa
+ * `discarded: true` eikä virhettä: B:lle ei kuulu A:n pyynnön lopputulos.
+ *
  * @param {Function} [input.fetchImpl] testejä varten
- * @returns {Promise<{ok:boolean, plan?:object, error?:string}>}
+ * @returns {Promise<{ok:boolean, plan?:object, error?:string, discarded?:boolean}>}
  */
 export async function requestPlan({ goalText, goalId = null, fetchImpl } = {}) {
   const text = String(goalText ?? '').trim();
@@ -118,6 +131,7 @@ export async function requestPlan({ goalText, goalId = null, fetchImpl } = {}) {
   const doFetch = fetchImpl || (typeof fetch === 'function' ? fetch : null);
   if (!doFetch) return { ok: false, error: 'Verkkokutsu ei ole käytettävissä.' };
 
+  const startedIn = sessionSnapshot();
   const state = getState();
   const todayIso = fmtISO(todayMidnight());
 
@@ -125,13 +139,22 @@ export async function requestPlan({ goalText, goalId = null, fetchImpl } = {}) {
   //
   // Käyttäjän tehtävälista, muistiinpanot ja hyvinvointimerkinnät eivät
   // lähde ulos. Ks. `buildPlanningContext`.
+  //
+  // KALENTERI MUKAAN (§42). Menot, valmistautuminen, matka ja suojattu uni
+  // eivät ole vapaata aikaa: ilman niitä toistuva 9-16 meno näytti viikossa
+  // noin 26 h liikaa suunniteltavaa. Kalenteri samasta paikasta kuin muualla
+  // (calendarPlan.calendarForPlanning). Mallille lähtee edelleen vain luku.
+  const toIso = horizonEnd(todayIso, 28);
+  const calendar = calendarForPlanning(state, { from: todayIso, to: toIso, todayIso });
   const capacity = horizonCapacity({
     tasks: state.tasks,
     profile: state.profile,
     fromIso: todayIso,
-    toIso: horizonEnd(todayIso, 28),
+    toIso,
     routines: state.routines,
-    exceptions: state.routineExceptions
+    exceptions: state.routineExceptions,
+    events: calendar.events,
+    blocks: calendar.blocks
   });
 
   // SUUNNAN PALAUTE. Jos käyttäjä on itse sanonut ehtivänsä viikossa
@@ -151,6 +174,9 @@ export async function requestPlan({ goalText, goalId = null, fetchImpl } = {}) {
 
   try {
     const token = await currentAccessToken();
+    // Token voi jo olla seuraavan käyttäjän: A:n tavoitetekstiä ei lähetetä
+    // B:n tunnuksilla.
+    if (!isSameSession(startedIn)) return DISCARDED;
     if (!token) return { ok: false, error: 'Kirjaudu sisään ennen suunnittelua.' };
 
     const response = await doFetch(apiUrl(API.plan), {
@@ -171,6 +197,9 @@ export async function requestPlan({ goalText, goalId = null, fetchImpl } = {}) {
       })
     });
 
+    // Vaihtunut istunto ei näe edes A:n pyynnön virheilmoitusta.
+    if (!isSameSession(startedIn)) return DISCARDED;
+
     if (!response.ok) {
       const status = response.status;
       const message = status === 401 || status === 403
@@ -182,6 +211,7 @@ export async function requestPlan({ goalText, goalId = null, fetchImpl } = {}) {
     }
 
     const data = await response.json();
+    if (!isSameSession(startedIn)) return DISCARDED;
     const responseText = textFrom(data);
     if (!responseText) return { ok: false, error: 'Suunnitelmaa ei saatu.' };
 
@@ -196,6 +226,7 @@ export async function requestPlan({ goalText, goalId = null, fetchImpl } = {}) {
     setPendingPlan(parsed.plan);
     return { ok: true, plan: parsed.plan, rejectedFields: parsed.rejectedFields };
   } catch (cause) {
+    if (!isSameSession(startedIn)) return DISCARDED;
     logError(cause);
     return { ok: false, error: 'Suunnittelu ei onnistunut.' };
   }

@@ -7,11 +7,13 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
-        // Oma liitannainen rekisteroidaan ENNEN super.onCreatea: BridgeActivity
+        // Omat liitannaiset rekisteroidaan ENNEN super.onCreatea: BridgeActivity
         // rakentaa sillan onCreatessa, eika myohemmin lisatty liitannainen
         // paatyisi siihen lainkaan (window.Capacitor.Plugins.ManifestivalSpeech
-        // puuttuisi, ja puhe nakyisi "ei kaytettavissa" -tilassa).
+        // tai ManifestivalAlarm puuttuisi, ja ominaisuus nakyisi "ei
+        // kaytettavissa" -tilassa).
         registerPlugin(SpeechPlugin.class);
+        registerPlugin(AlarmPlugin.class);
         super.onCreate(savedInstanceState);
     }
 }

@@ -311,7 +311,10 @@ body.is-offline .offline-banner { display:block; }
 
 /* ---- Segmentoitu valinta (tehtävät / rutiinit) ---- */
 .segment { display:flex; gap:5px; background:var(--sage-soft); padding:4px; border-radius:13px; margin-bottom:16px; }
-.segment-btn { flex:1; appearance:none; -webkit-appearance:none; border:none; background:none; padding:9px; border-radius:9px; font-family:'Manrope',sans-serif; font-size:13px; font-weight:700; color:var(--text-2); cursor:pointer; }
+/* Osiopainike on näkymän päänavigointi (Kalenteri, Profiili, Tekeminen,
+ * Talous): kosketusalue vähintään 44 px. Pelkkä 9 px täyte ja rivi antoivat
+ * noin 34-36 px. */
+.segment-btn { flex:1; appearance:none; -webkit-appearance:none; border:none; background:none; padding:9px; min-height:44px; border-radius:9px; font-family:'Manrope',sans-serif; font-size:13px; font-weight:700; color:var(--text-2); cursor:pointer; }
 .segment-btn.active { background:var(--cream-card); color:var(--forest); }
 .segment-btn:focus-visible { outline:2px solid var(--gold); outline-offset:2px; }
 /* Kolmen osion segmentti (Talous). Nimet ovat pitkia suomeksi --
@@ -787,3 +790,254 @@ body.is-offline .offline-banner { display:block; }
   .screen { transition:none; }
   .toast { animation:none; }
 }
+/* ===== U4: Hyvinvointi ja Paikat (profiilin osiot) — alku ===== */
+/* Säiliöön piirrettävät osiot (src/app/views/wellbeingHub.js ja
+   placesSettings.js). Rivit, painikkeet ja lomakkeet käyttävät yhteisiä
+   luokkia (.assist-row, .assist-btn, .add-form); tässä vain osioiden omat
+   osat. Napautettavat vähintään 44 px, fokus kultaisella ääriviivalla,
+   tila myös tekstinä (ei pelkkä väri) eikä vaakavieritystä 360 px:llä. */
+.lh-hub { display:flex; flex-direction:column; min-width:0; }
+.lh-section { min-width:0; }
+.lh-heading:focus-visible { outline:2px solid var(--gold); outline-offset:2px; border-radius:6px; }
+.lh-list { list-style:none; margin:0 0 6px; padding:0; }
+.lh-row .assist-meta, .lh-row .assist-reason { overflow-wrap:anywhere; }
+.lh-field { min-width:0; }
+.lh-hint { font-size:11.5px; color:var(--text-2); line-height:1.5; margin-top:3px; }
+/* Virhe piirretään vain, kun se on olemassa: näkyy aina (.field-error on oletuksena piilossa). */
+.lh-error { display:block; margin-top:4px; }
+.lh-error:focus-visible { outline:2px solid var(--gold); outline-offset:2px; border-radius:6px; }
+.lh-unknown { color:var(--text-2); font-style:italic; }
+.lh-notice { margin-bottom:6px; }
+.lh-summary { background:var(--cream-card); border:1px solid var(--border); border-radius:14px; padding:10px 12px;
+  margin-bottom:10px; font-size:12.5px; line-height:1.55; color:var(--text-2); overflow-wrap:anywhere; }
+.lh-summary p + p, .lh-suggestion p + p { margin-top:4px; }
+.lh-summary strong { color:var(--forest); }
+.lh-sleep-note { margin-bottom:10px; }
+.lh-legend { font-size:11.5px; color:var(--text-2); line-height:1.5; margin:6px 0 4px; }
+/* Vointitaulukko: kuusi kapeaa saraketta mahtuu 328 px:iin; lyhenteet selitetään taulukon alla. */
+.lh-table-wrap { max-width:100%; overflow-x:auto; }
+.wbh-table { width:100%; border-collapse:collapse; table-layout:fixed; font-size:12.5px; color:var(--text-1);
+  background:var(--cream-card); border:1px solid var(--border); }
+.wbh-table th, .wbh-table td { padding:7px 2px; text-align:center; border-bottom:1px solid var(--border); }
+.wbh-table thead th { font-size:11px; font-weight:800; color:var(--text-2); }
+.wbh-table tbody th, .wbh-table tfoot th { width:72px; text-align:left; padding-left:8px; font-weight:700; color:var(--text-2); }
+.wbh-table tfoot th, .wbh-table tfoot td { font-weight:800; color:var(--forest); border-bottom:none; }
+.lh-chips { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px; }
+.lh-chip { min-height:44px; min-width:64px; }
+.lh-chip[aria-pressed="true"] { background:var(--forest); color:var(--cream); border-color:var(--forest); }
+.lh-chip:focus-visible { outline:2px solid var(--gold); outline-offset:2px; }
+.lh-inline { display:flex; flex-wrap:wrap; align-items:flex-end; gap:8px; margin-bottom:10px; }
+.lh-inline .lh-field { flex:1 1 140px; }
+.lh-inline input { font-family:'Manrope',sans-serif; font-size:13.5px; border:1px solid var(--border); border-radius:10px;
+  padding:9px 11px; min-height:44px; width:100%; max-width:100%; background:var(--cream-card); color:var(--text-1); }
+.lh-steps { border:1px solid var(--border); border-radius:12px; padding:8px 10px 10px; min-width:0; }
+.lh-steps legend { font-size:11px; font-weight:700; color:var(--text-2); padding:0 4px; }
+.lh-steps-list { list-style:none; margin:6px 0; padding:0; }
+.lh-step { display:flex; flex-wrap:wrap; align-items:flex-end; gap:6px; padding:6px 0; border-bottom:1px solid var(--border); }
+.lh-step .lh-field { flex:1 1 90px; }
+.lh-step .assist-btn { flex:0 0 auto; }
+.lh-subtitle { font-size:11px; font-weight:800; letter-spacing:.6px; text-transform:uppercase; color:var(--text-3); margin:10px 0 2px; }
+.lh-aliases { list-style:none; margin:0; padding:0; }
+.lh-aliases li { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:6px;
+  font-size:12.5px; color:var(--text-2); padding:2px 0; }
+.lh-aliases li span { min-width:0; overflow-wrap:anywhere; }
+.lh-learning { margin-top:4px; }
+/* Tapakirjaukset rivillä: oletuksena kiinni (tilanne on arkaluonteinen), poisto rivin lopussa. */
+.lh-recent { margin:6px 0 2px; font-size:12.5px; color:var(--text-2); }
+.lh-recent summary { min-height:44px; display:flex; align-items:center; cursor:pointer; font-weight:700; }
+.lh-recent summary:focus-visible { outline:2px solid var(--gold); outline-offset:2px; border-radius:6px; }
+.lh-events { list-style:none; margin:0; padding:0; }
+.lh-event { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:4px 6px;
+  padding:4px 0; border-bottom:1px solid var(--border); }
+.lh-event span { min-width:0; overflow-wrap:anywhere; }
+.lh-event .assist-reason { flex-basis:100%; }
+@media (max-width:380px) {
+  .wbh-table { font-size:11.5px; }
+  .wbh-table tbody th, .wbh-table tfoot th { width:60px; padding-left:6px; }
+  .lh-chip { min-width:56px; }
+}
+/* ===== U4 — loppu ===== */
+
+/* ===== U2: Profiilin osiot, Arki ja Ohjaus — alku ===== */
+/* Aamurutiinin vaiheet ja ateriat: yksi rivi = yksi kortti. Kentät
+ * pinotaan, jotta 360 px leveä puhelin ei vuoda sivusuunnassa. */
+.ds-list { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:10px; }
+.ds-row { display:flex; flex-direction:column; gap:8px; min-width:0; padding:10px; border:1px solid var(--border);
+  border-radius:12px; background:var(--cream); }
+.ds-row-title { font-size:12px; font-weight:700; color:var(--text-2); }
+.ds-row-actions { display:flex; flex-wrap:wrap; gap:6px; }
+.ds-row-actions .form-btn { flex:1 1 70px; }
+.ds-total { font-size:12px; font-weight:700; color:var(--text-2); }
+/* Herätyksen tila: teksti kertoo tilan (kyllä / ei / ei tiedossa), ei väri. */
+.ds-status-row { display:flex; flex-wrap:wrap; align-items:baseline; gap:2px 6px; font-size:12.5px; color:var(--text-2);
+  line-height:1.5; overflow-wrap:anywhere; }
+.ds-status-row strong { color:var(--forest); }
+.ds-fieldset { border:none; margin:0; padding:0; min-width:0; display:flex; flex-direction:column; gap:2px; }
+.ds-fieldset legend { padding:0; }
+@media (max-width:380px) {
+  .ds-row { padding:8px; }
+  .ds-row-actions .form-btn { flex-basis:60px; }
+}
+/* ===== U2 — loppu ===== */
+
+/* ===== U1: Kalenteri — alku ===== */
+/* Kalenteri-välilehti (screen-week): osiot Päivä / Viikko / Kuukausi,
+ * päivän aikataulu, kuukausiruudukko ja menolomake.
+ *
+ * Suojatut lohkot (valmistautuminen, matka, pysäköinti, etuaika,
+ * iltarauhoittuminen, uni) on himmennetty JA merkitty sanalla "suojattu":
+ * tila ei ole koskaan pelkkä väri. Kosketusalueet vähintään 44 px. */
+.cal-eyebrow { margin-bottom:10px; }
+.cal-segments { margin-bottom:12px; }
+.cal-nav { margin-bottom:8px; }
+.cal-nav-center { flex:1; min-width:0; text-align:center; }
+/* Viikon otsikko on pisin ("Viikko 40 · 28.9.–4.10."): hieman pienempi kirjasin pitää sen kahden nuolen välissä. */
+.cal-nav-center h1.title { font-size:21px; overflow-wrap:anywhere; }
+.cal-nav-center h1.title:focus-visible { outline:2px solid var(--gold); outline-offset:2px; border-radius:8px; }
+.cal-new { margin-top:4px; }
+.cal-notice { margin-bottom:10px; }
+
+.cal-list { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; }
+.cal-row { border-bottom:1px solid var(--border); border-left:3px solid transparent; padding:2px 0 2px 6px; }
+.cal-row-main { display:flex; align-items:flex-start; gap:10px; width:100%; min-height:44px; padding:8px 4px; text-align:left;
+  background:none; border:none; font-family:'Manrope',sans-serif; color:var(--text-1); }
+button.cal-row-main { appearance:none; -webkit-appearance:none; cursor:pointer; border-radius:10px; }
+button.cal-row-main:focus-visible { outline:2px solid var(--gold); outline-offset:2px; }
+.cal-row-time { flex:0 0 80px; font-size:12px; font-weight:700; color:var(--text-2); padding-top:1px; overflow-wrap:anywhere; }
+.cal-row-body { flex:1; min-width:0; display:flex; flex-direction:column; gap:2px; }
+.cal-row-title { font-size:14px; font-weight:600; color:var(--text-1); overflow-wrap:anywhere; }
+.cal-row-meta { font-size:11.5px; color:var(--text-2); overflow-wrap:anywhere; }
+.cal-kind { font-weight:700; color:var(--forest); }
+.cal-protected { font-style:italic; }
+/* Meno erottuu reunaviivalla; laji kerrotaan silti tekstinä ("Meno"). */
+.cal-row-event { border-left-color:var(--gold); }
+.cal-row.is-protected { border-bottom-style:dashed; }
+.cal-row.is-protected .cal-row-title { font-weight:500; color:var(--text-2); }
+.cal-row.is-protected .cal-kind { color:var(--text-2); }
+.cal-row.is-done .cal-row-title { text-decoration:line-through; color:var(--text-3); }
+.cal-departure { margin:0 4px 0 94px; font-size:12.5px; font-weight:700; color:var(--forest); overflow-wrap:anywhere; }
+.cal-departure-detail { margin:2px 4px 8px 94px; font-size:11.5px; color:var(--text-2); overflow-wrap:anywhere; }
+.cal-departure.is-unknown { display:flex; flex-wrap:wrap; align-items:center; gap:2px; color:var(--clay-ink); font-weight:600; margin-bottom:6px; }
+.cal-inline-btn { appearance:none; -webkit-appearance:none; background:none; border:none; min-height:44px; padding:0 6px;
+  font-family:'Manrope',sans-serif; font-size:12.5px; font-weight:700; color:var(--forest); text-decoration:underline; cursor:pointer; }
+.cal-inline-btn:focus-visible { outline:2px solid var(--gold); outline-offset:2px; border-radius:8px; }
+.cal-route { margin:0 4px 6px 88px; }
+a.cal-inline-btn { display:inline-flex; align-items:center; }
+.cal-empty { padding:24px 14px; }
+.cal-week-empty { margin:10px 0 4px; }
+
+/* Kuukausi: 7 saraketta. 360 px näytöllä sarake on noin 45 px leveä. */
+.cal-month { display:flex; flex-direction:column; gap:3px; margin-top:6px; }
+.cal-month-head, .cal-month-row { display:grid; grid-template-columns:repeat(7, minmax(0, 1fr)); gap:3px; }
+.cal-month-head span { text-align:center; font-size:10.5px; font-weight:800; text-transform:uppercase; color:var(--text-3); padding:2px 0; }
+.cal-day { appearance:none; -webkit-appearance:none; min-width:0; min-height:48px; display:flex; flex-direction:column; align-items:center;
+  justify-content:flex-start; gap:2px; padding:5px 0 4px; background:var(--cream-card); border:1px solid var(--border); border-radius:10px;
+  font-family:'Manrope',sans-serif; color:var(--text-1); cursor:pointer; }
+.cal-day:focus-visible { outline:2px solid var(--gold); outline-offset:2px; }
+.cal-day-num { width:26px; height:26px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:700; }
+.cal-day-count { min-height:13px; font-size:10.5px; font-weight:800; color:var(--sage-ink); }
+.cal-day.is-weekend .cal-day-num { color:var(--text-2); }
+.cal-day.is-outside { background:transparent; color:var(--text-3); }
+.cal-day.is-outside .cal-day-num { color:var(--text-3); }
+.cal-day.is-today .cal-day-num { background:var(--forest); color:var(--cream); }
+.cal-day.is-selected { border:2px solid var(--forest); }
+.cal-legend { margin-top:10px; }
+
+/* Menolomake */
+.cal-form .form-row > .checkbox-row { flex:0 1 auto; align-self:flex-end; }
+.cal-repeat { border:none; margin:0; padding:0; min-width:0; display:flex; flex-direction:column; gap:6px; }
+.cal-repeat legend { padding:0; margin-bottom:6px; }
+/* Viikonpäivävalinta on kosketusalue: vähintään 44 × 44 px myös tässä
+ * lomakkeessa (ei 38 tai kapealla 33 px leveä). Rivi rivittyy, kun seitsemän
+ * ruutua eivät mahdu kapealle näytölle. */
+.cal-repeat .weekday-chip { min-height:44px; min-width:44px; }
+.cal-place-hint { margin-top:4px; }
+
+@media (max-width:380px) {
+  .cal-nav-center h1.title { font-size:19px; }
+  .cal-row-time { flex-basis:64px; font-size:11.5px; }
+  .cal-departure, .cal-departure-detail, .cal-route { margin-left:4px; }
+  .cal-month-head, .cal-month-row { gap:2px; }
+  .cal-day-num { width:24px; height:24px; font-size:12px; }
+}
+/* ===== U1 — loppu ===== */
+
+/* ===== U3: Tänään-näkymän arjen kortit — alku ===== */
+/* Seuraava lähtö, aamu, tavat, keskeytykset, avoimet asiat ja huominen
+   (src/app/views/todayDailyLife.js) sekä aikajanan menot ja suojatut
+   lohkot (today.js). Rivit ja painikkeet käyttävät yhteisiä luokkia
+   (.assist-row, .assist-btn, .section-title); tässä vain korttien omat
+   osat. Tila kerrotaan aina tekstinä, ei pelkkänä värinä; napautettavat
+   vähintään 44 px; ei vaakavieritystä 360 px:llä. */
+.td-card { min-width:0; }
+.td-card .section-title:focus-visible, .td-subtitle:focus-visible { outline:2px solid var(--gold); outline-offset:2px; border-radius:6px; }
+.td-phase { font-size:15px; font-weight:800; color:var(--forest); line-height:1.4; margin-bottom:4px; overflow-wrap:anywhere; }
+.td-phase.is-late { color:var(--clay-ink); }
+.td-lines { list-style:none; margin:8px 0 0; padding:0; }
+.td-lines li { font-size:12.5px; color:var(--text-2); line-height:1.55; padding:2px 0; overflow-wrap:anywhere; }
+.td-list { list-style:none; margin:0; padding:0; }
+.td-note { font-size:12.5px; color:var(--text-1); line-height:1.55; background:var(--sage-soft); border-radius:12px;
+  padding:9px 12px; margin:8px 0; overflow-wrap:anywhere; }
+.td-subtitle { font-size:12px; font-weight:800; color:var(--text-2); margin:10px 0 4px; overflow-wrap:anywhere; }
+.td-steps { margin:8px 0 6px; padding-left:20px; }
+.td-steps li { font-size:12.5px; color:var(--text-1); line-height:1.6; overflow-wrap:anywhere; }
+.td-step-time { font-weight:700; color:var(--forest); margin-right:4px; }
+.td-tag { display:inline-block; font-size:10.5px; font-weight:700; color:var(--path-ink); border:1px solid var(--border);
+  border-radius:7px; padding:0 6px; margin-left:4px; }
+.td-facts { display:flex; flex-direction:column; gap:4px; margin:0; }
+.td-fact { display:flex; flex-wrap:wrap; justify-content:space-between; gap:2px 10px; font-size:13px; line-height:1.5; }
+.td-fact dt { color:var(--text-2); font-weight:700; }
+.td-fact dd { margin:0; color:var(--text-1); font-weight:700; min-width:0; overflow-wrap:anywhere; }
+.td-link { display:inline-flex; align-items:center; justify-content:center; text-decoration:none; }
+.td-proposal, .td-picker { margin-top:10px; padding-top:8px; border-top:1px dashed var(--border); min-width:0; }
+.td-changes li { font-size:12.5px; color:var(--text-1); line-height:1.5; padding:5px 0; border-bottom:1px solid var(--border); overflow-wrap:anywhere; }
+.td-reason { display:block; font-size:12px; color:var(--text-2); margin-top:2px; }
+.td-when { font-size:13px; font-weight:700; color:var(--forest); }
+.td-alt { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:6px; padding:6px 0;
+  border-bottom:1px solid var(--border); }
+.td-alt .hint { flex-basis:100%; }
+.td-choices .assist-btn[aria-pressed="true"] { background:var(--forest); color:var(--cream); border-color:var(--forest); }
+.td-interrupt-actions .assist-btn { flex:1 1 96px; }
+/* Aikajana: menot kiinteinä, suojatut lohkot himmeinä ja merkittyinä. */
+.kind-tag { font-size:9px; font-weight:800; letter-spacing:.4px; text-transform:uppercase; color:var(--path-ink);
+  border:1px solid var(--path); border-radius:8px; padding:1px 5px; margin-left:4px; }
+.event-dot { width:22px; height:22px; border-radius:6px; border:1.6px solid var(--forest); flex-shrink:0; display:inline-block; }
+.block-dot { width:22px; height:22px; border-radius:50%; border:1.6px dotted var(--path); flex-shrink:0; display:inline-block; }
+.t-item.t-block { opacity:.72; border-bottom:1px dashed var(--border); }
+.t-item.t-block .t-title { font-weight:600; color:var(--text-2); }
+.t-item.t-event .t-title { font-weight:700; }
+/* Tapakortin valinnainen tilanne: yksi tekstikenttä, koko rivin levyinen. */
+.td-habit-note { margin-top:8px; min-width:0; }
+.td-habit-note input { font-family:'Manrope',sans-serif; font-size:13.5px; border:1px solid var(--border); border-radius:10px;
+  padding:9px 11px; min-height:44px; width:100%; max-width:100%; background:var(--cream-card); color:var(--text-1); }
+.td-habit-note input:focus-visible { outline:2px solid var(--gold); outline-offset:2px; }
+@media (max-width:380px) {
+  .td-phase { font-size:14px; }
+  .td-fact { font-size:12.5px; }
+  .td-interrupt-actions .assist-btn { flex-basis:88px; }
+}
+/* ===== U3 — loppu ===== */
+
+/* ============ Ostos omana aikana (views/purchaseCheck.js) ============ */
+.purchase-check { margin-top:16px; }
+.purchase-check input[type="text"] { width:100%; max-width:220px; min-height:44px; }
+.purchase-check .pc-price { margin:8px 0 2px; font-weight:700; }
+.purchase-check .pc-work { margin:0 0 6px; color:var(--forest); font-weight:700; }
+.purchase-check .pc-goals { margin:4px 0 10px; padding-left:18px; }
+.purchase-check .pc-goals li { margin:2px 0; overflow-wrap:anywhere; }
+
+/* ============ Aloitusasetukset (views/setupChecklist.js) ============ */
+.setup-checklist { margin-bottom:16px; }
+.setup-list { list-style:none; margin:8px 0; padding:0; }
+.setup-open { display:flex; align-items:center; gap:10px; width:100%; min-height:44px; padding:6px 4px;
+  background:none; border:none; border-bottom:1px solid var(--line, rgba(0,0,0,0.08)); text-align:left; cursor:pointer; font:inherit; color:inherit; }
+.setup-open:focus-visible { outline:2px solid var(--gold); outline-offset:2px; border-radius:8px; }
+.setup-mark { width:1.4em; text-align:center; font-weight:700; }
+.setup-row.is-done .setup-mark { color:var(--forest); }
+.setup-label { flex:1; font-weight:600; overflow-wrap:anywhere; }
+.setup-note { font-size:12.5px; color:var(--text-2); }
+
+/* ============ Harkinnanvarainen käyttö (views/discretionaryLimit.js) ============ */
+.discretionary-limit { margin-top:16px; }
+.discretionary-limit input[type="text"] { width:100%; max-width:220px; min-height:44px; }
+.discretionary-limit .dl-status { margin:8px 0 10px; overflow-wrap:anywhere; }

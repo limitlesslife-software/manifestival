@@ -71,10 +71,15 @@ test('KRIITTINEN: vanhentuneet Android-assetit paikataan automaattisesti ennen t
 
 test('SÄÄNTÖ: Android-hakemistossa ei ole sovelluslogiikkaa', { skip: !hasAndroid }, () => {
   // Capacitorin generoima kuori sisältää yhden Java-tiedoston (MainActivity).
-  // Ainoa hyväksytty lisäys on puheliitännäinen (SpeechPlugin): se on
-  // alustarajapinta (mikrofoni -> teksti), ei sovelluslogiikkaa, ja sen
-  // ainoa kuluttaja on src/platform/speech.js. Lista on TÄSMÄLLINEN:
-  // jokainen uusi natiivitiedosto on omistajan päätös, ei sivutuote.
+  // Hyväksytyt lisäykset ovat alustarajapintoja, eivät sovelluslogiikkaa:
+  //   - puheliitännäinen (SpeechPlugin: mikrofoni -> teksti), kuluttaja
+  //     src/platform/speech.js
+  //   - herätys ja puhutut muistutukset (AlarmPlugin ja sen apuluokat:
+  //     ajastus, soittopalvelu, lukitusnäkymä, uudelleenajastus), kuluttaja
+  //     src/platform/alarms.js. Mitä ja milloin herätetään, päättää
+  //     domain (src/domain/alarmPlan.js); natiivi vain soittaa.
+  // Lista on TÄSMÄLLINEN: jokainen uusi natiivitiedosto on omistajan
+  // päätös, ei sivutuote.
   const javaRoot = path.join(ROOT, 'android', 'app', 'src', 'main', 'java');
   if (!fs.existsSync(javaRoot)) return;
 
@@ -88,7 +93,11 @@ test('SÄÄNTÖ: Android-hakemistossa ei ole sovelluslogiikkaa', { skip: !hasAnd
   };
   walk(javaRoot);
 
-  assert.deepEqual(javaFiles.sort(), ['MainActivity.java', 'SpeechPlugin.java'],
+  assert.deepEqual(javaFiles.sort(), [
+    'AlarmActivity.java', 'AlarmMath.java', 'AlarmPlugin.java', 'AlarmReceiver.java',
+    'AlarmScheduler.java', 'AlarmService.java', 'AlarmStore.java', 'BootReceiver.java',
+    'MainActivity.java', 'SpeechPlugin.java'
+  ],
     'natiivipuolen lähdetiedostot: ' + javaFiles.join(', ')
     + ' — logiikan pitää olla src/platform/-sovittimen takana');
 });
@@ -275,9 +284,12 @@ test('selväkielinen liikenne on nimenomaisesti kielletty', { skip: !hasAndroid 
 });
 
 test('luvat rajoittuvat siihen, mitä toteutetut ominaisuudet vaativat', { skip: !hasAndroid }, () => {
-  // Oma manifesti pyytää INTERNETin ja mikrofonin (puheentunnistus,
-  // SpeechPlugin.java; lupa kysytään vasta napautuksesta). Sijaintilupaa
-  // EI ole: mikään toteutettu ominaisuus ei käytä sijaintia
+  // Oma manifesti pyytää INTERNETin, mikrofonin (puheentunnistus,
+  // SpeechPlugin.java; lupa kysytään vasta napautuksesta) ja herätyksen
+  // luvat (AlarmPlugin.java: käynnistyksen jälkeinen palautus, tarkat
+  // herätykset käyttäjän myöntämänä, koko näytön herätys, mediaPlayback-
+  // etualapalvelu soitolle ja puheelle, ilmoitukset, rajattu herätyslukko).
+  // Sijaintilupaa EI ole: mikään toteutettu ominaisuus ei käytä sijaintia
   // (NATIVE_LOCATION_ENABLED = false). Loput luvat tulevat lisäosista
   // yhdistämisen kautta, eikä niitä lisätä käsin.
   const manifest = appManifest();
@@ -286,7 +298,14 @@ test('luvat rajoittuvat siihen, mitä toteutetut ominaisuudet vaativat', { skip:
 
   assert.deepEqual(permissions, [
     'android.permission.INTERNET',
-    'android.permission.RECORD_AUDIO'
+    'android.permission.RECORD_AUDIO',
+    'android.permission.RECEIVE_BOOT_COMPLETED',
+    'android.permission.SCHEDULE_EXACT_ALARM',
+    'android.permission.USE_FULL_SCREEN_INTENT',
+    'android.permission.FOREGROUND_SERVICE',
+    'android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK',
+    'android.permission.POST_NOTIFICATIONS',
+    'android.permission.WAKE_LOCK'
   ], 'omaan manifestiin lisättiin lupa: ' + permissions.join(', '));
 
   // Kielletyt. includes() koko tiedostoon, joten nimet eivät saa esiintyä
@@ -294,14 +313,28 @@ test('luvat rajoittuvat siihen, mitä toteutetut ominaisuudet vaativat', { skip:
   //   - Äänen asetusten muokkauslupa: ilman sitä Capacitor hylkää WebView'n
   //     omat mikrofonipyynnöt, joten web-koodi ei avaa mikrofonia
   //     liitännäisen ohi.
-  //   - Etualapalvelu (mikrofoni, sijainti): ei taustakuuntelua, ei seurantaa.
+  //   - Etualapalvelu muuna kuin toistona (mikrofoni, sijainti, datasynkka,
+  //     erikoiskäyttö ...): ei taustakuuntelua, ei seurantaa. Vain
+  //     mediaPlayback on sallittu (herätyksen ääni ja puhe).
+  //   - Automaattisesti myönnetty herätyskellon lupa: Play varaa sen
+  //     herätyskellosovelluksille; tarkat herätykset kulkevat käyttäjän
+  //     myöntämällä SCHEDULE_EXACT_ALARMilla.
+  //   - Värinä: sitä ei käytetä, joten lupaa ei julisteta.
   //   - Sijainti: ei julisteta ennen kuin jokin ominaisuus käyttää sitä.
-  for (const forbidden of ['MODIFY_AUDIO_SETTINGS', 'FOREGROUND_SERVICE', 'CAPTURE_AUDIO_OUTPUT',
+  for (const forbidden of ['MODIFY_AUDIO_SETTINGS', 'CAPTURE_AUDIO_OUTPUT',
+    'FOREGROUND_SERVICE_MICROPHONE', 'FOREGROUND_SERVICE_LOCATION', 'FOREGROUND_SERVICE_CAMERA',
+    'FOREGROUND_SERVICE_DATA_SYNC', 'FOREGROUND_SERVICE_SPECIAL_USE', 'FOREGROUND_SERVICE_MEDIA_PROJECTION',
+    'FOREGROUND_SERVICE_PHONE_CALL', 'FOREGROUND_SERVICE_CONNECTED_DEVICE', 'FOREGROUND_SERVICE_HEALTH',
+    'FOREGROUND_SERVICE_REMOTE_MESSAGING', 'FOREGROUND_SERVICE_SYSTEM_EXEMPTED',
+    'USE_EXACT_ALARM', 'VIBRATE', 'SYSTEM_ALERT_WINDOW', 'READ_MEDIA_AUDIO',
     'ACCESS_BACKGROUND_LOCATION', 'ACCESS_COARSE_LOCATION', 'ACCESS_FINE_LOCATION',
     'CAMERA', 'READ_EXTERNAL_STORAGE', 'READ_CONTACTS']) {
     assert.equal(manifest.includes(forbidden), false,
       'lupa ilman toteutusta: ' + forbidden);
   }
+  // Etualapalvelun tyyppi on vain mediaPlayback.
+  const types = [...manifest.matchAll(/android:foregroundServiceType="([^"]+)"/g)].map(m => m[1]);
+  assert.deepEqual(types, ['mediaPlayback']);
 });
 
 test('LOC-3: jos sijaintilupa joskus palaa, se ei saa rajata jakelua', { skip: !hasAndroid }, () => {
@@ -346,6 +379,8 @@ test('puheentunnistuspalvelu on näkyvissä Android 11+:ssa (<queries>)', { skip
   const queries = /<queries>([\s\S]*?)<\/queries>/.exec(manifest);
   assert.ok(queries, 'manifestista puuttuu <queries>: SpeechRecognizer ei näkisi tunnistinpalvelua');
   assert.match(queries[1], /<action android:name="android\.speech\.RecognitionService" \/>/);
+  // Herätyksen puhe: ilman tätä Android 11+ ei näytä puhemoottoria TextToSpeechille.
+  assert.match(queries[1], /<action android:name="android\.intent\.action\.TTS_SERVICE" \/>/);
   // <queries> on <manifest>-tason elementti, ei <application>in sisällä.
   assert.ok(manifest.indexOf('<queries>') > manifest.indexOf('</application>'));
 });

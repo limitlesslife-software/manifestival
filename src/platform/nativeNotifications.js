@@ -21,8 +21,80 @@ import {
   PERMISSION, CAPABILITY, permissionOf, setNativePermission, resetNativePermission
 } from './capabilities.js';
 
-/** Kanavan tunniste Androidilla. Luodaan ensimmäisellä käytöllä. */
+/**
+ * Kanavan tunniste Androidilla (taso 2, Muistutus). Luodaan ensimmäisellä
+ * käytöllä. Tunniste EI SAA muuttua: Android ei salli olemassa olevan
+ * kanavan tärkeyden muuttamista, ja asennetuilla laitteilla kanava on jo.
+ */
 export const CHANNEL_ID = 'manifestival-reminders';
+
+/**
+ * Kanava tasoittain (src/domain/notification.js LEVEL 1–4).
+ *
+ * Androidissa ääni, värinä ja keskeyttävyys ovat KANAVAN ominaisuuksia,
+ * eivät yksittäisen ilmoituksen. Ilman erillisiä kanavia "Tieto" ja
+ * "Kriittinen" kuulostaisivat laitteella samalta. Tärkeyttä ei voi muuttaa
+ * luonnin jälkeen, joten uusi tärkeys tarkoittaa aina uutta tunnistetta.
+ */
+export const CHANNEL_IDS = Object.freeze({
+  1: 'manifestival-info',
+  2: CHANNEL_ID,
+  3: 'manifestival-action',
+  4: 'manifestival-critical'
+});
+
+/** Kanavien määritykset. Importance: 2 matala (ei ääntä), 4 korkea, 5 kiireellisin. */
+export const CHANNELS = Object.freeze([
+  Object.freeze({
+    id: CHANNEL_IDS[1],
+    name: 'Tiedot',
+    description: 'Manifestivalin hiljaiset tiedot ja koosteet',
+    importance: 2,
+    visibility: 1
+  }),
+  Object.freeze({
+    id: CHANNEL_IDS[2],
+    name: 'Muistutukset',
+    description: 'Manifestivalin tehtävä- ja rutiinimuistutukset',
+    importance: 4,
+    visibility: 1
+  }),
+  Object.freeze({
+    id: CHANNEL_IDS[3],
+    name: 'Toiminta nyt',
+    description: 'Muistutukset, jotka vaativat toimintaa heti, kuten lähtö viiden minuutin päästä',
+    importance: 4,
+    visibility: 1,
+    vibration: true
+  }),
+  Object.freeze({
+    id: CHANNEL_IDS[4],
+    name: 'Kriittiset',
+    description: 'Lähde nyt -muistutukset ja muut, joissa myöhästymisen riski on suuri',
+    importance: 5,
+    visibility: 1,
+    vibration: true
+  })
+]);
+
+/**
+ * Tyypit, joiden ilmoitus saa herättää laitteen lepotilasta (Doze).
+ * Toistettu merkkijonoina: alusta ei saa importata domainia.
+ */
+const WAKE_FROM_IDLE_TYPES = new Set([
+  'departure_prepare', 'departure_leave_in_5', 'departure_leave_now'
+]);
+
+/**
+ * Kanava aikomukselle. Käyttäjän valitsema hiljainen toimitustapa ohjaa
+ * hiljaiselle kanavalle tasosta riippumatta; muuten taso ratkaisee.
+ * Tuntematon taso käyttää muistutuskanavaa (sama kuin ennen tasokanavia).
+ */
+export function channelIdFor(intent) {
+  if (intent && intent.delivery === 'silent') return CHANNEL_IDS[1];
+  const level = intent && intent.level;
+  return Object.hasOwn(CHANNEL_IDS, level) ? CHANNEL_IDS[level] : CHANNEL_ID;
+}
 
 /**
  * Hae plugin globaalista rekisteristä.
@@ -162,24 +234,198 @@ export function intentAt(intent) {
 
   // Viimeinen varmistus: helmikuun 31. vierittyisi maaliskuuksi.
   if (at.getMonth() !== month - 1 || at.getDate() !== day) return null;
+
+  // KESÄAJAN AUKKO: kevään siirtymäyönä kello 03.00–03.59 ei ole olemassa
+  // (Suomessa 29.3.2026). Date siirtää olemattoman ajan tunnin ETEENPÄIN,
+  // jolloin "5 min ennen lähtöä" -muistutus tulisi lähdön JÄLKEEN.
+  // Muistutus lasketaan aina taaksepäin myöhemmästä hetkestä, joten oikea
+  // tulkinta on aukon jälkeinen aikavyöhyke: siirretään yhtä paljon
+  // TAAKSEPÄIN. Muistutus tulee mieluummin ajoissa kuin myöhässä.
+  const drift = (at.getHours() * 60 + at.getMinutes()) - (hours * 60 + minutes);
+  if (drift !== 0) return new Date(at.getTime() - drift * 60000);
   return at;
 }
 
-/** Kanava, jolle Android-ilmoitukset ohjataan. Luonti on idempotentti. */
+/** Suurin sallittu ankkurin siirtymä minuutteina (kaksi vuorokautta). */
+const MAX_ANCHOR_OFFSET_MINUTES = 2 * 1440;
+
+/**
+ * Aikomuksen todellinen ilmoitushetki.
+ *
+ * Jos aikomuksella on ankkuri { date, time, offsetMinutes }, hetki on
+ * ankkurin paikallinen aika + siirtymä TODELLISINA minuutteina. Näin
+ * "5 min ennen lähtöä" on viisi oikeaa minuuttia myös kesäajan vaihtoyönä,
+ * jolloin seinäkelloaika hyppää tunnin. Muuten intentAt(intent).
+ *
+ * @returns {Date|null}
+ */
+export function instantOf(intent) {
+  const anchor = intent && intent.anchor;
+  if (anchor && typeof anchor === 'object' && Number.isInteger(anchor.offsetMinutes)
+    && Math.abs(anchor.offsetMinutes) <= MAX_ANCHOR_OFFSET_MINUTES) {
+    const base = intentAt(anchor);
+    if (base) return new Date(base.getTime() + anchor.offsetMinutes * 60000);
+  }
+  return intentAt(intent);
+}
+
+/**
+ * Tasokanavat, joille Android-ilmoitukset ohjataan. Luonti on idempotentti:
+ * olemassa olevan kanavan asetuksia (käyttäjän omia muutoksia) ei ylikirjoiteta.
+ */
 async function ensureChannel(api) {
   if (typeof api.createChannel !== 'function') return;
-  try {
-    await api.createChannel({
-      id: CHANNEL_ID,
-      name: 'Muistutukset',
-      description: 'Manifestivalin tehtävä- ja rutiinimuistutukset',
-      importance: 4,
-      visibility: 1
-    });
-  } catch {
-    // Kanavan luonti voi epäonnistua vanhemmilla Android-versioilla, joilla
-    // kanavia ei ole. Se ei estä ilmoituksen näyttämistä.
+  for (const channel of CHANNELS) {
+    try {
+      await api.createChannel({ ...channel });
+    } catch {
+      // Kanavan luonti voi epäonnistua vanhemmilla Android-versioilla, joilla
+      // kanavia ei ole. Se ei estä ilmoituksen näyttämistä.
+    }
   }
+}
+
+// ------------------------------------------------------------ "Avaa reitti"
+
+/**
+ * Lähtöilmoituksen toiminto "Avaa reitti" (paketin §14 ja §36). Tavallinen
+ * "Lähde nyt" -ilmoitus (oletustoimitus Ääni) saa saman painikkeen kuin
+ * herätysliitännäisen puhuva muistutus.
+ *
+ * Ilmoitus kantaa vain kohteen TEKSTIN (osoite tai paikan nimi) ja
+ * kulkutavan, ei koskaan linkkiä. Painalluksesta sovellus kokoaa kohteen
+ * uudelleen (src/domain/navigationLink.js) ja avaa sen alustan
+ * reittitoiminnolla (alarms.openNavigation).
+ */
+export const ROUTE_ACTION_TYPE_ID = 'manifestival-route';
+export const ROUTE_ACTION_ID = 'avaa-reitti';
+/** Capacitorin tapahtuma, jonka liitännäinen lähettää toiminnon painalluksesta. */
+export const ACTION_PERFORMED_EVENT = 'localNotificationActionPerformed';
+
+export const ACTION_TYPES = Object.freeze([
+  Object.freeze({
+    id: ROUTE_ACTION_TYPE_ID,
+    actions: Object.freeze([Object.freeze({ id: ROUTE_ACTION_ID, title: 'Avaa reitti', foreground: true })])
+  })
+]);
+
+/** Kohteen enimmäispituus (sama kuin herätysliitännäisellä, ALARM_LIMITS.maxDestinationLength). */
+const MAX_ROUTE_TEXT = 200;
+const ROUTE_MODE = /^[a-z_]{1,20}$/;
+const CONTROL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g;
+
+/** Kohde pelkkänä, rajattuna tekstinä tai null. Linkkiä ei tästä koskaan synny. */
+function routeText(value) {
+  if (typeof value !== 'string') return null;
+  const text = value.replace(CONTROL, ' ').replace(/\s+/g, ' ').trim();
+  if (!text) return null;
+  return Array.from(text).slice(0, MAX_ROUTE_TEXT).join('').trim() || null;
+}
+
+function routeMode(value) {
+  return typeof value === 'string' && ROUTE_MODE.test(value) ? value : null;
+}
+
+/** Toimintotyypit rekisteröidään kerran kutakin liitännäistä kohden. */
+let registeredFor = new WeakSet();
+
+async function ensureActionTypes(api) {
+  if (typeof api.registerActionTypes !== 'function' || registeredFor.has(api)) return;
+  try {
+    await api.registerActionTypes({ types: ACTION_TYPES.map(type => ({ ...type, actions: type.actions.map(a => ({ ...a })) })) });
+    registeredFor.add(api);
+  } catch {
+    // Ilman toimintotyyppiä ilmoitus näkyy silti, vain ilman painiketta.
+  }
+}
+
+/** Testit: toimintotyypit rekisteröidään uudelleen. */
+export function resetActionTypesForTests() {
+  registeredFor = new WeakSet();
+}
+
+/**
+ * "Avaa reitti" -painalluksen tiedot ilmoituksen lisätiedoista, tai null
+ * (muu toiminto, napautus tai kelvoton kohde).
+ *
+ * @returns {null | {destination:string, mode:string|null, intentId:string|null, type:string|null, ackKey:string|null}}
+ */
+export function routeActionPayload(event) {
+  if (!event || typeof event !== 'object' || event.actionId !== ROUTE_ACTION_ID) return null;
+  const notification = event.notification;
+  const extra = notification && typeof notification === 'object' ? notification.extra : null;
+  if (!extra || typeof extra !== 'object') return null;
+  const destination = routeText(extra.routeDestination);
+  if (!destination) return null;
+  const idOf = value => (typeof value === 'string' && value && value.length <= 400 ? value : null);
+  return Object.freeze({
+    destination,
+    mode: routeMode(extra.routeMode),
+    intentId: idOf(extra.intentId),
+    type: idOf(extra.type),
+    ackKey: idOf(extra.ackKey)
+  });
+}
+
+/**
+ * Kuuntele "Avaa reitti" -painalluksia. `handler` saa routeActionPayload-
+ * olion. Liitännäinen säilyttää painalluksen, kunnes kuuntelija on
+ * kytketty, joten kylmäkäynnistyskään ei hukkaa sitä.
+ *
+ * @returns {Function} lopetusfunktio; ei koskaan heitä
+ */
+export function onRouteAction(handler) {
+  const api = plugin();
+  if (!api || typeof api.addListener !== 'function' || typeof handler !== 'function') return () => {};
+  let handle = null;
+  let removed = false;
+  const listener = event => {
+    const payload = routeActionPayload(event);
+    if (!payload) return;
+    try {
+      handler(payload);
+    } catch {
+      // Kuuntelijan virhe ei saa kaataa liitännäisen tapahtumaketjua.
+    }
+  };
+  try {
+    const registration = api.addListener(ACTION_PERFORMED_EVENT, listener);
+    Promise.resolve(registration).then(value => {
+      handle = value;
+      if (removed && handle && typeof handle.remove === 'function') handle.remove();
+    }).catch(() => {});
+  } catch {
+    return () => {};
+  }
+  return () => {
+    removed = true;
+    try {
+      if (handle && typeof handle.remove === 'function') handle.remove();
+    } catch {
+      // jo poistettu
+    }
+  };
+}
+
+/** Ilmoituksen lisätiedot: tunnisteet kuittausta ja napautusta varten, lähdöllä reitin kohde. */
+function extraFor(intent) {
+  const extra = { intentId: intent.id, type: intent.type };
+  if (typeof intent.ackKey === 'string' && intent.ackKey) extra.ackKey = intent.ackKey;
+  if (typeof intent.speech === 'string' && intent.speech) extra.speech = intent.speech;
+  const destination = routeText(intent.routeDestination);
+  if (destination) {
+    extra.routeDestination = destination;
+    const mode = routeMode(intent.routeMode);
+    if (mode) extra.routeMode = mode;
+  }
+  return extra;
+}
+
+/** Ilmoitus ja sen lisätiedot; reitin kohteella toimintotyyppi "Avaa reitti". */
+function withRouteAction(notification) {
+  return notification.extra && notification.extra.routeDestination
+    ? { ...notification, actionTypeId: ROUTE_ACTION_TYPE_ID }
+    : notification;
 }
 
 /**
@@ -188,47 +434,73 @@ async function ensureChannel(api) {
  * Menneet ajankohdat pudotetaan: laite näyttäisi ne heti, mikä tuottaisi
  * ilmoitusryöpyn joka kerta kun sovellus avataan.
  *
+ * TARKKA HÄLYTYS VAIN NIMENOMAISESTI
+ * Liitännäinen (8.3+) olettaa jokaiselle ilmoitukselle tarkan hälytyksen
+ * (isExactNotification: true). Jos lupaa tarkkoihin hälytyksiin ei ole
+ * (Android 12+, uusilla asennuksilla oletus Android 14+), liitännäinen avaa
+ * "Hälytykset ja muistutukset" -asetusnäkymän KESKEN ajastuksen — myös
+ * käynnistyksessä ja sovellukseen palatessa, ilman käyttäjän elettä. Se
+ * rikkoo säännön "lupa vain käyttäjän eleestä". Siksi tarkka hälytys
+ * pyydetään vain, kun kutsuja antaa exactAllowed: true (lupa tiedetään
+ * myönnetyksi tai kutsu tulee käyttäjän eleestä). Oletuksena ajastus on
+ * epätarkka, eikä asetusnäkymää koskaan avata.
+ *
  * @param {Array} intents domain/notification.js:n tuottamat aikomukset
  * @param {Date}  now     nykyhetki — annetaan parametrina testattavuuden vuoksi
+ * @param {object} [options]
+ * @param {boolean} [options.exactAllowed] vain arvo true pyytää tarkan hälytyksen
  */
-export async function schedule(intents = [], now = new Date()) {
+export async function schedule(intents = [], now = new Date(), options = {}) {
+  const list = Array.isArray(intents) ? intents : [];
+  const exact = Boolean(options) && options.exactAllowed === true;
   const api = plugin();
   if (!api || typeof api.schedule !== 'function') {
-    return { ok: false, planned: true, scheduled: 0, requested: intents.length,
+    return { ok: false, planned: true, scheduled: 0, requested: list.length,
       reason: 'Natiivi-ilmoitukset eivät ole käytettävissä' };
   }
   if (cachedPermission() !== PERMISSION.GRANTED) {
-    return { ok: false, scheduled: 0, requested: intents.length,
+    return { ok: false, scheduled: 0, requested: list.length,
       reason: 'Ilmoituslupa puuttuu' };
   }
 
   await ensureChannel(api);
+  await ensureActionTypes(api);
 
   const notifications = [];
-  for (const intent of intents) {
-    const at = intentAt(intent);
+  for (const intent of list) {
+    if (!intent || typeof intent !== 'object') continue;
+    const at = instantOf(intent);
     if (!at || at.getTime() <= now.getTime()) continue;
-    notifications.push({
+    notifications.push(withRouteAction({
       id: numericId(intent.id),
       title: intent.title,
       body: intent.body,
-      channelId: CHANNEL_ID,
+      channelId: channelIdFor(intent),
       // Lähtömuistutus saa herättää laitteen lepotilasta (Doze): myöhästynyt
       // lähtöilmoitus on vahinko, ei mukavuushaitta. Laitehyväksyntä kesken.
-      schedule: { at, allowWhileIdle: intent.level >= 4 || intent.type === 'departure_reminder' },
-      extra: { intentId: intent.id, type: intent.type }
-    });
+      // Sama koskee lähtöketjua (valmistaudu, 5 min, nyt).
+      schedule: {
+        at,
+        allowWhileIdle: intent.level >= 4 || intent.type === 'departure_reminder' || WAKE_FROM_IDLE_TYPES.has(intent.type)
+      },
+      isExactNotification: exact,
+      extra: extraFor(intent)
+    }));
   }
 
   if (notifications.length === 0) {
-    return { ok: true, scheduled: 0, requested: intents.length, reason: '' };
+    return { ok: true, scheduled: 0, requested: list.length, reason: '', exact, inexactFallback: false };
   }
 
   try {
-    await api.schedule({ notifications });
-    return { ok: true, scheduled: notifications.length, requested: intents.length, reason: '' };
+    const result = await api.schedule({ notifications });
+    // Liitännäinen kertoo varoituksella, jos tarkka hälytys vaihtui
+    // epätarkaksi (lupa puuttui). Tieto välitetään eteenpäin, ei piiloteta.
+    const inexactFallback = Boolean(result && result.warning);
+    return { ok: true, scheduled: notifications.length, requested: list.length, reason: '',
+      exact: exact && !inexactFallback, inexactFallback };
   } catch {
-    return { ok: false, scheduled: 0, requested: intents.length,
+    return { ok: false, scheduled: 0, requested: list.length,
       reason: 'Muistutusten ajastus ei onnistunut' };
   }
 }
@@ -283,18 +555,22 @@ export async function showNow(intent, now = new Date()) {
   }
 
   await ensureChannel(api);
+  await ensureActionTypes(api);
   try {
     await api.schedule({
-      notifications: [{
+      notifications: [withRouteAction({
         id: numericId(intent.id),
         title: intent.title,
         body: intent.body,
-        channelId: CHANNEL_ID,
+        channelId: channelIdFor(intent),
         // Muutama sekunti eteenpäin: osa Android-versioista jättää menneeseen
         // ajastetun ilmoituksen näyttämättä kokonaan.
         schedule: { at: new Date(now.getTime() + 1000) },
-        extra: { intentId: intent.id, type: intent.type }
-      }]
+        // Heti näytettävä ei tarvitse tarkkaa hälytystä — eikä saa avata
+        // hälytysasetuksia (ks. schedule).
+        isExactNotification: false,
+        extra: extraFor(intent)
+      })]
     });
     return { ok: true, reason: '' };
   } catch {

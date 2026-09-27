@@ -426,7 +426,9 @@ test('KRIITTINEN: säännön päälle kytkeminen kysyy vahvistuksen', () => {
 
 test('ilmoituskeskus tarjoaa vain domainin sallimat toiminnot', () => {
   const source = read('src/app/views/notices.js');
-  assert.match(source, /actionsFor\(notice\)/,
+  // Muistutuslajille kerrotaan, onko takana oikea muistutus (reminderIdOfNotice):
+  // ilman sitä Torkuta ja Hoidettu eivät tekisi mitään.
+  assert.match(source, /actionsFor\(notice(, \{ hasReminder \})?\)/,
     'toimintolista rakennetaan käsin domainin sijaan');
 });
 
@@ -481,18 +483,22 @@ test('jokaisella uudella repositoriolla on portti ja normalisointi', () => {
   }
 });
 
-test('repositorioita on kaksikymmentäkolme', () => {
+test('repositorioita on kolmekymmentäkolme', () => {
   // Luku on käsin laskettu ja tarkoituksella: uusi repositorio kaataa
   // tämän, ja se on oikea hetki tarkistaa, että sillä on portti,
   // migraatio, varmistus ja tavoitettavuusrivi. 0013 toi kaksi:
-  // running_timers ja alignment_item_settings.
-  assert.equal(ALL_REPOSITORIES.length, 23,
+  // running_timers ja alignment_item_settings. 0014 toi kymmenen
+  // (arjen käyttöjärjestelmä).
+  assert.equal(ALL_REPOSITORIES.length, 33,
     `repositorioita on ${ALL_REPOSITORIES.length}`);
 });
 
-test('tavoitettavuusmatriisi kattaa kaikki kaksikymmentäneljä', () => {
+test('tavoitettavuusmatriisi kattaa kaikki kolmekymmentäneljä', () => {
   // 0013 toi kaksi porttia: runningTimers ja alignmentItemSettings.
-  assert.equal(REACHABILITY.length, 24);
-  assert.equal(REACHABILITY.filter(r => r.reach === REACH.NO_UI).length, 0,
-    'jokin domain on yhä ilman käyttöliittymää');
+  // 0014 toi kymmenen, ja niiden näkymät (Kalenteri, Profiilin Arki,
+  // Hyvinvointi ja Paikat, Tänään-kortit) on rakennettu: yksikään portti
+  // ei ole ilman käyttöliittymää.
+  assert.equal(REACHABILITY.length, 34);
+  assert.deepEqual(REACHABILITY.filter(r => r.reach === REACH.NO_UI).map(r => r.gate).sort(), [],
+    'jokin domain on ilman käyttöliittymää');
 });

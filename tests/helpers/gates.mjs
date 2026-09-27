@@ -97,6 +97,16 @@ export function fakeClient(response = { data: [], error: null }) {
         entry.maybeSingle = true;
         return query;
       },
+      // Sivutettu lataus (collectionsRepo selectOwnedRows). Vastaus on
+      // aina yksi sivu, joten vajaa sivu päättää latauksen.
+      order(column) {
+        entry.order = column;
+        return query;
+      },
+      range(from, to) {
+        entry.range = [from, to];
+        return query;
+      },
       then(resolve, reject) {
         if (response.throws) {
           return Promise.reject(response.throws).then(resolve, reject);

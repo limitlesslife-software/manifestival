@@ -1,0 +1,363 @@
++ col:calendar_events.all_day:boolean:notnull=true:default=false:identity=:generated=:acl=
++ col:calendar_events.arrival_buffer_minutes:integer:notnull=false:default=:identity=:generated=:acl=
++ col:calendar_events.category:text:notnull=true:default='muu'::text:identity=:generated=:acl=
++ col:calendar_events.created_at:timestamp with time zone:notnull=true:default=now():identity=:generated=:acl=
++ col:calendar_events.duration_minutes:integer:notnull=false:default=:identity=:generated=:acl=
++ col:calendar_events.end_time:time without time zone:notnull=false:default=:identity=:generated=:acl=
++ col:calendar_events.event_date:date:notnull=true:default=:identity=:generated=:acl=
++ col:calendar_events.goal_id:text:notnull=false:default=:identity=:generated=:acl=
++ col:calendar_events.id:text:notnull=true:default=:identity=:generated=:acl=
++ col:calendar_events.location_text:text:notnull=false:default=:identity=:generated=:acl=
++ col:calendar_events.notes:text:notnull=false:default=:identity=:generated=:acl=
++ col:calendar_events.overhead_minutes:integer:notnull=false:default=:identity=:generated=:acl=
++ col:calendar_events.place_id:text:notnull=false:default=:identity=:generated=:acl=
++ col:calendar_events.preparation_minutes:integer:notnull=false:default=:identity=:generated=:acl=
++ col:calendar_events.recurrence_until:date:notnull=false:default=:identity=:generated=:acl=
++ col:calendar_events.recurrence_weekdays:smallint[]:notnull=true:default='{}'::smallint[]:identity=:generated=:acl=
++ col:calendar_events.skip_dates:date[]:notnull=true:default='{}'::date[]:identity=:generated=:acl=
++ col:calendar_events.start_time:time without time zone:notnull=false:default=:identity=:generated=:acl=
++ col:calendar_events.title:text:notnull=true:default=:identity=:generated=:acl=
++ col:calendar_events.travel_minutes:integer:notnull=false:default=:identity=:generated=:acl=
++ col:calendar_events.travel_mode:text:notnull=false:default=:identity=:generated=:acl=
++ col:calendar_events.updated_at:timestamp with time zone:notnull=true:default=now():identity=:generated=:acl=
++ col:calendar_events.user_id:uuid:notnull=true:default=auth.uid():identity=:generated=:acl=
++ col:commute_observations.actual_departure:time without time zone:notnull=false:default=:identity=:generated=:acl=
++ col:commute_observations.arrival_at:time without time zone:notnull=false:default=:identity=:generated=:acl=
++ col:commute_observations.arrival_result:text:notnull=false:default=:identity=:generated=:acl=
++ col:commute_observations.created_at:timestamp with time zone:notnull=true:default=now():identity=:generated=:acl=
++ col:commute_observations.event_id:text:notnull=false:default=:identity=:generated=:acl=
++ col:commute_observations.id:text:notnull=true:default=:identity=:generated=:acl=
++ col:commute_observations.observed_on:date:notnull=true:default=:identity=:generated=:acl=
++ col:commute_observations.overhead_minutes:integer:notnull=false:default=:identity=:generated=:acl=
++ col:commute_observations.place_id:text:notnull=true:default=:identity=:generated=:acl=
++ col:commute_observations.planned_departure:time without time zone:notnull=false:default=:identity=:generated=:acl=
++ col:commute_observations.preparation_minutes:integer:notnull=false:default=:identity=:generated=:acl=
++ col:commute_observations.provider_minutes:integer:notnull=false:default=:identity=:generated=:acl=
++ col:commute_observations.source:text:notnull=true:default='user_confirmed'::text:identity=:generated=:acl=
++ col:commute_observations.travel_minutes:integer:notnull=false:default=:identity=:generated=:acl=
++ col:commute_observations.updated_at:timestamp with time zone:notnull=true:default=now():identity=:generated=:acl=
++ col:commute_observations.user_id:uuid:notnull=true:default=auth.uid():identity=:generated=:acl=
++ col:commute_observations.weekday:smallint:notnull=true:default=:identity=:generated=:acl=
++ col:exercise_sessions.actual_minutes:integer:notnull=false:default=:identity=:generated=:acl=
++ col:exercise_sessions.created_at:timestamp with time zone:notnull=true:default=now():identity=:generated=:acl=
++ col:exercise_sessions.goal_id:text:notnull=false:default=:identity=:generated=:acl=
++ col:exercise_sessions.id:text:notnull=true:default=:identity=:generated=:acl=
++ col:exercise_sessions.intensity:smallint:notnull=false:default=:identity=:generated=:acl=
++ col:exercise_sessions.kind:text:notnull=true:default=:identity=:generated=:acl=
++ col:exercise_sessions.note:text:notnull=false:default=:identity=:generated=:acl=
++ col:exercise_sessions.planned_minutes:integer:notnull=false:default=:identity=:generated=:acl=
++ col:exercise_sessions.recovery_demand:smallint:notnull=false:default=:identity=:generated=:acl=
++ col:exercise_sessions.session_date:date:notnull=true:default=:identity=:generated=:acl=
++ col:exercise_sessions.updated_at:timestamp with time zone:notnull=true:default=now():identity=:generated=:acl=
++ col:exercise_sessions.user_id:uuid:notnull=true:default=auth.uid():identity=:generated=:acl=
++ col:habit_events.action:text:notnull=true:default=:identity=:generated=:acl=
++ col:habit_events.created_at:timestamp with time zone:notnull=true:default=now():identity=:generated=:acl=
++ col:habit_events.id:text:notnull=true:default=:identity=:generated=:acl=
++ col:habit_events.note:text:notnull=false:default=:identity=:generated=:acl=
++ col:habit_events.occurred_at:timestamp with time zone:notnull=true:default=:identity=:generated=:acl=
++ col:habit_events.plan_id:text:notnull=true:default=:identity=:generated=:acl=
++ col:habit_events.updated_at:timestamp with time zone:notnull=true:default=now():identity=:generated=:acl=
++ col:habit_events.user_id:uuid:notnull=true:default=auth.uid():identity=:generated=:acl=
++ col:habit_plans.active:boolean:notnull=true:default=true:identity=:generated=:acl=
++ col:habit_plans.baseline_per_day:integer:notnull=false:default=:identity=:generated=:acl=
++ col:habit_plans.created_at:timestamp with time zone:notnull=true:default=now():identity=:generated=:acl=
++ col:habit_plans.daily_target:integer:notnull=false:default=:identity=:generated=:acl=
++ col:habit_plans.id:text:notnull=true:default=:identity=:generated=:acl=
++ col:habit_plans.kind:text:notnull=true:default='generic'::text:identity=:generated=:acl=
++ col:habit_plans.min_interval_minutes:integer:notnull=false:default=:identity=:generated=:acl=
++ col:habit_plans.name:text:notnull=true:default=:identity=:generated=:acl=
++ col:habit_plans.reminder_delivery:text:notnull=true:default='silent'::text:identity=:generated=:acl=
++ col:habit_plans.steps:jsonb:notnull=true:default='[]'::jsonb:identity=:generated=:acl=
++ col:habit_plans.unit_cost_minor:bigint:notnull=false:default=:identity=:generated=:acl=
++ col:habit_plans.updated_at:timestamp with time zone:notnull=true:default=now():identity=:generated=:acl=
++ col:habit_plans.user_id:uuid:notnull=true:default=auth.uid():identity=:generated=:acl=
++ col:life_settings.alarm:jsonb:notnull=true:default='{}'::jsonb:identity=:generated=:acl=
++ col:life_settings.arrival_buffer_minutes:integer:notnull=true:default=10:identity=:generated=:acl=
++ col:life_settings.bedtime_target:time without time zone:notnull=false:default=:identity=:generated=:acl=
++ col:life_settings.created_at:timestamp with time zone:notnull=true:default=now():identity=:generated=:acl=
++ col:life_settings.currency:text:notnull=true:default='EUR'::text:identity=:generated=:acl=
++ col:life_settings.delivery:jsonb:notnull=true:default='{}'::jsonb:identity=:generated=:acl=
++ col:life_settings.digest_enabled:boolean:notnull=true:default=false:identity=:generated=:acl=
++ col:life_settings.digest_time:time without time zone:notnull=true:default='18:00:00'::time without time zone:identity=:generated=:acl=
++ col:life_settings.guidance_style:text:notnull=true:default='rauhallinen'::text:identity=:generated=:acl=
++ col:life_settings.hourly_value_minor:bigint:notnull=false:default=:identity=:generated=:acl=
++ col:life_settings.id:text:notnull=true:default=:identity=:generated=:acl=
++ col:life_settings.meal_rhythm:jsonb:notnull=true:default='{}'::jsonb:identity=:generated=:acl=
++ col:life_settings.morning_brief_enabled:boolean:notnull=true:default=false:identity=:generated=:acl=
++ col:life_settings.morning_routine:jsonb:notnull=true:default='[]'::jsonb:identity=:generated=:acl=
++ col:life_settings.reminder_offset_minutes:integer:notnull=true:default=0:identity=:generated=:acl=
++ col:life_settings.sleep_affects_capacity:boolean:notnull=true:default=false:identity=:generated=:acl=
++ col:life_settings.speech_enabled:boolean:notnull=true:default=false:identity=:generated=:acl=
++ col:life_settings.updated_at:timestamp with time zone:notnull=true:default=now():identity=:generated=:acl=
++ col:life_settings.user_id:uuid:notnull=true:default=auth.uid():identity=:generated=:acl=
++ col:life_settings.weekend_bed_shift_max_minutes:integer:notnull=true:default=60:identity=:generated=:acl=
++ col:life_settings.weekend_wake_shift_max_minutes:integer:notnull=true:default=60:identity=:generated=:acl=
++ col:life_settings.wind_down_minutes:integer:notnull=true:default=30:identity=:generated=:acl=
++ col:place_aliases.alias:text:notnull=true:default=:identity=:generated=:acl=
++ col:place_aliases.confirmations:integer:notnull=true:default=1:identity=:generated=:acl=
++ col:place_aliases.created_at:timestamp with time zone:notnull=true:default=now():identity=:generated=:acl=
++ col:place_aliases.id:text:notnull=true:default=:identity=:generated=:acl=
++ col:place_aliases.last_confirmed_at:timestamp with time zone:notnull=false:default=:identity=:generated=:acl=
++ col:place_aliases.place_id:text:notnull=true:default=:identity=:generated=:acl=
++ col:place_aliases.updated_at:timestamp with time zone:notnull=true:default=now():identity=:generated=:acl=
++ col:place_aliases.user_id:uuid:notnull=true:default=auth.uid():identity=:generated=:acl=
++ col:saved_places.address:text:notnull=false:default=:identity=:generated=:acl=
++ col:saved_places.area:text:notnull=false:default=:identity=:generated=:acl=
++ col:saved_places.arrival_buffer_minutes:integer:notnull=false:default=:identity=:generated=:acl=
++ col:saved_places.created_at:timestamp with time zone:notnull=true:default=now():identity=:generated=:acl=
++ col:saved_places.id:text:notnull=true:default=:identity=:generated=:acl=
++ col:saved_places.name:text:notnull=true:default=:identity=:generated=:acl=
++ col:saved_places.note:text:notnull=false:default=:identity=:generated=:acl=
++ col:saved_places.overhead_minutes:integer:notnull=false:default=:identity=:generated=:acl=
++ col:saved_places.preparation_minutes:integer:notnull=false:default=:identity=:generated=:acl=
++ col:saved_places.provider_place_id:text:notnull=false:default=:identity=:generated=:acl=
++ col:saved_places.travel_mode:text:notnull=true:default='driving'::text:identity=:generated=:acl=
++ col:saved_places.updated_at:timestamp with time zone:notnull=true:default=now():identity=:generated=:acl=
++ col:saved_places.use_learned:boolean:notnull=true:default=false:identity=:generated=:acl=
++ col:saved_places.user_id:uuid:notnull=true:default=auth.uid():identity=:generated=:acl=
++ col:saved_places.usual_travel_minutes:integer:notnull=false:default=:identity=:generated=:acl=
++ col:sleep_logs.actual_bedtime:time without time zone:notnull=false:default=:identity=:generated=:acl=
++ col:sleep_logs.actual_wake:time without time zone:notnull=false:default=:identity=:generated=:acl=
++ col:sleep_logs.created_at:timestamp with time zone:notnull=true:default=now():identity=:generated=:acl=
++ col:sleep_logs.id:text:notnull=true:default=:identity=:generated=:acl=
++ col:sleep_logs.kind:text:notnull=true:default='opportunity'::text:identity=:generated=:acl=
++ col:sleep_logs.note:text:notnull=false:default=:identity=:generated=:acl=
++ col:sleep_logs.planned_bedtime:time without time zone:notnull=false:default=:identity=:generated=:acl=
++ col:sleep_logs.planned_wake:time without time zone:notnull=false:default=:identity=:generated=:acl=
++ col:sleep_logs.source:text:notnull=true:default='user'::text:identity=:generated=:acl=
++ col:sleep_logs.updated_at:timestamp with time zone:notnull=true:default=now():identity=:generated=:acl=
++ col:sleep_logs.user_id:uuid:notnull=true:default=auth.uid():identity=:generated=:acl=
++ col:sleep_logs.wake_date:date:notnull=true:default=:identity=:generated=:acl=
++ col:wellbeing_checkins.control:smallint:notnull=false:default=:identity=:generated=:acl=
++ col:wellbeing_checkins.created_at:timestamp with time zone:notnull=true:default=now():identity=:generated=:acl=
++ col:wellbeing_checkins.date:date:notnull=true:default=:identity=:generated=:acl=
++ col:wellbeing_checkins.id:text:notnull=true:default=:identity=:generated=:acl=
++ col:wellbeing_checkins.motivation:smallint:notnull=false:default=:identity=:generated=:acl=
++ col:wellbeing_checkins.updated_at:timestamp with time zone:notnull=true:default=now():identity=:generated=:acl=
++ col:wellbeing_checkins.user_id:uuid:notnull=true:default=auth.uid():identity=:generated=:acl=
++ con:calendar_events:calendar_events_all_day_check:CHECK ((all_day = (start_time IS NULL))):validated=true
++ con:calendar_events:calendar_events_arrival_buffer_check:CHECK (((arrival_buffer_minutes IS NULL) OR ((arrival_buffer_minutes >= 0) AND (arrival_buffer_minutes <= 240)))):validated=true
++ con:calendar_events:calendar_events_category_check:CHECK (((length(btrim(category)) > 0) AND (length(category) <= 40))):validated=true
++ con:calendar_events:calendar_events_duration_check:CHECK (((duration_minutes IS NULL) OR ((duration_minutes >= 1) AND (duration_minutes <= 1440)))):validated=true
++ con:calendar_events:calendar_events_end_time_check:CHECK (((end_time IS NULL) OR (start_time IS NOT NULL))):validated=true
++ con:calendar_events:calendar_events_goal_fkey:FOREIGN KEY (user_id, goal_id) REFERENCES goals(user_id, id) ON DELETE SET NULL (goal_id):validated=true
++ con:calendar_events:calendar_events_location_check:CHECK (((location_text IS NULL) OR (length(location_text) <= 200))):validated=true
++ con:calendar_events:calendar_events_notes_check:CHECK (((notes IS NULL) OR (length(notes) <= 2000))):validated=true
++ con:calendar_events:calendar_events_overhead_check:CHECK (((overhead_minutes IS NULL) OR ((overhead_minutes >= 0) AND (overhead_minutes <= 240)))):validated=true
++ con:calendar_events:calendar_events_owner_row_key:UNIQUE (user_id, id):validated=true
++ con:calendar_events:calendar_events_pkey:PRIMARY KEY (id):validated=true
++ con:calendar_events:calendar_events_place_fkey:FOREIGN KEY (user_id, place_id) REFERENCES saved_places(user_id, id) ON DELETE SET NULL (place_id):validated=true
++ con:calendar_events:calendar_events_preparation_check:CHECK (((preparation_minutes IS NULL) OR ((preparation_minutes >= 0) AND (preparation_minutes <= 480)))):validated=true
++ con:calendar_events:calendar_events_skip_dates_check:CHECK (((cardinality(skip_dates) <= 366) AND (array_position(skip_dates, NULL::date) IS NULL))):validated=true
++ con:calendar_events:calendar_events_title_check:CHECK (((length(btrim(title)) > 0) AND (length(title) <= 200))):validated=true
++ con:calendar_events:calendar_events_travel_check:CHECK (((travel_minutes IS NULL) OR ((travel_minutes >= 1) AND (travel_minutes <= 1440)))):validated=true
++ con:calendar_events:calendar_events_travel_mode_check:CHECK (((travel_mode IS NULL) OR (travel_mode = ANY (ARRAY['driving'::text, 'transit'::text, 'walking'::text, 'cycling'::text, 'other'::text])))):validated=true
++ con:calendar_events:calendar_events_until_check:CHECK (((recurrence_until IS NULL) OR (recurrence_until >= event_date))):validated=true
++ con:calendar_events:calendar_events_user_id_fkey:FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE:validated=true
++ con:calendar_events:calendar_events_weekdays_check:CHECK (((cardinality(recurrence_weekdays) <= 7) AND (recurrence_weekdays <@ '{1,2,3,4,5,6,7}'::smallint[]))):validated=true
++ con:commute_observations:commute_observations_event_id_check:CHECK (((event_id IS NULL) OR ((length(event_id) >= 1) AND (length(event_id) <= 100)))):validated=true
++ con:commute_observations:commute_observations_overhead_check:CHECK (((overhead_minutes IS NULL) OR ((overhead_minutes >= 0) AND (overhead_minutes <= 240)))):validated=true
++ con:commute_observations:commute_observations_owner_row_key:UNIQUE (user_id, id):validated=true
++ con:commute_observations:commute_observations_pkey:PRIMARY KEY (id):validated=true
++ con:commute_observations:commute_observations_place_fkey:FOREIGN KEY (user_id, place_id) REFERENCES saved_places(user_id, id) ON DELETE CASCADE:validated=true
++ con:commute_observations:commute_observations_preparation_check:CHECK (((preparation_minutes IS NULL) OR ((preparation_minutes >= 0) AND (preparation_minutes <= 480)))):validated=true
++ con:commute_observations:commute_observations_provider_check:CHECK (((provider_minutes IS NULL) OR ((provider_minutes >= 1) AND (provider_minutes <= 1440)))):validated=true
++ con:commute_observations:commute_observations_result_check:CHECK (((arrival_result IS NULL) OR (arrival_result = ANY (ARRAY['early'::text, 'on_time'::text, 'late'::text])))):validated=true
++ con:commute_observations:commute_observations_source_check:CHECK ((source = ANY (ARRAY['user_confirmed'::text, 'departure_ack'::text]))):validated=true
++ con:commute_observations:commute_observations_travel_check:CHECK (((travel_minutes IS NULL) OR ((travel_minutes >= 1) AND (travel_minutes <= 1440)))):validated=true
++ con:commute_observations:commute_observations_user_id_fkey:FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE:validated=true
++ con:commute_observations:commute_observations_weekday_check:CHECK (((weekday >= 1) AND (weekday <= 7))):validated=true
++ con:exercise_sessions:exercise_sessions_actual_check:CHECK (((actual_minutes IS NULL) OR ((actual_minutes >= 1) AND (actual_minutes <= 1440)))):validated=true
++ con:exercise_sessions:exercise_sessions_goal_fkey:FOREIGN KEY (user_id, goal_id) REFERENCES goals(user_id, id) ON DELETE SET NULL (goal_id):validated=true
++ con:exercise_sessions:exercise_sessions_intensity_check:CHECK (((intensity IS NULL) OR ((intensity >= 1) AND (intensity <= 5)))):validated=true
++ con:exercise_sessions:exercise_sessions_kind_check:CHECK (((length(btrim(kind)) > 0) AND (length(kind) <= 60))):validated=true
++ con:exercise_sessions:exercise_sessions_note_check:CHECK (((note IS NULL) OR (length(note) <= 500))):validated=true
++ con:exercise_sessions:exercise_sessions_owner_row_key:UNIQUE (user_id, id):validated=true
++ con:exercise_sessions:exercise_sessions_pkey:PRIMARY KEY (id):validated=true
++ con:exercise_sessions:exercise_sessions_planned_check:CHECK (((planned_minutes IS NULL) OR ((planned_minutes >= 1) AND (planned_minutes <= 1440)))):validated=true
++ con:exercise_sessions:exercise_sessions_recovery_check:CHECK (((recovery_demand IS NULL) OR ((recovery_demand >= 1) AND (recovery_demand <= 5)))):validated=true
++ con:exercise_sessions:exercise_sessions_user_id_fkey:FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE:validated=true
++ con:habit_events:habit_events_action_check:CHECK ((action = ANY (ARRAY['use'::text, 'delay'::text, 'skip'::text]))):validated=true
++ con:habit_events:habit_events_note_check:CHECK (((note IS NULL) OR (length(note) <= 200))):validated=true
++ con:habit_events:habit_events_owner_row_key:UNIQUE (user_id, id):validated=true
++ con:habit_events:habit_events_pkey:PRIMARY KEY (id):validated=true
++ con:habit_events:habit_events_plan_fkey:FOREIGN KEY (user_id, plan_id) REFERENCES habit_plans(user_id, id) ON DELETE CASCADE:validated=true
++ con:habit_events:habit_events_user_id_fkey:FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE:validated=true
++ con:habit_plans:habit_plans_baseline_check:CHECK (((baseline_per_day IS NULL) OR ((baseline_per_day >= 0) AND (baseline_per_day <= 200)))):validated=true
++ con:habit_plans:habit_plans_daily_target_check:CHECK (((daily_target IS NULL) OR ((daily_target >= 0) AND (daily_target <= 200)))):validated=true
++ con:habit_plans:habit_plans_delivery_check:CHECK ((reminder_delivery = ANY (ARRAY['silent'::text, 'vibrate'::text, 'sound'::text, 'speech'::text, 'sound_and_speech'::text, 'critical_escalation'::text]))):validated=true
++ con:habit_plans:habit_plans_kind_check:CHECK ((kind = ANY (ARRAY['nicotine'::text, 'generic'::text]))):validated=true
++ con:habit_plans:habit_plans_min_interval_check:CHECK (((min_interval_minutes IS NULL) OR ((min_interval_minutes >= 1) AND (min_interval_minutes <= 1440)))):validated=true
++ con:habit_plans:habit_plans_name_check:CHECK (((length(btrim(name)) > 0) AND (length(name) <= 80))):validated=true
++ con:habit_plans:habit_plans_owner_row_key:UNIQUE (user_id, id):validated=true
++ con:habit_plans:habit_plans_pkey:PRIMARY KEY (id):validated=true
++ con:habit_plans:habit_plans_steps_check:CHECK (((jsonb_typeof(steps) = 'array'::text) AND (pg_column_size(steps) <= 8192))):validated=true
++ con:habit_plans:habit_plans_unit_cost_check:CHECK (((unit_cost_minor IS NULL) OR ((unit_cost_minor >= 0) AND (unit_cost_minor <= 10000000)))):validated=true
++ con:habit_plans:habit_plans_user_id_fkey:FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE:validated=true
++ con:life_settings:life_settings_alarm_check:CHECK (((jsonb_typeof(alarm) = 'object'::text) AND (pg_column_size(alarm) <= 8192))):validated=true
++ con:life_settings:life_settings_arrival_buffer_check:CHECK (((arrival_buffer_minutes >= 0) AND (arrival_buffer_minutes <= 120))):validated=true
++ con:life_settings:life_settings_currency_check:CHECK ((currency ~ '^[A-Z]{3}$'::text)):validated=true
++ con:life_settings:life_settings_delivery_check:CHECK (((jsonb_typeof(delivery) = 'object'::text) AND (pg_column_size(delivery) <= 4096))):validated=true
++ con:life_settings:life_settings_guidance_check:CHECK ((guidance_style = ANY (ARRAY['rauhallinen'::text, 'napakka'::text, 'aktiivinen'::text]))):validated=true
++ con:life_settings:life_settings_hourly_value_check:CHECK (((hourly_value_minor IS NULL) OR ((hourly_value_minor >= 1) AND (hourly_value_minor <= 1000000000)))):validated=true
++ con:life_settings:life_settings_meal_rhythm_check:CHECK (((jsonb_typeof(meal_rhythm) = 'object'::text) AND (pg_column_size(meal_rhythm) <= 8192))):validated=true
++ con:life_settings:life_settings_morning_routine_check:CHECK (((jsonb_typeof(morning_routine) = 'array'::text) AND (pg_column_size(morning_routine) <= 8192))):validated=true
++ con:life_settings:life_settings_one_per_user:UNIQUE (user_id):validated=true
++ con:life_settings:life_settings_owner_row_key:UNIQUE (user_id, id):validated=true
++ con:life_settings:life_settings_pkey:PRIMARY KEY (id):validated=true
++ con:life_settings:life_settings_reminder_offset_check:CHECK (((reminder_offset_minutes >= 0) AND (reminder_offset_minutes <= 60))):validated=true
++ con:life_settings:life_settings_user_id_fkey:FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE:validated=true
++ con:life_settings:life_settings_weekend_bed_check:CHECK (((weekend_bed_shift_max_minutes >= 0) AND (weekend_bed_shift_max_minutes <= 240))):validated=true
++ con:life_settings:life_settings_weekend_wake_check:CHECK (((weekend_wake_shift_max_minutes >= 0) AND (weekend_wake_shift_max_minutes <= 240))):validated=true
++ con:life_settings:life_settings_wind_down_check:CHECK (((wind_down_minutes >= 0) AND (wind_down_minutes <= 180))):validated=true
++ con:place_aliases:place_aliases_alias_check:CHECK (((length(btrim(alias)) > 0) AND (length(alias) <= 80))):validated=true
++ con:place_aliases:place_aliases_alias_unique:UNIQUE (user_id, alias, place_id):validated=true
++ con:place_aliases:place_aliases_confirmations_check:CHECK (((confirmations >= 1) AND (confirmations <= 10000))):validated=true
++ con:place_aliases:place_aliases_owner_row_key:UNIQUE (user_id, id):validated=true
++ con:place_aliases:place_aliases_pkey:PRIMARY KEY (id):validated=true
++ con:place_aliases:place_aliases_place_fkey:FOREIGN KEY (user_id, place_id) REFERENCES saved_places(user_id, id) ON DELETE CASCADE:validated=true
++ con:place_aliases:place_aliases_user_id_fkey:FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE:validated=true
++ con:saved_places:saved_places_address_check:CHECK (((address IS NULL) OR (length(address) <= 300))):validated=true
++ con:saved_places:saved_places_area_check:CHECK (((area IS NULL) OR (length(area) <= 80))):validated=true
++ con:saved_places:saved_places_arrival_buffer_check:CHECK (((arrival_buffer_minutes IS NULL) OR ((arrival_buffer_minutes >= 0) AND (arrival_buffer_minutes <= 240)))):validated=true
++ con:saved_places:saved_places_name_check:CHECK (((length(btrim(name)) > 0) AND (length(name) <= 80))):validated=true
++ con:saved_places:saved_places_note_check:CHECK (((note IS NULL) OR (length(note) <= 500))):validated=true
++ con:saved_places:saved_places_overhead_check:CHECK (((overhead_minutes IS NULL) OR ((overhead_minutes >= 0) AND (overhead_minutes <= 240)))):validated=true
++ con:saved_places:saved_places_owner_row_key:UNIQUE (user_id, id):validated=true
++ con:saved_places:saved_places_pkey:PRIMARY KEY (id):validated=true
++ con:saved_places:saved_places_preparation_check:CHECK (((preparation_minutes IS NULL) OR ((preparation_minutes >= 0) AND (preparation_minutes <= 480)))):validated=true
++ con:saved_places:saved_places_provider_place_check:CHECK (((provider_place_id IS NULL) OR (length(provider_place_id) <= 200))):validated=true
++ con:saved_places:saved_places_travel_mode_check:CHECK ((travel_mode = ANY (ARRAY['driving'::text, 'transit'::text, 'walking'::text, 'cycling'::text, 'other'::text]))):validated=true
++ con:saved_places:saved_places_user_id_fkey:FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE:validated=true
++ con:saved_places:saved_places_usual_travel_check:CHECK (((usual_travel_minutes IS NULL) OR ((usual_travel_minutes >= 1) AND (usual_travel_minutes <= 1440)))):validated=true
++ con:sleep_logs:sleep_logs_kind_check:CHECK ((kind = ANY (ARRAY['opportunity'::text, 'measured'::text]))):validated=true
++ con:sleep_logs:sleep_logs_note_check:CHECK (((note IS NULL) OR (length(note) <= 500))):validated=true
++ con:sleep_logs:sleep_logs_owner_row_key:UNIQUE (user_id, id):validated=true
++ con:sleep_logs:sleep_logs_pkey:PRIMARY KEY (id):validated=true
++ con:sleep_logs:sleep_logs_source_check:CHECK ((source = ANY (ARRAY['user'::text, 'alarm'::text]))):validated=true
++ con:sleep_logs:sleep_logs_user_id_fkey:FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE:validated=true
++ con:sleep_logs:sleep_logs_wake_date_unique:UNIQUE (user_id, wake_date):validated=true
++ con:wellbeing_checkins:wellbeing_checkins_control_check:CHECK (((control IS NULL) OR ((control >= 1) AND (control <= 5)))):validated=true
++ con:wellbeing_checkins:wellbeing_checkins_date_unique:UNIQUE (user_id, date):validated=true
++ con:wellbeing_checkins:wellbeing_checkins_motivation_check:CHECK (((motivation IS NULL) OR ((motivation >= 1) AND (motivation <= 5)))):validated=true
++ con:wellbeing_checkins:wellbeing_checkins_owner_row_key:UNIQUE (user_id, id):validated=true
++ con:wellbeing_checkins:wellbeing_checkins_pkey:PRIMARY KEY (id):validated=true
++ con:wellbeing_checkins:wellbeing_checkins_user_id_fkey:FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE:validated=true
++ idx:calendar_events_owner_row_key:CREATE UNIQUE INDEX calendar_events_owner_row_key ON public.calendar_events USING btree (user_id, id)
++ idx:calendar_events_pkey:CREATE UNIQUE INDEX calendar_events_pkey ON public.calendar_events USING btree (id)
++ idx:calendar_events_user_date_idx:CREATE INDEX calendar_events_user_date_idx ON public.calendar_events USING btree (user_id, event_date)
++ idx:commute_observations_owner_row_key:CREATE UNIQUE INDEX commute_observations_owner_row_key ON public.commute_observations USING btree (user_id, id)
++ idx:commute_observations_pkey:CREATE UNIQUE INDEX commute_observations_pkey ON public.commute_observations USING btree (id)
++ idx:commute_observations_user_place_idx:CREATE INDEX commute_observations_user_place_idx ON public.commute_observations USING btree (user_id, place_id, observed_on)
++ idx:exercise_sessions_owner_row_key:CREATE UNIQUE INDEX exercise_sessions_owner_row_key ON public.exercise_sessions USING btree (user_id, id)
++ idx:exercise_sessions_pkey:CREATE UNIQUE INDEX exercise_sessions_pkey ON public.exercise_sessions USING btree (id)
++ idx:exercise_sessions_user_date_idx:CREATE INDEX exercise_sessions_user_date_idx ON public.exercise_sessions USING btree (user_id, session_date)
++ idx:habit_events_owner_row_key:CREATE UNIQUE INDEX habit_events_owner_row_key ON public.habit_events USING btree (user_id, id)
++ idx:habit_events_pkey:CREATE UNIQUE INDEX habit_events_pkey ON public.habit_events USING btree (id)
++ idx:habit_events_user_plan_idx:CREATE INDEX habit_events_user_plan_idx ON public.habit_events USING btree (user_id, plan_id, occurred_at)
++ idx:habit_plans_owner_row_key:CREATE UNIQUE INDEX habit_plans_owner_row_key ON public.habit_plans USING btree (user_id, id)
++ idx:habit_plans_pkey:CREATE UNIQUE INDEX habit_plans_pkey ON public.habit_plans USING btree (id)
++ idx:life_settings_one_per_user:CREATE UNIQUE INDEX life_settings_one_per_user ON public.life_settings USING btree (user_id)
++ idx:life_settings_owner_row_key:CREATE UNIQUE INDEX life_settings_owner_row_key ON public.life_settings USING btree (user_id, id)
++ idx:life_settings_pkey:CREATE UNIQUE INDEX life_settings_pkey ON public.life_settings USING btree (id)
++ idx:place_aliases_alias_unique:CREATE UNIQUE INDEX place_aliases_alias_unique ON public.place_aliases USING btree (user_id, alias, place_id)
++ idx:place_aliases_owner_row_key:CREATE UNIQUE INDEX place_aliases_owner_row_key ON public.place_aliases USING btree (user_id, id)
++ idx:place_aliases_pkey:CREATE UNIQUE INDEX place_aliases_pkey ON public.place_aliases USING btree (id)
++ idx:saved_places_owner_row_key:CREATE UNIQUE INDEX saved_places_owner_row_key ON public.saved_places USING btree (user_id, id)
++ idx:saved_places_pkey:CREATE UNIQUE INDEX saved_places_pkey ON public.saved_places USING btree (id)
++ idx:saved_places_user_name_idx:CREATE UNIQUE INDEX saved_places_user_name_idx ON public.saved_places USING btree (user_id, lower(name))
++ idx:sleep_logs_owner_row_key:CREATE UNIQUE INDEX sleep_logs_owner_row_key ON public.sleep_logs USING btree (user_id, id)
++ idx:sleep_logs_pkey:CREATE UNIQUE INDEX sleep_logs_pkey ON public.sleep_logs USING btree (id)
++ idx:sleep_logs_wake_date_unique:CREATE UNIQUE INDEX sleep_logs_wake_date_unique ON public.sleep_logs USING btree (user_id, wake_date)
++ idx:wellbeing_checkins_date_unique:CREATE UNIQUE INDEX wellbeing_checkins_date_unique ON public.wellbeing_checkins USING btree (user_id, date)
++ idx:wellbeing_checkins_owner_row_key:CREATE UNIQUE INDEX wellbeing_checkins_owner_row_key ON public.wellbeing_checkins USING btree (user_id, id)
++ idx:wellbeing_checkins_pkey:CREATE UNIQUE INDEX wellbeing_checkins_pkey ON public.wellbeing_checkins USING btree (id)
++ pol:calendar_events:calendar_events_delete_own:PERMISSIVE:DELETE:(auth.uid() = user_id)::authenticated
++ pol:calendar_events:calendar_events_insert_own:PERMISSIVE:INSERT::(auth.uid() = user_id):authenticated
++ pol:calendar_events:calendar_events_select_own:PERMISSIVE:SELECT:(auth.uid() = user_id)::authenticated
++ pol:calendar_events:calendar_events_update_own:PERMISSIVE:UPDATE:(auth.uid() = user_id):(auth.uid() = user_id):authenticated
++ pol:commute_observations:commute_observations_delete_own:PERMISSIVE:DELETE:(auth.uid() = user_id)::authenticated
++ pol:commute_observations:commute_observations_insert_own:PERMISSIVE:INSERT::(auth.uid() = user_id):authenticated
++ pol:commute_observations:commute_observations_select_own:PERMISSIVE:SELECT:(auth.uid() = user_id)::authenticated
++ pol:commute_observations:commute_observations_update_own:PERMISSIVE:UPDATE:(auth.uid() = user_id):(auth.uid() = user_id):authenticated
++ pol:exercise_sessions:exercise_sessions_delete_own:PERMISSIVE:DELETE:(auth.uid() = user_id)::authenticated
++ pol:exercise_sessions:exercise_sessions_insert_own:PERMISSIVE:INSERT::(auth.uid() = user_id):authenticated
++ pol:exercise_sessions:exercise_sessions_select_own:PERMISSIVE:SELECT:(auth.uid() = user_id)::authenticated
++ pol:exercise_sessions:exercise_sessions_update_own:PERMISSIVE:UPDATE:(auth.uid() = user_id):(auth.uid() = user_id):authenticated
++ pol:habit_events:habit_events_delete_own:PERMISSIVE:DELETE:(auth.uid() = user_id)::authenticated
++ pol:habit_events:habit_events_insert_own:PERMISSIVE:INSERT::(auth.uid() = user_id):authenticated
++ pol:habit_events:habit_events_select_own:PERMISSIVE:SELECT:(auth.uid() = user_id)::authenticated
++ pol:habit_events:habit_events_update_own:PERMISSIVE:UPDATE:(auth.uid() = user_id):(auth.uid() = user_id):authenticated
++ pol:habit_plans:habit_plans_delete_own:PERMISSIVE:DELETE:(auth.uid() = user_id)::authenticated
++ pol:habit_plans:habit_plans_insert_own:PERMISSIVE:INSERT::(auth.uid() = user_id):authenticated
++ pol:habit_plans:habit_plans_select_own:PERMISSIVE:SELECT:(auth.uid() = user_id)::authenticated
++ pol:habit_plans:habit_plans_update_own:PERMISSIVE:UPDATE:(auth.uid() = user_id):(auth.uid() = user_id):authenticated
++ pol:life_settings:life_settings_delete_own:PERMISSIVE:DELETE:(auth.uid() = user_id)::authenticated
++ pol:life_settings:life_settings_insert_own:PERMISSIVE:INSERT::(auth.uid() = user_id):authenticated
++ pol:life_settings:life_settings_select_own:PERMISSIVE:SELECT:(auth.uid() = user_id)::authenticated
++ pol:life_settings:life_settings_update_own:PERMISSIVE:UPDATE:(auth.uid() = user_id):(auth.uid() = user_id):authenticated
++ pol:place_aliases:place_aliases_delete_own:PERMISSIVE:DELETE:(auth.uid() = user_id)::authenticated
++ pol:place_aliases:place_aliases_insert_own:PERMISSIVE:INSERT::(auth.uid() = user_id):authenticated
++ pol:place_aliases:place_aliases_select_own:PERMISSIVE:SELECT:(auth.uid() = user_id)::authenticated
++ pol:place_aliases:place_aliases_update_own:PERMISSIVE:UPDATE:(auth.uid() = user_id):(auth.uid() = user_id):authenticated
++ pol:saved_places:saved_places_delete_own:PERMISSIVE:DELETE:(auth.uid() = user_id)::authenticated
++ pol:saved_places:saved_places_insert_own:PERMISSIVE:INSERT::(auth.uid() = user_id):authenticated
++ pol:saved_places:saved_places_select_own:PERMISSIVE:SELECT:(auth.uid() = user_id)::authenticated
++ pol:saved_places:saved_places_update_own:PERMISSIVE:UPDATE:(auth.uid() = user_id):(auth.uid() = user_id):authenticated
++ pol:sleep_logs:sleep_logs_delete_own:PERMISSIVE:DELETE:(auth.uid() = user_id)::authenticated
++ pol:sleep_logs:sleep_logs_insert_own:PERMISSIVE:INSERT::(auth.uid() = user_id):authenticated
++ pol:sleep_logs:sleep_logs_select_own:PERMISSIVE:SELECT:(auth.uid() = user_id)::authenticated
++ pol:sleep_logs:sleep_logs_update_own:PERMISSIVE:UPDATE:(auth.uid() = user_id):(auth.uid() = user_id):authenticated
++ pol:wellbeing_checkins:wellbeing_checkins_delete_own:PERMISSIVE:DELETE:(auth.uid() = user_id)::authenticated
++ pol:wellbeing_checkins:wellbeing_checkins_insert_own:PERMISSIVE:INSERT::(auth.uid() = user_id):authenticated
++ pol:wellbeing_checkins:wellbeing_checkins_select_own:PERMISSIVE:SELECT:(auth.uid() = user_id)::authenticated
++ pol:wellbeing_checkins:wellbeing_checkins_update_own:PERMISSIVE:UPDATE:(auth.uid() = user_id):(auth.uid() = user_id):authenticated
++ rel:calendar_events:r:rls=true:force=false:owner=postgres:acl=postgres=arwdDxtm/postgres,service_role=arwdDxtm/postgres,authenticated=arwd/postgres
++ rel:calendar_events_owner_row_key:i:rls=false:force=false:owner=postgres:acl=
++ rel:calendar_events_pkey:i:rls=false:force=false:owner=postgres:acl=
++ rel:calendar_events_user_date_idx:i:rls=false:force=false:owner=postgres:acl=
++ rel:commute_observations:r:rls=true:force=false:owner=postgres:acl=postgres=arwdDxtm/postgres,service_role=arwdDxtm/postgres,authenticated=arwd/postgres
++ rel:commute_observations_owner_row_key:i:rls=false:force=false:owner=postgres:acl=
++ rel:commute_observations_pkey:i:rls=false:force=false:owner=postgres:acl=
++ rel:commute_observations_user_place_idx:i:rls=false:force=false:owner=postgres:acl=
++ rel:exercise_sessions:r:rls=true:force=false:owner=postgres:acl=postgres=arwdDxtm/postgres,service_role=arwdDxtm/postgres,authenticated=arwd/postgres
++ rel:exercise_sessions_owner_row_key:i:rls=false:force=false:owner=postgres:acl=
++ rel:exercise_sessions_pkey:i:rls=false:force=false:owner=postgres:acl=
++ rel:exercise_sessions_user_date_idx:i:rls=false:force=false:owner=postgres:acl=
++ rel:habit_events:r:rls=true:force=false:owner=postgres:acl=postgres=arwdDxtm/postgres,service_role=arwdDxtm/postgres,authenticated=arwd/postgres
++ rel:habit_events_owner_row_key:i:rls=false:force=false:owner=postgres:acl=
++ rel:habit_events_pkey:i:rls=false:force=false:owner=postgres:acl=
++ rel:habit_events_user_plan_idx:i:rls=false:force=false:owner=postgres:acl=
++ rel:habit_plans:r:rls=true:force=false:owner=postgres:acl=postgres=arwdDxtm/postgres,service_role=arwdDxtm/postgres,authenticated=arwd/postgres
++ rel:habit_plans_owner_row_key:i:rls=false:force=false:owner=postgres:acl=
++ rel:habit_plans_pkey:i:rls=false:force=false:owner=postgres:acl=
++ rel:life_settings:r:rls=true:force=false:owner=postgres:acl=postgres=arwdDxtm/postgres,service_role=arwdDxtm/postgres,authenticated=arwd/postgres
++ rel:life_settings_one_per_user:i:rls=false:force=false:owner=postgres:acl=
++ rel:life_settings_owner_row_key:i:rls=false:force=false:owner=postgres:acl=
++ rel:life_settings_pkey:i:rls=false:force=false:owner=postgres:acl=
++ rel:place_aliases:r:rls=true:force=false:owner=postgres:acl=postgres=arwdDxtm/postgres,service_role=arwdDxtm/postgres,authenticated=arwd/postgres
++ rel:place_aliases_alias_unique:i:rls=false:force=false:owner=postgres:acl=
++ rel:place_aliases_owner_row_key:i:rls=false:force=false:owner=postgres:acl=
++ rel:place_aliases_pkey:i:rls=false:force=false:owner=postgres:acl=
++ rel:saved_places:r:rls=true:force=false:owner=postgres:acl=postgres=arwdDxtm/postgres,service_role=arwdDxtm/postgres,authenticated=arwd/postgres
++ rel:saved_places_owner_row_key:i:rls=false:force=false:owner=postgres:acl=
++ rel:saved_places_pkey:i:rls=false:force=false:owner=postgres:acl=
++ rel:saved_places_user_name_idx:i:rls=false:force=false:owner=postgres:acl=
++ rel:sleep_logs:r:rls=true:force=false:owner=postgres:acl=postgres=arwdDxtm/postgres,service_role=arwdDxtm/postgres,authenticated=arwd/postgres
++ rel:sleep_logs_owner_row_key:i:rls=false:force=false:owner=postgres:acl=
++ rel:sleep_logs_pkey:i:rls=false:force=false:owner=postgres:acl=
++ rel:sleep_logs_wake_date_unique:i:rls=false:force=false:owner=postgres:acl=
++ rel:wellbeing_checkins:r:rls=true:force=false:owner=postgres:acl=postgres=arwdDxtm/postgres,service_role=arwdDxtm/postgres,authenticated=arwd/postgres
++ rel:wellbeing_checkins_date_unique:i:rls=false:force=false:owner=postgres:acl=
++ rel:wellbeing_checkins_owner_row_key:i:rls=false:force=false:owner=postgres:acl=
++ rel:wellbeing_checkins_pkey:i:rls=false:force=false:owner=postgres:acl=
++ trg:calendar_events:calendar_events_touch_updated_at:enabled=O:CREATE TRIGGER calendar_events_touch_updated_at BEFORE UPDATE ON public.calendar_events FOR EACH ROW EXECUTE FUNCTION touch_updated_at()
++ trg:commute_observations:commute_observations_touch_updated_at:enabled=O:CREATE TRIGGER commute_observations_touch_updated_at BEFORE UPDATE ON public.commute_observations FOR EACH ROW EXECUTE FUNCTION touch_updated_at()
++ trg:exercise_sessions:exercise_sessions_touch_updated_at:enabled=O:CREATE TRIGGER exercise_sessions_touch_updated_at BEFORE UPDATE ON public.exercise_sessions FOR EACH ROW EXECUTE FUNCTION touch_updated_at()
++ trg:habit_events:habit_events_touch_updated_at:enabled=O:CREATE TRIGGER habit_events_touch_updated_at BEFORE UPDATE ON public.habit_events FOR EACH ROW EXECUTE FUNCTION touch_updated_at()
++ trg:habit_plans:habit_plans_touch_updated_at:enabled=O:CREATE TRIGGER habit_plans_touch_updated_at BEFORE UPDATE ON public.habit_plans FOR EACH ROW EXECUTE FUNCTION touch_updated_at()
++ trg:life_settings:life_settings_touch_updated_at:enabled=O:CREATE TRIGGER life_settings_touch_updated_at BEFORE UPDATE ON public.life_settings FOR EACH ROW EXECUTE FUNCTION touch_updated_at()
++ trg:place_aliases:place_aliases_touch_updated_at:enabled=O:CREATE TRIGGER place_aliases_touch_updated_at BEFORE UPDATE ON public.place_aliases FOR EACH ROW EXECUTE FUNCTION touch_updated_at()
++ trg:saved_places:saved_places_touch_updated_at:enabled=O:CREATE TRIGGER saved_places_touch_updated_at BEFORE UPDATE ON public.saved_places FOR EACH ROW EXECUTE FUNCTION touch_updated_at()
++ trg:sleep_logs:sleep_logs_touch_updated_at:enabled=O:CREATE TRIGGER sleep_logs_touch_updated_at BEFORE UPDATE ON public.sleep_logs FOR EACH ROW EXECUTE FUNCTION touch_updated_at()
++ trg:wellbeing_checkins:wellbeing_checkins_touch_updated_at:enabled=O:CREATE TRIGGER wellbeing_checkins_touch_updated_at BEFORE UPDATE ON public.wellbeing_checkins FOR EACH ROW EXECUTE FUNCTION touch_updated_at()

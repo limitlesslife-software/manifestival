@@ -48,6 +48,14 @@ import { normalizeTimeEntry } from '../domain/timeEntry.js';
 import { normalizeAlignmentReview } from '../domain/alignmentReview.js';
 import { normalizeTimer } from '../domain/timer.js';
 import { normalizeItemSettings } from '../domain/alignmentItemSettings.js';
+import { normalizeSavedPlace, normalizePlaceAlias } from '../domain/savedPlace.js';
+import { normalizeCalendarEvent } from '../domain/calendarEvent.js';
+import { normalizeCommuteObservation } from '../domain/commuteObservation.js';
+import { normalizeLifeSettings } from '../domain/lifeSettings.js';
+import { normalizeSleepLog } from '../domain/sleepLog.js';
+import { normalizeHabitPlan, normalizeHabitEvent } from '../domain/habit.js';
+import { normalizeExerciseSession } from '../domain/exerciseSession.js';
+import { normalizeWellbeingCheckin } from '../domain/wellbeingCheckin.js';
 
 /** Kentät, joita client ei saa koskaan lähettää. */
 const SERVER_OWNED = Object.freeze(['user_id', 'created_at', 'updated_at']);
@@ -59,6 +67,112 @@ function assertClientSafe(row) {
     }
   }
   return row;
+}
+
+// ------------------------------------------------------ sivutettu lataus
+//
+// PostgREST palauttaa yhdessä vastauksessa enintään max-rows riviä
+// (Supabasessa oletus 1000) EIKÄ kerro katkaisusta mitään. Ilman
+// järjestystä ja sivutusta lataus näki pitkäikäisestä taulusta vain
+// satunnaisen tuhannen rivin osajoukon ja korvasi tilan sillä: uusimmat
+// unikirjaukset ja tulevat menot katosivat jokaisella latauksella, ja
+// puuttuvan päivän tallennus törmäsi uniikkiavaimeen (23505).
+//
+// Siksi arjen taulut (0014) ladataan sivuittain vakaassa järjestyksessä
+// (tunniste on uniikki, joten sivut eivät mene päällekkäin). Ensimmäinen
+// sivu pyytää kokonaismäärän: jos palvelimen raja on sivua pienempi,
+// jatketaan kunnes kaikki on haettu. Karkaamisraja estää loputtoman
+// silmukan, ja sen ylitys on näkyvä virhe — ei hiljainen katkaisu.
+
+/** Pyydetyn sivun koko (sama kuin Supabasen oletusraja). */
+export const LIST_PAGE_ROWS = 1000;
+
+/** Karkaamisraja: näin monta riviä yhdestä taulusta on jo vika, ei käyttöä. */
+export const MAX_LIST_ROWS = 50000;
+
+/**
+ * Hae kirjautuneen käyttäjän kaikki rivit sivuittain.
+ *
+ * @param {string} table
+ * @param {string} orderColumn uniikki sarake, jonka mukaan sivutetaan
+ * @param {{pageRows?:number, maxRows?:number}} [limits]
+ * @returns {Promise<{data:object[]|null, error:object|null, overflow?:boolean}>}
+ */
+export async function selectOwnedRows(table, orderColumn,
+  { pageRows = LIST_PAGE_ROWS, maxRows = MAX_LIST_ROWS } = {}) {
+  const rows = [];
+  let total = null;
+  while (rows.length < maxRows) {
+    const from = rows.length;
+    const { data, error, count } = await getClient()
+      .from(table)
+      .select('*', from === 0 ? { count: 'exact' } : {})
+      .eq('user_id', requireUserId())
+      .order(orderColumn, { ascending: true })
+      .range(from, from + pageRows - 1);
+    if (error) return { data: null, error };
+    const page = Array.isArray(data) ? data : [];
+    if (from === 0 && Number.isInteger(count)) total = count;
+    rows.push(...page);
+    // Tyhjä sivu päättää aina. Tunnettu kokonaismäärä ratkaisee, vaikka
+    // palvelimen raja olisi sivua pienempi; ilman sitä vajaa sivu on viimeinen.
+    const done = page.length === 0 || (total !== null ? rows.length >= total : page.length < pageRows);
+    if (done) return { data: rows, error: null };
+  }
+  return { data: null, error: null, overflow: true };
+}
+
+// ------------------------------------------------ muuttuneet sarakkeet
+
+/** Domain-olion kentät, jotka eivät ole käyttäjän muutoksia. */
+const DOMAIN_META_FIELDS = Object.freeze(['id', 'createdAt', 'updatedAt']);
+
+/**
+ * Sarakkeet (tai domain-kentät), joiden arvo eroaa. Tunniste ei ole muutos.
+ * jsonb-sarake verrataan kokonaisena: sisäkkäinen olio lähtee koko
+ * sarakkeena, kuten kanta sen tallentaa.
+ *
+ * @param {object|null} before rivi, johon muutos yhdistettiin
+ * @param {object} after
+ * @param {string[]} [ignore]
+ * @returns {object} vain muuttuneet avaimet
+ */
+export function changedColumns(before, after, ignore = ['id']) {
+  const patch = {};
+  for (const [key, value] of Object.entries(after || {})) {
+    if (ignore.includes(key)) continue;
+    const previous = before ? before[key] : undefined;
+    if (JSON.stringify(previous) !== JSON.stringify(value)) patch[key] = value;
+  }
+  return patch;
+}
+
+// ------------------------------------------ poistosäännöt muistipolulla
+//
+// Kanta hoitaa poiston seuraukset itse (0014: ON DELETE SET NULL ja
+// CASCADE). Muistivarasto ei: paikan poiston jälkeen menon muistiriville
+// jäi kuollut place_id, ja seuraava lataus (paluu sovellukseen, verkon
+// palautuminen) toi sen tilaan. Lähtö muuttui tuntemattomaksi ja aamun
+// suunnitelma putosi profiilin työmatkaan, joten suositeltu herätys
+// aikaistui ilman käyttäjän muutosta.
+//
+// Siksi onnistunut poisto peilaa kannan säännön niihin lapsitauluihin,
+// jotka elävät muistissa. Kannassa oleva lapsi on kannan vastuulla (ja
+// muistissa elävään vanhempaan se ei voi viitata: vierasavain estäisi).
+
+/** Kannan ON DELETE -toiminnot. */
+export const ON_DELETE = Object.freeze({ SET_NULL: 'set null', CASCADE: 'cascade' });
+
+async function mirrorDeleteInMemory(references, id) {
+  for (const { repo, field, onDelete } of references) {
+    if (repo.isPersistent()) continue;
+    const listed = await repo.memory.list();
+    for (const row of listed.value || []) {
+      if (row[field] == null || String(row[field]) !== String(id)) continue;
+      if (onDelete === ON_DELETE.CASCADE) await repo.memory.remove(row.id);
+      else await repo.memory.patch(row.id, { [field]: null });
+    }
+  }
 }
 
 /**
@@ -73,6 +187,11 @@ function assertClientSafe(row) {
  * @param {Function} config.fromRow   Kannan rivi -> domain
  * @param {Function} [config.guardWrite] normalisoitu -> kieltäytyminen tai null
  *   (arvot, joita kanta ei vielä hyväksy; tarkistetaan ennen verkkoa)
+ * @param {string} [config.listOrder] uniikki sarake: lataus sivuittain tämän
+ *   mukaan järjestettynä (selectOwnedRows). Puuttuu = yksi haku.
+ * @param {Function} [config.referencedBy] () => [{repo, field, onDelete}]:
+ *   kannan vierasavaimet tähän tauluun, peilataan muistiin poistossa
+ *   (laiska, koska lapsirepositoriot määritellään myöhemmin)
  *
  * AJONAIKAINEN SKEEMATARKISTUS (src/data/schema.js, schemaRuntime.js):
  * käännösaikainen portti valitsee yhä kannan ja muistin välillä. Jos kanta
@@ -86,15 +205,44 @@ function assertClientSafe(row) {
  *
  * Torjunta tapahtuu ENNEN verkkokutsua ja kertoo syyn käyttäjälle.
  */
-export function createRepository({ table, schemaKey, normalize, toRow, fromRow, guardWrite = null }) {
+export function createRepository({
+  table, schemaKey, normalize, toRow, fromRow, guardWrite = null, listOrder = null, referencedBy = null
+}) {
   const memory = createMemoryRepository({ normalize, name: table });
 
   const usesDatabase = () => hasTable(schemaKey);
   const refusal = normalized => writeRefusal(schemaKey) || (guardWrite ? guardWrite(normalized) : null);
 
+  async function removeRow(id) {
+    if (!usesDatabase()) return memory.remove(id);
+    const refused = writeRefusal(schemaKey);
+    if (refused) return refused;
+    try {
+      const { error } = await getClient()
+        .from(table)
+        .delete()
+        .eq('user_id', requireUserId())
+        .eq('id', id);
+      if (error) {
+        noteSchemaError(table, error, [], { write: true });
+        return failFromCause(error, { op: 'delete', fallback: 'Poisto ei onnistunut.', code: table + '.delete' });
+      }
+      return ok({ id });
+    } catch (cause) {
+      return failFromThrown(cause, { op: 'delete', fallback: 'Poisto ei onnistunut.', code: table + '.delete' });
+    }
+  }
+
   return {
     table,
     schemaKey,
+
+    /** Sivutetun latauksen järjestyssarake, tai null (yksi haku). */
+    listOrder,
+
+    /** Muistiin peilattavat vierasavaimet tarkastelua varten: [{table, field, onDelete}]. */
+    references: () => (referencedBy ? referencedBy() : [])
+      .map(({ repo, field, onDelete }) => ({ table: repo.table, field, onDelete })),
 
     /** Säilyykö tieto tallennuksen yli tällä hetkellä? */
     isPersistent: () => usesDatabase(),
@@ -123,6 +271,18 @@ export function createRepository({ table, schemaKey, normalize, toRow, fromRow, 
       // auttaisi, ja tyhjässä taulussa ei ole mitään kadonnutta.
       if (isTableMissing(schemaKey)) return ok([]);
       try {
+        if (listOrder) {
+          const paged = await selectOwnedRows(table, listOrder);
+          if (paged.overflow) {
+            return failWith(ERROR_CODE.UNSUPPORTED, 'Tietoja on enemmän kuin sovellus pystyy kerralla lataamaan.',
+              { op: table + '.list' });
+          }
+          if (paged.error) {
+            noteSchemaError(table, paged.error);
+            return failFromCause(paged.error, { op: 'load', fallback: 'Tietojen lataus ei onnistunut.', code: table + '.list' });
+          }
+          return ok(paged.data.map(fromRow));
+        }
         const { data, error } = await getClient()
           .from(table)
           .select('*')
@@ -162,21 +322,35 @@ export function createRepository({ table, schemaKey, normalize, toRow, fromRow, 
      * poistettu toisella laitteella tai RLS suodatti sen) onnistuneeksi:
      * näkymä väitti tallentaneensa, ja seuraava lataus pudotti muutoksen
      * sanomatta mitään. Nyt nolla riviä on NOT_FOUND, ja kutsuja peruu.
+     *
+     * `changedFrom` = rivi, johon kutsuja yhdisti muutoksensa. Silloin
+     * lähetetään VAIN muuttuneet sarakkeet (changedColumns), ei koko riviä
+     * laitteen välimuistista: muuten vanhentunut laite kumosi hiljaa toisella
+     * laitteella tehdyt muutokset saman rivin muihin sarakkeisiin.
      */
-    async update(entity) {
+    async update(entity, { changedFrom = null } = {}) {
       const normalized = normalize(entity);
-      if (!usesDatabase()) return memory.update(normalized);
+      if (!usesDatabase()) {
+        if (!changedFrom) return memory.update(normalized);
+        // Muistissa sama sääntö: vain muuttuneet kentät yhdistetään riviin.
+        return memory.patch(normalized.id,
+          changedColumns(normalize(changedFrom), normalized, DOMAIN_META_FIELDS));
+      }
       const refused = refusal(normalized);
       if (refused) return refused;
+      const fullRow = toRow(normalized);
+      const row = changedFrom ? changedColumns(toRow(normalize(changedFrom)), fullRow) : fullRow;
+      // Mikään ei muuttunut: ei tyhjää UPDATEa (PostgREST hylkäisi sen).
+      if (Object.keys(row).length === 0) return ok(normalized);
       try {
         const { data, error } = await getClient()
           .from(table)
-          .update(stripLoweredColumns(table, assertClientSafe(toRow(normalized))))
+          .update(stripLoweredColumns(table, assertClientSafe(row)))
           .eq('user_id', requireUserId())
           .eq('id', normalized.id)
           .select('id');
         if (error) {
-          noteSchemaError(table, error, Object.keys(toRow(normalized)));
+          noteSchemaError(table, error, Object.keys(row));
           return failFromCause(error, { op: 'save', fallback: 'Muutoksen tallennus ei onnistunut.', code: table + '.update' });
         }
         if (!Array.isArray(data) || data.length === 0) {
@@ -188,24 +362,11 @@ export function createRepository({ table, schemaKey, normalize, toRow, fromRow, 
       }
     },
 
+    /** Poisto; onnistuessa kannan poistosäännöt peilataan muistissa eläviin lapsiin. */
     async remove(id) {
-      if (!usesDatabase()) return memory.remove(id);
-      const refused = writeRefusal(schemaKey);
-      if (refused) return refused;
-      try {
-        const { error } = await getClient()
-          .from(table)
-          .delete()
-          .eq('user_id', requireUserId())
-          .eq('id', id);
-        if (error) {
-          noteSchemaError(table, error, [], { write: true });
-          return failFromCause(error, { op: 'delete', fallback: 'Poisto ei onnistunut.', code: table + '.delete' });
-        }
-        return ok({ id });
-      } catch (cause) {
-        return failFromThrown(cause, { op: 'delete', fallback: 'Poisto ei onnistunut.', code: table + '.delete' });
-      }
+      const result = await removeRow(id);
+      if (result.ok && referencedBy) await mirrorDeleteInMemory(referencedBy(), id);
+      return result;
     },
 
     /** Tyhjennä muistivarasto. Kutsutaan uloskirjautumisessa. */
@@ -294,6 +455,11 @@ export const goalsRepo = createRepository({
     maintenanceAllowed: columnGateOpen('GOAL_MAINTENANCE_MODE')
   }) ? null : failWith(ERROR_CODE.VALIDATION_ERROR,
     'Ylläpitotila ei ole vielä käytössä. Valitse tavoitteelle toinen tila.')),
+  // 0014: menot ja liikuntakerrat säilyvät, tavoiteliitos katkeaa.
+  referencedBy: () => [
+    { repo: calendarEventsRepo, field: 'goalId', onDelete: ON_DELETE.SET_NULL },
+    { repo: exerciseSessionsRepo, field: 'goalId', onDelete: ON_DELETE.SET_NULL }
+  ],
   toRow: goal => ({
     id: goal.id,
     title: goal.title,
@@ -1104,6 +1270,392 @@ export const alignmentItemSettingsRepo = createRepository({
   })
 });
 
+// ------------------------------------------ arjen käyttöjärjestelmä (0014)
+//
+// Kymmenen uutta taulua, kaikki portin takana (migraatio 0014 EI AJETTU;
+// aalto K avaa ne yhdessä). Portti kiinni -> istunnon muisti.
+//
+// NOT NULL DEFAULT -sarakkeita ei koskaan lähetetä nullina: normalisointi
+// antaa niille aina arvon (oletus tai kiristetty), joten rivissä on aina
+// kelvollinen arvo. Yksikään rivimuunnos ei lähetä user_id:tä eikä
+// aikaleimoja — ne asettaa kanta.
+
+/**
+ * Tallennetut paikat. NIMI JA OSOITE TEKSTINÄ, EI KOORDINAATTEJA: yksikään
+ * sarake ei kerro sijaintia, eikä sitä lähetetä minnekään.
+ */
+export const savedPlacesRepo = createRepository({
+  table: 'saved_places',
+  schemaKey: 'savedPlaces',
+  normalize: normalizeSavedPlace,
+  listOrder: 'id',
+  // 0014: menot jäävät ilman paikkaa; nimitykset ja havainnot poistuvat.
+  referencedBy: () => [
+    { repo: calendarEventsRepo, field: 'placeId', onDelete: ON_DELETE.SET_NULL },
+    { repo: placeAliasesRepo, field: 'placeId', onDelete: ON_DELETE.CASCADE },
+    { repo: commuteObservationsRepo, field: 'placeId', onDelete: ON_DELETE.CASCADE }
+  ],
+  toRow: place => ({
+    id: place.id,
+    name: place.name,
+    address: place.address,
+    provider_place_id: place.providerPlaceId,
+    area: place.area,
+    travel_mode: place.travelMode,
+    usual_travel_minutes: place.usualTravelMinutes,
+    preparation_minutes: place.preparationMinutes,
+    arrival_buffer_minutes: place.arrivalBufferMinutes,
+    overhead_minutes: place.overheadMinutes,
+    use_learned: place.useLearned,
+    note: place.note
+  }),
+  fromRow: row => normalizeSavedPlace({
+    id: row.id,
+    name: row.name,
+    address: row.address,
+    providerPlaceId: row.provider_place_id,
+    area: row.area,
+    travelMode: row.travel_mode,
+    usualTravelMinutes: row.usual_travel_minutes,
+    preparationMinutes: row.preparation_minutes,
+    arrivalBufferMinutes: row.arrival_buffer_minutes,
+    overheadMinutes: row.overhead_minutes,
+    useLearned: row.use_learned,
+    note: row.note,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  })
+});
+
+/** Paikan lisänimet: vain käyttäjän vahvistamat. Paikan poisto vie ne (kaskadi). */
+export const placeAliasesRepo = createRepository({
+  table: 'place_aliases',
+  schemaKey: 'placeAliases',
+  normalize: normalizePlaceAlias,
+  listOrder: 'id',
+  toRow: alias => ({
+    id: alias.id,
+    place_id: alias.placeId,
+    alias: alias.alias,
+    confirmations: alias.confirmations,
+    last_confirmed_at: alias.lastConfirmedAt
+  }),
+  fromRow: row => normalizePlaceAlias({
+    id: row.id,
+    placeId: row.place_id,
+    alias: row.alias,
+    confirmations: row.confirmations,
+    lastConfirmedAt: row.last_confirmed_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  })
+});
+
+/**
+ * Kalenterin menot. ESIINTYMIÄ EI TALLENNETA: ne lasketaan ensimmäisestä
+ * päivästä, viikonpäivistä, päättymispäivästä ja ohitetuista päivistä.
+ * Domainin `date` on kannan `event_date`.
+ */
+export const calendarEventsRepo = createRepository({
+  table: 'calendar_events',
+  schemaKey: 'calendarEvents',
+  normalize: normalizeCalendarEvent,
+  listOrder: 'id',
+  toRow: event => ({
+    id: event.id,
+    title: event.title,
+    event_date: event.date,
+    start_time: event.startTime,
+    end_time: event.endTime,
+    duration_minutes: event.durationMinutes,
+    all_day: event.allDay,
+    category: event.category,
+    location_text: event.locationText,
+    place_id: event.placeId,
+    travel_mode: event.travelMode,
+    travel_minutes: event.travelMinutes,
+    preparation_minutes: event.preparationMinutes,
+    arrival_buffer_minutes: event.arrivalBufferMinutes,
+    overhead_minutes: event.overheadMinutes,
+    recurrence_weekdays: event.recurrenceWeekdays,
+    recurrence_until: event.recurrenceUntil,
+    skip_dates: event.skipDates,
+    goal_id: event.goalId,
+    notes: event.notes
+  }),
+  fromRow: row => normalizeCalendarEvent({
+    id: row.id,
+    title: row.title,
+    date: row.event_date,
+    startTime: row.start_time,
+    endTime: row.end_time,
+    durationMinutes: row.duration_minutes,
+    allDay: row.all_day,
+    category: row.category,
+    locationText: row.location_text,
+    placeId: row.place_id,
+    travelMode: row.travel_mode,
+    travelMinutes: row.travel_minutes,
+    preparationMinutes: row.preparation_minutes,
+    arrivalBufferMinutes: row.arrival_buffer_minutes,
+    overheadMinutes: row.overhead_minutes,
+    recurrenceWeekdays: row.recurrence_weekdays,
+    recurrenceUntil: row.recurrence_until,
+    skipDates: row.skip_dates,
+    goalId: row.goal_id,
+    notes: row.notes,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  })
+});
+
+/**
+ * Käyttäjän kuittaamat toteutuneet matkat. EI SIJAINTIHISTORIAA: ei
+ * reittiä, ei pisteitä. `event_id` ei ole vierasavain.
+ */
+export const commuteObservationsRepo = createRepository({
+  table: 'commute_observations',
+  schemaKey: 'commuteObservations',
+  normalize: normalizeCommuteObservation,
+  listOrder: 'id',
+  toRow: observation => ({
+    id: observation.id,
+    place_id: observation.placeId,
+    event_id: observation.eventId,
+    observed_on: observation.observedOn,
+    weekday: observation.weekday,
+    planned_departure: observation.plannedDeparture,
+    actual_departure: observation.actualDeparture,
+    arrival_at: observation.arrivalAt,
+    travel_minutes: observation.travelMinutes,
+    provider_minutes: observation.providerMinutes,
+    preparation_minutes: observation.preparationMinutes,
+    overhead_minutes: observation.overheadMinutes,
+    arrival_result: observation.arrivalResult,
+    source: observation.source
+  }),
+  fromRow: row => normalizeCommuteObservation({
+    id: row.id,
+    placeId: row.place_id,
+    eventId: row.event_id,
+    observedOn: row.observed_on,
+    weekday: row.weekday,
+    plannedDeparture: row.planned_departure,
+    actualDeparture: row.actual_departure,
+    arrivalAt: row.arrival_at,
+    travelMinutes: row.travel_minutes,
+    providerMinutes: row.provider_minutes,
+    preparationMinutes: row.preparation_minutes,
+    overheadMinutes: row.overhead_minutes,
+    arrivalResult: row.arrival_result,
+    source: row.source,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  })
+});
+
+/**
+ * Arjen asetukset: YKSI RIVI KÄYTTÄJÄÄ KOHTI (kannan uniikkirajoite).
+ * Rivi on aina täysi: normalisointi täyttää puuttuvat oletuksilla, joten
+ * yksikään NOT NULL -sarake ei lähde nullina.
+ */
+export const lifeSettingsRepo = createRepository({
+  table: 'life_settings',
+  schemaKey: 'lifeSettings',
+  normalize: normalizeLifeSettings,
+  listOrder: 'id',
+  toRow: settings => ({
+    id: settings.id,
+    weekend_wake_shift_max_minutes: settings.weekendWakeShiftMaxMinutes,
+    weekend_bed_shift_max_minutes: settings.weekendBedShiftMaxMinutes,
+    wind_down_minutes: settings.windDownMinutes,
+    bedtime_target: settings.bedtimeTarget,
+    arrival_buffer_minutes: settings.arrivalBufferMinutes,
+    guidance_style: settings.guidanceStyle,
+    speech_enabled: settings.speechEnabled,
+    morning_brief_enabled: settings.morningBriefEnabled,
+    reminder_offset_minutes: settings.reminderOffsetMinutes,
+    digest_enabled: settings.digestEnabled,
+    digest_time: settings.digestTime,
+    sleep_affects_capacity: settings.sleepAffectsCapacity,
+    hourly_value_minor: settings.hourlyValueMinor,
+    currency: settings.currency,
+    alarm: settings.alarm,
+    morning_routine: settings.morningRoutine,
+    meal_rhythm: settings.mealRhythm,
+    delivery: settings.delivery
+  }),
+  fromRow: row => normalizeLifeSettings({
+    id: row.id,
+    weekendWakeShiftMaxMinutes: row.weekend_wake_shift_max_minutes,
+    weekendBedShiftMaxMinutes: row.weekend_bed_shift_max_minutes,
+    windDownMinutes: row.wind_down_minutes,
+    bedtimeTarget: row.bedtime_target,
+    arrivalBufferMinutes: row.arrival_buffer_minutes,
+    guidanceStyle: row.guidance_style,
+    speechEnabled: row.speech_enabled,
+    morningBriefEnabled: row.morning_brief_enabled,
+    reminderOffsetMinutes: row.reminder_offset_minutes,
+    digestEnabled: row.digest_enabled,
+    digestTime: row.digest_time,
+    sleepAffectsCapacity: row.sleep_affects_capacity,
+    hourlyValueMinor: row.hourly_value_minor,
+    currency: row.currency,
+    alarm: row.alarm,
+    morningRoutine: row.morning_routine,
+    mealRhythm: row.meal_rhythm,
+    delivery: row.delivery,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  })
+});
+
+/** Unikirjaukset: vuoteessa olon aika, yksi rivi heräämispäivää kohti. ARKALUONTEINEN. */
+export const sleepLogsRepo = createRepository({
+  table: 'sleep_logs',
+  schemaKey: 'sleepLogs',
+  normalize: normalizeSleepLog,
+  listOrder: 'id',
+  toRow: log => ({
+    id: log.id,
+    wake_date: log.wakeDate,
+    planned_bedtime: log.plannedBedtime,
+    actual_bedtime: log.actualBedtime,
+    planned_wake: log.plannedWake,
+    actual_wake: log.actualWake,
+    source: log.source,
+    kind: log.kind,
+    note: log.note
+  }),
+  fromRow: row => normalizeSleepLog({
+    id: row.id,
+    wakeDate: row.wake_date,
+    plannedBedtime: row.planned_bedtime,
+    actualBedtime: row.actual_bedtime,
+    plannedWake: row.planned_wake,
+    actualWake: row.actual_wake,
+    source: row.source,
+    kind: row.kind,
+    note: row.note,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  })
+});
+
+/** Tapojen muutoksen suunnitelmat. ARKALUONTEINEN (esim. nikotiini). */
+export const habitPlansRepo = createRepository({
+  table: 'habit_plans',
+  schemaKey: 'habitPlans',
+  normalize: normalizeHabitPlan,
+  listOrder: 'id',
+  // 0014: suunnitelman kirjaukset poistuvat sen mukana.
+  referencedBy: () => [{ repo: habitEventsRepo, field: 'planId', onDelete: ON_DELETE.CASCADE }],
+  toRow: plan => ({
+    id: plan.id,
+    kind: plan.kind,
+    name: plan.name,
+    min_interval_minutes: plan.minIntervalMinutes,
+    daily_target: plan.dailyTarget,
+    baseline_per_day: plan.baselinePerDay,
+    steps: plan.steps,
+    reminder_delivery: plan.reminderDelivery,
+    unit_cost_minor: plan.unitCostMinor,
+    active: plan.active
+  }),
+  fromRow: row => normalizeHabitPlan({
+    id: row.id,
+    kind: row.kind,
+    name: row.name,
+    minIntervalMinutes: row.min_interval_minutes,
+    dailyTarget: row.daily_target,
+    baselinePerDay: row.baseline_per_day,
+    steps: row.steps,
+    reminderDelivery: row.reminder_delivery,
+    unitCostMinor: row.unit_cost_minor,
+    active: row.active,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  })
+});
+
+/** Tapojen kirjaukset: käyttö, lykkäys, väliin jättäminen. Suunnitelman poisto vie ne. */
+export const habitEventsRepo = createRepository({
+  table: 'habit_events',
+  schemaKey: 'habitEvents',
+  normalize: normalizeHabitEvent,
+  listOrder: 'id',
+  toRow: event => ({
+    id: event.id,
+    plan_id: event.planId,
+    occurred_at: event.occurredAt,
+    action: event.action,
+    note: event.note
+  }),
+  fromRow: row => normalizeHabitEvent({
+    id: row.id,
+    planId: row.plan_id,
+    occurredAt: row.occurred_at,
+    action: row.action,
+    note: row.note,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  })
+});
+
+/** Liikuntakerrat. Domainin `date` on kannan `session_date`. */
+export const exerciseSessionsRepo = createRepository({
+  table: 'exercise_sessions',
+  schemaKey: 'exerciseSessions',
+  normalize: normalizeExerciseSession,
+  listOrder: 'id',
+  toRow: session => ({
+    id: session.id,
+    session_date: session.date,
+    kind: session.kind,
+    planned_minutes: session.plannedMinutes,
+    actual_minutes: session.actualMinutes,
+    intensity: session.intensity,
+    recovery_demand: session.recoveryDemand,
+    goal_id: session.goalId,
+    note: session.note
+  }),
+  fromRow: row => normalizeExerciseSession({
+    id: row.id,
+    date: row.session_date,
+    kind: row.kind,
+    plannedMinutes: row.planned_minutes,
+    actualMinutes: row.actual_minutes,
+    intensity: row.intensity,
+    recoveryDemand: row.recovery_demand,
+    goalId: row.goal_id,
+    note: row.note,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  })
+});
+
+/** Motivaatio ja hallinnan tunne, yksi rivi päivää kohti. ARKALUONTEINEN. */
+export const wellbeingCheckinsRepo = createRepository({
+  table: 'wellbeing_checkins',
+  schemaKey: 'wellbeingCheckins',
+  normalize: normalizeWellbeingCheckin,
+  listOrder: 'id',
+  toRow: checkin => ({
+    id: checkin.id,
+    date: checkin.date,
+    motivation: checkin.motivation,
+    control: checkin.control
+  }),
+  fromRow: row => normalizeWellbeingCheckin({
+    id: row.id,
+    date: row.date,
+    motivation: row.motivation,
+    control: row.control,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  })
+});
+
 // ------------------------------------------------------- AI-kirjausketju
 
 export const aiAuditRepo = createRepository({
@@ -1162,7 +1714,10 @@ export const ALL_REPOSITORIES = Object.freeze([
   inboxRepo, remindersRepo, noticesRepo, travelPlansRepo, locationRulesRepo,
   lifeAreasRepo, weeklyCapacitiesRepo, timeEntriesRepo, alignmentReviewsRepo,
   runningTimersRepo, alignmentItemSettingsRepo,
-  aiAuditRepo
+  aiAuditRepo,
+  savedPlacesRepo, placeAliasesRepo, calendarEventsRepo, commuteObservationsRepo,
+  lifeSettingsRepo, sleepLogsRepo, habitPlansRepo, habitEventsRepo,
+  exerciseSessionsRepo, wellbeingCheckinsRepo
 ]);
 
 /** Tyhjennä kaikki muistivarastot. Kutsutaan uloskirjautumisessa. */

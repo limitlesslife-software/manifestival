@@ -166,16 +166,24 @@
       <div id="capturePending"></div>
 
       <div id="noticeCenterContainer"></div>
+      <!-- Arjen kortit (src/app/views/todayDailyLife.js): piirretään vain,
+           kun niillä on sanottavaa tänään. -->
+      <div id="todayDeparture"></div>
+      <div id="todayMorning"></div>
       <div id="todayNowNext"></div>
       <div id="todayDirection"></div>
+      <div id="todayHabits"></div>
 
       <div id="todayFocus"></div>
       <div id="todayOverdue"></div>
+      <div id="todayInterruptions"></div>
       <div id="todayTimelineContainer"></div>
       <div id="todayUnscheduled"></div>
+      <div id="todayOpenEnded"></div>
       <div id="todayFreeSlots"></div>
       <div id="todayCompleted"></div>
       <div id="todayWellbeing"></div>
+      <div id="todayTomorrow"></div>
       <div id="todayReview"></div>
     </section>
 
@@ -421,23 +429,183 @@
       </div>
     </section>
 
-    <!-- ============ VIIKKO ============ -->
-    <section class="screen" id="screen-week" role="tabpanel" aria-label="Viikko" aria-hidden="true" inert>
-      <div class="nav-row">
+    <!-- ============ KALENTERI (päivä / viikko / kuukausi) ============ -->
+    <!-- Tunniste pysyy screen-week: navigointi, viimeksi avattu näkymä ja
+         puhekomennot tuntevat sen. Vanha viikkonäkymä elää Viikko-osiossa
+         omine tunnisteineen. -->
+    <section class="screen" id="screen-week" role="tabpanel" aria-label="Kalenteri" aria-hidden="true" inert>
+      <div class="eyebrow cal-eyebrow">KALENTERI</div>
+
+      <div class="segment segment-3 cal-segments" role="tablist" aria-label="Kalenterin näkymät">
+        <button class="segment-btn active" id="segmentCalDay" type="button" role="tab" aria-selected="true" aria-controls="calDaySection">Päivä</button>
+        <button class="segment-btn" id="segmentCalWeek" type="button" role="tab" aria-selected="false" aria-controls="calWeekSection">Viikko</button>
+        <button class="segment-btn" id="segmentCalMonth" type="button" role="tab" aria-selected="false" aria-controls="calMonthSection">Kuukausi</button>
+      </div>
+
+      <!-- Päivän ja kuukauden otsikko. Viikolla on oma otsikkonsa alla. -->
+      <div class="nav-row cal-nav" id="calNav">
+        <button class="nav-arrow" id="calPrev" type="button" aria-label="Edellinen päivä"><svg class="icon" aria-hidden="true"><use href="#i-chevron-left"/></svg></button>
+        <div class="cal-nav-center">
+          <div class="eyebrow" id="calEyebrow"></div>
+          <h1 class="title" id="calTitle" tabindex="-1" aria-live="polite"></h1>
+          <button class="jump-link" id="calToday" type="button">Tänään</button>
+        </div>
+        <button class="nav-arrow" id="calNext" type="button" aria-label="Seuraava päivä"><svg class="icon" aria-hidden="true"><use href="#i-chevron-right"/></svg></button>
+      </div>
+
+      <div class="nav-row cal-nav" id="calWeekNav" style="display:none;">
         <button class="nav-arrow" id="weekPrev" type="button" aria-label="Edellinen viikko"><svg class="icon" aria-hidden="true"><use href="#i-chevron-left"/></svg></button>
-        <div style="text-align:center; flex:1;">
-          <div class="eyebrow">VIIKKO</div>
-          <h1 class="title" id="weekRangeLabel"></h1>
+        <div class="cal-nav-center">
+          <h1 class="title" id="weekRangeLabel" tabindex="-1" aria-live="polite"></h1>
+          <button class="jump-link" id="calWeekToday" type="button">Tänään</button>
         </div>
         <button class="nav-arrow" id="weekNext" type="button" aria-label="Seuraava viikko"><svg class="icon" aria-hidden="true"><use href="#i-chevron-right"/></svg></button>
       </div>
 
-      <div id="weekStripContainer" class="week-strip" style="margin-top:18px;"></div>
-      <div id="weekSummary"></div>
-      <div id="weekDeadlines"></div>
-      <div id="weekGoals"></div>
-      <div id="weekListContainer" style="margin-top:12px;"></div>
-      <div id="weekReview"></div>
+      <div id="calNotice"></div>
+
+      <button class="add-row cal-new" id="calNewEvent" type="button"><svg aria-hidden="true"><use href="#i-plus"/></svg>Uusi meno</button>
+
+      <div class="add-form cal-form" id="calEventForm" style="display:none;" role="group" aria-labelledby="calFormTitle">
+        <div class="add-form-title" id="calFormTitle" tabindex="-1">Uusi meno</div>
+        <p class="hint" id="calFormNote" style="display:none;"></p>
+
+        <div>
+          <label class="field-label" for="ceTitle">Otsikko (pakollinen)</label>
+          <input type="text" id="ceTitle" maxlength="200" placeholder="esim. Hammaslääkäri" autocomplete="off" aria-describedby="ceTitleError">
+          <div class="field-error" id="ceTitleError" role="alert"></div>
+        </div>
+
+        <div class="form-row">
+          <div>
+            <label class="field-label" for="ceDate">Päivä (pakollinen)</label>
+            <input type="date" id="ceDate" aria-describedby="ceDateError">
+            <div class="field-error" id="ceDateError" role="alert"></div>
+          </div>
+          <label class="checkbox-row" for="ceAllDay">
+            <input type="checkbox" id="ceAllDay"> Koko päivä
+          </label>
+        </div>
+
+        <div class="form-row" id="ceTimeRow">
+          <div>
+            <label class="field-label" for="ceStart">Alkaa</label>
+            <input type="time" id="ceStart" aria-describedby="ceStartError">
+            <div class="field-error" id="ceStartError" role="alert"></div>
+          </div>
+          <div>
+            <label class="field-label" for="ceEnd">Päättyy</label>
+            <input type="time" id="ceEnd" aria-describedby="ceEndError">
+            <div class="field-error" id="ceEndError" role="alert"></div>
+          </div>
+          <div>
+            <label class="field-label" for="ceDuration">tai kesto (min)</label>
+            <input type="number" id="ceDuration" min="1" max="1440" step="1" inputmode="numeric" placeholder="esim. 45" aria-describedby="ceDurationError">
+            <div class="field-error" id="ceDurationError" role="alert"></div>
+          </div>
+        </div>
+
+        <div>
+          <label class="field-label" for="cePlace">Paikka</label>
+          <select id="cePlace" aria-describedby="cePlaceHint"></select>
+          <p class="hint cal-place-hint" id="cePlaceHint"></p>
+        </div>
+        <div id="ceLocationGroup" style="display:none;">
+          <label class="field-label" for="ceLocation">Muu paikka</label>
+          <input type="text" id="ceLocation" maxlength="200" placeholder="esim. Kauppakatu 5" autocomplete="off" aria-describedby="ceLocationError">
+          <div class="field-error" id="ceLocationError" role="alert"></div>
+        </div>
+
+        <div>
+          <label class="field-label" for="ceMode">Kulkutapa</label>
+          <select id="ceMode"></select>
+        </div>
+
+        <div class="form-row">
+          <div>
+            <label class="field-label" for="ceTravel">Oma arvio matka-ajasta (min)</label>
+            <input type="number" id="ceTravel" min="1" max="1440" step="1" inputmode="numeric" aria-describedby="ceTravelError">
+            <div class="field-error" id="ceTravelError" role="alert"></div>
+          </div>
+          <div>
+            <label class="field-label" for="cePrep">Valmistautuminen (min)</label>
+            <input type="number" id="cePrep" min="0" max="480" step="1" inputmode="numeric" aria-describedby="cePrepError">
+            <div class="field-error" id="cePrepError" role="alert"></div>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div>
+            <label class="field-label" for="ceEarly">Saavu etuajassa (min)</label>
+            <input type="number" id="ceEarly" min="0" max="240" step="1" inputmode="numeric" aria-describedby="ceEarlyError">
+            <div class="field-error" id="ceEarlyError" role="alert"></div>
+          </div>
+          <div>
+            <label class="field-label" for="ceOverhead">Pysäköinti ja kävely (min)</label>
+            <input type="number" id="ceOverhead" min="0" max="240" step="1" inputmode="numeric" aria-describedby="ceOverheadError">
+            <div class="field-error" id="ceOverheadError" role="alert"></div>
+          </div>
+        </div>
+
+        <fieldset class="cal-repeat">
+          <legend class="field-label">Toistuu viikoittain</legend>
+          <div class="weekday-row" id="ceRepeatDays">
+            <label class="weekday-chip"><input type="checkbox" id="ceRepeat1" value="1" data-weekday aria-label="maanantai"><span aria-hidden="true">ma</span></label>
+            <label class="weekday-chip"><input type="checkbox" id="ceRepeat2" value="2" data-weekday aria-label="tiistai"><span aria-hidden="true">ti</span></label>
+            <label class="weekday-chip"><input type="checkbox" id="ceRepeat3" value="3" data-weekday aria-label="keskiviikko"><span aria-hidden="true">ke</span></label>
+            <label class="weekday-chip"><input type="checkbox" id="ceRepeat4" value="4" data-weekday aria-label="torstai"><span aria-hidden="true">to</span></label>
+            <label class="weekday-chip"><input type="checkbox" id="ceRepeat5" value="5" data-weekday aria-label="perjantai"><span aria-hidden="true">pe</span></label>
+            <label class="weekday-chip"><input type="checkbox" id="ceRepeat6" value="6" data-weekday aria-label="lauantai"><span aria-hidden="true">la</span></label>
+            <label class="weekday-chip"><input type="checkbox" id="ceRepeat7" value="7" data-weekday aria-label="sunnuntai"><span aria-hidden="true">su</span></label>
+          </div>
+          <p class="hint">Ensimmäinen kerta on yllä valittuna päivänä. Ilman valintaa meno on kertaluonteinen.</p>
+        </fieldset>
+        <div id="ceUntilGroup" style="display:none;">
+          <label class="field-label" for="ceUntil">Toistuu asti (valinnainen)</label>
+          <input type="date" id="ceUntil" aria-describedby="ceUntilError">
+          <div class="field-error" id="ceUntilError" role="alert"></div>
+        </div>
+
+        <div>
+          <label class="field-label" for="ceCategory">Luokka</label>
+          <select id="ceCategory"></select>
+        </div>
+
+        <div>
+          <label class="field-label" for="ceNotes">Muistiinpano (valinnainen)</label>
+          <textarea id="ceNotes" rows="2" maxlength="2000" aria-describedby="ceNotesError"></textarea>
+          <div class="field-error" id="ceNotesError" role="alert"></div>
+        </div>
+
+        <div class="form-actions">
+          <button class="form-btn danger" id="ceDelete" type="button" style="display:none;">Poista</button>
+          <button class="form-btn secondary" id="ceSkip" type="button" style="display:none;">Ohita tämä kerta</button>
+          <button class="form-btn secondary" id="ceCancel" type="button">Peruuta</button>
+          <button class="form-btn primary" id="ceSave" type="button">Tallenna</button>
+        </div>
+      </div>
+
+      <!-- ---- Päivä ---- -->
+      <div id="calDaySection" role="tabpanel" aria-labelledby="segmentCalDay">
+        <div id="calDayAgenda"></div>
+      </div>
+
+      <!-- ---- Viikko (entinen viikkonäkymä, tunnisteet ennallaan) ---- -->
+      <div id="calWeekSection" role="tabpanel" aria-labelledby="segmentCalWeek" style="display:none;">
+        <div id="weekStripContainer" class="week-strip" style="margin-top:18px;"></div>
+        <div id="calWeekEvents"></div>
+        <div id="weekSummary"></div>
+        <div id="weekDeadlines"></div>
+        <div id="weekGoals"></div>
+        <div id="weekListContainer" style="margin-top:12px;"></div>
+        <div id="weekReview"></div>
+      </div>
+
+      <!-- ---- Kuukausi ---- -->
+      <div id="calMonthSection" role="tabpanel" aria-labelledby="segmentCalMonth" style="display:none;">
+        <div id="calMonthGrid"></div>
+        <p class="hint cal-legend">Ympyröity päivä on tänään. Luku päivän numeron alla on menojen ja tehtävien määrä. Valitse päivä, niin näet sen aikataulun.</p>
+      </div>
     </section>
 
     <!-- ============ TEHTÄVÄT JA RUTIINIT ============ -->
@@ -1225,6 +1393,8 @@
       <!-- ---- Budjetti ---- -->
       <div id="budgetSection" style="display:none;">
         <div id="budgetContainer"></div>
+        <!-- Harkinnanvarainen käyttö suhteessa omaan kuukausirajaan (views/discretionaryLimit.js). -->
+        <div id="discretionaryLimitContainer"></div>
       </div>
 
       <!-- ---- Laskut ---- -->
@@ -1437,6 +1607,8 @@
         </div>
 
         <div id="savingsListContainer"></div>
+        <!-- Ostos omana aikana: työaika ja suhde säästötavoitteisiin (views/purchaseCheck.js). -->
+        <div id="purchaseCheckContainer"></div>
       </div>
 
       <!-- ---- Sijoitukset ---- -->
@@ -1501,6 +1673,13 @@
           </div>
 
           <div>
+            <label class="field-label" for="ifTargetValue">Tavoitearvo (valinnainen)</label>
+            <input type="text" id="ifTargetValue" inputmode="decimal" placeholder="esim. 5000" autocomplete="off" aria-describedby="ifTargetValueHint">
+            <p class="hint" id="ifTargetValueHint">Oma tavoitteesi koko omistuksen arvolle. Verrataan vain käsin kirjattuun arvoon; tyhjä poistaa tavoitteen.</p>
+            <div class="field-error" id="ifTargetValueMinorError"></div>
+          </div>
+
+          <div>
             <label class="field-label" for="ifNote">Muistiinpano (valinnainen)</label>
             <input type="text" id="ifNote" placeholder="esim. kuukausisäästö" autocomplete="off">
           </div>
@@ -1519,67 +1698,107 @@
     <!-- ============ PROFIILI ============ -->
     <section class="screen" id="screen-profile" role="tabpanel" aria-label="Profiili" aria-hidden="true" inert>
       <div class="eyebrow">PROFIILI</div>
-      <h1 class="title" style="margin-bottom:16px;">Henkilökohtaiset tiedot</h1>
+      <h1 class="title" style="margin-bottom:16px;">Arki ja asetukset</h1>
 
-      <div id="pfSchemaNotice"></div>
-      <div id="pfCapabilities"></div>
+      <!-- Aloitusasetukset: vaiheittainen, valinnainen lista (views/setupChecklist.js). -->
+      <div id="profileSetupChecklist"></div>
 
-      <div class="hint" style="margin-bottom:14px;">
-        Kaikki kentät ovat vapaaehtoisia. Näitä käytetään herätys- ja
-        nukkumaanmenoajan automaattiseen laskentaan.
+      <!-- Osiot: arjen rytmi, hyvinvointi, omat paikat ja sovelluksen asetukset.
+           Näkyvä osio tulee tilasta (profileSegment), ks. views/profileSegments.js. -->
+      <div class="segment segment-scroll" role="tablist" aria-label="Profiilin osiot">
+        <button class="segment-btn active" id="segmentProfileDaily" type="button" role="tab" aria-selected="true" aria-controls="profileDailySection">Arki</button>
+        <button class="segment-btn" id="segmentProfileWellbeing" type="button" role="tab" aria-selected="false" tabindex="-1" aria-controls="profileWellbeingSection">Hyvinvointi</button>
+        <button class="segment-btn" id="segmentProfilePlaces" type="button" role="tab" aria-selected="false" tabindex="-1" aria-controls="profilePlacesSection">Paikat</button>
+        <button class="segment-btn" id="segmentProfileSettings" type="button" role="tab" aria-selected="false" tabindex="-1" aria-controls="profileSettingsSection">Asetukset</button>
       </div>
 
-      <div class="preview-block" id="pfPreview"></div>
-
-      <div class="add-form" style="display:flex;">
-        <div class="form-row">
-          <div>
-            <label class="field-label" for="pfAge">Ikä</label>
-            <input type="number" id="pfAge" placeholder="esim. 34" min="0" max="130">
-          </div>
-          <div>
-            <label class="field-label" for="pfWeight">Paino (kg)</label>
-            <input type="number" id="pfWeight" placeholder="esim. 82" min="0" max="500">
-          </div>
-          <div>
-            <label class="field-label" for="pfHeight">Pituus (cm)</label>
-            <input type="number" id="pfHeight" placeholder="esim. 180" min="0" max="300">
-          </div>
-        </div>
-
-        <div>
-          <label class="field-label" for="pfSleepTarget">Unitavoite (tuntia/yö)</label>
-          <input type="number" step="0.5" id="pfSleepTarget" placeholder="8" min="1" max="14">
-        </div>
-
-        <div class="add-form-title" style="margin-top:10px;">Automaattinen heräämisaika</div>
-
-        <div>
-          <label class="field-label" for="pfDefaultWake">Oletusheräämisaika (kun huomiselle ei ole töitä)</label>
-          <input type="time" id="pfDefaultWake">
-        </div>
-
-        <div class="form-row">
-          <div>
-            <label class="field-label" for="pfCommute">Työmatka (min)</label>
-            <input type="number" id="pfCommute" placeholder="30" min="0" max="600">
-          </div>
-          <div>
-            <label class="field-label" for="pfRoutine">Aamutoimet (min)</label>
-            <input type="number" id="pfRoutine" placeholder="60" min="0" max="600">
-          </div>
-        </div>
-
-        <div class="form-actions">
-          <button class="form-btn primary" id="pfSave" type="button" style="flex:none; padding:10px 24px;">Tallenna</button>
-        </div>
-        <div id="pfSavedMsg" style="display:none; font-size:12px; color:var(--sage); font-weight:700;" role="status">✓ Tallennettu</div>
-        <div id="pfErrorMsg" style="display:none; font-size:12px; color:var(--clay); font-weight:700;" role="alert">Tallennus epäonnistui. Yritä uudelleen.</div>
+      <!-- Arki: uni ja rytmi, aamurutiini, herätys, aamukatsaus, ateriat (views/dailySettings.js). -->
+      <div id="profileDailySection" role="tabpanel" aria-labelledby="segmentProfileDaily">
+        <div id="dailyLifeNotice"></div>
+        <h2 class="section-title" id="dailySleepTitle">Uni ja rytmi</h2>
+        <div id="dailySleepSettings"></div>
+        <h2 class="section-title" id="dailyRoutineTitle">Aamurutiini</h2>
+        <div id="dailyRoutineSettings"></div>
+        <h2 class="section-title" id="dailyAlarmTitle">Herätys</h2>
+        <div id="dailyAlarmNext"></div>
+        <div id="dailyAlarmStatus"></div>
+        <div id="dailyAlarmSettings"></div>
+        <h2 class="section-title" id="dailyBriefTitle">Aamukatsaus</h2>
+        <div id="dailyBriefSettings"></div>
+        <h2 class="section-title" id="dailyMealTitle">Ateriat</h2>
+        <div id="dailyMealSettings"></div>
       </div>
 
-      <div id="notificationSettings"></div>
+      <!-- Hyvinvointi ja Paikat piirtävät omat näkymänsä näihin säiliöihin. -->
+      <div id="profileWellbeingSection" role="tabpanel" aria-labelledby="segmentProfileWellbeing" style="display:none;"></div>
+      <div id="profilePlacesSection" role="tabpanel" aria-labelledby="segmentProfilePlaces" style="display:none;"></div>
 
-      <div id="pfAccountDeletion"></div>
+      <!-- Asetukset: aiempi profiilinäkymä sellaisenaan (tunnisteet ennallaan) + ohjaus ja puhe. -->
+      <div id="profileSettingsSection" role="tabpanel" aria-labelledby="segmentProfileSettings" style="display:none;">
+        <div id="pfSchemaNotice"></div>
+        <div id="pfCapabilities"></div>
+
+        <h2 class="section-title">Perustiedot</h2>
+        <div class="hint" style="margin-bottom:14px;">
+          Kaikki kentät ovat vapaaehtoisia. Näitä käytetään herätys- ja
+          nukkumaanmenoajan automaattiseen laskentaan.
+        </div>
+
+        <div class="preview-block" id="pfPreview"></div>
+
+        <div class="add-form" style="display:flex;">
+          <div class="form-row">
+            <div>
+              <label class="field-label" for="pfAge">Ikä</label>
+              <input type="number" id="pfAge" placeholder="esim. 34" min="0" max="130">
+            </div>
+            <div>
+              <label class="field-label" for="pfWeight">Paino (kg)</label>
+              <input type="number" id="pfWeight" placeholder="esim. 82" min="0" max="500">
+            </div>
+            <div>
+              <label class="field-label" for="pfHeight">Pituus (cm)</label>
+              <input type="number" id="pfHeight" placeholder="esim. 180" min="0" max="300">
+            </div>
+          </div>
+
+          <div>
+            <label class="field-label" for="pfSleepTarget">Unitavoite (tuntia/yö)</label>
+            <input type="number" step="0.5" id="pfSleepTarget" placeholder="8" min="1" max="14">
+          </div>
+
+          <div class="add-form-title" style="margin-top:10px;">Automaattinen heräämisaika</div>
+
+          <div>
+            <label class="field-label" for="pfDefaultWake">Oletusheräämisaika (kun huomiselle ei ole töitä)</label>
+            <input type="time" id="pfDefaultWake">
+          </div>
+
+          <div class="form-row">
+            <div>
+              <label class="field-label" for="pfCommute">Työmatka (min)</label>
+              <input type="number" id="pfCommute" placeholder="30" min="0" max="600">
+            </div>
+            <div>
+              <label class="field-label" for="pfRoutine">Aamutoimet (min)</label>
+              <input type="number" id="pfRoutine" placeholder="60" min="0" max="600">
+            </div>
+          </div>
+
+          <div class="form-actions">
+            <button class="form-btn primary" id="pfSave" type="button" style="flex:none; padding:10px 24px;">Tallenna</button>
+          </div>
+          <div id="pfSavedMsg" style="display:none; font-size:12px; color:var(--sage); font-weight:700;" role="status">✓ Tallennettu</div>
+          <div id="pfErrorMsg" style="display:none; font-size:12px; color:var(--clay); font-weight:700;" role="alert">Tallennus epäonnistui. Yritä uudelleen.</div>
+        </div>
+
+        <div id="notificationSettings"></div>
+
+        <!-- Ohjaus ja puhe (views/guidanceSettings.js): tyyli, puhe, toimitustavat, kooste. -->
+        <div id="guidanceSettings"></div>
+
+        <div id="pfAccountDeletion"></div>
+      </div>
 
       <div class="signout-block">
         <div class="signout-email" id="signoutEmail"></div>
@@ -1601,7 +1820,7 @@
   <nav class="tab-bar" role="tablist" aria-label="Päänavigaatio">
     <button class="tab-btn active" type="button" role="tab" aria-selected="true" data-screen="screen-today"><svg class="icon" aria-hidden="true"><use href="#i-sun"/></svg>Tänään</button>
     <button class="tab-btn" type="button" role="tab" aria-selected="false" tabindex="-1" data-screen="screen-direction"><svg class="icon" aria-hidden="true"><use href="#i-compass"/></svg>Suunta</button>
-    <button class="tab-btn" type="button" role="tab" aria-selected="false" tabindex="-1" data-screen="screen-week"><svg class="icon" aria-hidden="true"><use href="#i-cal"/></svg>Viikko</button>
+    <button class="tab-btn" type="button" role="tab" aria-selected="false" tabindex="-1" data-screen="screen-week"><svg class="icon" aria-hidden="true"><use href="#i-cal"/></svg>Kalenteri</button>
     <button class="tab-btn" type="button" role="tab" aria-selected="false" tabindex="-1" data-screen="screen-tasks"><svg class="icon" aria-hidden="true"><use href="#i-list"/></svg>Tekeminen</button>
     <button class="tab-btn" type="button" role="tab" aria-selected="false" tabindex="-1" data-screen="screen-goals"><svg class="icon" aria-hidden="true"><use href="#i-target"/></svg>Tavoitteet</button>
     <button class="tab-btn" type="button" role="tab" aria-selected="false" tabindex="-1" data-screen="screen-finance"><svg class="icon" aria-hidden="true"><use href="#i-wallet"/></svg>Talous</button>

@@ -26,7 +26,7 @@ import { runAcceptance, formatReport, idsFor, taskRow, profileRow,
   from '../tools/rls-acceptance/acceptance.js';
 import { TABLE_SPECS, COMPOSITE_FK_PROBES, CLEANUP_ORDER, ACCEPTANCE_WAVES, inWave }
   from '../tools/rls-acceptance/tableSpecs.js';
-import { WAVES, MIGRATION_WAVE, DB_FLOOR } from '../tools/release/waves.mjs';
+import { WAVES, MIGRATION_WAVE } from '../tools/release/waves.mjs';
 import { ACCOUNT_DATA_MAP } from '../src/domain/accountLifecycle.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -96,6 +96,17 @@ function makeDb() {
     alignment_reviews: [],
     running_timers: [],
     alignment_item_settings: [],
+    // Migraation 0014 taulut (aalto K).
+    saved_places: [],
+    place_aliases: [],
+    calendar_events: [],
+    commute_observations: [],
+    life_settings: [],
+    sleep_logs: [],
+    habit_plans: [],
+    habit_events: [],
+    exercise_sessions: [],
+    wellbeing_checkins: [],
     users: [OWNER_A, USER_B]
   };
 }
@@ -148,7 +159,14 @@ const YHDISTELMAVIERASAVAIMET = [
   { table: 'running_timers',     column: 'goal_id',              parent: 'goals' },
   { table: 'running_timers',     column: 'task_id',              parent: 'tasks' },
   { table: 'running_timers',     column: 'project_id',           parent: 'projects' },
-  { table: 'running_timers',     column: 'routine_id',           parent: 'routines' }
+  { table: 'running_timers',     column: 'routine_id',           parent: 'routines' },
+  // 0014 (aalto K).
+  { table: 'place_aliases',        column: 'place_id',           parent: 'saved_places' },
+  { table: 'calendar_events',      column: 'place_id',           parent: 'saved_places' },
+  { table: 'calendar_events',      column: 'goal_id',            parent: 'goals' },
+  { table: 'commute_observations', column: 'place_id',           parent: 'saved_places' },
+  { table: 'habit_events',         column: 'plan_id',            parent: 'habit_plans' },
+  { table: 'exercise_sessions',    column: 'goal_id',            parent: 'goals' }
 ];
 
 /**
@@ -179,7 +197,14 @@ const YKSIKASITTEISYYDET = [
   { table: 'alignment_reviews',       columns: ['user_id', 'week_start'] },
   { table: 'time_entries',            columns: ['user_id', 'operation_id'] },
   { table: 'running_timers',          columns: ['user_id'] },
-  { table: 'alignment_item_settings', columns: ['user_id', 'item_kind', 'item_id'] }
+  { table: 'alignment_item_settings', columns: ['user_id', 'item_kind', 'item_id'] },
+  // 0014. saved_places_user_name_idx on lower(name): testirivien nimet
+  // ovat jo pieniä/yksilöllisiä, joten sarakevertailu riittää tähän.
+  { table: 'saved_places',            columns: ['user_id', 'name'] },
+  { table: 'place_aliases',           columns: ['user_id', 'alias', 'place_id'] },
+  { table: 'life_settings',           columns: ['user_id'] },
+  { table: 'sleep_logs',              columns: ['user_id', 'wake_date'] },
+  { table: 'wellbeing_checkins',      columns: ['user_id', 'date'] }
 ];
 
 /** Osuuko rivi olemassa olevaan yksikasitteisyysrajoitteeseen? */
@@ -1572,9 +1597,9 @@ test('KRIITTINEN: tekokannan vierasavainlista vastaa migraatioita', async () => 
 
   // Migraatiot luovat 25 omistajuusviitettä: yksi 0003:ssa, kuusi
   // 0004:ssä, kaksi 0007:ssä, kolme 0010:ssä, kaksi 0011:ssä, neljä
-  // 0012:ssa ja seitsemän 0013:ssa.
-  assert.equal(kannassa.length, 25,
-    `migraatioista löytyi ${kannassa.length} yhdistelmävierasavainta, odotettiin 25`);
+  // 0012:ssa, seitsemän 0013:ssa ja kuusi 0014:ssä.
+  assert.equal(kannassa.length, 31,
+    `migraatioista löytyi ${kannassa.length} yhdistelmävierasavainta, odotettiin 31`);
 
   for (const { table, column, parent } of kannassa) {
     const loytyi = YHDISTELMAVIERASAVAIMET.some(
@@ -1636,31 +1661,9 @@ test('KRIITTINEN: uusien taulujen testirivit vastaavat sovelluksen sarakkeita', 
       { id: 'x', intent: 'create_task', risk: 'medium' }]
   ];
 
-  // AALTO J: sovellus kirjoittaa myös myöhempien migraatioiden
-  // sarakeporttien sarakkeet (0009 bills.payee/iban/reference, 0010
-  // goals.metric ... ja projects.milestone_id, 0012 goals.life_area_id).
-  // Työkalun testirivit EIVÄT lue porttitilaa (tableSpecs.js: "TÄMÄ EI
-  // OLE SOVELLUKSEN PORTTITILA"): oletusajo (aalto E = 0008) ei saa
-  // lähettää niitä (ks. "aalto rajaa ajon"), ja viitesarakkeet
-  // kokeillaan omina ristiinkiinnityshyökkäyksinään (COMPOSITE_FK_PROBES).
-  // Testirivin on siksi oltava TÄSMÄLLEEN sovelluksen rivi ilman niitä:
-  // ei yhtään saraketta enempää, eikä mitään muuta vähempää.
-  const { SCHEMA_REQUIREMENTS, COMPILE_COLUMN_GATES } = await import('../src/data/schema.js');
-  const myohemmat = taulu => SCHEMA_REQUIREMENTS
-    .filter(r => r.kind === 'column' && r.table === taulu && r.migration > DB_FLOOR.migration
-      && COMPILE_COLUMN_GATES[r.gate] === true)
-    .flatMap(r => r.columns);
-  const karsitut = new Set();
-
   for (const [testirivi, repo, esimerkki] of parit) {
     const sovelluksen = repo.mapping.toRow(repo.mapping.normalize(esimerkki));
-    for (const sarake of myohemmat(repo.table)) {
-      assert.ok(sarake in sovelluksen,
-        `${repo.table}.${sarake}: portti on auki, mutta sovellus ei kirjoita saraketta`);
-      karsitut.add(`${repo.table}.${sarake}`);
-    }
-    const odotetut = Object.keys(sovelluksen).filter(sarake => !myohemmat(repo.table).includes(sarake));
-    assert.deepEqual(Object.keys(testirivi).sort(), odotetut.sort(),
+    assert.deepEqual(Object.keys(testirivi).sort(), Object.keys(sovelluksen).sort(),
       `taulun ${repo.table} testirivi ei vastaa sovelluksen kirjoittamia sarakkeita`);
 
     // Eikä yksikään lähetä palvelimen omistamia kenttiä.
@@ -1669,14 +1672,6 @@ test('KRIITTINEN: uusien taulujen testirivit vastaavat sovelluksen sarakkeita', 
         `${repo.table}: testirivi lähettää palvelimen omistaman kentän ${kielletty}`);
     }
   }
-
-  // Aallossa J karsinta koskee täsmälleen näitä sarakkeita.
-  assert.deepEqual([...karsitut].sort(), [
-    'bills.iban', 'bills.payee', 'bills.reference',
-    'goals.baseline_value', 'goals.current_value', 'goals.life_area_id', 'goals.measured_on',
-    'goals.metric', 'goals.savings_goal_id', 'goals.target_value', 'goals.unit',
-    'projects.milestone_id'
-  ]);
 });
 
 test('KRIITTINEN: porttitila on suunniteltu aalto, ei sattuma', async () => {
@@ -1985,7 +1980,9 @@ test('KRIITTINEN: tekokanta tarkistaa uuid-tyypin ennen oikeuksia', async () => 
 // migraatiot tuotannossa on ajettu. Tekokanta tuntee kaikki 14 taulua,
 // niiden yksikäsitteisyysrajoitteet ja yhdistelmävierasavaimet.
 
-const NEW_MIGRATIONS = ['0009', '0010', '0011', '0012', '0013'];
+const NEW_MIGRATIONS = ['0009', '0010', '0011', '0012', '0013', '0014'];
+/** Koko junan aalto: kaikki uudet taulut ja viitteet mukana (aalto K, 0014). */
+const FULL_WAVE = 'K';
 const newMigrationFiles = () => migrationFiles().filter(name => NEW_MIGRATIONS.includes(name.slice(0, 4)));
 const codeOf = table => TABLE_SPECS.find(entry => entry.table === table).code;
 
@@ -2016,7 +2013,7 @@ test('0009–0013: TABLE_SPECS kattaa täsmälleen migraatioiden luomat taulut',
   for (const name of newMigrationFiles()) {
     for (const m of sql(name).matchAll(/create table public\.(\w+) \(/g)) luodut.push(m[1]);
   }
-  assert.equal(luodut.length, 14, `migraatiot 0009–0013 luovat ${luodut.length} taulua`);
+  assert.equal(luodut.length, 24, `migraatiot 0009–0014 luovat ${luodut.length} taulua`);
   assert.deepEqual(TABLE_SPECS.map(entry => entry.table).sort(), [...luodut].sort());
   // Tunnukset ovat yksilöllisiä eivätkä törmää 0003–0008:n osioihin.
   const codes = TABLE_SPECS.map(entry => entry.code);
@@ -2037,14 +2034,14 @@ test('0009–0013: jokaisen taulun aalto tulee tools/release/waves.mjs:stä', ()
     assert.ok(NEW_MIGRATIONS.includes(entry.migration), `${entry.table}: ${entry.migration}`);
   }
   // Aallot, joita vasten ajon voi valita: kannan lattiasta (0008) J:hin.
-  assert.deepEqual([...ACCEPTANCE_WAVES], ['E', 'F', 'G', 'H', 'I', 'J']);
+  assert.deepEqual([...ACCEPTANCE_WAVES], ['E', 'F', 'G', 'H', 'I', 'J', 'K']);
 });
 
 test('KRIITTINEN: ristiinkiinnityslista on johdettu migraatioista 0009–0013', () => {
   // Staattinen jäsennys `foreign key (user_id, …)` → jokaiselle
   // käyttäjän omistaman taulun yhdistelmävierasavaimelle on kokeilu.
   const kannassa = compositeForeignKeys(newMigrationFiles());
-  assert.equal(kannassa.length, 16, `migraatioista löytyi ${kannassa.length}`);
+  assert.equal(kannassa.length, 22, `migraatioista löytyi ${kannassa.length}`);
 
   const avain = fk => `${fk.migration}:${fk.table}.${fk.column}->${fk.parent}`;
   assert.deepEqual(COMPOSITE_FK_PROBES.map(avain).sort(), kannassa.map(avain).sort());
@@ -2082,10 +2079,10 @@ test('KRIITTINEN: jokainen ACCOUNT_DATA_MAP-taulu on todistettu tai perustellust
   }
 });
 
-test('KRIITTINEN: aallossa J jokainen ACCOUNT_DATA_MAP-taulu todella kohtaa B:n lukukiellon ja anonin', async () => {
+test('KRIITTINEN: koko junassa (K) jokainen ACCOUNT_DATA_MAP-taulu todella kohtaa B:n lukukiellon ja anonin', async () => {
   // Kattavuuslista voi valehdella; lauseloki ei. Jokaiseen käyttäjän
   // tauluun on lähtenyt B:n SELECT ja kirjautumattoman yritys.
-  const { ledger } = await runAgainst({}, null, { wave: 'J' });
+  const { ledger } = await runAgainst({}, null, { wave: FULL_WAVE });
   for (const { table } of Object.values(ACCOUNT_DATA_MAP)) {
     if (RLS_EXEMPTIONS[table] !== undefined) continue;
     assert.ok(ledger.some(entry => entry.uid === USER_B && entry.table === table && entry.op === 'select'),
@@ -2096,11 +2093,11 @@ test('KRIITTINEN: aallossa J jokainen ACCOUNT_DATA_MAP-taulu todella kohtaa B:n 
 });
 
 test('ehjä RLS aallossa J: jokainen 0003–0013:n tarkistus menee läpi', async () => {
-  const { rows, summary } = await runAgainst({}, null, { wave: 'J' });
+  const { rows, summary } = await runAgainst({}, null, { wave: FULL_WAVE });
   const notPassing = rows.filter(entry => entry.status !== STATUS.PASS);
   assert.deepEqual(notPassing.map(entry => `${entry.test_no}:${entry.status}:${entry.actual}`), []);
   assert.equal(summary.verdict, 'PASS');
-  assert.equal(summary.wave, 'J');
+  assert.equal(summary.wave, FULL_WAVE);
   assert.deepEqual([...summary.tablesInScope].sort(), TABLE_SPECS.map(entry => entry.table).sort());
 
   const numerot = new Set(rows.map(entry => entry.test_no));
@@ -2123,11 +2120,11 @@ test('ehjä RLS aallossa J: jokainen 0003–0013:n tarkistus menee läpi', async
       assert.ok(numerot.has(no), `${no} puuttuu`);
     }
   }
-  for (const no of ['P2', 'P3', 'XV-ok', 'AR6a', 'AR6b']) assert.ok(numerot.has(no), no);
+  for (const no of ['P2', 'P3', 'P4', 'P5', 'XV-ok', 'AR6a', 'AR6b']) assert.ok(numerot.has(no), no);
 });
 
 test('KRIITTINEN: B:n aikakirjaus A:n elämänalueeseen torjutaan vierasavaimella (23503)', async () => {
-  const { rows, ledger } = await runAgainst({}, null, { wave: 'J' });
+  const { rows, ledger } = await runAgainst({}, null, { wave: FULL_WAVE });
   const entry = byNumber(rows, 'XV-time_entries.life_area_id');
   assert.equal(entry.status, STATUS.PASS, entry.actual);
   assert.match(entry.expected, /23503/);
@@ -2141,7 +2138,7 @@ test('KRIITTINEN: B:n aikakirjaus A:n elämänalueeseen torjutaan vierasavaimell
 });
 
 test('KRIITTINEN: B:n UPDATE A:n viikkokatsauksen pohdintaan osuu nollaan riviin', async () => {
-  const { rows, ledger, db } = await runAgainst({}, null, { wave: 'J' });
+  const { rows, ledger, db } = await runAgainst({}, null, { wave: FULL_WAVE });
   const aReview = specIdsFor('testiajo', 'AR').a;
   for (const no of ['AR3a', 'AR6a']) {
     assert.equal(byNumber(rows, no).status, STATUS.PASS, `${no}: ${byNumber(rows, no).actual}`);
@@ -2158,18 +2155,18 @@ test('KRIITTINEN: B:n UPDATE A:n viikkokatsauksen pohdintaan osuu nollaan riviin
 });
 
 test('KRIITTINEN: B ei näe A:n käynnissä olevaa ajastinta', async () => {
-  const { rows } = await runAgainst({}, null, { wave: 'J' });
+  const { rows } = await runAgainst({}, null, { wave: FULL_WAVE });
   for (const no of ['RT2a', 'RT2b', 'RT5a']) {
     assert.equal(byNumber(rows, no).status, STATUS.PASS, `${no}: ${byNumber(rows, no).actual}`);
   }
-  const { rows: auki } = await runAgainst({ selectUsingOff: true }, null, { wave: 'J' });
+  const { rows: auki } = await runAgainst({ selectUsingOff: true }, null, { wave: FULL_WAVE });
   for (const no of ['RT2a', 'RT2b']) {
     assert.equal(byNumber(auki, no).status, STATUS.FAIL, `${no} ei huomannut, että B näkee A:n ajastimen`);
   }
 });
 
-test('KRIITTINEN: kaikki 16 uutta ristiinkiinnitystä torjutaan 23503:lla, INSERT ja UPDATE', async () => {
-  const { rows } = await runAgainst({}, null, { wave: 'J' });
+test('KRIITTINEN: kaikki 22 uutta ristiinkiinnitystä torjutaan 23503:lla, INSERT ja UPDATE', async () => {
+  const { rows } = await runAgainst({}, null, { wave: FULL_WAVE });
   for (const probe of COMPOSITE_FK_PROBES) {
     for (const no of [`XV-${probe.key}`, `UV-${probe.key}`]) {
       const entry = byNumber(rows, no);
@@ -2180,8 +2177,8 @@ test('KRIITTINEN: kaikki 16 uutta ristiinkiinnitystä torjutaan 23503:lla, INSER
   assert.equal(byNumber(rows, 'XV-ok').status, STATUS.PASS, 'sallittu oma viite ei toiminut');
 });
 
-test('MUTAATIO: yhdistelmävierasavaimet pois — kaikki 32 uutta hyökkäystä huomataan', async () => {
-  const { rows, summary } = await runAgainst({ compositeFkOff: true }, null, { wave: 'J' });
+test('MUTAATIO: yhdistelmävierasavaimet pois — kaikki 44 uutta hyökkäystä huomataan', async () => {
+  const { rows, summary } = await runAgainst({ compositeFkOff: true }, null, { wave: FULL_WAVE });
   assert.equal(summary.verdict, 'FAIL');
   for (const probe of COMPOSITE_FK_PROBES) {
     for (const no of [`XV-${probe.key}`, `UV-${probe.key}`]) {
@@ -2194,7 +2191,7 @@ test('MUTAATIO: yhdistelmävierasavaimet pois — kaikki 32 uutta hyökkäystä 
 test('KRIITTINEN: jokainen uusi hyökkäys osuu OMAAN vierasavaimeensa', async () => {
   const kaikki = COMPOSITE_FK_PROBES.flatMap(probe => [`XV-${probe.key}`, `UV-${probe.key}`]);
   for (const probe of COMPOSITE_FK_PROBES) {
-    const { rows } = await runAgainst({ fkOff: new Set([probe.key]) }, null, { wave: 'J' });
+    const { rows } = await runAgainst({ fkOff: new Set([probe.key]) }, null, { wave: FULL_WAVE });
     const omat = [`XV-${probe.key}`, `UV-${probe.key}`];
     for (const no of omat) {
       assert.notEqual(byNumber(rows, no).status, STATUS.PASS, `${probe.key} pois, mutta ${no} ei huomannut`);
@@ -2214,7 +2211,7 @@ test('MUTAATIO aallossa J: rikkinäinen politiikka huomataan jokaisessa uudessa 
     [{ withCheckOff: true }, ['3c']]
   ];
   for (const [flaws, suffixes] of tapaukset) {
-    const { rows, summary } = await runAgainst(flaws, null, { wave: 'J' });
+    const { rows, summary } = await runAgainst(flaws, null, { wave: FULL_WAVE });
     assert.equal(summary.verdict, 'FAIL');
     for (const entry of TABLE_SPECS) {
       for (const suffix of suffixes) {
@@ -2228,7 +2225,7 @@ test('MUTAATIO aallossa J: rikkinäinen politiikka huomataan jokaisessa uudessa 
       assert.equal(byNumber(rows, 'AR6b').status, STATUS.FAIL, 'muuttunut pohdinta jäi huomaamatta');
     }
   }
-  const { rows } = await runAgainst({ anonAllowed: true }, null, { wave: 'J' });
+  const { rows } = await runAgainst({ anonAllowed: true }, null, { wave: FULL_WAVE });
   for (const entry of TABLE_SPECS) {
     assert.equal(byNumber(rows, `T6-${entry.code.toLowerCase()}-select`).status, STATUS.FAIL, entry.table);
   }
@@ -2245,7 +2242,7 @@ test('aalto rajaa ajon: myöhempiin migraatioihin kuuluviin tauluihin ei lähete
   assert.equal(oletus.ledger.some(entry => entry.payload && ('milestone_id' in entry.payload
     || 'life_area_id' in entry.payload)), false, 'myöhemmän migraation sarake lähti kantaan');
 
-  for (const wave of ['F', 'G', 'H', 'I', 'J']) {
+  for (const wave of ['F', 'G', 'H', 'I', 'J', 'K']) {
     const { ledger, summary, rows } = await runAgainst({}, null, { wave });
     const odotetut = TABLE_SPECS.filter(entry => inWave(entry, wave)).map(entry => entry.table);
     assert.deepEqual([...kosketut(ledger)].sort(), [...odotetut].sort(), `aalto ${wave}`);
@@ -2268,7 +2265,7 @@ test('tuntematon tai liian vanha aalto keskeyttää ennen yhtäkään kyselyä',
     anon: makeClient(db, null, {}, ledger), ownerAId: OWNER_A, userBId: USER_B,
     expectedTaskCount: TASK_COUNT, runId: 'aalto', today: '2026-09-05'
   };
-  for (const wave of ['K', 'A', 'BASE', '', null]) {
+  for (const wave of ['L', 'A', 'BASE', '', null]) {
     await assert.rejects(() => runAcceptance({ ...base, wave }), /aalto/, String(wave));
   }
   assert.deepEqual(ledger, []);
@@ -2280,7 +2277,7 @@ test('KRIITTINEN: A:n käynnissä oleva ajastin pysäyttää ajon ennen yhtäkä
       id: 'oikea-ajastin', user_id: OWNER_A, target_kind: 'none', started_at: '2026-09-05T06:00:00Z',
       paused_seconds: 0
     });
-  }, { wave: 'J' });
+  }, { wave: FULL_WAVE });
   assert.equal(byNumber(rows, 'P2').status, STATUS.FAIL);
   assert.ok(summary.aborted);
   assert.equal(ledger.some(entry => entry.op !== 'select'), false, 'epäselvästä lähtötilasta kirjoitettiin');
@@ -2315,7 +2312,7 @@ test('KRIITTINEN: A:n oikea Suunta-data säilyy kaikissa vikatiloissa', async ()
 
   for (const flaws of [{}, { selectUsingOff: true, updateUsingOff: true, deleteUsingOff: true,
     withCheckOff: true, anonAllowed: true }, { compositeFkOff: true }]) {
-    const { db, rows } = await runAgainst(flaws, oikeat, { wave: 'J' });
+    const { db, rows } = await runAgainst(flaws, oikeat, { wave: FULL_WAVE });
     assert.equal(kuva(db), odotettu, `${JSON.stringify(flaws)}: A:n oikea data muuttui`);
     for (const secret of ['Terapia', 'yksityinen muistiinpano', 'oikea pohdinta']) {
       assert.equal(JSON.stringify(rows).includes(secret), false, `raportti kantaa arvon ${secret}`);
@@ -2323,8 +2320,8 @@ test('KRIITTINEN: A:n oikea Suunta-data säilyy kaikissa vikatiloissa', async ()
   }
 });
 
-test('KRIITTINEN: aallossa J yksikään muuttava lause ei ole rajaamaton', async () => {
-  const { ledger } = await runAgainst({}, null, { wave: 'J' });
+test('KRIITTINEN: koko junassa (K) yksikään muuttava lause ei ole rajaamaton', async () => {
+  const { ledger } = await runAgainst({}, null, { wave: FULL_WAVE });
   const muuttavat = ledger.filter(entry => entry.op === 'update' || entry.op === 'delete');
   assert.ok(muuttavat.length >= 100);
   for (const entry of muuttavat) {
@@ -2337,13 +2334,13 @@ test('KRIITTINEN: aallossa J yksikään muuttava lause ei ole rajaamaton', async
 });
 
 test('KRIITTINEN: siivous tyhjentää 0009–0013:n taulut, ja jäännös huomataan', async () => {
-  const { db, rows } = await runAgainst({}, null, { wave: 'J' });
+  const { db, rows } = await runAgainst({}, null, { wave: FULL_WAVE });
   for (const entry of TABLE_SPECS) {
     assert.deepEqual(db[entry.table], [], `tauluun ${entry.table} jäi rivejä`);
   }
   const { rows: jaannos, summary } = await runAgainst({
     deleteDrops: row => String(row.id).endsWith('_b_te')
-  }, null, { wave: 'J' });
+  }, null, { wave: FULL_WAVE });
   assert.equal(summary.verdict, 'FAIL');
   assert.equal(byNumber(jaannos, 'C12-te').status, STATUS.FAIL, 'B:n jäljelle jäänyttä kirjausta ei huomattu');
   assert.equal(byNumber(jaannos, 'C11-te').status, STATUS.PASS);
@@ -2352,14 +2349,15 @@ test('KRIITTINEN: siivous tyhjentää 0009–0013:n taulut, ja jäännös huomat
 
 test('KRIITTINEN: 0009–0013:n testirivit kirjoittavat vain sovelluksen sarakkeita ja kaikki pakolliset', async () => {
   const { ALL_REPOSITORIES } = await import('../src/data/collectionsRepo.js');
-  const ctx = { today: '2026-09-07', parents: { goalA: 'g-a', goalB: 'g-b' } };
+  const ctx = { today: '2026-09-07', parents: { goalA: 'g-a', goalB: 'g-b', placeA: 'p-a', placeB: 'p-b', planA: 'h-a', planB: 'h-b' } };
   for (const entry of TABLE_SPECS) {
     const repo = ALL_REPOSITORIES.find(candidate => candidate.table === entry.table);
     assert.ok(repo, `${entry.table}: sovelluksella ei ole repositoriota`);
     // Sovelluksen sarakkeet: repositorion toRow normalisoidulle oliolle.
     const sovellus = Object.keys(repo.mapping.toRow(repo.mapping.normalize({ id: 'x' })));
     const pakolliset = requiredColumns(entry.table);
-    assert.ok(pakolliset.length > 0 || entry.table === 'investments', `${entry.table}: jäsennys`);
+    // investments ja life_settings: jokaisella NOT NULL -sarakkeella on oletus.
+    assert.ok(pakolliset.length > 0 || ['investments', 'life_settings'].includes(entry.table), `${entry.table}: jäsennys`);
     for (const variant of ['a', 'b', 'forged']) {
       const testirivi = entry.row(`${MARKER_PREFIX}t_${variant}`, variant, ctx);
       for (const sarake of Object.keys(testirivi)) {
@@ -2377,7 +2375,7 @@ test('KRIITTINEN: 0009–0013:n testirivit kirjoittavat vain sovelluksen sarakke
 });
 
 test('0009–0013: testirivit väistävät yksikäsitteisyyden rakenteella', () => {
-  const ctx = { today: '2026-09-07', parents: { goalA: 'g-a', goalB: 'g-b' } };
+  const ctx = { today: '2026-09-07', parents: { goalA: 'g-a', goalB: 'g-b', placeA: 'p-a', placeB: 'p-b', planA: 'h-a', planB: 'h-b' } };
   const ids = specIdsFor('20260926120000', 'LA');
   const la = TABLE_SPECS.find(entry => entry.table === 'life_areas');
   const names = ['a', 'b', 'forged'].map(variant => la.row(ids[variant], variant, ctx).name);
@@ -2465,7 +2463,7 @@ test('TURVA: tableSpecs ei sisällä avaimia eikä kirjoita vapaata tekstiä mui
   const source = read('tools/rls-acceptance/tableSpecs.js');
   assert.equal(source.includes('service_role'), false);
   assert.equal(/eyJ[A-Za-z0-9_-]{20,}/.test(source), false);
-  const ctx = { today: '2026-09-07', parents: { goalA: 'g-a', goalB: 'g-b' } };
+  const ctx = { today: '2026-09-07', parents: { goalA: 'g-a', goalB: 'g-b', placeA: 'p-a', placeB: 'p-b', planA: 'h-a', planB: 'h-b' } };
   for (const entry of TABLE_SPECS) {
     const rivi = entry.row('x', 'a', ctx);
     for (const sarake of ['note', 'description', 'message', 'reason', 'reflection', 'proposal']) {

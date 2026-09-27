@@ -167,14 +167,14 @@ hyväksynnän, ehdokkaan kirjatun testiajon ja käynnistyssavun sekä julkaisun 
 tekee compare-and-swapin, pushaa ja todentaa tuotannon:
 
 ```
-# STOP H — TRAIN_RECUT_REQUIRED: lukon deployTarget 48b2cad ei sisällä pakollista korjausta 5aa0d53; ei push- eikä deploy-komentoa ennen uudelleenleikkausta (leikkaa, sitten node tools/activation/train-map.mjs --write ja --sync-docs) [deploy --verify-result=<verify_0011-tulos>]
+npm run activation:orchestrate -- --execute-deploy --approved-sha=388cd990a1f764d08e9596bcb0c874451bcb21a9 --verify-result=<verify_0011-tulos>
 ```
 
 Viitteeksi (älä aja käsin): orkestroija ajaa compare-and-swapin jälkeen
 täsmälleen tämän — ei koskaan forcea:
 
 ```
-# STOP H — TRAIN_RECUT_REQUIRED: lukon deployTarget 48b2cad ei sisällä pakollista korjausta 5aa0d53; ei push- eikä deploy-komentoa ennen uudelleenleikkausta (leikkaa, sitten node tools/activation/train-map.mjs --write ja --sync-docs) [push]
+git push origin 388cd990a1f764d08e9596bcb0c874451bcb21a9:refs/heads/main
 ```
 
 ---

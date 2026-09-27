@@ -26,7 +26,7 @@ import { escapeHtml, formatShortDate } from '../../lib/format.js';
 import { getState, findInvestment, setEditingInvestmentId } from '../state.js';
 import {
   HOLDING_KIND, HOLDING_KINDS, holdingKindLabel, summarizePortfolio,
-  compareHoldings, hasKnownValue, hasMarketDataProvider
+  compareHoldings, hasKnownValue, hasMarketDataProvider, targetComparison
 } from '../../domain/investments.js';
 import {
   DEFAULT_CURRENCY, parseMoneyToMinor, formatMoney, formatMinorAsInput,
@@ -144,6 +144,7 @@ function renderPortfolio(container, state) {
           ? `<div class="t-sub">Arvo kirjattu ${
               escapeHtml(formatShortDate(parseISO(holding.valuedOn)))}</div>`
           : known ? '<div class="t-sub">Arvolle ei ole päiväystä</div>' : ''}
+        ${targetLine(holding, todayIso)}
       </button>
     </div>`;
   }).join('');
@@ -152,6 +153,20 @@ function renderPortfolio(container, state) {
 
   container.querySelectorAll('[data-edit-investment]').forEach(node =>
     node.addEventListener('click', () => openInvestmentForm(node.dataset.editInvestment)));
+}
+
+/**
+ * Oma tavoitearvo suhteessa käsin kirjattuun arvoon (targetComparison).
+ * Tuntematon arvo ei ole 0 % tavoitteesta: silloin vertailua ei tehdä,
+ * ja se sanotaan. Kuvaa, ei neuvo ostamaan eikä myymään.
+ */
+function targetLine(holding, todayIso) {
+  if (!Number.isSafeInteger(holding.targetValueMinor) || holding.targetValueMinor <= 0) return '';
+  const comparison = targetComparison(holding, todayIso);
+  const text = comparison
+    ? comparison.text
+    : `Tavoitearvo ${formatMoney(holding.targetValueMinor, holding.currency)}. Arvoa ei tiedetä, joten vertailua ei tehdä.`;
+  return `<div class="t-sub inv-target">${escapeHtml(text)}</div>`;
 }
 
 function hasNegative(byCurrency) {
@@ -200,6 +215,7 @@ function readInvestmentForm() {
     currentValueMinor,
     currency: el('ifCurrency').value,
     valuedOn: el('ifValuedOn').value || null,
+    targetValueMinor: readMoney('ifTargetValue'),
 
     // ARVON LÄHDE JOHDETAAN, EI KYSYTÄ.
     //
@@ -224,6 +240,7 @@ function fillInvestmentForm(holding) {
   el('ifCurrentValue').value = holding ? formatMinorAsInput(holding.currentValueMinor) : '';
   el('ifCurrency').value = holding ? holding.currency : DEFAULT_CURRENCY;
   el('ifValuedOn').value = holding && holding.valuedOn ? holding.valuedOn : '';
+  el('ifTargetValue').value = holding ? formatMinorAsInput(holding.targetValueMinor) : '';
   el('ifNote').value = holding && holding.note ? holding.note : '';
 }
 
@@ -262,6 +279,13 @@ export function closeInvestmentForm() {
 }
 
 async function submitInvestment() {
+  // Lukematon tavoitearvo on virhe, ei tyhjä: muuten kirjoitettu luku
+  // katoaisi hiljaa ja vanha tavoite poistuisi.
+  const targetText = el('ifTargetValue').value.trim();
+  if (targetText !== '' && parseMoneyToMinor(targetText) === null) {
+    investmentErrors.show({ targetValueMinor: 'Anna tavoitearvo euroina, esim. 5000,00.' });
+    return;
+  }
   const input = readInvestmentForm();
 
   // Arvon päiväys täytetään automaattisesti, jos arvo on kirjattu
@@ -285,7 +309,8 @@ async function submitInvestment() {
 
 const investmentErrors = makeFormErrors('#investmentForm', {
   name: 'ifName', kind: 'ifKind', quantity: 'ifQuantity',
-  costBasisMinor: 'ifCostBasis', currentValueMinor: 'ifCurrentValue'
+  costBasisMinor: 'ifCostBasis', currentValueMinor: 'ifCurrentValue',
+  targetValueMinor: 'ifTargetValue'
 });
 
 function makeFormErrors(formSelector, fieldToInput) {
@@ -307,7 +332,9 @@ function makeFormErrors(formSelector, fieldToInput) {
       const inputId = fieldToInput[field];
       if (!inputId) continue;
       const input = maybe(inputId);
-      const errorNode = maybe(inputId + 'Error');
+      // Rahakenttien virheriveillä on kentän nimen mukainen tunniste
+      // (ifCostBasisMinorError); ilman tätä niiden viesti jäi näkymättä.
+      const errorNode = maybe(inputId + 'Error') || maybe(inputId + 'MinorError');
       if (input) {
         input.classList.add('invalid');
         input.setAttribute('aria-invalid', 'true');

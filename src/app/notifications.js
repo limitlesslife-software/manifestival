@@ -15,10 +15,12 @@
 //   2. Mitään ei ajasteta ennen kuin käyttäjä on kytkenyt muistutukset
 //      päälle JA lupa on myönnetty.
 
-import { fmtISO, todayMidnight, addDays } from '../lib/datetime.js';
-import { planRange, summarizeIntents, normalizePreferences } from '../domain/notification.js';
-import { expandRoutines } from '../domain/routine.js';
-import { notifications as platformNotifications, PERMISSION } from '../platform/index.js';
+import { fmtISO, todayMidnight } from '../lib/datetime.js';
+import { summarizeIntents, normalizePreferences } from '../domain/notification.js';
+import { notifications as platformNotifications, alarms as platformAlarms, PERMISSION } from '../platform/index.js';
+import { dailyLifeLocalIntents, dailyLifeReminderPlan, resetAlarmSync } from './alarmSync.js';
+import { handleAlarmEvents, DEVICE_EVENT } from './alarmEvents.js';
+import { buildNavigationTarget, isAllowedNavigationUrl } from '../domain/navigationLink.js';
 import { getState, setNotificationPreferences } from './state.js';
 import { savePreferences, isPersistent } from '../data/notificationPrefsRepo.js';
 import { sessionSnapshot, isSameSession } from '../data/session.js';
@@ -53,38 +55,18 @@ let lastSync = { at: null, scheduled: 0, planned: 0, reason: '' };
  * PUHDAS LASKENTA — ei kosketa alustaan. Käyttöliittymä voi näyttää tämän
  * esikatseluna ("tänään 5 muistutusta") ilman että mitään ajastetaan.
  *
+ * YKSI PUTKI: sama suunnitelma kuin ajastuksessa (alarmSync.dailyLifeReminderPlan:
+ * perinteiset ja arjen muistutukset saman toimituspolitiikan läpi), mutta
+ * esikatselu näyttää myös tämän päivän jo menneet. Horisontti lasketaan
+ * kalenteripäivinä (alarmSync.horizonDates), ei millisekunteina.
+ *
  * @param {Date} [from] mistä päivästä alkaen
  * @returns {{intents:Array, summary:object}}
  */
 export function planUpcoming(from = todayMidnight()) {
-  const state = getState();
-  const preferences = normalizePreferences(state.notificationPreferences);
-  const fromIso = fmtISO(from);
-  const todayIso = fmtISO(todayMidnight());
-
-  // Rutiiniesiintymät koko horisontille kerralla — ne eivät ole tallennettuja.
-  // KALENTERILASKU, ei millisekunteja. Kesaajan paattyessa vuorokausi on
-  // 25 tuntia, joten from.getTime() + n * 86400000 laskeutuu edelliselle
-  // paivalle - ja horisontin viimeisen paivan rutiinit jaisivat kerran
-  // vuodessa hiljaa ilman muistutusta.
-  const toDate = addDays(from, SYNC_HORIZON_DAYS - 1);
-  const routineOccurrences = expandRoutines({
-    routines: state.routines,
-    from: fromIso,
-    to: fmtISO(toDate),
-    exceptions: state.routineExceptions
+  const { intents } = dailyLifeReminderPlan({
+    state: getState(), now: new Date(), includePast: true, fromIso: fmtISO(from)
   });
-
-  const intents = planRange({
-    tasks: state.tasks,
-    routineOccurrences,
-    travelPlans: state.travelPlans,
-    from: fromIso,
-    days: SYNC_HORIZON_DAYS,
-    todayIso,
-    preferences
-  });
-
   return { intents, summary: summarizeIntents(intents) };
 }
 
@@ -125,7 +107,18 @@ export async function syncNotifications() {
       return { ok: false, ...lastSync };
     }
 
-    const { intents } = planUpcoming();
+    // KAIKKI muistutukset (tehtävät, rutiinit, määräajat, lähtöketju, uni,
+    // ateriat, tavat ...), jotka EIVÄT mene herätysliitännäiselle: sama
+    // suunnitelma ja jako kuin src/app/alarmSync.js:n laiteajastuksessa,
+    // joten sama muistutus ei tule kahdesti. Toimituspolitiikka ja päiväraja
+    // on jo sovellettu kerran, kaikille yhdessä (ei toista kattoa tässä).
+    const intents = safeReminderIntents();
+
+    // Tarkka hälytys vain, kun laite on jo sallinut sen: muuten
+    // ilmoitusliitännäinen avaisi "Hälytykset ja muistutukset" -asetuksen
+    // kesken ajastuksen ilman käyttäjän elettä. Asetus avataan vain
+    // napautuksesta (Profiili → Arki → Salli täsmälliset herätykset).
+    const exactAllowed = await exactAlarmsAllowed();
 
     // Vanhat perutaan ennen uusien ajastusta. Ilman tätä poistetun tehtävän
     // muistutus jäisi elämään laitteelle: käyttäjää muistutettaisiin
@@ -154,7 +147,7 @@ export async function syncNotifications() {
       return { ok: true, ...lastSync };
     }
 
-    const result = await platformNotifications.schedule(intents);
+    const result = await platformNotifications.schedule(intents, { exactAllowed });
     lastSync = {
       at: Date.now(),
       scheduled: result.scheduled || 0,
@@ -164,6 +157,26 @@ export async function syncNotifications() {
     return { ok: Boolean(result.ok), ...lastSync };
   } finally {
     syncing = false;
+  }
+}
+
+/** Muistutukset tavallisiksi ilmoituksiksi; laskennan virhe ei kaada synkronointia. */
+function safeReminderIntents() {
+  try {
+    return dailyLifeLocalIntents({ state: getState() });
+  } catch (error) {
+    logFailure('notifications.daily_life_failed', error);
+    return [];
+  }
+}
+
+/** Onko laite jo sallinut tarkat hälytykset? EI pyydä lupaa eikä avaa asetuksia. */
+async function exactAlarmsAllowed() {
+  try {
+    const status = await platformAlarms.status();
+    return Boolean(status) && status.supported === true && status.exact === true;
+  } catch {
+    return false;
   }
 }
 
@@ -295,7 +308,11 @@ export async function cancelDeviceNotifications({ timeoutMs = DEVICE_CANCEL_TIME
   const settle = task => Promise.resolve().then(task).catch(() => null);
   const work = Promise.all([
     settle(() => platformNotifications.cancel()),
-    settle(() => platformNotifications.removeAllDelivered())
+    settle(() => platformNotifications.removeAllDelivered()),
+    // Herätykset ja puhutut muistutukset (Android-liitännäinen): ajastus
+    // lopetetaan tälle käyttäjälle ja laitteen joukko perutaan. Muuten
+    // poistetun tilin "Lähde nyt" voisi vielä soida.
+    settle(() => resetAlarmSync())
   ]).then(([cancelled, delivered]) => ({
     timedOut: false,
     cancelled: (cancelled && cancelled.cancelled) || 0,
@@ -311,6 +328,72 @@ export async function cancelDeviceNotifications({ timeoutMs = DEVICE_CANCEL_TIME
   } finally {
     if (timer) clearTimeout(timer);
   }
+}
+
+// ------------------------------------------------------------ "Avaa reitti"
+
+/**
+ * Lähtöilmoituksen "Avaa reitti" -painallus (src/platform/nativeNotifications.js).
+ *
+ * Ilmoitus kantaa vain kohteen tekstin ja kulkutavan. Reitti kootaan tässä
+ * AINA uudelleen src/domain/navigationLink.js:llä (siivottu teksti, kiinteä
+ * muoto) ja avataan alustan reittitoiminnolla: ilmoituksen tiedoista ei
+ * koskaan avata linkkiä sellaisenaan. Painallus kuittaa ilmoituksen
+ * (sama kuin laitteen muistutuksen kuittaus), joten "Lähde nyt" -toisto
+ * ei enää tule.
+ *
+ * Ei heitä. @returns {Promise<{ok:boolean, opened:boolean, code:string|null}>}
+ */
+export async function openRouteFromNotification(payload, { nowMs = Date.now() } = {}) {
+  const source = payload && typeof payload === 'object' ? payload : {};
+  const target = buildNavigationTarget({ address: source.destination, mode: source.mode });
+  if (!target) return { ok: false, opened: false, code: 'invalid' };
+  const key = typeof source.ackKey === 'string' && source.ackKey ? source.ackKey : source.intentId;
+  if (typeof key === 'string' && key) {
+    handleAlarmEvents([{ type: DEVICE_EVENT.ACKNOWLEDGED, id: key, atMs: nowMs }]).catch(() => {});
+  }
+  let result = null;
+  try {
+    result = await platformAlarms.openNavigation({ destination: target.query, mode: target.mode });
+  } catch {
+    result = null;
+  }
+  if (result && result.opened === true) return { ok: true, opened: true, code: null };
+  // Android-sovellus ilman herätysliitännäistä: sallittu reittiohjeen
+  // https-linkki selaimeen (sama muoto kuin navigationLink.googleMapsUrl).
+  const url = result && typeof result.url === 'string' ? result.url : null;
+  if (url && isAllowedNavigationUrl(url) && typeof globalThis.open === 'function') {
+    try {
+      globalThis.open(url, '_blank', 'noopener');
+      return { ok: true, opened: true, code: null };
+    } catch {
+      // alla virheviesti
+    }
+  }
+  notify('Reittiä ei voitu avata. Tarkista, että karttasovellus on asennettu.');
+  return { ok: false, opened: false, code: (result && result.code) || 'failed' };
+}
+
+let stopRouteActions = null;
+
+/**
+ * Kuuntele lähtöilmoitusten "Avaa reitti" -painalluksia. Kutsutaan kerran
+ * käynnistyksessä ENNEN istunnon palautusta: liitännäinen säilyttää
+ * kylmäkäynnistyksen painalluksen, kunnes kuuntelija on kytketty.
+ */
+export function startNotificationActions() {
+  if (stopRouteActions) return;
+  stopRouteActions = platformNotifications.onRouteAction(payload => {
+    openRouteFromNotification(payload).catch(() => {});
+  });
+}
+
+/** Testit: kuuntelu pois. */
+export function stopNotificationActions() {
+  if (typeof stopRouteActions === 'function') {
+    try { stopRouteActions(); } catch { /* jo poistettu */ }
+  }
+  stopRouteActions = null;
 }
 
 /**

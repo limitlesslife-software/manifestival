@@ -286,6 +286,12 @@ Muistutukset lasketaan, kun sovellus on auki: kirjautumisen jälkeen ja
 30 sekunnin välein. Suljetusta sovelluksesta tulevaa hälytystä **ei ole
 toteutettu**, eikä sitä luvata käyttöliittymässä.
 
+> **Päivitys 27.9.2026:** Android-sovellukseen on tehty natiivi herätys ja
+> puhutut muistutukset (ManifestivalAlarm), ks. osio "Herätys ja puhutut
+> muistutukset Android-sovelluksessa" alempana. Selaimessa ja PWA:ssa
+> taustaherätystä ei edelleenkään ole, ja sovellus sanoo sen ("toimivat
+> vain Android-sovelluksessa").
+
 Laitteella on todennettava, ettei käyttäjä silti oleta toisin:
 
 - [ ] Muistutusnäkymän rivi "Muistutukset lasketaan, kun sovellus on
@@ -708,6 +714,140 @@ jälkeen, ei että jokin laskisi taustalla.
       kytkee selityksen päälle (`docs/SUUNTA-ACTIVATION-GO-NOGO.md`):
       ilman verkkoa "Selitä tekoälyllä" näyttää saman deterministisen
       selityksen eikä jumiudu
+
+---
+
+## Herätys ja puhutut muistutukset Android-sovelluksessa — EI SUORITETTU
+
+ManifestivalAlarm-liitännäinen (`AlarmPlugin.java`, `AlarmService.java`,
+`AlarmActivity.java`, `BootReceiver.java`; JS `src/platform/alarms.js`) on
+käännetty (`gradlew compileDebugJavaWithJavac`) ja sen puhtaat apufunktiot
+on testattu JUnitilla (`gradlew testDebugUnitTest`), mutta sitä ei ole
+ajettu puhelimessa. Asenna tuore debug-APK. Kirjaa jokaisesta kohdasta
+Android-versio, valmistaja ja se, oliko tarkkojen herätysten oikeus päällä.
+Aseta testiherätykset 2–3 minuutin päähän.
+
+### P0
+
+- [P0] **Lukittu näyttö, herätys:** herätys soi näytön ollessa lukittuna ja
+      sammuksissa; näytölle tulee herätysnäkymä (kellonaika, nimi, iso
+      **Sammuta** ja **Torku**) lukituksen päälle; puhelin **pysyy
+      lukittuna** (muu sovellus ei näy); Sammuta lopettaa äänen heti
+- [P0] **Torku:** Torku lopettaa soiton ja herätys soi uudelleen torkun
+      pituuden jälkeen; kaksoisnapautus Torkuun tuottaa **yhden** uuden
+      herätyksen; torkkujen loputtua Torku-painiketta ei näy
+- [P0] **Ei loputonta soittoa:** kuittaamaton herätys soi enintään
+      10 minuuttia, torkkuu kerran automaattisesti ja lopettaa sen jälkeen
+      kokonaan (ei kolmatta soittoa)
+- [P0] **Uudelleenkäynnistys:** ajasta herätys, käynnistä puhelin uudelleen
+      avaamatta sovellusta → herätys soi ajallaan. Uudelleenkäynnistys ei itse
+      käynnistä soittoa eikä näytä ilmoitusta (poikkeus: herätys, joka
+      erääntyi puhelimen ollessa pois päältä ja on enintään 30 min myöhässä,
+      soi heti käynnistyksen jälkeen; sitä vanhempi kirjautuu väliin jääneeksi)
+- [P0] **Uudelleenkäynnistys ilman lukituksen avausta (suora käynnistys):**
+      ajasta herätys 5 minuutin päähän, käynnistä puhelin uudelleen ja jätä
+      se lukituksen taakse **avaamatta PIN-koodilla** → herätys soi ajallaan
+      lukitulla näytöllä yleisnimellä "Herätys"; Sammuta ja Torku toimivat.
+      Avauksen jälkeen sovellus ei näytä sitä väliin jääneenä. Kirjaa,
+      soiko valittu oma ääni vai oletusääni ja kuuluiko puhe
+- [P0] **Aikavyöhykkeen ja kellon vaihto:** herätys klo 7.00, vaihda
+      aikavyöhyke (esim. Lontoo) → herätys soi klo 7.00 paikallista aikaa;
+      kellonajan käsin siirto ei tuota kahta soittoa. Myös: anna puhutun
+      muistutuksen soida kuittaamatta, siirrä kelloa tunti taaksepäin tai
+      vaihda vyöhyke tunnin länteen (Helsinki → Tukholma) → ei toista soittoa
+- [P0] **Puhuttu muistutus:** puhuttu herätys (tapa "Puhe" tai "Ääni ja
+      puhe") lukee tekstin suomeksi hälytysäänenvoimakkuudella; ääni hiljenee
+      puheen ajaksi ja palaa sen jälkeen
+- [P0] **Puhuttu lähtömuistutus taustalla:** sovellus suljettuna (pyyhkäisty
+      pois) ja näyttö lukittuna → "lähde nyt" -muistutus kuuluu ääneen kerran;
+      ilmoituksessa **Lähdin**, **Torku 5 min** ja **Avaa reitti**
+- [P0] **Karttasovellukseen siirto:** Avaa reitti (ilmoituksesta ja
+      sovelluksesta) avaa Google Mapsin navigoinnin oikeaan kohteeseen oikealla
+      kulkutavalla; julkisilla avautuu reittiohje; ilman Google Mapsia avautuu
+      selaimen reittiohje. Kohteen tekstissä oleva linkki ei koskaan avaudu
+- [P0] **Ilmoituksen painikkeet:** Kuittaa/Lähdin poistaa ilmoituksen eikä
+      muistutus toistu seuraavassa synkronoinnissa; Torku 5 min tuo sen
+      takaisin 5 minuutin päästä; pyyhkäisy pois kirjautuu hylkäykseksi.
+      Sovelluksen avaus näiden jälkeen näyttää kuittaukset
+      (`consumeEvents`) oikein eikä kahdesti — myös kun "Lähdin" painettiin
+      sovelluksen ollessa auki ja sovellus suljettiin ja avattiin sen jälkeen
+- [P0] **Suomenkielinen puhe puuttuu:** poista suomen puhedata
+      (Asetukset → Tekstistä puheeksi) → herätys soittaa äänen ja näyttää
+      tekstin; sovellus kertoo, ettei puhetta ole (`tts: missing`)
+- [P0] **Tarkkojen herätysten oikeus peruttu:** Asetukset → Sovellukset →
+      Erikoisoikeudet → Herätykset ja muistutukset → pois. Järjestelmä
+      sulkee sovelluksen; avaa se → sovellus kertoo, että herätys voi
+      myöhästyä, ja tarjoaa asetuksen avaamisen **vain napautuksesta**.
+      Oikeuden palautus ajastaa herätykset uudelleen tarkoiksi
+- [P0] **Android 14+: koko näytön ilmoitus peruttu:** Asetukset →
+      Sovellukset → Manifestival → Koko näytön ilmoitukset → pois →
+      herätys näkyy nousevana ilmoituksena, jossa Sammuta ja Torku toimivat;
+      ääni soi silti
+- [P0] **Doze:** puhelin lepotilassa ja irti laturista yli tunnin
+      (`adb`-komentoja ei käytetä; odota) → herätys soi minuutin
+      tarkkuudella, kun oikeus on päällä
+- [P0] **Ilmoitukset estetty (Android 13+):** herätys soi silti; sovelluksen
+      avaaminen soiton aikana näyttää herätysnäkymän, josta soiton saa
+      sammutettua
+- [P0] **Oma herätysmusiikki:** Profiili → Arki → Herätyksen tila →
+      **Valitse musiikki** avaa järjestelmän tiedostovalitsimen ilman
+      lupadialogia (ei tallennustilan lupaa). Valitse puhelimen muistissa
+      oleva kappale → tila näyttää sen nimen. Tapa "Oma musiikki" → herätys
+      soittaa valitun kappaleen herätyksen äänenvoimakkuudella, voimistuen
+      kuten herätysääni; Sammuta lopettaa sen heti. Kirjaa tiedostomuoto
+      (mp3, m4a, ogg)
+- [P0] **Aamukatsaus oletustavalla:** "Aamukatsaus puheena" päällä ja tapa
+      "Herätysääni" (ei puhevaihetta) → Sammuta lopettaa soiton, ja puhelin
+      lukee **kerran** "Hyvää huomenta. Kello on …" sekä lähtöajan ja
+      ensimmäisen menon; katsauksen ajan ilmoitusalueella näkyy
+      "Aamukatsausta luetaan ääneen" ilman Sammuta- ja Torku-painikkeita;
+      puhe loppuu viimeistään minuutissa. **Torku** ei lue katsausta.
+      Katsaus pois päältä → Sammuta ei lue mitään
+
+### P1
+
+- [P1] Oma herätysääni (järjestelmän äänivalitsin) soi; poistettu tai
+      lukukelvoton ääni vaihtuu oletusääneen (`sound_fallback`)
+- [P1] Oma musiikki, tapa "Ääni ja puhe": soi valittu kappale, ja se
+      hiljenee puheen ajaksi; tapa "Herätysääni" ei soita musiikkia, vaikka
+      se on valittu
+- [P1] Oman musiikin varavaihtoehto: poista tai siirrä valittu tiedosto →
+      herätys soittaa herätysäänen (ei hiljaisuutta), ja `sound_fallback`
+      kirjautuu koodilla `music-unavailable`; sovelluksen tila näyttää
+      "ei enää käytettävissä", jos lukuoikeus on poistunut
+- [P1] Oma musiikki ja suora käynnistys: käynnistä puhelin uudelleen
+      avaamatta sitä → herätys soi herätysäänellä; avauksen jälkeen seuraava
+      herätys soittaa taas valitun kappaleen (pysyvä lukuoikeus säilyi)
+- [P1] Musiikin valitsin: pilvitiedosto (esim. Drive) ei tule valituksi
+      herätykseksi, tai sovellus kertoo, ettei tiedostoa voi käyttää;
+      valitsimen sulkeminen ei muuta aiempaa valintaa eikä näytä virhettä
+- [P1] Aamukatsaus puhetavalla ("Puhe" tai "Ääni ja puhe"): soiton aikana
+      puhe on tervehdys ja kellonaika (ei katsausta); katsaus luetaan vasta
+      Sammuta-painalluksen jälkeen. Torkun jälkeen sanottu kellonaika on
+      todellinen, ei alkuperäinen herätysaika
+- [P1] Aamukatsaus uudelleenkäynnistyksen jälkeen avaamatta puhelinta:
+      Sammuta lukee vain tervehdyksen ja kellonajan (menon nimeä ei lueta
+      ennen lukituksen avausta)
+- [P1] Aamukatsaus ilman suomenkielistä puhetta: Sammuta lopettaa soiton,
+      eikä merkkiääntä soi; `speech_fallback` kirjautuu
+- [P1] Voimistuminen: pehmeä alku, kova vaihe vaiheen ajassa, äänenvoimakkuus
+      ei laske soiton aikana
+- [P1] Kaksi herätystä samaan aikaan: uudempi soi, vanhempi kirjautuu
+      kuittaamattomaksi; puhuttu muistutus herätyksen aikana näkyy vain
+      ilmoituksena (ei puhu päälle)
+- [P1] Uloskirjautuminen peruu kaikki herätykset ja muistutusilmoitukset
+      (`cancelAll`); toinen käyttäjä ei saa edellisen herätyksiä
+- [P1] Valmistajakohtainen virransäästö (esim. Samsung "nukkuvat
+      sovellukset", Xiaomi): herätys soi; jos ei, kirjaa asetus, joka estää
+- [P1] Mikrofoni-ilmaisin **ei** syty herätyksen tai puheen aikana
+- [P1] Android 14+, puhelin auki: pyyhkäise soivan herätyksen ilmoitus pois
+      → ilmoitus palaa heti Sammuta- ja Torku-painikkeineen; soitto ei lopu
+      eikä kirjaudu kuittaukseksi
+- [P1] Tarkkojen herätysten oikeus pois (epätarkka herätys): kun herätys
+      tulee varailmoituksena, sen Torku-painike kertoo oman torkkuajan
+      (esim. "Torku 9 min"), ja torkku kestää sen verran. Jos herätys on
+      myöhässä ja sovellus avataan ennen kuin se soi, se soi silti (enintään
+      30 min myöhässä); sitä vanhempi näkyy väliin jääneenä
 
 ---
 

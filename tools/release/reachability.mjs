@@ -302,6 +302,106 @@ export const REACHABILITY = Object.freeze([
     evidence: { html: 'afEnergy', view: 'src/app/views/tasks.js' },
     crud: 'luonti, luku, muokkaus, poisto kohteen mukana',
     note: 'Käyttäjän oma kuormittavuus 1–5, tarkoituksella ilman aluetta ja karkea arvio. Ei päätellä otsikosta.'
+  }),
+
+  // ------------------------------------------------------------------
+  // AALTO K (0014): arjen käyttöjärjestelmä.
+  //
+  // Domain, repositorio, lataus, vienti ja poisto ovat valmiit; näkymät
+  // rakennetaan erikseen. Siihen asti rivit ovat REHELLISESTI NO_UI ja
+  // aalto K on ESTETTY — sama välitila kuin aallolla H aikanaan. Kun
+  // näkymä on olemassa, rivi saa todisteen (html + view) ja tilan
+  // REACHABLE, ja aallon valmiustila johdetaan uudelleen.
+  // ------------------------------------------------------------------
+  Object.freeze({
+    gate: 'savedPlaces',
+    reach: REACH.REACHABLE,
+    label: 'Paikat',
+    nav: 'Profiili -> Paikat',
+    evidence: { html: 'profilePlacesSection', view: 'src/app/views/placesSettings.js' },
+    crud: 'luonti, muokkaus, poisto; oletusetuaika',
+    note: 'Tallennetut paikat nimenä ja osoitteena tekstinä, ei koordinaatteja. Paikan oletukset (matka-aika, valmistautuminen, etuaika, pysäköinti) täyttävät menon lähtölaskennan.'
+  }),
+  Object.freeze({
+    gate: 'placeAliases',
+    reach: REACH.REACHABLE,
+    label: 'Tunnetut nimitykset',
+    nav: 'Profiili -> Paikat -> paikan tunnetut nimitykset',
+    evidence: { html: 'profilePlacesSection', view: 'src/app/views/placesSettings.js' },
+    crud: 'luku, poisto, oppimisen nollaus; syntyy käyttäjän vahvistuksesta',
+    note: 'Lisänimi syntyy vain käyttäjän vahvistuksesta (puhe tai lomake). Käyttäjä näkee vahvistusten määrän ja voi poistaa tai nollata oppimisen.'
+  }),
+  Object.freeze({
+    gate: 'calendarEvents',
+    reach: REACH.REACHABLE,
+    label: 'Kalenteri',
+    nav: 'Kalenteri -> Päivä / Viikko / Kuukausi -> Uusi meno',
+    evidence: { html: 'calEventForm', view: 'src/app/views/calendarForm.js' },
+    crud: 'luonti, muokkaus, poisto, yhden kerran ohitus',
+    note: 'Menot ja sitoumukset; toistuvan menon esiintymät lasketaan eikä niitä tallenneta. Paikallisille menoille lähtö lasketaan saapumistavoitteesta taaksepäin.'
+  }),
+  Object.freeze({
+    gate: 'commuteObservations',
+    reach: REACH.REACHABLE,
+    label: 'Paikat',
+    nav: 'Profiili -> Paikat -> matkojen oppiminen',
+    evidence: { html: 'profilePlacesSection', view: 'src/app/views/placesSettings.js' },
+    crud: 'luku ja nollaus; syntyy kuittauksesta (Lähdin / Olin perillä)',
+    note: 'Käyttäjän kuittaamat toteutuneet matkat, ei sijaintihistoriaa. Oppiminen on selitettävää ja nollattavissa.'
+  }),
+  Object.freeze({
+    gate: 'lifeSettings',
+    reach: REACH.REACHABLE,
+    label: 'Arki',
+    nav: 'Profiili -> Arki',
+    evidence: { html: 'profileDailySection', view: 'src/app/views/dailySettings.js' },
+    crud: 'luku ja tallennus',
+    note: 'Yksi rivi käyttäjää kohti; puuttuva rivi = oletukset, joten sovellus toimii ilman tallennettuja asetuksiakin.'
+  }),
+  Object.freeze({
+    gate: 'sleepLogs',
+    reach: REACH.REACHABLE,
+    label: 'Uni',
+    nav: 'Profiili -> Hyvinvointi -> Uni',
+    evidence: { html: 'profileWellbeingSection', view: 'src/app/views/wellbeingHub.js' },
+    crud: 'luonti ja muokkaus',
+    note: 'Vuoteessa olon aika (mahdollisuus nukkua), ei mitattua unta. Arkaluonteinen: ei tekoälylle eikä lokiin.'
+  }),
+  Object.freeze({
+    gate: 'habitPlans',
+    reach: REACH.REACHABLE,
+    label: 'Tapojen muutos',
+    nav: 'Profiili -> Hyvinvointi -> Tapojen muutos',
+    evidence: { html: 'profileWellbeingSection', view: 'src/app/views/wellbeingHub.js' },
+    crud: 'luonti, muokkaus, poisto',
+    note: 'Tapojen muutossuunnitelmat käyttäjän omilla luvuilla; ei väestönormeja eikä lääketieteellisiä väitteitä.'
+  }),
+  Object.freeze({
+    gate: 'habitEvents',
+    reach: REACH.REACHABLE,
+    label: 'Tapojen muutos',
+    nav: 'Profiili -> Hyvinvointi -> Tapojen muutos (edistyminen); Tänään -> tapakortti',
+    evidence: { html: 'profileWellbeingSection', view: 'src/app/views/wellbeingHub.js' },
+    crud: 'luku (edistyminen); kirjaus Tänään-kortista',
+    note: 'Neutraali kirjaus: käyttö, lykkäys, väliin jättäminen. Suunnitelman poisto vie kirjaukset.'
+  }),
+  Object.freeze({
+    gate: 'exerciseSessions',
+    reach: REACH.REACHABLE,
+    label: 'Liikunta',
+    nav: 'Profiili -> Hyvinvointi -> Liikunta',
+    evidence: { html: 'profileWellbeingSection', view: 'src/app/views/wellbeingHub.js' },
+    crud: 'luonti, muokkaus, poisto',
+    note: 'Suunniteltu ja toteutunut liikuntakerta; kuormittavuus ja palautuminen ovat käyttäjän omia arvioita.'
+  }),
+  Object.freeze({
+    gate: 'wellbeingCheckins',
+    reach: REACH.REACHABLE,
+    label: 'Motivaatio',
+    nav: 'Profiili -> Hyvinvointi (14 päivän historia); Tänään -> voinnin kortti',
+    evidence: { html: 'profileWellbeingSection', view: 'src/app/views/wellbeingHub.js' },
+    crud: 'luku; kirjaus Tänään-kortista',
+    note: 'Yksi kirjaus päivää kohti, hyvinvointimerkinnän rinnalla. Puuttuva ei ole nolla. Arkaluonteinen: ei tekoälylle eikä lokiin.'
   })
 ]);
 
