@@ -107,6 +107,12 @@ function endLabel(dateIso) {
   return shortDateLabel(dateIso).replace(/\.$/u, '');
 }
 
+/** Kohteen tunniste samassa muodossa kuin describe() sen antaa (merkkijono). null = ei tunnistetta. */
+function cleanId(value) {
+  if (typeof value === 'string') return value.trim() ? value : null;
+  return Number.isFinite(value) ? String(value) : null;
+}
+
 function validMinutes(value) {
   return Number.isInteger(value) && value > 0 && value <= MAX_REPLAN_MINUTES ? value : null;
 }
@@ -636,7 +642,18 @@ function skipItem(ctx) {
   }
   const open = items.filter(item => !item.completed && item.kind !== 'virtual' && item.kind !== 'block');
   let matches;
-  if (interruption.targetText) {
+  if (interruption.targetId) {
+    // Valinta (kortin painike tai puheen valintadialogi) kulkee tunnisteena:
+    // kaksi samaan sanaan osuvaa kohdetta ei jää kiertämään kysymystä.
+    matches = open.filter(item => item.id === interruption.targetId);
+    if (matches.length === 0) {
+      return {
+        question: 'Mikä jää väliin?',
+        candidates: open.filter(item => item.flexible).slice(0, 5),
+        summary: 'Valittua kohdetta ei enää löytynyt tämän päivän suunnitelmasta. Päivän suunnitelma pysyy ennallaan.'
+      };
+    }
+  } else if (interruption.targetText) {
     const stems = targetStems(interruption.targetText);
     matches = stems.length > 0 ? open.filter(item => matchesTarget(item, stems)) : [];
     if (matches.length === 0) {
@@ -812,7 +829,8 @@ function emptyResult(kind, summary, question = null) {
  *
  * @param {object} input
  * @param {object} input.plan          buildDayPlan-tulos (timeline, unscheduled, flexibleRoutines, range, dateIso ...)
- * @param {object} input.interruption  parseInterruption-tulos {kind, minutes, targetText, toDate?, onDate?}
+ * @param {object} input.interruption  parseInterruption-tulos {kind, minutes, targetText, targetId?, toDate?, onDate?}
+ *                                     (targetId = aiemman tuloksen candidates[].id; ohitus käyttää sitä tekstin sijaan)
  * @param {number} input.nowMinutes    nykyhetki minuutteina keskiyöstä (seinäkello)
  * @param {string} input.todayIso      tämä päivä
  * @param {Array}  [input.tasks]       kaikki tehtävät (täydentää suunnitelmaa)
@@ -846,6 +864,8 @@ export function replanDay(input = {}) {
     kind,
     minutes: validMinutes(interruption.minutes),
     targetText: typeof interruption.targetText === 'string' && interruption.targetText.trim() ? interruption.targetText.trim() : null,
+    // Valitun kohteen tunniste (ks. candidates). Ohituksessa se voittaa tekstin.
+    targetId: cleanId(interruption.targetId),
     toDate: isIsoDate(interruption.toDate) ? interruption.toDate : null,
     onDate: isIsoDate(interruption.onDate) ? interruption.onDate : null
   };
