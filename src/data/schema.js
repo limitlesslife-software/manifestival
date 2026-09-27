@@ -73,26 +73,26 @@ export function taskColumns(isOpen = columnGateOpen) {
  */
 export const TABLES = Object.freeze({
   /** Migraatio 0003 */
-  routines: false,
-  routineExceptions: false,
+  routines: true,
+  routineExceptions: true,
   /** Migraatio 0004 */
-  goals: false,
-  projects: false,
+  goals: true,
+  projects: true,
   /** Migraatio 0005 */
-  notificationPreferences: false,
+  notificationPreferences: true,
   /** Migraatio 0006 */
-  wellbeing: false,
+  wellbeing: true,
   /** Migraatio 0007 */
-  bills: false,
-  recurringExpenses: false,
-  savingsGoals: false,
+  bills: true,
+  recurringExpenses: true,
+  savingsGoals: true,
   /** Migraatio 0008 */
-  aiAudit: false,
+  aiAudit: true,
   /** Migraatio 0009 — EI AJETTU. Ks. supabase/migrations/0009_finance_2.sql. */
-  transactions: false,
-  investments: false,
+  transactions: true,
+  investments: true,
   /** Migraatio 0010 — EI AJETTU. Ks. supabase/migrations/0010_goal_to_action.sql. */
-  milestones: false,
+  milestones: true,
   /**
    * Migraatio 0011 — EI AJETTU.
    * Ks. supabase/migrations/0011_personal_assistant.sql.
@@ -101,11 +101,11 @@ export const TABLES = Object.freeze({
    * 0011 ei muuta yhtäkään olemassa olevaa taulua — se on siksi
    * selvästi vähemmän vaarallinen, ja se on syytä sanoa ääneen.
    */
-  inboxItems: false,
-  reminders: false,
-  notices: false,
-  travelPlans: false,
-  locationRules: false,
+  inboxItems: true,
+  reminders: true,
+  notices: true,
+  travelPlans: true,
+  locationRules: true,
   /**
    * Migraatio 0012 — EI AJETTU.
    * Ks. supabase/migrations/0012_life_alignment.sql.
@@ -114,10 +114,10 @@ export const TABLES = Object.freeze({
    * elämänalueet, kapasiteetti, kirjattu aika ja katsaukset elävät
    * istunnon muistissa, ja Suunta-näkymä kertoo sen käyttäjälle.
    */
-  lifeAreas: false,
-  weeklyCapacities: false,
-  timeEntries: false,
-  alignmentReviews: false,
+  lifeAreas: true,
+  weeklyCapacities: true,
+  timeEntries: true,
+  alignmentReviews: true,
   /**
    * Migraatio 0013 — EI AJETTU. Riippuu 0012:sta.
    * Ks. supabase/migrations/0013_alignment_reality.sql.
@@ -128,8 +128,8 @@ export const TABLES = Object.freeze({
    * ajastin säilyy laitteella (src/data/timerStore.js), asetukset
    * istunnon muistissa.
    */
-  runningTimers: false,
-  alignmentItemSettings: false,
+  runningTimers: true,
+  alignmentItemSettings: true,
   /**
    * Migraatio 0014 — EI AJETTU. Riippuu 0013:sta.
    * Ks. supabase/migrations/0014_daily_life.sql.
@@ -140,16 +140,16 @@ export const TABLES = Object.freeze({
    * asetukset, uni-, tapa- ja liikuntakirjaukset elävät istunnon
    * muistissa, ja käyttöliittymä kertoo sen käyttäjälle.
    */
-  savedPlaces: false,
-  placeAliases: false,
-  calendarEvents: false,
-  commuteObservations: false,
-  lifeSettings: false,
-  sleepLogs: false,
-  habitPlans: false,
-  habitEvents: false,
-  exerciseSessions: false,
-  wellbeingCheckins: false
+  savedPlaces: true,
+  placeAliases: true,
+  calendarEvents: true,
+  commuteObservations: true,
+  lifeSettings: true,
+  sleepLogs: true,
+  habitPlans: true,
+  habitEvents: true,
+  exerciseSessions: true,
+  wellbeingCheckins: true
 });
 
 /**
@@ -169,7 +169,7 @@ export const TABLES = Object.freeze({
  *
  * Tämä saa mennä arvoon true VASTA kun migraatio 0009 on ajettu.
  */
-export const BILL_PAYMENT_FIELDS = false;
+export const BILL_PAYMENT_FIELDS = true;
 
 /**
  * Onko migraatio 0010 ajettu tavoitteiden ja tehtävien osalta?
@@ -195,7 +195,7 @@ export const BILL_PAYMENT_FIELDS = false;
  *
  * Tämä saa mennä arvoon true VASTA kun migraatio 0010 on ajettu.
  */
-export const GOAL_PLANNING_FIELDS = false;
+export const GOAL_PLANNING_FIELDS = true;
 
 /**
  * Onko `maintenance` sallittu tavoitteen tilaksi?
@@ -209,7 +209,7 @@ export const GOAL_PLANNING_FIELDS = false;
  * paikallaan. Sarakkeen puuttuminen ja arvon kieltäminen ovat eri
  * vikoja, ja niillä on eri oire.
  */
-export const GOAL_MAINTENANCE_MODE = false;
+export const GOAL_MAINTENANCE_MODE = true;
 
 /**
  * Onko migraatio 0012 ajettu `goals.life_area_id`-sarakkeen osalta?
@@ -223,7 +223,7 @@ export const GOAL_MAINTENANCE_MODE = false;
  * false = tavoitteen elämänalue elää istunnon muistissa.
  * true  = se tallentuu. Vasta kun 0012 on ajettu ja varmistettu.
  */
-export const GOAL_LIFE_AREA_FIELD = false;
+export const GOAL_LIFE_AREA_FIELD = true;
 
 /**
  * Onko migraatio 0013 ajettu 0012:n taulujen uusien sarakkeiden osalta?
@@ -245,7 +245,7 @@ export const GOAL_LIFE_AREA_FIELD = false;
  *
  * Tämä saa mennä arvoon true VASTA kun migraatio 0013 on ajettu.
  */
-export const ALIGNMENT_REALITY_FIELDS = false;
+export const ALIGNMENT_REALITY_FIELDS = true;
 
 /** Onko taulu käytettävissä tietokannassa? */
 export function hasTable(name) {
