@@ -265,7 +265,10 @@ async function runLocalInterruption(parsed, ui, { state, now }) {
 
   const changes = splitReplanChanges(result.changes).applicable;
   if (changes.length === 0) {
-    notify(result.question || result.summary);
+    // Varoitukset (kiinteä kohde, johon keskeytys osuu) näkyvät myös, kun
+    // muutettavaa ei ole: sama tieto kuin Tänään-kortin ehdotuksessa.
+    const warnings = Array.isArray(result.warnings) ? result.warnings : [];
+    notify(result.question || [result.summary, ...warnings].join(' '));
     return { ok: true, status: 'no_change', reason: result.summary, local: true, kind: 'interruption' };
   }
 

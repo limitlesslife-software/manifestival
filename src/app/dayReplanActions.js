@@ -70,7 +70,7 @@ export function horizonDays(fromIso, toIso, { state = getState(), now = new Date
  */
 export function previewDayReplan(interruption, { state = getState(), now = new Date() } = {}) {
   const { todayIso, nowMinutes } = clockOf(now);
-  const { plan } = calendarDayPlan(state, todayIso, { todayIso, nowMinutes, offsetMinutesFn: deviceOffsetMinutes });
+  const { plan, inputs } = calendarDayPlan(state, todayIso, { todayIso, nowMinutes, offsetMinutesFn: deviceOffsetMinutes });
   const days = interruption && interruption.kind === INTERRUPTION_KIND.DEFER_REMAINING
     ? horizonDays(shiftIso(todayIso, 1), shiftIso(todayIso, DEFAULT_HORIZON_DAYS), { state, now }).days
     : [];
@@ -83,6 +83,10 @@ export function previewDayReplan(interruption, { state = getState(), now = new D
     events: plan.eventItems,
     blocks: plan.blocks,
     days,
+    // Lähtömoottorin suunnitelmat samasta calendarInputs-laskennasta kuin
+    // lohkot: "olen 15 min myöhässä" kertoo myöhästyvän lähdön ja
+    // perilläolon (dayReplan.js "lähtö ja kiinteät alut").
+    departures: inputs && inputs.departures instanceof Map ? [...inputs.departures.values()] : [],
     offsetMinutesFn: deviceOffsetMinutes
   });
 }
