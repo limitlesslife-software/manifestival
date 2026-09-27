@@ -159,7 +159,7 @@ tallentavansa niitä.
 
 Käännösaikaiset portit (`src/data/schema.js`) kertovat, mihin tämä
 käännös AIKOO kirjoittaa. Kanta voi silti olla jäljessä: asennettu APK
-kantaa porttinsa mukanaan, ja jokaisella migraatiolla 0009–0013 on
+kantaa porttinsa mukanaan, ja jokaisella migraatiolla 0009–0015 on
 peruutus. Siksi sovellus tarkistaa kirjautumisen jälkeen, mitä kanta
 oikeasti sisältää, ja voi **laskea** (ei koskaan nostaa) porttejaan.
 
@@ -174,6 +174,7 @@ portille sen sarakejoukon ja migraation:
 | taulu | `0012.time_entries` | puuttuu: tyhjä lataus; sarakkeita puuttuu: vain luku |
 | sarakeportti | `0010.goals` (GOAL_PLANNING_FIELDS) | sarakkeet jätetään pois |
 | sarakeportti, `lowerAs: 'readonly'` | `0013.time_entries` | taulu vain luettavaksi |
+| sarakeportti | `0015.tasks`, `0015.life_areas` (MENTAL_LOAD_FIELDS) | horisontti, odotus, arkisto, siirrot ja alueen laji jätetään pois; päivätöntä tehtävää ei sallita |
 
 Tehtävän liitokset (`deadline`, `goal_id`, `project_id`, migraatio 0004)
 ovat oma sarakeporttinsa `TASK_LINK_FIELDS`, joka on auki täsmälleen
@@ -183,8 +184,21 @@ yksi transaktio, joten yksi sarake todistaa koko migraation.
 
 Testi `tests/schema-compat-matrix.test.mjs` vertaa vaatimuksia
 migraatioihin ja repositorioiden rivimuunnoksiin, ja ajaa oikean koodin
-aaltojen C–J porteilla kannan tiloja 0008, +0009, +0010, +0011, +0012,
-0008+0012, +0013 ja "0013 ilman operation_id:tä" vastaan.
+aaltojen C–L porteilla kannan tiloja 0008, +0009, +0010, +0011, +0012,
+0008+0012, +0013, "0013 ilman operation_id:tä", +0014 ja +0015 vastaan.
+
+### Migraatio 0015: tasks.date saa olla NULL
+
+0015 (aalto L, EI AJETTU) poistaa `tasks.date`-sarakkeen NOT NULL -ehdon,
+jos sellainen on (idempotentti), ja lisää tasks-tauluun sarakkeet
+`horizon`, `waiting_on`, `follow_up_date`, `archived_at`,
+`reschedule_count` (not null default 0) ja `original_date` sekä
+life_areas-tauluun `kind` (not null default 'STANDARD').
+`life_areas_category_unique` poistuu. Uudet taulut `protected_periods` ja
+`weekly_plans`. Tarkat CHECK-säännöt ja peruutus:
+`supabase/migrations/0015_mental_load.sql`,
+`docs/MIGRATION-0015-RECOVERY.md`, sopimus `docs/MENTAL-LOAD-CORE.md`.
+Sarakkeet lähtevät vain, kun `MENTAL_LOAD_FIELDS` on auki (aalto L).
 
 ### Tarkistus
 

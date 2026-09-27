@@ -322,6 +322,10 @@ test('tunnistegeneraattori pysyy sovelluskerroksessa', () => {
     // Lähtöjen seuranta ja arjen huomautukset luovat ilmoituskeskuksen
     // merkintöjen tunnisteet (kuten assistantActions).
     'src/app/departureWatch.js', 'src/app/dailyLifeNotices.js',
+    // Mielen kuorma (aalto L) luo tunnisteet suojatuille jaksoille,
+    // viikkosuunnitelmille ja Brain Dumpin saapuville riveille. Domain
+    // (protectedTime.js, weeklyPlan.js) ei tuota niitä.
+    'src/app/mentalLoadActions.js',
     'src/data/schema.js', 'src/data/tasksRepo.js', 'src/lib/rows.js'
   ]);
 

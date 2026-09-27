@@ -50,6 +50,8 @@ import {
 
 export const BACKUP_NUMBERS = Object.freeze(['0009', '0010', '0011', '0012', '0013', '0014', '0015']);
 const SNAPSHOT_TZ = 'UTC';
+/** 0015:n peruutuksen esiehto: toinen samaa kategoriaa jakava alue irti kategoriasta. */
+const SHARED_CATEGORY_FIX = `update public.life_areas set category_key = null where id like '%-la-music'`;
 const OTHER_TZ = 'America/Sao_Paulo';
 
 if (CORE_OWNER !== OWNER) throw new Error('snapshot-core ja harjoittelu eri omistajalla');
@@ -509,6 +511,16 @@ export async function backupScenario({ fixtureDir = null, variants = ['text', 't
             refused.error?.message || 'meni läpi');
           await c.query(`update public.goals set status = 'active' where status = 'maintenance'`);
         }
+        if (n === '0015') {
+          // Siemenissä kaksi aluetta jakaa kategorian (0015 salli sen):
+          // ROLLBACK-osion vartija kieltäytyy ennen yhtäkään DDL:ää.
+          const fpm = await catalogFingerprint(c);
+          const refused = await runSql(c, rollbackSql);
+          check('B9', '0015:n ROLLBACK:n vartija kieltäytyy, kun kaksi aluetta jakaa kategorian, katalogi ennallaan',
+            !refused.ok && /jakaa kategorian/.test(refused.error.message) && fpm.hash === (await catalogFingerprint(c)).hash,
+            refused.error?.message || 'meni läpi');
+          await c.query(SHARED_CATEGORY_FIX);
+        }
         const rolled = await runSql(c, rollbackSql);
         out = await runSql(c, buildRestoreSql(snap2, { prune: true }));
         const fp1 = await catalogFingerprint(c);
@@ -525,6 +537,7 @@ export async function backupScenario({ fixtureDir = null, variants = ['text', 't
         await awkwardFor(c, n);
         const snapN = parseSnapshot((await takeSnapshot(c, n)).rows);
         if (n === '0010') await c.query(`update public.goals set status = 'active' where status = 'maintenance'`);
+        if (n === '0015') await c.query(SHARED_CATEGORY_FIX);
         const rolled2 = await runSql(c, rollbackSql);
         const fpg = await catalogFingerprint(c);
         const dataG = await contentFingerprint(c);

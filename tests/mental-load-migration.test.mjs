@@ -369,3 +369,41 @@ test('KRIITTINEN: odotus — WAITING + waiting_on kelpaa, muu horisontti + waiti
   // Domain: odotus nollautuu, jos horisontti ei ole WAITING (normalizeTask).
   assert.equal(normalizeTask({ title: 'x', date: '2026-09-28', horizon: 'LATER', waitingOn: 'Matti' }).waitingOn, null);
 });
+
+// ---------------------------------------------------------------- E2E-korvike
+
+test('korvike (tools/e2e/fakeSupabase.mjs) tuntee 0015:n rajoitteet ja time-muodon', async () => {
+  const { createFakeDatabase, CHECK_CONSTRAINTS, TIME_COLUMNS, UNIQUE_CONSTRAINTS } = await import('../tools/e2e/fakeSupabase.mjs');
+  const uid = 'aaaaaaaa-0000-4000-8000-000000000001';
+  const db = createFakeDatabase();
+  const ok = (table, row) => assert.equal(db.insertRows(table, uid, row).error, undefined, `${table} ${JSON.stringify(row)}`);
+  const code = (table, row) => db.insertRows(table, uid, row).error?.code;
+  // Kategoria saa olla jaettu (0015 poisti uniikkiuden) — mutta ei tilassa 0014.
+  ok('life_areas', { id: 'la1', name: 'Kuoro', category_key: 'harrastus', kind: 'ENJOYMENT' });
+  ok('life_areas', { id: 'la2', name: 'Soitto', category_key: 'harrastus', kind: 'OWN_TIME' });
+  const k = createFakeDatabase({ through: '0014' });
+  assert.equal(k.insertRows('life_areas', uid, { id: 'x1', name: 'A', category_key: 'koti' }).error, undefined);
+  assert.equal(k.insertRows('life_areas', uid, { id: 'x2', name: 'B', category_key: 'koti' }).error?.code, '23505');
+  assert.equal(k.insertRows('tasks', uid, { id: 't-k', title: 'x', waiting_on: 'Matti' }).error, undefined, 'tila 0014: ei 0015:n CHECKejä');
+  // CHECK: odotus vain WAITING-horisontilla (myös NULL-horisontti hylätään).
+  ok('tasks', { id: 't1', date: null, title: 'x', horizon: 'WAITING', waiting_on: 'Matti' });
+  assert.equal(code('tasks', { id: 't2', title: 'x', horizon: 'LATER', waiting_on: 'Matti' }), '23514');
+  assert.equal(code('tasks', { id: 't3', title: 'x', waiting_on: 'Matti' }), '23514');
+  assert.equal(db.updateRows('tasks', uid, { horizon: 'LATER' }, [{ column: 'id', op: 'eq', arg: 't1' }]).error?.code, '23514');
+  // Viikkosuunnitelma: maanantai, enintään viisi, yksi viikkoa kohti.
+  ok('weekly_plans', { id: 'w1', week_start: '2026-09-28', priorities: [] });
+  assert.equal(code('weekly_plans', { id: 'w2', week_start: '2026-09-28', priorities: [] }), '23505');
+  assert.equal(code('weekly_plans', { id: 'w3', week_start: '2026-09-29', priorities: [] }), '23514');
+  assert.equal(code('weekly_plans', { id: 'w4', week_start: '2026-10-05', priorities: [1, 2, 3, 4, 5, 6] }), '23514');
+  // Suojattu aika: kellonajat palautuvat HH:MM:SS, säännöt kuten kannassa.
+  ok('protected_periods', { id: 'p1', kind: 'OWN_TIME', recurrence: 'weekly', weekdays: [2], start_time: '18:00', end_time: '20:00' });
+  assert.equal(db.rows('protected_periods')[0].start_time, '18:00:00');
+  assert.equal(code('protected_periods', { id: 'p2', kind: 'VACATION', recurrence: 'weekly', weekdays: [6] }), '23514');
+  assert.equal(code('protected_periods', { id: 'p3', kind: 'OWN_TIME', recurrence: 'weekly_target', target_minutes: 600 }), '23514');
+  assert.deepEqual(TIME_COLUMNS.protected_periods, ['start_time', 'end_time']);
+  assert.deepEqual(UNIQUE_CONSTRAINTS.weekly_plans, [['weekly_plans_week_unique', ['user_id', 'week_start']]]);
+  // Korvikkeen säännöt ovat samat kuin SQL:ssä nimettyinä.
+  for (const [table, list] of Object.entries(CHECK_CONSTRAINTS)) {
+    for (const [name] of list) assert.match(SQL, new RegExp(`add constraint ${name}\\b`), `${table}: ${name}`);
+  }
+});

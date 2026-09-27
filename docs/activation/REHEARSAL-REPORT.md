@@ -375,3 +375,172 @@ PG_REHEARSAL_PORT=54359 node tools/pg-rehearsal/rehearse.mjs --only=backup      
 PG_REHEARSAL_PORT=54359 node tools/pg-rehearsal/rehearse.mjs --only=failure:0010-locks    # lukot + authStall0014
 PG_REHEARSAL_PORT=54359 node tools/pg-rehearsal/sql-result-fixtures.mjs --numbers=0014
 ```
+
+---
+
+# Migraation 0015 harjoittelu 2026-09-27 (aalto L, mielen kuorman keventäminen)
+
+**Ympäristö:** PostgreSQL **17.10** (`PostgreSQL 17.10 on x86_64-windows,
+compiled by msvc-19.44.35226, 64-bit`), oma kertakäyttöinen klusteri
+`127.0.0.1:54371`, data `.claude/pg-local/data-wave-l` (pääkansion
+ignoroitu hakemisto, luotu tätä ajoa varten `initdb -U postgres
+--auth=trust --encoding=UTF8 --locale=C`). Portteihin 54329 (toisen
+projektin PostgreSQL 15) ja 54349 ei yhdistetty. Ei tuotantoa, ei
+Supabasea, ei verkkoa.
+
+**Koodi:** haara `wave-l/db-train`, commit `2c59538` (oletusajo:
+53 luettua tiedostoa, 0 commitoimatonta). Aalto L ei ole lukossa (C–K
+lukittu), joten `waves.trainWaves()` johtaa sen `tools/release/waves.mjs`:stä:
+K:n 34 taulua + 0015:n 2 porttia + sarakeportti `MENTAL_LOAD_FIELDS`
+(`locked: false`).
+
+**Ajot** (kaikki `PG_REHEARSAL_PORT=54371`):
+
+| Ajo | Komento | Commit | Aika (UTC) | Tulos |
+|---|---|---|---|---|
+| Kaikki 18 skenaariota | `rehearse.mjs --json=…` | `2c59538` | 18:22:25–18:32:41 | **0 hylättyä** |
+| Varmuuskopio B1–B15 | `rehearse.mjs --only=backup --backup-fixtures=<työhakemisto> --json=…` | `2c59538` + B9:n 0015-vartija | 18:35–18:40 | **379/379, 0 hylättyä** |
+| SQL-tulosfixturet | `sql-result-fixtures.mjs --numbers=0015` | ennen `2c59538` (samat SQL-blobit) | — | 4/4 odotettu päätös (2 GO, 2 STOP) |
+| Inventaariofixturet | `rehearse.mjs --only=preflight,rollback,inventory,failure --fixtures=tests/fixtures/activation-inventory --fixture-states=0015,0014-partial-0015` | ennen `2c59538` | — | `state-0015.json`, `state-0014-partial-0015.json` |
+| Kultainen ero | `rehearse.mjs --only=prodshape,values:0010,verify:null --write-golden` | ennen `2c59538` | — | 0015 kirjoitettu; **0009–0014 "sama", ei kirjoitettu** |
+
+## 0015: tulokset skenaarioittain
+
+| Skenaario | Tulos | 0015 |
+|---|---|---|
+| preflight | 63/63 (oli 48) | `preflight_0015` PASS vain tilassa 0014 (21 riviä, 0 FAIL); tilassa 0015 jokainen `preflight_0009…0015` FAIL |
+| rollback | 7/7 | ajo → ROLLBACK-osio → katalogirivit täsmälleen samat (myös `life_areas_category_unique` samalla määrittelyllä) → ajo uudelleen |
+| inventory | 54/54 (oli 45) | tila 0014 → GO, seuraava 0015; tila 0015 → GO, ei seuraavaa (rivi 24 = 47, **rivi 21 = 56 → 0012 "ajettu"**, koska 0015 poisti 0012:n rajoitteen: `score-inventory` `SUPERSEDED_OBJECTS`); keskeneräinen 0015 (yksi taulu) → STOP `0015 = partial`; text ja typed |
+| upgrade:text / :typed | 15/15 | **tila 0014 → 0015**: `verify_0015` 34 PASS / 0 FAIL (40 riviä, 6 INFO), `preflight_0015` 0 FAIL, ajo 81 ms; vanhojen taulujen rivit: arvot, `xmin` ja `relfilenode` ennallaan (tasks: ei uudelleenkirjoitusta); 36 alkuperäisellä tehtävällä horisontti NULL ja `reschedule_count` 0; **päivätön tehtävä (`date` NULL) molemmilla lähtötiloilla** (siemenet + lisäys omistajana, 3 riviä) |
+| rls | 38 taulua, 449 tarkistusta, 0 hylättyä (oli 36 / 427) | `protected_periods` ja `weekly_plans` 11 tarkistusta kumpikin: A ei lue, päivitä, poista, lisää B:n nimissä eikä siirrä riviään B:lle (42501); anon 42501; ei-sub näkee 0 riviä; ei anon/PUBLIC-oikeuksia |
+| lifecycle | 141/141 (85 uutta) | ks. "0015: lifecycle" |
+| failure | 62/62 (18 uutta) | ks. "0015: virhetilanteet" |
+| prodshape:fixture / values:0010 | 10/10 / 10/10 | ennallaan (odotettuun inventaarioon johdetut rivit 24 = 0, 31–32 = puuttuu, 33 = 0) |
+| prodshape:chain | 7/7 | 0015 tuotannon datalla täsmälleen K:n skeemaan (tila 0014): vanhat rivit ennallaan; kultainen ero `expected/schema-diff-0015.txt`: 2 taulua, 32 saraketta (25 uusissa tauluissa + 6 tasks + 1 life_areas), 30 rajoitetta (26 nimettyä + 2 pääavainta + 2 omistaja-avainta), 7 indeksiä, 8 politiikkaa, 2 liipaisinta; **poistettu vain `life_areas_category_unique` (rajoite + indeksi + relaatio, `ALLOWED_REMOVALS`), 0 funktiota** |
+| prodshape:pause | 8/8, 662 kirjoitusta | **Tauko 0015 (K → L):** elävän aallon K 72 ja aallon L 86 kirjoitusta sovelluksen omilla rivimuunnoksilla (tehtävät 0015-sarakkeineen, päivätön ja odottava tehtävä, suojattu aika, viikkosuunnitelma); `verify_0015` datan kanssa 0 FAIL; peruutuksen kuiva-ajo menee läpi |
+| verify:null | 7/7 | `tasks.date` pudotettu → rivi 08 FAIL "toteutui null", `poikkeavia_yhteensa` 1 = FAIL-rivit; rivit 62–64 eivät kaada varmistusta (`puuttuu`) |
+| preflight:blockers | 42/42 (oli 33) | Estäjä `tasks`/`life_areas`/`auth.users` → esteet-rivi FAIL; ilman 0 FAIL; ylimääräinen politiikka `saved_places`-taulussa → preflight FAIL (81 ≠ 80) ja migraatio kaatuu kiinni; F13 `verify_0015`: vieraat taulut → 0 FAIL, rivi 33 INFO; `goals`-avain ilman CASCADEa → vain rivi 31; ilman avainta → vain rivi 32; `weekly_plans`-avain ilman CASCADEa → rivit 30, 31 (32 yhä) |
+| rollback:data | 5/5 | 0015 aallon L datalla (84 kirjoitusta + kaksi aluetta samalla kategorialla): **vartija kieltäytyy** ("Kaksi aluetta jakaa kategorian", katalogi ennallaan) → toinen alue irti kategoriasta → ROLLBACK → katalogi = tila 0014, vanhat rivit ennallaan, `verify_0014` 0 FAIL, päivätön tehtävä säilyy rivinä, 0015 uudelleen läpi |
+| rollback:reverse-chain | PASS | 0008 → 0009…0015 aaltojen F–L datalla (24/27/37/45/50/72/84) → peruutukset 0015…0009 → katalogi = tuotannon 0008. Tiedoksi: 0014:n peruutus 0015:n ollessa ajettu menee läpi (0014 lukittu, ei vartijaa); inventaario pysäyttää tilan ("Migraatio 0015 on ajettu mutta 0014 ei: järjestys on rikki.") |
+| failure:0010-locks | estäjämatriisi 28/28, muut 8/8 | 0015 × tasks/life_areas × luku/kirjoitus: **jo lukukysely estää** (ACCESS EXCLUSIVE) → 5 033–5 044 ms ja peruutus, **0 DDL-komentoa**; auth.users-luku ei estä (läpi 103 ms), kirjoitus estää (5 078 ms; 16 DDL:ää — ALTERit — ehti alkaa, kaikki perutaan, katalogi ennallaan). Uudelleenajo `tasks`-kirjoituslukon aikana → "JO AJETTU" heti (30–40 ms) |
+| role:nonsuper | 7/7 | 0015 NOSUPERUSER-omistajana: `verify_0015` 34 PASS / 0 FAIL |
+| backup (`--only=backup`) | 379/379 (oli 324) | N = 0015 molemmilla lähtötiloilla: tilan 0014 kuva, 0015 + verify, vahinko, palautus eri aikavyöhykkeessä, `--prune`, peukalointi; **B9: 0015:n peruutuksen vartija kieltäytyy jaetusta kategoriasta (katalogi ennallaan), korjauksen jälkeen ROLLBACK + palautus → katalogi = 0014**; B10 0015:n kuva peruutettuun skeemaan hylätään; B11 erikoismerkit odotuksessa, aikavyöhykkeellinen `archived_at`, `time`- ja `smallint[]`-sarakkeet, jsonb-prioriteetit |
+
+## 0015: lifecycle (85 tarkistusta)
+
+- **Odotus ja horisontti:** WAITING + `waiting_on` kelpaa, WAITING ilman
+  nimeä kelpaa; muu horisontti + odotus, NULL-horisontti + odotus,
+  `ARCHIVED`, tyhjä tai yli 200 merkin odotus, `reschedule_count` −1 tai
+  10 001, horisontin vaihto odottavalta pois (odotus jää) → 23514;
+  `reschedule_count` NULL → 23502. Arkistointi ja päivätön tehtävä
+  (`THIS_WEEK`, `date` NULL) kelpaavat.
+- **Eristys uusissa sarakkeissa:** A ei näe B:n odottavaa, päivätöntä
+  eikä arkistoitua tehtävää, ei voi muuttaa niiden horisonttia eikä
+  odotusta (0 riviä, B:n arvot ennallaan), ei näe B:n alueen lajia.
+- **Alueet:** kaksi — ja kolme — aluetta samalla kategorialla kelpaavat;
+  laji oletuksena `STANDARD`; tuntematon laji 23514, NULL 23502.
+- **Suojattu aika:** 8 kelvollista (kerta ajoilla, ilta ilman loppua,
+  viikoittainen päivävälillä, kahden viikon ja yhden päivän loma,
+  viikkotavoite 0 ja 10 080, 365 päivän kertajakso) ja **24 hylättyä**
+  (kerta ilman alkua tai viikonpäivillä, loppu ennen alkua, viikoittainen
+  ilman tai tyhjin viikonpäivin, viikonpäivä 8 tai NULL, viikkotavoite
+  omalle ajalle / ilman lukua / kellonajalla / viikonpäivillä / yli
+  viikon, luku ilman viikkotavoitetta, loma viikoittain tai kellonajalla,
+  alku ei ennen loppua, loppu ilman alkua, yli vuoden kertajakso,
+  tuntematon laji/toistuvuus/vahvuus, nimi yli 60 tai tyhjä, muistiinpano
+  yli 500) → 23514. `updated_at`-liipaisin päivittää aikaleiman.
+- **Viikkosuunnitelma:** sama viikko kahdesti → 23505, sama viikko eri
+  käyttäjillä kelpaa, viisi prioriteettia kelpaa; tiistai, sunnuntai,
+  kuusi prioriteettia, objekti taulukon sijaan, yli viikon suunnitelma,
+  yli 1 000 merkin muistiinpano → 23514; prioriteetit NULL → 23502.
+- **Viittaus ei vuoda:** A:n suunnitelmaan tallennettu B:n tehtävän
+  tunniste on pelkkä merkkijono; liitos `weekly_plans × jsonb × tasks`
+  palauttaa A:lle 0 riviä, B:lle vain B:n oman tehtävän.
+- **Omistajuus ja anon:** `user_id`:n siirto B:lle (`protected_periods`,
+  `weekly_plans`) → 42501, omistaja ennallaan; anon select/insert/update/
+  delete → 42501 molemmissa uusissa tauluissa ja tasks-taulun
+  päivitys/poisto.
+- **Domain = kanta oikealla PostgreSQL:llä:** 240 generoitua suojattua
+  jaksoa: jokainen `validateProtectedPeriod`in hyväksymä meni kantaan ja
+  jokainen sen hylkäämä (laji ja toistuvuus kelvollisia) hylättiin
+  23514:llä — ei yhtään eroa; 40 viikkosuunnitelmaa ja 80 tehtävän
+  0015-sarakejoukkoa (`normalizeTask` + `toRow`): jokainen validoitu kelpasi.
+- **Vanhojen aaltojen rivimuodot 0015:n jälkeen:** aallon C–D muodot,
+  aallon K tehtävä ilman 0015-sarakkeita ja alue ilman `kind`-saraketta
+  kelpaavat.
+
+## 0015: virhetilanteet (18 uutta)
+
+"JO AJETTU" heti 0015:n jälkeen ja koko ketjun jälkeen; 0015 ilman 0014:ää
+→ "Migraatio 0014 pitaa ajaa ensin"; osittainen tila (taulu
+`weekly_plans`, sarake `tasks.horizon`, sarake `life_areas.kind`, indeksin
+nimi `protected_periods_user_active_idx` toisessa taulussa, rajoitteen
+nimi `tasks_horizon_check`) → "kesken: 1 objektia 47:sta"; käsin
+poistettu `life_areas_category_unique` → "puuttuu, vaikka 0015:n
+objekteja on 0/47"; `tasks`- ja `life_areas`-lukukysely sekä
+`auth.users`-kirjoitus → lukon aikakatkaisu (5 108/5 126/5 120 ms),
+katalogi ennallaan, uusi ajo läpi lukon vapauduttua; ylimääräinen
+politiikka `tasks`-taulussa → kaatuu vaiheessa 5 kaikkien muutosten
+jälkeen ("politiikat muuttuivat: 81"), katalogi ennallaan, tasks ilman
+0015-sarakkeita ja `life_areas_category_unique` yhä olemassa; `tasks.date`
+NOT NULL -lähtötila (text ja typed): `preflight_0015` kirjaa "kyllä",
+0015 poistaa ehdon, päivätön tehtävä kelpaa.
+
+**Tiedoksi (ei vikaa):** 0012:n uudelleenajo koko ketjun jälkeen sanoo
+nyt "Migraatio 0012 on kesken: 56 objektia 58:sta" eikä "JO AJETTU",
+koska 0015 poisti yhden 0012:n objektin. Se kaatuu yhä kiinni mitään
+muuttamatta, ja inventaario tunnistaa luvun 56 ajetuksi (0013 ja 0015
+ajettu). 0012 on lukittu, joten sen viestiä ei muuteta.
+
+## 0015: löydös (korjattu) — odotuksen CHECK hyväksyi NULL-horisontin
+
+**Oire.** Alkuperäinen `tasks_waiting_on_horizon_check`
+`check (horizon = 'WAITING' or waiting_on is null)` hyväksyi rivin, jonka
+horisontti on NULL ja odotus asetettu: `NULL = 'WAITING'` on NULL, ja
+CHECK hyväksyy NULLin (`lifecycle`:
+`0015_rejects_null_horizon_with_waiting_on`). JavaScript-predikaatti oli
+oikein, joten staattinen ominaisuustesti ei nähnyt eroa — vain oikea
+kanta näki.
+
+**Korjaus:** `check (waiting_on is null or (horizon is not null and horizon
+= 'WAITING'))`. `verify_0015` rivi 24 vaatii NULL-turvallisen muodon, ja
+`tests/mental-load-migration.test.mjs`, kultainen ero ja E2E-korvike
+(`tools/e2e/fakeSupabase.mjs` `CHECK_CONSTRAINTS`) lukitsevat sen.
+
+**Toinen löydös (domain):** staattinen ominaisuustesti löysi
+`validateProtectedPeriod`ista puuttuvan säännön: viikon vähimmäisaika
+päivävälillä, jonka loppu on ennen alkua, kelpasi domainissa mutta
+kaatuisi kannan `protected_periods_dates_check`iin. Korjattu domainiin.
+
+## 0015: alkuperä ja generoidut tiedostot
+
+| Tiedosto | git-blob |
+|---|---|
+| `supabase/migrations/0015_mental_load.sql` | `f45ae940c9acdb4f4eb2e4907eb7ef8f8084e9df` |
+| `supabase/preflight/preflight_0015.sql` | `6b06b2a5b25ca79f0809c0cdfe4d8f84b1465df4` |
+| `supabase/verify/verify_0015.sql` | `6bcde496a7a20f3aebf7d92174e8e4fb9e423e23` |
+| `supabase/backup/snapshot_state_0015.sql` | `10fd7f0572c9bafc217d9308e86099429290486d` |
+| `supabase/acceptance/activation_readonly_inventory.sql` | `f09ae749945964b9f7c1522dcfcd16e525b1c0ea` (rivit 24 ja 31–33 lisätty) |
+
+0001–0014:n migraatiot, `preflight_0009…0014` ja `verify_0009…0014` ovat
+tavu tavulta samat kuin lukon SQL-lähteessä (K, `d11d8b4`); C–K-lukko
+(`docs/activation/release-train-c-j.json`) on tavu tavulta ennallaan.
+
+Generoidut: `tools/pg-rehearsal/expected/schema-diff-0015.txt` (uusi;
+0009–0014 ennallaan), `docs/activation/SCHEMA-DIFFS-0009-0015.md`
+(nimetty uudelleen 0009-0014:stä, generaattorilla),
+`docs/activation/MIGRATION-BUNDLES.md` (blobit + 0015:n paketti),
+`tests/fixtures/activation-inventory/state-0015.json` ja
+`state-0014-partial-0015.json` (vain nämä: `--fixture-states`),
+`tests/fixtures/sql-results/{preflight,verify}_0015-{pass,fail}.tsv` +
+manifestin 0015-rivit (`--numbers=0015`). Varmuuskopion fixture
+kirjoitettiin työhakemistoon eikä repositorioon.
+
+## 0015: toistaminen
+
+```sh
+PG_REHEARSAL_PORT=54371 node tools/pg-rehearsal/rehearse.mjs --json=raportti.json        # 18 skenaariota
+PG_REHEARSAL_PORT=54371 node tools/pg-rehearsal/rehearse.mjs --only=backup                # B1–B15, N = 0009…0015
+PG_REHEARSAL_PORT=54371 node tools/pg-rehearsal/rehearse.mjs --only=upgrade,rls,lifecycle # ketju + eristys + 0015:n rajat
+PG_REHEARSAL_PORT=54371 node tools/pg-rehearsal/sql-result-fixtures.mjs --numbers=0015
+```
