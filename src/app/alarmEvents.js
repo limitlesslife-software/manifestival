@@ -17,6 +17,11 @@
 //     nyt), ja jos menolla on tallennettu paikka, siitä tulee käyttäjän
 //     vahvistama matkahavainto (lähde: departure_ack). Ei sijaintia: vain
 //     painalluksen hetki.
+//   - herätyksen sammutus (kuittaus tai hylkäys) on toteutunut herääminen:
+//     heräämispäivän unikirjaus saa heräämisajan (lähde 'alarm', tai
+//     käyttäjän rivi täydentyy). Käyttäjän oma heräämisaika voittaa aina.
+//     Kirjaus odottaa laitteella, kunnes unikirjaukset on ladattu ja yhteys
+//     on, ja sama sammutus kirjautuu vain kerran (flushWakeRecords).
 //
 // ISTUNTO VOI VAIHTUA ODOTUKSEN AIKANA. Tapahtumat kuuluvat sille, jonka
 // herätykset ne olivat. Jos käyttäjä vaihtui laitteen jonon luvun aikana,
@@ -28,13 +33,18 @@
 import { alarms } from '../platform/index.js';
 import { getState } from './state.js';
 import { sessionSnapshot, isSameSession } from '../data/session.js';
-import { loadAckState, saveAckState, clearAllAckStates, normalizeAckTarget, MAX_ACK_TARGETS } from '../data/alarmAckStore.js';
+import {
+  loadAckState, saveAckState, clearAllAckStates, normalizeAckTarget, MAX_ACK_TARGETS,
+  normalizeWakes, normalizeWakeRecord
+} from '../data/alarmAckStore.js';
 import { emptyAckLog, buildAckLog, normalizeAckLog, ackIndex, ACK_EVENT } from '../domain/notificationAck.js';
 import { DEPARTURE_CHAIN_TYPES, intentId } from '../domain/notification.js';
 import { OBSERVATION_SOURCE } from '../domain/dailyLife.js';
-import { epochToWallClock } from '../domain/wallClock.js';
+import { epochToWallClock, shiftDateIso } from '../domain/wallClock.js';
+import { alarmWakeLogInput } from '../domain/sleepLog.js';
 import { deviceOffsetMinutes } from './deviceTime.js';
-import { recordCommuteObservation } from './dailyLifeActions.js';
+import { recordCommuteObservation, saveSleepLog } from './dailyLifeActions.js';
+import { isOnlineNow } from './offline.js';
 import { logEvent } from '../lib/logger.js';
 
 /** Laitteen tapahtumat (platform/alarms.js ALARM_EVENT). Toistettu: sovellus ei tuo alustan sisäosia. */
@@ -48,10 +58,18 @@ export const DEVICE_EVENT = Object.freeze({
 const MINUTE_MS = 60000;
 const DEPARTURE_ID = /^(departure_prepare|departure_leave_in_5|departure_leave_now):(event:([A-Za-z0-9_-]+):(\d{4}-\d{2}-\d{2})):(\d{4}-\d{2}-\d{2})/;
 const SUFFIX = /:(?:toisto\d+|torkku)$/;
+/** Herätyksen tunniste (alarmPlan.desiredAlarms): 'wake:<herätyspäivä>'. */
+const WAKE_ID = /^wake:(\d{4}-\d{2}-\d{2})$/;
+/** Odottava herääminen vanhenee: yli viikon takaista aamua ei enää kirjata. */
+const WAKE_RECORD_MAX_AGE_DAYS = 7;
 
 let activeUserId = null;
 let ackLog = emptyAckLog();
 let targets = Object.freeze([]);
+/** Herätyksen sammutuksista kirjattavat heräämiset: {pending:[{date,time,plannedWake}], recorded:[päivä]}. */
+let wakes = normalizeWakes(null);
+/** Heräämisten kirjauskierrokset yksi kerrallaan (elävä tapahtuma ja jonon luku voivat osua yhtä aikaa). */
+let wakeChain = Promise.resolve();
 let unsubscribeLive = null;
 let onChange = () => {};
 
@@ -67,7 +85,7 @@ export function scheduledTargets() {
 
 function persist() {
   if (!activeUserId) return;
-  saveAckState(activeUserId, { log: ackLog, targets });
+  saveAckState(activeUserId, { log: ackLog, targets, wakes });
 }
 
 /**
@@ -82,6 +100,7 @@ export function activateAlarmEvents(userId, { changed = null } = {}) {
   const stored = activeUserId ? loadAckState(activeUserId) : { log: emptyAckLog(), targets: [] };
   ackLog = normalizeAckLog(stored.log);
   targets = Object.freeze([...stored.targets]);
+  wakes = normalizeWakes(stored.wakes);
   if (!activeUserId) return;
   const session = sessionSnapshot();
   unsubscribeLive = alarms.onEvent(event => {
@@ -106,6 +125,7 @@ export function resetAlarmEvents({ clearStorage = true } = {}) {
   activeUserId = null;
   ackLog = emptyAckLog();
   targets = Object.freeze([]);
+  wakes = normalizeWakes(null);
   onChange = () => {};
   if (clearStorage) clearAllAckStates();
 }
@@ -137,6 +157,9 @@ export function targetFor(id, { state = getState() } = {}) {
   if (typeof id !== 'string') return null;
   let ackKey = id;
   while (SUFFIX.test(ackKey)) ackKey = ackKey.replace(SUFFIX, '');
+  // Herätys, jota ajastusluettelo ei enää muista: laji ja aamu tunnisteesta.
+  const wake = WAKE_ID.exec(ackKey);
+  if (wake) return normalizeAckTarget({ id, ackKey, kind: 'wake', type: 'wake', date: wake[1] });
   const departure = DEPARTURE_ID.exec(ackKey);
   if (!departure) return normalizeAckTarget({ id, ackKey });
   const eventId = departure[3];
@@ -221,28 +244,131 @@ async function recordDeparture(event, target, session) {
   return Boolean(result && result.ok);
 }
 
+// ------------------------------------------------------------ herääminen herätyksestä
+
 /**
- * Käsittele laitteen tapahtumat: kuittausloki ja "Lähdin"-havainnot.
- * @returns {Promise<{recorded:number, departures:number}>}
+ * Herätyksen sammutus toteutuneeksi heräämiseksi {date, time, plannedWake},
+ * tai null. Vain herätyksen (wake) kuittaus tai hylkäys; torkku ja väliin
+ * jäänyt eivät ole heräämisiä. Sammutus toisena päivänä kuin herätyksen aamu
+ * (esim. herätys peruttiin edellisenä päivänä) ei ole herääminen.
+ */
+export function wakeRecordFor(event, target) {
+  if (!event || !target) return null;
+  if (event.type !== DEVICE_EVENT.ACKNOWLEDGED && event.type !== DEVICE_EVENT.DISMISSED) return null;
+  if (target.kind !== 'wake' && event.kind !== 'wake') return null;
+  const fromId = WAKE_ID.exec(target.ackKey || '');
+  const date = target.date || (fromId ? fromId[1] : null);
+  if (!date || !Number.isFinite(event.atMs)) return null;
+  const wall = epochToWallClock(event.atMs, deviceOffsetMinutes);
+  if (!wall || wall.date !== date) return null;
+  return normalizeWakeRecord({ date, time: wall.time, plannedWake: target.time });
+}
+
+/** Uusi herääminen jonoon; sama aamu vain kerran (ensimmäinen sammutus voittaa). */
+function queueWake(record) {
+  if (!record) return false;
+  if (wakes.recorded.includes(record.date) || wakes.pending.some(item => item.date === record.date)) return false;
+  wakes = normalizeWakes({ pending: [...wakes.pending, record], recorded: wakes.recorded });
+  return true;
+}
+
+function markWakeRecorded(date) {
+  wakes = normalizeWakes({
+    pending: wakes.pending.filter(item => item.date !== date),
+    recorded: [...wakes.recorded.filter(item => item !== date), date]
+  });
+}
+
+/** Onko unikirjaukset ladattu tässä istunnossa (muuten ei tiedetä, onko päivällä jo rivi). */
+function sleepLogsLoaded(state) {
+  const status = state && state.dataLoadStatus ? state.dataLoadStatus.sleepLogs : null;
+  return Boolean(status && status.lastSuccessAt);
+}
+
+async function runWakeFlush(session, nowMs) {
+  if (!activeUserId || wakes.pending.length === 0 || !isSameSession(session)) return 0;
+  const today = epochToWallClock(nowMs, deviceOffsetMinutes);
+  const oldest = today ? shiftDateIso(today.date, -WAKE_RECORD_MAX_AGE_DAYS) : null;
+  if (oldest && wakes.pending.some(item => item.date < oldest)) {
+    wakes = normalizeWakes({ pending: wakes.pending.filter(item => item.date >= oldest), recorded: wakes.recorded });
+    persist();
+  }
+  // Ennen latausta ei tiedetä, onko päivällä jo (käyttäjän) rivi, ja
+  // tunnetusti offline tallennus epäonnistuisi joka paluulla: odotetaan.
+  if (wakes.pending.length === 0 || !sleepLogsLoaded(getState()) || !isOnlineNow()) return 0;
+  let written = 0;
+  for (const record of [...wakes.pending]) {
+    if (!isSameSession(session) || !activeUserId) return written;
+    const logs = Array.isArray(getState().sleepLogs) ? getState().sleepLogs : [];
+    const existing = logs.find(log => log && log.wakeDate === record.date) || null;
+    const input = alarmWakeLogInput(existing, {
+      wakeDate: record.date, actualWake: record.time, plannedWake: record.plannedWake
+    });
+    if (!input) {
+      // Heräämisaika on jo kirjattu (käyttäjä tai aiempi sammutus): ei päällekirjoitusta.
+      markWakeRecorded(record.date);
+      continue;
+    }
+    const result = await saveSleepLog(input);
+    if (!isSameSession(session) || !activeUserId) return written;
+    if (result && result.ok) {
+      markWakeRecorded(record.date);
+      written += 1;
+    } else if (result && result.errors) {
+      // Kelvoton kirjaus ei muutu kelvolliseksi uudella yrityksellä.
+      markWakeRecorded(record.date);
+    } else {
+      // Verkko tai palvelin: tallennus peruttiin, yritetään seuraavalla kerralla.
+      break;
+    }
+  }
+  persist();
+  // Vain määrä lokiin: kellonajat ovat unitietoa (arkaluonteinen).
+  if (written > 0) logEvent('alarm.wake_recorded', { count: written });
+  return written;
+}
+
+/**
+ * Kirjaa odottavat heräämiset unikirjauksiin. Yksi kierros kerrallaan;
+ * samanaikainen kutsu odottaa edellisen ja näkee sen kirjaukset.
+ * @returns {Promise<number>} kirjoitettujen rivien määrä
+ */
+export function flushWakeRecords({ session = sessionSnapshot(), nowMs = Date.now() } = {}) {
+  const run = wakeChain.then(() => runWakeFlush(session, nowMs), () => runWakeFlush(session, nowMs));
+  wakeChain = run.then(() => {}, () => {});
+  return run;
+}
+
+/** Testejä varten: odottavat heräämiset. */
+export function pendingWakeRecordsForTests() {
+  return wakes.pending;
+}
+
+/**
+ * Käsittele laitteen tapahtumat: kuittausloki, "Lähdin"-havainnot ja
+ * herätyksen sammutuksesta toteutunut herääminen.
+ * @returns {Promise<{recorded:number, departures:number, wakes:number}>}
  */
 export async function handleAlarmEvents(events, { session = sessionSnapshot() } = {}) {
-  if (!activeUserId || !Array.isArray(events) || events.length === 0) return { recorded: 0, departures: 0 };
-  if (!isSameSession(session)) return { recorded: 0, departures: 0 };
+  if (!activeUserId || !Array.isArray(events) || events.length === 0) return { recorded: 0, departures: 0, wakes: 0 };
+  if (!isSameSession(session)) return { recorded: 0, departures: 0, wakes: 0 };
   const state = getState();
   const ackEvents = [];
   const departures = [];
+  let wakeQueued = false;
   for (const event of events) {
     if (!event || typeof event !== 'object') continue;
     const target = targetFor(event.id, { state });
     const produced = ackEventsFor(event, target);
     ackEvents.push(...produced);
     if (event.type === DEVICE_EVENT.DEPARTED && target) departures.push({ event, target });
+    if (queueWake(wakeRecordFor(event, target))) wakeQueued = true;
   }
   const before = ackLog;
-  if (ackEvents.length > 0) {
-    ackLog = buildAckLog(ackEvents, ackLog);
-    persist();
-  }
+  if (ackEvents.length > 0) ackLog = buildAckLog(ackEvents, ackLog);
+  // Odottava herääminen laitteelle ennen yhtäkään odotusta: sovelluksen
+  // sulkeminen kesken ei hävitä sitä (laitteen jono on jo luettu).
+  if (ackEvents.length > 0 || wakeQueued) persist();
   let recorded = 0;
   for (const { event, target } of departures) {
     if (!isSameSession(session)) break;
@@ -252,7 +378,9 @@ export async function handleAlarmEvents(events, { session = sessionSnapshot() } 
     logEvent('alarm.events', { count: ackEvents.length });
     try { onChange(); } catch { /* ajastus on apu */ }
   }
-  return { recorded: ackEvents.length, departures: recorded };
+  // Herääminen unikirjaukseen (myös aiemmin odottamaan jäänyt).
+  const wakesWritten = isSameSession(session) ? await flushWakeRecords({ session }) : 0;
+  return { recorded: ackEvents.length, departures: recorded, wakes: wakesWritten };
 }
 
 /**
@@ -261,19 +389,21 @@ export async function handleAlarmEvents(events, { session = sessionSnapshot() } 
  * ENNEN uudelleenajastusta: ajastus näkee silloin jo kuittaukset.
  */
 export async function consumeAlarmEvents() {
-  if (!activeUserId) return { recorded: 0, departures: 0 };
+  if (!activeUserId) return { recorded: 0, departures: 0, wakes: 0 };
   const session = sessionSnapshot();
   let result;
   try {
     result = await alarms.consumeEvents();
   } catch {
-    return { recorded: 0, departures: 0 };
-  }
-  if (!result || !result.ok || !Array.isArray(result.events) || result.events.length === 0) {
-    return { recorded: 0, departures: 0 };
+    result = null;
   }
   // Toinen käyttäjä ehti kirjautua: edellisen herätysten tapahtumat eivät kuulu hänelle.
-  if (!isSameSession(session)) return { recorded: 0, departures: 0 };
+  if (!isSameSession(session)) return { recorded: 0, departures: 0, wakes: 0 };
+  if (!result || !result.ok || !Array.isArray(result.events) || result.events.length === 0) {
+    // Ei uusia tapahtumia: aiemmin odottamaan jäänyt herääminen (unikirjaukset
+    // latautumatta tai ei yhteyttä) kirjataan nyt. Kutsutaan latauksen jälkeen.
+    return { recorded: 0, departures: 0, wakes: await flushWakeRecords({ session }) };
+  }
   return handleAlarmEvents(result.events, { session });
 }
 

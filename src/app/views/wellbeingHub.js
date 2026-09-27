@@ -41,7 +41,7 @@ import { mergeDays, windowAverages, strainSuggestion } from '../../domain/wellbe
 import { progress as habitProgress, currentStep } from '../../domain/habitEngine.js';
 import { weeklyExercise } from '../../domain/exercise.js';
 import { driftReport, sleepOpportunity, DRIFT_WINDOW_DAYS, REFERENCE_BASIS } from '../../domain/sleepRhythm.js';
-import { HABIT_KIND, DELIVERY, DELIVERIES, deliveryLabel, MAX_HABIT_STEPS } from '../../domain/dailyLife.js';
+import { HABIT_KIND, DELIVERY, DELIVERIES, deliveryLabel, MAX_HABIT_STEPS, SLEEP_SOURCE } from '../../domain/dailyLife.js';
 import {
   MAX_HABIT_NAME_LENGTH, MAX_HABIT_INTERVAL_MINUTES, MAX_HABIT_DAILY_TARGET, MAX_HABIT_UNIT_COST_MINOR
 } from '../../domain/habit.js';
@@ -742,7 +742,10 @@ function parseSleepDraft(draft, today) {
       wakeDate,
       actualBedtime: bedtime || null,
       actualWake: wake || null,
-      note: note || null
+      note: note || null,
+      // Lomakkeelta tallennettu rivi on käyttäjän oma, myös kun herätyksen
+      // sammutus kirjasi sen alun perin (lähde 'alarm').
+      source: SLEEP_SOURCE.USER
     }
   };
 }
@@ -793,9 +796,11 @@ function driftHtml(state, today, settings) {
 
 function sleepRowHtml(log) {
   const minutes = sleepOpportunity(log, { offsetMinutesFn: deviceOffsetMinutes });
+  // Herätyksen sammutuksesta kirjattu herääminen (src/app/alarmEvents.js) kerrotaan sellaisena.
+  const fromAlarm = log.source === SLEEP_SOURCE.ALARM ? ' (herätyksen sammutus)' : '';
   const parts = [
     log.actualBedtime ? `nukkumaan ${clockText(log.actualBedtime)}` : null,
-    log.actualWake ? `heräsi ${clockText(log.actualWake)}` : null
+    log.actualWake ? `heräsi ${clockText(log.actualWake)}${fromAlarm}` : null
   ].filter(Boolean);
   const inBed = minutes !== null ? `vuoteessa ${durationText(minutes)}` : 'vuoteessa oloaika ei tiedossa';
   const date = escapeHtml(log.wakeDate);

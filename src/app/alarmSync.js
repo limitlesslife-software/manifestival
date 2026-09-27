@@ -420,7 +420,8 @@ function wakeEntry(alarm) {
       routeDestination: null,
       routeMode: null
     },
-    target: { id: nativeIdFor(alarm.id), ackKey: alarm.id, kind: 'wake', type: 'wake', date: alarm.forDate }
+    // time: suunniteltu herätysaika; sammutuksesta kirjattava unirivi saa sen (alarmEvents).
+    target: { id: nativeIdFor(alarm.id), ackKey: alarm.id, kind: 'wake', type: 'wake', date: alarm.forDate, time: alarm.time }
   };
 }
 

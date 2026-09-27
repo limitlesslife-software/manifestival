@@ -48,6 +48,36 @@ export function validateSleepLog(log) {
 }
 
 /**
+ * Herätyksen sammutuksesta (laitteen kuittaus tai hylkäys) kirjattava
+ * toteutunut herääminen (§46 "alarm-derived actual wake").
+ *
+ * KÄYTTÄJÄN KIRJAUS VOITTAA AINA. Jos heräämispäivällä on jo heräämisaika
+ * (käyttäjän tai aiemman herätyksen), mitään ei kirjata. Käyttäjän rivi
+ * ilman heräämisaikaa täydentyy vain heräämisajalla (ja suunnitellulla, jos
+ * se puuttui): rivin lähde ja nukkumaanmeno pysyvät ennallaan. Uusi rivi on
+ * lähteeltään 'alarm' (migraatio 0014 sallii sen) ja lajiltaan vuoteessa
+ * oloaika, ei mitattua unta.
+ *
+ * @param {object|null} existing saman heräämispäivän rivi tai null
+ * @param {{wakeDate:string, actualWake:string, plannedWake?:string|null}} record
+ * @returns {object|null} saveSleepLog-syöte tai null (ei kirjattavaa)
+ */
+export function alarmWakeLogInput(existing, record) {
+  const source = record && typeof record === 'object' ? record : {};
+  const wakeDate = dateOrNull(source.wakeDate);
+  const actualWake = timeOrNull(source.actualWake);
+  const plannedWake = timeOrNull(source.plannedWake);
+  if (!wakeDate || !actualWake) return null;
+  if (existing && typeof existing === 'object') {
+    if (timeOrNull(existing.actualWake)) return null;
+    const input = { wakeDate, actualWake };
+    if (!timeOrNull(existing.plannedWake) && plannedWake) input.plannedWake = plannedWake;
+    return input;
+  }
+  return { wakeDate, actualWake, plannedWake, source: SLEEP_SOURCE.ALARM, kind: SLEEP_KIND.OPPORTUNITY };
+}
+
+/**
  * Vuoteessa olon aika minuutteina keskiyön yli, tai null kun jompikumpi
  * aika puuttuu. Sama nukkumaanmeno- ja heräämisaika on epäselvä (nolla vai
  * vuorokausi?), joten sekin on null — ei arvausta.

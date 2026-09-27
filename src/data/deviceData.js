@@ -89,7 +89,8 @@ export const DEVICE_STORAGE = Object.freeze([
     owner: 'src/data/alarmAckStore.js',
     contains: 'Herätysten ja puhuttujen muistutusten kuittaukset, torkut ja hylkäykset (avain ja '
       + 'aikaleimat) sekä laitteelle ajastettujen merkintöjen tunnisteet (menon ja paikan tunniste, '
-      + 'päivä, lähtöaika). Ei otsikoita, osoitteita eikä sijaintia',
+      + 'päivä, lähtöaika) sekä herätyksen sammutuksen heräämisaika, kunnes se on tallennettu '
+      + 'unikirjaukseen. Ei otsikoita, osoitteita eikä sijaintia',
     // Uloskirjautuminen perii laitteen herätykset: kuittauksilla ei ole enää kohdetta.
     onSignOut: DEVICE_ACTION.CLEAR,
     onDelete: DEVICE_ACTION.PURGE
