@@ -1139,6 +1139,24 @@ export function setWeekStart(date) {
   commit({ weekStart: date });
 }
 
+/**
+ * Kirjautuminen: Tänään-näkymän päivä, viikko ja Kalenterin päivä tähän
+ * päivään YHDELLÄ ilmoituksella. Sovellus avautuu aina tähän päivään, ei
+ * siihen, mihin edellinen istunto jäi.
+ *
+ * KAIKKI KATSOTTAVAT PÄIVÄT YHDESSÄ PAIKASSA. Aiemmin kirjautuminen nollasi
+ * vain päivän ja viikon; Kalenterin päivä jäi uloskirjautumisen
+ * resetState()-kutsun päivään. Keskiyön yli odottanut kirjautumisnäkymä
+ * avasi Kalenterin eiliseen ("Eilen"), ja "Uusi meno" ehdotti eilistä.
+ */
+export function resetDatesToToday(today = todayMidnight()) {
+  batch(() => {
+    setViewDate(today);
+    setWeekStart(startOfWeek(today));
+    setCalendarDate(fmtISO(today));
+  });
+}
+
 export function setScreen(screen) {
   commit({ screen });
 }

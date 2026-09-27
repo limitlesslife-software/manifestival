@@ -28,7 +28,7 @@ import { setClient } from '../src/data/client.js';
 import { clearAllCollections, calendarEventsRepo, savedPlacesRepo } from '../src/data/collectionsRepo.js';
 import {
   getState, resetState, subscribe, setCalendarView, setCalendarDate, showCalendarDay, setWeekStart,
-  setSavedPlaces, setCalendarEvents, setTasks, setDomainLoadStatus, setTasksSegment, CALENDAR_VIEWS
+  setSavedPlaces, setCalendarEvents, setTasks, setDomainLoadStatus, setTasksSegment, resetDatesToToday, CALENDAR_VIEWS
 } from '../src/app/state.js';
 import { clearLocalUserData } from '../src/app/actions.js';
 import { resetDailyLifeActions } from '../src/app/dailyLifeActions.js';
@@ -50,7 +50,7 @@ import { closeConfirmDialogs } from '../src/ui/confirm.js';
 import { clearToasts } from '../src/ui/toast.js';
 import { buildDayPlan } from '../src/domain/scheduler.js';
 import { normalizeTask } from '../src/domain/task.js';
-import { parseISO } from '../src/lib/datetime.js';
+import { parseISO, fmtISO } from '../src/lib/datetime.js';
 
 const INDEX_HTML = read('index.html');
 const HTML = INDEX_HTML.replace(/\r\n/g, '\n');
@@ -292,6 +292,31 @@ test('tila: oletus päivä ja tämä päivä; asettajat tarkistavat; resetState 
 
   resetState();
   assert.deepEqual([getState().calendarView, getState().calendarDate], ['day', TUESDAY], 'uloskirjautuminen nollaa');
+});
+
+test('kirjautuminen keskiyön jälkeen: Kalenteri avautuu tähän päivään, ei uloskirjautumisen päivään', (t) => {
+  freezeLocalDate(t, '2026-09-27', '23:50'); // su: uloskirjautuminen
+  resetState();
+  setCalendarView('month');
+  assert.equal(getState().calendarDate, '2026-09-27');
+  t.mock.timers.setTime(new Date(2026, 8, 28, 0, 10).getTime()); // ma 0.10: kirjautuminen ilman uudelleenlatausta
+
+  let notifications = 0;
+  const stop = subscribe(() => { notifications += 1; });
+  resetDatesToToday();
+  stop();
+  assert.equal(notifications, 1, 'päivät yhdellä ilmoituksella');
+  assert.equal(getState().calendarDate, MONDAY, 'Kalenterin päivä on tämä päivä');
+  assert.equal(relativeDayLabel(getState().calendarDate, MONDAY), 'Tänään');
+  assert.deepEqual([fmtISO(getState().viewDate), fmtISO(getState().weekStart)], [MONDAY, MONDAY]);
+  assert.equal(defaultEventDate(getState(), MONDAY), MONDAY, '"Uusi meno" ehdottaa tätä päivää');
+  assert.equal(getState().calendarView, 'month', 'osiota ei vaihdeta');
+
+  // main.js: kirjautuminen nollaa kaikki katsottavat päivät tällä yhdellä kutsulla.
+  const main = read('src/app/main.js').replace(/\r\n/g, '\n');
+  const signedIn = main.slice(main.indexOf('async function onSignedIn'), main.indexOf('function onSignedOut'));
+  assert.match(signedIn, /\n  resetDatesToToday\(\);\n/);
+  assert.equal(/setViewDate\(|setWeekStart\(/.test(signedIn), false, 'ei erillisiä asettajia, joista yksi voi unohtua');
 });
 
 // ================================================================ LASKENTA: KALENTERI = TÄNÄÄN
