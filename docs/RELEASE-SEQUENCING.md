@@ -116,6 +116,7 @@ kertoo deployn jälkeen, että rivi kannattaa päivittää.
 | H | `v21` | estetty (migraatio 0011 ajamatta) |
 | I | `v22` | estetty (migraatio 0012 ajamatta) |
 | J | `v23` | estetty (migraatio 0013 ajamatta; riippuu aallosta I) |
+| K | `v24` | estetty (migraatio 0014 ajamatta — `supabase/migrations/0014_daily_life.sql — EI AJETTU`; riippuu aallosta J; näkymät rakenteilla) |
 
 **Aalto C:n deployaus EI ole sama asia kuin sen hyväksyntä.** Rivi
 yllä kertoo vain, mitä `origin/main` sisältää -- ei sitä, että Panu
@@ -321,6 +322,7 @@ Aalto B  v15  (deployattu ddfc356)
             -> H  v21   Henkilökohtainen avustaja -- migraatio 0011
               -> I  v22   Suunta (Life Alignment) -- migraatio 0012
                 -> J  v23   Suunta 2: ajastin ja kuormittavuus -- migraatio 0013
+                  -> K  v24   Arjen käyttöjärjestelmä -- migraatio 0014
 ```
 
 **Feature-haarat EIVÄT ole tuotantojulkaisulinjan luotettava kuva.**
@@ -370,7 +372,14 @@ Migraatioita EI koskaan pakata samaan tuotantoikkunaan/transaktioon:
    tauluihin se ei koske; sarakkeilla on oma portti
    `ALIGNMENT_REALITY_FIELDS`.
 
-Kukaan ei saa niputtaa 0009+0010+0011+0012+0013 yhteen tuotantoajoon. Jokainen
+6. **0014** (Arjen käyttöjärjestelmä, aalto K, `v24`) luo kymmenen uutta
+   taulua eikä muuta yhtäkään olemassa olevaa taulua eikä tuo
+   sarakeportteja. Se RIIPPUU 0013:sta (`verify_0013.sql` = 0 poikkeavaa
+   ennen sitä). Riski on matala: vain uusia tyhjiä tauluja, joten tuore
+   varmuuskopio ei ole pakollinen. Este: `0014_daily_life.sql — EI AJETTU`
+   ja näkymät rakenteilla (aalto K ESTETTY).
+
+Kukaan ei saa niputtaa 0009+0010+0011+0012+0013+0014 yhteen tuotantoajoon. Jokainen
 saa oman `supabase/verify/verify_00XX.sql`-todennuksensa ja oman
 `docs/acceptance/WAVE-*.md`-hyväksyntäpakettinsa.
 

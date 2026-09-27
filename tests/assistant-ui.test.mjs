@@ -481,18 +481,24 @@ test('jokaisella uudella repositoriolla on portti ja normalisointi', () => {
   }
 });
 
-test('repositorioita on kaksikymmentäkolme', () => {
+test('repositorioita on kolmekymmentäkolme', () => {
   // Luku on käsin laskettu ja tarkoituksella: uusi repositorio kaataa
   // tämän, ja se on oikea hetki tarkistaa, että sillä on portti,
   // migraatio, varmistus ja tavoitettavuusrivi. 0013 toi kaksi:
-  // running_timers ja alignment_item_settings.
-  assert.equal(ALL_REPOSITORIES.length, 23,
+  // running_timers ja alignment_item_settings. 0014 toi kymmenen
+  // (arjen käyttöjärjestelmä).
+  assert.equal(ALL_REPOSITORIES.length, 33,
     `repositorioita on ${ALL_REPOSITORIES.length}`);
 });
 
-test('tavoitettavuusmatriisi kattaa kaikki kaksikymmentäneljä', () => {
+test('tavoitettavuusmatriisi kattaa kaikki kolmekymmentäneljä', () => {
   // 0013 toi kaksi porttia: runningTimers ja alignmentItemSettings.
-  assert.equal(REACHABILITY.length, 24);
-  assert.equal(REACHABILITY.filter(r => r.reach === REACH.NO_UI).length, 0,
-    'jokin domain on yhä ilman käyttöliittymää');
+  // 0014 toi kymmenen. Niiden näkymät rakennetaan erikseen: siihen asti
+  // ne ovat rehellisesti ilman käyttöliittymää (aalto K ESTETTY), ja
+  // joukko luetellaan nimeltä.
+  assert.equal(REACHABILITY.length, 34);
+  assert.deepEqual(REACHABILITY.filter(r => r.reach === REACH.NO_UI).map(r => r.gate).sort(),
+    ['calendarEvents', 'commuteObservations', 'exerciseSessions', 'habitEvents', 'habitPlans',
+      'lifeSettings', 'placeAliases', 'savedPlaces', 'sleepLogs', 'wellbeingCheckins'],
+    'jokin muu kuin aallon K domain on ilman käyttöliittymää');
 });

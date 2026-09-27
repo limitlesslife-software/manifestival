@@ -302,6 +302,107 @@ export const REACHABILITY = Object.freeze([
     evidence: { html: 'afEnergy', view: 'src/app/views/tasks.js' },
     crud: 'luonti, luku, muokkaus, poisto kohteen mukana',
     note: 'Käyttäjän oma kuormittavuus 1–5, tarkoituksella ilman aluetta ja karkea arvio. Ei päätellä otsikosta.'
+  }),
+
+  // ------------------------------------------------------------------
+  // AALTO K (0014): arjen käyttöjärjestelmä.
+  //
+  // Domain, repositorio, lataus, vienti ja poisto ovat valmiit; näkymät
+  // rakennetaan erikseen. Siihen asti rivit ovat REHELLISESTI NO_UI ja
+  // aalto K on ESTETTY — sama välitila kuin aallolla H aikanaan. Kun
+  // näkymä on olemassa, rivi saa todisteen (html + view) ja tilan
+  // REACHABLE, ja aallon valmiustila johdetaan uudelleen.
+  // ------------------------------------------------------------------
+  Object.freeze({
+    gate: 'savedPlaces',
+    reach: REACH.NO_UI,
+    label: 'Paikat',
+    nav: 'ei vielä näkymää (tuleva: Profiili -> Paikat)',
+    evidence: null,
+    crud: 'domain ja tallennus valmiina, näkymä puuttuu',
+    note: 'Tallennetut paikat nimenä ja osoitteena tekstinä, ei koordinaatteja. '
+        + 'Näkymä rakennetaan erikseen; siihen asti paikkoja ei voi luoda käyttöliittymästä.'
+  }),
+  Object.freeze({
+    gate: 'placeAliases',
+    reach: REACH.NO_UI,
+    label: 'Paikkojen lisänimet',
+    nav: 'ei vielä näkymää (tuleva: paikan vahvistus puheesta tai lomakkeelta)',
+    evidence: null,
+    crud: 'domain ja tallennus valmiina, näkymä puuttuu',
+    note: 'Lisänimi syntyy vain käyttäjän vahvistuksesta. Ilman näkymää vahvistusta ei voi antaa.'
+  }),
+  Object.freeze({
+    gate: 'calendarEvents',
+    reach: REACH.NO_UI,
+    label: 'Kalenteri',
+    nav: 'ei vielä näkymää (tuleva: Kalenteri -> Päivä / Viikko / Kuukausi)',
+    evidence: null,
+    crud: 'domain ja tallennus valmiina, näkymä puuttuu',
+    note: 'Menot ja sitoumukset; toistuvan menon esiintymät lasketaan eikä niitä tallenneta.'
+  }),
+  Object.freeze({
+    gate: 'commuteObservations',
+    reach: REACH.NO_UI,
+    label: 'Matka-ajat',
+    nav: 'ei vielä näkymää (tuleva: lähtömuistutuksen "Lähdin" / "Olin perillä")',
+    evidence: null,
+    crud: 'domain ja tallennus valmiina, näkymä puuttuu',
+    note: 'Käyttäjän kuittaamat toteutuneet matkat, ei sijaintihistoriaa. Syntyvät vain käyttäjän eleestä.'
+  }),
+  Object.freeze({
+    gate: 'lifeSettings',
+    reach: REACH.NO_UI,
+    label: 'Arjen asetukset',
+    nav: 'ei vielä näkymää (tuleva: Profiili -> arjen asetukset)',
+    evidence: null,
+    crud: 'domain ja tallennus valmiina, näkymä puuttuu',
+    note: 'Yksi rivi käyttäjää kohti; puuttuva rivi = oletukset, joten sovellus toimii ilman näkymääkin.'
+  }),
+  Object.freeze({
+    gate: 'sleepLogs',
+    reach: REACH.NO_UI,
+    label: 'Uni',
+    nav: 'ei vielä näkymää (tuleva: Tänään -> Uni)',
+    evidence: null,
+    crud: 'domain ja tallennus valmiina, näkymä puuttuu',
+    note: 'Vuoteessa olon aika (mahdollisuus nukkua), ei mitattua unta. Arkaluonteinen: ei tekoälylle eikä lokiin.'
+  }),
+  Object.freeze({
+    gate: 'habitPlans',
+    reach: REACH.NO_UI,
+    label: 'Tavat',
+    nav: 'ei vielä näkymää (tuleva: Suunta -> Tavat)',
+    evidence: null,
+    crud: 'domain ja tallennus valmiina, näkymä puuttuu',
+    note: 'Tapojen muutossuunnitelmat käyttäjän omilla luvuilla; ei väestönormeja eikä lääketieteellisiä väitteitä.'
+  }),
+  Object.freeze({
+    gate: 'habitEvents',
+    reach: REACH.NO_UI,
+    label: 'Tapojen kirjaukset',
+    nav: 'ei vielä näkymää (tuleva: Suunta -> Tavat -> kirjaa)',
+    evidence: null,
+    crud: 'domain ja tallennus valmiina, näkymä puuttuu',
+    note: 'Neutraali kirjaus: käyttö, lykkäys, väliin jättäminen. Suunnitelman poisto vie kirjaukset.'
+  }),
+  Object.freeze({
+    gate: 'exerciseSessions',
+    reach: REACH.NO_UI,
+    label: 'Liikunta',
+    nav: 'ei vielä näkymää (tuleva: Suunta -> Liikunta)',
+    evidence: null,
+    crud: 'domain ja tallennus valmiina, näkymä puuttuu',
+    note: 'Suunniteltu ja toteutunut liikuntakerta; kuormittavuus ja palautuminen ovat käyttäjän omia arvioita.'
+  }),
+  Object.freeze({
+    gate: 'wellbeingCheckins',
+    reach: REACH.NO_UI,
+    label: 'Motivaatio ja hallinnan tunne',
+    nav: 'ei vielä näkymää (tuleva: Tänään -> Hyvinvointi)',
+    evidence: null,
+    crud: 'domain ja tallennus valmiina, näkymä puuttuu',
+    note: 'Yksi kirjaus päivää kohti, hyvinvointimerkinnän rinnalla. Arkaluonteinen: ei tekoälylle eikä lokiin.'
   })
 ]);
 

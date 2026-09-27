@@ -40,7 +40,7 @@ export const FORMAT = 'mv-snapshot-v1';
 /** Hyväksytty omistaja; sama kuin migraatioissa 0001 ja 0010–0013. */
 export const OWNER = '2cc00622-f927-4604-a518-361a4328481b';
 /** Tilat, joille tilannekuvatiedosto generoidaan. */
-export const SNAPSHOT_STATES = Object.freeze(['0008', '0009', '0010', '0011', '0012', '0013']);
+export const SNAPSHOT_STATES = Object.freeze(['0008', '0009', '0010', '0011', '0012', '0013', '0014']);
 /** Taulut, jotka ovat olleet olemassa ennen 0001:tä (docs/SCHEMA.md). */
 export const BASE_TABLES = Object.freeze(['tasks', 'profile']);
 

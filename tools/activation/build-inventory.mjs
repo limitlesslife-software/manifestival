@@ -6,7 +6,7 @@
 // MIKSI GENEROIDAAN
 //
 // Inventaario kertoo, missä tilassa tuotannon kanta on migraatioiden
-// 0002–0013 suhteen: ajamaton (0 objektia), ajettu (täysi luku) vai kesken
+// 0002–0014 suhteen: ajamaton (0 objektia), ajettu (täysi luku) vai kesken
 // (muu luku). Luku on luotettava vain, jos inventaario laskee TÄSMÄLLEEN
 // samat objektit kuin migraatio itse laskee ennen ajoa. Siksi
 // tunnistuslistoja ei kopioida käsin: ne poimitaan jokaisen migraation
@@ -33,8 +33,19 @@ const OWNER = '2cc00622-f927-4604-a518-361a4328481b';
 /** Täysi objektimäärä jokaiselle migraatiolle. 0004: 36, tai 37 jos routines on olemassa. */
 export const EXPECTED = Object.freeze({
   '0002': 12, '0003': 25, '0004': '36|37', '0005': 9, '0006': 10, '0007': 39,
-  '0008': 11, '0009': 39, '0010': 38, '0011': 72, '0012': 58, '0013': 46
+  '0008': 11, '0009': 39, '0010': 38, '0011': 72, '0012': 58, '0013': 46, '0014': 153
 });
+
+/**
+ * Migraation 0014 taulut: rivimäärät riveille 90–99 (rivin 89 jälkeen).
+ * Vanhoja rivinumeroita EI numeroida uudelleen: liitetyt inventaariot ja
+ * fixturet pysyvät luettavina.
+ */
+export const DAILY_LIFE_TABLES = Object.freeze([
+  'saved_places', 'place_aliases', 'calendar_events', 'commute_observations', 'life_settings',
+  'sleep_logs', 'habit_plans', 'habit_events', 'exercise_sessions', 'wellbeing_checkins'
+]);
+export const DAILY_LIFE_FIRST_ROW = 90;
 
 function detectionBlock(file) {
   const src = fs.readFileSync(path.join(ROOT, 'supabase/migrations', file), 'utf8').replace(/\r\n/g, '\n');
@@ -79,7 +90,7 @@ export function buildInventorySql() {
   rows.push(row('30', 'migraatio', '0013 korvaava lähderajoite (time_entries_source_v2_check)',
     "(select count(*) from pg_constraint where conname = 'time_entries_source_v2_check')"));
 
-  rows.push(row('40', 'esiehto', 'Hyväksytty omistaja auth.users-taulussa (0010–0013 vaativat)',
+  rows.push(row('40', 'esiehto', 'Hyväksytty omistaja auth.users-taulussa (0010–0014 vaativat)',
     `(select count(*) from auth.users where id = '${OWNER}'::uuid)`));
   rows.push(row('41', 'esiehto', 'Auth-käyttäjiä (lukumäärä)', '(select count(*) from auth.users)'));
   rows.push(row('42', 'esiehto', 'Omistajan rivin avaimet (goals, projects, tasks, routines, recurring_expenses)',
@@ -137,11 +148,19 @@ export function buildInventorySql() {
         where table_schema = 'public' and table_name = 'tasks' and column_name = 'duration_minutes') = 0 then 'puuttuu'
         else (xpath('/row/c/text()', query_to_xml('select count(*) as c from public.tasks where duration_minutes > 0', false, true, '')))[1]::text end`));
 
+  // RIVIT 90–99: migraation 0014 taulujen rivimäärät. Loppuun, kuten rivi
+  // 89: pisteytys ei vaadi niitä, joten 0014:ää edeltävä inventaario
+  // pysyy kelvollisena. Taulu, jota ei ole, on 'puuttuu', ei nolla.
+  let kn = DAILY_LIFE_FIRST_ROW;
+  for (const table of DAILY_LIFE_TABLES) {
+    rows.push(row(String(kn++), 'data', `rivejä: ${table}`, countIfExists(table)));
+  }
+
   const union = rows.join('\n  union all\n');
   const expected = Object.entries(EXPECTED).map(([k, v]) => `${k}=${v}`).join(' ');
 
   return `-- =====================================================================
--- Manifestival — aktivoinnin inventaario 0001–0013 (VAIN LUKU)
+-- Manifestival — aktivoinnin inventaario 0001–0014 (VAIN LUKU)
 -- =====================================================================
 --
 -- GENEROITU: node tools/activation/build-inventory.mjs. ÄLÄ MUOKKAA

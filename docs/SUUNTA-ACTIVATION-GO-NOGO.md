@@ -39,6 +39,7 @@ tuotannon muotoisesta datasta: ketju, RLS (311 tarkistusta), virheet
 | **H** v21 | Henkilökohtainen avustaja | `388cd990a1f764d08e9596bcb0c874451bcb21a9` (`rehearsal/wave-h-v5`) | **0011** | READY 0011:n jälkeen | "hyväksyn 0011/H" | matala | G |
 | **I** v22 | **Suunta 1** | `4a24fdf3e2cb74473c4066329a0b693862a0e019` (`rehearsal/wave-i-v3`) | **0012** | READY 0012:n jälkeen | "hyväksyn 0012/I" (välivaihe) | keski (goals + sarake) | H |
 | **J** v23 | **Suunta 2** (ajastin, energia, katsaus v2) + yön korjaukset | `cba9463155c823a24d0fdb4632ab18a1fcbd01d0` (`rehearsal/wave-j-v2`) | **0013** | READY 0013:n jälkeen | "hyväksyn 0013/J", sitten APK (vasta kun verify_0013 = 0 ja J on tuotannossa) | matala | I (aika säilyy) |
+| **K** v24 | **Arjen käyttöjärjestelmä** (kalenteri, paikat, uni, herätys, tavat, liikunta) | ei vielä leikattu (ehdokas J:n päälle, `rehearsal/wave-k-v1`) | **0014** | ESTETTY: näkymät rakenteilla, 0014 ajamatta | "hyväksyn 0014/K" (vasta kun verify_0013 = 0 ja J on tuotannossa; vain uusia tyhjiä tauluja, tilannekuva ei pakollinen) | matala | J (taulut jäävät) |
 
 Deploykohde on **lukon** `docs/activation/release-train-c-j.json` täysi SHA
 (`deployTarget`) — ei haaran nimi eikä manifestin aaltocommit. Lukon

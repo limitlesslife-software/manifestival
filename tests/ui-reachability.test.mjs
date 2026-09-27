@@ -162,8 +162,14 @@ test('KRIITTINEN: puuttuvaksi merkittyä domainia ei ole käyttöliittymässä',
   // Joukko luetellaan nimeltä eikä sen kokoa lasketa: uusi näkymätön
   // domain kaataa tämän, ja se on oikea hetki päivittää matriisi,
   // valmiustila ja dokumentaatio yhdessä.
-  assert.deepEqual([...unreachableGates()].sort(), [],
-    'puuttuvien joukko muuttui — päivitä dokumentaatio ja aaltojen valmius');
+  //
+  //   5. Aallon K kymmenen domainia (0014) toivat sen jälleen takaisin:
+  //      domain, repositorio ja migraatio ovat olemassa, näkymät
+  //      rakennetaan erikseen. Aalto K on siksi ESTETTY.
+  assert.deepEqual([...unreachableGates()].sort(), [
+    'calendarEvents', 'commuteObservations', 'exerciseSessions', 'habitEvents', 'habitPlans',
+    'lifeSettings', 'placeAliases', 'savedPlaces', 'sleepLogs', 'wellbeingCheckins'
+  ], 'puuttuvien joukko muuttui — päivitä dokumentaatio ja aaltojen valmius');
 });
 
 test('KRIITTINEN: puuttuva käyttöliittymä ei silti riko latauspolkua', () => {

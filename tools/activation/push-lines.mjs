@@ -29,12 +29,12 @@ const PUSH = /git push origin (\S+?):((?:refs\/heads\/)?main)\b([^\n`]*)/g;
 const DEPLOY = /npm run activation:orchestrate -- --execute-deploy --approved-sha=(\S+?)(?=[\s`]|$)([^\n`]*)/g;
 const PUSH_LINE = /^(\s*)git push origin (\S+?):((?:refs\/heads\/)?main)\b(.*)$/;
 const DEPLOY_LINE = /^(\s*)npm run activation:orchestrate -- --execute-deploy --approved-sha=(\S+)(.*)$/;
-const STOP_LINE = /^(\s*)# STOP ([A-J]) — TRAIN_RECUT_REQUIRED: .*\[(push|deploy)([^\]]*)\]\s*$/;
+const STOP_LINE = /^(\s*)# STOP ([A-Z]) — TRAIN_RECUT_REQUIRED: .*\[(push|deploy)([^\]]*)\]\s*$/;
 const SQL_SHOW = /(git show )([0-9a-f]{40})(:supabase\/)/g;
 const SQL_SOURCE = /(SQL-lähde \(lukon sqlSource\): `)([^`]+)(` @ `)([0-9a-f]{40})(`)/g;
 const SHA40 = /^[0-9a-f]{40}$/;
 
-const tagOf = rest => /#\s*([A-J])\b/.exec(rest || '');
+const tagOf = rest => /#\s*([A-Z])\b/.exec(rest || '');
 
 /**
  * Kaikki push-rivit tekstissä.
@@ -165,7 +165,7 @@ export function syncSqlSourceRefs(text, { lock }) {
     .replace(SQL_SOURCE, (whole, a, ref, b, sha, c) => `${a}${source.ref}${b}${source.sha}${c}`);
 }
 
-const WAVE_ARG = /--(?:(?:wave|record-acceptance|record-candidate-tests|record-boot-smoke)=|label[= ])([A-J])\b/;
+const WAVE_ARG = /--(?:(?:wave|record-acceptance|record-candidate-tests|record-boot-smoke)=|label[= ])([A-Z])\b/;
 const SHA_ARG = /(--sha=|--expect-sha[= ])([0-9a-f]{40})/g;
 
 /**
@@ -215,7 +215,7 @@ export function sqlSourceProblems(text, { lock, file = '' }) {
  */
 export function syncTableDeployTargets(text, { lock }) {
   return String(text).split('\n').map(line => {
-    const m = /^\| \*\*([A-J])\*\* v\d+ \|/.exec(line);
+    const m = /^\| \*\*([A-Z])\*\* v\d+ \|/.exec(line);
     if (!m) return line;
     const sha = deployTargetOf(lock, m[1]);
     if (!sha) return line;
@@ -229,7 +229,7 @@ export function syncTableDeployTargets(text, { lock }) {
 export function goNoGoTableRows(text) {
   const rows = {};
   for (const line of String(text).split(/\r?\n/)) {
-    const m = /^\| \*\*([A-J])\*\* (v\d+) \|/.exec(line);
+    const m = /^\| \*\*([A-Z])\*\* (v\d+) \|/.exec(line);
     if (!m) continue;
     const cells = line.split('|').slice(1, -1).map(c => c.trim());
     const sha = /[0-9a-f]{40}/.exec(cells[2] || '');

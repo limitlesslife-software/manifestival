@@ -129,7 +129,27 @@ export const TABLES = Object.freeze({
    * istunnon muistissa.
    */
   runningTimers: false,
-  alignmentItemSettings: false
+  alignmentItemSettings: false,
+  /**
+   * Migraatio 0014 — EI AJETTU. Riippuu 0013:sta.
+   * Ks. supabase/migrations/0014_daily_life.sql.
+   *
+   * Arjen käyttöjärjestelmä: kymmenen UUTTA TAULUA, ei yhtään muutosta
+   * olemassa olevaan tauluun eikä yhtään sarakeporttia. Kaikki kymmenen
+   * aukeavat yhdessä aallossa K. Portin ollessa kiinni paikat, menot,
+   * asetukset, uni-, tapa- ja liikuntakirjaukset elävät istunnon
+   * muistissa, ja käyttöliittymä kertoo sen käyttäjälle.
+   */
+  savedPlaces: false,
+  placeAliases: false,
+  calendarEvents: false,
+  commuteObservations: false,
+  lifeSettings: false,
+  sleepLogs: false,
+  habitPlans: false,
+  habitEvents: false,
+  exerciseSessions: false,
+  wellbeingCheckins: false
 });
 
 /**
@@ -495,7 +515,47 @@ export const SCHEMA_REQUIREMENTS = Object.freeze([
   req({ id: '0013.weekly_capacities', migration: '0013', kind: 'column', table: 'weekly_capacities',
     gate: 'ALIGNMENT_REALITY_FIELDS', columns: ['energy_budget_minutes'] }),
   req({ id: '0013.alignment_reviews', migration: '0013', kind: 'column', table: 'alignment_reviews',
-    gate: 'ALIGNMENT_REALITY_FIELDS', columns: ['policy_version', 'reflection_answers'] })
+    gate: 'ALIGNMENT_REALITY_FIELDS', columns: ['policy_version', 'reflection_answers'] }),
+
+  // 0014: kymmenen uutta taulua, ei sarakeportteja. Sarakkeet = rivi-
+  // muunnoksen avaimet (src/data/collectionsRepo.js).
+  req({ id: '0014.saved_places', migration: '0014', kind: 'table', table: 'saved_places',
+    tableKey: 'savedPlaces',
+    columns: ['id', 'name', 'address', 'provider_place_id', 'area', 'travel_mode', 'usual_travel_minutes',
+      'preparation_minutes', 'arrival_buffer_minutes', 'overhead_minutes', 'use_learned', 'note'] }),
+  req({ id: '0014.place_aliases', migration: '0014', kind: 'table', table: 'place_aliases',
+    tableKey: 'placeAliases', columns: ['id', 'place_id', 'alias', 'confirmations', 'last_confirmed_at'] }),
+  req({ id: '0014.calendar_events', migration: '0014', kind: 'table', table: 'calendar_events',
+    tableKey: 'calendarEvents',
+    columns: ['id', 'title', 'event_date', 'start_time', 'end_time', 'duration_minutes', 'all_day', 'category',
+      'location_text', 'place_id', 'travel_mode', 'travel_minutes', 'preparation_minutes',
+      'arrival_buffer_minutes', 'overhead_minutes', 'recurrence_weekdays', 'recurrence_until', 'skip_dates',
+      'goal_id', 'notes'] }),
+  req({ id: '0014.commute_observations', migration: '0014', kind: 'table', table: 'commute_observations',
+    tableKey: 'commuteObservations',
+    columns: ['id', 'place_id', 'event_id', 'observed_on', 'weekday', 'planned_departure', 'actual_departure',
+      'arrival_at', 'travel_minutes', 'provider_minutes', 'preparation_minutes', 'overhead_minutes',
+      'arrival_result', 'source'] }),
+  req({ id: '0014.life_settings', migration: '0014', kind: 'table', table: 'life_settings',
+    tableKey: 'lifeSettings',
+    columns: ['id', 'weekend_wake_shift_max_minutes', 'weekend_bed_shift_max_minutes', 'wind_down_minutes',
+      'bedtime_target', 'arrival_buffer_minutes', 'guidance_style', 'speech_enabled', 'morning_brief_enabled',
+      'reminder_offset_minutes', 'digest_enabled', 'digest_time', 'sleep_affects_capacity',
+      'hourly_value_minor', 'currency', 'alarm', 'morning_routine', 'meal_rhythm', 'delivery'] }),
+  req({ id: '0014.sleep_logs', migration: '0014', kind: 'table', table: 'sleep_logs', tableKey: 'sleepLogs',
+    columns: ['id', 'wake_date', 'planned_bedtime', 'actual_bedtime', 'planned_wake', 'actual_wake', 'source',
+      'kind', 'note'] }),
+  req({ id: '0014.habit_plans', migration: '0014', kind: 'table', table: 'habit_plans', tableKey: 'habitPlans',
+    columns: ['id', 'kind', 'name', 'min_interval_minutes', 'daily_target', 'baseline_per_day', 'steps',
+      'reminder_delivery', 'unit_cost_minor', 'active'] }),
+  req({ id: '0014.habit_events', migration: '0014', kind: 'table', table: 'habit_events', tableKey: 'habitEvents',
+    columns: ['id', 'plan_id', 'occurred_at', 'action', 'note'] }),
+  req({ id: '0014.exercise_sessions', migration: '0014', kind: 'table', table: 'exercise_sessions',
+    tableKey: 'exerciseSessions',
+    columns: ['id', 'session_date', 'kind', 'planned_minutes', 'actual_minutes', 'intensity', 'recovery_demand',
+      'goal_id', 'note'] }),
+  req({ id: '0014.wellbeing_checkins', migration: '0014', kind: 'table', table: 'wellbeing_checkins',
+    tableKey: 'wellbeingCheckins', columns: ['id', 'date', 'motivation', 'control'] })
 ]);
 
 function req(spec) {

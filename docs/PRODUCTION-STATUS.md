@@ -60,6 +60,14 @@ Automaattinen testi vartioi, että tämä dokumentti pysyy ajan tasalla.
 | 0011 | `0011_personal_assistant.sql` | **EI AJETTU** | — |
 | 0012 | `0012_life_alignment.sql` | **EI AJETTU** | — |
 | 0013 | `0013_alignment_reality.sql` | **EI AJETTU** | — |
+| 0014 | `0014_daily_life.sql` | **EI AJETTU** | — |
+
+> **Migraatio 0014 on suunniteltu, ei ajettu.** Se riippuu 0013:sta ja
+> luo kymmenen uutta taulua arjen käyttöjärjestelmälle (paikat ja
+> lisänimet, menot, kuitatut matka-ajat, arjen asetukset, unikirjaukset,
+> tapojen suunnitelmat ja kirjaukset, liikuntakerrat, motivaatio ja
+> hallinnan tunne). Olemassa oleviin tauluihin se ei koske, eikä sillä
+> ole sarakeportteja. Kymmenen porttia ovat kiinni (aalto K, v24).
 
 > **Migraatio 0013 on suunniteltu, ei ajettu.** Se riippuu 0012:sta:
 > lisää taulut `running_timers` (yksi ajastin käyttäjää kohti) ja
@@ -169,6 +177,16 @@ vertaa niihin.
 | `runningTimers` | 0013 | kiinni |
 | `alignmentItemSettings` | 0013 | kiinni |
 | `ALIGNMENT_REALITY_FIELDS` | 0013 | kiinni |
+| `savedPlaces` | 0014 | kiinni |
+| `placeAliases` | 0014 | kiinni |
+| `calendarEvents` | 0014 | kiinni |
+| `commuteObservations` | 0014 | kiinni |
+| `lifeSettings` | 0014 | kiinni |
+| `sleepLogs` | 0014 | kiinni |
+| `habitPlans` | 0014 | kiinni |
+| `habitEvents` | 0014 | kiinni |
+| `exerciseSessions` | 0014 | kiinni |
+| `wellbeingCheckins` | 0014 | kiinni |
 
 `GOAL_PLANNING_FIELDS` on **sarakeportti** ja `GOAL_MAINTENANCE_MODE`
 **arvoportti**. Ne ovat erillisiä, koska niiden viat ovat erilaisia:
