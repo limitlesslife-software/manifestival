@@ -22,6 +22,13 @@
 // toimitustapa aiheittain, ohjaustyyli, rauhoitusaika, kooste, päiväraja
 // ja kuittausloki (kuitattua ei toisteta, torkutettu tulee torkun lopussa).
 //
+// YKSI PUTKI. Myös perinteiset muistutukset (tehtävä, rutiini, määräaika,
+// päivän suunnitelma, illan katsaus, matkan lähtö; legacyReminderIntents)
+// kulkevat SAMAN politiikan läpi samassa kutsussa: "Määräajat"- ja
+// "Rutiinit"-valinnat pätevät, puheeksi valittu määräaika menee laitteelle,
+// kooste yhdistää vähäiset ja päiväraja on yksi yhteinen. Tavalliset
+// ilmoitukset (notifications.js) ajastavat tästä vain paikallisen osan.
+//
 // Lähdöt, aamun sitoumus ja uni tulevat src/app/dailyLifeModel.js:stä:
 // sama laskentapolku kuin kalenterissa ja Tänään-näkymässä, joten herätys
 // ja muistutus ovat samaa mieltä näkymän kanssa. Aikavyöhyke on AINA
@@ -63,8 +70,9 @@ import { departuresOn, firstCommitmentOn, sleepScheduleOn, clockOf, shiftIso } f
 import { currentAckLog, rememberScheduledTargets } from './alarmEvents.js';
 import { desiredAlarms, DEFAULT_ESCALATION } from '../domain/alarmPlan.js';
 import { planDepartureChain, planDailyLifeReminders, DAILY_REMINDER_KIND } from '../domain/dailyReminders.js';
-import { applyNotificationPolicy } from '../domain/notificationPolicy.js';
-import { normalizePreferences, DEPARTURE_CHAIN_TYPES } from '../domain/notification.js';
+import { applyNotificationPolicy, resolveGuidanceStyle, scaleLeadMinutes } from '../domain/notificationPolicy.js';
+import { normalizePreferences, DEPARTURE_CHAIN_TYPES, planRange } from '../domain/notification.js';
+import { expandRoutines } from '../domain/routine.js';
 import { ackIndex, entryHandled } from '../domain/notificationAck.js';
 import { dailyMealItems, MEAL_ITEM_KIND } from '../domain/mealRhythm.js';
 import { status as habitStatus, HABIT_STATE } from '../domain/habitEngine.js';
@@ -100,10 +108,15 @@ const SPOKEN_CRITICAL_ESCALATION = Object.freeze([
   Object.freeze({ afterSeconds: 90, step: ESCALATION_STEP.REPEAT_SPEECH })
 ]);
 
-/** Kokoelmat, joiden muutos voi muuttaa herätyksiä tai arjen muistutuksia. */
+/**
+ * Kokoelmat, joiden muutos voi muuttaa herätyksiä tai muistutuksia. Rutiinit
+ * ja matkasuunnitelmat kuuluvat mukaan, koska niiden muistutukset kulkevat
+ * samaa putkea ja voivat puhua (laitteelle).
+ */
 export const ALARM_RELEVANT_KEYS = Object.freeze([
   'calendarEvents', 'savedPlaces', 'lifeSettings', 'habitPlans', 'habitEvents', 'profile',
-  'commuteObservations', 'tasks', 'sleepLogs', 'notificationPreferences'
+  'commuteObservations', 'tasks', 'sleepLogs', 'notificationPreferences',
+  'routines', 'routineExceptions', 'travelPlans'
 ]);
 
 const EMPTY = Object.freeze([]);
@@ -304,40 +317,121 @@ function isFuture(intent, nowMs) {
 }
 
 /**
- * Arjen muistutusaikomukset toimituspolitiikan jälkeen.
+ * Perinteiset muistutukset (tehtävä, rutiini, määräaika, päivän suunnitelma,
+ * illan katsaus, matkan lähtö) päiville `dates` RAAKOINA: rauhoitusaika,
+ * päiväraja, toimitustapa ja kooste tulevat samasta toimituspolitiikasta
+ * kuin arjen muistutuksille (dailyLifeReminderPlan).
+ *
+ * Ohjaustyyli pidentää tehtävän ja rutiinin ennakkoa
+ * (GUIDANCE_EFFECTS.leadMultiplier; aktiivinen 10 -> 15 min), ei koskaan
+ * lyhennä. Horisontti on kalenteripäiviä (horizonDates -> shiftIso ->
+ * addDays), ei millisekunteja: kesäajan 25-tuntinen vuorokausi ei pudota
+ * viimeisen päivän rutiineja. Matkan lähtö lasketaan laitteen vyöhykkeellä.
+ *
+ * @returns {ReadonlyArray<object>}
+ */
+export function legacyReminderIntents({ state = getState(), dates, todayIso, preferences = null, settings = null } = {}) {
+  const days = listOf(dates).filter(Boolean);
+  if (days.length === 0) return EMPTY;
+  const prefs = preferences || normalizePreferences(state.notificationPreferences || {});
+  const style = resolveGuidanceStyle(null, settings || currentLifeSettings(state));
+  const scaled = {
+    ...prefs,
+    taskLeadMinutes: scaleLeadMinutes(prefs.taskLeadMinutes, style) ?? prefs.taskLeadMinutes,
+    routineLeadMinutes: scaleLeadMinutes(prefs.routineLeadMinutes, style) ?? prefs.routineLeadMinutes
+  };
+  // Rutiiniesiintymät koko horisontille kerralla — ne eivät ole tallennettuja.
+  const routineOccurrences = expandRoutines({
+    routines: listOf(state.routines),
+    from: days[0],
+    to: days[days.length - 1],
+    exceptions: listOf(state.routineExceptions)
+  });
+  return planRange({
+    tasks: listOf(state.tasks),
+    routineOccurrences,
+    travelPlans: listOf(state.travelPlans),
+    from: days[0],
+    days: days.length,
+    todayIso: todayIso || days[0],
+    preferences: scaled,
+    // Kesäaikaan siirtymisen yönä matkan lähtömuistutus ei tule tuntia
+    // myöhässä (bugijahti time-04).
+    offsetMinutesFn: deviceOffsetMinutes,
+    limits: false
+  });
+}
+
+/** Perinteiset muistutukset; laskennan virhe ei estä arjen muistutuksia. */
+function safeLegacyIntents(options) {
+  try {
+    return legacyReminderIntents(options);
+  } catch {
+    logEvent('alarm.legacy_plan_failed', { code: 'compute' });
+    return EMPTY;
+  }
+}
+
+/**
+ * KAIKKI muistutusaikomukset toimituspolitiikan jälkeen: arjen muistutukset
+ * ja perinteiset (legacyReminderIntents) YHDESSÄ politiikan kutsussa, joten
+ * toimitustapa aiheittain, puhe, ohjaustyyli, kooste, rauhoitusaika,
+ * kuittaukset ja päiväraja koskevat kaikkia samalla tavalla.
  *
  * @param {object} [options]
  * @param {object} [options.state]
  * @param {Date}   [options.now]
  * @param {object} [options.ackLog]
+ * @param {boolean} [options.includePast] esikatselu (notifications.planUpcoming):
+ *        myös tämän päivän jo menneet mukaan. Ajastus ei koskaan anna tätä.
+ * @param {string} [options.fromIso] horisontin ensimmäinen päivä (oletus tänään)
  * @returns {{intents:ReadonlyArray<object>, routes:Map<string,object>}}
  */
-export function dailyLifeReminderPlan({ state = getState(), now = new Date(), ackLog = currentAckLog() } = {}) {
+export function dailyLifeReminderPlan({
+  state = getState(), now = new Date(), ackLog = currentAckLog(), includePast = false, fromIso = null
+} = {}) {
   const preferences = normalizePreferences(state.notificationPreferences || {});
   if (!preferences.enabled) return { intents: EMPTY, routes: new Map() };
   const { todayIso } = clockOf(now);
   const nowMs = now.getTime();
-  const dates = horizonDates(todayIso);
+  const dates = horizonDates(typeof fromIso === 'string' && fromIso ? fromIso : todayIso);
   const settings = currentLifeSettings(state);
 
-  const { inputs, routes } = departureInputs(state, now, dates);
-  const habits = habitEntries(state, now, dates);
-  const effective = policySettings(settings, habits.delivery);
-  const chain = planDepartureChain({ departures: inputs, settings: effective, todayIso });
-  const daily = planDailyLifeReminders({
-    entries: [...sleepEntries(state, now, dates), ...mealEntries(settings, dates), ...habits.entries],
-    settings: effective,
-    todayIso
-  });
+  // Arjen osan laskentavirhe ei vie perinteisiä muistutuksia (eikä päinvastoin).
+  let routes = new Map();
+  let effective = settings;
+  let everyday = EMPTY;
+  try {
+    const departures = departureInputs(state, now, dates);
+    routes = departures.routes;
+    const habits = habitEntries(state, now, dates);
+    effective = policySettings(settings, habits.delivery);
+    const chain = planDepartureChain({ departures: departures.inputs, settings: effective, todayIso });
+    const daily = planDailyLifeReminders({
+      entries: [...sleepEntries(state, now, dates), ...mealEntries(settings, dates), ...habits.entries],
+      settings: effective,
+      todayIso
+    });
+    everyday = [...chain, ...daily];
+  } catch {
+    logEvent('alarm.daily_plan_failed', { code: 'compute' });
+  }
+  const legacy = safeLegacyIntents({ state, dates, todayIso, preferences, settings: effective });
 
   // Menneet pois ENNEN päivärajaa (muuten aamun menneet veisivät illan
   // paikat), paitsi torkussa olevat: torkun korvaaja rakennetaan niistä.
   const snoozed = snoozedKeys(ackLog, nowMs);
-  const candidates = [...chain, ...daily].filter(intent =>
-    isFuture(intent, nowMs) || snoozed.has(intent.ackKey || intent.id));
+  const candidates = [...legacy, ...everyday].filter(intent =>
+    includePast || isFuture(intent, nowMs) || snoozed.has(intent.ackKey || intent.id));
   const policy = applyNotificationPolicy(candidates, { settings: effective, preferences, ackLog, nowMs });
-  return { intents: Object.freeze(policy.filter(intent => isFuture(intent, nowMs))), routes };
+  return {
+    intents: Object.freeze(includePast ? [...policy] : policy.filter(intent => isFuture(intent, nowMs))),
+    routes
+  };
 }
+
+/** Sama suunnitelma kuvaavalla nimellä: kaikki muistutukset, yksi putki. */
+export const reminderPlan = dailyLifeReminderPlan;
 
 /** Meneekö aikomus laitteen herätysliitännäiselle: puhuu tai voimistuu hälytykseksi. */
 export function isNativeBound(intent) {

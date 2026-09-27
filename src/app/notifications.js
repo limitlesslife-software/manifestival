@@ -15,13 +15,10 @@
 //   2. Mitään ei ajasteta ennen kuin käyttäjä on kytkenyt muistutukset
 //      päälle JA lupa on myönnetty.
 
-import { fmtISO, todayMidnight, addDays } from '../lib/datetime.js';
-import { planRange, summarizeIntents, normalizePreferences } from '../domain/notification.js';
-import { capPerDay } from '../domain/notificationPolicy.js';
-import { expandRoutines } from '../domain/routine.js';
+import { fmtISO, todayMidnight } from '../lib/datetime.js';
+import { summarizeIntents, normalizePreferences } from '../domain/notification.js';
 import { notifications as platformNotifications, alarms as platformAlarms, PERMISSION } from '../platform/index.js';
-import { dailyLifeLocalIntents, resetAlarmSync } from './alarmSync.js';
-import { deviceOffsetMinutes } from './deviceTime.js';
+import { dailyLifeLocalIntents, dailyLifeReminderPlan, resetAlarmSync } from './alarmSync.js';
 import { getState, setNotificationPreferences } from './state.js';
 import { savePreferences, isPersistent } from '../data/notificationPrefsRepo.js';
 import { sessionSnapshot, isSameSession } from '../data/session.js';
@@ -56,41 +53,18 @@ let lastSync = { at: null, scheduled: 0, planned: 0, reason: '' };
  * PUHDAS LASKENTA — ei kosketa alustaan. Käyttöliittymä voi näyttää tämän
  * esikatseluna ("tänään 5 muistutusta") ilman että mitään ajastetaan.
  *
+ * YKSI PUTKI: sama suunnitelma kuin ajastuksessa (alarmSync.dailyLifeReminderPlan:
+ * perinteiset ja arjen muistutukset saman toimituspolitiikan läpi), mutta
+ * esikatselu näyttää myös tämän päivän jo menneet. Horisontti lasketaan
+ * kalenteripäivinä (alarmSync.horizonDates), ei millisekunteina.
+ *
  * @param {Date} [from] mistä päivästä alkaen
  * @returns {{intents:Array, summary:object}}
  */
 export function planUpcoming(from = todayMidnight()) {
-  const state = getState();
-  const preferences = normalizePreferences(state.notificationPreferences);
-  const fromIso = fmtISO(from);
-  const todayIso = fmtISO(todayMidnight());
-
-  // Rutiiniesiintymät koko horisontille kerralla — ne eivät ole tallennettuja.
-  // KALENTERILASKU, ei millisekunteja. Kesaajan paattyessa vuorokausi on
-  // 25 tuntia, joten from.getTime() + n * 86400000 laskeutuu edelliselle
-  // paivalle - ja horisontin viimeisen paivan rutiinit jaisivat kerran
-  // vuodessa hiljaa ilman muistutusta.
-  const toDate = addDays(from, SYNC_HORIZON_DAYS - 1);
-  const routineOccurrences = expandRoutines({
-    routines: state.routines,
-    from: fromIso,
-    to: fmtISO(toDate),
-    exceptions: state.routineExceptions
+  const { intents } = dailyLifeReminderPlan({
+    state: getState(), now: new Date(), includePast: true, fromIso: fmtISO(from)
   });
-
-  const intents = planRange({
-    tasks: state.tasks,
-    routineOccurrences,
-    travelPlans: state.travelPlans,
-    from: fromIso,
-    days: SYNC_HORIZON_DAYS,
-    todayIso,
-    preferences,
-    // Matkan lähtö lasketaan laitteen vyöhykkeellä: kesäaikaan siirtymisen
-    // yönä muistutus ei tule tuntia myöhässä (bugijahti time-04).
-    offsetMinutesFn: deviceOffsetMinutes
-  });
-
   return { intents, summary: summarizeIntents(intents) };
 }
 
@@ -131,13 +105,12 @@ export async function syncNotifications() {
       return { ok: false, ...lastSync };
     }
 
-    const { intents: legacy } = planUpcoming();
-    // Arjen muistutukset (lähtöketju, uni, ateriat, tavat), jotka EIVÄT
-    // mene herätysliitännäiselle: sama jako kuin src/app/alarmSync.js:n
-    // laiteajastuksessa, joten sama muistutus ei tule kahdesti. Päiväraja
-    // koskee molempia yhdessä: kaksi erillistä kattoa kaksinkertaistaisi hälyn.
-    const daily = safeDailyLifeIntents();
-    const intents = daily.length > 0 ? capPerDay([...legacy, ...daily], preferences.maxPerDay) : legacy;
+    // KAIKKI muistutukset (tehtävät, rutiinit, määräajat, lähtöketju, uni,
+    // ateriat, tavat ...), jotka EIVÄT mene herätysliitännäiselle: sama
+    // suunnitelma ja jako kuin src/app/alarmSync.js:n laiteajastuksessa,
+    // joten sama muistutus ei tule kahdesti. Toimituspolitiikka ja päiväraja
+    // on jo sovellettu kerran, kaikille yhdessä (ei toista kattoa tässä).
+    const intents = safeReminderIntents();
 
     // Tarkka hälytys vain, kun laite on jo sallinut sen: muuten
     // ilmoitusliitännäinen avaisi "Hälytykset ja muistutukset" -asetuksen
@@ -185,8 +158,8 @@ export async function syncNotifications() {
   }
 }
 
-/** Arjen muistutukset tavallisiksi ilmoituksiksi; laskennan virhe ei estä muita muistutuksia. */
-function safeDailyLifeIntents() {
+/** Muistutukset tavallisiksi ilmoituksiksi; laskennan virhe ei kaada synkronointia. */
+function safeReminderIntents() {
   try {
     return dailyLifeLocalIntents({ state: getState() });
   } catch (error) {
