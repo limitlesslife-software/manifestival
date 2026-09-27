@@ -25,6 +25,7 @@ import { normalizeRoutine, RECURRENCE } from '../src/domain/routine.js';
 import { runTypedCommand } from '../src/app/commandBar.js';
 import { runLocalCommand, previewInterruption } from '../src/app/localCommands.js';
 import { readCode } from './helpers/sources.mjs';
+import { freezeLocalDate } from './helpers/clock.mjs';
 
 const USER = { id: 'aaaaaaaa-9999-4000-8000-000000000009', email: 'v@example.com' };
 const at = (y, m, d, hh, mm) => new Date(y, m - 1, d, hh, mm);
@@ -61,7 +62,8 @@ beforeEach(() => {
 
 // ------------------------------------------------------------ menon luonti
 
-test('selvä lause: meno kalenteriin ilman tekoälyä ja ilman verkkoa, tarkistuksen kautta', async () => {
+test('selvä lause: meno kalenteriin ilman tekoälyä ja ilman verkkoa, tarkistuksen kautta', async t => {
+  freezeLocalDate(t, '2026-09-28');
   const { seen, options } = ui();
   const result = await runTypedCommand('Lisää parturi ensi tiistaille klo 16', options);
   assert.equal(result.ok, true);
@@ -83,14 +85,16 @@ test('selvä lause: meno kalenteriin ilman tekoälyä ja ilman verkkoa, tarkistu
   assert.ok(seen.phases.indexOf('confirmation') < seen.phases.indexOf('executing'));
 });
 
-test('KRIITTINEN: peruttu tarkistus ei tallenna mitään', async () => {
+test('KRIITTINEN: peruttu tarkistus ei tallenna mitään', async t => {
+  freezeLocalDate(t, '2026-09-28');
   const { options } = ui({ accept: false });
   const result = await runTypedCommand('Lisää parturi ensi tiistaille klo 16', options);
   assert.equal(result.status, 'cancelled');
   assert.deepEqual(getState().calendarEvents, []);
 });
 
-test('epäselvä kellonaika kysytään (klo 7 vai 19), ei arvata', async () => {
+test('epäselvä kellonaika kysytään (klo 7 vai 19), ei arvata', async t => {
+  freezeLocalDate(t, '2026-09-28');
   const { seen, options } = ui({ choose: candidates => candidates.find(c => c.id === '19:00') });
   const result = await runTypedCommand('Teatteri lauantaina seitsemältä', options);
   assert.equal(result.ok, true);
@@ -102,7 +106,8 @@ test('epäselvä kellonaika kysytään (klo 7 vai 19), ei arvata', async () => {
   assert.equal(event.date, '2026-10-03');
 });
 
-test('epäselvän kysymyksen peruminen ei tallenna eikä kysy tekoälyltä', async () => {
+test('epäselvän kysymyksen peruminen ei tallenna eikä kysy tekoälyltä', async t => {
+  freezeLocalDate(t, '2026-09-28');
   const { options } = ui({ choose: () => null });
   const result = await runTypedCommand('Teatteri lauantaina seitsemältä', options);
   assert.equal(result.status, 'cancelled');
@@ -110,7 +115,8 @@ test('epäselvän kysymyksen peruminen ei tallenna eikä kysy tekoälyltä', asy
   assert.equal(network, 0);
 });
 
-test('puuttuva päivä kysytään valintana (tänään / huomenna), kesto päättää loppuajan', async () => {
+test('puuttuva päivä kysytään valintana (tänään / huomenna), kesto päättää loppuajan', async t => {
+  freezeLocalDate(t, '2026-09-28');
   const { seen, options } = ui({ choose: candidates => candidates[1] });
   const result = await runTypedCommand('Lisää hammaslääkäri klo 9.30 kestää tunnin', options);
   assert.equal(result.ok, true);
@@ -119,7 +125,8 @@ test('puuttuva päivä kysytään valintana (tänään / huomenna), kesto päät
   assert.deepEqual([event.date, event.startTime, event.endTime], ['2026-09-29', '09:30', '10:30']);
 });
 
-test('tallennettu paikka tunnistetaan; epäselvä nimi kysytään ja nimitys opitaan vasta hyväksynnän jälkeen', async () => {
+test('tallennettu paikka tunnistetaan; epäselvä nimi kysytään ja nimitys opitaan vasta hyväksynnän jälkeen', async t => {
+  freezeLocalDate(t, '2026-09-28');
   setSavedPlaces([
     { id: 'pe', name: 'Motonet Espoo', usualTravelMinutes: 25 },
     { id: 'pv', name: 'Motonet Vantaa', usualTravelMinutes: 30 }
@@ -139,7 +146,8 @@ test('tallennettu paikka tunnistetaan; epäselvä nimi kysytään ja nimitys opi
   assert.equal(aliases[0].alias, 'motonetissa');
 });
 
-test('peruttu meno ei opeta paikan nimitystä', async () => {
+test('peruttu meno ei opeta paikan nimitystä', async t => {
+  freezeLocalDate(t, '2026-09-28');
   setSavedPlaces([
     { id: 'pe', name: 'Motonet Espoo' }, { id: 'pv', name: 'Motonet Vantaa' }
   ]);
@@ -148,7 +156,8 @@ test('peruttu meno ei opeta paikan nimitystä', async () => {
   assert.deepEqual(getState().placeAliases, []);
 });
 
-test('opittu nimitys vahvistuu hyväksytyssä menossa; paikan oma nimi ei ole nimitys', async () => {
+test('opittu nimitys vahvistuu hyväksytyssä menossa; paikan oma nimi ei ole nimitys', async t => {
+  freezeLocalDate(t, '2026-09-28');
   setSavedPlaces([{ id: 'pk', name: 'Kamppi' }]);
   const alias = { id: 'a1', placeId: 'pk', alias: 'salille', confirmations: 2 };
   setPlaceAliases([alias]);
@@ -165,7 +174,8 @@ test('opittu nimitys vahvistuu hyväksytyssä menossa; paikan oma nimi ei ole ni
 
 // ------------------------------------------------------------ tekoäly ja turva
 
-test('tuhoava lause ei koskaan kulje paikallisesti: se menee tekoälyn vahvistettuun polkuun', async () => {
+test('tuhoava lause ei koskaan kulje paikallisesti: se menee tekoälyn vahvistettuun polkuun', async t => {
+  freezeLocalDate(t, '2026-09-28');
   const { seen, options } = ui();
   const result = await runTypedCommand('poista huominen parturi', options);
   assert.equal(result.local, undefined);
@@ -179,7 +189,8 @@ test('tehtävälause ei ole meno: tekoäly hoitaa sen kuten ennenkin', async () 
   assert.equal(result, null);
 });
 
-test('puhuttu komento kulkee saman paikallisen polun (source voice)', async () => {
+test('puhuttu komento kulkee saman paikallisen polun (source voice)', async t => {
+  freezeLocalDate(t, '2026-09-28');
   const { seen, options } = ui();
   const result = await runTypedCommand('lisää palaveri huomenna kello 14', { ...options, source: 'voice' });
   assert.equal(result.ok, true);
@@ -196,7 +207,8 @@ function flexibleTask(id, time, minutes = 30) {
   });
 }
 
-test('"olen 10 min myöhässä": ehdotus näytetään, hyväksyntä siirtää joustavan tehtävän', async () => {
+test('"olen 10 min myöhässä": ehdotus näytetään, hyväksyntä siirtää joustavan tehtävän', async t => {
+  freezeLocalDate(t, '2026-09-28');
   setTasks([flexibleTask('t1', '12:05'), normalizeTask({
     id: 'm1', title: 'Oma kiinteä', date: '2026-09-28', time: '15:00', durationMinutes: 30, schedulingState: 'manual'
   })]);
@@ -213,7 +225,8 @@ test('"olen 10 min myöhässä": ehdotus näytetään, hyväksyntä siirtää jo
   assert.equal(getState().tasks.find(task => task.id === 'm1').time, '15:00', 'itse ajastettu ei liiku');
 });
 
-test('keskeytyksen peruminen ei muuta mitään', async () => {
+test('keskeytyksen peruminen ei muuta mitään', async t => {
+  freezeLocalDate(t, '2026-09-28');
   setTasks([flexibleTask('t1', '12:05')]);
   const { options } = ui({ accept: false });
   const result = await runTypedCommand('olen 10 min myöhässä', options);
@@ -221,7 +234,8 @@ test('keskeytyksen peruminen ei muuta mitään', async () => {
   assert.equal(getState().tasks[0].time, '12:05');
 });
 
-test('määrä puuttuu ("olen myöhässä"): kysytään, ei arvata', async () => {
+test('määrä puuttuu ("olen myöhässä"): kysytään, ei arvata', async t => {
+  freezeLocalDate(t, '2026-09-28');
   setTasks([flexibleTask('t1', '12:05')]);
   const { seen, options } = ui({ choose: candidates => candidates.find(c => c.id === '15') });
   const result = await runTypedCommand('olen myöhässä', options);
@@ -230,7 +244,8 @@ test('määrä puuttuu ("olen myöhässä"): kysytään, ei arvata', async () =>
   assert.equal(result.ok, true);
 });
 
-test('rutiinin kerran ohitus toteutetaan rutiinin omalla toiminnolla', async () => {
+test('rutiinin kerran ohitus toteutetaan rutiinin omalla toiminnolla', async t => {
+  freezeLocalDate(t, '2026-09-28');
   setRoutines([normalizeRoutine({
     id: 'r1', title: 'Lenkki', active: true, recurrence: { type: RECURRENCE.DAILY, weekdays: [] },
     durationMinutes: 45
@@ -246,7 +261,8 @@ test('rutiinin kerran ohitus toteutetaan rutiinin omalla toiminnolla', async () 
   assert.ok(getState().routineExceptions.some(e => e.routineId === 'r1' && e.date === '2026-09-28' && e.type === 'skip'));
 });
 
-test('ei muutettavaa: kerrotaan, ei kysytä vahvistusta', async () => {
+test('ei muutettavaa: kerrotaan, ei kysytä vahvistusta', async t => {
+  freezeLocalDate(t, '2026-09-28');
   const { seen, options } = ui();
   const result = await runTypedCommand('olen 10 min myöhässä', options);
   assert.equal(result.status, 'no_change');

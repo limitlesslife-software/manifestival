@@ -143,7 +143,8 @@ test('verkkovirhe ei koskaan tuota arvattua komentoa', async () => {
   assert.equal(result.status, 'error');
 });
 
-test('menolause käsitellään laitteella: /api/commandia ei kutsuta, vahvistus kysytään silti', async () => {
+test('menolause käsitellään laitteella: /api/commandia ei kutsuta, vahvistus kysytään silti', async t => {
+  freezeLocalDate(t, '2026-09-28');
   let called = 0;
   let confirmed = null;
   const result = await runTypedCommand('lisää parturi keskiviikkona klo 16', {
@@ -160,7 +161,8 @@ test('menolause käsitellään laitteella: /api/commandia ei kutsuta, vahvistus 
   assert.equal(getState().tasks.length, 0, 'meno ei ole tehtävä');
 });
 
-test('KRIITTINEN: epäselvä menolause ilman valintaa ei tallenna eikä siirry tekoälylle arvattavaksi', async () => {
+test('KRIITTINEN: epäselvä menolause ilman valintaa ei tallenna eikä siirry tekoälylle arvattavaksi', async t => {
+  freezeLocalDate(t, '2026-09-28');
   let called = 0;
   const result = await runTypedCommand('teatteri lauantaina seitsemältä', {
     now: new Date(2026, 8, 28, 12, 0),

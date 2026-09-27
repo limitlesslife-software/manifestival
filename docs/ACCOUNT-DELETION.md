@@ -293,6 +293,8 @@ selaintallennusta ilman rekisterimerkintää.
 | `manifestival.timeOutbox.v1.<käyttäjä>` | Lähettämättömät aikakirjaukset (myös muistiinpano) | säilyy | poistetaan |
 | `manifestival.timerTombstones.v1.<käyttäjä>` | Poistettujen ajastimien tunnisteet | säilyy | poistetaan |
 | `manifestival.timerPending.v1.<käyttäjä>` | Kirjaamattomat ajastimet, jotka jäivät odottamaan toisen laitteen ajastimen vuoksi | säilyy | poistetaan |
+| `manifestival.alarmAcks.v1.<käyttäjä>` | Herätysten ja puhuttujen muistutusten kuittaukset, torkut ja hylkäykset sekä laitteelle ajastettujen merkintöjen tunnisteet (ei otsikoita, osoitteita eikä sijaintia) | tyhjennetään (laitteen herätykset perutaan samalla) | poistetaan |
+| `manifestival.dailyLifeOutbox.v1.<käyttäjä>` | Lähettämättömät menojen tallennukset ja tapakirjaukset | säilyy | poistetaan |
 | `manifestival.userPrefs.v1.<käyttäjä>` | Käyttäjäkohtaiset liput (`USER_DEFAULTS`): ensikäytön opastus nähty, Suunnan aloituksen ohitetut vaiheet | säilyy | poistetaan (`purgeUserPreferences`) |
 | `manifestival:<asetus>` | Laitekohtaiset asetukset (`DEVICE_DEFAULTS`) | tyhjennetään | tyhjennetään |
 | `manifestival.schemaCompat.v1.<tiiviste>` | Viimeisimmän skeematarkistuksen tulos tälle käännökselle ja palvelimelle (migraatiotunnisteet, ei käyttäjän dataa) | säilyy | tyhjennetään (`clearSchemaCache`) |
@@ -312,7 +314,10 @@ Muu laitteen tila:
   käyttöjärjestelmässä sovelluksesta riippumatta ja sisältävät tehtävien
   otsikoita. `cancelDeviceNotifications()` peruu ajastetut ja poistaa jo
   toimitetut ilmoitusalueelta: uloskirjautuessa odottamatta, tilin
-  poistossa odottaen (enintään 3 s) ennen uloskirjautumista.
+  poistossa odottaen (enintään 3 s) ennen uloskirjautumista. Sama kutsu
+  lopettaa herätysten ajastuksen ja peruu ManifestivalAlarm-liitännäisen
+  herätykset ja puhutut muistutukset (`src/app/alarmSync.js`
+  `resetAlarmSync`).
 - **Muistissa elävä tila** (tilan kokoelmat, repositorioiden
   muistivarastot, offline-jonon muistikopio, sijainti, avoimet lomakkeet)
   tyhjennetään uloskirjautuessa (`onSignedOut`) ja katoaa joka tapauksessa
