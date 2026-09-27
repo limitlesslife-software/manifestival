@@ -105,8 +105,10 @@ test('tyhjä tila: ohje, lisäyspainike ja oletusetuaika 10 min valittuna teksti
   assert.match(view.text(), /Ei vielä tallennettuja paikkoja/);
   assert.ok(view.q('[data-action="place-add"]'));
   const chips = view.qa('[data-action="buffer-set"]');
-  assert.deepEqual(chips.map(chip => chip.textContent.trim()), ['5 min', '10 min', '15 min']);
+  assert.deepEqual(chips.map(chip => accessibleName(chip)), ['5 min', '10 min', '15 min']);
   assert.deepEqual(chips.map(chip => chip.getAttribute('aria-pressed')), ['false', 'true', 'false']);
+  assert.deepEqual(chips.map(chip => chip.textContent.trim().startsWith('✓')), [false, true, false],
+    'valinta näkyy merkkinä, ei pelkkänä värinä');
   assert.match(view.text(), /Nyt 10 min\./, 'valinta näkyy myös tekstinä');
   assert.equal(view.q('[data-section="late"]'), null, 'ei ehdotusta ilman havaintoja');
 });
@@ -346,7 +348,8 @@ test('oletusetuaika: 5/10/15 yhdellä napautuksella, oma arvo, virheellinen oma 
   await flush();
   assert.equal(currentLifeSettings(getState()).arrivalBufferMinutes, 25);
   const custom = action(view, 'buffer-custom');
-  assert.equal(custom.textContent.trim(), 'Oma: 25 min');
+  assert.equal(accessibleName(custom), 'Oma: 25 min');
+  assert.equal(custom.textContent.trim(), '✓ Oma: 25 min');
   assert.equal(custom.getAttribute('aria-pressed'), 'true');
   assert.ok(view.qa('[data-action="buffer-set"]').every(button => button.getAttribute('aria-pressed') === 'false'));
 

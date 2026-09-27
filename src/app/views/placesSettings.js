@@ -147,11 +147,13 @@ function persistenceNoticeHtml() {
 function bufferHtml(settings) {
   const current = settings.arrivalBufferMinutes;
   const custom = !ARRIVAL_BUFFER_CHOICES.includes(current);
+  // Valinta näkyy merkkinä eikä pelkkänä värinä; ruudunlukija saa sen aria-pressedistä.
+  const mark = pressed => (pressed ? '<span class="lh-check" aria-hidden="true">✓ </span>' : '');
   const chips = ARRIVAL_BUFFER_CHOICES.map(minutes =>
-    `<button type="button" class="assist-btn lh-chip" data-action="buffer-set" data-value="${minutes}" aria-pressed="${current === minutes}">${minutes} min</button>`)
+    `<button type="button" class="assist-btn lh-chip" data-action="buffer-set" data-value="${minutes}" aria-pressed="${current === minutes}">${mark(current === minutes)}${minutes} min</button>`)
     .join('');
   const customChip = `<button type="button" class="assist-btn lh-chip" data-action="buffer-custom" aria-pressed="${custom}">`
-    + `Oma${custom ? `: ${current} min` : '…'}</button>`;
+    + `${mark(custom)}Oma${custom ? `: ${current} min` : '…'}</button>`;
   const draft = drafts.buffer;
   const editor = draft
     ? `<div class="lh-inline" role="group" aria-labelledby="plcBufferCustomLabel" data-form-root="buffer">
