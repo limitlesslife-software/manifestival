@@ -29,6 +29,10 @@ import {
 } from './notificationPolicy.js';
 import { spokenPhrase, PHRASE_REPEAT_LEAVE_NOW } from './spokenPhrases.js';
 import { isIsoDate, isTimeOfDay } from './task.js';
+import { MEAL_ITEM_KIND } from './mealRhythm.js';
+
+/** Ateriarytmin muut kuin ateriamuistutukset (MEAL-muistutuksen alalaji). */
+const MEAL_SUBKINDS = Object.freeze([MEAL_ITEM_KIND.SUPPLEMENT, MEAL_ITEM_KIND.WATER, MEAL_ITEM_KIND.LATE_CUTOFF]);
 
 const EMPTY = Object.freeze([]);
 
@@ -377,6 +381,30 @@ function dailyIntent(entry, { settings, style, today }) {
     case DAILY_REMINDER_KIND.MEAL: {
       const mealId = cleanId(source.id);
       if (!mealId) return null;
+      // Lisäravinne, vesi ja ruokailun iltaraja kuuluvat samaan aiheeseen
+      // (ateriarytmi), mutta "Ruoka-aika" olisi niille väärä sana. Otsikko ja
+      // teksti pysyvät neutraaleina: lisäravinteen nimi ei näy lukitusnäytöllä.
+      if (MEAL_SUBKINDS.includes(source.mealKind)) {
+        const mealKind = source.mealKind;
+        if (mealKind === MEAL_ITEM_KIND.SUPPLEMENT) {
+          title = 'Lisäravinne';
+          body = 'Suunniteltu lisäravinteen aika.';
+          reason = 'Oma ateriarytmisi: lisäravinne.';
+        } else if (mealKind === MEAL_ITEM_KIND.WATER) {
+          title = 'Vesitauko';
+          body = 'Juo lasillinen vettä.';
+          reason = 'Oma ateriarytmisi: vesimuistutus päiväsaikaan.';
+        } else {
+          title = 'Ruokailun iltaraja';
+          body = `Oma iltarajasi: klo ${at.time} jälkeen ei enää syödä.`;
+          reason = 'Oma ateriarytmisi: ruokailun iltaraja.';
+        }
+        targetId = mealId;
+        phraseContext = { style, mealKind };
+        extra.mealId = mealId;
+        extra.mealKind = mealKind;
+        break;
+      }
       const prep = Number.isInteger(source.prepMinutes) && source.prepMinutes > 0
         && source.prepMinutes <= MAX_PREPARATION_MINUTES ? source.prepMinutes : 0;
       const mealAt = at;

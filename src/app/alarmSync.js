@@ -70,6 +70,7 @@ import { dailyMealItems, MEAL_ITEM_KIND } from '../domain/mealRhythm.js';
 import { status as habitStatus, HABIT_STATE } from '../domain/habitEngine.js';
 import { DELIVERY, DELIVERIES, deliverySpeaks, ESCALATION_STEP } from '../domain/dailyLife.js';
 import { wallClockToEpoch, epochToWallClock } from '../domain/wallClock.js';
+import { isTimeOfDay } from '../domain/task.js';
 import { logEvent } from '../lib/logger.js';
 
 /** Kuinka monta päivää eteenpäin (tänään mukaan lukien). Sama kuin tavallisissa muistutuksissa. */
@@ -194,8 +195,12 @@ function departureInputs(state, now, dates) {
 /** Iltarauhoittuminen ja nukkumaanmeno herätyspäiville huomisesta eteenpäin. */
 function sleepEntries(state, now, dates) {
   // Pelkillä oletuksilla ei muistuteta nukkumaanmenosta: käyttäjä ei ole
-  // kertonut rytmiään, eikä ilmoitus iltaisin saa tulla yllätyksenä.
-  if (listOf(state.lifeSettings).length === 0) return [];
+  // kertonut rytmiään, eikä ilmoitus iltaisin saa tulla yllätyksenä. Rytmin
+  // kertoo joko tallennettu arjen asetus TAI profiiliin itse asetettu
+  // herätysaika (onboarding kysyy sen).
+  const toldRhythm = listOf(state.lifeSettings).length > 0
+    || (state.profileExists === true && Boolean(state.profile) && isTimeOfDay(state.profile.defaultWakeTime));
+  if (!toldRhythm) return [];
   const entries = [];
   for (const date of dates) {
     const wakeDate = shiftIso(date, 1);
@@ -223,12 +228,21 @@ function sleepEntries(state, now, dates) {
 /** Ateriat käyttäjän omasta ateriarytmistä (valmistelu huomioiden). */
 function mealEntries(settings, dates) {
   const rhythm = settings && settings.mealRhythm;
-  const meals = rhythm && Array.isArray(rhythm.meals) ? rhythm.meals : EMPTY;
-  if (meals.length === 0) return [];
+  if (!rhythm || typeof rhythm !== 'object') return [];
+  const meals = Array.isArray(rhythm.meals) ? rhythm.meals : EMPTY;
   const prepById = new Map(meals.filter(meal => meal && meal.id).map(meal => [meal.id, meal.prepMinutes]));
   const entries = [];
   for (const date of dates) {
     for (const item of dailyMealItems({ mealRhythm: rhythm, dateIso: date })) {
+      // Lisäravinne, vesi ja iltaraja omina alalajeinaan (oikea sanamuoto);
+      // valmistelu on osa ateriaa (prepMinutes), ei oma muistutuksensa.
+      if (item.kind === MEAL_ITEM_KIND.SUPPLEMENT || item.kind === MEAL_ITEM_KIND.WATER
+        || item.kind === MEAL_ITEM_KIND.LATE_CUTOFF) {
+        entries.push({
+          kind: DAILY_REMINDER_KIND.MEAL, mealKind: item.kind, id: item.id, date: item.date, time: item.time
+        });
+        continue;
+      }
       if (item.kind !== MEAL_ITEM_KIND.MEAL) continue;
       const prep = item.sourceId ? prepById.get(item.sourceId) : null;
       entries.push({

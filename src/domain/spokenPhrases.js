@@ -164,6 +164,27 @@ const BUILDERS = Object.freeze({
   }),
 
   [NOTIFICATION_TYPE.MEAL]: (style, ctx) => {
+    if (ctx.mealKind === 'supplement') {
+      return pick(style, {
+        [CALM]: 'Lisäravinteen aika.',
+        [BRISK]: 'Lisäravinne.',
+        [ACTIVE]: 'Nyt on sovittu lisäravinteen aika.'
+      });
+    }
+    if (ctx.mealKind === 'water') {
+      return pick(style, {
+        [CALM]: 'Pieni vesitauko.',
+        [BRISK]: 'Vesitauko.',
+        [ACTIVE]: 'Nyt on hyvä hetki juoda lasillinen vettä.'
+      });
+    }
+    if (ctx.mealKind === 'late_cutoff') {
+      return pick(style, {
+        [CALM]: 'Ruokailun iltaraja on nyt.',
+        [BRISK]: 'Ruokailun iltaraja.',
+        [ACTIVE]: 'Oma iltarajasi on nyt: tästä eteenpäin ei enää syödä tänään.'
+      });
+    }
     if (ctx.prep === false) {
       return pick(style, {
         [CALM]: 'Nyt on hyvä aika syödä.',

@@ -205,14 +205,37 @@ test('herätys pois (oletus): laitteelle ei herätystä', () => {
   assert.equal(entries.some(entry => entry.kind === 'wake'), false);
 });
 
-test('nukkumaanmenosta muistutetaan vain, kun arjen asetukset on tallennettu', () => {
+test('nukkumaanmenosta muistutetaan vain, kun käyttäjä on kertonut rytminsä (arjen asetukset tai oma herätysaika)', () => {
   signIn();
   seedDay();
   const types = () => dailyLifeReminderPlan({ now: NOON }).intents.map(intent => intent.type);
   assert.ok(types().includes('bedtime') && types().includes('wind_down'));
+  // Profiiliin itse asetettu herätysaika riittää (onboarding kysyy sen).
   setLifeSettings([]);
+  assert.ok(types().includes('bedtime'), 'oma herätysaika profiilissa kertoo rytmin');
+  // Ei profiilia eikä asetuksia: pelkillä oletuksilla ei iltamuistutuksia.
+  setProfile({}, false);
   assert.equal(types().includes('bedtime'), false, 'pelkillä oletuksilla ei iltamuistutuksia');
   assert.equal(types().includes('wind_down'), false);
+});
+
+test('ateriarytmin lisäravinne, vesitauko ja iltaraja omina muistutuksinaan oikealla sanamuodolla', () => {
+  signIn();
+  seedDay({ settings: { mealRhythm: {
+    meals: [],
+    supplements: [{ id: 'dvit', name: 'D-vitamiini', time: '14:00' }],
+    waterEveryMinutes: 120, waterFrom: '13:00', waterTo: '17:00',
+    lateEatingCutoff: '20:00'
+  } } });
+  const intents = dailyLifeReminderPlan({ now: NOON }).intents
+    .filter(intent => intent.type === 'meal' && intent.date === TODAY);
+  const byKind = kind => intents.filter(intent => intent.mealKind === kind);
+  assert.equal(byKind('supplement').length, 1);
+  assert.equal(byKind('supplement')[0].title, 'Lisäravinne');
+  assert.equal(/D-vitamiini/.test(JSON.stringify(byKind('supplement')[0])), false, 'nimi ei näy lukitusnäytöllä');
+  assert.ok(byKind('water').length >= 1 && byKind('water').every(intent => intent.title === 'Vesitauko'));
+  assert.equal(byKind('late_cutoff')[0].time, '20:00');
+  assert.equal(intents.some(intent => /Ruoka-aika/.test(intent.body)), false, 'ei väärää sanaa');
 });
 
 test('ateriat ja tapojen seuraava suunniteltu aika tulevat mukaan; tavan otsikko on neutraali', () => {
