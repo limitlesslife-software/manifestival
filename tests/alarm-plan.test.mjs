@@ -246,6 +246,23 @@ test('katsaus kertoo ajan aamulenkille aamun väljyydestä (§34), ei keksi vapa
   assert.doesNotMatch(alarms({ settings, commitmentsByDate: { [MONDAY]: near } })[0].briefText, /aamulenkille/);
 });
 
+test('iltapäivän meno ei ole aamun meno: kerrotaan, mutta aamu ja lenkki tavallisesta rytmistä (uusintakatselmointi)', () => {
+  const settings = { ...SETTINGS, morningBriefEnabled: true };
+  // Meno klo 16: aiemmin aamurutiini ajoitettiin 15.25 ja katsaus sanoi "535 minuutin aamulenkille".
+  const afternoon = { id: 'h', title: 'Hammaslääkäri', startTime: '16:00', leaveTime: '15:30' };
+  const chosen = morningOfDay({ dateIso: MONDAY, commitments: [afternoon], profile: PROFILE, settings });
+  assert.equal(chosen.commitment.id, 'h', 'meno kerrotaan tietona');
+  assert.equal(chosen.plan.commitment, null, 'aamu lasketaan ilman iltapäivän menoa');
+  const [alarm] = alarms({ settings, commitmentsByDate: { [MONDAY]: afternoon } });
+  assert.match(alarm.briefText, /Hammaslääkäri/);
+  assert.doesNotMatch(alarm.briefText, /aamulenkille/);
+  // Pitkä aamuväljyys aamun menolle sanotaan yleisesti, ei minuuttimääränä.
+  const late = { id: 'l', title: 'Lääkäri', startTime: '11:00', leaveTime: '10:50' };
+  const [roomy] = alarms({ settings, commitmentsByDate: { [MONDAY]: late } });
+  assert.match(roomy.briefText, /Sinulla on aikaa yli puolentoista tunnin aamulenkille\./);
+  assert.doesNotMatch(roomy.briefText, /\d{3} minuutin/);
+});
+
 // ================================================================ voimistuminen
 
 test('voimistumisen tarkistus: enintään 4 vaihetta, kasvava, alle 10 min, tunnetut vaiheet', () => {
