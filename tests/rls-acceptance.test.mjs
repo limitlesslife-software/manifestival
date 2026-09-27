@@ -26,7 +26,7 @@ import { runAcceptance, formatReport, idsFor, taskRow, profileRow,
   from '../tools/rls-acceptance/acceptance.js';
 import { TABLE_SPECS, COMPOSITE_FK_PROBES, CLEANUP_ORDER, ACCEPTANCE_WAVES, inWave }
   from '../tools/rls-acceptance/tableSpecs.js';
-import { WAVES, MIGRATION_WAVE } from '../tools/release/waves.mjs';
+import { WAVES, MIGRATION_WAVE, DB_FLOOR } from '../tools/release/waves.mjs';
 import { ACCOUNT_DATA_MAP } from '../src/domain/accountLifecycle.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -1666,9 +1666,31 @@ test('KRIITTINEN: uusien taulujen testirivit vastaavat sovelluksen sarakkeita', 
       { id: 'x', intent: 'create_task', risk: 'medium' }]
   ];
 
+  // AALTO J: sovellus kirjoittaa myös myöhempien migraatioiden
+  // sarakeporttien sarakkeet (0009 bills.payee/iban/reference, 0010
+  // goals.metric ... ja projects.milestone_id, 0012 goals.life_area_id).
+  // Työkalun testirivit EIVÄT lue porttitilaa (tableSpecs.js: "TÄMÄ EI
+  // OLE SOVELLUKSEN PORTTITILA"): oletusajo (aalto E = 0008) ei saa
+  // lähettää niitä (ks. "aalto rajaa ajon"), ja viitesarakkeet
+  // kokeillaan omina ristiinkiinnityshyökkäyksinään (COMPOSITE_FK_PROBES).
+  // Testirivin on siksi oltava TÄSMÄLLEEN sovelluksen rivi ilman niitä:
+  // ei yhtään saraketta enempää, eikä mitään muuta vähempää.
+  const { SCHEMA_REQUIREMENTS, COMPILE_COLUMN_GATES } = await import('../src/data/schema.js');
+  const myohemmat = taulu => SCHEMA_REQUIREMENTS
+    .filter(r => r.kind === 'column' && r.table === taulu && r.migration > DB_FLOOR.migration
+      && COMPILE_COLUMN_GATES[r.gate] === true)
+    .flatMap(r => r.columns);
+  const karsitut = new Set();
+
   for (const [testirivi, repo, esimerkki] of parit) {
     const sovelluksen = repo.mapping.toRow(repo.mapping.normalize(esimerkki));
-    assert.deepEqual(Object.keys(testirivi).sort(), Object.keys(sovelluksen).sort(),
+    for (const sarake of myohemmat(repo.table)) {
+      assert.ok(sarake in sovelluksen,
+        `${repo.table}.${sarake}: portti on auki, mutta sovellus ei kirjoita saraketta`);
+      karsitut.add(`${repo.table}.${sarake}`);
+    }
+    const odotetut = Object.keys(sovelluksen).filter(sarake => !myohemmat(repo.table).includes(sarake));
+    assert.deepEqual(Object.keys(testirivi).sort(), odotetut.sort(),
       `taulun ${repo.table} testirivi ei vastaa sovelluksen kirjoittamia sarakkeita`);
 
     // Eikä yksikään lähetä palvelimen omistamia kenttiä.
@@ -1677,6 +1699,14 @@ test('KRIITTINEN: uusien taulujen testirivit vastaavat sovelluksen sarakkeita', 
         `${repo.table}: testirivi lähettää palvelimen omistaman kentän ${kielletty}`);
     }
   }
+
+  // Aallossa J karsinta koskee täsmälleen näitä sarakkeita.
+  assert.deepEqual([...karsitut].sort(), [
+    'bills.iban', 'bills.payee', 'bills.reference',
+    'goals.baseline_value', 'goals.current_value', 'goals.life_area_id', 'goals.measured_on',
+    'goals.metric', 'goals.savings_goal_id', 'goals.target_value', 'goals.unit',
+    'projects.milestone_id'
+  ]);
 });
 
 test('KRIITTINEN: porttitila on suunniteltu aalto, ei sattuma', async () => {

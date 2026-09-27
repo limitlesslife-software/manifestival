@@ -450,25 +450,32 @@ test('KRIITTINEN: tilannedokumentti luettelee jokaisen migraation', () => {
       `tilannedokumentti ei mainitse migraatiota ${nimi}`);
   }
 
-  // KAHDEKSAN AJETTUA, YKSI AJAMATON.
+  // AALTOCOMMIT K: KAIKKI NELJÄTOISTA AJETTUA.
   //
-  // Migraatio 0009 (Talous 2.0) on suunniteltu mutta EI AJETTU. Jos
-  // tämä luku nousisi yhdeksään ilman että migraatio on todella
-  // ajettu, dokumentti väittäisi tuotannosta jotain mitä siellä ei
-  // ole -- ja porttien avaaminen sen perusteella kaataisi jokaisen
-  // kirjoituksen.
-  assert.equal((doc.match(/\*\*AJETTU\*\*/g) || []).length, 8,
-    'tilannedokumentti ei merkitse kahdeksaa ajetuksi');
+  // 0001–0008 on ajettu ja hyväksytty tuotannossa. 0009–0014 ovat
+  // aaltojen F–K EDELLYTYKSIÄ: rivi saa sanoa AJETTU vain, jos se
+  // samalla nimeää edellytyksen ja oman varmistuksensa. Pelkkä "AJETTU"
+  // ilman ehtoa väittäisi tuotannosta jotain, mitä commitin
+  // valmisteluhetkellä ei ollut tapahtunut.
+  // AALTOCOMMIT L: KAIKKI VIISITOISTA AJETTUA (0015 tämän commitin edellytys).
+  assert.equal((doc.match(/\*\*AJETTU\*\*/g) || []).length, 15,
+    'tilannedokumentti ei merkitse viittätoista ajetuksi');
 
-  for (const [numero, tiedosto] of [
-    ['0009', '0009_finance_2.sql'],
-    ['0010', '0010_goal_to_action.sql']
-  ]) {
-    const rivi = doc.split(NEWLINE).find(r => r.includes(tiedosto));
-    assert.ok(rivi, `tilannedokumentti ei mainitse migraatiota ${numero}`);
-    assert.match(rivi, /EI AJETTU/,
-      `migraatio ${numero} ei ole merkitty ajamattomaksi`);
+  const rivit = doc.split(NEWLINE);
+  for (const nimi of migraatiot) {
+    const numero = nimi.slice(0, 4);
+    const rivi = rivit.find(r => r.includes('|') && r.includes('`' + nimi + '`'));
+    assert.ok(rivi, `tilannedokumentin migraatiotaulukossa ei ole riviä ${nimi}`);
+    assert.match(rivi, /\*\*AJETTU\*\*/, `${nimi} ei ole merkitty ajetuksi`);
+    if (numero <= '0008') continue;
+    assert.match(rivi, new RegExp(`EDELLYTYS[^|]*\`verify_${numero}\\.sql\` 0 poikkeavaa`),
+      `${nimi}: AJETTU ilman edellytystä ja omaa varmistusta`);
   }
+
+  // Aallon L oma migraatio on TÄMÄN commitin edellytys.
+  const rivi0015 = rivit.find(r => r.includes('0015_mental_load.sql'));
+  assert.match(rivi0015, /EDELLYTYS: `verify_0015\.sql` 0 poikkeavaa ennen tämän commitin deployta/,
+    'migraation 0015 rivi ei nimeä deployn edellytystä');
 });
 
 test('KRIITTINEN: tilannedokumentin porttitaulukko vastaa koodia', () => {

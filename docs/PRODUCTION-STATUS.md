@@ -55,50 +55,54 @@ Automaattinen testi vartioi, että tämä dokumentti pysyy ajan tasalla.
 | 0006 | `0006_wellbeing.sql` | **AJETTU** | PASS |
 | 0007 | `0007_finance.sql` | **AJETTU** | PASS |
 | 0008 | `0008_ai_audit.sql` | **AJETTU** | PASS |
-| 0009 | `0009_finance_2.sql` | **EI AJETTU** | — |
-| 0010 | `0010_goal_to_action.sql` | **EI AJETTU** | — |
-| 0011 | `0011_personal_assistant.sql` | **EI AJETTU** | — |
-| 0012 | `0012_life_alignment.sql` | **EI AJETTU** | — |
-| 0013 | `0013_alignment_reality.sql` | **EI AJETTU** | — |
-| 0014 | `0014_daily_life.sql` | **EI AJETTU** | — |
-| 0015 | `0015_mental_load.sql` | **EI AJETTU** | — |
+| 0009 | `0009_finance_2.sql` | **AJETTU** | EDELLYTYS (aalto F, e05c54b): `verify_0009.sql` 0 poikkeavaa |
+| 0010 | `0010_goal_to_action.sql` | **AJETTU** | EDELLYTYS (aalto G, f362e1a): `verify_0010.sql` 0 poikkeavaa |
+| 0011 | `0011_personal_assistant.sql` | **AJETTU** | EDELLYTYS (aalto H, b7be377): `verify_0011.sql` 0 poikkeavaa |
+| 0012 | `0012_life_alignment.sql` | **AJETTU** | EDELLYTYS (aalto I, d418b79): `verify_0012.sql` 0 poikkeavaa |
+| 0013 | `0013_alignment_reality.sql` | **AJETTU** | EDELLYTYS (aalto J, 783cfc1): `verify_0013.sql` 0 poikkeavaa |
+| 0014 | `0014_daily_life.sql` | **AJETTU** | EDELLYTYS (aalto K, d11d8b4): `verify_0014.sql` 0 poikkeavaa |
+| 0015 | `0015_mental_load.sql` | **AJETTU** | EDELLYTYS: `verify_0015.sql` 0 poikkeavaa ennen tämän commitin deployta |
 
-> **Migraatio 0015 on suunniteltu, ei ajettu.** Se riippuu 0014:stä ja
-> MUUTTAA tuotannossa auki olevaa `tasks`-taulua (horisontti, odotus,
-> tarkistuspäivä, arkistointi, siirtojen seuranta; `date` saa olla NULL)
-> sekä `life_areas`-taulua (`kind`; kategorian uniikkius poistuu).
-> Lisäksi kaksi uutta taulua: `protected_periods` (suojattu aika) ja
-> `weekly_plans` (sunnuntain nollaus). Portit `protectedPeriods`,
-> `weeklyPlans` ja sarakeportti `MENTAL_LOAD_FIELDS` ovat kiinni
-> (aalto L, v25). Riski keski, tuore varmuuskopio pakollinen
-> (`docs/MIGRATION-0015-RECOVERY.md`).
+> **Migraatio 0015 (aalto L).** Se riippuu 0014:stä ja MUUTTAA tuotannossa
+> auki olevaa `tasks`-taulua (horisontti, odotus, tarkistuspäivä,
+> arkistointi, siirtojen seuranta; `date` saa olla NULL) sekä
+> `life_areas`-taulua (`kind`; kategorian uniikkius poistuu), ja luo
+> `protected_periods`- ja `weekly_plans`-taulut. Portit `protectedPeriods`,
+> `weeklyPlans` ja sarakeportti `MENTAL_LOAD_FIELDS` avataan tässä
+> commitissa (aalto L, v25): deploy vasta kun `verify_0015.sql` antaa 0
+> poikkeavaa. Tuore varmuuskopio pakollinen (`docs/MIGRATION-0015-RECOVERY.md`).
 
-> **Migraatio 0014 on suunniteltu, ei ajettu.** Se riippuu 0013:sta ja
-> luo kymmenen uutta taulua arjen käyttöjärjestelmälle (paikat ja
-> lisänimet, menot, kuitatut matka-ajat, arjen asetukset, unikirjaukset,
-> tapojen suunnitelmat ja kirjaukset, liikuntakerrat, motivaatio ja
-> hallinnan tunne). Olemassa oleviin tauluihin se ei koske, eikä sillä
-> ole sarakeportteja. Kymmenen porttia ovat kiinni (aalto K, v24).
+> **Migraatio 0014 (aalto K).** Se riippuu 0013:sta ja luo kymmenen uutta
+> taulua arjen käyttöjärjestelmälle (paikat ja lisänimet, menot, kuitatut
+> matka-ajat, arjen asetukset, unikirjaukset, tapojen suunnitelmat ja
+> kirjaukset, liikuntakerrat, motivaatio ja hallinnan tunne). Olemassa
+> oleviin tauluihin se ei koske, eikä sillä ole sarakeportteja. Kymmenen
+> porttia avataan tässä commitissa (aalto K, v24): deploy vasta kun
+> `verify_0014.sql` antaa 0 poikkeavaa.
 
-> **Migraatio 0013 on suunniteltu, ei ajettu.** Se riippuu 0012:sta:
+> **Migraatio 0013 (aalto J).** Se riippuu 0012:sta:
 > lisää taulut `running_timers` (yksi ajastin käyttäjää kohti) ja
 > `alignment_item_settings` (kuormittavuus ym.) sekä sarakkeita 0012:n
 > tauluihin. Tuotannossa auki oleviin tauluihin se ei koske. Portit
 > `runningTimers`, `alignmentItemSettings` ja
-> `ALIGNMENT_REALITY_FIELDS` ovat kiinni (aalto J, v23).
+> `ALIGNMENT_REALITY_FIELDS` avataan tässä commitissa (aalto J, v23):
+> deploy vasta kun `verify_0013.sql` antaa 0 poikkeavaa.
 
-> **⚠ Migraatio 0010 on suunniteltu, ei ajettu — ja se on
-> vaarallisempi kuin aiemmat.** Se on ensimmäinen migraatio, joka
-> MUUTTAA tauluja joissa on käyttäjän dataa ja joiden portit ovat auki
-> tuotannossa (`goals`, `projects`, `tasks`). Se myös korvaa
-> `goals_status_check` -rajoitteen. Varmuuskopio ei ole muodollisuus.
-> Ks. `docs/GOAL-TO-ACTION.md`.
-
-> **Migraatio 0009 on suunniteltu, ei ajettu.** Se luo taulut
-> `transactions` ja `investments` sekä lisää `bills`-tauluun kolme
-> maksutietosaraketta. Talous 2.0:n sovelluskoodi toimii ilman sitä:
-> portit ovat kiinni, jolloin tieto elää istunnon muistissa. Ajaminen
-> vaatii Panun erillisen hyväksynnän.
+> **EDELLYTYS-merkintä (0009 alkaen).** Aallot F–J on valmisteltu
+> etukäteen harjoitteluhaaroissa. Rivi, jossa lukee AJETTU ja
+> EDELLYTYS, ei ole historiallinen havainto vaan deployn ehto: aallon
+> commit deployataan vasta, kun edellinen aalto on hyväksytty, Panu on
+> erikseen hyväksynyt migraation, se on ajettu tuotantoon ja sen
+> `supabase/verify/verify_XXXX.sql` antaa 0 poikkeavaa.
+>
+> **⚠ 0010 on vaarallisempi kuin aiemmat.** Se MUUTTAA tauluja, joissa
+> on käyttäjän dataa ja joiden portit ovat auki tuotannossa (`goals`,
+> `projects`, `tasks`, `profile`), ja korvaa `goals_status_check`
+> -rajoitteen. Se on harjoiteltu oikealla PostgreSQL 17:llä tuotannon
+> muotoista dataa vasten (`tools/pg-rehearsal`, tuotehaara): olemassa
+> olevat rivit säilyvät, uudelleenajo ja lukon aikakatkaisu kaatuvat
+> kiinni jättämättä jälkeä. Varmuuskopio ennen ajoa ei silti ole
+> muodollisuus. Ks. `docs/GOAL-TO-ACTION.md`.
 
 > **Yhtäkään ajettua ei saa ajaa uudelleen.** Jokainen on fail-closed ja
 > keskeytyy itse, mutta älä luota siihen — ne on tarkoitettu ajettaviksi
@@ -159,48 +163,48 @@ vertaa niihin.
 | Portti | Migraatio | Tuotannon tila |
 |---|---|---|
 | `TASK_EXTENDED_FIELDS` | 0002 | **AKTIVOITU** |
-| `routines` | 0003 | kiinni |
-| `routineExceptions` | 0003 | kiinni |
-| `goals` | 0004 | kiinni |
-| `projects` | 0004 | kiinni |
-| `notificationPreferences` | 0005 | kiinni |
-| `wellbeing` | 0006 | kiinni |
-| `bills` | 0007 | kiinni |
-| `recurringExpenses` | 0007 | kiinni |
-| `savingsGoals` | 0007 | kiinni |
-| `aiAudit` | 0008 | kiinni |
-| `transactions` | 0009 | kiinni |
-| `investments` | 0009 | kiinni |
-| `BILL_PAYMENT_FIELDS` | 0009 | kiinni |
-| `milestones` | 0010 | kiinni |
-| `GOAL_PLANNING_FIELDS` | 0010 | kiinni |
-| `GOAL_MAINTENANCE_MODE` | 0010 | kiinni |
-| `inboxItems` | 0011 | kiinni |
-| `reminders` | 0011 | kiinni |
-| `notices` | 0011 | kiinni |
-| `travelPlans` | 0011 | kiinni |
-| `locationRules` | 0011 | kiinni |
-| `lifeAreas` | 0012 | kiinni |
-| `weeklyCapacities` | 0012 | kiinni |
-| `timeEntries` | 0012 | kiinni |
-| `alignmentReviews` | 0012 | kiinni |
-| `GOAL_LIFE_AREA_FIELD` | 0012 | kiinni |
-| `runningTimers` | 0013 | kiinni |
-| `alignmentItemSettings` | 0013 | kiinni |
-| `ALIGNMENT_REALITY_FIELDS` | 0013 | kiinni |
-| `savedPlaces` | 0014 | kiinni |
-| `placeAliases` | 0014 | kiinni |
-| `calendarEvents` | 0014 | kiinni |
-| `commuteObservations` | 0014 | kiinni |
-| `lifeSettings` | 0014 | kiinni |
-| `sleepLogs` | 0014 | kiinni |
-| `habitPlans` | 0014 | kiinni |
-| `habitEvents` | 0014 | kiinni |
-| `exerciseSessions` | 0014 | kiinni |
-| `wellbeingCheckins` | 0014 | kiinni |
-| `protectedPeriods` | 0015 | kiinni |
-| `weeklyPlans` | 0015 | kiinni |
-| `MENTAL_LOAD_FIELDS` | 0015 | kiinni |
+| `routines` | 0003 | **AKTIVOITU** |
+| `routineExceptions` | 0003 | **AKTIVOITU** |
+| `goals` | 0004 | **AKTIVOITU** |
+| `projects` | 0004 | **AKTIVOITU** |
+| `notificationPreferences` | 0005 | **AKTIVOITU** |
+| `wellbeing` | 0006 | **AKTIVOITU** |
+| `bills` | 0007 | **AKTIVOITU** |
+| `recurringExpenses` | 0007 | **AKTIVOITU** |
+| `savingsGoals` | 0007 | **AKTIVOITU** |
+| `aiAudit` | 0008 | **AKTIVOITU** |
+| `transactions` | 0009 | **AKTIVOITU** |
+| `investments` | 0009 | **AKTIVOITU** |
+| `BILL_PAYMENT_FIELDS` | 0009 | **AKTIVOITU** |
+| `milestones` | 0010 | **AKTIVOITU** |
+| `GOAL_PLANNING_FIELDS` | 0010 | **AKTIVOITU** |
+| `GOAL_MAINTENANCE_MODE` | 0010 | **AKTIVOITU** |
+| `inboxItems` | 0011 | **AKTIVOITU** |
+| `reminders` | 0011 | **AKTIVOITU** |
+| `notices` | 0011 | **AKTIVOITU** |
+| `travelPlans` | 0011 | **AKTIVOITU** |
+| `locationRules` | 0011 | **AKTIVOITU** |
+| `lifeAreas` | 0012 | **AKTIVOITU** |
+| `weeklyCapacities` | 0012 | **AKTIVOITU** |
+| `timeEntries` | 0012 | **AKTIVOITU** |
+| `alignmentReviews` | 0012 | **AKTIVOITU** |
+| `GOAL_LIFE_AREA_FIELD` | 0012 | **AKTIVOITU** |
+| `runningTimers` | 0013 | **AKTIVOITU** |
+| `alignmentItemSettings` | 0013 | **AKTIVOITU** |
+| `ALIGNMENT_REALITY_FIELDS` | 0013 | **AKTIVOITU** |
+| `savedPlaces` | 0014 | **AKTIVOITU** |
+| `placeAliases` | 0014 | **AKTIVOITU** |
+| `calendarEvents` | 0014 | **AKTIVOITU** |
+| `commuteObservations` | 0014 | **AKTIVOITU** |
+| `lifeSettings` | 0014 | **AKTIVOITU** |
+| `sleepLogs` | 0014 | **AKTIVOITU** |
+| `habitPlans` | 0014 | **AKTIVOITU** |
+| `habitEvents` | 0014 | **AKTIVOITU** |
+| `exerciseSessions` | 0014 | **AKTIVOITU** |
+| `wellbeingCheckins` | 0014 | **AKTIVOITU** |
+| `protectedPeriods` | 0015 | **AKTIVOITU** |
+| `weeklyPlans` | 0015 | **AKTIVOITU** |
+| `MENTAL_LOAD_FIELDS` | 0015 | **AKTIVOITU** |
 
 `GOAL_PLANNING_FIELDS` on **sarakeportti** ja `GOAL_MAINTENANCE_MODE`
 **arvoportti**. Ne ovat erillisiä, koska niiden viat ovat erilaisia:
@@ -235,36 +239,33 @@ hyväksyntäpaketit: `docs/RELEASE-TRAIN-0003-0008.md`.
 | Vaihe | Portit | Cache | Valmius | Suunniteltu | Deployattu | Selain | Kanta | Turva |
 |---|---|---|---|---|---|---|---|---|
 | — | tuotanto nyt | `v12` | — | `63a96c5` | **2026-09-08** | **PASS** | **PASS** | **PASS** |
-| **Korjaus** | ei yhtään | `v13` | VALMIS | `beac82e` | — | — | — | — |
-| **A** | `notificationPreferences`, `wellbeing` | `v14` | VALMIS | `1c2a6d1` | — | — | — | — |
-| **B** | `goals`, `projects` | `v15` | OSITTAINEN | `47cfda8` | — | — | — | — |
-| **C** | `routines`, `routineExceptions` | `v16` | VALMIS | `78dc6f8` | — | — | — | — |
-| **D** | `recurringExpenses`, `savingsGoals`, `bills` | `v17` | **ESTETTY** | `76ba75d` | — | — | — | — |
-| **E** | `aiAudit` | `v18` | VALMIS | `edd9b33` | — | — | — | — |
-| **F** | `transactions`, `investments` | `v19` | **ESTETTY** | — | — | — | — | — |
-| **G** | `milestones` | `v20` | **ESTETTY** | — | — | — | — | — |
-| **H** | `inboxItems`, `reminders`, `notices`, `travelPlans`, `locationRules` | `v21` | **ESTETTY** | — | — | — | — | — |
+| **Perustila** | ei yhtään | `v13` | VALMIS | `f78f60a` | — | — | — | — |
+| **A** | `notificationPreferences`, `wellbeing` | `v14` | VALMIS | `703c28f` | — | — | — | — |
+| **B** | `goals`, `projects` | `v15` | VALMIS | `ddfc356` | — | — | — | — |
+| **C** | `routines`, `routineExceptions` | `v16` | VALMIS | `cf259d0` | — | — | — | — |
+| **D** | `recurringExpenses`, `savingsGoals`, `bills` | `v17` | VALMIS | `091e73c` | — | — | — | — |
+| **E** | `aiAudit` | `v18` | VALMIS | `2b947cc` | — | — | — | — |
+| **F** | `transactions`, `investments`, `BILL_PAYMENT_FIELDS` | `v19` | VALMIS (edellyttää 0009) | `e05c54b` | — | — | — | — |
+| **G** | `milestones`, `GOAL_PLANNING_FIELDS`, `GOAL_MAINTENANCE_MODE` | `v20` | VALMIS (edellyttää 0010) | `f362e1a` | — | — | — | — |
+| **H** | `inboxItems`, `reminders`, `notices`, `travelPlans`, `locationRules` | `v21` | VALMIS (edellyttää 0011) | `b7be377` | — | — | — | — |
+| **I** | `lifeAreas`, `weeklyCapacities`, `timeEntries`, `alignmentReviews`, `GOAL_LIFE_AREA_FIELD` | `v22` | VALMIS (edellyttää 0012) | `d418b79` | — | — | — | — |
+| **J** | `runningTimers`, `alignmentItemSettings`, `ALIGNMENT_REALITY_FIELDS` | `v23` | VALMIS (edellyttää 0013) | tämä commit | — | — | — | — |
 
-**Aalto F on estetty, ei kesken.** Sen sovelluskoodi on valmis ja
-testattu porttien ollessa kiinni. Este on yksi ja nimetty: migraatiota
-`0009_finance_2.sql` **ei ole ajettu tuotantoon**. Portteja ei voi
-avata tauluihin, joita ei ole.
+**Aalto F = Talous 2.0:n tuotekoodi + migraatio 0009 + sen portit
+yhtenä hyväksyntätapahtumana** (lukittu päätös,
+`docs/RELEASE-SEQUENCING.md`). Välimuistiversio `v19` kattaa sekä
+tuotekoodin että porttien avaamisen: kuori vaihtuu yhdellä kertaa.
 
-Aalto muuttuu VALMIIKSI vasta kun
+Järjestys on pakollinen:
 
-1. Panu on hyväksynyt migraation 0009,
-2. migraatio on ajettu tuotantoon, ja
-3. `supabase/verify/verify_0009.sql` antaa 0 poikkeavaa.
+1. Panu hyväksyy migraation 0009,
+2. migraatio ajetaan tuotantoon,
+3. `supabase/verify/verify_0009.sql` antaa 0 poikkeavaa,
+4. vasta sitten tämä commit deployataan.
 
-> **HUOM. Talous 2.0:n tuotantoversiota ei ole vielä valittu.**
->
-> Aallon F cache-versio `v19` koskee porttien avaamista. Talous 2.0:n
-> *tuotekoodi* on eri asia: se on uusi julkaisu, joka ei muuta yhtään
-> porttia mutta muuttaa sovelluskuorta — ja siksi vaatii oman
-> cache-version bumpin deployhetkellä. Sitä ei ole annettu tässä
-> haarassa, koska oikea numero riippuu siitä, missä järjestyksessä
-> aallot C–E ja Talous 2.0 deployataan. Ks.
-> `docs/FINANCE-2.0.md`, kohta "Julkaisujärjestys".
+Jos kohta 3 ei ole PASS, tätä committia EI deployata: auki olevat
+portit kaataisivat jokaisen tapahtuman, sijoituksen ja laskun
+tallennuksen.
 
 Aaltojen commit-SHA:t: `docs/activation-0003-0008-release-manifest.json`.
 

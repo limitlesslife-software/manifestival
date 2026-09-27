@@ -229,7 +229,9 @@ export const WAVES = Object.freeze([
     // Deployattavuus on siksi molempien ehtojen konjunktio. Ks.
     // `isDeployable()`.
     readiness: 'READY',
-    blockedBy: 'supabase/migrations/0009_finance_2.sql — EI AJETTU',
+    // Este poistettu aaltocommitissa: 0009_finance_2.sql on tämän commitin
+    // EDELLYTYS. Deploy vasta kun verify_0009.sql = 0 poikkeavaa.
+    blockedBy: null,
     gates: Object.freeze(['transactions', 'investments']),
     title: 'Talous 2.0: tapahtumat ja sijoitukset',
     rationale:
@@ -252,7 +254,9 @@ export const WAVES = Object.freeze([
 
     // READY koskee käyttöliittymää, `blockedBy` kantaa. Ks. aalto F.
     readiness: 'READY',
-    blockedBy: 'supabase/migrations/0010_goal_to_action.sql — EI AJETTU',
+    // Este poistettu aaltocommitissa: 0010_goal_to_action.sql on tämän commitin
+    // EDELLYTYS. Deploy vasta kun verify_0010.sql = 0 poikkeavaa.
+    blockedBy: null,
     gates: Object.freeze(['milestones']),
     title: 'Tavoitteesta tekemiseksi: välitavoitteet',
     rationale:
@@ -285,7 +289,9 @@ export const WAVES = Object.freeze([
     //
     // `blockedBy` on yhä voimassa: käyttöliittymä on olemassa, kantaa ei.
     readiness: 'READY',
-    blockedBy: 'supabase/migrations/0011_personal_assistant.sql — EI AJETTU',
+    // Este poistettu aaltocommitissa: 0011_personal_assistant.sql on tämän commitin
+    // EDELLYTYS. Deploy vasta kun verify_0011.sql = 0 poikkeavaa.
+    blockedBy: null,
     gates: Object.freeze(['inboxItems', 'reminders', 'notices',
                           'travelPlans', 'locationRules']),
     title: 'Henkilökohtainen avustaja: kirjaus, muistutukset ja matka',
@@ -314,7 +320,9 @@ export const WAVES = Object.freeze([
 
     // READY koskee käyttöliittymää, `blockedBy` kantaa. Ks. aalto F.
     readiness: 'READY',
-    blockedBy: 'supabase/migrations/0012_life_alignment.sql — EI AJETTU',
+    // Este poistettu aaltocommitissa: 0012_life_alignment.sql on tämän commitin
+    // EDELLYTYS. Deploy vasta kun verify_0012.sql = 0 poikkeavaa.
+    blockedBy: null,
     gates: Object.freeze(['lifeAreas', 'weeklyCapacities', 'timeEntries', 'alignmentReviews']),
     title: 'Suunta: elämänalueet, kapasiteetti, toteuma ja viikkokatsaus',
     rationale:
@@ -339,7 +347,9 @@ export const WAVES = Object.freeze([
 
     // READY koskee käyttöliittymää, `blockedBy` kantaa. Ks. aalto F.
     readiness: 'READY',
-    blockedBy: 'supabase/migrations/0013_alignment_reality.sql — EI AJETTU',
+    // Este poistettu aaltocommitissa: 0013_alignment_reality.sql on tämän commitin
+    // EDELLYTYS. Deploy vasta kun verify_0013.sql = 0 poikkeavaa.
+    blockedBy: null,
     gates: Object.freeze(['runningTimers', 'alignmentItemSettings']),
     title: 'Suunta 2: ajastin, kuormittavuus ja toteuman lähteet',
     rationale:
@@ -372,7 +382,9 @@ export const WAVES = Object.freeze([
     // takia: migraatiota 0014 ei ole ajettu. Valmiustila JOHDETAAN
     // tavoitettavuudesta (tests/ui-reachability.test.mjs).
     readiness: 'READY',
-    blockedBy: 'supabase/migrations/0014_daily_life.sql — EI AJETTU',
+    // Este poistettu aaltocommitissa: 0014_daily_life.sql on tämän commitin
+    // EDELLYTYS. Deploy vasta kun verify_0014.sql = 0 poikkeavaa.
+    blockedBy: null,
     gates: Object.freeze(['savedPlaces', 'placeAliases', 'calendarEvents', 'commuteObservations',
                           'lifeSettings', 'sleepLogs', 'habitPlans', 'habitEvents',
                           'exerciseSessions', 'wellbeingCheckins']),
@@ -407,7 +419,9 @@ export const WAVES = Object.freeze([
 
     // READY koskee käyttöliittymää, `blockedBy` kantaa. Ks. aalto F.
     readiness: 'READY',
-    blockedBy: 'supabase/migrations/0015_mental_load.sql — EI AJETTU',
+    // Este poistettu aaltocommitissa: 0015_mental_load.sql on tämän commitin
+    // EDELLYTYS. Deploy vasta kun verify_0015.sql = 0 poikkeavaa.
+    blockedBy: null,
     gates: Object.freeze(['protectedPeriods', 'weeklyPlans']),
     title: 'Mielen kuorman keventäminen: horisontit, odotus, suojattu aika ja sunnuntain nollaus',
     rationale:

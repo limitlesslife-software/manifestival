@@ -13,7 +13,8 @@ import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 
 import { ROOT, read } from './helpers/sources.mjs';
-import { COLUMN_GATES, cacheVersionOf, cumulativeGates, waveById, WAVE_IDS } from '../tools/release/waves.mjs';
+import { COLUMN_GATES, cacheVersionOf, cumulativeGates, waveById, WAVE_IDS, resolveWave } from '../tools/release/waves.mjs';
+import { TABLES } from '../src/data/schema.js';
 import { candidateChecks } from '../tools/activation/orchestrate.mjs';
 import { parseColumnGates } from '../tools/release/live-assets.mjs';
 import { versionNumber } from '../tools/release/lineage.mjs';
@@ -42,7 +43,8 @@ test('kartta kattaa aallot C–K järjestyksessä; K on viimeinen lukittu', () =
   const after = WAVE_IDS.slice(WAVE_IDS.indexOf(map.waves.at(-1).wave) + 1);
   assert.deepEqual(after, ['L']);
   for (const id of after) {
-    assert.ok(waveById(id).blockedBy, `${id}: leikkaamaton aalto on yhä kannan estämä`);
+    // Aaltocommitissa L:n oma migraatio on edellytys (este poistettu).
+    assert.ok(waveById(id).blockedBy || resolveWave(TABLES) === id, `${id}: leikkaamaton aalto on yhä kannan estämä`);
     assert.equal(TRAIN.some(e => e.wave === id), false, `${id}: alias lisätään vasta leikkauksessa`);
   }
 });

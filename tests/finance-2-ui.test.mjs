@@ -135,39 +135,37 @@ test('palvelin ei palauta kuvaa vastauksessa', () => {
 // PORTIT
 // =====================================================================
 
-test('KRIITTINEN: Talous 2.0:n portit ovat kiinni', () => {
-  // Migraatiota 0009 ei ole ajettu. Auki oleva portti kaataisi
-  // jokaisen kirjoituksen koodilla 42P01 tai 42703.
-  assert.equal(TABLES.transactions, false);
-  assert.equal(TABLES.investments, false);
-  assert.equal(BILL_PAYMENT_FIELDS, false);
+test('KRIITTINEN: aallossa F Talous 2.0:n portit ovat auki', () => {
+  // Aaltocommit F. Migraatio 0009 on tämän commitin EDELLYTYS:
+  // deploy vasta kun verify_0009.sql antaa 0 poikkeavaa. Ennen sitä
+  // auki oleva portti kaataisi jokaisen kirjoituksen (42P01 / 42703).
+  assert.equal(TABLES.transactions, true);
+  assert.equal(TABLES.investments, true);
+  assert.equal(BILL_PAYMENT_FIELDS, true);
 
-  assert.ok(pendingTables().includes('transactions'));
-  assert.ok(pendingTables().includes('investments'));
+  assert.equal(pendingTables().includes('transactions'), false);
+  assert.equal(pendingTables().includes('investments'), false);
 });
 
-test('KRIITTINEN: portin ollessa kiinni tieto ei väitä säilyvänsä', () => {
-  assert.equal(transactionsRepo.isPersistent(), false);
-  assert.equal(investmentsRepo.isPersistent(), false);
-  assert.deepEqual(volatileBillFields(), ['payee', 'iban', 'reference']);
+test('KRIITTINEN: portin ollessa auki tieto kertoo säilyvänsä', () => {
+  assert.equal(transactionsRepo.isPersistent(), true);
+  assert.equal(investmentsRepo.isPersistent(), true);
+  assert.deepEqual(volatileBillFields(), []);
 });
 
-test('KRIITTINEN: kiinni oleva portti käyttää muistivarastoa', async () => {
-  // Ei tietokantayhteyttä: getClient() heittäisi, koska asiakasta ei
-  // ole asetettu. Jos nämä menevät läpi, tietokantapolkua ei ajettu.
+test('KRIITTINEN: auki oleva portti ei kirjoita hiljaa muistivarastoon', async () => {
+  // Ei tietokantayhteyttä eikä istuntoa. Jos kirjoitus silti onnistuisi,
+  // se olisi mennyt muistiin ja käyttäjä luulisi tiedon tallentuneen.
   const tapahtuma = await transactionsRepo.insert({
     id: 'ui-t-1', kind: 'expense', amountMinor: 1250,
     date: '2026-09-10', category: 'ruoka'
   });
-  assert.equal(tapahtuma.ok, true);
+  assert.equal(tapahtuma.ok, false, 'kirjoitus onnistui ilman kantaa');
 
   const sijoitus = await investmentsRepo.insert({
     id: 'ui-i-1', name: 'Rahasto', kind: 'fund', costBasisMinor: 100000
   });
-  assert.equal(sijoitus.ok, true);
-
-  const lista = await transactionsRepo.list();
-  assert.ok(lista.value.some(r => r.id === 'ui-t-1'));
+  assert.equal(sijoitus.ok, false, 'kirjoitus onnistui ilman kantaa');
 
   transactionsRepo.clear();
   investmentsRepo.clear();
@@ -259,22 +257,19 @@ test('KRIITTINEN: sijoituksen rivimuunnos vastaa migraatiota 0009', () => {
   assert.equal(Number.isInteger(rivi.cost_basis_minor), true);
 });
 
-test('KRIITTINEN: laskun maksutietoja EI lähetetä portin ollessa kiinni', () => {
-  // Sarakkeet payee, iban ja reference syntyvät migraatiossa 0009.
-  // Niiden lähettäminen -- NULLINAKIN -- kaataisi jokaisen laskun
-  // tallennuksen koodilla 42703.
+test('KRIITTINEN: laskun maksutiedot lähetetään portin ollessa auki', () => {
+  // Sarakkeet payee, iban ja reference syntyvät migraatiossa 0009, joka
+  // on aallon F edellytys. Portin auettua ne tallentuvat.
   const rivi = billsRepo.mapping.toRow(
     billsRepo.mapping.normalize({
       id: 'b1', name: 'Sähkö', amountMinor: 4550, dueDate: '2026-09-20',
       payee: 'Sähköyhtiö', iban: 'FI21 1234 5600 0007 85', reference: '123'
     }));
 
-  assert.equal(BILL_PAYMENT_FIELDS, false, 'testi olettaa portin olevan kiinni');
-
-  for (const kentta of ['payee', 'iban', 'reference']) {
-    assert.equal(kentta in rivi, false,
-      `maksutieto ${kentta} lähetettiin vaikka saraketta ei ole`);
-  }
+  assert.equal(BILL_PAYMENT_FIELDS, true, 'testi olettaa portin olevan auki');
+  assert.equal(rivi.payee, 'Sähköyhtiö');
+  assert.equal(rivi.iban, 'FI21 1234 5600 0007 85');
+  assert.equal(rivi.reference, '123');
 });
 
 test('laskun maksutiedot säilyvät domain-mallissa vaikka niitä ei lähetetä', () => {
