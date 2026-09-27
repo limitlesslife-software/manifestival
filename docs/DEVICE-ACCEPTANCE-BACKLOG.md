@@ -741,10 +741,20 @@ Aseta testiherätykset 2–3 minuutin päähän.
       kokonaan (ei kolmatta soittoa)
 - [P0] **Uudelleenkäynnistys:** ajasta herätys, käynnistä puhelin uudelleen
       avaamatta sovellusta → herätys soi ajallaan. Uudelleenkäynnistys ei itse
-      käynnistä soittoa eikä näytä ilmoitusta
+      käynnistä soittoa eikä näytä ilmoitusta (poikkeus: herätys, joka
+      erääntyi puhelimen ollessa pois päältä ja on enintään 30 min myöhässä,
+      soi heti käynnistyksen jälkeen; sitä vanhempi kirjautuu väliin jääneeksi)
+- [P0] **Uudelleenkäynnistys ilman lukituksen avausta (suora käynnistys):**
+      ajasta herätys 5 minuutin päähän, käynnistä puhelin uudelleen ja jätä
+      se lukituksen taakse **avaamatta PIN-koodilla** → herätys soi ajallaan
+      lukitulla näytöllä yleisnimellä "Herätys"; Sammuta ja Torku toimivat.
+      Avauksen jälkeen sovellus ei näytä sitä väliin jääneenä. Kirjaa,
+      soiko valittu oma ääni vai oletusääni ja kuuluiko puhe
 - [P0] **Aikavyöhykkeen ja kellon vaihto:** herätys klo 7.00, vaihda
       aikavyöhyke (esim. Lontoo) → herätys soi klo 7.00 paikallista aikaa;
-      kellonajan käsin siirto ei tuota kahta soittoa
+      kellonajan käsin siirto ei tuota kahta soittoa. Myös: anna puhutun
+      muistutuksen soida kuittaamatta, siirrä kelloa tunti taaksepäin tai
+      vaihda vyöhyke tunnin länteen (Helsinki → Tukholma) → ei toista soittoa
 - [P0] **Puhuttu muistutus:** puhuttu herätys (tapa "Puhe" tai "Ääni ja
       puhe") lukee tekstin suomeksi hälytysäänenvoimakkuudella; ääni hiljenee
       puheen ajaksi ja palaa sen jälkeen
@@ -759,7 +769,8 @@ Aseta testiherätykset 2–3 minuutin päähän.
       muistutus toistu seuraavassa synkronoinnissa; Torku 5 min tuo sen
       takaisin 5 minuutin päästä; pyyhkäisy pois kirjautuu hylkäykseksi.
       Sovelluksen avaus näiden jälkeen näyttää kuittaukset
-      (`consumeEvents`) oikein eikä kahdesti
+      (`consumeEvents`) oikein eikä kahdesti — myös kun "Lähdin" painettiin
+      sovelluksen ollessa auki ja sovellus suljettiin ja avattiin sen jälkeen
 - [P0] **Suomenkielinen puhe puuttuu:** poista suomen puhedata
       (Asetukset → Tekstistä puheeksi) → herätys soittaa äänen ja näyttää
       tekstin; sovellus kertoo, ettei puhetta ole (`tts: missing`)
@@ -793,6 +804,14 @@ Aseta testiherätykset 2–3 minuutin päähän.
 - [P1] Valmistajakohtainen virransäästö (esim. Samsung "nukkuvat
       sovellukset", Xiaomi): herätys soi; jos ei, kirjaa asetus, joka estää
 - [P1] Mikrofoni-ilmaisin **ei** syty herätyksen tai puheen aikana
+- [P1] Android 14+, puhelin auki: pyyhkäise soivan herätyksen ilmoitus pois
+      → ilmoitus palaa heti Sammuta- ja Torku-painikkeineen; soitto ei lopu
+      eikä kirjaudu kuittaukseksi
+- [P1] Tarkkojen herätysten oikeus pois (epätarkka herätys): kun herätys
+      tulee varailmoituksena, sen Torku-painike kertoo oman torkkuajan
+      (esim. "Torku 9 min"), ja torkku kestää sen verran. Jos herätys on
+      myöhässä ja sovellus avataan ennen kuin se soi, se soi silti (enintään
+      30 min myöhässä); sitä vanhempi näkyy väliin jääneenä
 
 ---
 
