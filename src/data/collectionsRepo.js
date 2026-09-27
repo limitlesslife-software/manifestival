@@ -69,6 +69,59 @@ function assertClientSafe(row) {
   return row;
 }
 
+// ------------------------------------------------------ sivutettu lataus
+//
+// PostgREST palauttaa yhdessä vastauksessa enintään max-rows riviä
+// (Supabasessa oletus 1000) EIKÄ kerro katkaisusta mitään. Ilman
+// järjestystä ja sivutusta lataus näki pitkäikäisestä taulusta vain
+// satunnaisen tuhannen rivin osajoukon ja korvasi tilan sillä: uusimmat
+// unikirjaukset ja tulevat menot katosivat jokaisella latauksella, ja
+// puuttuvan päivän tallennus törmäsi uniikkiavaimeen (23505).
+//
+// Siksi arjen taulut (0014) ladataan sivuittain vakaassa järjestyksessä
+// (tunniste on uniikki, joten sivut eivät mene päällekkäin). Ensimmäinen
+// sivu pyytää kokonaismäärän: jos palvelimen raja on sivua pienempi,
+// jatketaan kunnes kaikki on haettu. Karkaamisraja estää loputtoman
+// silmukan, ja sen ylitys on näkyvä virhe — ei hiljainen katkaisu.
+
+/** Pyydetyn sivun koko (sama kuin Supabasen oletusraja). */
+export const LIST_PAGE_ROWS = 1000;
+
+/** Karkaamisraja: näin monta riviä yhdestä taulusta on jo vika, ei käyttöä. */
+export const MAX_LIST_ROWS = 50000;
+
+/**
+ * Hae kirjautuneen käyttäjän kaikki rivit sivuittain.
+ *
+ * @param {string} table
+ * @param {string} orderColumn uniikki sarake, jonka mukaan sivutetaan
+ * @param {{pageRows?:number, maxRows?:number}} [limits]
+ * @returns {Promise<{data:object[]|null, error:object|null, overflow?:boolean}>}
+ */
+export async function selectOwnedRows(table, orderColumn,
+  { pageRows = LIST_PAGE_ROWS, maxRows = MAX_LIST_ROWS } = {}) {
+  const rows = [];
+  let total = null;
+  while (rows.length < maxRows) {
+    const from = rows.length;
+    const { data, error, count } = await getClient()
+      .from(table)
+      .select('*', from === 0 ? { count: 'exact' } : {})
+      .eq('user_id', requireUserId())
+      .order(orderColumn, { ascending: true })
+      .range(from, from + pageRows - 1);
+    if (error) return { data: null, error };
+    const page = Array.isArray(data) ? data : [];
+    if (from === 0 && Number.isInteger(count)) total = count;
+    rows.push(...page);
+    // Tyhjä sivu päättää aina. Tunnettu kokonaismäärä ratkaisee, vaikka
+    // palvelimen raja olisi sivua pienempi; ilman sitä vajaa sivu on viimeinen.
+    const done = page.length === 0 || (total !== null ? rows.length >= total : page.length < pageRows);
+    if (done) return { data: rows, error: null };
+  }
+  return { data: null, error: null, overflow: true };
+}
+
 /**
  * Luo repositorio, joka käyttää Supabasea jos taulu on olemassa ja
  * muistivarastoa muuten.
@@ -81,6 +134,8 @@ function assertClientSafe(row) {
  * @param {Function} config.fromRow   Kannan rivi -> domain
  * @param {Function} [config.guardWrite] normalisoitu -> kieltäytyminen tai null
  *   (arvot, joita kanta ei vielä hyväksy; tarkistetaan ennen verkkoa)
+ * @param {string} [config.listOrder] uniikki sarake: lataus sivuittain tämän
+ *   mukaan järjestettynä (selectOwnedRows). Puuttuu = yksi haku.
  *
  * AJONAIKAINEN SKEEMATARKISTUS (src/data/schema.js, schemaRuntime.js):
  * käännösaikainen portti valitsee yhä kannan ja muistin välillä. Jos kanta
@@ -94,7 +149,9 @@ function assertClientSafe(row) {
  *
  * Torjunta tapahtuu ENNEN verkkokutsua ja kertoo syyn käyttäjälle.
  */
-export function createRepository({ table, schemaKey, normalize, toRow, fromRow, guardWrite = null }) {
+export function createRepository({
+  table, schemaKey, normalize, toRow, fromRow, guardWrite = null, listOrder = null
+}) {
   const memory = createMemoryRepository({ normalize, name: table });
 
   const usesDatabase = () => hasTable(schemaKey);
@@ -103,6 +160,9 @@ export function createRepository({ table, schemaKey, normalize, toRow, fromRow, 
   return {
     table,
     schemaKey,
+
+    /** Sivutetun latauksen järjestyssarake, tai null (yksi haku). */
+    listOrder,
 
     /** Säilyykö tieto tallennuksen yli tällä hetkellä? */
     isPersistent: () => usesDatabase(),
@@ -131,6 +191,18 @@ export function createRepository({ table, schemaKey, normalize, toRow, fromRow, 
       // auttaisi, ja tyhjässä taulussa ei ole mitään kadonnutta.
       if (isTableMissing(schemaKey)) return ok([]);
       try {
+        if (listOrder) {
+          const paged = await selectOwnedRows(table, listOrder);
+          if (paged.overflow) {
+            return failWith(ERROR_CODE.UNSUPPORTED, 'Tietoja on enemmän kuin sovellus pystyy kerralla lataamaan.',
+              { op: table + '.list' });
+          }
+          if (paged.error) {
+            noteSchemaError(table, paged.error);
+            return failFromCause(paged.error, { op: 'load', fallback: 'Tietojen lataus ei onnistunut.', code: table + '.list' });
+          }
+          return ok(paged.data.map(fromRow));
+        }
         const { data, error } = await getClient()
           .from(table)
           .select('*')
@@ -1130,6 +1202,7 @@ export const savedPlacesRepo = createRepository({
   table: 'saved_places',
   schemaKey: 'savedPlaces',
   normalize: normalizeSavedPlace,
+  listOrder: 'id',
   toRow: place => ({
     id: place.id,
     name: place.name,
@@ -1167,6 +1240,7 @@ export const placeAliasesRepo = createRepository({
   table: 'place_aliases',
   schemaKey: 'placeAliases',
   normalize: normalizePlaceAlias,
+  listOrder: 'id',
   toRow: alias => ({
     id: alias.id,
     place_id: alias.placeId,
@@ -1194,6 +1268,7 @@ export const calendarEventsRepo = createRepository({
   table: 'calendar_events',
   schemaKey: 'calendarEvents',
   normalize: normalizeCalendarEvent,
+  listOrder: 'id',
   toRow: event => ({
     id: event.id,
     title: event.title,
@@ -1250,6 +1325,7 @@ export const commuteObservationsRepo = createRepository({
   table: 'commute_observations',
   schemaKey: 'commuteObservations',
   normalize: normalizeCommuteObservation,
+  listOrder: 'id',
   toRow: observation => ({
     id: observation.id,
     place_id: observation.placeId,
@@ -1295,6 +1371,7 @@ export const lifeSettingsRepo = createRepository({
   table: 'life_settings',
   schemaKey: 'lifeSettings',
   normalize: normalizeLifeSettings,
+  listOrder: 'id',
   toRow: settings => ({
     id: settings.id,
     weekend_wake_shift_max_minutes: settings.weekendWakeShiftMaxMinutes,
@@ -1346,6 +1423,7 @@ export const sleepLogsRepo = createRepository({
   table: 'sleep_logs',
   schemaKey: 'sleepLogs',
   normalize: normalizeSleepLog,
+  listOrder: 'id',
   toRow: log => ({
     id: log.id,
     wake_date: log.wakeDate,
@@ -1377,6 +1455,7 @@ export const habitPlansRepo = createRepository({
   table: 'habit_plans',
   schemaKey: 'habitPlans',
   normalize: normalizeHabitPlan,
+  listOrder: 'id',
   toRow: plan => ({
     id: plan.id,
     kind: plan.kind,
@@ -1410,6 +1489,7 @@ export const habitEventsRepo = createRepository({
   table: 'habit_events',
   schemaKey: 'habitEvents',
   normalize: normalizeHabitEvent,
+  listOrder: 'id',
   toRow: event => ({
     id: event.id,
     plan_id: event.planId,
@@ -1433,6 +1513,7 @@ export const exerciseSessionsRepo = createRepository({
   table: 'exercise_sessions',
   schemaKey: 'exerciseSessions',
   normalize: normalizeExerciseSession,
+  listOrder: 'id',
   toRow: session => ({
     id: session.id,
     session_date: session.date,
@@ -1464,6 +1545,7 @@ export const wellbeingCheckinsRepo = createRepository({
   table: 'wellbeing_checkins',
   schemaKey: 'wellbeingCheckins',
   normalize: normalizeWellbeingCheckin,
+  listOrder: 'id',
   toRow: checkin => ({
     id: checkin.id,
     date: checkin.date,
