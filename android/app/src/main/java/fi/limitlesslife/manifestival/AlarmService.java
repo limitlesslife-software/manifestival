@@ -141,6 +141,21 @@ public class AlarmService extends Service {
         service.main.post(() -> service.stopFor(id));
     }
 
+    /**
+     * Soivan heratyksen ilmoitus takaisin: kayttaja pyyhkaisi sen pois kesken
+     * soiton (Android 14+). Vain jos sama heratys soi yha; muuten ei mitaan.
+     * Mista tahansa saikeesta.
+     */
+    static void repostRing(String id) {
+        AlarmService service = running;
+        if (service == null || id == null) return;
+        service.main.post(() -> {
+            if (service.ringing != null && id.equals(ringingId)) {
+                service.enterForeground(ringNotification(service, service.ringing));
+            }
+        });
+    }
+
     /** Lopeta kaikki (cancelAll). */
     static void stopEverything() {
         AlarmService service = running;
@@ -867,6 +882,9 @@ public class AlarmService extends Service {
             .setAutoCancel(false)
             .setOnlyAlertOnce(true)
             .setContentIntent(alarmScreen(context, entry))
+            // Android 14+: ongoing-ilmoituksen voi pyyhkaista pois, vaikka soitto
+            // jatkuu. Pyyhkaisy palauttaa ilmoituksen (AlarmReceiver.ACTION_RING_SWIPED).
+            .setDeleteIntent(broadcast(context, AlarmReceiver.ACTION_RING_SWIPED, entry))
             .addAction(0, context.getString(R.string.alarm_dismiss), broadcast(context, AlarmReceiver.ACTION_DISMISS, entry));
         int left = snoozesLeft(entry);
         if (left > 0) {

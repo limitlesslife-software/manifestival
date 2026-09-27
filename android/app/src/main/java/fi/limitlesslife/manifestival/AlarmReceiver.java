@@ -37,6 +37,8 @@ public class AlarmReceiver extends BroadcastReceiver {
     static final String ACTION_ACK = "fi.limitlesslife.manifestival.alarm.ACK";
     static final String ACTION_DEPARTED = "fi.limitlesslife.manifestival.alarm.DEPARTED";
     static final String ACTION_DELETED = "fi.limitlesslife.manifestival.alarm.DELETED";
+    /** Soivan heratyksen ilmoitus pyyhkaistiin pois (Android 14+): ilmoitus palautetaan, soitto jatkuu. */
+    static final String ACTION_RING_SWIPED = "fi.limitlesslife.manifestival.alarm.RING_SWIPED";
 
     /** Ilmoituksen toimintoon upotettu merkinta (torkku toimii, vaikka sovitus olisi jo poistanut sen). */
     static final String EXTRA_ENTRY = "fi.limitlesslife.manifestival.alarm.ENTRY";
@@ -84,6 +86,14 @@ public class AlarmReceiver extends BroadcastReceiver {
      */
     static void handleUserAction(Context context, String action, String id, String entryJson) {
         if (!AlarmMath.isValidId(id)) return;
+        if (ACTION_RING_SWIPED.equals(action)) {
+            // Android 14+ sallii etualapalvelun ilmoituksen pyyhkaisyn, kun puhelin
+            // on auki, eika ALARM-luokka ole poikkeus. Soitto jatkuu (enintaan
+            // 10 min), joten Sammuta ja Torku palautetaan heti nakyviin.
+            // Pyyhkaisy EI ole kuittaus: ei tallennusta eika tapahtumaa.
+            AlarmService.repostRing(id);
+            return;
+        }
         JSONObject entry = AlarmStore.entry(context, id);
         if (entry == null && entryJson != null) {
             try {

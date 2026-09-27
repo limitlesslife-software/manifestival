@@ -359,6 +359,26 @@ test('REGRESSIO: varailmoituksen Torku-painike kertoo saman keston kuin torkku (
   }
 });
 
+test('Android 14+: pyyhkäisty soivan herätyksen ilmoitus palaa, eikä pyyhkäisy kuittaa', () => {
+  // native-ring-notification-swipe-no-stop (ei todennettavissa ilman
+  // laitetta): Android 14+ sallii ongoing-etualapalveluilmoituksen
+  // pyyhkäisyn puhelimen ollessa auki. Ilman poistoaikomusta soitto jatkui
+  // jopa 10 minuuttia ilman Sammuta- ja Torku-painikkeita.
+  const service = javaCode('AlarmService.java');
+  assert.match(methodBody(service, 'static Notification ringNotification('),
+    /\.setDeleteIntent\(broadcast\(context, AlarmReceiver\.ACTION_RING_SWIPED, entry\)\)/);
+  const handle = methodBody(javaCode('AlarmReceiver.java'), 'static void handleUserAction(');
+  const swiped = /if \(ACTION_RING_SWIPED\.equals\(action\)\) \{([^}]*)\}/.exec(handle);
+  assert.ok(swiped, 'pyyhkäisyn käsittely puuttuu');
+  assert.match(swiped[1], /AlarmService\.repostRing\(id\);\s*return;/);
+  // Pyyhkäisy ei ole kuittaus eikä torkku: ei tallennusta, ei tapahtumaa, soitto ei lopu.
+  assert.equal(/finish\(|recordEvent|snooze\(|stopRinging|markHandled|AlarmStore\./.test(swiped[1]), false);
+  const repost = methodBody(service, 'static void repostRing(');
+  assert.match(repost, /service\.ringing != null && id\.equals\(ringingId\)/, 'palautus vain, jos sama herätys soi yhä');
+  assert.match(repost, /service\.enterForeground\(ringNotification\(service, service\.ringing\)\)/);
+  assert.match(repost, /service\.main\.post\(/, 'tila luetaan vain pääsäikeessä');
+});
+
 test('herätyslukko on aikarajattu ja vapautetaan', () => {
   const service = javaCode('AlarmService.java');
   assert.match(service, /newWakeLock\(PowerManager\.PARTIAL_WAKE_LOCK/);
