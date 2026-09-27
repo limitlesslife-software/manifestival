@@ -103,6 +103,14 @@ export function resetDailySettings() {
   sectionErrors = { sleep: {}, routine: {}, alarm: {}, meals: {} };
   alarmStatus = INITIAL_STATUS;
   statusInFlight = false;
+  // Kirjoitettu arvo elää kentän DOM-solmussa. Jos merkintä ei muutu,
+  // renderHtml ei kirjoita solmua uudelleen, ja edellisen käyttäjän
+  // tallentamaton syöte jäisi näkyviin. Tyhjä säiliö piirretään aina alusta.
+  if (typeof document === 'undefined') return;
+  for (const id of Object.values(CONTAINERS)) {
+    const node = maybe(id);
+    if (node) node.innerHTML = '';
+  }
 }
 
 /** Testejä varten: herätysalustan kaksoiskappale (null palauttaa oikean). */
@@ -870,8 +878,8 @@ function alarmNextHtml(state, settings) {
   if (!next) return '<p class="hint">Seuraavalle kahdelle päivälle ei ole herätystä.</p>';
   return `<div class="preview-block">
     <div class="preview-title">Seuraava herätys</div>
-    <div class="preview-row"><span>${escapeHtml(shortDateLabel(next.date))}</span>`
-    + `<strong>klo ${escapeHtml(clockText(next.time))}</strong></div>
+    <div class="preview-row"><span>${escapeHtml(shortDateLabel(next.date))}</span>
+      <strong>klo ${escapeHtml(clockText(next.time))}</strong></div>
     <div class="hint">${escapeHtml(next.reason || '')}</div>
   </div>`;
 }
