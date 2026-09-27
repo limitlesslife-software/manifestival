@@ -26,6 +26,7 @@
 import { expandEventOccurrences, addDaysToIso } from '../domain/calendar.js';
 import { deriveBlocks } from '../domain/calendarBlocks.js';
 import { planDeparture, selectTravelEstimate } from '../domain/departure.js';
+import { minusMinutes } from '../domain/travel.js';
 import { summarizeCommute } from '../domain/commuteLearning.js';
 import { sleepScheduleFor } from '../domain/sleepRhythm.js';
 import { morningOfDay } from '../domain/alarmPlan.js';
@@ -86,11 +87,17 @@ export function departureForOccurrence(occurrence, {
 /**
  * Lähtösuunnitelma lohkomoottorin muotoon (calendarBlocks.eventBlocks).
  * Tuntematon matka-aika -> { known: false }: lohkoja ei synny.
+ *
+ * Perilläolo ja matkan loppu annetaan lähtömoottorin seinäkellohetkinä
+ * samalla vyöhykkeellä kuin lähtö: kesäaikaan siirtymisen yönä "lähtö +
+ * matka" seinäkellolla jättäisi matkan loppumaan tuntia liian aikaisin, ja
+ * väliin syntyisi keksitty "Olet perillä 60 min ennen alkua" -lohko.
  */
-export function departureBlockInput(plan) {
+export function departureBlockInput(plan, offsetMinutesFn = deviceOffsetMinutes) {
   if (!plan || plan.known !== true || !plan.leave || !plan.prepareStart || !plan.eventStart) {
     return { known: false };
   }
+  const arrivalAbs = plan.arrivalTarget ? plan.arrivalTarget.abs : null;
   return {
     known: true,
     startAbs: plan.eventStart.abs,
@@ -98,7 +105,9 @@ export function departureBlockInput(plan) {
     prepareStartAbs: plan.prepareStart.abs,
     travelMinutes: plan.parts.travel,
     overheadMinutes: plan.parts.overhead,
-    earlyMinutes: plan.parts.early
+    earlyMinutes: plan.parts.early,
+    arrivalAbs,
+    travelEndAbs: arrivalAbs === null ? null : minusMinutes(arrivalAbs, plan.parts.overhead || 0, offsetMinutesFn)
   };
 }
 
@@ -244,7 +253,7 @@ export function calendarInputs(state, {
   });
   const blocks = deriveBlocks({
     occurrences,
-    departureFor: occurrence => departureBlockInput(departures.get(occurrence.id)),
+    departureFor: occurrence => departureBlockInput(departures.get(occurrence.id), offsetMinutesFn),
     sleepSchedules
   });
   return Object.freeze({ occurrences, departures, blocks, sleepSchedules });
