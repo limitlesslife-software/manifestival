@@ -34,11 +34,12 @@ PERSONAL_USE_P1 (ensimmäiset viikot), **P2** = PERSONAL_USE_P2, **CL** = COMMER
 |---|---|---|---|---|---|
 | Ydin | Tehtävät, aikajana, päivän suunnitelma | P0 | COMPLETE_LOCAL | A–F (tuotannossa) | `src/domain/scheduler.js`, `views/today.js` |
 | Ydin | Rutiinit ja poikkeukset | P0 | COMPLETE_LOCAL | C (tuotannossa) | `docs/ROUTINES.md` |
-| Ydin | Tavoitteet, projektit, välitavoitteet | P0 | COMPLETE_LOCAL | A, G | `docs/GOAL-TO-ACTION.md`; G odottaa 0010:tä |
+| Ydin | Tavoitteet, projektit, välitavoitteet | P0 | COMPLETE_LOCAL | A, G | `docs/GOAL-TO-ACTION.md`; suunnittelu, kapasiteetti ja uudelleensuunnittelu käyttävät kalenterin menoja, matkoja ja suojattua unta; G odottaa 0010:tä |
 | Suunta | Elämän suunta (alueet, kapasiteetti, katsaus, ajastin) | P0 | COMPLETE_LOCAL | I–J | `docs/LIFE-ALIGNMENT.md`; odottaa 0012–0013:a |
 | Kalenteri | Päivä, viikko ja kuukausi | P0 | COMPLETE_LOCAL | K | `views/calendar.js`, `tests/calendar-ui.test.mjs` |
 | Kalenteri | Kiinteät menot, koko päivän menot, viikkotoisto, kerran ohitus | P0 | COMPLETE_LOCAL | K | `domain/calendar.js`, `views/calendarForm.js` |
 | Kalenteri | Suojatut lohkot: valmistautuminen, matka, pysäköinti ja kävely, etuaika, iltarauhoittuminen, uni | P0 | COMPLETE_LOCAL | K | `domain/calendarBlocks.js`, `app/calendarPlan.js` |
+| Kalenteri | Muistutus menon alkuun, kun lähtöketjua ei ole (ei paikkaa tai matka-aikaa) | P1 | COMPLETE_LOCAL | K | `domain/dailyReminders` EVENT_START + `alarmSync`; "Alkaa klo", lähtöaikaa ei arvata |
 | Kalenteri | Ulkoiset kalenterit (Google, Outlook) | P2 | BLOCKED_PRODUCT_DECISION | — | OAuth-tili ja tietosuojapäätös puuttuvat |
 | Puhe | Puhe tekstiksi (käyttäjän käynnistämä) | P0 | IMPLEMENTED_DEVICE_UNVERIFIED | — | `SpeechPlugin`; selaimessa Web Speech |
 | Puhe | Puhe menoksi paikallisesti (ei tekoälyä) | P0 | COMPLETE_LOCAL | K | `app/localCommands.js` + `domain/eventParse.js`: tarkennus, tarkistus ennen tallennusta, paikan nimityksen oppiminen vasta hyväksynnästä |
@@ -50,19 +51,19 @@ PERSONAL_USE_P1 (ensimmäiset viikot), **P2** = PERSONAL_USE_P2, **CL** = COMMER
 | Avustaja | Kooste (digest) | P1 | COMPLETE_LOCAL | K | `notificationPolicy.mergeDigest` ajastuksen polulla (`alarmSync`) |
 | Avustaja | Ohjaustyyli: rauhallinen, napakka, aktiivinen | P1 | COMPLETE_LOCAL | K | `views/guidanceSettings.js`, `notificationPolicy.guidanceEffects` |
 | Paikat | Tallennetut paikat, oletusetuaika, kulkutapa | P0 | COMPLETE_LOCAL | K | `views/placesSettings.js` |
-| Paikat | Lisänimet ja niiden vahvistus | P0 | COMPLETE_LOCAL | K | `domain/places.js`; luku, poisto, nollaus |
+| Paikat | Lisänimet ja niiden vahvistus | P0 | COMPLETE_LOCAL | K | `domain/places.js`, `domain/eventParse.js`: osittain nimetty paikka kysytään, perusmuoto opitaan vahvistuksesta ja liitetään kahden vahvistuksen jälkeen; luku, poisto, nollaus |
 | Paikat | Sijainti (vain etualalla, käyttäjän pyynnöstä) | P2 | ARCHITECTURE_ONLY | — | tarkoituksella pois päältä; ei sijaintihistoriaa |
 | Lähtö | Reittipalvelun raja (tuntematon ilman palvelua) | P0 | COMPLETE_LOCAL | K | `domain/routing.js` |
 | Lähtö | Reaaliaikainen liikenne ja ETA | P0 | BLOCKED_EXTERNAL_PROVIDER | — | reittipalvelun tili puuttuu; raja palauttaa UNKNOWN |
 | Lähtö | Lähtömoottori v2: vaiheet, etuaika, pysäköinti, valmistautuminen | P0 | COMPLETE_LOCAL | K | `domain/departure.js`, `tests/departure-v2.test.mjs` |
 | Lähtö | Uudelleenlaskennan hystereesi | P0 | COMPLETE_LOCAL | K | `app/departureWatch.js` |
-| Lähtö | Avaa reitti (Google Maps) | P0 | COMPLETE_LOCAL | K | `domain/navigationLink.js` sallittu lista; kalenterin rivi; natiivi intentti laitteella vahvistamatta |
+| Lähtö | Avaa reitti (Google Maps) | P0 | COMPLETE_LOCAL | K | `domain/navigationLink.js` sallittu lista; kalenterin rivi, Tänään-kortti ja tavallisen "Lähde nyt" -ilmoituksen toiminto (`platform/nativeNotifications.js`); natiivi intentti laitteella vahvistamatta |
 | Lähtö | Oppiva matka-aika (käyttäjän hyväksymä, selitetty) | P0 | COMPLETE_LOCAL | K | `domain/commuteLearning.js`, Paikat-näkymän ehdotus |
 | Lähtö | Myöhästymisten oppiminen | P1 | COMPLETE_LOCAL | K | `commuteLearning` + `app/dailyLifeNotices.js` latenessNotice |
 | Aamu | Älykäs aamusuunnittelu (ensimmäinen sitoumus → herätys) | P0 | COMPLETE_LOCAL | K | `domain/morningPlanner.js`, `app/calendarPlan.morningFor` |
 | Uni | Suojattu uni ja nukkumaanmenon siirto | P0 | COMPLETE_LOCAL | K | `domain/sleepRhythm.js` |
-| Uni | Unikirjaus ja rytmin ajelehtiminen | P1 | COMPLETE_LOCAL | K | `views/wellbeingHub.js` ("vuoteessa oloaika, ei mitattua unta") |
-| Rytmi | Illan ennakkosuunnittelu | P0 | COMPLETE_LOCAL | K | `app/dailyLifeNotices.eveningBeforeNotice` |
+| Uni | Unikirjaus ja rytmin ajelehtiminen | P1 | COMPLETE_LOCAL | K | `views/wellbeingHub.js` ("vuoteessa oloaika, ei mitattua unta"); sammutettu herätys kirjaa toteutuneen heräämisen (`app/alarmEvents.js`) |
+| Rytmi | Illan ennakkosuunnittelu | P0 | COMPLETE_LOCAL | K | `app/dailyLifeNotices.eveningBeforeAdvice` (sama `sleepPlanOn`-laskenta) ilmoituskeskukseen ja laitteen muistutukseksi (`alarmSync`) |
 | Rytmi | Viikonlopun rytmi ja maanantain valmius | P1 | COMPLETE_LOCAL | K | `app/dailyLifeNotices.weekendRhythmNotices` |
 | Herätys | Natiivi tarkka herätys (lukitusnäyttö, uudelleenkäynnistys, kesäaika) | P0 | IMPLEMENTED_DEVICE_UNVERIFIED | K | `ManifestivalAlarm` (Java) + `platform/alarms.js` + `app/alarmSync.js`; laitehyväksyntä `docs/DEVICE-ACCEPTANCE-BACKLOG.md` |
 | Herätys | Tilat: ääni, musiikki, puhe, yhdistelmä | P0 | IMPLEMENTED_DEVICE_UNVERIFIED | K | `AlarmService`; valittu ääni `pickAlarmSound`; oma musiikki `pickAlarmMusic` (järjestelmän tiedostovalitsin audio/*, pysyvä lukuoikeus, ei tallennuslupaa) soi tavoilla Oma musiikki ja Ääni ja puhe, varavaihtoehto herätysääni (`AlarmMath.soundSources`); laitteella vahvistamatta |
@@ -80,7 +81,8 @@ PERSONAL_USE_P1 (ensimmäiset viikot), **P2** = PERSONAL_USE_P2, **CL** = COMMER
 | Terveys | Terveysdata ja puettavat (Health Connect) | P2 | ARCHITECTURE_ONLY | — | `domain/healthData.js` sopimus; ei palvelua |
 | Talous | Talous 2.0: tapahtumat, budjetti, laskut, kuitit, säästöt | P2 | COMPLETE_LOCAL | F (tuotannossa) | `docs/FINANCE-2.0.md` |
 | Talous | Rahan suunta ja ostos työtunteina | P2 | COMPLETE_LOCAL | K | Talous → Säästötavoitteet → Ostos omana aikana (`views/purchaseCheck.js`, oma tunnin arvo); Talous → Budjetti → Harkinnanvarainen käyttö omaa kuukausirajaa vasten (`views/discretionaryLimit.js`, raja laitteella kunnes tilisarake on migraatiossa) ja sama vertailu katsauksen Arki-osiossa |
-| Talous | Sijoitukset (oma kirjanpito) | P2 | COMPLETE_LOCAL | F | `docs/INVESTMENTS-ARCHITECTURE.md`; oma tavoitearvo lomakkeessa ja rivillä (`targetComparison`); omat hälytykset vain domainissa (`evaluateUserAlerts`), ei tallennusta eikä näkymää |
+| Talous | Sijoitukset (oma kirjanpito) | P2 | COMPLETE_LOCAL | F | `docs/INVESTMENTS-ARCHITECTURE.md`; oma tavoitearvo lomakkeessa ja rivillä (`targetComparison`) |
+| Talous | Sijoitusten omat hälytykset | P2 | ARCHITECTURE_ONLY | — | `domain/investments.evaluateUserAlerts` valmis; tallennus vaatii migraation (ei taulua eikä saraketta) |
 | Talous | Automaattinen kurssiseuranta | P2 | BLOCKED_EXTERNAL_PROVIDER | — | `domain/marketData.js` palauttaa UNKNOWN |
 | Talous | Pankkiyhteys | CL | BLOCKED_EXTERNAL_PROVIDER | — | PSD2-palvelu ja sopimus puuttuvat |
 | Oppiminen | Selitettävä personointi (käyttäjä hyväksyy) | P1 | COMPLETE_LOCAL | K | oppiminen ehdottaa, ei koskaan muuta itse |
