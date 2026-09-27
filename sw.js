@@ -162,6 +162,7 @@ const SHELL = [
   '/src/domain/task.js',
   '/src/domain/transactions.js',
   '/src/domain/travel.js',
+  '/src/domain/wallClock.js',
   '/src/domain/utteranceRoute.js',
   '/src/domain/voiceFlow.js',
   '/src/domain/lifeArea.js',
