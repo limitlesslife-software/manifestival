@@ -1,6 +1,6 @@
-# Suunta — nopea aktivointi C → J (omistajalle ja Claudelle)
+# Suunta — nopea aktivointi C → K (omistajalle ja Claudelle)
 
-Askel kerrallaan tuotannon nykytilasta (C) aaltoon J. Jokaisella askeleella:
+Askel kerrallaan tuotannon nykytilasta (C) aaltoon K. Jokaisella askeleella:
 **TILA** / **KOMENTO** (tai liitettävä SQL-tiedosto) / **ODOTUS** / **STOP JOS** /
 **SEURAAVA**, ja omistajan viesti, joka avaa askeleen. Politiikka:
 [`docs/activation/AUTOMATED-ACCEPTANCE-POLICY.md`](activation/AUTOMATED-ACCEPTANCE-POLICY.md)
@@ -16,7 +16,7 @@ Säännöt joka askeleella:
   SHA:t tulevat lukosta `docs/activation/release-train-c-j.json`; tämän
   dokumentin SHA:t päivittää `node tools/activation/train-map.mjs --sync-docs`.
 - SQL-tiedostot ajetaan **lukon SQL-lähteestä**, ei tuotehaaran työpuusta.
-  SQL-lähde (lukon sqlSource): `rehearsal/wave-j-v2` @ `cba9463155c823a24d0fdb4632ab18a1fcbd01d0`.
+  SQL-lähde (lukon sqlSource): `rehearsal/wave-k-v1` @ `d11d8b4661bc84c2e90b668132c11104db4cf203`.
   Claude kirjoittaa ne omistajalle `git show` -komennolla hakemistoon
   `.claude/activation/sql/` (git-ignoroitu) ja tarkistaa sha256:n
   dry-runin `SQL:`-riviltä.
@@ -32,7 +32,7 @@ Säännöt joka askeleella:
 - **TILA (2026-09-26, F:n deployn jälkeen):** tuotanto `origin/main` =
   `2c8e230` = F (v19), `DEPLOYED_TECHNICALLY_ACCEPTED`; C–F teknisesti
   hyväksytty. Kanta 0001–0009 ajettu (verify_0009 34/34, 0 poikkeavaa),
-  0010–0013 ei. Seuraava askel: G (0010, KORKEA riski, tilannekuva ensin).
+  0010–0014 ei. Seuraava askel: G (0010, KORKEA riski, tilannekuva ensin).
 - **KOMENTO (Claude):** `npm run activation:dry-run` (tai `-- --offline`)
 - **ODOTUS:** `NEXT_ACTION: DEPLOY D`; `REQUIRED_OWNER_GATE` = vain
   "hyväksyn D"; `REQUIRED_TECHNICAL_GATE` = C:n tekninen hyväksyntä, D:n
@@ -118,9 +118,9 @@ npm run activation:orchestrate -- --execute-deploy --approved-sha=86c4325b00e8d5
 npm run activation:orchestrate -- --record-candidate-tests=F --sha=2c8e230f8864ce0df1529718fb17ae265fb5d82b --tests-result=.claude/activation/tests-F.txt
 npm run e2e:boot-smoke -- --root .claude/worktrees/rc-F-smoke --label F --expect-sha 2c8e230f8864ce0df1529718fb17ae265fb5d82b > .claude/activation/smoke-F.txt
 npm run activation:orchestrate -- --record-boot-smoke=F --sha=2c8e230f8864ce0df1529718fb17ae265fb5d82b --smoke-result=.claude/activation/smoke-F.txt
-git show cba9463155c823a24d0fdb4632ab18a1fcbd01d0:supabase/preflight/preflight_0009.sql > .claude/activation/sql/preflight_0009.sql
-git show cba9463155c823a24d0fdb4632ab18a1fcbd01d0:supabase/migrations/0009_finance_2.sql > .claude/activation/sql/0009_finance_2.sql
-git show cba9463155c823a24d0fdb4632ab18a1fcbd01d0:supabase/verify/verify_0009.sql > .claude/activation/sql/verify_0009.sql
+git show d11d8b4661bc84c2e90b668132c11104db4cf203:supabase/preflight/preflight_0009.sql > .claude/activation/sql/preflight_0009.sql
+git show d11d8b4661bc84c2e90b668132c11104db4cf203:supabase/migrations/0009_finance_2.sql > .claude/activation/sql/0009_finance_2.sql
+git show d11d8b4661bc84c2e90b668132c11104db4cf203:supabase/verify/verify_0009.sql > .claude/activation/sql/verify_0009.sql
 ```
 
 1. **Omistaja (vain luku):** `supabase/acceptance/activation_readonly_inventory.sql`
@@ -158,9 +158,9 @@ npm run activation:orchestrate -- --execute-deploy --approved-sha=2c8e230f8864ce
 npm run activation:orchestrate -- --record-candidate-tests=G --sha=4eb93a9e386123042485881fad9aa91b862069c7 --tests-result=.claude/activation/tests-G.txt
 npm run e2e:boot-smoke -- --root .claude/worktrees/rc-G-smoke --label G --expect-sha 4eb93a9e386123042485881fad9aa91b862069c7 > .claude/activation/smoke-G.txt
 npm run activation:orchestrate -- --record-boot-smoke=G --sha=4eb93a9e386123042485881fad9aa91b862069c7 --smoke-result=.claude/activation/smoke-G.txt
-git show cba9463155c823a24d0fdb4632ab18a1fcbd01d0:supabase/preflight/preflight_0010.sql > .claude/activation/sql/preflight_0010.sql
-git show cba9463155c823a24d0fdb4632ab18a1fcbd01d0:supabase/migrations/0010_goal_to_action.sql > .claude/activation/sql/0010_goal_to_action.sql
-git show cba9463155c823a24d0fdb4632ab18a1fcbd01d0:supabase/verify/verify_0010.sql > .claude/activation/sql/verify_0010.sql
+git show d11d8b4661bc84c2e90b668132c11104db4cf203:supabase/preflight/preflight_0010.sql > .claude/activation/sql/preflight_0010.sql
+git show d11d8b4661bc84c2e90b668132c11104db4cf203:supabase/migrations/0010_goal_to_action.sql > .claude/activation/sql/0010_goal_to_action.sql
+git show d11d8b4661bc84c2e90b668132c11104db4cf203:supabase/verify/verify_0010.sql > .claude/activation/sql/verify_0010.sql
 ```
 
 1. **Omistaja:** sulje sovellus kaikilta laitteilta.
@@ -208,9 +208,9 @@ npm run activation:orchestrate -- --execute-deploy --approved-sha=4eb93a9e386123
 npm run activation:orchestrate -- --record-candidate-tests=H --sha=388cd990a1f764d08e9596bcb0c874451bcb21a9 --tests-result=.claude/activation/tests-H.txt
 npm run e2e:boot-smoke -- --root .claude/worktrees/rc-H-smoke --label H --expect-sha 388cd990a1f764d08e9596bcb0c874451bcb21a9 > .claude/activation/smoke-H.txt
 npm run activation:orchestrate -- --record-boot-smoke=H --sha=388cd990a1f764d08e9596bcb0c874451bcb21a9 --smoke-result=.claude/activation/smoke-H.txt
-git show cba9463155c823a24d0fdb4632ab18a1fcbd01d0:supabase/preflight/preflight_0011.sql > .claude/activation/sql/preflight_0011.sql
-git show cba9463155c823a24d0fdb4632ab18a1fcbd01d0:supabase/migrations/0011_personal_assistant.sql > .claude/activation/sql/0011_personal_assistant.sql
-git show cba9463155c823a24d0fdb4632ab18a1fcbd01d0:supabase/verify/verify_0011.sql > .claude/activation/sql/verify_0011.sql
+git show d11d8b4661bc84c2e90b668132c11104db4cf203:supabase/preflight/preflight_0011.sql > .claude/activation/sql/preflight_0011.sql
+git show d11d8b4661bc84c2e90b668132c11104db4cf203:supabase/migrations/0011_personal_assistant.sql > .claude/activation/sql/0011_personal_assistant.sql
+git show d11d8b4661bc84c2e90b668132c11104db4cf203:supabase/verify/verify_0011.sql > .claude/activation/sql/verify_0011.sql
 ```
 
 1. **Omistaja (vain luku):** inventaario ja `preflight_0011.sql` → liitä. **Claude:**
@@ -241,9 +241,9 @@ npm run activation:orchestrate -- --execute-deploy --approved-sha=388cd990a1f764
 npm run activation:orchestrate -- --record-candidate-tests=I --sha=4a24fdf3e2cb74473c4066329a0b693862a0e019 --tests-result=.claude/activation/tests-I.txt
 npm run e2e:boot-smoke -- --root .claude/worktrees/rc-I-smoke --label I --expect-sha 4a24fdf3e2cb74473c4066329a0b693862a0e019 > .claude/activation/smoke-I.txt
 npm run activation:orchestrate -- --record-boot-smoke=I --sha=4a24fdf3e2cb74473c4066329a0b693862a0e019 --smoke-result=.claude/activation/smoke-I.txt
-git show cba9463155c823a24d0fdb4632ab18a1fcbd01d0:supabase/preflight/preflight_0012.sql > .claude/activation/sql/preflight_0012.sql
-git show cba9463155c823a24d0fdb4632ab18a1fcbd01d0:supabase/migrations/0012_life_alignment.sql > .claude/activation/sql/0012_life_alignment.sql
-git show cba9463155c823a24d0fdb4632ab18a1fcbd01d0:supabase/verify/verify_0012.sql > .claude/activation/sql/verify_0012.sql
+git show d11d8b4661bc84c2e90b668132c11104db4cf203:supabase/preflight/preflight_0012.sql > .claude/activation/sql/preflight_0012.sql
+git show d11d8b4661bc84c2e90b668132c11104db4cf203:supabase/migrations/0012_life_alignment.sql > .claude/activation/sql/0012_life_alignment.sql
+git show d11d8b4661bc84c2e90b668132c11104db4cf203:supabase/verify/verify_0012.sql > .claude/activation/sql/verify_0012.sql
 ```
 
 1. **Omistaja (vain luku):** inventaario ja `preflight_0012.sql` → liitä. **Claude:**
@@ -266,7 +266,8 @@ npm run activation:orchestrate -- --execute-deploy --approved-sha=4a24fdf3e2cb74
 
 - **OMISTAJAN VIESTI:** **"hyväksyn 0013/J"**
 - **TILA:** I teknisesti hyväksytty; kanta 0012; `verify_0012` = 0 poikkeavaa.
-  Leikattu uudelleen (J v2) ja lukittu kuten H; J on lukon SQL-lähde.
+  Leikattu uudelleen (J v2) ja lukittu kuten H. SQL-tiedostot lukon
+  SQL-lähteestä (K v1: sen 0009–0013 ovat tavu tavulta J v2:n tiedostot).
 - **KOMENTO (Claude):** J:n testiajo ja käynnistyssavu kirjauksineen
   (työpuut ja komennot dry-runista kuten D), SQL-tiedostot:
 
@@ -274,9 +275,9 @@ npm run activation:orchestrate -- --execute-deploy --approved-sha=4a24fdf3e2cb74
 npm run activation:orchestrate -- --record-candidate-tests=J --sha=cba9463155c823a24d0fdb4632ab18a1fcbd01d0 --tests-result=.claude/activation/tests-J.txt
 npm run e2e:boot-smoke -- --root .claude/worktrees/rc-J-smoke --label J --expect-sha cba9463155c823a24d0fdb4632ab18a1fcbd01d0 > .claude/activation/smoke-J.txt
 npm run activation:orchestrate -- --record-boot-smoke=J --sha=cba9463155c823a24d0fdb4632ab18a1fcbd01d0 --smoke-result=.claude/activation/smoke-J.txt
-git show cba9463155c823a24d0fdb4632ab18a1fcbd01d0:supabase/preflight/preflight_0013.sql > .claude/activation/sql/preflight_0013.sql
-git show cba9463155c823a24d0fdb4632ab18a1fcbd01d0:supabase/migrations/0013_alignment_reality.sql > .claude/activation/sql/0013_alignment_reality.sql
-git show cba9463155c823a24d0fdb4632ab18a1fcbd01d0:supabase/verify/verify_0013.sql > .claude/activation/sql/verify_0013.sql
+git show d11d8b4661bc84c2e90b668132c11104db4cf203:supabase/preflight/preflight_0013.sql > .claude/activation/sql/preflight_0013.sql
+git show d11d8b4661bc84c2e90b668132c11104db4cf203:supabase/migrations/0013_alignment_reality.sql > .claude/activation/sql/0013_alignment_reality.sql
+git show d11d8b4661bc84c2e90b668132c11104db4cf203:supabase/verify/verify_0013.sql > .claude/activation/sql/verify_0013.sql
 ```
 
 1. **Omistaja (vain luku):** inventaario, `verify_0012.sql` (edellytys) ja
@@ -295,13 +296,58 @@ npm run activation:orchestrate -- --execute-deploy --approved-sha=cba9463155c823
 4. **Claude:** AI-selitys suljettu (`WAVE-J.md` kohta 3: `GET /api/explain` 405,
    `POST` 503, `OPTIONS` 204; ei tunnuksia, ei maksullista kutsua).
 
-- **ODOTUS:** `DEPLOYED_TECHNICALLY_ACCEPTED` (v23); dry-run `GO: DONE`.
+- **ODOTUS:** `DEPLOYED_TECHNICALLY_ACCEPTED` (v23); dry-run
+  `NEXT_ACTION: MIGRATE K 0014` (askel K). Säilytä `verify_0013`-tulos: se
+  on 0014:n edellytys.
 - **STOP JOS:** kuten H; `/api/explain` POST antaa 401 tai 200.
-- **SEURAAVA:** APK.
+- **SEURAAVA:** askel K. (APK voi tulla jo J:n jälkeen: askel APK.)
+
+## Askel K — migraatio 0014 + deploy K (v24)
+
+- **OMISTAJAN VIESTI:** **"hyväksyn 0014/K"** (kattaa migraation 0014 ja K:n
+  deployn, kun `verify_0014` = 0)
+- **TILA:** J teknisesti hyväksytty; kanta 0013; `verify_0013` = 0 poikkeavaa.
+  K v1 (`rehearsal/wave-k-v1`) on leikattu J v2:n päälle ja lukittu; K on
+  lukon SQL-lähde (0009–0014). Riski matala: kymmenen uutta tyhjää taulua,
+  ei muutoksia olemassa olevaan dataan, tilannekuva ei pakollinen.
+- **KOMENTO (Claude):** K:n testiajo ja käynnistyssavu kirjauksineen
+  (työpuut ja komennot dry-runista kuten D), SQL-tiedostot:
+
+```
+npm run activation:orchestrate -- --record-candidate-tests=K --sha=d11d8b4661bc84c2e90b668132c11104db4cf203 --tests-result=.claude/activation/tests-K.txt
+npm run e2e:boot-smoke -- --root .claude/worktrees/rc-K-smoke --label K --expect-sha d11d8b4661bc84c2e90b668132c11104db4cf203 > .claude/activation/smoke-K.txt
+npm run activation:orchestrate -- --record-boot-smoke=K --sha=d11d8b4661bc84c2e90b668132c11104db4cf203 --smoke-result=.claude/activation/smoke-K.txt
+git show d11d8b4661bc84c2e90b668132c11104db4cf203:supabase/preflight/preflight_0014.sql > .claude/activation/sql/preflight_0014.sql
+git show d11d8b4661bc84c2e90b668132c11104db4cf203:supabase/migrations/0014_daily_life.sql > .claude/activation/sql/0014_daily_life.sql
+git show d11d8b4661bc84c2e90b668132c11104db4cf203:supabase/verify/verify_0014.sql > .claude/activation/sql/verify_0014.sql
+```
+
+1. **Omistaja (vain luku):** inventaario, `verify_0013.sql` (edellytys) ja
+   `preflight_0014.sql` → liitä. **Claude:**
+   `node tools/activation/score-sql-result.mjs --sql=supabase/verify/verify_0013.sql <tulos>` ja
+   `node tools/activation/score-sql-result.mjs --sql=supabase/preflight/preflight_0014.sql <tulos>` → GO;
+   orkestroija `--inventory --preflight-result` → `STOP_OWNER_MIGRATION`.
+2. **Omistaja:** "hyväksyn 0014/K" → aja `0014_daily_life.sql` kokonaan (yksi
+   transaktio; `lock_timeout` 5 s — aikakatkaisu peruu koko ajon, jolloin
+   tiedosto ajetaan uudelleen kokonaan).
+3. **Omistaja (vain luku):** `verify_0014.sql` ja uusi inventaario → liitä. **Claude:**
+   `node tools/activation/score-sql-result.mjs --sql=supabase/verify/verify_0014.sql <tulos>` → GO, sitten:
+
+```
+npm run activation:orchestrate -- --execute-deploy --approved-sha=d11d8b4661bc84c2e90b668132c11104db4cf203 --inventory=<uusi-inventaario> --verify-result=<verify_0014-tulos>   # K v24
+```
+
+- **ODOTUS:** preflight 0 FAIL; migraatio `COMMIT`; verify 0 poikkeavaa;
+  `DEPLOYED_TECHNICALLY_ACCEPTED` (v24); dry-run `GO: DONE`.
+- **STOP JOS:** testiajo tai käynnistyssavu ei kirjaudu (ei PASS); preflight
+  FAIL; migraatio päättyy virheeseen (koko transaktio perutaan — älä aja
+  tiedoston osia); verify ≠ 0 → **älä deployaa** (`WAVE-K.md` §6).
+- **SEURAAVA:** päivittäinen käyttö (ja APK, ellei se ole jo tehty).
 
 ## Askel APK — puhelin (J:n jälkeen)
 
 - **TILA:** J tuotannossa ja teknisesti hyväksytty, `verify_0013` = 0.
+  APK ei odota aaltoa K (askel K voi olla tehty tai tekemättä).
 - **KOMENTO:** `docs/activation/ANDROID-ACCEPTANCE-BUILD.md` (koonti ja
   `verify-apk`); versionCode-politiikka on omistajan hyväksyntä.
 - **ODOTUS:** APK asentuu; Day 1 (`docs/SUUNTA-DAY1-ACCEPTANCE.md`) on

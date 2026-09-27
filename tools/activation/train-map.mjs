@@ -1,8 +1,10 @@
-// Julkaisujunan C–J LUKKO gitistä: node tools/activation/train-map.mjs [--write] [--sync-docs] [--json]
+// Julkaisujunan C–K LUKKO gitistä: node tools/activation/train-map.mjs [--write] [--sync-docs] [--json]
 //
 // MITÄ TÄMÄ ON (ACT-04)
 //
-// docs/activation/release-train-c-j.json on junan LUKKO: jokainen aalto
+// docs/activation/release-train-c-j.json on junan LUKKO (tiedostonimi on
+// historiallinen: juna jatkui aallolla K, ja nimeen viittaa moni työkalu,
+// testi ja dokumentti, joten sitä ei vaihdettu): jokainen aalto
 // on kiinnitetty täyteen 40-merkkiseen SHA:han (`deployTarget`). Se on
 // ainoa totuus siitä, mikä commit pushataan tuotantoon. Aliakset
 // (`ref`, alla TRAIN) ovat vain muistiapu, jolla lukko KIRJOITETAAN.
@@ -18,8 +20,9 @@
 //                   tilaan ja SQL-lähteen viitteet lukon sqlSourceen
 //                   (docs/SUUNTA-ACTIVATION-GO-NOGO.md,
 //                   docs/SUUNTA-FAST-ACTIVATION.md ja
-//                   docs/acceptance/WAVE-D..J.md). Käytä --write:n jälkeen,
-//                   kun H/I/J on leikattu uudelleen.
+//                   docs/acceptance/WAVE-D..K.md: jokainen lukon aalto
+//                   C:n jälkeen). Käytä --write:n jälkeen, kun aalto on
+//                   leikattu uudelleen tai uusi aalto lukittu.
 //
 // MIKSI EI `origin/main`
 //
@@ -58,9 +61,10 @@ export const LOCK_PATH = 'docs/activation/release-train-c-j.json';
 /**
  * Aallot ja niiden ALIAKSET. Alias ratkaistaan vain --write:ssa; lukossa
  * on SHA. C:n alias on sen oma SHA (tuotannossa oleva lattia), D:n
- * samoin (jäädytetty aaltocommit). F-J on leikattu uudelleen (F v4, G v5,
- * H v5, I v3, J v2): uusi leikkaus = päivitä aliakset uusiin haaroihin ja
- * aja --write — SHA:ita EI kirjoiteta tänne.
+ * samoin (jäädytetty aaltocommit). F–J on leikattu uudelleen (F v4, G v5,
+ * H v5, I v3, J v2), ja K v1 on leikattu J v2:n päälle: uusi leikkaus =
+ * päivitä aliakset uusiin haaroihin ja aja --write — SHA:ita EI kirjoiteta
+ * tänne.
  */
 export const TRAIN = Object.freeze([
   Object.freeze({ wave: 'C', ref: 'cf259d0ef755f7e875cc9cd9c15405eba632e408', acceptance: 'docs/acceptance/WAVE-C-OWNER-ACCEPTANCE.md' }),
@@ -70,7 +74,8 @@ export const TRAIN = Object.freeze([
   Object.freeze({ wave: 'G', ref: 'rehearsal/wave-g-v5', acceptance: 'docs/acceptance/WAVE-G.md' }),
   Object.freeze({ wave: 'H', ref: 'rehearsal/wave-h-v5', acceptance: 'docs/acceptance/WAVE-H.md' }),
   Object.freeze({ wave: 'I', ref: 'rehearsal/wave-i-v3', acceptance: 'docs/acceptance/WAVE-I.md' }),
-  Object.freeze({ wave: 'J', ref: 'rehearsal/wave-j-v2', acceptance: 'docs/acceptance/WAVE-J.md' })
+  Object.freeze({ wave: 'J', ref: 'rehearsal/wave-j-v2', acceptance: 'docs/acceptance/WAVE-J.md' }),
+  Object.freeze({ wave: 'K', ref: 'rehearsal/wave-k-v1', acceptance: 'docs/acceptance/WAVE-K.md' })
 ]);
 
 /**
@@ -97,8 +102,13 @@ export const REQUIRED_PATCHES = Object.freeze([
   })
 ]);
 
-/** SQL-tiedostot haetaan AINA tästä aallosta: vain sen kärjessä on kaikki 0009–0013 -tiedostot. */
-export const SQL_SOURCE_WAVE = 'J';
+/**
+ * SQL-tiedostot haetaan AINA tästä aallosta: vain sen kärjessä on kaikki
+ * 0009–0014 -tiedostot. K:n kärjen (d11d8b4) 0009–0013 -tiedostot ovat
+ * tavu tavulta samat kuin J:n (cba9463) — sama git-blob — joten niiden
+ * sha256 lukossa ei muuttunut, kun lähde siirtyi J:stä K:hon.
+ */
+export const SQL_SOURCE_WAVE = 'K';
 
 const sha256 = text => createHash('sha256').update(text).digest('hex');
 
@@ -167,10 +177,12 @@ function missingRecord(entry, previous) {
  * SQL-lähteen tiedostot ja niiden sha256 (lukittu SHA).
  *
  * VAIN SQL-LÄHDEAALTOON ASTI. Lähdeaallon kärjessä on sen omat ja kaikkien
- * aiempien aaltojen tiedostot, ei myöhempien: aallon K migraatio 0014 ei
- * ole J:n kärjessä (cba9463), eikä sen puuttuminen sieltä ole virhe. Kun
- * K leikataan ja SQL_SOURCE_WAVE siirtyy K:hon, 0014:n tiedostot tulevat
- * lukkoon samalla --write-ajolla.
+ * aiempien aaltojen tiedostot, ei myöhempien. Lähde siirtyi J:stä
+ * (cba9463, 0009–0013) K:hon (d11d8b4, 0009–0014), kun K leikattiin:
+ * 0014:n tiedostot tulivat lukkoon samalla --write-ajolla, ja 0009–0013:n
+ * tiivisteet pysyivät samoina. Jos junaan lisätään myöhempi aalto ennen
+ * kuin sen SQL on lähteessä, sen tiedostojen puuttuminen täältä ei ole
+ * virhe — lähdeaalto siirretään, kun aalto leikataan.
  */
 export function sqlSourceFiles(git, sha, sourceWave = SQL_SOURCE_WAVE) {
   const last = waveIndex(sourceWave);

@@ -100,11 +100,11 @@ test('taukopisteet vastaavat junaa: tauon jälkeen deployataan juuri sen migraat
 const K_TABLES = ['saved_places', 'place_aliases', 'calendar_events', 'commute_observations', 'life_settings',
   'sleep_logs', 'habit_plans', 'habit_events', 'exercise_sessions', 'wellbeing_checkins'];
 
-test('KRIITTINEN: aalto K johdetaan julkaisuaalloista, kun lukko ei vielä tunne sitä', async () => {
+test('KRIITTINEN: aalto K luetaan lukosta (locked: true), ja muoto vastaa julkaisuaaltoja', async () => {
   const { cumulativeGates, WAVES } = await import('../tools/release/waves.mjs');
-  // Lukitut C–J luetaan lukosta sellaisenaan; K on lukitsematon.
-  for (const w of ['C', 'D', 'E', 'F', 'G', 'H', 'I', 'J']) assert.equal(train[w].locked, true, w);
-  assert.equal(train.K.locked, false);
+  // Lukitut C–K luetaan lukosta sellaisenaan; yhtäkään aaltoa ei johdeta.
+  for (const w of ['C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K']) assert.equal(train[w].locked, true, w);
+  assert.equal(Object.values(train).some(w => !w.locked), false, 'lukitsematon aalto junassa');
   assert.equal(train.K.migration, '0014_daily_life.sql');
   assert.deepEqual([...train.K.tables].sort(), [...cumulativeGates('K')].sort());
   // K = J:n taulut + 0014:n kymmenen porttia, EI uusia sarakeportteja.

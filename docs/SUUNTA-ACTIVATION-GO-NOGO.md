@@ -18,11 +18,12 @@ Tämä korvaa aiemman aaltokohtaisen selainhyväksyntäportin.
 omistajan viesti):** [`docs/SUUNTA-FAST-ACTIVATION.md`](SUUNTA-FAST-ACTIVATION.md).
 
 **Omistajan hyväksyntä vaaditaan vain:** jokainen tuotantomigraatio
-(0009–0013; **0010 erikseen + varmuuskopio**), jokainen tuotantodeploy (D–J),
+(0009–0014; **0010 erikseen + varmuuskopio**), jokainen tuotantodeploy (D–K),
 valinnainen T-2-varmuuskopion kuivaharjoitus tuotannossa, AI-selityksen
 käyttöönotto ja Androidin versionCode-politiikka. Hyväksyntä annetaan
 lyhyellä viestillä: "hyväksyn D", "hyväksyn E", "hyväksyn 0009/F",
-"hyväksyn 0010/G", "hyväksyn 0011/H", "hyväksyn 0012/I", "hyväksyn 0013/J".
+"hyväksyn 0010/G", "hyväksyn 0011/H", "hyväksyn 0012/I", "hyväksyn 0013/J",
+"hyväksyn 0014/K".
 
 **Kaikki migraatiot 0009–0013 on harjoiteltu oikealla PostgreSQL 17:llä**
 tuotannon muotoisesta datasta: ketju, RLS (311 tarkistusta), virheet
@@ -39,16 +40,16 @@ tuotannon muotoisesta datasta: ketju, RLS (311 tarkistusta), virheet
 | **H** v21 | Henkilökohtainen avustaja | `388cd990a1f764d08e9596bcb0c874451bcb21a9` (`rehearsal/wave-h-v5`) | **0011** | READY 0011:n jälkeen | "hyväksyn 0011/H" | matala | G |
 | **I** v22 | **Suunta 1** | `4a24fdf3e2cb74473c4066329a0b693862a0e019` (`rehearsal/wave-i-v3`) | **0012** | READY 0012:n jälkeen | "hyväksyn 0012/I" (välivaihe) | keski (goals + sarake) | H |
 | **J** v23 | **Suunta 2** (ajastin, energia, katsaus v2) + yön korjaukset | `cba9463155c823a24d0fdb4632ab18a1fcbd01d0` (`rehearsal/wave-j-v2`) | **0013** | READY 0013:n jälkeen | "hyväksyn 0013/J", sitten APK (vasta kun verify_0013 = 0 ja J on tuotannossa) | matala | I (aika säilyy) |
-| **K** v24 | **Arjen käyttöjärjestelmä** (kalenteri, paikat, uni, herätys, tavat, liikunta) | ei vielä leikattu (ehdokas J:n päälle, `rehearsal/wave-k-v1`) | **0014** | ESTETTY: näkymät rakenteilla, 0014 ajamatta | "hyväksyn 0014/K" (vasta kun verify_0013 = 0 ja J on tuotannossa; vain uusia tyhjiä tauluja, tilannekuva ei pakollinen) | matala | J (taulut jäävät) |
+| **K** v24 | **Arjen käyttöjärjestelmä** (kalenteri, paikat, uni, herätys, tavat, liikunta) | `d11d8b4661bc84c2e90b668132c11104db4cf203` (`rehearsal/wave-k-v1`) | **0014** | READY 0014:n jälkeen (K v1 lukittu J v2:n päälle; lukon SQL-lähde 0009–0014) | "hyväksyn 0014/K" (vasta kun verify_0013 = 0 ja J on tuotannossa; vain uusia tyhjiä tauluja, tilannekuva ei pakollinen) | matala | J (taulut jäävät) |
 
 Deploykohde on **lukon** `docs/activation/release-train-c-j.json` täysi SHA
 (`deployTarget`) — ei haaran nimi eikä manifestin aaltocommit. Lukon
 tarkistus: `npm run activation:train-map`. Koneellinen kartta (jokaisen
-kohteen oma `sw.js`/`schema.js`: v16→v23 nousevat, ei törmäyksiä, ei
+kohteen oma `sw.js`/`schema.js`: v16→v24 nousevat, ei törmäyksiä, ei
 ennenaikaisia portteja; jokainen aalto edellisen jälkeläinen).
-Paketit: `docs/activation/MIGRATION-BUNDLES.md`. H, I ja J leikataan
-uudelleen: niiden SHA:t päivittyvät lukosta (`train-map --write`, sitten
-`train-map --sync-docs`), eikä niitä kirjoiteta käsin.
+Paketit: `docs/activation/MIGRATION-BUNDLES.md`. Uudelleenleikatun tai
+uuden aallon SHA päivittyy lukosta (`train-map --write`, sitten
+`train-map --sync-docs`), eikä sitä kirjoiteta käsin.
 
 ---
 
@@ -80,7 +81,7 @@ deployTargetin** (ei koskaan force), todentaa tuotannon (välimuisti, portit,
 sarakeportit, sormenjälki) ja kirjaa D:n `AUTOMATED_TECHNICAL_ACCEPTANCE`:n.
 E samalla kaavalla ("hyväksyn E").
 
-**5. Jokainen migraatioaalto F–J:** omistaja ajaa `preflight_00XX.sql`:n
+**5. Jokainen migraatioaalto F–K:** omistaja ajaa `preflight_00XX.sql`:n
 (vain luku) ja liittää tuloksen → Claude pisteyttää
 (`node tools/activation/score-sql-result.mjs`) → "hyväksyn 00XX/W" →
 omistaja ajaa migraation → omistaja ajaa `verify_00XX.sql`:n ja liittää →
@@ -91,7 +92,10 @@ tekninen hyväksyntä kirjataan. 0010:lle ensin tuore tilannekuva
 F–J on leikattu uudelleen (F v4, G v5, H v5, I v3, J v2) ja lukittu
 2026-09-26: jokainen deploykohde sisältää pakolliset korjaukset
 (`train-map.mjs` REQUIRED_PATCHES), ja jokaisen ehdokkaan oma
-testipatteristo ja käynnistyssavu on kirjattu päiväkirjaan. Jos lukko
+testipatteristo ja käynnistyssavu on kirjattu päiväkirjaan. K v1 on
+leikattu J v2:n päälle ja lukittu 2026-09-27 (lukon SQL-lähde 0009–0014);
+sen testiajo ja käynnistyssavu kirjataan ennen migraatiota 0014
+(orkestroija vaatii ne, `CANDIDATE_TESTS_REQUIRED`, `BOOT_SMOKE_REQUIRED`). Jos lukko
 jää korjauksesta jälkeen, orkestroija pysähtyy (`TRAIN_RECUT_REQUIRED`)
 ja STOP-rivi pysyy, kunnes lukko on kirjoitettu uusilla SHA:illa.
 
@@ -105,6 +109,7 @@ npm run activation:orchestrate -- --execute-deploy --approved-sha=4eb93a9e386123
 npm run activation:orchestrate -- --execute-deploy --approved-sha=388cd990a1f764d08e9596bcb0c874451bcb21a9 --verify-result=<verify_0011-tulos>   # H v21
 npm run activation:orchestrate -- --execute-deploy --approved-sha=4a24fdf3e2cb74473c4066329a0b693862a0e019 --verify-result=<verify_0012-tulos>   # I v22
 npm run activation:orchestrate -- --execute-deploy --approved-sha=cba9463155c823a24d0fdb4632ab18a1fcbd01d0 --verify-result=<verify_0013-tulos>   # J v23
+npm run activation:orchestrate -- --execute-deploy --approved-sha=d11d8b4661bc84c2e90b668132c11104db4cf203 --verify-result=<verify_0014-tulos>   # K v24
 ```
 
 Push-kohteet (viitteeksi — orkestroija ajaa nämä compare-and-swapin jälkeen;
@@ -118,14 +123,19 @@ git push origin 4eb93a9e386123042485881fad9aa91b862069c7:refs/heads/main   # G v
 git push origin 388cd990a1f764d08e9596bcb0c874451bcb21a9:refs/heads/main   # H v21
 git push origin 4a24fdf3e2cb74473c4066329a0b693862a0e019:refs/heads/main   # I v22
 git push origin cba9463155c823a24d0fdb4632ab18a1fcbd01d0:refs/heads/main   # J v23
+git push origin d11d8b4661bc84c2e90b668132c11104db4cf203:refs/heads/main   # K v24
 ```
 
 **6.** J:n jälkeen: APK puhelimeen (`docs/activation/ANDROID-ACCEPTANCE-BUILD.md`)
 **vasta kun `verify_0013` = 0 ja J on tuotannossa**; Day 1
 (`docs/SUUNTA-DAY1-ACCEPTANCE.md`) on `LIVE_USE_VALIDATION_PENDING`.
 
+**7.** K (0014) J:n jälkeen samalla kaavalla kuin kohta 5: edellytys
+`verify_0013` = 0, sitten "hyväksyn 0014/K" → 0014 → `verify_0014` = 0 →
+deploy K. Riski matala (vain uusia tyhjiä tauluja), tilannekuva ei pakollinen.
+
 **Nopein turvallinen polku päivittäiseen käyttöön:** C (tekninen) → D → E →
-0009/F → 0010/G → 0011/H → 0012/I → 0013/J → puhelin. Jokainen deploy ja
+0009/F → 0010/G → 0011/H → 0012/I → 0013/J → puhelin → 0014/K. Jokainen deploy ja
 migraatio on oma omistajan hyväksyntänsä; D ja E eivät vaadi migraatiota.
 Kaikki migraatiot ovat taaksepäin yhteensopivia edellisen aallon koodin
 kanssa (todennettu), joten tauko minkä tahansa aallon jälkeen on turvallinen.
@@ -136,10 +146,10 @@ kanssa (todennettu), joten tauko minkä tahansa aallon jälkeen on turvallinen.
 
 | Luokka | Mitä |
 |---|---|
-| OWNER_DEPLOY_APPROVAL_REQUIRED | Aaltojen D–J deployt: "hyväksyn D", "hyväksyn E", F–J migraatioviestin kautta |
-| OWNER_PRODUCTION_MIGRATION_APPROVAL_REQUIRED | "hyväksyn 0009/F", **"hyväksyn 0010/G" (erikseen, tilannekuva ensin)**, "hyväksyn 0011/H", "hyväksyn 0012/I", "hyväksyn 0013/J" |
+| OWNER_DEPLOY_APPROVAL_REQUIRED | Aaltojen D–K deployt: "hyväksyn D", "hyväksyn E", F–K migraatioviestin kautta |
+| OWNER_PRODUCTION_MIGRATION_APPROVAL_REQUIRED | "hyväksyn 0009/F", **"hyväksyn 0010/G" (erikseen, tilannekuva ensin)**, "hyväksyn 0011/H", "hyväksyn 0012/I", "hyväksyn 0013/J", "hyväksyn 0014/K" |
 | OWNER_READ_ONLY_SQL_REQUIRED | Omistajan syöte, ei hyväksyntä: tuore inventaario ennen 0009:ää, `preflight_00XX.sql`- ja `verify_00XX.sql`-tulokset (vain luku, liitetään Claudelle) |
-| TECHNICAL_ACCEPTANCE_REQUIRED | Claude: tuotannon aallon `AUTOMATED_TECHNICAL_ACCEPTANCE` päiväkirjaan (C live-todennuksesta, D–J orkestroijan deploysta) |
+| TECHNICAL_ACCEPTANCE_REQUIRED | Claude: tuotannon aallon `AUTOMATED_TECHNICAL_ACCEPTANCE` päiväkirjaan (C live-todennuksesta, D–K orkestroijan deploysta) |
 | CANDIDATE_TESTS_REQUIRED | Claude: ehdokkaan oma täysi testipatteristo vihreänä ja kirjattuna ennen sen migraatiota tai deployta |
 | BOOT_SMOKE_REQUIRED | Claude: ehdokkaan käynnistyssavu (`npm run e2e:boot-smoke`, omalla koodilla ja porteilla) PASSina ja kirjattuna (`--record-boot-smoke`) ennen sen migraatiota tai deployta |
 | LIVE_USE_VALIDATION_PENDING | Kaikki käsin tehtävät selain- ja laitetarkistukset (WAVE-X.md kohta 4, `WAVE-C-OWNER-ACCEPTANCE.md`, Day 1): oikeassa käytössä, **ei estä junaa, ei koskaan PASS** |

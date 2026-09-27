@@ -162,7 +162,8 @@ test('migraatiovaihe: SQL-tiedostot tiivisteineen ja lukittu lähde', async () =
   assert.equal(sql.length, 3);
   for (const l of sql) {
     assert.match(l, /sha256 [0-9a-f]{64}/);
-    assert.match(l, new RegExp(`lähde rehearsal/wave-j-v2 @ ${shaOf('J')}`));
+    // Lukon SQL-lähde on aalto K (0009–0014), ei migraation oma aalto F.
+    assert.match(l, new RegExp(`lähde rehearsal/wave-k-v1 @ ${shaOf('K')}`));
   }
   assert.match(lineOf(result.lines, 'NEXT_DEPLOYMENT'), /F .* \(migraation 0009 jälkeen\)/);
   // Migraation hyväksyntä on omistajan portti; vain lukeva SQL on syöte, ei hyväksyntä.

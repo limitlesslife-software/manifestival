@@ -14,13 +14,15 @@
 uudelleenkirjoitusta. Tuore varmuuskopio ei ole pakollinen.
 
 **Push-kohde (deployTarget):** junan lukon `docs/activation/release-train-c-j.json`
-aallon K `deployTarget` — täysi 40-merkkinen SHA. Aaltoa K **ei ole vielä
-leikattu** (ehdokas `rehearsal/wave-k-v1` J:n `cba9463`:n päälle), joten
-lukossa ei vielä ole sen tietuetta. Manifestin
+aallon K `deployTarget` — täysi 40-merkkinen SHA, sama kuin kohdan
+"Deploy" orkestroijan rivillä. Ehdokas K v1 (`rehearsal/wave-k-v1`) on
+leikattu J v2:n (`cba9463`) päälle ja lukittu; K on myös lukon SQL-lähde
+(0009–0014). Manifestin
 (`docs/activation-0003-0008-release-manifest.json`) `commitSha` on aallon
 AALTOCOMMIT: peruutuksen ja diffin viite, EI push-kohde. Push tehdään
-orkestroijalla, joka tarkistaa ensin, että `origin`in main on yhä odotettu
-edellinen SHA.
+orkestroijalla (`npm run activation:orchestrate -- --execute-deploy
+--approved-sha=<deployTarget>`), joka tarkistaa ensin, että `origin`in main
+on yhä odotettu edellinen SHA.
 
 **Hyväksyntä:** junan portti on koneellinen `AUTOMATED_TECHNICAL_ACCEPTANCE` —
 ehdot, komennot ja kirjauspaikka:
@@ -58,13 +60,15 @@ taulujen välisiä.
 
 1. Aalto J tuotannossa: `0013` ajettu ja `verify_0013.sql` → 0 poikkeavaa
 2. (tehty) Näkymät olemassa ja `tools/release/reachability.mjs` päivitetty
-3. Aallon K ehdokas leikattu (`rehearsal/wave-k-v1`), lukko kirjoitettu
-   (`train-map --write`, `SQL_SOURCE_WAVE` = K) ja dokumentit synkattu
-   (`train-map --sync-docs`)
-4. Panun kirjallinen hyväksyntä "hyväksyn 0014/K"
-5. `supabase/preflight/preflight_0014.sql` (vain luku) → **0 FAIL**
-6. Migraation ajo `postgres`-roolilla Supabasen SQL-editorissa
-7. `supabase/verify/verify_0014.sql` → **poikkeavia_yhteensa = 0**
+3. (tehty) Aallon K ehdokas leikattu (`rehearsal/wave-k-v1`), lukko
+   kirjoitettu (`train-map --write`, `SQL_SOURCE_WAVE` = K) ja dokumentit
+   synkattu (`train-map --sync-docs`)
+4. Ehdokkaan oma testipatteristo ja käynnistyssavu kirjattu päiväkirjaan
+   (kohta 1 alla; `docs/SUUNTA-FAST-ACTIVATION.md` askel K)
+5. Panun kirjallinen hyväksyntä "hyväksyn 0014/K"
+6. `supabase/preflight/preflight_0014.sql` (vain luku) → **0 FAIL**
+7. Migraation ajo `postgres`-roolilla Supabasen SQL-editorissa
+8. `supabase/verify/verify_0014.sql` → **poikkeavia_yhteensa = 0**
 
 ---
 
@@ -107,6 +111,18 @@ npm run activation:preflight -- --wave=K
 npm test && npm run check && npm run smoke && npm run build:web
 ```
 
+Ehdokkaan oma testipatteristo ja käynnistyssavu ajetaan sen omissa
+irrotetuissa työpuissa (tarkat työpuukomennot dry-runin
+`REQUIRED_TECHNICAL_GATE`-riviltä) ja kirjataan päiväkirjaan — orkestroija
+ei suunnittele migraatiota 0014 ajettavaksi eikä deployaa K:ta ilman
+molempia kirjauksia täsmälleen lukon SHA:lle:
+
+```
+npm run activation:orchestrate -- --record-candidate-tests=K --sha=d11d8b4661bc84c2e90b668132c11104db4cf203 --tests-result=.claude/activation/tests-K.txt
+npm run e2e:boot-smoke -- --root .claude/worktrees/rc-K-smoke --label K --expect-sha d11d8b4661bc84c2e90b668132c11104db4cf203 > .claude/activation/smoke-K.txt
+npm run activation:orchestrate -- --record-boot-smoke=K --sha=d11d8b4661bc84c2e90b668132c11104db4cf203 --smoke-result=.claude/activation/smoke-K.txt
+```
+
 - [ ] **Migraatio 0014 on ajettu ja `verify_0014.sql` antoi 0 poikkeavaa**
 - [ ] Kaikki kolmekymmentäneljä porttia auki
 - [ ] Sarakeportit ennallaan (`ALIGNMENT_REALITY_FIELDS` ym. yhä `true`)
@@ -118,8 +134,11 @@ npm test && npm run check && npm run smoke && npm run build:web
 git diff <WAVE-J-SHA>..<WAVE-K-SHA> --stat
 ```
 
-Aaltocommitissa vain `src/data/schema.js`, `sw.js`, `docs/PRODUCTION-STATUS.md`
-ja `tools/release/waves.mjs` (`blockedBy` pois).
+K:n pohja on yhdistys J v2:n ja tuotehaaran välillä, joten J..K-diff on
+suuri. Itse aaltocommitissa (`git show --stat <K:n aaltocommit>`, lukon
+`waveCommit`) ovat vain `src/data/schema.js`, `sw.js`,
+`docs/PRODUCTION-STATUS.md`, `tools/release/waves.mjs` (`blockedBy` pois) ja
+suljetun portin vartijatestit auki-tilaan käännettyinä.
 
 ---
 
@@ -128,14 +147,21 @@ ja `tools/release/waves.mjs` (`blockedBy` pois).
 Omistajan viesti **"hyväksyn 0014/K"** kattaa migraation 0014 ja tämän askeleen.
 Deploy vasta, kun `verify_0014.sql` = 0 poikkeavaa; tulos annetaan
 orkestroijalle (`--verify-result`). Ensisijainen (ja ainoa suositeltu)
-deploy-askel on orkestroija:
+deploy-askel on orkestroija: se tarkistaa lukon, tuotannon aallon (J)
+teknisen hyväksynnän, ehdokkaan kirjatun testiajon ja käynnistyssavun sekä
+julkaisun esitarkistuksen, tekee compare-and-swapin, pushaa ja todentaa
+tuotannon:
 
 ```
-npm run activation:orchestrate -- --execute-deploy --approved-sha=<deployTarget> --verify-result=<verify_0014-tulos>
+npm run activation:orchestrate -- --execute-deploy --approved-sha=d11d8b4661bc84c2e90b668132c11104db4cf203 --verify-result=<verify_0014-tulos>
 ```
 
-`<deployTarget>` on lukon aallon K SHA, kun ehdokas on leikattu ja lukko
-kirjoitettu. Orkestroija ei koskaan käytä forcea.
+Viitteeksi (älä aja käsin): orkestroija ajaa compare-and-swapin jälkeen
+täsmälleen tämän — ei koskaan forcea:
+
+```
+git push origin d11d8b4661bc84c2e90b668132c11104db4cf203:refs/heads/main
+```
 
 ---
 

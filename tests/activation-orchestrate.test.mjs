@@ -317,7 +317,8 @@ test('migraatioaalto: puuttuva esitarkistus nimetään, eikä migraatiota koskaa
   assert.deepEqual(sql, ['supabase/preflight/preflight_0009.sql', 'supabase/migrations/0009_finance_2.sql', 'supabase/verify/verify_0009.sql']);
   for (const f of result.plan.sql) {
     assert.match(f.sha256, /^[0-9a-f]{64}$/);
-    assert.equal(f.sourceSha, shaOf('J'));
+    // SQL luetaan aina lukon SQL-lähteestä (SQL_SOURCE_WAVE = K), ei ehdokkaasta F.
+    assert.equal(f.sourceSha, shaOf('K'));
     assert.equal(f.matchesLock, true);
   }
 });
@@ -405,20 +406,77 @@ test('koodi edellä kantaa -> STOP ROLLBACK_CODE', async () => {
   assert.deepEqual(pushes(git), []);
 });
 
-test('J + 0013 -> seuraavaksi K (0014); lukitsematon K pysäyttää (LOCK_DRIFT), ei pushia', async () => {
-  // Aalto K (arjen käyttöjärjestelmä, 0014) seuraa J:tä. Ennen kuin K:n
-  // ehdokas on lukittu, orkestroija kertoo seuraavan askeleen mutta
-  // pysähtyy: lukitsematonta SHA:ta ei koskaan deployata.
-  const { git, deps, options } = setup({ production: 'J', dbState: '0013' });
-  const result = await runOrchestrator(deps, options);
-  assert.equal(result.plan.decision, 'STOP');
-  assert.equal(result.plan.stopClass, 'LOCK_DRIFT');
+test('KRIITTINEN: J + 0013 -> seuraavaksi K (0014): lukittu K pysähtyy omistajan migraatioporttiin, ei pushia', async () => {
+  // Aalto K (arjen käyttöjärjestelmä, 0014) seuraa J:tä ja on lukittu.
+  // Orkestroija suunnittelee migraation 0014, mutta ei koskaan aja sitä:
+  // STOP_OWNER_MIGRATION, SQL lukon lähteestä (K), verify_0013 edellytyksenä.
+  const { git, fs: fsStub, deps, options } = setup({ production: 'J', dbState: '0013' });
+  const result = await runOrchestrator(deps, { ...options, preflightResult: checkResult(PREFLIGHT_CHECKS) });
   assert.equal(result.plan.nextAction.kind, 'MIGRATE');
   assert.equal(result.plan.nextAction.wave, 'K');
   assert.equal(result.plan.nextAction.migration, '0014');
   assert.equal(result.plan.nextAction.verifyPrerequisite, 'supabase/verify/verify_0013.sql');
-  assert.notEqual(result.exitCode, 0);
+  assert.equal(result.plan.state, 'STOP_OWNER_MIGRATION');
+  assert.equal(result.plan.candidate.sha, shaOf('K'));
+  assert.equal(result.plan.steps.find(s => s.name === 'PREFLIGHT_REPO').status, 'OK');
+  assert.equal(result.plan.steps.find(s => s.name === 'PREFLIGHT_DB').status, 'OK');
+  assert.equal(result.plan.risk.level, 'low');
+  assert.equal(result.plan.risk.backupRequired, false);
+  assert.deepEqual(result.plan.sql.map(f => f.path), ['supabase/verify/verify_0013.sql', 'supabase/preflight/preflight_0014.sql',
+    'supabase/migrations/0014_daily_life.sql', 'supabase/verify/verify_0014.sql']);
+  for (const f of result.plan.sql) {
+    assert.equal(f.sourceSha, shaOf('K'));
+    assert.equal(f.matchesLock, true, f.path);
+  }
+  const approval = result.plan.pendingGates.find(g => g.class === 'OWNER_PRODUCTION_MIGRATION_APPROVAL_REQUIRED');
+  assert.match(approval.detail, /"hyväksyn 0014\/K"/);
+  assert.equal(/VARMUUSKOPIO/.test(approval.detail), false, '0014 ei vaadi tilannekuvaa');
+  const gates = result.plan.pendingGates.map(g => `${g.class} ${g.detail}`).join(' | ');
+  assert.match(gates, /aallon J \(0808080\) tekninen hyväksyntä/);
+  assert.match(gates, /--record-candidate-tests=K/);
+  assert.match(gates, /--record-boot-smoke=K/);
+  assert.equal(result.exitCode, 1);
   assert.deepEqual(pushes(git), []);
+  assert.deepEqual(writes(fsStub), []);
+});
+
+test('KRIITTINEN: lukitsematon aalto (lukko ilman K:ta) pysäyttää (LOCK_DRIFT), ei pushia', async () => {
+  // Sama tilanne kuin ennen K v1:n lukitsemista: orkestroija kertoo
+  // seuraavan askeleen mutta pysähtyy — lukitsematonta SHA:ta ei koskaan
+  // deployata eikä sen migraatiota suunnitella.
+  const full = lockFrom(stubGit({ production: 'J' }));
+  const lockOverride = { ...full, waves: full.waves.filter(w => w.wave !== 'K') };
+  for (const executeDeploy of [false, true]) {
+    const { git, deps, options } = setup({ production: 'J', dbState: '0013', lockOverride, live: executeDeploy });
+    const result = await runOrchestrator(deps, { ...options, executeDeploy, approvedSha: executeDeploy ? shaOf('K') : null });
+    assert.equal(result.plan.decision, 'STOP');
+    assert.equal(result.plan.stopClass, 'LOCK_DRIFT');
+    assert.equal(result.plan.nextAction.kind, 'MIGRATE');
+    assert.equal(result.plan.nextAction.wave, 'K');
+    assert.equal(result.plan.nextAction.migration, '0014');
+    assert.notEqual(result.exitCode, 0);
+    assert.deepEqual(pushes(git), []);
+  }
+});
+
+test('K + 0014: DEPLOY K vaatii verify_0014-tuloksen; K tuotannossa + 0014 -> DONE (junan loppu)', async () => {
+  const pending = setup({ production: 'J', dbState: '0014' });
+  const missing = await runOrchestrator(pending.deps, pending.options);
+  assert.equal(missing.plan.nextAction.kind, 'DEPLOY');
+  assert.equal(missing.plan.candidate.wave, 'K');
+  assert.equal(missing.plan.candidate.sha, shaOf('K'));
+  assert.match(missing.plan.pendingGates.map(g => g.detail).join(' '), /verify_0014\.sql/);
+  assert.match(missing.plan.pendingGates.find(g => g.class === 'OWNER_DEPLOY_APPROVAL_REQUIRED').detail, /"hyväksyn 0014\/K"/);
+  const good = await runOrchestrator(pending.deps, { ...pending.options, verifyResult: checkResult(VERIFY_CHECKS) });
+  assert.equal(good.plan.state, 'STOP_OWNER_DEPLOY');
+  assert.match(good.plan.evidence.migrationVerify, /verify_0014\.sql: 30\/30 tarkistusta, 0 poikkeavaa/);
+  assert.deepEqual(pushes(pending.git), []);
+
+  const done = setup({ production: 'K', dbState: '0014', journal: journalOf(acceptanceEntry('K')) });
+  const end = await runOrchestrator(done.deps, done.options);
+  assert.equal(end.plan.decision, 'DONE', end.plan.reason);
+  assert.equal(end.exitCode, 0);
+  assert.deepEqual(pushes(done.git), []);
 });
 
 // =====================================================================
@@ -770,6 +828,15 @@ test('KRIITTINEN: peruutuspaketti: irrotus deployTargetiin, revert ilman committ
   assert.equal(/push origin HEAD:main/.test(pack), false, 'vanha HEAD-push jäi pakettiin');
   assert.equal(/push[^\n]*--force(?!-with-lease)[^\n]*$/m.test(pack.replace('(EI --force)', '')), false);
   assert.equal(/-f\b|\+[0-9a-f<]/.test(lines.find(l => l.includes('git push'))), false);
+});
+
+test('peruutuspaketti junan viimeiselle aallolle K: tila J, v25, ei seuraavan aallon varausta', () => {
+  const lock = lockFrom(stubGit());
+  const pack = rollbackPack('K', { lock }).join('\n');
+  assert.match(pack, /^PERUUTUS aallolle K -> tila J/);
+  assert.match(pack, new RegExp(`git switch --detach ${shaOf('K')}`));
+  assert.match(pack, /nosta CACHE_VERSION v24 -> v25/);
+  assert.match(pack, /v25 on aallon - varattu versio/);
 });
 
 // =====================================================================
