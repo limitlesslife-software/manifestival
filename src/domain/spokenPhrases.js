@@ -212,6 +212,16 @@ const BUILDERS = Object.freeze({
   },
 
   [NOTIFICATION_TYPE.EVENING_BEFORE]: (style, ctx) => {
+    // Illan ennakko: huominen vaatii aiemman herätyksen -> iltarutiini aiemmin.
+    if (ctx.windDown) {
+      return pick(style, {
+        [CALM]: `Huominen alkaa tavallista aiemmin. Iltarutiini kannattaa aloittaa kello ${ctx.windDown}.`,
+        [BRISK]: `Huomenna aiemmin. Iltarutiini kello ${ctx.windDown}.`,
+        [ACTIVE]: ctx.firstLeave
+          ? `Huominen alkaa aiemmin: lähtö kello ${ctx.firstLeave}. Aloita iltarutiini kello ${ctx.windDown}.`
+          : `Huominen alkaa tavallista aiemmin. Aloita iltarutiini jo kello ${ctx.windDown}.`
+      });
+    }
     if (!ctx.firstLeave) {
       return pick(style, {
         [CALM]: 'Huomenna ei ole sovittuja lähtöjä.',
@@ -298,6 +308,7 @@ export const PHRASE_KINDS = Object.freeze(Object.keys(BUILDERS));
  * @param {string} [context.bedtime]    'HH:MM' iltarauhoittumiseen
  * @param {string} [context.wake]       'HH:MM' nukkumaanmenoon
  * @param {string} [context.firstLeave] 'HH:MM' tai null (illan ja aamun kooste)
+ * @param {string} [context.windDown]   'HH:MM' illan ennakon iltarutiinin alku
  * @param {string} [context.habitKind]  HABIT_KIND
  * @param {boolean}[context.prep]       ateria: false = ruoka-aika, muuten valmistus
  * @param {number} [context.count]      koosteen muistutusten määrä
@@ -326,6 +337,8 @@ function buildPhrase(kind, context) {
     bedtime: spokenTime(raw.bedtime),
     wake: spokenTime(raw.wake),
     firstLeave: spokenTime(raw.firstLeave),
+    // Illan ennakko: iltarutiinin (aiempi) alku.
+    windDown: spokenTime(raw.windDown),
     habitKind: raw.habitKind === HABIT_KIND.NICOTINE ? HABIT_KIND.NICOTINE : HABIT_KIND.GENERIC,
     prep: raw.prep !== false,
     count: Number.isInteger(raw.count) ? raw.count : null

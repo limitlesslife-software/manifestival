@@ -69,7 +69,8 @@ import { deviceOffsetMinutes, deviceTimeZone } from './deviceTime.js';
 import { departuresOn, firstCommitmentOn, sleepScheduleOn, clockOf, shiftIso } from './dailyLifeModel.js';
 import { currentAckLog, rememberScheduledTargets } from './alarmEvents.js';
 import { desiredAlarms, DEFAULT_ESCALATION } from '../domain/alarmPlan.js';
-import { planDepartureChain, planDailyLifeReminders, DAILY_REMINDER_KIND } from '../domain/dailyReminders.js';
+import { planDepartureChain, planDailyLifeReminders, DAILY_REMINDER_KIND, firstLeaveOn } from '../domain/dailyReminders.js';
+import { eveningBeforeAdvice } from './dailyLifeNotices.js';
 import { applyNotificationPolicy, resolveGuidanceStyle, scaleLeadMinutes } from '../domain/notificationPolicy.js';
 import { normalizePreferences, DEPARTURE_CHAIN_TYPES, planRange } from '../domain/notification.js';
 import { expandRoutines } from '../domain/routine.js';
@@ -205,8 +206,39 @@ function departureInputs(state, now, dates) {
   return { inputs, routes };
 }
 
-/** Iltarauhoittuminen ja nukkumaanmeno herätyspäiville huomisesta eteenpäin. */
-function sleepEntries(state, now, dates) {
+/** Illan ennakko tulee viimeistään tähän aikaan illalla (minuutit keskiyöstä). */
+export const EVENING_BEFORE_LATEST_MINUTES = 18 * 60;
+/** ... ja vähintään tämän verran ennen (aikaistettua) iltarauhoittumista. */
+export const EVENING_BEFORE_LEAD_MINUTES = 60;
+const EVENING_BEFORE_EARLIEST_MINUTES = 12 * 60;
+
+/**
+ * Illan ennakon hetki illalle `eveningDate`: iltarauhoittumisen alku − 60 min,
+ * kuitenkin viimeistään klo 18.00 ja aikaisintaan klo 12.00. Keskiyön
+ * jälkeen alkava rauhoittuminen -> klo 18.00.
+ */
+export function eveningBeforeTime(eveningDate, windDownDate, windDownStart) {
+  let minutes = EVENING_BEFORE_LATEST_MINUTES;
+  if (windDownDate === eveningDate && isTimeOfDay(windDownStart)) {
+    const [hours, mins] = windDownStart.split(':').map(Number);
+    minutes = Math.min(minutes, hours * 60 + mins - EVENING_BEFORE_LEAD_MINUTES);
+  } else if (typeof windDownDate === 'string' && windDownDate < eveningDate) {
+    return null;
+  }
+  minutes = Math.max(minutes, EVENING_BEFORE_EARLIEST_MINUTES);
+  return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+}
+
+/**
+ * Iltarauhoittuminen ja nukkumaanmeno herätyspäiville huomisesta eteenpäin,
+ * sekä ILLAN ENNAKKO (DAILY_REMINDER_KIND.EVENING_BEFORE) iltaan, jonka
+ * jälkeinen aamu vaatii tavallista aiemman herätyksen. Neuvo on sama kuin
+ * ilmoituskeskuksen merkinnässä (dailyLifeNotices.eveningBeforeAdvice), mutta
+ * tämä tulee laitteen muistutuksena, vaikka sovellusta ei avattaisi illalla.
+ *
+ * @param {Function} [firstLeaveFor] herätyspäivä -> ensimmäinen lähtö 'HH:MM' tai null
+ */
+function sleepEntries(state, now, dates, firstLeaveFor = () => null) {
   // Pelkillä oletuksilla ei muistuteta nukkumaanmenosta: käyttäjä ei ole
   // kertonut rytmiään, eikä ilmoitus iltaisin saa tulla yllätyksenä. Rytmin
   // kertoo joko tallennettu arjen asetus TAI profiiliin itse asetettu
@@ -234,8 +266,33 @@ function sleepEntries(state, now, dates) {
       kind: DAILY_REMINDER_KIND.BEDTIME, date: schedule.bedtimeDate, time: schedule.bedtime,
       wakeTime: schedule.wakeTime
     });
+    const evening = eveningBeforeEntry(state, now, date, wakeDate, schedule, firstLeaveFor);
+    if (evening) entries.push(evening);
   }
   return entries;
+}
+
+/** Illan ennakko illalle `date` tai null (ei aiempaa herätystä tai laskentavirhe). */
+function eveningBeforeEntry(state, now, date, wakeDate, schedule, firstLeaveFor) {
+  let advice = null;
+  try {
+    advice = eveningBeforeAdvice(wakeDate, { state, now, schedule });
+  } catch {
+    advice = null;
+  }
+  if (!advice || !advice.message) return null;
+  const time = eveningBeforeTime(date, schedule.windDownDate || schedule.bedtimeDate, advice.windDownStart);
+  if (!time) return null;
+  let firstLeave = null;
+  try {
+    firstLeave = firstLeaveFor(wakeDate);
+  } catch {
+    firstLeave = null;
+  }
+  return {
+    kind: DAILY_REMINDER_KIND.EVENING_BEFORE, date, time, wakeDate,
+    message: advice.message, detail: advice.detail, windDownStart: advice.windDownStart, firstLeave
+  };
 }
 
 /** Ateriat käyttäjän omasta ateriarytmistä (valmistelu huomioiden). */
@@ -407,8 +464,9 @@ export function dailyLifeReminderPlan({
     const habits = habitEntries(state, now, dates);
     effective = policySettings(settings, habits.delivery);
     const chain = planDepartureChain({ departures: departures.inputs, settings: effective, todayIso });
+    const firstLeaveFor = wakeDate => firstLeaveOn(departures.inputs, wakeDate);
     const daily = planDailyLifeReminders({
-      entries: [...sleepEntries(state, now, dates), ...mealEntries(settings, dates), ...habits.entries],
+      entries: [...sleepEntries(state, now, dates, firstLeaveFor), ...mealEntries(settings, dates), ...habits.entries],
       settings: effective,
       todayIso
     });

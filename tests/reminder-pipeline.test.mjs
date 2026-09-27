@@ -262,6 +262,65 @@ test('valittu puhuttu nukkumaanmeno kuuluu, vaikka oletusrauhoitusaika (22.00) a
   assert.ok(night.some(entry => entry.time >= '22:00'), 'rauhoitusajan sisällä');
 });
 
+// ------------------------------------------------------------ illan ennakko
+
+/** Huomenna aikainen meno: herätys aiemmin kuin tavallisesti (06.30). */
+function seedEarlyTomorrow(settings = {}) {
+  seed({ settings: { arrivalBufferMinutes: 10, windDownMinutes: 30, ...settings } });
+  setProfile({ sleepTargetHours: 8, defaultWakeTime: '06:30', routineMinutes: 45 }, true);
+  setSavedPlaces([{ id: 'kk', name: 'Lentokenttä', address: 'Lentoasemantie 1', travelMode: 'driving',
+    usualTravelMinutes: 40, preparationMinutes: 10 }]);
+  setCalendarEvents([{ id: 'lento', title: 'Lento', date: TOMORROW, startTime: '07:00', durationMinutes: 60, placeId: 'kk' }]);
+}
+
+test('illan ennakko ajastetaan muistutukseksi, kun huominen vaatii aiemman herätyksen', async () => {
+  signIn();
+  seedEarlyTomorrow();
+  const { eveningBeforeAdvice, eveningBeforeNotice } = await import('../src/app/dailyLifeNotices.js');
+  const { eveningBeforeTime } = await import('../src/app/alarmSync.js');
+  const advice = eveningBeforeAdvice(TOMORROW, { now: NOON });
+  assert.ok(advice && advice.message, 'huominen vaatii aiemman herätyksen');
+
+  const { entries, localIntents } = desiredNativeEntries({ now: NOON, nativeSupported: true });
+  const evening = localIntents.find(intent => intent.type === 'evening_before');
+  assert.ok(evening, 'illan ennakko on ajastettu muistutus');
+  assert.equal(evening.date, TODAY);
+  assert.equal(evening.time, eveningBeforeTime(TODAY, TODAY, advice.windDownStart));
+  assert.ok(evening.time <= '18:00' && evening.time < advice.windDownStart, 'ennen iltarauhoittumista');
+  assert.equal(evening.title, 'Huominen alkaa aiemmin');
+  assert.ok(evening.body.startsWith(advice.message), 'sama neuvo kuin ilmoituskeskuksessa');
+  const leave = /Ensimmäinen lähtö klo (\d{2}:\d{2})\./.exec(evening.body);
+  assert.ok(leave && leave[1] < '07:00', 'huomisen ensimmäinen lähtö kerrotaan');
+  assert.equal(evening.delivery, DELIVERY.VIBRATE, 'oletus värisee (ei hiljainen)');
+  assert.equal(entries.some(entry => entry.id.startsWith('evening_before')), false, 'ei puhu oletuksena');
+  // Sovelluksessa sama neuvo illalla (ilmoituskeskus): yksi laskenta.
+  const notice = eveningBeforeNotice({ now: at(2026, 9, 29, 19, 0) });
+  assert.equal(notice.reason, advice.message);
+});
+
+test('illan ennakko puhuu, kun Aamurutiini = Puhe; tavallisena iltana ennakkoa ei tule', () => {
+  signIn();
+  seedEarlyTomorrow({ speechEnabled: true, delivery: { morning: DELIVERY.SPEECH } });
+  const { entries } = desiredNativeEntries({ now: NOON, nativeSupported: true });
+  const spoken = entries.find(entry => entry.id.startsWith(`evening_before:huominen:${TODAY}`));
+  assert.ok(spoken, 'puhuttu illan ennakko laitteelle');
+  assert.match(spoken.speech, /Iltarutiini kannattaa aloittaa kello \d{1,2}\.\d{2}\./);
+  assert.equal(/Lento|Lentokenttä/.test(spoken.speech), false, 'ei menon nimeä ääneen');
+
+  setCalendarEvents([]);
+  const plain = dailyLifeReminderPlan({ now: NOON }).intents;
+  assert.equal(plain.some(intent => intent.type === 'evening_before'), false, 'ei aiempaa herätystä -> ei ennakkoa');
+});
+
+test('illan ennakon hetki: rauhoittuminen − 60 min, viimeistään 18.00, aikaisintaan 12.00', async () => {
+  const { eveningBeforeTime } = await import('../src/app/alarmSync.js');
+  assert.equal(eveningBeforeTime(TODAY, TODAY, '21:40'), '18:00');
+  assert.equal(eveningBeforeTime(TODAY, TODAY, '18:30'), '17:30');
+  assert.equal(eveningBeforeTime(TODAY, TODAY, '12:30'), '12:00');
+  assert.equal(eveningBeforeTime(TODAY, TOMORROW, '00:15'), '18:00', 'keskiyön jälkeen alkava rauhoittuminen');
+  assert.equal(eveningBeforeTime(TODAY, '2026-09-28', '23:00'), null);
+});
+
 test('päivärajan arvo: suojatut ennen tavallisia, vähäiset (vesi, suunnitelma, Tieto) viimeisenä', async () => {
   const { capValue, capPerDay, CAP_VALUE } = await import('../src/domain/notificationPolicy.js');
   const { createIntent } = await import('../src/domain/notification.js');

@@ -436,11 +436,26 @@ function dailyIntent(entry, { settings, style, today }) {
     }
     case DAILY_REMINDER_KIND.EVENING_BEFORE: {
       const firstLeave = isTimeOfDay(source.firstLeave) ? source.firstLeave : null;
-      title = 'Huomisen suunnitelma';
-      body = firstLeave ? `Huomenna ensimmäinen lähtö klo ${firstLeave}.` : 'Huomenna ei ole sovittuja lähtöjä.';
-      reason = 'Illan katsaus huomiseen, jotta aamu sujuu ilman kiirettä.';
+      // Illan ennakko (sleepRhythm.eveningBefore): huominen vaatii aiemman
+      // herätyksen. Teksti on sovelluksen oma neuvo (ei käyttäjän tekstiä),
+      // puheeseen menevät vain kellonajat (spokenPhrases).
+      const advice = cleanText(source.message, 300);
+      const windDown = isTimeOfDay(source.windDownStart) ? source.windDownStart : null;
+      if (advice) {
+        title = 'Huominen alkaa aiemmin';
+        body = firstLeave ? `${advice} Ensimmäinen lähtö klo ${firstLeave}.` : advice;
+        reason = cleanText(source.detail, 200) || 'Illan ennakko: huominen vaatii tavallista aiemman herätyksen.';
+      } else {
+        title = 'Huomisen suunnitelma';
+        body = firstLeave ? `Huomenna ensimmäinen lähtö klo ${firstLeave}.` : 'Huomenna ei ole sovittuja lähtöjä.';
+        reason = 'Illan katsaus huomiseen, jotta aamu sujuu ilman kiirettä.';
+      }
       targetId = 'huominen';
-      phraseContext = { style, firstLeave };
+      phraseContext = { style, firstLeave, windDown: advice ? windDown : null };
+      if (advice) {
+        extra.windDownStart = windDown;
+        extra.wakeDate = isIsoDate(source.wakeDate) ? source.wakeDate : null;
+      }
       break;
     }
     case DAILY_REMINDER_KIND.MORNING_BRIEF: {
@@ -490,7 +505,8 @@ function dailyIntent(entry, { settings, style, today }) {
  *   meal            { id, date, time (ateria), prepMinutes?, name? }
  *                   -> muistutus klo time − prepMinutes ("aloita valmistus")
  *   habit           { id (suunnitelma), date, time, habitKind? }
- *   evening_before  { date, time, firstLeave? }
+ *   evening_before  { date, time, firstLeave?, message?, detail?, windDownStart?, wakeDate? }
+ *                   message = illan ennakon neuvo (sleepRhythm.eveningBefore)
  *   morning_brief   { date, time, firstLeave? } — vain jos
  *                   settings.morningBriefEnabled === true
  *

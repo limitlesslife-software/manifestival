@@ -444,6 +444,8 @@ export const DIGEST_BYPASS_TYPES = Object.freeze([
   NOTIFICATION_TYPE.MEAL,
   NOTIFICATION_TYPE.HABIT,
   NOTIFICATION_TYPE.MORNING_BRIEF,
+  // Illan ennakko on hyödytön iltarauhoittumisen jälkeen: ei koosteeseen.
+  NOTIFICATION_TYPE.EVENING_BEFORE,
   NOTIFICATION_TYPE.DIGEST
 ]);
 
