@@ -53,7 +53,8 @@ export const fixtureName = (kind, n, outcome) => `${kind}_${n}-${outcome}.tsv`;
 
 /**
  * Puhdas: yhdistä osittaisen ajon tulokset aiempaan manifestiin. Vain
- * `numbers`-migraatioiden rivit korvataan; muut säilyvät sellaisinaan.
+ * `numbers`-migraatioiden rivit korvataan; muut säilyvät sellaisinaan ja
+ * samassa järjestyksessä.
  * Aiempi ylätason alkuperä siirtyy `runs`-listaan, jotta jokaisen rivin
  * lähde on yhä tiedossa.
  */
@@ -65,8 +66,8 @@ export function mergeManifest(previous, next, numbers) {
   for (const [name, entry] of Object.entries(next.files)) files[name] = entry;
   const runOf = m => ({ generatedAt: m.generatedAt, server: m.server, git: m.git, numbers: m.numbers ?? null });
   const runs = [...(previous.runs || [runOf(previous)]), runOf({ ...next, numbers })];
-  const sorted = Object.fromEntries(Object.keys(files).sort().map(k => [k, files[k]]));
-  return { ...previous, generatedAt: next.generatedAt, runs, files: sorted };
+  // Aiempien rivien järjestys säilyy (pieni diff); uudet perään ajojärjestyksessä.
+  return { ...previous, generatedAt: next.generatedAt, runs, files };
 }
 
 async function capture(client, kind, n) {
