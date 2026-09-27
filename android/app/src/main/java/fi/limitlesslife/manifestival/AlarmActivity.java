@@ -111,7 +111,7 @@ public class AlarmActivity extends Activity {
         int max = entry == null ? 0 : AlarmMath.clamp(entry.optInt("maxSnoozes", AlarmMath.MAX_SNOOZES), 0, AlarmMath.MAX_SNOOZES);
         int used = entry == null ? 0 : Math.max(0, entry.optInt("snoozeCount", 0));
         if (entry != null && used < max) {
-            int minutes = AlarmMath.clamp(entry.optInt("snoozeMinutes", AlarmMath.DEFAULT_SNOOZE_MINUTES), 1, AlarmMath.MAX_SNOOZE_MINUTES);
+            int minutes = AlarmMath.snoozeMinutes(entry.optString("kind"), entry.optInt("snoozeMinutes", AlarmMath.DEFAULT_SNOOZE_MINUTES));
             snooze.setText(getString(R.string.alarm_snooze_minutes, minutes));
             snooze.setContentDescription(getString(R.string.alarm_snooze_description, minutes));
             snooze.setVisibility(View.VISIBLE);

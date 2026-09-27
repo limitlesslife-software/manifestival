@@ -40,8 +40,6 @@ public class AlarmReceiver extends BroadcastReceiver {
 
     /** Ilmoituksen toimintoon upotettu merkinta (torkku toimii, vaikka sovitus olisi jo poistanut sen). */
     static final String EXTRA_ENTRY = "fi.limitlesslife.manifestival.alarm.ENTRY";
-    /** Puhutun muistutuksen torkku on aina 5 minuuttia. */
-    static final int SPOKEN_SNOOZE_MINUTES = 5;
 
     @Override
     public void onReceive(Context context, Intent intent) {
@@ -141,9 +139,8 @@ public class AlarmReceiver extends BroadcastReceiver {
         if (!ringing && base.optLong("snoozeUntil", 0L) > now) return false;
 
         boolean spoken = AlarmMath.KIND_SPOKEN.equals(kind);
-        int minutes = spoken
-            ? SPOKEN_SNOOZE_MINUTES
-            : AlarmMath.clamp(base.optInt("snoozeMinutes", AlarmMath.DEFAULT_SNOOZE_MINUTES), 1, AlarmMath.MAX_SNOOZE_MINUTES);
+        // Sama saanto kuin painikkeiden tekstissa (AlarmService, AlarmActivity).
+        int minutes = AlarmMath.snoozeMinutes(kind, base.optInt("snoozeMinutes", AlarmMath.DEFAULT_SNOOZE_MINUTES));
         int maxSnoozes = spoken
             ? AlarmMath.MAX_SNOOZES
             : AlarmMath.clamp(base.optInt("maxSnoozes", AlarmMath.MAX_SNOOZES), 0, AlarmMath.MAX_SNOOZES);

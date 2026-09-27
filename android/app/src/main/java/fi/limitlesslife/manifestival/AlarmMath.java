@@ -305,6 +305,20 @@ final class AlarmMath {
         return Math.max(min, Math.min(max, value));
     }
 
+    /** Puhutun muistutuksen torkku on aina 5 minuuttia ("Torku 5 min"). */
+    static final int SPOKEN_SNOOZE_MINUTES = 5;
+
+    /**
+     * Torkun pituus minuutteina. YKSI saanto seka torkulle
+     * (AlarmReceiver.snooze) etta jokaisen painikkeen tekstille: puhuttu
+     * muistutus aina 5, heratys ja kriittinen oman asetuksen mukaan (1-30).
+     * Ennen varailmoituksen painike sanoi "Torku 5 min", vaikka heratys
+     * torkkui asetuksen mukaan (oletus 9 min).
+     */
+    static int snoozeMinutes(String kind, int requested) {
+        return KIND_SPOKEN.equals(kind) ? SPOKEN_SNOOZE_MINUTES : clamp(requested, 1, MAX_SNOOZE_MINUTES);
+    }
+
     /** Kieli BCP 47 -muodossa, muuten suomi. */
     static String langOrDefault(String lang) {
         return lang != null && LANG.matcher(lang).matches() ? lang : "fi-FI";

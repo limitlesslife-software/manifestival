@@ -319,7 +319,8 @@ test('torkku on idempotentti ja rajattu; sammutus kuittaa ja pysäyttää', () =
   assert.match(snooze, /if \(!ringing && base\.optLong\("snoozeUntil", 0L\) > now\) return false;/,
     'toinen torkkupainallus ei saa ajastaa toista herätystä');
   assert.match(snooze, /if \(!auto && used >= maxSnoozes\) return false;/);
-  assert.match(snooze, /AlarmMath\.MAX_SNOOZE_MINUTES/);
+  assert.match(snooze, /AlarmMath\.snoozeMinutes\(kind, /);
+  assert.match(methodBody(javaCode('AlarmMath.java'), 'static int snoozeMinutes('), /clamp\(requested, 1, MAX_SNOOZE_MINUTES\)/);
   const finish = methodBody(receiver, 'private static void finish(');
   assert.match(finish, /AlarmStore\.markHandled/);
   assert.match(finish, /AlarmScheduler\.cancel\(/);
@@ -335,6 +336,27 @@ test('torkku on idempotentti ja rajattu; sammutus kuittaa ja pysäyttää', () =
   assert.equal(/targetOf\([^)]*,/.test(ALARM_FILES.map(javaCode).join('\n')), false, 'targetOf ei saa ottaa nykyhetkeä');
   // Näkymän Torku toimii, vaikka synkronointi olisi poistanut soivan herätyksen tallesta.
   assert.match(javaCode('AlarmActivity.java'), /AlarmService\.ringingEntryJson\(id\)/);
+});
+
+test('REGRESSIO: varailmoituksen Torku-painike kertoo saman keston kuin torkku (ei aina "Torku 5 min")', () => {
+  // native-fallback-snooze-label: kun etualapalvelua ei saa käynnistää
+  // (epätarkka herätys, valmistajan rajoitus), herätys ja kriittinen
+  // näytetään varailmoituksena reminderNotificationilla. Sen painike sanoi
+  // aina "Torku 5 min", vaikka torkku kesti asetuksen mukaan (oletus 9 min).
+  const service = javaCode('AlarmService.java');
+  const reminder = methodBody(service, 'static Notification reminderNotification(Context context, JSONObject entry, String channel)');
+  assert.equal(/R\.string\.reminder_snooze/.test(reminder), false, 'varailmoitus sanoisi aina "Torku 5 min"');
+  assert.match(reminder, /snoozeLabel\(context, entry\)/);
+  assert.match(methodBody(service, 'static Notification ringNotification('), /snoozeLabel\(context, entry\)/);
+  const label = methodBody(service, 'static String snoozeLabel(');
+  assert.match(label, /if \(AlarmMath\.KIND_SPOKEN\.equals\(kind\)\) return context\.getString\(R\.string\.reminder_snooze\);/);
+  assert.match(label, /AlarmMath\.snoozeMinutes\(kind, entry\.optInt\("snoozeMinutes", AlarmMath\.DEFAULT_SNOOZE_MINUTES\)\)/);
+  assert.match(label, /R\.string\.alarm_snooze_minutes, minutes/);
+  // Torkku itse ja lukitusnäkymä samasta säännöstä; kesto ei ole laskettu muualla.
+  assert.match(javaCode('AlarmActivity.java'), /AlarmMath\.snoozeMinutes\(entry\.optString\("kind"\), /);
+  for (const file of ['AlarmService.java', 'AlarmReceiver.java', 'AlarmActivity.java']) {
+    assert.equal(/SPOKEN_SNOOZE_MINUTES|MAX_SNOOZE_MINUTES/.test(javaCode(file)), false, `${file}: torkun kesto laskettu toisessa paikassa`);
+  }
 });
 
 test('herätyslukko on aikarajattu ja vapautetaan', () => {

@@ -196,6 +196,18 @@ public class AlarmMathTest {
     }
 
     @Test
+    public void snoozeLengthIsOneRuleForSnoozeAndButtons() {
+        // REGRESSIO (native-fallback-snooze-label): herätyksen varailmoitus sanoi
+        // "Torku 5 min", mutta torkku kesti asetuksen mukaan (oletus 9 min).
+        assertEquals(5, AlarmMath.snoozeMinutes("spoken", AlarmMath.DEFAULT_SNOOZE_MINUTES));
+        assertEquals(5, AlarmMath.snoozeMinutes("spoken", 30));
+        assertEquals(9, AlarmMath.snoozeMinutes("wake", AlarmMath.DEFAULT_SNOOZE_MINUTES));
+        assertEquals(9, AlarmMath.snoozeMinutes("critical", 9));
+        assertEquals(30, AlarmMath.snoozeMinutes("wake", 45));
+        assertEquals(1, AlarmMath.snoozeMinutes("critical", 0));
+    }
+
+    @Test
     public void cleanTextStripsControlsAndBoundsLength() {
         assertEquals("Lahde nyt", AlarmMath.cleanText("Lahde\u0000 \t nyt\u0007", 50));
         assertNull(AlarmMath.cleanText("​‎", 50));
