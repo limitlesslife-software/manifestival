@@ -94,8 +94,8 @@ function validDuration(value) {
 
 /** 'tänään', 'huomenna' tai 'torstaina 1.10.' */
 function dayPhrase(dateIso, todayIso) {
-  if (dateIso === todayIso) return 'tänään';
-  if (dateIso === addDaysIso(todayIso, 1)) return 'huomenna';
+  if (todayIso && dateIso === todayIso) return 'tänään';
+  if (todayIso && dateIso === addDaysIso(todayIso, 1)) return 'huomenna';
   const [, month, day] = dateIso.split('-').map(Number);
   return `${WEEKDAY_ESSIVE[weekdayOfIso(dateIso)]} ${day}.${month}.`;
 }
@@ -397,15 +397,16 @@ export function proposeOpenEndedSlot(input = {}) {
  * @param {Array}  input.trips   tapahtumaesiintymät (paikka tai alue)
  * @param {Array}  [input.places]
  * @param {string} input.todayIso
- * @param {string} [input.weekEndIso]
+ * @param {string} [input.todayIso]  ilman sitä menoja ei rajata tähän päivään
  * @returns {ReadonlyArray<{tripId, date, time, tripTitle, placeId, area, nearby, taskIds, text}>}
  */
 export function groupErrands(input = {}) {
   const args = isObject(input) ? input : {};
   const todayIso = isIsoDate(args.todayIso) ? args.todayIso : null;
-  if (!todayIso) return EMPTY;
-  const weekEnd = isIsoDate(args.weekEndIso) && args.weekEndIso >= todayIso
-    ? args.weekEndIso : addDaysIso(todayIso, DEFAULT_HORIZON_DAYS - 1);
+  // Ilman tätä päivää kaikki annetut menot kelpaavat (kutsuja on jo rajannut ne);
+  // "tänään" ja "huomenna" korvautuvat viikonpäivällä ja päiväyksellä.
+  const weekEnd = isIsoDate(args.weekEndIso) && (!todayIso || args.weekEndIso >= todayIso)
+    ? args.weekEndIso : (todayIso ? addDaysIso(todayIso, DEFAULT_HORIZON_DAYS - 1) : null);
 
   const index = indexPlaces(args.places);
   const byPlace = new Map();
@@ -413,7 +414,7 @@ export function groupErrands(input = {}) {
   const seenTrips = new Set();
   for (const raw of Array.isArray(args.trips) ? args.trips : EMPTY) {
     const trip = tripOf(raw, index);
-    if (!trip || trip.date < todayIso || trip.date > weekEnd || seenTrips.has(trip.id)) continue;
+    if (!trip || (todayIso && trip.date < todayIso) || (weekEnd && trip.date > weekEnd) || seenTrips.has(trip.id)) continue;
     seenTrips.add(trip.id);
     if (trip.placeId) pushTo(byPlace, trip.placeId, trip);
     if (trip.area) pushTo(byArea, trip.area, trip);
@@ -431,7 +432,7 @@ export function groupErrands(input = {}) {
       seenTasks.add(id);
       const errand = errandPlaceOf(task, index);
       if (!errand) return;
-      const deadline = isIsoDate(task.deadline) && task.deadline >= todayIso ? task.deadline : null;
+      const deadline = isIsoDate(task.deadline) && (!todayIso || task.deadline >= todayIso) ? task.deadline : null;
       const samePlace = errand.placeId ? earliestWithin(byPlace.get(errand.placeId), deadline) : null;
       const sameArea = !samePlace && errand.area
         ? earliestWithin(byArea.get(errand.area), deadline)

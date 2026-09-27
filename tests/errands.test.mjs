@@ -309,6 +309,14 @@ test('roskasyöte ei koskaan kaada', () => {
   assert.deepEqual([...groupErrands({ tasks: [], trips: [], todayIso: null })], []);
 });
 
+test('groupErrands ilman tätä päivää: annetut menot kelpaavat, päivä sanotaan viikonpäivänä', () => {
+  const groups = groupErrands({ tasks: [{ id: 't1', title: 'Sulat', placeId: 'motonet' }], trips: TRIPS, places: PLACES });
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].text, 'Olet jo menossa perjantaina 2.10. paikkaan Motonet (Renkaanvaihto klo 9.00). Voit hoitaa samalla: Sulat.');
+  const withDeadline = groupErrands({ tasks: [{ id: 't1', title: 'Sulat', placeId: 'motonet', deadline: '2026-09-30' }], trips: TRIPS, places: PLACES });
+  assert.deepEqual([...withDeadline], [], 'määräaika rajaa silti');
+});
+
 test('suorituskyky: tuhannet asiat ja menot pysyvät lineaarisina', () => {
   const build = count => {
     const places = [];
