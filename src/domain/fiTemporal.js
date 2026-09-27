@@ -435,6 +435,33 @@ export function clockFromParts(hour, minute, text = '') {
   return clock(hour, minute, dayPart(lower));
 }
 
+// Puhuttu tunti ilman klo-sanaa ("torstaina 14-15", "perjantaina kaksitoista").
+// Paikallinen tapahtumajäsennin (eventParse.js) käyttää näitä vain päivän
+// perässä; tämän moduulin oma jäsennys (temporalHints) ei muutu.
+
+/** Tuntisanan perusmuoto -> tunti: "kaksitoista" -> 12, "seitsemän" -> 7. Muu -> null. */
+const NOMINATIVE_HOUR = new Map([
+  ...Object.entries(HOUR_FORMS).map(([hour, forms]) => [forms[0], Number(hour)]),
+  ...Object.entries(LATE_HOUR_FORMS).map(([hour, forms]) => [forms[0], Number(hour)])
+]);
+
+export function nominativeHourValue(word) {
+  return typeof word === 'string' ? NOMINATIVE_HOUR.get(word.normalize('NFC').toLocaleLowerCase('fi')) ?? null : null;
+}
+
+/**
+ * Pelkän tunnin kellonaika samalla säännöllä kuin pelkkä tuntisana: 1-11
+ * ilman vuorokaudenaikaa on epäselvä (klo 7 vai 19), 12-23 selvä, ja
+ * lauseen vuorokaudenaika ("aamulla", "illalla") ratkaisee.
+ *
+ * @param {number} hour
+ * @param {string} [text] lause, josta vuorokaudenaika luetaan
+ */
+export function bareHourFromParts(hour, text = '') {
+  const lower = typeof text === 'string' ? text.normalize('NFC').toLocaleLowerCase('fi') : '';
+  return bareHourClock(hour, dayPart(lower));
+}
+
 /**
  * Yksiselitteinen päivä ja kellonaika komentoa varten.
  *

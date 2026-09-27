@@ -136,14 +136,18 @@ test('tallennettu paikka tunnistetaan; epäselvä nimi kysytään ja nimitys opi
   assert.equal(result.ok, true);
   const placeQuestion = seen.choices.find(choice => choice.candidates.some(c => c.id === 'pv'));
   assert.ok(placeQuestion, 'paikasta kysyttiin');
-  assert.deepEqual(placeQuestion.candidates.map(c => c.label).sort(), ['Motonet Espoo', 'Motonet Vantaa']);
+  // Tallennetut ehdokkaat + pakotie "Ei mikään näistä" (meno ilman paikkaa, ei opittua nimitystä).
+  assert.deepEqual(placeQuestion.candidates.map(c => c.label).sort(),
+    ['Ei mikään näistä (ilman tallennettua paikkaa)', 'Motonet Espoo', 'Motonet Vantaa']);
   const [event] = getState().calendarEvents;
   assert.equal(event.placeId, 'pv');
   assert.equal(event.locationText, null);
   const aliases = getState().placeAliases;
   assert.equal(aliases.length, 1);
   assert.equal(aliases[0].placeId, 'pv');
-  assert.equal(aliases[0].alias, 'motonetissa');
+  // Opittava nimitys on perusmuoto: vahvistettu "motonet" liittää myös
+  // "Motonetissa", "Motonetiin" ja "Motonetista" (event-parse-voice-gaps).
+  assert.equal(aliases[0].alias, 'motonet');
 });
 
 test('peruttu meno ei opeta paikan nimitystä', async t => {

@@ -232,8 +232,13 @@ export function resolvePlaceText(text, context) {
       return result(PLACE_MATCH.LEARNED, place, [place], aliasConfidence(confirmations),
         `Olet vahvistanut tämän nimen paikaksi ${place.name.trim()} ${timesText(confirmations)}.`);
     }
-    return result(PLACE_MATCH.AMBIGUOUS, null, [place], PLACE_CONFIDENCE.LOW,
-      `Tarkoititko paikkaa ${place.name.trim()}? Nimi on yhdistetty siihen vasta kerran.`);
+    // Kerran vahvistettu ei vielä päätä: kerran valittu paikka ensin, mutta
+    // muutkin nimeen sopivat paikat pysyvät valittavina (useampi ehdokas -> kysytään).
+    const others = Array.from(query).length >= MIN_PARTIAL_QUERY
+      ? rankCandidates(places, query, index).filter(candidate => candidate.id !== place.id)
+      : [];
+    return result(PLACE_MATCH.AMBIGUOUS, null, [place, ...others], PLACE_CONFIDENCE.LOW,
+      `Tarkoititko paikkaa ${place.name.trim()}? Nimi on yhdistetty siihen vasta kerran.${others.length > 0 ? ' Valitse oikea.' : ''}`);
   }
   if (learned.length > 1) {
     learned.sort((a, b) => b.confirmations - a.confirmations || byName(a.place, b.place));

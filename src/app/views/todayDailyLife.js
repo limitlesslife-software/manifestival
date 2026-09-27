@@ -836,11 +836,23 @@ const recordHabit = singleFlight(async button => {
 
 // ------------------------------------------------------------ avoimet asiat
 
-/** Päivättömät, keskeneräiset tehtävät, joiden määräaika on seuraavan viikon aikana. */
+/**
+ * Avoin asia: keskeneräinen tehtävä ilman omaa ajankohtaa -- ei päivää, tai
+ * päivä on sama kuin määräaika eikä kellonaikaa ("käydä Motonetissä tällä
+ * viikolla" tallentuu sunnuntaille ilman kellonaikaa, src/app/localCommands.js).
+ * Tehtävällä on aina päivä (validateTask), joten jälkimmäinen on se muoto,
+ * jossa puheesta luotu avoin asia oikeasti on.
+ */
+function isOpenEnded(task) {
+  if (!task || task.completed || !task.deadline) return false;
+  return !task.date || (task.date === task.deadline && !task.time);
+}
+
+/** Avoimet asiat, joiden määräaika on seuraavan viikon aikana. */
 export function openEndedTasks(state, todayIso) {
   const last = shiftIso(todayIso, DEFAULT_HORIZON_DAYS - 1);
   return (state.tasks || [])
-    .filter(task => task && !task.completed && !task.date && task.deadline && task.deadline >= todayIso && task.deadline <= last)
+    .filter(task => isOpenEnded(task) && task.deadline >= todayIso && task.deadline <= last)
     .sort((a, b) => a.deadline.localeCompare(b.deadline) || byTitle(a, b));
 }
 
@@ -858,7 +870,8 @@ function errandTask(task, state) {
 /** Asiointiehdotukset: avoimet asiat, jotka voi hoitaa jo suunnitellun menon yhteydessä. */
 export function errandGroups(state, todayIso) {
   const tasks = (state.tasks || [])
-    .filter(task => task && !task.completed && !task.date && !task.time)
+    // Päivätön tai avoin asia (päivä = määräaika, ei kellonaikaa), ks. isOpenEnded.
+    .filter(task => task && !task.completed && !task.time && (!task.date || isOpenEnded(task)))
     .map(task => ({ ...errandTask(task, state), completed: false, time: null }))
     .filter(task => task.placeId);
   if (tasks.length === 0) return EMPTY;

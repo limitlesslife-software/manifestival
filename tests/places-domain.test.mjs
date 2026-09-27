@@ -69,8 +69,10 @@ test('opittu nimi voittaa vasta kahden vahvistuksen jälkeen ja vain yhdellä pa
   const once = resolvePlaceText('Parturi', { places: PLACES, aliases: [alias('a1', 'kallio', 'parturi', 1)] });
   assert.equal(once.status, PLACE_MATCH.AMBIGUOUS);
   assert.equal(once.place, null);
-  assert.deepEqual(once.candidates.map(p => p.id), ['kallio']);
-  assert.match(once.reason, /Tarkoititko paikkaa Parturi Kallio\?/);
+  // Kerran vahvistettu ensin, mutta muut nimeen sopivat pysyvät valittavina
+  // (paketti §12: useampi ehdokas -> kysy).
+  assert.deepEqual(once.candidates.map(p => p.id), ['kallio', 'haka']);
+  assert.match(once.reason, /Tarkoititko paikkaa Parturi Kallio\?.*Valitse oikea\./);
 
   const twice = resolvePlaceText('Parturi', { places: PLACES, aliases: [alias('a1', 'kallio', 'parturi', 2)] });
   assert.equal(MIN_ALIAS_CONFIRMATIONS, 2);
