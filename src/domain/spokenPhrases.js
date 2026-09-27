@@ -293,6 +293,23 @@ const BUILDERS = Object.freeze({
     });
   },
 
+  // Aamurutiinin vaihe: käyttäjän oma vaiheen nimi ("Suihku"), aamulla kotona.
+  [NOTIFICATION_TYPE.MORNING_STEP]: (style, ctx) => {
+    const name = typeof ctx.name === 'string' && ctx.name.trim() ? ctx.name.trim() : null;
+    if (!name) {
+      return pick(style, {
+        [CALM]: 'Aamurutiinin seuraava vaihe.',
+        [BRISK]: 'Seuraava vaihe.',
+        [ACTIVE]: 'Aamurutiinin seuraava vaihe alkaa nyt.'
+      });
+    }
+    return pick(style, {
+      [CALM]: `Nyt on aika: ${name}.`,
+      [BRISK]: `${name}.`,
+      [ACTIVE]: `Nyt on aika: ${name}. Pysyt aikataulussa.`
+    });
+  },
+
   [NOTIFICATION_TYPE.ROUTINE_REMINDER]: (style, ctx) => pick(style, {
     [CALM]: ctx.time ? `Seuraava rutiini alkaa kello ${ctx.time}.` : 'Seuraava rutiini alkaa pian.',
     [BRISK]: 'Rutiinin aika.',

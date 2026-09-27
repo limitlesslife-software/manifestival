@@ -67,7 +67,7 @@ import { alarms } from '../platform/index.js';
 import { getState, currentLifeSettings } from './state.js';
 import { sessionSnapshot, isSameSession } from '../data/session.js';
 import { deviceOffsetMinutes, deviceTimeZone } from './deviceTime.js';
-import { departuresOn, firstCommitmentOn, sleepScheduleOn, clockOf, shiftIso } from './dailyLifeModel.js';
+import { departuresOn, firstCommitmentOn, sleepScheduleOn, morningPlanOn, clockOf, shiftIso } from './dailyLifeModel.js';
 import { needsDeparture } from './calendarPlan.js';
 import { currentAckLog, rememberScheduledTargets } from './alarmEvents.js';
 import { desiredAlarms, DEFAULT_ESCALATION } from '../domain/alarmPlan.js';
@@ -79,13 +79,20 @@ import { expandRoutines } from '../domain/routine.js';
 import { ackIndex, entryHandled } from '../domain/notificationAck.js';
 import { dailyMealItems, MEAL_ITEM_KIND } from '../domain/mealRhythm.js';
 import { status as habitStatus, HABIT_STATE } from '../domain/habitEngine.js';
-import { DELIVERY, DELIVERIES, deliverySpeaks, ESCALATION_STEP } from '../domain/dailyLife.js';
+import { DELIVERY, DELIVERIES, deliverySpeaks, ESCALATION_STEP, REMINDER_TOPIC } from '../domain/dailyLife.js';
 import { wallClockToEpoch, epochToWallClock } from '../domain/wallClock.js';
 import { isTimeOfDay } from '../domain/task.js';
 import { logEvent } from '../lib/logger.js';
 
 /** Kuinka monta päivää eteenpäin (tänään mukaan lukien). Sama kuin tavallisissa muistutuksissa. */
 export const ALARM_SYNC_HORIZON_DAYS = 3;
+
+/**
+ * Herätysten horisontti (tänään + 7, alarmPlan.MAX_ALARM_DAYS). Pidempi kuin
+ * muistutusten: herätys ei saa jäädä ajastamatta, vaikka sovellusta ei
+ * avattaisi päiviin. Kahdeksan merkintää mahtuu laitteen rajaan (50).
+ */
+export const WAKE_ALARM_HORIZON_DAYS = 8;
 
 /** Tilamuutokset kootaan yhdeksi ajastukseksi (sama kuin notifications.RESYNC_DEBOUNCE_MS). */
 export const ALARM_SYNC_DEBOUNCE_MS = 2000;
@@ -350,6 +357,42 @@ function mealEntries(settings, dates) {
 }
 
 /** Tapojen muutoksen seuraava suunniteltu aika aktiivisille suunnitelmille. */
+/**
+ * Aamurutiinin vaiheet muistutuksiksi (sama aamusuunnitelma kuin Tänään-
+ * kortissa: dailyLifeModel.morningPlanOn). VAIN kun käyttäjä on valinnut
+ * Aamurutiinille muun kuin hiljaisen tavan ja kertonut oman aamurutiininsa:
+ * oletuksena (hiljainen) aamu ei täyty ilmoituksista.
+ */
+function morningStepEntries(state, now, dates, settings) {
+  const chosen = settings && settings.delivery && typeof settings.delivery === 'object'
+    ? settings.delivery[REMINDER_TOPIC.MORNING] : null;
+  if (!chosen || chosen === DELIVERY.SILENT) return [];
+  if (!settings || !Array.isArray(settings.morningRoutine) || settings.morningRoutine.length === 0) return [];
+  const entries = [];
+  for (const date of dates) {
+    let plan = null;
+    try {
+      plan = morningPlanOn(date, { state, now });
+    } catch {
+      plan = null;
+    }
+    if (!plan || !Array.isArray(plan.steps)) continue;
+    plan.steps.forEach((step, index) => {
+      if (!step || !isTimeOfDay(step.start)) return;
+      const next = plan.steps[index + 1] || null;
+      entries.push({
+        kind: DAILY_REMINDER_KIND.MORNING_STEP,
+        id: `${date}:${step.id || index}`,
+        date: step.startDate || date,
+        time: step.start,
+        name: step.name,
+        nextName: next ? next.name : null
+      });
+    });
+  }
+  return entries;
+}
+
 function habitEntries(state, now, dates) {
   const plans = listOf(state.habitPlans).filter(plan => plan && plan.active !== false && plan.id);
   if (plans.length === 0) return { entries: [], delivery: null };
@@ -493,7 +536,7 @@ export function dailyLifeReminderPlan({
     const daily = planDailyLifeReminders({
       entries: [
         ...sleepEntries(state, now, dates, firstLeaveFor), ...mealEntries(settings, dates), ...habits.entries,
-        ...departures.starts
+        ...departures.starts, ...morningStepEntries(state, now, dates, settings)
       ],
       settings: effective,
       todayIso
@@ -549,7 +592,7 @@ export function partitionReminders(intents, { nativeSupported = false, capacity 
 /** Herätykset horisontille; kuitatut ja menneet pois. */
 export function plannedWakeAlarms({ state = getState(), now = new Date(), ackLog = currentAckLog() } = {}) {
   const { todayIso } = clockOf(now);
-  const dates = horizonDates(todayIso);
+  const dates = horizonDates(todayIso, WAKE_ALARM_HORIZON_DAYS);
   const commitmentsByDate = {};
   for (const date of dates) {
     try {
@@ -852,12 +895,16 @@ async function runSync(ticket, fixedNow) {
     dropped: result && Array.isArray(result.dropped) ? result.dropped.length : 0,
     rejected: result && Array.isArray(result.rejected) ? result.rejected.length : 0
   });
+  // Viimeinen laitteelle pyydetty herätyspäivä: Arki kertoo, mihin asti
+  // herätykset ovat ajastettuina ilman sovelluksen avaamista.
+  const wakeDates = desired.entries.filter(entry => entry.kind === 'wake').map(entry => entry.date).sort();
   return finish({
     ok: Boolean(result && result.ok),
     supported: true,
     scheduled: result ? result.scheduled || 0 : 0,
     requested: desired.entries.length,
     exact: Boolean(result && result.exact),
+    wakeUntil: result && result.ok && wakeDates.length > 0 ? wakeDates[wakeDates.length - 1] : null,
     reason: result && result.reason ? result.reason : ''
   });
 }

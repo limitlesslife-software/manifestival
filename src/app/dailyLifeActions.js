@@ -366,13 +366,21 @@ export async function deletePlace(id, { confirm = confirmAction } = {}) {
  * Käyttäjä vahvisti, että `aliasText` tarkoittaa paikkaa `placeId`.
  * Sama pari kasvattaa vahvistusten määrää; uutta riviä ei synny.
  */
-export async function confirmPlaceAlias(aliasText, placeId, { nowIso = new Date().toISOString() } = {}) {
+/**
+ * Vahvista nimitys paikalle (puheen hyväksyntä) tai lisää se itse.
+ *
+ * `minConfirmations`: käyttäjän Paikoissa itse lisäämä nimitys on nimenomainen
+ * valinta, joten se saa heti liittämiseen riittävän määrän
+ * (places.MIN_ALIAS_CONFIRMATIONS) eikä odota kahta puhevahvistusta.
+ */
+export async function confirmPlaceAlias(aliasText, placeId, { nowIso = new Date().toISOString(), minConfirmations = 1 } = {}) {
   const alias = normalizeAliasText(aliasText);
   if (!alias || !findSavedPlace(placeId)) return { ok: false };
   const existing = getState().placeAliases.find(a => a.alias === alias && a.placeId === placeId) || null;
+  const floor = Number.isInteger(minConfirmations) && minConfirmations > 1 ? minConfirmations : 1;
   const next = normalizePlaceAlias(existing
-    ? { ...existing, confirmations: existing.confirmations + 1, lastConfirmedAt: nowIso }
-    : { id: newTaskId(), placeId, alias, confirmations: 1, lastConfirmedAt: nowIso });
+    ? { ...existing, confirmations: Math.max(existing.confirmations + 1, floor), lastConfirmedAt: nowIso }
+    : { id: newTaskId(), placeId, alias, confirmations: floor, lastConfirmedAt: nowIso });
   const { valid, errors } = validatePlaceAlias(next);
   if (!valid) return { ok: false, errors };
 

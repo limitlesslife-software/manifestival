@@ -66,7 +66,12 @@ test('K-porttitila: ilman K-ehdokasta portit tulevat junan määrittelystä, ja 
     assert.ok(resolved.source.includes(name), name);
   }
   const changed = resolved.source.split('\n').filter((line, i) => line !== SCHEMA.split('\n')[i]);
-  assert.ok(changed.length > 0);
+  // Haaran oma schema.js voi jo olla aallossa K (aaltocommit, kaikki portit
+  // auki): silloin muutettavaa ei ole, ja lähde on haaran tiedosto sellaisenaan.
+  const branchAtK = ALL_GATES.every(gate => parseGates(SCHEMA)[gate] === true)
+    && Object.values(parseColumnGates(SCHEMA)).every(Boolean);
+  if (branchAtK) assert.equal(resolved.source, SCHEMA, 'K-haaran lähdettä muutettiin');
+  else assert.ok(changed.length > 0, 'K-tila ei avannut yhtään porttia');
   assert.ok(changed.every(line => /:\s*true,?\s*$|^export const [A-Z_]+ = true;/.test(line.trim())), changed.join('\n'));
 });
 

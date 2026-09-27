@@ -86,7 +86,8 @@ test('arkiaamu ilman menoa: herätys profiilin mukaan, rajattu soitto ja torkku'
 });
 
 test(`päiviä enintään ${MAX_ALARM_DAYS}; vuoden vaihde ja viikonloppu`, () => {
-  assert.equal(alarms({ days: 5 }).length, MAX_ALARM_DAYS);
+  assert.equal(MAX_ALARM_DAYS, 8, 'tänään + 7: sama viikonpäivä ensi viikolla on katettu');
+  assert.equal(alarms({ days: 20 }).length, MAX_ALARM_DAYS);
   for (const days of [0, -2, 'kolme', null, NaN]) assert.equal(alarms({ days }).length, 1, String(days));
   const newYear = desiredAlarms({ fromIso: '2026-12-31', days: 3, profile: PROFILE, settings: SETTINGS });
   assert.deepEqual(newYear.map(alarm => [alarm.id, alarm.time]), [
@@ -243,6 +244,23 @@ test('katsaus kertoo ajan aamulenkille aamun väljyydestä (§34), ei keksi vapa
   // Alle MIN_RUN_MINUTES väljyys ei ole lenkkiaika (rutiini alkaa 7.05, herätys 7.00).
   const near = { id: 'n', title: 'Palaveri', startTime: '08:30', leaveTime: '08:20' };
   assert.doesNotMatch(alarms({ settings, commitmentsByDate: { [MONDAY]: near } })[0].briefText, /aamulenkille/);
+});
+
+test('iltapäivän meno ei ole aamun meno: kerrotaan, mutta aamu ja lenkki tavallisesta rytmistä (uusintakatselmointi)', () => {
+  const settings = { ...SETTINGS, morningBriefEnabled: true };
+  // Meno klo 16: aiemmin aamurutiini ajoitettiin 15.25 ja katsaus sanoi "535 minuutin aamulenkille".
+  const afternoon = { id: 'h', title: 'Hammaslääkäri', startTime: '16:00', leaveTime: '15:30' };
+  const chosen = morningOfDay({ dateIso: MONDAY, commitments: [afternoon], profile: PROFILE, settings });
+  assert.equal(chosen.commitment.id, 'h', 'meno kerrotaan tietona');
+  assert.equal(chosen.plan.commitment, null, 'aamu lasketaan ilman iltapäivän menoa');
+  const [alarm] = alarms({ settings, commitmentsByDate: { [MONDAY]: afternoon } });
+  assert.match(alarm.briefText, /Hammaslääkäri/);
+  assert.doesNotMatch(alarm.briefText, /aamulenkille/);
+  // Pitkä aamuväljyys aamun menolle sanotaan yleisesti, ei minuuttimääränä.
+  const late = { id: 'l', title: 'Lääkäri', startTime: '11:00', leaveTime: '10:50' };
+  const [roomy] = alarms({ settings, commitmentsByDate: { [MONDAY]: late } });
+  assert.match(roomy.briefText, /Sinulla on aikaa yli puolentoista tunnin aamulenkille\./);
+  assert.doesNotMatch(roomy.briefText, /\d{3} minuutin/);
 });
 
 // ================================================================ voimistuminen

@@ -14,8 +14,9 @@ import {
   resetState, getState, setProfile, setSavedPlaces, setCalendarEvents, setLifeSettings,
   setNotificationPreferences, setHabitPlans, setHabitEvents, setCommuteObservations
 } from '../src/app/state.js';
-import { clearAllCollections } from '../src/data/collectionsRepo.js';
+import { clearAllCollections, commuteObservationsRepo } from '../src/data/collectionsRepo.js';
 import { resetAckStoreForTests, loadAckState, ackStoreKey } from '../src/data/alarmAckStore.js';
+import { resetTestStore, storedRows } from './helpers/gateAwareStore.mjs';
 import * as capabilities from '../src/platform/capabilities.js';
 import { ALARM_LIMITS, isAlarmId, resetAlarmsForTests, ALARMS_WEB_REASON } from '../src/platform/alarms.js';
 import {
@@ -129,6 +130,8 @@ function signIn(user = USER_A) {
 beforeEach(() => {
   delete globalThis.Capacitor;
   clearAllCollections();
+  // Portin ollessa auki matkahavainto kulkee kantaa jäljittelevälle palvelimelle.
+  resetTestStore();
   resetState();
   clearUser();
   resetAlarmsForTests();
@@ -198,6 +201,22 @@ test('muistutukset pois päältä: vain herätys (oma valintansa) menee laitteel
   assert.deepEqual(dailyLifeReminderPlan({ now: NOON }).intents, []);
 });
 
+test('KRIITTINEN: herätykset ajastetaan viikoksi eteenpäin — perjantai-iltana maanantain herätys on laitteella', () => {
+  // Bugi (uusintakatselmointi): horisontti oli 3 päivää, eikä laite ajasta
+  // mitään itse. Viikonloppuna avaamaton sovellus jätti maanantain
+  // herätyksen soimatta.
+  signIn();
+  seedDay({ preferences: { enabled: false } });
+  const fridayEvening = at(2026, 10, 2, 20, 0); // pe 2.10.2026
+  const { entries } = desiredNativeEntries({ now: fridayEvening, nativeSupported: true });
+  const wakeDates = entries.filter(entry => entry.kind === 'wake').map(entry => entry.date).sort();
+  assert.ok(wakeDates.includes('2026-10-05'), 'maanantai mukana: ' + wakeDates.join(', '));
+  assert.ok(wakeDates.includes('2026-10-09'), 'seuraava perjantai mukana (tänään + 7)');
+  assert.ok(wakeDates.length <= 8 && wakeDates.length >= 7, String(wakeDates.length));
+  // Muistutukset pysyvät lyhyellä horisontilla (3 päivää).
+  assert.ok(entries.filter(entry => entry.kind !== 'wake').every(entry => entry.date <= '2026-10-04'));
+});
+
 test('herätys pois (oletus): laitteelle ei herätystä', () => {
   signIn();
   seedDay({ settings: { alarm: { enabled: false } } });
@@ -217,6 +236,31 @@ test('nukkumaanmenosta muistutetaan vain, kun käyttäjä on kertonut rytminsä 
   setProfile({}, false);
   assert.equal(types().includes('bedtime'), false, 'pelkillä oletuksilla ei iltamuistutuksia');
   assert.equal(types().includes('wind_down'), false);
+});
+
+test('aamurutiinin vaiheet muistutuksina vain omalla valinnalla; oletuksena (hiljainen) ei yhtään (uusintakatselmointi)', () => {
+  const ROUTINE = [
+    { id: 'r1', name: 'Suihku', minutes: 15, protection: 'mandatory' },
+    { id: 'r2', name: 'Aamiainen', minutes: 20, protection: 'important_flexible' }
+  ];
+  signIn();
+  seedDay({ settings: { morningRoutine: ROUTINE } });
+  const tomorrow = '2026-09-30';
+  const steps = () => dailyLifeReminderPlan({ now: NOON }).intents
+    .filter(intent => intent.type === 'morning_step' && intent.date === tomorrow);
+  assert.deepEqual(steps(), [], 'oletus: Aamurutiini hiljainen, ei vaihemuistutuksia');
+
+  seedDay({ settings: { morningRoutine: ROUTINE, delivery: { departure: 'speech', morning: 'sound' } } });
+  const list = steps();
+  assert.equal(list.length, 2);
+  assert.deepEqual(list.map(intent => intent.title), ['Aamurutiini', 'Aamurutiini']);
+  assert.match(list[0].body, /^Suihku nyt\. Seuraavaksi: Aamiainen\.$/);
+  assert.match(list[1].body, /^Aamiainen nyt\.$/);
+  // Vaiheet peräkkäin: toinen alkaa, kun ensimmäinen päättyy (15 min).
+  const minutes = time => Number(time.slice(0, 2)) * 60 + Number(time.slice(3));
+  assert.equal(minutes(list[1].time) - minutes(list[0].time), 15);
+  // Oma aamu herätyksen jälkeen läpäisee rauhoitusajan (oletus 22.00–6.30).
+  assert.ok(list.every(intent => intent.delivery === 'sound'));
 });
 
 test('ateriarytmin lisäravinne, vesitauko ja iltaraja omina muistutuksinaan oikealla sanamuodolla', () => {
@@ -489,6 +533,8 @@ test('"Lähdin": koko lähtöketju kuitataan ja matka kirjataan kerran (kaksoisp
   assert.equal(observations[0].eventId, 'e1');
   assert.equal(observations[0].plannedDeparture, '17:10');
   assert.equal(observations[0].actualDeparture, '17:07');
+  assert.deepEqual((await storedRows(commuteObservationsRepo)).map(o => [o.eventId, o.actualDeparture]), [['e1', '17:07']],
+    'kaksoispaluu tallensi matkan kahdesti (tai ei lainkaan)');
   const ids = desiredNativeEntries({ now: at(2026, 9, 29, 17, 8), nativeSupported: true }).entries.map(e => e.id);
   assert.equal(ids.some(id => id.startsWith('departure')), false, 'lähtenyt ei saa "lähde nyt" -muistutusta');
 });

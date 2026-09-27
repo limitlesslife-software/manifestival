@@ -3,14 +3,17 @@
 // vahvistusten laskenta, havaintojen karsinta ja istunnon vaihto kesken.
 //
 // Portit ovat tuotehaaralla kiinni: repositoriot käyttävät muistivarastoa.
+// Julkaisuehdokkaassa ne ovat auki, ja sama testi ajaa kantapolun
+// muistinvaraista palvelinta vasten (helpers/gateAwareStore.mjs).
 // Epäonnistuminen tuotetaan korvaamalla repositorion metodi hetkeksi.
 
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { setUser, clearUser } from '../src/data/session.js';
+import { resetTestStore, storedRow, storedRows } from './helpers/gateAwareStore.mjs';
 import { resetState, getState } from '../src/app/state.js';
-import { clearAllCollections, calendarEventsRepo, savedPlacesRepo, lifeSettingsRepo, habitEventsRepo }
+import { clearAllCollections, calendarEventsRepo, savedPlacesRepo, lifeSettingsRepo, habitEventsRepo, sleepLogsRepo }
   from '../src/data/collectionsRepo.js';
 import {
   saveCalendarEvent, deleteCalendarEvent, skipEventOccurrence, savePlace, deletePlace, confirmPlaceAlias,
@@ -28,6 +31,7 @@ const no = async () => false;
 
 beforeEach(() => {
   clearAllCollections();
+  resetTestStore();
   resetState();
   resetDailyLifeActions();
   setUser(USER_A);
@@ -54,6 +58,10 @@ test('meno: luonti, päivitys samalla tunnisteella, validointi', async () => {
   assert.equal(getState().calendarEvents.length, 1, 'päivitys ei luo uutta menoa');
   assert.equal(getState().calendarEvents[0].startTime, '16:30');
   assert.equal(getState().calendarEvents[0].title, 'Parturi', 'muut kentät säilyvät');
+  // Sama tallennuksessa (muisti tai kanta porttitilan mukaan).
+  assert.equal((await storedRows(calendarEventsRepo)).length, 1, 'päivitys loi toisen rivin');
+  const saved = await storedRow(calendarEventsRepo, created.event.id);
+  assert.deepEqual([saved.title, saved.startTime], ['Parturi', '16:30']);
 });
 
 test('KRIITTINEN: epäonnistunut tallennus peruu tilan (luonti ja päivitys)', async () => {
@@ -67,6 +75,7 @@ test('KRIITTINEN: epäonnistunut tallennus peruu tilan (luonti ja päivitys)', a
     () => saveCalendarEvent({ id: ok.event.id, startTime: '18:00' }));
   assert.equal(edit.ok, false);
   assert.equal(getState().calendarEvents[0].startTime, '19:00', 'vanha arvo palautui');
+  assert.equal((await storedRow(calendarEventsRepo, ok.event.id)).startTime, '19:00');
 });
 
 test('poistettuun paikkaan ei liitetä menoa (yhdistelmävierasavain)', async () => {
@@ -174,6 +183,9 @@ test('arjen asetukset: yksi rivi, sisäkkäinen herätys yhdistetään, epäonni
   assert.equal(getState().lifeSettings.length, 1);
   assert.equal(getState().lifeSettings[0].windDownMinutes, 45);
   assert.equal(getState().lifeSettings[0].alarm.enabled, true);
+  const rows = await storedRows(lifeSettingsRepo);
+  assert.equal(rows.length, 1, 'toinen tallennus loi toisen asetusrivin');
+  assert.deepEqual([rows[0].windDownMinutes, rows[0].alarm.enabled], [45, true]);
 
   const before = getState().lifeSettings[0];
   const failed = await withFailing(lifeSettingsRepo, 'update', () => saveLifeSettings({ windDownMinutes: 10 }));
@@ -186,6 +198,9 @@ test('uni ja vointi: yksi rivi päivää kohti; tyhjä ei ole nolla', async () =
   await saveSleepLog({ wakeDate: '2026-09-28', actualWake: '06:30' });
   assert.equal(getState().sleepLogs.length, 1);
   assert.deepEqual([getState().sleepLogs[0].actualBedtime, getState().sleepLogs[0].actualWake], ['23:00', '06:30']);
+  const logs = await storedRows(sleepLogsRepo);
+  assert.equal(logs.length, 1, 'sama yö tallentui kahdeksi riviksi');
+  assert.deepEqual([logs[0].actualBedtime, logs[0].actualWake], ['23:00', '06:30']);
 
   await saveWellbeingCheckin({ date: '2026-09-28', motivation: 4 });
   await saveWellbeingCheckin({ date: '2026-09-28', control: 3 });

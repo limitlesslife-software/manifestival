@@ -2,7 +2,8 @@
 // DOMissa: paikkojen luonti, muokkaus ja poisto, opitut nimitykset,
 // oppimisen nollaus, omista matkoista opitun keston hyväksyntä,
 // myöhästelyehdotus ja oletusetuaika. Tallennus kulkee muistivaraston
-// kautta (portit ovat tuotehaaralla kiinni).
+// kautta, kun portit ovat kiinni (tuotehaara), ja kantaa jäljittelevän
+// palvelimen kautta, kun ne ovat auki (helpers/gateAwareStore.mjs).
 //
 // Säiliön (#profilePlacesSection) luo profiilinäkymä muualla; testi luo
 // oman säiliönsä.
@@ -29,6 +30,7 @@ import {
 } from '../src/app/views/placesSettings.js';
 import { closeConfirmDialogs } from '../src/ui/confirm.js';
 import { clearToasts } from '../src/ui/toast.js';
+import { resetTestStore, seedStored, storedRow, storedRows } from './helpers/gateAwareStore.mjs';
 
 const USER = Object.freeze({ id: 'ddddaaaa-5555-4555-8555-00000000d0de', email: 'places@example.invalid' });
 const TODAY = '2026-09-28';
@@ -41,6 +43,7 @@ function mount(t) {
   freezeLocalDate(t, TODAY);
   clearUser();
   clearAllCollections();
+  resetTestStore();
   resetState();
   resetDailyLifeActions();
   resetPlacesSettings();
@@ -70,9 +73,12 @@ function mount(t) {
   };
 }
 
-/** Rivit sekä tilaan että muistivarastoon (päivitys ja poisto kulkevat repositorion kautta). */
+/**
+ * Rivit sekä tilaan että tallennukseen (päivitys ja poisto kulkevat
+ * repositorion kautta): muistiin tai kantaan porttitilan mukaan.
+ */
 async function seed(repo, setter, rows) {
-  await repo.memory.replaceAll(rows);
+  await seedStored(repo, rows);
   setter(rows);
 }
 
@@ -203,6 +209,7 @@ test('paikan muokkaus; poisto kysyy vahvistuksen ja peruutus säilyttää', asyn
   await flush();
   assert.equal(getState().savedPlaces.length, 1);
   assert.equal(getState().savedPlaces[0].usualTravelMinutes, 25);
+  assert.equal((await storedRow(savedPlacesRepo, 'p1')).usualTravelMinutes, 25, 'muutos ei tallentunut');
 
   action(view, 'place-delete', 'p1').click();
   await answerConfirm(view.doc, false);
@@ -214,6 +221,7 @@ test('paikan muokkaus; poisto kysyy vahvistuksen ja peruutus säilyttää', asyn
   action(view, 'place-delete', 'p1').click();
   await answerConfirm(view.doc, true);
   assert.deepEqual(getState().savedPlaces, []);
+  assert.deepEqual(await storedRows(savedPlacesRepo), [], 'poisto ei poistanut tallennettua paikkaa');
   assertSameNode(view.doc.activeElement, action(view, 'place-add'), 'fokus lisäyspainikkeeseen');
 });
 
@@ -239,6 +247,33 @@ test('opitut nimitykset: vahvistusmäärä näkyy, poisto nimetyllä painikkeell
   assertSameNode(view.doc.activeElement, action(view, 'alias-delete', 'a2'), 'fokus seuraavaan nimitykseen');
 });
 
+test('oma nimitys: "parturi" paikalle Hiustalo liittyy puheessa heti (uusintakatselmointi)', async t => {
+  // Paikan nimessä ei ole puhuttua sanaa, joten puhe ei ehdota sitä koskaan:
+  // ainoa keino liittää on lisätä nimitys itse.
+  const view = mount(t);
+  await seed(savedPlacesRepo, setSavedPlaces, [{ id: 'p1', name: 'Hiustalo' }]);
+  const input = view.byId('plcAliasNew-0');
+  assert.ok(input, 'lisäyskenttä on myös ilman opittuja nimityksiä');
+  assert.equal(accessibleName(action(view, 'alias-add')), 'Lisää nimitys paikalle Hiustalo');
+
+  action(view, 'alias-add').click();
+  await flush();
+  assert.equal(getState().placeAliases.length, 0, 'tyhjä ei tallennu');
+
+  type(view.byId('plcAliasNew-0'), 'Parturi');
+  action(view, 'alias-add').click();
+  await flush();
+  const [alias] = getState().placeAliases;
+  assert.equal(alias.alias, 'parturi');
+  assert.equal(alias.placeId, 'p1');
+  assert.ok(alias.confirmations >= 2, 'itse lisätty riittää liittämiseen heti');
+  const { resolvePlaceText, PLACE_MATCH } = await import('../src/domain/places.js');
+  const resolved = resolvePlaceText('parturi', { places: getState().savedPlaces, aliases: getState().placeAliases });
+  assert.equal(resolved.status, PLACE_MATCH.LEARNED);
+  assert.equal(resolved.place.id, 'p1');
+  assert.match(view.q('[data-place-row="p1"]').textContent, /”parturi”/);
+});
+
 test('Nollaa oppiminen: vahvistus, nimitykset ja havainnot pois, oma arvio säilyy', async t => {
   const view = mount(t);
   await seed(savedPlacesRepo, setSavedPlaces, [{ id: 'p1', name: 'Työ', usualTravelMinutes: 35, useLearned: true }]);
@@ -260,6 +295,11 @@ test('Nollaa oppiminen: vahvistus, nimitykset ja havainnot pois, oma arvio säil
   assert.equal(state.savedPlaces[0].useLearned, false);
   assert.equal(state.savedPlaces[0].usualTravelMinutes, 35, 'oma arvio säilyi');
   assert.equal(view.q('[data-action="place-reset"]'), null, 'nollattavaa ei enää ole');
+  // Sama tallennuksessa (muisti tai kanta): seuraava lataus ei tuo oppimista takaisin.
+  assert.deepEqual(await storedRows(placeAliasesRepo), []);
+  assert.deepEqual(await storedRows(commuteObservationsRepo), []);
+  const place = await storedRow(savedPlacesRepo, 'p1');
+  assert.deepEqual([place.useLearned, place.usualTravelMinutes], [false, 35]);
 });
 
 test('oppiminen: 6 matkan mediaani ehdotetaan, hyväksyntä ottaa käyttöön, alle 3 matkaa ei ehdoteta', async t => {

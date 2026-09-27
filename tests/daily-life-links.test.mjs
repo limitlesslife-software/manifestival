@@ -20,6 +20,7 @@ import {
 } from '../src/app/state.js';
 import { clearAllCollections, calendarEventsRepo, exerciseSessionsRepo } from '../src/data/collectionsRepo.js';
 import { saveCalendarEvent, saveExerciseSession, resetDailyLifeActions } from '../src/app/dailyLifeActions.js';
+import { resetTestStore, storedRow } from './helpers/gateAwareStore.mjs';
 
 const USER_A = { id: 'aaaaaaaa-5555-0000-0000-00000000000a', email: 'a@example.com' };
 const LOAD_FAILED = { message: 'verkko', userMessage: 'Yhteys katkesi.' };
@@ -29,16 +30,19 @@ const SESSION = { id: 's1', date: '2026-09-28', kind: 'Juoksu', actualMinutes: 3
 beforeEach(async () => {
   clearUser();
   clearAllCollections();
+  resetTestStore();
   resetState();
   resetDailyLifeActions();
   setUser(USER_A);
+  // Siemen repositorion kautta: portin tilan mukaan muistiin tai kantaan.
   await calendarEventsRepo.insert(EVENT);
   await exerciseSessionsRepo.insert(SESSION);
   setCalendarEvents([EVENT]);
   setExerciseSessions([SESSION]);
 });
 
-const stored = async (repo, id) => (await repo.memory.get(id)).value;
+/** Tallennettu rivi siitä varastosta, jota portti käyttää (muisti tai kanta). */
+const stored = storedRow;
 
 test('KRIITTINEN: paikkojen lataus epäonnistui -> otsikon muutos ei katkaise menon paikkaliitosta', async () => {
   // Paikat eivät latautuneet (tila tyhjä), menot latautuivat.

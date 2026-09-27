@@ -36,8 +36,14 @@ import {
 
 export { wallClockToEpoch, epochToWallClock } from './wallClock.js';
 
-/** Herätyksiä suunnitellaan enintään näin moneksi päiväksi eteenpäin. */
-export const MAX_ALARM_DAYS = 3;
+/**
+ * Herätyksiä suunnitellaan enintään näin moneksi päiväksi eteenpäin
+ * (tänään + 7). Laite soittaa vain sille ajastetut herätykset: lyhyt
+ * horisontti jätti maanantain herätyksen ajastamatta, jos sovellusta ei
+ * avattu viikonloppuna. Kahdeksan päivää kattaa saman viikonpäivän
+ * seuraavalla viikolla, vaikka sovellus olisi kiinni koko viikon.
+ */
+export const MAX_ALARM_DAYS = 8;
 
 /** Voimistuvassa herätyksessä on enintään näin monta vaihetta. */
 export const MAX_ESCALATION_STEPS = 4;
@@ -69,6 +75,16 @@ export const BRIEF_MAX_SENTENCES = 5;
 
 /** Lenkistä kerrotaan vasta, kun aikaa on vähintään näin monta minuuttia. */
 export const MIN_RUN_MINUTES = 10;
+
+/**
+ * Aamun sitoumuksen raja: meno, jonka valmistautuminen, lähtö tai alku on
+ * vasta tästä eteenpäin, ei ole aamun meno. Iltapäivän meno ei määrää
+ * aamurutiinin ajoitusta ("suihku 15.25") eikä aamulenkin aikaa.
+ */
+export const MORNING_COMMITMENT_END = '12:00';
+
+/** Yli tämän väljyys sanotaan "yli puolentoista tunnin" eikä minuuttimääränä. */
+export const RUN_MINUTES_SPOKEN_MAX = 90;
 
 /** Menon nimi katsauksessa enintään näin pitkä. */
 export const MAX_BRIEF_TITLE_LENGTH = 60;
@@ -267,7 +283,14 @@ export function morningOfDay(input) {
     dateIso, commitments = null, profile, settings, steps, wakeTimeLimit = null, usualWakeTime = null, offsetMinutesFn
   } = objectOf(input);
   const base = { dateIso, profile, settings, steps, wakeTimeLimit, usualWakeTime, offsetMinutesFn };
+  const commute = commuteOf(profile);
   for (const commitment of commitmentsInOrder(commitments, profile)) {
+    // Iltapäivän meno ei ole aamun meno: se kerrotaan (katsaus, Aamu-kortti),
+    // mutta aamu lasketaan tavallisesta rytmistä. Järjestyksessä seuraavat
+    // ovat vielä myöhemmin.
+    if (anchorMinutes(commitment, commute) >= toMinutes(MORNING_COMMITMENT_END)) {
+      return { commitment, plan: planMorning({ ...base, firstCommitment: null }) };
+    }
     const plan = planMorning({ ...base, firstCommitment: commitment });
     if (plan && isIsoDate(plan.requiredWakeDate) && plan.requiredWakeDate < dateIso) continue;
     return { commitment, plan };
@@ -693,7 +716,10 @@ export function morningBrief(input) {
   }
   if (typeof freeMinutesForRun === 'number' && Number.isFinite(freeMinutesForRun)
     && Math.floor(freeMinutesForRun) >= MIN_RUN_MINUTES) {
-    optional.push(`Sinulla on aikaa ${Math.floor(freeMinutesForRun)} minuutin aamulenkille.`);
+    const minutes = Math.floor(freeMinutesForRun);
+    optional.push(minutes > RUN_MINUTES_SPOKEN_MAX
+      ? 'Sinulla on aikaa yli puolentoista tunnin aamulenkille.'
+      : `Sinulla on aikaa ${minutes} minuutin aamulenkille.`);
   }
   if (todays.length === 0 && !hasLeave) optional.push('Aamussa ei ole kiinteitä menoja.');
   if (isTimeOfDay(wakeTime) && toMinutes(wakeTime) > nowMinutes) {

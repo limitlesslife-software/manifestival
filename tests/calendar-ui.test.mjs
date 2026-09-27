@@ -23,6 +23,7 @@ import {
 } from './helpers/a11yDom.mjs';
 import { echoClient, flush } from './helpers/a11ySuunta.mjs';
 import { freezeLocalDate } from './helpers/clock.mjs';
+import { isGateOpen } from './helpers/gates.mjs';
 import { setUser, clearUser } from '../src/data/session.js';
 import { setClient } from '../src/data/client.js';
 import { clearAllCollections, calendarEventsRepo, savedPlacesRepo } from '../src/data/collectionsRepo.js';
@@ -116,7 +117,8 @@ function mountCalendar({ before = () => {} } = {}) {
   const doc = createDocument(INDEX_HTML);
   const uninstall = installDocument(doc);
   setUser(USER);
-  setClient(echoClient());
+  const client = echoClient();
+  setClient(client);
   doc.getElementById('app').classList.remove('app-hidden');
   showScreen(doc, 'screen-week');
   before();
@@ -130,6 +132,7 @@ function mountCalendar({ before = () => {} } = {}) {
   render();
   mounted = {
     doc,
+    client,
     render,
     byId: id => doc.getElementById(id),
     async unmount() {
@@ -160,6 +163,34 @@ beforeEach(() => {
 
 const text = node => (node ? node.textContent.replace(/\s+/g, ' ').trim() : '');
 const rowTexts = doc => doc.querySelectorAll('#calDayAgenda .cal-row').map(text);
+
+/**
+ * Menojen huomautus porttitilan mukaan (tests/helpers/gates.mjs): kiinni
+ * olevalla portilla menot elävät istunnon ajan ja se sanotaan; auki
+ * olevalla ne tallentuvat, eikä istuntohuomautusta saa näkyä.
+ */
+const SESSION_ONLY_NOTICE = /Menot säilyvät toistaiseksi vain tämän istunnon ajan\./;
+function assertCalendarPersistenceNotice(noticeText) {
+  if (isGateOpen('calendarEvents')) {
+    assert.doesNotMatch(noticeText, SESSION_ONLY_NOTICE, 'auki oleva portti väittää menojen katoavan');
+    assert.equal(noticeText.trim(), '', 'onnistuneen latauksen jälkeen huomautusta ei ole');
+  } else {
+    assert.match(noticeText, SESSION_ONLY_NOTICE);
+  }
+}
+
+/**
+ * Tallennettu meno: kiinni olevalla portilla muistivarastosta, auki olevalla
+ * viimeisin kantaan lähetetty rivi (echoClient kirjaa jokaisen kutsun).
+ */
+async function storedEvent(client, id) {
+  if (!calendarEventsRepo.isPersistent()) return (await calendarEventsRepo.memory.get(id)).value;
+  const writes = client.calls.filter(call => call.table === 'calendar_events'
+    && (call.operation === 'insert' || call.operation === 'update')
+    && (call.payload?.id === id || call.filters.some(([column, value]) => column === 'id' && value === id)));
+  assert.ok(writes.length > 0, `menoa ${id} ei lähetetty kantaan`);
+  return calendarEventsRepo.mapping.fromRow({ id, ...writes.at(-1).payload });
+}
 
 // ================================================================ MERKINTÄ
 
@@ -578,7 +609,7 @@ test('tynkä-DOM: päivä, viikko ja kuukausi piirtyvät kaatumatta ja tuottavat
     assert.match(day, /<span class="cal-protected">suojattu<\/span>/);
     assert.equal(node('calTitle').textContent, 'Tiistai 29.9.');
     assert.equal(node('calEyebrow').textContent, 'Tänään');
-    assert.match(node('calNotice').innerHTML, /Menot säilyvät toistaiseksi vain tämän istunnon ajan/);
+    assertCalendarPersistenceNotice(node('calNotice').innerHTML);
 
     setCalendarView('month');
     assert.doesNotThrow(() => renderCalendar());
@@ -1003,7 +1034,7 @@ test('KRIITTINEN: paikkojen lataus epäonnistui -> lomake säilyttää menon pai
   // Menot latautuivat, paikat eivät: lomake näytti aiemmin "Ei paikkaa" ja
   // lähetti placeId = null -- lähtö ja muistutukset katosivat pysyvästi.
   freezeLocalDate(t, TUESDAY);
-  const { doc, byId } = mountCalendar({
+  const { doc, byId, client } = mountCalendar({
     before: () => {
       seed({ events: [EVENTS[0]], places: [], tasks: [] });
       setDomainLoadStatus('savedPlaces', false, { message: 'verkko' });
@@ -1017,7 +1048,7 @@ test('KRIITTINEN: paikkojen lataus epäonnistui -> lomake säilyttää menon pai
   const result = await submitEventForm();
   assert.equal(result.ok, true);
   assert.equal(getState().calendarEvents[0].placeId, 'p-hammas');
-  assert.equal((await calendarEventsRepo.memory.get('e-hammas')).value.placeId, 'p-hammas');
+  assert.equal((await storedEvent(client, 'e-hammas')).placeId, 'p-hammas', 'place_id = null tallentui');
 });
 
 test('paikat latautuivat ja menon paikka puuttuu: lomake näyttää "Ei paikkaa" (kuollutta liitosta ei tarjota)', (t) => {
@@ -1062,7 +1093,7 @@ test('huomautukset: suljettu portti kertoo istunnon ajasta; latausvirhe ei näyt
   const { byId } = mountCalendar({ before: () => setDomainLoadStatus('calendarEvents', false) });
   assert.match(text(byId('calNotice')), /Tietoja ei saatu ladattua/);
   setDomainLoadStatus('calendarEvents', true);
-  assert.match(text(byId('calNotice')), /Menot säilyvät toistaiseksi vain tämän istunnon ajan\./);
+  assertCalendarPersistenceNotice(text(byId('calNotice')));
   assert.match(text(byId('calDayAgenda')), /Ei menoja eikä tehtäviä tälle päivälle\./);
 });
 

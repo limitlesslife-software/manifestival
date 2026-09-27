@@ -21,6 +21,7 @@ import {
 import { deleteGoal } from '../src/app/actions.js';
 import { goalsRepo, calendarEventsRepo, exerciseSessionsRepo, clearAllCollections } from '../src/data/collectionsRepo.js';
 import { saveCalendarEvent, saveExerciseSession, resetDailyLifeActions } from '../src/app/dailyLifeActions.js';
+import { resetTestStore, storedRow } from './helpers/gateAwareStore.mjs';
 
 const USER_A = { id: 'aaaaaaaa-4444-0000-0000-00000000000a', email: 'a@example.com' };
 const USER_B = { id: 'bbbbbbbb-4444-0000-0000-00000000000b', email: 'b@example.com' };
@@ -30,6 +31,8 @@ const GOAL = { id: 'g1', title: 'Juoksukoulu' };
 beforeEach(async () => {
   clearUser();
   clearAllCollections();
+  // Portin ollessa auki siemen ja tallennus menevät kantaa jäljittelevälle palvelimelle.
+  resetTestStore();
   resetState();
   resetDailyLifeActions();
   setUser(USER_A);
@@ -74,8 +77,8 @@ test('KRIITTINEN: peruutuksen jälkeinen muokkaus ei pyyhi liitosta tallennukses
 
   assert.equal((await saveCalendarEvent({ id: 'e1', title: 'Intervallit (siirretty)' })).ok, true);
   assert.equal((await saveExerciseSession({ id: 's1', actualMinutes: 45 })).ok, true);
-  const storedEvent = (await calendarEventsRepo.memory.get('e1')).value;
-  const storedSession = (await exerciseSessionsRepo.memory.get('s1')).value;
+  const storedEvent = await storedRow(calendarEventsRepo, 'e1');
+  const storedSession = await storedRow(exerciseSessionsRepo, 's1');
   assert.equal(storedEvent.goalId, 'g1', 'otsikon muutos tallensi goal_id = null');
   assert.equal(storedSession.goalId, 'g1', 'keston muutos tallensi goal_id = null');
 });
