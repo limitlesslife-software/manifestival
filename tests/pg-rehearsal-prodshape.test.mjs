@@ -103,8 +103,8 @@ test('checkRemovals: vain sallitut poistot, kukin kerran', () => {
   assert.equal(checkRemovals('0013', ['con:time_entries:time_entries_source_check:x', 'col:tasks.title:text']).length, 1);
 });
 
-test('KRIITTINEN: kultaiset skeemaerot 0009–0013 ovat olemassa ja poistavat vain sallitun', () => {
-  for (const n of ['0009', '0010', '0011', '0012', '0013']) {
+test('KRIITTINEN: kultaiset skeemaerot 0009–0014 ovat olemassa ja poistavat vain sallitun', () => {
+  for (const n of ['0009', '0010', '0011', '0012', '0013', '0014']) {
     const text = read(goldenFile(n)).replace(/\r\n/g, '\n');
     const lines = text.split('\n').filter(Boolean);
     assert.ok(lines.length > 20, `${n}: kultainen ero on tyhjä`);
@@ -122,7 +122,7 @@ test('KRIITTINEN: kultaiset skeemaerot 0009–0013 ovat olemassa ja poistavat va
     for (const pol of lines.filter(l => l.startsWith('+ pol:'))) assert.match(pol, /:authenticated$/, pol);
   }
   // Neljä politiikkaa jokaiselle uudelle taululle.
-  for (const n of ['0009', '0010', '0011', '0012', '0013']) {
+  for (const n of ['0009', '0010', '0011', '0012', '0013', '0014']) {
     const lines = read(goldenFile(n)).replace(/\r\n/g, '\n').split('\n');
     const tables = lines.filter(l => /^\+ rel:\w+:r:/.test(l)).length;
     assert.equal(lines.filter(l => l.startsWith('+ pol:')).length, 4 * tables, `${n}: politiikkoja ≠ 4 × uudet taulut`);
@@ -136,7 +136,54 @@ test('KRIITTINEN: kultaiset skeemaerot 0009–0013 ovat olemassa ja poistavat va
   assert.match(d13, /\+ con:time_entries:time_entries_source_v2_check:.*'timer'::text/);
 });
 
-test('KRIITTINEN: SCHEMA-DIFFS-0009-0013.md on johdettu kultaisista tiedostoista', () => {
+test('KRIITTINEN: 0014:n kultainen ero koskee vain sen kymmentä uutta taulua', () => {
+  const NEW = ['saved_places', 'place_aliases', 'calendar_events', 'commute_observations', 'life_settings', 'sleep_logs',
+    'habit_plans', 'habit_events', 'exercise_sessions', 'wellbeing_checkins'];
+  const lines = read(goldenFile('0014')).replace(/\r\n/g, '\n').split('\n').filter(Boolean);
+  assert.equal(lines.filter(l => l.startsWith('- ')).length, 0, '0014 ei poista mitään');
+  // Jokainen lisätty objekti (taulu, sarake, indeksi, rajoite, politiikka,
+  // liipaisin) kuuluu uuteen tauluun: yhtäkään olemassa olevaa ei muuteta.
+  const prefix = new RegExp(`^\\+ (rel|col|idx|con|pol|trg):(${NEW.join('|')})[.:_]`);
+  for (const l of lines) assert.match(l, prefix, `0014 koskee vanhaan objektiin: ${l}`);
+  assert.equal(lines.filter(l => /^\+ fn:/.test(l)).length, 0, '0014 ei luo funktioita');
+  assert.deepEqual(lines.filter(l => /^\+ rel:\w+:r:/.test(l)).map(l => l.split(':')[1]).sort(), [...NEW].sort());
+  // Kuusi yhdistelmävierasavainta täsmälleen sovitulla poistosäännöllä.
+  const fks = Object.fromEntries(lines.filter(l => /FOREIGN KEY \(user_id, \w+\)/.test(l))
+    .map(l => [l.split(':')[2], l.replace(/^.*?FOREIGN KEY/, 'FOREIGN KEY').replace(/:validated=\w+$/, '')]));
+  assert.deepEqual(fks, {
+    place_aliases_place_fkey: 'FOREIGN KEY (user_id, place_id) REFERENCES saved_places(user_id, id) ON DELETE CASCADE',
+    calendar_events_place_fkey: 'FOREIGN KEY (user_id, place_id) REFERENCES saved_places(user_id, id) ON DELETE SET NULL (place_id)',
+    calendar_events_goal_fkey: 'FOREIGN KEY (user_id, goal_id) REFERENCES goals(user_id, id) ON DELETE SET NULL (goal_id)',
+    commute_observations_place_fkey: 'FOREIGN KEY (user_id, place_id) REFERENCES saved_places(user_id, id) ON DELETE CASCADE',
+    habit_events_plan_fkey: 'FOREIGN KEY (user_id, plan_id) REFERENCES habit_plans(user_id, id) ON DELETE CASCADE',
+    exercise_sessions_goal_fkey: 'FOREIGN KEY (user_id, goal_id) REFERENCES goals(user_id, id) ON DELETE SET NULL (goal_id)'
+  });
+  // Omistaja-avain auth.usersiin on CASCADE jokaisessa uudessa taulussa.
+  for (const t of NEW) {
+    assert.ok(lines.includes(`+ con:${t}:${t}_user_id_fkey:FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE:validated=true`), t);
+  }
+  // Havainnon event_id ei ole vierasavain.
+  assert.equal(lines.some(l => /commute_observations.*FOREIGN KEY \(user_id, event_id\)/.test(l)), false);
+});
+
+test('KRIITTINEN: oikean kannan inventaario tilassa 0014: GO, ei seuraavaa migraatiota; keskeneräinen 0014 -> STOP', () => {
+  const dir = path.join(ROOT, 'tests/fixtures/activation-inventory');
+  const done = parseInventory(fs.readFileSync(path.join(dir, 'state-0014.json'), 'utf8'));
+  const scored = scoreInventory(done);
+  assert.equal(scored.decision, 'GO', scored.stops.join('; '));
+  assert.equal(scored.nextMigration, null);
+  assert.equal(scored.facts.migrations['0014'], 'run');
+  assert.equal(scored.facts.migrations['0013'], 'run');
+  // Rivit 90–99: uusien taulujen rivimäärät. Harjoittelu siemensi jokaiseen
+  // tauluun rivin kummallekin synteettiselle käyttäjälle; 'puuttuu' = ei taulua.
+  for (let nro = 90; nro <= 99; nro++) assert.equal(done[String(nro)], '2', `rivi ${nro}`);
+  const partial = scoreInventory(parseInventory(fs.readFileSync(path.join(dir, 'state-0013-partial-0014.json'), 'utf8')));
+  assert.equal(partial.decision, 'STOP');
+  assert.equal(partial.facts.migrations['0014'], 'partial');
+  assert.ok(partial.stops.some(s => /0014/.test(s)), partial.stops.join('; '));
+});
+
+test('KRIITTINEN: SCHEMA-DIFFS-0009-0014.md on johdettu kultaisista tiedostoista', () => {
   assert.equal(read(SUMMARY_DOC).replace(/\r\n/g, '\n'), summaryMarkdown(),
     'aja: node tools/pg-rehearsal/schema-diff-summary.mjs');
   assert.deepEqual(parseGolden('- a:b\n+ c:d\n\n'), { added: ['c:d'], removed: ['a:b'] });

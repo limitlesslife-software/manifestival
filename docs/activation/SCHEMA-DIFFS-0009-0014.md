@@ -1,4 +1,4 @@
-# Skeemaerot 0009–0013 (kultaiset tiedostot)
+# Skeemaerot 0009–0014 (kultaiset tiedostot)
 
 GENEROITU: `node tools/pg-rehearsal/schema-diff-summary.mjs`. ÄLÄ MUOKKAA KÄSIN —
 testi vertaa tätä kultaisiin tiedostoihin.
@@ -18,6 +18,7 @@ hylkäys. Poistoja sallitaan vain `ALLOWED_REMOVALS`-listan korvaukset.
 | 0011 | 5 | 0 | 43 | 20 | 20 | 5 | 0 |
 | 0012 | 4 | 1 | 38 | 15 | 16 | 4 | 0 |
 | 0013 | 2 | 9 | 28 | 8 | 8 | 2 | 1 |
+| 0014 | 10 | 0 | 108 | 29 | 40 | 10 | 0 |
 
 Yhteistä kaikille uusille tauluille (todennettu riveistä): RLS päällä, neljä
 `authenticated`-roolin politiikkaa (`auth.uid() = user_id`), `authenticated`
@@ -204,3 +205,45 @@ ajava rooli (harjoittelussa `postgres`).
 **Politiikat (8):** `alignment_item_settings` 4, `running_timers` 4
 
 **Liipaisimet (2):** `alignment_item_settings_touch_updated_at`, `running_timers_touch_updated_at`
+
+## 0014 — Arjen käyttöjärjestelmä (aalto K)
+
+**Uudet taulut (10):** `calendar_events` (23 saraketta, RLS päällä), `commute_observations` (17 saraketta, RLS päällä), `exercise_sessions` (12 saraketta, RLS päällä), `habit_events` (8 saraketta, RLS päällä), `habit_plans` (13 saraketta, RLS päällä), `life_settings` (22 saraketta, RLS päällä), `place_aliases` (8 saraketta, RLS päällä), `saved_places` (15 saraketta, RLS päällä), `sleep_logs` (12 saraketta, RLS päällä), `wellbeing_checkins` (7 saraketta, RLS päällä)
+
+**Rajoitteet (108):**
+
+- `calendar_events`: calendar_events_all_day_check (CHECK), calendar_events_arrival_buffer_check (CHECK), calendar_events_category_check (CHECK), calendar_events_duration_check (CHECK), calendar_events_end_time_check (CHECK), calendar_events_goal_fkey (FOREIGN KEY), calendar_events_location_check (CHECK), calendar_events_notes_check (CHECK), calendar_events_overhead_check (CHECK), calendar_events_owner_row_key (UNIQUE), calendar_events_pkey (PRIMARY KEY), calendar_events_place_fkey (FOREIGN KEY), calendar_events_preparation_check (CHECK), calendar_events_skip_dates_check (CHECK), calendar_events_title_check (CHECK), calendar_events_travel_check (CHECK), calendar_events_travel_mode_check (CHECK), calendar_events_until_check (CHECK), calendar_events_user_id_fkey (FOREIGN KEY), calendar_events_weekdays_check (CHECK)
+- `commute_observations`: commute_observations_event_id_check (CHECK), commute_observations_overhead_check (CHECK), commute_observations_owner_row_key (UNIQUE), commute_observations_pkey (PRIMARY KEY), commute_observations_place_fkey (FOREIGN KEY), commute_observations_preparation_check (CHECK), commute_observations_provider_check (CHECK), commute_observations_result_check (CHECK), commute_observations_source_check (CHECK), commute_observations_travel_check (CHECK), commute_observations_user_id_fkey (FOREIGN KEY), commute_observations_weekday_check (CHECK)
+- `exercise_sessions`: exercise_sessions_actual_check (CHECK), exercise_sessions_goal_fkey (FOREIGN KEY), exercise_sessions_intensity_check (CHECK), exercise_sessions_kind_check (CHECK), exercise_sessions_note_check (CHECK), exercise_sessions_owner_row_key (UNIQUE), exercise_sessions_pkey (PRIMARY KEY), exercise_sessions_planned_check (CHECK), exercise_sessions_recovery_check (CHECK), exercise_sessions_user_id_fkey (FOREIGN KEY)
+- `habit_events`: habit_events_action_check (CHECK), habit_events_note_check (CHECK), habit_events_owner_row_key (UNIQUE), habit_events_pkey (PRIMARY KEY), habit_events_plan_fkey (FOREIGN KEY), habit_events_user_id_fkey (FOREIGN KEY)
+- `habit_plans`: habit_plans_baseline_check (CHECK), habit_plans_daily_target_check (CHECK), habit_plans_delivery_check (CHECK), habit_plans_kind_check (CHECK), habit_plans_min_interval_check (CHECK), habit_plans_name_check (CHECK), habit_plans_owner_row_key (UNIQUE), habit_plans_pkey (PRIMARY KEY), habit_plans_steps_check (CHECK), habit_plans_unit_cost_check (CHECK), habit_plans_user_id_fkey (FOREIGN KEY)
+- `life_settings`: life_settings_alarm_check (CHECK), life_settings_arrival_buffer_check (CHECK), life_settings_currency_check (CHECK), life_settings_delivery_check (CHECK), life_settings_guidance_check (CHECK), life_settings_hourly_value_check (CHECK), life_settings_meal_rhythm_check (CHECK), life_settings_morning_routine_check (CHECK), life_settings_one_per_user (UNIQUE), life_settings_owner_row_key (UNIQUE), life_settings_pkey (PRIMARY KEY), life_settings_reminder_offset_check (CHECK), life_settings_user_id_fkey (FOREIGN KEY), life_settings_weekend_bed_check (CHECK), life_settings_weekend_wake_check (CHECK), life_settings_wind_down_check (CHECK)
+- `place_aliases`: place_aliases_alias_check (CHECK), place_aliases_alias_unique (UNIQUE), place_aliases_confirmations_check (CHECK), place_aliases_owner_row_key (UNIQUE), place_aliases_pkey (PRIMARY KEY), place_aliases_place_fkey (FOREIGN KEY), place_aliases_user_id_fkey (FOREIGN KEY)
+- `saved_places`: saved_places_address_check (CHECK), saved_places_area_check (CHECK), saved_places_arrival_buffer_check (CHECK), saved_places_name_check (CHECK), saved_places_note_check (CHECK), saved_places_overhead_check (CHECK), saved_places_owner_row_key (UNIQUE), saved_places_pkey (PRIMARY KEY), saved_places_preparation_check (CHECK), saved_places_provider_place_check (CHECK), saved_places_travel_mode_check (CHECK), saved_places_user_id_fkey (FOREIGN KEY), saved_places_usual_travel_check (CHECK)
+- `sleep_logs`: sleep_logs_kind_check (CHECK), sleep_logs_note_check (CHECK), sleep_logs_owner_row_key (UNIQUE), sleep_logs_pkey (PRIMARY KEY), sleep_logs_source_check (CHECK), sleep_logs_user_id_fkey (FOREIGN KEY), sleep_logs_wake_date_unique (UNIQUE)
+- `wellbeing_checkins`: wellbeing_checkins_control_check (CHECK), wellbeing_checkins_date_unique (UNIQUE), wellbeing_checkins_motivation_check (CHECK), wellbeing_checkins_owner_row_key (UNIQUE), wellbeing_checkins_pkey (PRIMARY KEY), wellbeing_checkins_user_id_fkey (FOREIGN KEY)
+
+**Vierasavaimet (16):**
+
+- `calendar_events.calendar_events_goal_fkey`: `FOREIGN KEY (user_id, goal_id) REFERENCES goals(user_id, id) ON DELETE SET NULL (goal_id)`
+- `calendar_events.calendar_events_place_fkey`: `FOREIGN KEY (user_id, place_id) REFERENCES saved_places(user_id, id) ON DELETE SET NULL (place_id)`
+- `calendar_events.calendar_events_user_id_fkey`: `FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE`
+- `commute_observations.commute_observations_place_fkey`: `FOREIGN KEY (user_id, place_id) REFERENCES saved_places(user_id, id) ON DELETE CASCADE`
+- `commute_observations.commute_observations_user_id_fkey`: `FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE`
+- `exercise_sessions.exercise_sessions_goal_fkey`: `FOREIGN KEY (user_id, goal_id) REFERENCES goals(user_id, id) ON DELETE SET NULL (goal_id)`
+- `exercise_sessions.exercise_sessions_user_id_fkey`: `FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE`
+- `habit_events.habit_events_plan_fkey`: `FOREIGN KEY (user_id, plan_id) REFERENCES habit_plans(user_id, id) ON DELETE CASCADE`
+- `habit_events.habit_events_user_id_fkey`: `FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE`
+- `habit_plans.habit_plans_user_id_fkey`: `FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE`
+- `life_settings.life_settings_user_id_fkey`: `FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE`
+- `place_aliases.place_aliases_place_fkey`: `FOREIGN KEY (user_id, place_id) REFERENCES saved_places(user_id, id) ON DELETE CASCADE`
+- `place_aliases.place_aliases_user_id_fkey`: `FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE`
+- `saved_places.saved_places_user_id_fkey`: `FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE`
+- `sleep_logs.sleep_logs_user_id_fkey`: `FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE`
+- `wellbeing_checkins.wellbeing_checkins_user_id_fkey`: `FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE`
+
+**Indeksit (29):** `calendar_events_owner_row_key`, `calendar_events_pkey`, `calendar_events_user_date_idx`, `commute_observations_owner_row_key`, `commute_observations_pkey`, `commute_observations_user_place_idx`, `exercise_sessions_owner_row_key`, `exercise_sessions_pkey`, `exercise_sessions_user_date_idx`, `habit_events_owner_row_key`, `habit_events_pkey`, `habit_events_user_plan_idx`, `habit_plans_owner_row_key`, `habit_plans_pkey`, `life_settings_one_per_user`, `life_settings_owner_row_key`, `life_settings_pkey`, `place_aliases_alias_unique`, `place_aliases_owner_row_key`, `place_aliases_pkey`, `saved_places_owner_row_key`, `saved_places_pkey`, `saved_places_user_name_idx`, `sleep_logs_owner_row_key`, `sleep_logs_pkey`, `sleep_logs_wake_date_unique`, `wellbeing_checkins_date_unique`, `wellbeing_checkins_owner_row_key`, `wellbeing_checkins_pkey`
+
+**Politiikat (40):** `calendar_events` 4, `commute_observations` 4, `exercise_sessions` 4, `habit_events` 4, `habit_plans` 4, `life_settings` 4, `place_aliases` 4, `saved_places` 4, `sleep_logs` 4, `wellbeing_checkins` 4
+
+**Liipaisimet (10):** `calendar_events_touch_updated_at`, `commute_observations_touch_updated_at`, `exercise_sessions_touch_updated_at`, `habit_events_touch_updated_at`, `habit_plans_touch_updated_at`, `life_settings_touch_updated_at`, `place_aliases_touch_updated_at`, `saved_places_touch_updated_at`, `sleep_logs_touch_updated_at`, `wellbeing_checkins_touch_updated_at`

@@ -14,7 +14,7 @@
 //
 // Aliskenaariot kloonataan siitä: `create database X template
 // mv_rehearsal_prodshape_0008` — ne alkavat aidosti tilasta 0008 eivätkä
-// toista ketjua 0001:stä. Myöhemmät mallit (0009..0013) syntyvät
+// toista ketjua 0001:stä. Myöhemmät mallit (0009..0014) syntyvät
 // kloonaamalla edellinen ja ajamalla yksi migraatio.
 //
 // Tuotannon tavoitteen tila ja projektin kytkentä eivät ole tiedossa
@@ -105,7 +105,7 @@ export async function buildProdShape0008() {
   return db;
 }
 
-/** Varmista malli tilassa n (0008..0013); rakentaa puuttuvat edeltäjät. */
+/** Varmista malli tilassa n (0008..0014); rakentaa puuttuvat edeltäjät. */
 export async function ensureTemplate(n) {
   if (built.has(n)) return templateAt(n);
   if (n === '0008') return buildProdShape0008();
@@ -272,7 +272,9 @@ export const ALLOWED_REMOVALS = Object.freeze({
   '0010': Object.freeze(['con:goals:goals_status_check:']),
   '0011': Object.freeze([]),
   '0012': Object.freeze([]),
-  '0013': Object.freeze(['con:time_entries:time_entries_source_check:'])
+  '0013': Object.freeze(['con:time_entries:time_entries_source_check:']),
+  // 0014 luo vain uusia tauluja: yhtäkään olemassa olevaa objektia ei poisteta.
+  '0014': Object.freeze([])
 });
 
 /** Puhdas: ovatko poistot täsmälleen sallitut (kukin sallittu etuliite kerran)? */

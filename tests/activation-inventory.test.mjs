@@ -214,11 +214,13 @@ const EXPECTED_ACTIONS = {
   '0010': { F: ['GO', 'DEPLOY', 'G'], G: ['GO', 'MIGRATE', 'H', '0011'] },
   '0011': { G: ['GO', 'DEPLOY', 'H'], H: ['GO', 'MIGRATE', 'I', '0012'] },
   '0012': { H: ['GO', 'DEPLOY', 'I'], I: ['GO', 'MIGRATE', 'J', '0013'] },
-  '0013': { I: ['GO', 'DEPLOY', 'J'], J: ['GO', 'MIGRATE', 'K', '0014'] }
+  '0013': { I: ['GO', 'DEPLOY', 'J'], J: ['GO', 'MIGRATE', 'K', '0014'] },
+  // 0014 on junan viimeinen migraatio: K:n jälkeen ei ole seuraavaa toimenpidettä.
+  '0014': { J: ['GO', 'DEPLOY', 'K'], K: ['GO', 'DONE', 'K'] }
 };
-const DB_WAVE = { '0008': 'E', '0009': 'F', '0010': 'G', '0011': 'H', '0012': 'I', '0013': 'J' };
+const DB_WAVE = { '0008': 'E', '0009': 'F', '0010': 'G', '0011': 'H', '0012': 'I', '0013': 'J', '0014': 'K' };
 
-test('KRIITTINEN: koko taulukko — tila 0008–0013 × koodiaalto BASE, A–K', () => {
+test('KRIITTINEN: koko taulukko — tila 0008–0014 × koodiaalto BASE, A–K', () => {
   for (const [state, expectations] of Object.entries(EXPECTED_ACTIONS)) {
     const rows = parseInventory(fixture(`state-${state}.json`));
     const dbIndex = CODE_WAVES.indexOf(DB_WAVE[state]);
@@ -262,8 +264,8 @@ test('ACT-05 yksityiskohdat: esitarkistus, varmuuskopio, verify_0012-edellytys j
   assert.equal(at('0013', 'J').nextAction.backupRequired, false);
 });
 
-test('KRIITTINEN: keskeneräinen 0012 ja puuttuva omistaja pysäyttävät jokaisella koodiaallolla', () => {
-  for (const name of ['state-0011-partial-0012.json', 'state-0008-no-owner.json']) {
+test('KRIITTINEN: keskeneräinen 0012 tai 0014 ja puuttuva omistaja pysäyttävät jokaisella koodiaallolla', () => {
+  for (const name of ['state-0011-partial-0012.json', 'state-0013-partial-0014.json', 'state-0008-no-owner.json']) {
     const rows = parseInventory(fixture(name));
     for (const codeWave of [...CODE_WAVES, null]) {
       const c = classifyActivation(rows, { codeWave });

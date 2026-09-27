@@ -1,0 +1,51 @@
+check_no	section	check_name	status	details	poikkeavia_yhteensa
+01	taulut	Kymmenen uutta taulua on olemassa	PASS	odotus 10, toteutui 10	2
+02	taulut	saved_places: 15 odotettua saraketta eika muita	PASS	odotus 15/15, toteutui 15/15	2
+03	taulut	place_aliases: 8 odotettua saraketta eika muita	PASS	odotus 8/8, toteutui 8/8	2
+04	taulut	calendar_events: 23 odotettua saraketta eika muita	PASS	odotus 23/23, toteutui 23/23	2
+05	taulut	commute_observations: 17 odotettua saraketta eika muita	PASS	odotus 17/17, toteutui 17/17	2
+06	taulut	life_settings: 22 odotettua saraketta eika muita	PASS	odotus 22/22, toteutui 22/22	2
+07	taulut	sleep_logs: 12 odotettua saraketta eika muita	PASS	odotus 12/12, toteutui 12/12	2
+08	taulut	habit_plans: 13 odotettua saraketta eika muita	PASS	odotus 13/13, toteutui 13/13	2
+09	taulut	habit_events: 8 odotettua saraketta eika muita	PASS	odotus 8/8, toteutui 8/8	2
+10	taulut	exercise_sessions: 12 odotettua saraketta eika muita	PASS	odotus 12/12, toteutui 12/12	2
+11	taulut	wellbeing_checkins: 7 odotettua saraketta eika muita	PASS	odotus 7/7, toteutui 7/7	2
+12	sarakkeet	Omistaja: user_id NOT NULL default auth.uid() kaikissa kymmenessa	PASS	odotus 10, toteutui 10	2
+13	tietosuoja	Uusissa tauluissa ei ole koordinaatti- tai sijaintisaraketta	PASS	odotus 0, toteutui 0	2
+20	rajoitteet	Kaikki 88 uutta rajoitetta ovat olemassa	FAIL	odotus 88, toteutui 87	2
+21	rajoitteet	Koko paiva = ei alkuaikaa (all_day = start_time is null)	PASS	odotus true, toteutui true	2
+22	rajoitteet	YKSI ASETUSRIVI KAYTTAJAA KOHTI: unique (user_id)	PASS	odotus true, toteutui true	2
+23	rajoitteet	Yksi unikirjaus heraamispaivaa kohti (user_id, wake_date)	PASS	odotus true, toteutui true	2
+24	rajoitteet	Yksi motivaatio- ja hallintakirjaus paivaa kohti (user_id, date)	FAIL	odotus true, toteutui false	2
+25	rajoitteet	Paikan nimi on uniikki kayttajaa kohti kirjainkoosta riippumatta	PASS	odotus true, toteutui true	2
+26	rajoitteet	Sama lisanimi samalle paikalle kerran (user_id, alias, place_id)	PASS	odotus true, toteutui true	2
+27	rajoitteet	Motivaatio ja hallinnan tunne ovat 1-5 tai tyhja	PASS	odotus true, toteutui true	2
+28	rajoitteet	jsonb-rakenteiden koko on rajattu (4 asetussaraketta ja portaat)	PASS	odotus 5, toteutui 5	2
+30	omistajuus	Vierasavaimet ovat yhdistelmaavaimia (user_id, x)	PASS	odotus 6, toteutui 6	2
+31	omistajuus	Paikan ja tavoitteen poisto nollaa vain oman sarakkeensa (ON DELETE SET NULL (x))	PASS	odotus 3, toteutui 3	2
+32	omistajuus	Lisanimet, havainnot ja tapojen kirjaukset poistuvat vanhempansa mukana (CASCADE)	PASS	odotus 3, toteutui 3	2
+33	omistajuus	Kymmenen uutta taulua: user_id -> auth.users on CASCADE	PASS	odotus 10, toteutui 10	2
+34	omistajuus	Migraatioiden 36 taulun jokainen vierasavain auth.usersiin on CASCADE	PASS	odotus 0, toteutui 0	2
+35	omistajuus	Jokaisella migraatioiden 36 taululla on vierasavain auth.usersiin	PASS	odotus 0, toteutui 0	2
+36	omistajuus	Muut public-taulut kuin migraatioiden 36 (INFO, eivat kuulu riveihin 34-35)	INFO	0	2
+37	omistajuus	commute_observations: vain kaksi vierasavainta (omistaja ja paikka)	PASS	odotus 2, toteutui 2	2
+40	rls	RLS paalla kaikissa kymmenessa uudessa taulussa	PASS	odotus 10, toteutui 10	2
+41	rls	40 politiikkaa, kaikki authenticated-roolille	PASS	odotus 40, toteutui 40	2
+42	rls	Jokainen politiikka rajaa omistajaan auth.uid() = user_id	PASS	odotus 40, toteutui 40	2
+43	rls	Muokkauspolitiikat rajaavat molemmat puolet (USING ja WITH CHECK)	PASS	odotus 10, toteutui 10	2
+44	oikeudet	anon: ei mitaan oikeutta	PASS	odotus 0, toteutui 0	2
+45	oikeudet	PUBLIC: ei mitaan oikeutta	PASS	odotus 0, toteutui 0	2
+46	oikeudet	authenticated: select/insert/update/delete (40)	PASS	odotus 40, toteutui 40	2
+47	liipaisimet	updated_at-liipaisin kaikissa kymmenessa taulussa	PASS	odotus 10, toteutui 10	2
+50	koskematon	tasks/goals/projects/routines, 0012:n ja 0013:n taulut: 40 politiikkaa kuten ennen	PASS	odotus 40, toteutui 40	2
+51	koskematon	profile ja wellbeing_entries: ei uusia arjen sarakkeita	PASS	odotus 0, toteutui 0	2
+60	rivit	saved_places: riveja (INFO, tuore ajo = 0)	INFO	0	2
+61	rivit	place_aliases: riveja (INFO, tuore ajo = 0)	INFO	0	2
+62	rivit	calendar_events: riveja (INFO, tuore ajo = 0)	INFO	0	2
+63	rivit	commute_observations: riveja (INFO, tuore ajo = 0)	INFO	0	2
+64	rivit	life_settings: riveja (INFO, tuore ajo = 0)	INFO	0	2
+65	rivit	sleep_logs: riveja (INFO, tuore ajo = 0)	INFO	0	2
+66	rivit	habit_plans: riveja (INFO, tuore ajo = 0)	INFO	0	2
+67	rivit	habit_events: riveja (INFO, tuore ajo = 0)	INFO	0	2
+68	rivit	exercise_sessions: riveja (INFO, tuore ajo = 0)	INFO	0	2
+69	rivit	wellbeing_checkins: riveja (INFO, tuore ajo = 0)	INFO	0	2

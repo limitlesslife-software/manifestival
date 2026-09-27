@@ -1,7 +1,7 @@
 // Harjoitusskenaario `backup`: looginen tilannekuva ja palautus oikealla
 // PostgreSQL:llä — EI TUOTANTOA.
 //
-// Jokaiselle migraatiolle N = 0009…0013 ja molemmille lähtötiloille
+// Jokaiselle migraatiolle N = 0009…0014 ja molemmille lähtötiloille
 // (tasks.date/time tekstinä / omina tyyppeinään), P = N-1:
 //
 //   B1  snapshot_state_P.sql READ ONLY -transaktiossa: yksi lause, katalogi ennallaan
@@ -48,7 +48,7 @@ import {
   parseExport, parseSnapshot, buildRestoreSql, buildCompareSql, OWNER as CORE_OWNER
 } from '../activation/snapshot-core.mjs';
 
-export const BACKUP_NUMBERS = Object.freeze(['0009', '0010', '0011', '0012', '0013']);
+export const BACKUP_NUMBERS = Object.freeze(['0009', '0010', '0011', '0012', '0013', '0014']);
 const SNAPSHOT_TZ = 'UTC';
 const OTHER_TZ = 'America/Sao_Paulo';
 
@@ -126,6 +126,18 @@ async function awkwardFor(c, n) {
     }
     if (n === '0012') {
       await c.query(`update public.goals set life_area_id = 'a-la' where id = 'p-goal'`);
+    }
+    if (n === '0014') {
+      // Erikoismerkit, jsonb-rakenteet, taulukot (smallint[], date[]) ja
+      // bigint: tilannekuvan on säilytettävä jokainen tavu.
+      await c.query(`update public.saved_places set name = 'Sali "Ä" <x> ''y'' 😀', note = E'rivi1\\nrivi2 $mv0$ \\\\'
+                     where id = 'a-place'`);
+      await c.query(`update public.life_settings set hourly_value_minor = 2500, digest_time = '19:15',
+                            alarm = '{"enabled": true, "weekdayTime": "06:30", "escalation": [{"afterSeconds": 0, "step": "soft"}]}'
+                      where id = 'a-life'`);
+      await c.query(`update public.calendar_events set goal_id = 'p-goal', recurrence_weekdays = '{1,3,5}',
+                            skip_dates = '{2026-10-05,2026-10-07}' where id = 'a-event'`);
+      await c.query(`update public.habit_plans set unit_cost_minor = 60 where id = 'a-habit'`);
     }
   });
 }
