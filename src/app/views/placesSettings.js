@@ -22,12 +22,13 @@
 
 import { getState, currentLifeSettings } from '../state.js';
 import {
-  savePlace, deletePlace, deletePlaceAlias, resetPlaceLearning, saveLifeSettings
+  savePlace, deletePlace, deletePlaceAlias, resetPlaceLearning, saveLifeSettings, confirmPlaceAlias
 } from '../dailyLifeActions.js';
+import { MIN_ALIAS_CONFIRMATIONS } from '../../domain/places.js';
 import { serverUnavailableHintHtml } from '../schemaStatus.js';
 import { loadFailureHtml } from './loadNotice.js';
 import { renderHtml, singleFlight, setBusy } from '../../ui/dom.js';
-import { success } from '../../ui/toast.js';
+import { success, notify } from '../../ui/toast.js';
 import { escapeHtml } from '../../lib/format.js';
 import { hasTable, isTableAvailable } from '../../data/schema.js';
 import {
@@ -36,7 +37,7 @@ import {
 import { TRAVEL_MODE, TRAVEL_MODES, DEFAULT_BUFFERS, travelModeLabel } from '../../domain/travel.js';
 import {
   ARRIVAL_BUFFER_CHOICES, MAX_ARRIVAL_BUFFER_MINUTES, MAX_PLACE_NAME_LENGTH, MAX_ADDRESS_LENGTH,
-  MAX_TRAVEL_MINUTES, MAX_PREPARATION_MINUTES, MAX_PLACE_ARRIVAL_BUFFER_MINUTES, MAX_OVERHEAD_MINUTES
+  MAX_TRAVEL_MINUTES, MAX_PREPARATION_MINUTES, MAX_PLACE_ARRIVAL_BUFFER_MINUTES, MAX_OVERHEAD_MINUTES, MAX_ALIAS_LENGTH
 } from '../../domain/dailyLife.js';
 import { MAX_AREA_LENGTH, MAX_PLACE_NOTE_LENGTH } from '../../domain/savedPlace.js';
 import { durationText } from '../../domain/wallClock.js';
@@ -323,8 +324,17 @@ function preparationHtml(place, state) {
 }
 
 function aliasesHtml(place, aliases, index) {
-  if (aliases.length === 0) return '';
   const headingId = `plcAliasesTitle-${index}`;
+  const inputId = `plcAliasNew-${index}`;
+  // Oma nimitys: paikka, jonka nimessä puhuttu sana ei ole ("parturi" ->
+  // Hiustalo), ei muuten koskaan liittyisi puheessa. Itse lisätty liitetään heti.
+  const add = `<div class="lh-alias-add">
+      <label class="field-label" for="${inputId}">Lisää nimitys, jolla puhut tästä paikasta</label>
+      <div class="form-row">
+        <input type="text" id="${inputId}" maxlength="${MAX_ALIAS_LENGTH}" autocomplete="off" placeholder="esim. parturi">
+        <button type="button" class="assist-btn" data-action="alias-add" data-place="${escapeHtml(place.id)}" data-input="${inputId}" aria-label="Lisää nimitys paikalle ${escapeHtml(place.name)}">Lisää</button>
+      </div>
+    </div>`;
   const rows = aliases.map(alias => {
     const text = escapeHtml(alias.alias);
     return `<li>
@@ -332,8 +342,10 @@ function aliasesHtml(place, aliases, index) {
         <button type="button" class="assist-btn danger" data-action="alias-delete" data-id="${escapeHtml(alias.id)}" data-place="${escapeHtml(place.id)}" aria-label="Poista nimitys ${text}">Poista</button>
       </li>`;
   }).join('');
+  const list = aliases.length > 0 ? `<ul class="lh-aliases" aria-labelledby="${headingId}">${rows}</ul>` : '';
   return `<div class="lh-subtitle" id="${headingId}">Tunnetut nimitykset</div>
-    <ul class="lh-aliases" aria-labelledby="${headingId}">${rows}</ul>`;
+    ${list}
+    ${add}`;
 }
 
 function placeRowHtml(place, index, state, settings) {
@@ -724,6 +736,22 @@ function onClick(container, event) {
       renderPlacesSettings(container);
       focusIn(container, byAction('place-edit', id), `#${SECTION_HEADINGS.places}`);
       break;
+    case 'alias-add': {
+      const placeId = button.getAttribute('data-place');
+      const inputId = button.getAttribute('data-input');
+      const input = inputId ? container.querySelector(`#${inputId}`) : null;
+      const aliasText = input ? String(input.value || '').trim() : '';
+      if (!aliasText) {
+        notify('Kirjoita nimitys ensin.');
+        if (input) input.focus();
+        break;
+      }
+      quick(container, button, () => confirmPlaceAlias(aliasText, placeId, { minConfirmations: MIN_ALIAS_CONFIRMATIONS }), () => {
+        success('Nimitys lisätty.');
+        focusIn(container, `#${inputId}`, byAction('place-edit', placeId));
+      });
+      break;
+    }
     case 'alias-delete': {
       const placeId = button.getAttribute('data-place');
       quick(container, button, () => deletePlaceAlias(id), () => {

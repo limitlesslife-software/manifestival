@@ -247,6 +247,33 @@ test('opitut nimitykset: vahvistusmäärä näkyy, poisto nimetyllä painikkeell
   assertSameNode(view.doc.activeElement, action(view, 'alias-delete', 'a2'), 'fokus seuraavaan nimitykseen');
 });
 
+test('oma nimitys: "parturi" paikalle Hiustalo liittyy puheessa heti (uusintakatselmointi)', async t => {
+  // Paikan nimessä ei ole puhuttua sanaa, joten puhe ei ehdota sitä koskaan:
+  // ainoa keino liittää on lisätä nimitys itse.
+  const view = mount(t);
+  await seed(savedPlacesRepo, setSavedPlaces, [{ id: 'p1', name: 'Hiustalo' }]);
+  const input = view.byId('plcAliasNew-0');
+  assert.ok(input, 'lisäyskenttä on myös ilman opittuja nimityksiä');
+  assert.equal(accessibleName(action(view, 'alias-add')), 'Lisää nimitys paikalle Hiustalo');
+
+  action(view, 'alias-add').click();
+  await flush();
+  assert.equal(getState().placeAliases.length, 0, 'tyhjä ei tallennu');
+
+  type(view.byId('plcAliasNew-0'), 'Parturi');
+  action(view, 'alias-add').click();
+  await flush();
+  const [alias] = getState().placeAliases;
+  assert.equal(alias.alias, 'parturi');
+  assert.equal(alias.placeId, 'p1');
+  assert.ok(alias.confirmations >= 2, 'itse lisätty riittää liittämiseen heti');
+  const { resolvePlaceText, PLACE_MATCH } = await import('../src/domain/places.js');
+  const resolved = resolvePlaceText('parturi', { places: getState().savedPlaces, aliases: getState().placeAliases });
+  assert.equal(resolved.status, PLACE_MATCH.LEARNED);
+  assert.equal(resolved.place.id, 'p1');
+  assert.match(view.q('[data-place-row="p1"]').textContent, /”parturi”/);
+});
+
 test('Nollaa oppiminen: vahvistus, nimitykset ja havainnot pois, oma arvio säilyy', async t => {
   const view = mount(t);
   await seed(savedPlacesRepo, setSavedPlaces, [{ id: 'p1', name: 'Työ', usualTravelMinutes: 35, useLearned: true }]);
