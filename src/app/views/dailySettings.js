@@ -43,7 +43,7 @@ import { serverUnavailableHintHtml } from '../schemaStatus.js';
 import {
   PROTECTION, PROTECTIONS, protectionLabel, ALARM_MODE, ALARM_MODES, alarmModeLabel, ESCALATION_STEP,
   MAX_MORNING_STEPS, MAX_MEALS, MAX_SNOOZE_MINUTES, MAX_SNOOZES, MAX_WEEKEND_SHIFT_MINUTES,
-  MAX_WIND_DOWN_MINUTES
+  MAX_WIND_DOWN_MINUTES, MAX_ALARM_RING_MINUTES
 } from '../../domain/dailyLife.js';
 import {
   MAX_STEP_NAME_LENGTH, MAX_STEP_MINUTES, MAX_MEAL_PREP_MINUTES, MAX_SUPPLEMENTS, MAX_WATER_INTERVAL_MINUTES
@@ -742,7 +742,7 @@ function alarmHtml(state, settings) {
         ${errorHtml(ALARM_IDS.preset, errors.preset)}
       </div>
     </div>
-    <div class="hint" id="dsAlarmEscalationHint">${escapeHtml(presetHint)} Herätys soi enintään 10 minuuttia.</div>
+    <div class="hint" id="dsAlarmEscalationHint">${escapeHtml(presetHint)} Herätys soi enintään ${MAX_ALARM_RING_MINUTES} minuuttia.</div>
     <div class="form-row">
       ${numberField({ id: ALARM_IDS.snooze, label: 'Torkun pituus (min)', value: values.snooze, min: 1, max: MAX_SNOOZE_MINUTES, error: errors.snooze })}
       ${numberField({ id: ALARM_IDS.maxSnoozes, label: 'Torkkuja enintään', value: values.maxSnoozes, min: 0, max: MAX_SNOOZES, error: errors.maxSnoozes })}
@@ -795,7 +795,7 @@ const submitAlarm = singleFlight(async () => {
     if (ok) {
       drafts.alarm = null;
       sectionErrors.alarm = {};
-      success(draft.enabled ? 'Herätys tallennettu.' : 'Herätys tallennettu pois päältä.');
+      success(draft.enabled ? 'Herätys tallennettu.' : 'Herätyksen asetukset tallennettu. Herätys on pois päältä.');
     } else if (saved.errors) {
       sectionErrors.alarm = { general: Object.values(saved.errors).join(' ') };
     }
