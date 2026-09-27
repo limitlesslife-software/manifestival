@@ -191,6 +191,9 @@ test('paikan muokkaus; poisto kysyy vahvistuksen ja peruutus säilyttää', asyn
   action(view, 'place-delete', 'p1').click();
   await answerConfirm(view.doc, false);
   assert.equal(getState().savedPlaces.length, 1, 'peruutus ei poista');
+  const again = action(view, 'place-delete', 'p1');
+  assert.equal(again.disabled, false, 'painike vapautui');
+  assertSameNode(view.doc.activeElement, again, 'peruutuksen jälkeen fokus palaa poistopainikkeeseen');
 
   action(view, 'place-delete', 'p1').click();
   await answerConfirm(view.doc, true);

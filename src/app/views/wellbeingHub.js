@@ -905,7 +905,7 @@ function closeForm(container, form, { focus = true } = {}) {
   renderWellbeingHub(container);
   if (focus) {
     focusIn(container, draft && draft.returnFocus, `[data-action="${form}-add"]`,
-      `#${SECTION_HEADINGS[form === 'habit' ? 'habits' : form]}`);
+      `#${headingOf(form)}`);
   }
 }
 
@@ -984,24 +984,37 @@ const saveSleep = singleFlight(container => submitDraft(container, 'sleep', {
   }
 }));
 
-/** Poisto kysyy vahvistuksen (toiminto itse); onnistuessa fokus lisäyspainikkeeseen. */
-const removeHabit = singleFlight(async (container, id) => {
-  const result = await deleteHabitPlan(id);
-  if (!result || !result.ok) return;
-  if (drafts.habit && drafts.habit.id === id) drafts.habit = null;
-  renderWellbeingHub(container);
-  success('Suunnitelma poistettu.');
-  focusIn(container, '[data-action="habit-add"]', `#${SECTION_HEADINGS.habits}`);
+const REMOVALS = Object.freeze({
+  habit: Object.freeze({ remove: deleteHabitPlan, message: 'Suunnitelma poistettu.' }),
+  exercise: Object.freeze({ remove: deleteExerciseSession, message: 'Liikuntakerta poistettu.' })
 });
 
-const removeExercise = singleFlight(async (container, id) => {
-  const result = await deleteExerciseSession(id);
-  if (!result || !result.ok) return;
-  if (drafts.exercise && drafts.exercise.id === id) drafts.exercise = null;
+/**
+ * Poisto kysyy vahvistuksen (toiminto itse). Onnistuessa fokus
+ * lisäyspainikkeeseen; peruutuksen tai epäonnistumisen jälkeen takaisin
+ * samaan painikkeeseen (`again`), koska peruttu poisto piirtää rivin
+ * uudelleen uutena solmuna.
+ */
+const removeEntry = singleFlight(async (container, form, id, again) => {
+  const { remove, message } = REMOVALS[form];
+  const result = await remove(id);
+  if (result && result.discarded) return;
   renderWellbeingHub(container);
-  success('Liikuntakerta poistettu.');
-  focusIn(container, '[data-action="exercise-add"]', `#${SECTION_HEADINGS.exercise}`);
+  if (!result || !result.ok) {
+    focusIn(container, again);
+    return;
+  }
+  if (drafts[form] && drafts[form].id === id) {
+    drafts[form] = null;
+    renderWellbeingHub(container);
+  }
+  success(message);
+  focusIn(container, `[data-action="${form}-add"]`, `#${headingOf(form)}`);
 });
+
+function headingOf(form) {
+  return SECTION_HEADINGS[form === 'habit' ? 'habits' : form];
+}
 
 function openerSelector(action, id) {
   return id ? `[data-action="${action}"][data-id="${attrValue(id)}"]` : `[data-action="${action}"]`;
@@ -1025,10 +1038,10 @@ function onClick(container, event) {
       break;
     }
     case 'habit-delete':
-      removeHabit(container, id);
+      removeEntry(container, 'habit', id, openerSelector('habit-delete', id));
       break;
     case 'habit-remove':
-      if (drafts.habit && drafts.habit.id) removeHabit(container, drafts.habit.id);
+      if (drafts.habit && drafts.habit.id) removeEntry(container, 'habit', drafts.habit.id, openerSelector('habit-remove'));
       break;
     case 'habit-step-add':
       if (drafts.habit && drafts.habit.steps.length < MAX_HABIT_STEPS) {
@@ -1062,10 +1075,12 @@ function onClick(container, event) {
       break;
     }
     case 'exercise-delete':
-      removeExercise(container, id);
+      removeEntry(container, 'exercise', id, openerSelector('exercise-delete', id));
       break;
     case 'exercise-remove':
-      if (drafts.exercise && drafts.exercise.id) removeExercise(container, drafts.exercise.id);
+      if (drafts.exercise && drafts.exercise.id) {
+        removeEntry(container, 'exercise', drafts.exercise.id, openerSelector('exercise-remove'));
+      }
       break;
     case 'exercise-save': saveExercise(container); break;
     case 'exercise-cancel': closeForm(container, 'exercise'); break;

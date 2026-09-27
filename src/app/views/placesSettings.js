@@ -528,6 +528,7 @@ const savePlaceForm = singleFlight(async container => {
  * napautettu painike usein katoaa (esim. "Käytä opittua kestoa").
  */
 const quick = singleFlight(async (container, button, run, after) => {
+  const again = sameButton(button);
   setBusy(button, true);
   let result;
   try {
@@ -535,12 +536,28 @@ const quick = singleFlight(async (container, button, run, after) => {
   } finally {
     if (button.isConnected) setBusy(button, false);
   }
-  if (!result || !result.ok) return;
+  if (result && result.discarded) return;
   // Tila piirtää näkymän itse; tämä varmistaa ajantasaisen DOMin ennen
   // fokuksen siirtoa, vaikka piirto olisi tilaajalla viivästetty.
   renderPlacesSettings(container);
-  after(result);
+  if (result && result.ok) {
+    after(result);
+    return;
+  }
+  // Peruttu vahvistus tai epäonnistunut tallennus: dialogi ei voinut
+  // palauttaa fokusta varattuun painikkeeseen, joten se palautetaan tässä
+  // samaan toimintoon (peruutuksen jälkeen piirretty painike on uusi solmu).
+  focusIn(container, again);
 });
+
+/** Valitsin, joka löytää saman toiminnon painikkeen uudelleenpiirron jälkeen. */
+function sameButton(button) {
+  return ['action', 'id', 'value', 'place']
+    .map(name => [name, button.getAttribute(`data-${name}`)])
+    .filter(([, value]) => value !== null)
+    .map(([name, value]) => `[data-${name}="${attrValue(value)}"]`)
+    .join('');
+}
 
 const saveBufferChoice = singleFlight(async container => {
   const draft = drafts.buffer;

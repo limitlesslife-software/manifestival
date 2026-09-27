@@ -291,6 +291,8 @@ test('tapasuunnitelman muokkaus; poisto kysyy vahvistuksen ja peruutus säilytt�
   clickAction(view, 'habit-delete', 'h1');
   await answerConfirm(view.doc, false);
   assert.equal(getState().habitPlans.length, 1, 'peruutus ei poista');
+  assertSameNode(view.doc.activeElement, view.q('[data-action="habit-delete"][data-id="h1"]'),
+    'peruutuksen jälkeen fokus palaa poistopainikkeeseen');
 
   clickAction(view, 'habit-delete', 'h1');
   await answerConfirm(view.doc, true);
