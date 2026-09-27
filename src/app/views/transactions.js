@@ -430,7 +430,9 @@ async function handleFileChosen(event) {
     // Tunnisteen luonti ja tilaan asettaminen tehdään toimintokerroksessa.
     // Näkymä vain kertoo, mitä luetaan, ja näyttää virheen.
     const result = await scanImage({ file, subject: scanSubject });
-    if (!result.ok) showError(result.error);
+    // Hylätty = istunto vaihtui kesken; seuraavalle käyttäjälle ei näytetä
+    // edellisen luennan lopputulosta, ei edes virhettä.
+    if (!result.ok && !result.discarded) showError(result.error);
   } finally {
     // Kuva vapautetaan riippumatta siitä, onnistuiko luenta.
     releaseFileInput(input);
