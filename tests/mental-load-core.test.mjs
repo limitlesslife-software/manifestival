@@ -532,3 +532,14 @@ test('NYT/SEURAAVA fokuksen rinnalla: ei fokuksen asioita eikä kaukaisia menoja
   const legacy = nowNext({ tasks, todayIso: MON, nowMinutes: 600 });
   assert.ok(legacy.all.some(entry => entry.id === 'f1'), 'ilman fokusta vanha käytös');
 });
+
+test('Rauhallinen tänään näyttää viikon valitut prioriteetit (enintään kolme)', async t => {
+  freezeLocalDate(t, MON, '09:00');
+  const nodes = installDom();
+  const { renderToday } = await import('../src/app/views/today.js');
+  setViewDate(new Date(2026, 9, 5));
+  setTasks([task('a', { date: MON, durationMinutes: 20 })]);
+  setWeeklyPlans([{ id: 'wp', weekStart: MON, priorities: [{ ref: 'text', title: 'Lepo' }, { ref: 'text', title: 'Raportti' }] }]);
+  renderToday();
+  assert.match(nodes.get('todayFocus').innerHTML, /Tämän viikon tärkeimmät: Lepo · Raportti/);
+});

@@ -58,6 +58,8 @@ import { switchTab } from '../navigation.js';
 import { setStoredTab } from './stored.js';
 import { formatMinutes as minutesText } from '../../domain/lifeArea.js';
 import { renderSundayResetEntry } from './sundayReset.js';
+import { weeklyPlanFor } from '../../domain/weeklyPlan.js';
+import { weekStartOf } from '../../domain/weeklyCapacity.js';
 
 const ROW_HEIGHT = 66;
 
@@ -316,7 +318,7 @@ function routineLogButton(routineId, dateIso, title) {
 // ---------------------------------------------------------------- fokus
 
 /** Rauhallinen fokus: enintään kolme ja "Kaikki muu on tallessa (N)". */
-function renderCalmFocus(container, load) {
+function renderCalmFocus(container, load, weeklyPlan = null) {
   const stored = storedMessage(load.storedCount);
   const rows = load.now.map(entry => (entry.kind === 'bill' ? calmBillRow(entry) : calmTaskRow(entry))).join('');
   const empty = load.now.length === 0
@@ -331,10 +333,15 @@ function renderCalmFocus(container, load) {
   const room = Number.isFinite(load.dayRoomMinutes) && load.now.length > 0
     ? `<p class="hint calm-room">Fokus vie noin ${escapeHtml(minutesText(load.nowMinutes))}; joustavaa aikaa on ${escapeHtml(minutesText(load.dayRoomMinutes))}.</p>`
     : '';
+  // Sunnuntain nollauksessa valitut viikon prioriteetit (enintään kolme):
+  // muistutus siitä, mikä on tärkeää, ei uusi lista tehtävää.
+  const priorities = weeklyPlan && Array.isArray(weeklyPlan.priorities) && weeklyPlan.priorities.length
+    ? `<p class="hint calm-week">Tämän viikon tärkeimmät: ${weeklyPlan.priorities.slice(0, 3).map(p => escapeHtml(p.title)).join(' · ')}</p>`
+    : '';
   container.innerHTML = `
     <section class="focus-block calm-focus" aria-labelledby="calmFocusTitle">
       <h2 class="section-title" id="calmFocusTitle">Tänään keskityn <span class="count-badge">${load.now.length}/3</span></h2>
-      ${energy}
+      ${priorities}${energy}
       ${rows}${empty}${room}
       <div class="calm-stored" role="note">
         <p class="calm-stored-title">${escapeHtml(stored.title)}</p>
@@ -419,7 +426,7 @@ function renderProtected(container, state, dateIso, plan) {
 
 function renderFocus(container, state, dateIso, todayIso, load = null) {
   if (load) {
-    renderCalmFocus(container, load);
+    renderCalmFocus(container, load, weeklyPlanFor(state.weeklyPlans || [], weekStartOf(todayIso)));
     return;
   }
   const entries = todayFocus({ tasks: state.tasks, dateIso, todayIso, limit: 3 });

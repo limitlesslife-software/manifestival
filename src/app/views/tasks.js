@@ -184,6 +184,12 @@ export function renderTasks() {
     // Päivättömät (0015) ja arkistoidut ovat Tallessa-osiossa: tämä lista on
     // päivätty suunnitelma, ei koko jono.
     renderList(el('tasksListContainer'), state.tasks.filter(task => task.date && !task.archivedAt));
+    // Päivättömät eivät katoa: kerrotaan, missä ne ovat.
+    const dateless = state.tasks.filter(task => !task.date && !task.archivedAt && !task.completed).length;
+    const container = el('tasksListContainer');
+    if (dateless > 0) {
+      container.innerHTML = `<p class="hint">${dateless === 1 ? 'Yksi asia' : `${dateless} asiaa`} ilman päivää on Tallessa-osiossa.</p>` + container.innerHTML;
+    }
     renderEstimateButton();
   }
 }
