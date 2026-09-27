@@ -352,7 +352,10 @@ export function validateTask(task, { allowDateless = false } = {}) {
   const datelessOk = allowDateless && task.date == null
     && task.horizon && task.horizon !== TASK_HORIZON.NOW && !task.time;
   if (!isIsoDate(task.date) && !datelessOk) {
-    errors.date = allowDateless ? 'Valitse päivä tai "Myöhemmin".' : 'Valitse päivämäärä.';
+    errors.date = allowDateless ? 'Valitse päivä tai "Myöhemmin".'
+      : task.horizon && task.date == null
+        ? 'Valitse päivä. Päivätön tallennus tulee käyttöön, kun palvelin on päivitetty (migraatio 0015).'
+        : 'Valitse päivämäärä.';
   }
   if (task.horizon != null && !TASK_HORIZONS.includes(task.horizon)) errors.horizon = 'Horisontti ei kelpaa.';
   if (task.waitingOn != null && task.horizon !== TASK_HORIZON.WAITING) {

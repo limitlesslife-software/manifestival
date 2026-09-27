@@ -271,7 +271,8 @@ function readSchedule() {
   const horizonNode = maybe('afHorizon');
   const horizon = horizonNode && horizonNode.value ? horizonNode.value : null;
   const dateValue = el('afDate').value || null;
-  const date = dateValue || (horizon && datelessTasksAllowed() ? null : fmtISO(todayMidnight()));
+  // Horisontti ilman päivää: päivätön (0015) tai selkeä virhe — ei keksittyä päivää.
+  const date = dateValue || (horizon ? null : fmtISO(todayMidnight()));
   const waiting = horizon === 'WAITING';
   const waitingNode = maybe('afWaitingOn');
   const followNode = maybe('afFollowUp');
