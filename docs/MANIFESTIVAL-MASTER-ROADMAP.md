@@ -41,12 +41,13 @@ PERSONAL_USE_P1 (ensimmäiset viikot), **P2** = PERSONAL_USE_P2, **CL** = COMMER
 | Kalenteri | Suojatut lohkot: valmistautuminen, matka, pysäköinti ja kävely, etuaika, iltarauhoittuminen, uni | P0 | COMPLETE_LOCAL | K | `domain/calendarBlocks.js`, `app/calendarPlan.js` |
 | Kalenteri | Ulkoiset kalenterit (Google, Outlook) | P2 | BLOCKED_PRODUCT_DECISION | — | OAuth-tili ja tietosuojapäätös puuttuvat |
 | Puhe | Puhe tekstiksi (käyttäjän käynnistämä) | P0 | IMPLEMENTED_DEVICE_UNVERIFIED | — | `SpeechPlugin`; selaimessa Web Speech |
-| Puhe | Puhe menoksi paikallisesti (ei tekoälyä) | P0 | PARTIAL | K | `domain/eventParse.js` valmis; komentopalkin kytkentä W-vaiheessa |
-| Puhe | Keskeytykset: myöhässä, jatka, ohita, siirrä | P0 | PARTIAL | K | `domain/interruptions.js`, `dayReplan.js`; käyttöliittymä U3/W-vaiheessa |
-| Avustaja | Puhuva taustamuistutus (lähtö, 5 min, nyt, nukkumaan, herätys, ateria, tupakka, määräaika) | P0 | PARTIAL | K | ketju `domain/dailyReminders.js`, puhe `spokenPhrases.js`, natiivi TTS; ajastus `alarmSync` W-vaiheessa |
-| Avustaja | Ilmoitusten tasot (hiljainen … kriittinen) | P0 | PARTIAL | K | `domain/notificationPolicy.js`; natiivi/paikallinen jako W-vaiheessa |
-| Avustaja | Kuittaus (kuitattu, torkku, ohitettu, lähdin) | P0 | PARTIAL | K | `domain/notificationAck.js`; natiivien tapahtumien luku W-vaiheessa |
-| Avustaja | Kooste (digest) | P1 | PARTIAL | K | politiikka + asetus valmiit; ajastus W-vaiheessa |
+| Puhe | Puhe menoksi paikallisesti (ei tekoälyä) | P0 | COMPLETE_LOCAL | K | `app/localCommands.js` + `domain/eventParse.js`: tarkennus, tarkistus ennen tallennusta, paikan nimityksen oppiminen vasta hyväksynnästä |
+| Puhe | Keskeytykset: myöhässä, jatka, ohita, siirrä | P0 | COMPLETE_LOCAL | K | yksi polku `app/dayReplanActions.js` (Tänään-kortti ja puhe), esikatselu + vahvistus + peruutus virheessä |
+| Avustaja | Puhuva taustamuistutus (lähtö, 5 min, nyt, nukkumaan, herätys, ateria, tupakka, määräaika) | P0 | IMPLEMENTED_DEVICE_UNVERIFIED | K | `app/alarmSync.js` → natiivi `ManifestivalAlarm` (TTS); puhe ja lukitusnäyttö laitteella vahvistamatta |
+| Avustaja | Ilmoitusten tasot (hiljainen … kriittinen) | P0 | COMPLETE_LOCAL | K | `domain/notificationPolicy.js`; puhuvat ja kriittiset natiiviin, muut paikallisiin (`alarmSync.partitionReminders`) |
+| Avustaja | Kuittaus (kuitattu, torkku, ohitettu, lähdin) | P0 | COMPLETE_LOCAL | K | natiivit tapahtumat → `app/alarmEvents.js` kuittausmuisti; ilmoituskeskuksen Kuittaa/Torkuta/Hoidettu muistutukseen |
+| Avustaja | Kuittaus tavallisten ilmoitusten painikkeista | P2 | NOT_STARTED | — | — |
+| Avustaja | Kooste (digest) | P1 | COMPLETE_LOCAL | K | `notificationPolicy.mergeDigest` ajastuksen polulla (`alarmSync`) |
 | Avustaja | Ohjaustyyli: rauhallinen, napakka, aktiivinen | P1 | COMPLETE_LOCAL | K | `views/guidanceSettings.js`, `notificationPolicy.guidanceEffects` |
 | Paikat | Tallennetut paikat, oletusetuaika, kulkutapa | P0 | COMPLETE_LOCAL | K | `views/placesSettings.js` |
 | Paikat | Lisänimet ja niiden vahvistus | P0 | COMPLETE_LOCAL | K | `domain/places.js`; luku, poisto, nollaus |
@@ -63,18 +64,18 @@ PERSONAL_USE_P1 (ensimmäiset viikot), **P2** = PERSONAL_USE_P2, **CL** = COMMER
 | Uni | Unikirjaus ja rytmin ajelehtiminen | P1 | COMPLETE_LOCAL | K | `views/wellbeingHub.js` ("vuoteessa oloaika, ei mitattua unta") |
 | Rytmi | Illan ennakkosuunnittelu | P0 | COMPLETE_LOCAL | K | `app/dailyLifeNotices.eveningBeforeNotice` |
 | Rytmi | Viikonlopun rytmi ja maanantain valmius | P1 | COMPLETE_LOCAL | K | `app/dailyLifeNotices.weekendRhythmNotices` |
-| Herätys | Natiivi tarkka herätys (lukitusnäyttö, uudelleenkäynnistys, kesäaika) | P0 | IMPLEMENTED_DEVICE_UNVERIFIED | K | `ManifestivalAlarm` (Java) + `platform/alarms.js`; sovelluksen ajastus W-vaiheessa |
+| Herätys | Natiivi tarkka herätys (lukitusnäyttö, uudelleenkäynnistys, kesäaika) | P0 | IMPLEMENTED_DEVICE_UNVERIFIED | K | `ManifestivalAlarm` (Java) + `platform/alarms.js` + `app/alarmSync.js`; laitehyväksyntä `docs/DEVICE-ACCEPTANCE-BACKLOG.md` |
 | Herätys | Tilat: ääni, musiikki, puhe, yhdistelmä | P0 | IMPLEMENTED_DEVICE_UNVERIFIED | K | `AlarmService`; valittu ääni `pickAlarmSound` |
 | Herätys | Porrastettu voimistuminen | P1 | IMPLEMENTED_DEVICE_UNVERIFIED | K | `alarmPlan.normalizeEscalation`, `AlarmService` |
-| Herätys | Puhuttu aamukooste | P1 | PARTIAL | K | `alarmPlan.morningBrief`; natiiviin merkintään W-vaiheessa |
-| Päivä | Päivän uudelleensuunnittelu lohkoineen | P0 | PARTIAL | K | `domain/dayReplan.js`; esikatselu ja vahvistus U3-vaiheessa |
-| Päivä | Avoimet asiat ("tällä viikolla") | P1 | PARTIAL | K | `domain/errands.proposeOpenEndedSlot`; kortti U3-vaiheessa |
-| Päivä | Asiointien ryhmittely | P1 | PARTIAL | K | `domain/errands.groupErrands`; ehdotus U3-vaiheessa |
-| Hyvinvointi | Ateriarytmi, vesi ja lisäravinteet | P1 | PARTIAL | K | `domain/mealRhythm.js` + asetukset; muistutukset W-vaiheessa |
+| Herätys | Puhuttu aamukooste | P1 | IMPLEMENTED_DEVICE_UNVERIFIED | K | `alarmPlan.morningBrief` herätyksen puheena; TTS laitteella vahvistamatta |
+| Päivä | Päivän uudelleensuunnittelu lohkoineen | P0 | COMPLETE_LOCAL | K | `domain/dayReplan.js` + `app/dayReplanActions.js`; kiinteät menot, matkat ja lepo eivät siirry |
+| Päivä | Avoimet asiat ("tällä viikolla") | P1 | COMPLETE_LOCAL | K | Tänään → Avoimet asiat: Ehdota aikaa → perustelu → hyväksyntä |
+| Päivä | Asiointien ryhmittely | P1 | COMPLETE_LOCAL | K | Tänään: "olet jo menossa lähelle" -ehdotus |
+| Hyvinvointi | Ateriarytmi, vesi ja lisäravinteet | P1 | COMPLETE_LOCAL | K | asetukset + ateria-, lisäravinne-, vesi- ja iltarajamuistutukset (`alarmSync`) |
 | Hyvinvointi | Liikunta ja viikkokooste | P1 | COMPLETE_LOCAL | K | `domain/exercise.js`, Hyvinvointi-näkymä |
 | Hyvinvointi | Kuntotestit | P2 | NOT_STARTED | — | — |
 | Hyvinvointi | Stressi, mieliala, motivaatio, hallinnan tunne | P1 | COMPLETE_LOCAL | K | `wellbeingCheckins`, 14 päivän historia (puuttuva ≠ 0) |
-| Hyvinvointi | Nikotiini ja tapojen muutos | P1 | COMPLETE_LOCAL | K | `domain/habitEngine.js`, Tapojen muutos; muistutukset W-vaiheessa |
+| Hyvinvointi | Nikotiini ja tapojen muutos | P1 | COMPLETE_LOCAL | K | `domain/habitEngine.js`, Tapojen muutos, Tänään-tapakortti, neutraali muistutus |
 | Hyvinvointi | Hyvinvointi Suunnan katsauksessa | P1 | COMPLETE_LOCAL | K | `domain/dailyLifeSignals.js`, katsauksen Arki-osio |
 | Terveys | Terveysdata ja puettavat (Health Connect) | P2 | ARCHITECTURE_ONLY | — | `domain/healthData.js` sopimus; ei palvelua |
 | Talous | Talous 2.0: tapahtumat, budjetti, laskut, kuitit, säästöt | P2 | COMPLETE_LOCAL | F (tuotannossa) | `docs/FINANCE-2.0.md` |
@@ -85,13 +86,13 @@ PERSONAL_USE_P1 (ensimmäiset viikot), **P2** = PERSONAL_USE_P2, **CL** = COMMER
 | Oppiminen | Selitettävä personointi (käyttäjä hyväksyy) | P1 | COMPLETE_LOCAL | K | oppiminen ehdottaa, ei koskaan muuta itse |
 | Tieto | Vienti (kaikki omat tiedot, ei koordinaatteja) | P0 | COMPLETE_LOCAL | K | `domain/dataExport.js` (0014:n kymmenen kokoelmaa) |
 | Tieto | Tilin poisto | P0 | BLOCKED_PRODUCT_DECISION | — | koodi ja Edge Function valmiit; funktion deploy odottaa omistajaa (`docs/ACCOUNT-DELETION.md`) |
-| Tieto | Offline ja synkronointi | P0 | PARTIAL | — | tehtävät valmiit; menot ja tapakirjaukset W-vaiheessa |
+| Tieto | Offline ja synkronointi | P0 | COMPLETE_LOCAL | K | tehtävät (`offline.js`); menot ja tapakirjaukset (`dailyLifeOutbox.js`), tila samalla rivillä |
 | Tieto | Varmuuskopio ja palautus | P1 | COMPLETE_LOCAL | — | `docs/activation/0010-BACKUP-AND-RECOVERY.md` |
 | Tieto | Käynnistyksen yhteensopivuus (skeemakoetin) | P0 | COMPLETE_LOCAL | K | `src/data/schema.js`, `tests/schema-session-recovery.test.mjs` |
 | Tieto | Useampi välilehti ja kilpatilanteet | P0 | COMPLETE_LOCAL | K | istuntovartija `app/dailyLifeActions.js`, `tests/daily-life-actions.test.mjs` |
 | Laatu | Yksityisyys (ei sijaintihistoriaa, arkaluonteinen ei tekoälylle) | P0 | COMPLETE_LOCAL | K | `docs/SECURITY.md`, `docs/DAILY-LIFE-OS.md` |
 | Laatu | Saavutettavuus (näppäimistö, 44 px, nimet) | P0 | COMPLETE_LOCAL | K | a11y-testit |
-| Käyttöönotto | Ensikäytön asetukset (vaiheittain) | P1 | PARTIAL | — | Profiili → Arki; ohjauskortit W-vaiheessa |
+| Käyttöönotto | Ensikäytön asetukset (vaiheittain) | P1 | COMPLETE_LOCAL | K | Profiili → Arki; opastuksen kaksi valinnaista arjen korttia |
 | Android | APK (henkilökäyttö) | P0 | IMPLEMENTED_DEVICE_UNVERIFIED | K | rakennetaan K-ehdokkaasta, EI ASENNETTAVAKSI ennen aaltoa K |
 | Kaupallinen | Perhetila | CL | FUTURE_COMMERCIAL | — | — |
 | Kaupallinen | Yrittäjätila | CL | FUTURE_COMMERCIAL | — | — |

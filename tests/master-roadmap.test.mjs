@@ -65,9 +65,12 @@ test('estetty, osittainen ja päätöstä odottava rivi kertoo syyn', () => {
   }
 });
 
-test('henkilökäytön P0 ei ole aloittamatta eikä pelkkää arkkitehtuuria', () => {
+test('henkilökäytön P0 ei ole aloittamatta, pelkkää arkkitehtuuria eikä osittainen', () => {
+  // Täydellisyyskierros (27.9.2026) rakensi jokaisen paikallisesti
+  // rakennettavan P0:n. Jäljelle jää vain nimetty este: ulkoinen palvelu,
+  // laitehyväksyntä tai omistajan päätös.
   for (const row of tableRows().filter(r => r.priority === 'P0')) {
-    assert.ok(!['NOT_STARTED', 'ARCHITECTURE_ONLY', 'FUTURE_COMMERCIAL'].includes(row.status),
+    assert.ok(!['NOT_STARTED', 'ARCHITECTURE_ONLY', 'FUTURE_COMMERCIAL', 'PARTIAL'].includes(row.status),
       `P0 ilman toteutusta tai nimettyä estettä: ${row.line}`);
   }
 });
