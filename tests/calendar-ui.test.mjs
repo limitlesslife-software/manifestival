@@ -38,7 +38,7 @@ import {
   departureSummary, selectCalendarView, stepCalendar, KIND_LABELS, dayAgendaHtml
 } from '../src/app/views/calendar.js';
 import {
-  validateEventForm, openEventForm, editingEvent, submitEventForm, skipEditedOccurrence, OTHER_PLACE,
+  validateEventForm, openEventForm, editingEvent, submitEventForm, skipEditedOccurrence, deleteEditedEvent, OTHER_PLACE,
   defaultEventDate
 } from '../src/app/views/calendarForm.js';
 import { renderWeek, initWeekNavigation, isoWeekNumber } from '../src/app/views/week.js';
@@ -1094,4 +1094,49 @@ test('Päivä Viikon jälkeen: poisto vie fokuksen "Uusi meno" -painikkeeseen, e
   await flush();
   assert.deepEqual(getState().calendarEvents.find(e => e.id === 'e-jooga').skipDates, [THURSDAY]);
   assertSameNode(doc.activeElement, byId('calNewEvent'));
+});
+
+test('Poista → Peruuta (tai Esc) palauttaa fokuksen Poista-painikkeeseen; epäonnistunut poisto samoin', async (t) => {
+  freezeLocalDate(t, TUESDAY);
+  const { doc, byId } = mountCalendar({ before: () => seed({ tasks: [] }) });
+  doc.querySelector('[data-cal-open="e-palaveri"]').click();
+  const del = byId('ceDelete');
+  del.focus();
+  press(doc, 'Enter');
+  const dialog = doc.getElementById('confirmDialog');
+  assert.ok(dialog.open, 'vahvistus kysytään');
+  // Dialogi palauttaa sulkeutuessaan fokuksen avaajaansa: estettyyn
+  // painikkeeseen fokus ei siirry.
+  assert.equal(del.disabled, false, 'Poista ei ole estetty vahvistuksen aikana');
+  press(doc, 'Escape');
+  await flush();
+  assert.equal(dialog.open, false);
+  assert.ok(getState().calendarEvents.some(e => e.id === 'e-palaveri'), 'peruttu: meno säilyi');
+  assert.equal(isRendered(byId('calEventForm')), true, 'lomake jäi auki');
+  assertSameNode(doc.activeElement, del, 'fokus palasi Poista-painikkeeseen');
+
+  // Peruuta-painike: sama.
+  del.click();
+  doc.getElementById('confirmCancel').click();
+  await flush();
+  assertSameNode(doc.activeElement, del);
+
+  // Hyväksytty mutta epäonnistunut poisto: meno palaa, lomake jää auki ja
+  // fokus palaa Poista-painikkeeseen uutta yritystä varten.
+  const original = calendarEventsRepo.remove;
+  calendarEventsRepo.remove = async () => ({ ok: false, error: { message: 'verkko', userMessage: 'Yhteys katkesi.' } });
+  t.after(() => { calendarEventsRepo.remove = original; });
+  const result = await deleteEditedEvent({
+    confirm: async () => {
+      // Selain siirtää fokuksen bodyyn, kun fokusoitu painike estetään
+      // tallennuksen ajaksi (tynkä-DOM ei tee sitä itse).
+      doc.activeElement = doc.body;
+      return true;
+    }
+  });
+  assert.equal(result.ok, false);
+  assert.ok(getState().calendarEvents.some(e => e.id === 'e-palaveri'), 'epäonnistunut poisto palautettiin');
+  assert.equal(isRendered(byId('calEventForm')), true);
+  assert.equal(del.disabled, false, 'painike vapautui');
+  assertSameNode(doc.activeElement, del);
 });

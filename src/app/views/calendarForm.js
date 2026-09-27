@@ -527,21 +527,37 @@ export const submitEventForm = singleFlight(async () => {
   return result || { ok: false };
 });
 
-/** Poista koko meno (kysyy vahvistuksen dailyLifeActionsissa). */
-export const deleteEditedEvent = singleFlight(async () => {
+/**
+ * Poista koko meno (kysyy vahvistuksen dailyLifeActionsissa).
+ *
+ * Painike estetään vasta vahvistuksen JÄLKEEN, kuten "Ohita tämä kerta":
+ * dialogi palauttaa sulkeutuessaan fokuksen avaajaansa, eikä estettyyn
+ * painikkeeseen voi siirtää fokusta. Aiemmin Peruuta tai Esc pudotti
+ * fokuksen bodyyn. Tuplapainalluksen estävät singleFlight ja modaali.
+ */
+export const deleteEditedEvent = singleFlight(async ({ confirm = confirmAction } = {}) => {
   const eventId = editing.eventId;
   if (!eventId) return { ok: false };
   const button = el('ceDelete');
-  setBusy(button, true);
   let result;
   try {
-    result = await deleteCalendarEvent(eventId);
+    result = await deleteCalendarEvent(eventId, {
+      confirm: async options => {
+        const confirmed = await confirm(options);
+        if (confirmed) setBusy(button, true);
+        return confirmed;
+      }
+    });
   } finally {
     setBusy(button, false);
   }
   if (result && result.ok) {
     closeEventForm();
     success('Meno poistettu.');
+  } else if (isOpen() && button.isConnected !== false) {
+    // Peruttu tai epäonnistunut: lomake jää auki, ja fokus palaa Poista-
+    // painikkeeseen (estetty painike pudotti sen hyväksynnän jälkeen).
+    button.focus();
   }
   return result || { ok: false };
 });
