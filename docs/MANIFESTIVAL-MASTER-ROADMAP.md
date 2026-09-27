@@ -51,7 +51,7 @@ PERSONAL_USE_P1 (ensimmäiset viikot), **P2** = PERSONAL_USE_P2, **CL** = COMMER
 | Avustaja | Kooste (digest) | P1 | COMPLETE_LOCAL | K | `notificationPolicy.mergeDigest` ajastuksen polulla (`alarmSync`) |
 | Avustaja | Ohjaustyyli: rauhallinen, napakka, aktiivinen | P1 | COMPLETE_LOCAL | K | `views/guidanceSettings.js`, `notificationPolicy.guidanceEffects` |
 | Paikat | Tallennetut paikat, oletusetuaika, kulkutapa | P0 | COMPLETE_LOCAL | K | `views/placesSettings.js` |
-| Paikat | Lisänimet ja niiden vahvistus | P0 | COMPLETE_LOCAL | K | `domain/places.js`, `domain/eventParse.js`: osittain nimetty paikka kysytään, perusmuoto opitaan vahvistuksesta ja liitetään kahden vahvistuksen jälkeen; luku, poisto, nollaus |
+| Paikat | Lisänimet ja niiden vahvistus | P0 | COMPLETE_LOCAL | K | `domain/places.js`, `domain/eventParse.js`: osittain nimetty paikka kysytään, perusmuoto opitaan vahvistuksesta ja liitetään kahden vahvistuksen jälkeen; oma nimitys Paikoissa liitetään heti; luku, poisto, nollaus |
 | Paikat | Sijainti (vain etualalla, käyttäjän pyynnöstä) | P2 | ARCHITECTURE_ONLY | — | tarkoituksella pois päältä; ei sijaintihistoriaa |
 | Lähtö | Reittipalvelun raja (tuntematon ilman palvelua) | P0 | COMPLETE_LOCAL | K | `domain/routing.js` |
 | Lähtö | Reaaliaikainen liikenne ja ETA | P0 | BLOCKED_EXTERNAL_PROVIDER | — | reittipalvelun tili puuttuu; raja palauttaa UNKNOWN |
@@ -61,11 +61,12 @@ PERSONAL_USE_P1 (ensimmäiset viikot), **P2** = PERSONAL_USE_P2, **CL** = COMMER
 | Lähtö | Oppiva matka-aika (käyttäjän hyväksymä, selitetty) | P0 | COMPLETE_LOCAL | K | `domain/commuteLearning.js`, Paikat-näkymän ehdotus |
 | Lähtö | Myöhästymisten oppiminen | P1 | COMPLETE_LOCAL | K | `commuteLearning` + `app/dailyLifeNotices.js` latenessNotice |
 | Aamu | Älykäs aamusuunnittelu (ensimmäinen sitoumus → herätys) | P0 | COMPLETE_LOCAL | K | `domain/morningPlanner.js`, `app/calendarPlan.morningFor` |
+| Aamu | Aamurutiinin vaihemuistutukset ("Suihku nyt. Seuraavaksi: Aamiainen.") | P1 | COMPLETE_LOCAL | K | `alarmSync` + `dailyReminders` MORNING_STEP samasta aamusuunnitelmasta, vain kun Aamurutiini-tapa on valittu; iltapäivän meno ei ole aamun meno |
 | Uni | Suojattu uni ja nukkumaanmenon siirto | P0 | COMPLETE_LOCAL | K | `domain/sleepRhythm.js` |
 | Uni | Unikirjaus ja rytmin ajelehtiminen | P1 | COMPLETE_LOCAL | K | `views/wellbeingHub.js` ("vuoteessa oloaika, ei mitattua unta"); sammutettu herätys kirjaa toteutuneen heräämisen (`app/alarmEvents.js`) |
 | Rytmi | Illan ennakkosuunnittelu | P0 | COMPLETE_LOCAL | K | `app/dailyLifeNotices.eveningBeforeAdvice` (sama `sleepPlanOn`-laskenta) ilmoituskeskukseen ja laitteen muistutukseksi (`alarmSync`) |
 | Rytmi | Viikonlopun rytmi ja maanantain valmius | P1 | COMPLETE_LOCAL | K | `app/dailyLifeNotices.weekendRhythmNotices` |
-| Herätys | Natiivi tarkka herätys (lukitusnäyttö, uudelleenkäynnistys, kesäaika) | P0 | IMPLEMENTED_DEVICE_UNVERIFIED | K | `ManifestivalAlarm` (Java) + `platform/alarms.js` + `app/alarmSync.js`; laitehyväksyntä `docs/DEVICE-ACCEPTANCE-BACKLOG.md` |
+| Herätys | Natiivi tarkka herätys (lukitusnäyttö, uudelleenkäynnistys, kesäaika) | P0 | IMPLEMENTED_DEVICE_UNVERIFIED | K | `ManifestivalAlarm` (Java) + `platform/alarms.js` + `app/alarmSync.js`; herätykset ajastetaan viikoksi eteenpäin (tänään + 7), Arki kertoo mihin asti; laitehyväksyntä `docs/DEVICE-ACCEPTANCE-BACKLOG.md` |
 | Herätys | Tilat: ääni, musiikki, puhe, yhdistelmä | P0 | IMPLEMENTED_DEVICE_UNVERIFIED | K | `AlarmService`; valittu ääni `pickAlarmSound`; oma musiikki `pickAlarmMusic` (järjestelmän tiedostovalitsin audio/*, pysyvä lukuoikeus, ei tallennuslupaa) soi tavoilla Oma musiikki ja Ääni ja puhe, varavaihtoehto herätysääni (`AlarmMath.soundSources`); laitteella vahvistamatta |
 | Herätys | Porrastettu voimistuminen | P1 | IMPLEMENTED_DEVICE_UNVERIFIED | K | `alarmPlan.normalizeEscalation`, `AlarmService` |
 | Herätys | Puhuttu aamukooste | P1 | IMPLEMENTED_DEVICE_UNVERIFIED | K | `alarmPlan.morningBrief` luetaan kerran Sammuta-painalluksen jälkeen (`briefOnDismiss`) tavasta riippumatta, myös oletustavalla; ei torkussa; TTS laitteella vahvistamatta |
