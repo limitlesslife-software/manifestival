@@ -562,6 +562,23 @@ test('aamun katsaus: tervehdys, menojen määrä, ei menoja, lenkin raja ja päi
   assert.match(at('07:00', { leaveTime: '07:40', commitments: [{ startTime: '08:30', category: 'muu' }] }).text, /^Hyvää huomenta\. Kello on 7\.00\. Lähtötavoite on 7\.40\./);
 });
 
+test('aamun katsaus: paikattoman menon alku ei ole lähtötavoite', () => {
+  // calendarPlan.commitmentsOn: meno ilman paikkaa ja matkaa -> lähtö = alku.
+  const placeless = [{ title: 'Hammaslääkäri keskustassa', startTime: '16:00', leaveTime: '16:00', prepareStart: null }];
+  const closed = morningBrief({ now: { date: MONDAY, time: '07:00' }, leaveTime: '16:00', commitments: placeless, settings: {} });
+  assert.doesNotMatch(closed.text, /[Ll]ähtötavoite|lähtö/);
+  assert.match(closed.text, /Ensimmäinen meno alkaa kello 16\.00\./);
+  assert.doesNotMatch(closed.text, /Hammaslääkäri/, 'nimi vain käyttöön otetussa katsauksessa');
+  const open = morningBrief({ now: { date: MONDAY, time: '07:00' }, leaveTime: '16:00', commitments: placeless,
+    settings: { morningBriefEnabled: true } });
+  assert.doesNotMatch(open.text, /[Ll]ähtötavoite/);
+  assert.match(open.text, /Ensimmäinen meno on Hammaslääkäri keskustassa kello 16\.00\./);
+  // Oikea lähtö (matka tiedossa) on edelleen lähtötavoite.
+  const travel = morningBrief({ now: { date: MONDAY, time: '07:00' }, leaveTime: '15:20',
+    commitments: [{ title: 'Asiakas', startTime: '16:00', leaveTime: '15:20', category: 'tyo' }], settings: {} });
+  assert.match(travel.text, /Työmatkan lähtötavoite on 15\.20\./);
+});
+
 test('aamun katsaus: nimi siistitään ja lyhennetään', () => {
   const brief = morningBrief({ now: { date: MONDAY, time: '07:00' }, settings: { morningBriefEnabled: true },
     commitments: [{ title: '  Kokous\n\n\tasiakkaan kanssa!!! ', startTime: '09:00' }] });

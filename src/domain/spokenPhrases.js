@@ -276,6 +276,23 @@ const BUILDERS = Object.freeze({
     });
   },
 
+  // Kalenterin meno ilman lähtöketjua: vain alkamisaika, ei lähtöä eikä
+  // menon nimeä (nimi on käyttäjän tekstiä, eikä se kuulu huoneeseen).
+  [NOTIFICATION_TYPE.EVENT_START]: (style, ctx) => {
+    if (!ctx.time) {
+      return pick(style, {
+        [CALM]: 'Seuraava meno alkaa pian.',
+        [BRISK]: 'Meno pian.',
+        [ACTIVE]: 'Seuraava meno alkaa pian. Nyt on hyvä hetki valmistautua.'
+      });
+    }
+    return pick(style, {
+      [CALM]: `Seuraava meno alkaa kello ${ctx.time}.`,
+      [BRISK]: `Meno kello ${ctx.time}.`,
+      [ACTIVE]: `Seuraava meno alkaa kello ${ctx.time}. Nyt on hyvä hetki valmistautua.`
+    });
+  },
+
   [NOTIFICATION_TYPE.ROUTINE_REMINDER]: (style, ctx) => pick(style, {
     [CALM]: ctx.time ? `Seuraava rutiini alkaa kello ${ctx.time}.` : 'Seuraava rutiini alkaa pian.',
     [BRISK]: 'Rutiinin aika.',

@@ -341,3 +341,93 @@ test('päivärajan arvo: suojatut ennen tavallisia, vähäiset (vesi, suunnitelm
   const kept = capPerDay(list, 3).map(intent => intent.type);
   assert.deepEqual(kept, ['task_reminder', 'wind_down', 'bedtime'], 'aamun vesitauot eivät vie illan paikkoja');
 });
+
+// ------------------------------------------------------------ menon alku ilman lähtöketjua
+
+test('meno ilman paikkaa saa muistutuksen alkuun (alku − 10 min), ei lähtöketjua eikä lähtösanoja', () => {
+  signIn();
+  seed();
+  setCalendarEvents([{ id: 'hl', title: 'Hammaslääkäri keskustassa', date: TOMORROW, startTime: '16:00', durationMinutes: 45 }]);
+  const intents = dailyLifeReminderPlan({ now: NOON }).intents;
+  const starts = intents.filter(intent => intent.type === 'event_start');
+  assert.equal(starts.length, 1, 'yksi muistutus menon alkuun');
+  const [start] = starts;
+  assert.deepEqual([start.date, start.time], [TOMORROW, '15:50'], 'oletusennakko 10 min (Tehtävä tai meno)');
+  assert.equal(start.title, 'Hammaslääkäri keskustassa');
+  assert.equal(start.body, 'Alkaa klo 16:00.');
+  assert.equal(start.topic, 'preparation', 'toimitustapa Valmistautuminen-valinnasta');
+  assert.equal(start.delivery, DELIVERY.SOUND);
+  assert.equal(start.occurrenceId, `event:hl:${TOMORROW}`);
+  assert.doesNotMatch(start.title + start.body + start.reason, /[Ll]ähtö|[Ll]ähde/);
+  assert.equal(intents.some(intent => /^departure_/.test(intent.type)), false, 'lähtöä ei arvata');
+  // Tavallisena ilmoituksena (ei puhu oletuksena): ei laitteen herätysliitännäiselle.
+  const { entries, localIntents } = desiredNativeEntries({ now: NOON, nativeSupported: true });
+  assert.equal(entries.some(entry => entry.id.startsWith('event_start:')), false);
+  assert.ok(localIntents.some(intent => intent.id === start.id));
+});
+
+test('menon alku: paikka ilman matka-aikaa kertoo, ettei lähtöä laskettu; tunnettu matka tuottaa lähtöketjun', () => {
+  signIn();
+  seed();
+  setSavedPlaces([{ id: 'p1', name: 'Asiakas', address: 'Kauppakatu 1', travelMode: 'driving', usualTravelMinutes: 20 }]);
+  setCalendarEvents([
+    { id: 'tuntematon', title: 'Kokous', date: TOMORROW, startTime: '10:00', durationMinutes: 60, locationText: 'Kaupungintalo' },
+    { id: 'tunnettu', title: 'Asiakas', date: TOMORROW, startTime: '14:00', durationMinutes: 60, placeId: 'p1' }
+  ]);
+  const intents = dailyLifeReminderPlan({ now: NOON }).intents;
+  const unknown = intents.find(intent => intent.type === 'event_start');
+  assert.ok(unknown, 'tuntematon matka-aika: muistutus alkuun');
+  assert.equal(unknown.occurrenceId, `event:tuntematon:${TOMORROW}`);
+  assert.equal(unknown.time, '09:50');
+  assert.match(unknown.body, /^Alkaa klo 10:00\. Matka-aikaa ei ole tiedossa, joten lähtöaikaa ei laskettu\.$/);
+  assert.equal(intents.filter(intent => intent.type === 'event_start').length, 1, 'tunnetulle matkalle ei alun muistutusta');
+  assert.ok(intents.some(intent => intent.type === 'departure_leave_now' && intent.departureId === `event:tunnettu:${TOMORROW}`));
+});
+
+test('menon alun ennakko: oma asetus ja ohjaustyyli; puheena laitteelle ilman menon nimeä', () => {
+  signIn();
+  seed({ preferences: { taskLeadMinutes: 30 } });
+  setCalendarEvents([{ id: 'soitto', title: 'Puhelu lääkärille', date: TOMORROW, startTime: '09:00', durationMinutes: 15 }]);
+  assert.equal(dailyLifeReminderPlan({ now: NOON }).intents.find(intent => intent.type === 'event_start').time, '08:30');
+
+  seed({ settings: { guidanceStyle: 'aktiivinen' } });
+  assert.equal(dailyLifeReminderPlan({ now: NOON }).intents.find(intent => intent.type === 'event_start').time, '08:45',
+    'aktiivinen tyyli pidentää ennakkoa kuten tehtävillä (10 -> 15 min)');
+
+  seed({ settings: { speechEnabled: true, delivery: { preparation: DELIVERY.SPEECH } } });
+  const { entries, localIntents } = desiredNativeEntries({ now: NOON, nativeSupported: true });
+  const spoken = entries.find(entry => entry.id.startsWith('event_start:'));
+  assert.ok(spoken, 'puhuva menon alku laitteelle');
+  assert.equal(spoken.speech, 'Seuraava meno alkaa kello 9.00.');
+  assert.equal(/lääkäri/i.test(spoken.speech), false, 'menon nimi ei kuulu ääneen');
+  assert.equal(spoken.routeDestination, null, 'ei reittiä ilman paikkaa');
+  assert.equal(localIntents.some(intent => intent.type === 'event_start'), false, 'ei kahdesti');
+});
+
+test('menon alku: ei muistutusta, kun muistutukset ovat pois, meno on koko päivän tai alku on jo mennyt', () => {
+  signIn();
+  seed({ preferences: { enabled: false } });
+  setCalendarEvents([{ id: 'a', title: 'Meno', date: TOMORROW, startTime: '09:00', durationMinutes: 15 }]);
+  assert.deepEqual([...dailyLifeReminderPlan({ now: NOON }).intents], []);
+
+  seed();
+  setCalendarEvents([
+    { id: 'koko', title: 'Loma', date: TOMORROW, allDay: true },
+    { id: 'mennyt', title: 'Aamupalaveri', date: TODAY, startTime: '09:00', durationMinutes: 30 },
+    { id: 'pian', title: 'Pian', date: TODAY, startTime: '12:05', durationMinutes: 30 }
+  ]);
+  const starts = dailyLifeReminderPlan({ now: NOON }).intents.filter(intent => intent.type === 'event_start');
+  assert.deepEqual(starts.map(intent => intent.occurrenceId), [],
+    'koko päivän menolle ei alkua; mennyt ja jo ennakon sisällä oleva eivät tule enää');
+});
+
+test('herätyksen aamun katsaus ei kutsu paikattoman menon alkua lähtötavoitteeksi', async () => {
+  const { plannedWakeAlarms } = await import('../src/app/alarmSync.js');
+  signIn();
+  seed({ settings: { alarm: { enabled: true, followPlan: true }, morningBriefEnabled: true } });
+  setCalendarEvents([{ id: 'hl', title: 'Hammaslääkäri keskustassa', date: TOMORROW, startTime: '16:00', durationMinutes: 45 }]);
+  const wake = plannedWakeAlarms({ now: NOON }).find(alarm => alarm.forDate === TOMORROW);
+  assert.ok(wake && typeof wake.briefText === 'string', 'katsaus on käytössä');
+  assert.doesNotMatch(wake.briefText, /[Ll]ähtötavoite/);
+  assert.match(wake.briefText, /Ensimmäinen meno on Hammaslääkäri keskustassa kello 16\.00\./);
+});

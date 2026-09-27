@@ -105,7 +105,7 @@ export function renderNotificationSettings() {
       ${preferences.enabled ? `
         <div class="form-row">
           <div>
-            <label class="field-label" for="nfTaskLead">Tehtävä (min ennen)</label>
+            <label class="field-label" for="nfTaskLead">Tehtävä tai meno (min ennen)</label>
             <input type="number" id="nfTaskLead" min="0" max="240" step="5"
                    value="${preferences.taskLeadMinutes}">
           </div>

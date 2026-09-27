@@ -532,9 +532,9 @@ test('valmiista tehtävästä ei muistuteta eikä maksetusta laskusta', () => {
 
 // ------------------------------------ arjen käyttöjärjestelmän laajennus
 
-test('uudet ilmoitustyypit: lähtöketju, uni, ateria, tapa, illan ja aamun kooste, kooste', () => {
+test('uudet ilmoitustyypit: lähtöketju, uni, ateria, tapa, illan ja aamun kooste, kooste, menon alku', () => {
   const expected = ['departure_prepare', 'departure_leave_in_5', 'departure_leave_now', 'wind_down', 'bedtime',
-    'meal', 'habit', 'evening_before', 'morning_brief', 'digest'];
+    'meal', 'habit', 'evening_before', 'morning_brief', 'digest', 'event_start'];
   for (const type of expected) assert.ok(NOTIFICATION_TYPES.includes(type), type);
   assert.equal(NOTIFICATION_TYPES.length, 6 + expected.length);
   assert.deepEqual([...DEPARTURE_CHAIN_TYPES],

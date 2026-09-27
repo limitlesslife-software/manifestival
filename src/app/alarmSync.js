@@ -16,8 +16,9 @@
 //     - kaikki muu: hiljainen, värinä, ääni
 //
 // Arjen muistutukset: lähtöketju (valmistaudu, 5 min, nyt) kalenterin
-// menoista, iltarauhoittuminen ja nukkumaanmeno, ateriat ja tapojen
-// muutoksen seuraava suunniteltu aika. Kaikki kulkevat saman
+// menoista, menon alku (alkaa klo) menoille, joille lähtöketjua ei ole (ei
+// paikkaa tai matka-aikaa), iltarauhoittuminen ja nukkumaanmeno, ateriat ja
+// tapojen muutoksen seuraava suunniteltu aika. Kaikki kulkevat saman
 // toimituspolitiikan läpi (notificationPolicy.applyNotificationPolicy):
 // toimitustapa aiheittain, ohjaustyyli, rauhoitusaika, kooste, päiväraja
 // ja kuittausloki (kuitattua ei toisteta, torkutettu tulee torkun lopussa).
@@ -67,12 +68,13 @@ import { getState, currentLifeSettings } from './state.js';
 import { sessionSnapshot, isSameSession } from '../data/session.js';
 import { deviceOffsetMinutes, deviceTimeZone } from './deviceTime.js';
 import { departuresOn, firstCommitmentOn, sleepScheduleOn, clockOf, shiftIso } from './dailyLifeModel.js';
+import { needsDeparture } from './calendarPlan.js';
 import { currentAckLog, rememberScheduledTargets } from './alarmEvents.js';
 import { desiredAlarms, DEFAULT_ESCALATION } from '../domain/alarmPlan.js';
 import { planDepartureChain, planDailyLifeReminders, DAILY_REMINDER_KIND, firstLeaveOn } from '../domain/dailyReminders.js';
 import { eveningBeforeAdvice } from './dailyLifeNotices.js';
 import { applyNotificationPolicy, resolveGuidanceStyle, scaleLeadMinutes } from '../domain/notificationPolicy.js';
-import { normalizePreferences, DEPARTURE_CHAIN_TYPES, planRange } from '../domain/notification.js';
+import { normalizePreferences, DEPARTURE_CHAIN_TYPES, DEFAULT_PREFERENCES, planRange } from '../domain/notification.js';
 import { expandRoutines } from '../domain/routine.js';
 import { ackIndex, entryHandled } from '../domain/notificationAck.js';
 import { dailyMealItems, MEAL_ITEM_KIND } from '../domain/mealRhythm.js';
@@ -169,10 +171,27 @@ export function intentMoment(intent, offsetMinutesFn = deviceOffsetMinutes) {
   return at ? { epochMs: at.epochMs, date: at.date, time: at.time } : null;
 }
 
-/** Lähtöketjun syötteet horisontin menoista + lähdön kohde laitteen reittiä varten. */
-function departureInputs(state, now, dates) {
+/**
+ * Menon alun ennakko (DAILY_REMINDER_KIND.EVENT_START): sama asetus kuin
+ * tehtävän ennakolla (Profiili → Muistutukset, "Tehtävä tai meno", oletus
+ * 10 min), ja ohjaustyyli pidentää sitä samoin kuin tehtävillä.
+ */
+export function eventLeadMinutes(preferences, settings) {
+  const value = preferences && typeof preferences === 'object' ? preferences.taskLeadMinutes : null;
+  const base = Number.isInteger(value) && value >= 0 ? value : DEFAULT_PREFERENCES.taskLeadMinutes;
+  return scaleLeadMinutes(base, resolveGuidanceStyle(null, settings)) ?? base;
+}
+
+/**
+ * Lähtöketjun syötteet horisontin menoista + lähdön kohde laitteen reittiä
+ * varten, sekä MENON ALUN merkinnät menoille, joille lähtöketjua ei ole
+ * (ei paikkaa, tai paikka ilman tiedossa olevaa matka-aikaa): muistutus
+ * alku − ennakko. Lähtöaikaa ei arvata, eikä alkua kutsuta lähdöksi.
+ */
+function departureInputs(state, now, dates, leadMinutes = 0) {
   const inputs = [];
   const routes = new Map();
+  const starts = [];
   for (const date of dates) {
     let list = EMPTY;
     try {
@@ -181,7 +200,13 @@ function departureInputs(state, now, dates) {
       list = EMPTY;
     }
     for (const { occurrence, place, departure } of list) {
-      if (!departure || departure.known !== true || !departure.leave) continue;
+      if (!departure || departure.known !== true || !departure.leave) {
+        starts.push({
+          kind: DAILY_REMINDER_KIND.EVENT_START, id: occurrence.id, date: occurrence.date, time: occurrence.time,
+          leadMinutes, title: occurrence.title, needsTravel: needsDeparture(occurrence)
+        });
+        continue;
+      }
       inputs.push({
         id: occurrence.id,
         date: occurrence.date,
@@ -203,7 +228,7 @@ function departureInputs(state, now, dates) {
       });
     }
   }
-  return { inputs, routes };
+  return { inputs, routes, starts };
 }
 
 /** Illan ennakko tulee viimeistään tähän aikaan illalla (minuutit keskiyöstä). */
@@ -459,14 +484,17 @@ export function dailyLifeReminderPlan({
   let effective = settings;
   let everyday = EMPTY;
   try {
-    const departures = departureInputs(state, now, dates);
+    const departures = departureInputs(state, now, dates, eventLeadMinutes(preferences, settings));
     routes = departures.routes;
     const habits = habitEntries(state, now, dates);
     effective = policySettings(settings, habits.delivery);
     const chain = planDepartureChain({ departures: departures.inputs, settings: effective, todayIso });
     const firstLeaveFor = wakeDate => firstLeaveOn(departures.inputs, wakeDate);
     const daily = planDailyLifeReminders({
-      entries: [...sleepEntries(state, now, dates, firstLeaveFor), ...mealEntries(settings, dates), ...habits.entries],
+      entries: [
+        ...sleepEntries(state, now, dates, firstLeaveFor), ...mealEntries(settings, dates), ...habits.entries,
+        ...departures.starts
+      ],
       settings: effective,
       todayIso
     });
