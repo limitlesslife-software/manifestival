@@ -4,7 +4,7 @@
 //   values:0010        0010 ei muuta yhtäkään vanhaa arvoa, ei kirjoita rivejä
 //                      eikä tauluja uudelleen; uusien sarakkeiden arvot vanhoilla
 //                      riveillä ovat odotetut (5 tilaa × projekti kytketty/irti)
-//   prodshape:chain    0009..0014 tuotannon datalla: tiivisteet, xmin ja
+//   prodshape:chain    0009..0015 tuotannon datalla: tiivisteet, xmin ja
 //                      relfilenode jokaisen migraation ympärillä + kultaiset
 //                      skeemaerot (tools/pg-rehearsal/expected/schema-diff-*.txt)
 //   prodshape:pause    jokaisessa tauossa elävän ja seuraavan aallon oikeat
@@ -24,7 +24,7 @@ import {
 } from './prodshape.mjs';
 import { PAUSES, trainWaves, waveWrites } from './waves.mjs';
 
-const NUMBERS = ['0009', '0010', '0011', '0012', '0013', '0014'];
+const NUMBERS = ['0009', '0010', '0011', '0012', '0013', '0014', '0015'];
 const pad = n => String(n).padStart(4, '0');
 
 export async function fixtureScenario({ fail }) {
@@ -166,6 +166,14 @@ export async function pauseScenario({ fail }) {
   const client = await cloneProdShape('0008', db);
   try {
     let slot = 0;
+    // Yksi arjen asetusrivi käyttäjää kohti: kun rivi on kirjoitettu,
+    // myöhemmät sarjat eivät lisää toista (sovellus päivittäisi sen).
+    let singletonsWritten = false;
+    const writesFor = async (wave, prefix) => {
+      const ops = await waveWrites(wave, { prefix, train, slot: slot++, insertSingletons: !singletonsWritten });
+      if (ops.some(o => o.table === 'life_settings' && o.method === 'insert')) singletonsWritten = true;
+      return ops;
+    };
     for (const pause of PAUSES) {
       const out = { after: pause.after, live: pause.live, next: pause.next };
       const problems = [];
@@ -175,11 +183,11 @@ export async function pauseScenario({ fail }) {
         problems.push(...p);
         if (!record.ok) { results.push({ ...out, pass: false, problems }); for (const x of problems) fail('prodshape:pause', `${pause.after}: ${x}`); break; }
       }
-      const live = await runWrites(client, await waveWrites(pause.live, { prefix: `p${pause.after}${pause.live.toLowerCase()}`, train, slot: slot++ }));
+      const live = await runWrites(client, await writesFor(pause.live, `p${pause.after}${pause.live.toLowerCase()}`));
       out.liveWrites = live;
       problems.push(...live.failed.map(f => `elävä aalto ${pause.live}: ${f}`));
       if (pause.next) {
-        const next = await runWrites(client, await waveWrites(pause.next, { prefix: `p${pause.after}${pause.next.toLowerCase()}`, train, slot: slot++ }));
+        const next = await runWrites(client, await writesFor(pause.next, `p${pause.after}${pause.next.toLowerCase()}`));
         out.nextWrites = next;
         problems.push(...next.failed.map(f => `seuraava aalto ${pause.next}: ${f}`));
       }

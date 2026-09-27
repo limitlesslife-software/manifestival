@@ -1,4 +1,4 @@
-# Skeemaerot 0009–0014 (kultaiset tiedostot)
+# Skeemaerot 0009–0015 (kultaiset tiedostot)
 
 GENEROITU: `node tools/pg-rehearsal/schema-diff-summary.mjs`. ÄLÄ MUOKKAA KÄSIN —
 testi vertaa tätä kultaisiin tiedostoihin.
@@ -19,6 +19,7 @@ hylkäys. Poistoja sallitaan vain `ALLOWED_REMOVALS`-listan korvaukset.
 | 0012 | 4 | 1 | 38 | 15 | 16 | 4 | 0 |
 | 0013 | 2 | 9 | 28 | 8 | 8 | 2 | 1 |
 | 0014 | 10 | 0 | 108 | 29 | 40 | 10 | 0 |
+| 0015 | 2 | 7 | 30 | 7 | 8 | 2 | 3 |
 
 Yhteistä kaikille uusille tauluille (todennettu riveistä): RLS päällä, neljä
 `authenticated`-roolin politiikkaa (`auth.uid() = user_id`), `authenticated`
@@ -247,3 +248,41 @@ ajava rooli (harjoittelussa `postgres`).
 **Politiikat (40):** `calendar_events` 4, `commute_observations` 4, `exercise_sessions` 4, `habit_events` 4, `habit_plans` 4, `life_settings` 4, `place_aliases` 4, `saved_places` 4, `sleep_logs` 4, `wellbeing_checkins` 4
 
 **Liipaisimet (10):** `calendar_events_touch_updated_at`, `commute_observations_touch_updated_at`, `exercise_sessions_touch_updated_at`, `habit_events_touch_updated_at`, `habit_plans_touch_updated_at`, `life_settings_touch_updated_at`, `place_aliases_touch_updated_at`, `saved_places_touch_updated_at`, `sleep_logs_touch_updated_at`, `wellbeing_checkins_touch_updated_at`
+
+## 0015 — Mielen kuorman keventäminen (aalto L)
+
+**Uudet taulut (2):** `protected_periods` (16 saraketta, RLS päällä), `weekly_plans` (9 saraketta, RLS päällä)
+
+**Uudet sarakkeet olemassa oleviin tauluihin (7):**
+
+- `life_areas.kind` text NOT NULL, oletus `'STANDARD'`
+- `tasks.archived_at` timestamp with time zone (nullable)
+- `tasks.follow_up_date` date (nullable)
+- `tasks.horizon` text (nullable)
+- `tasks.original_date` date (nullable)
+- `tasks.reschedule_count` integer NOT NULL, oletus `0`
+- `tasks.waiting_on` text (nullable)
+
+**Korvattu / poistettu (3):**
+
+- `life_areas.life_areas_category_unique`: `UNIQUE (user_id, category_key)`
+- `life_areas_category_unique.CREATE UNIQUE INDEX life_areas_category_unique ON public.life_areas USING btree (user_id, category_key)`: ``
+- `life_areas_category_unique.i`: `rls=false:force=false:owner=postgres:acl=`
+
+**Rajoitteet (30):**
+
+- `life_areas`: life_areas_kind_check (CHECK)
+- `protected_periods`: protected_periods_dates_check (CHECK), protected_periods_kind_check (CHECK), protected_periods_note_check (CHECK), protected_periods_once_check (CHECK), protected_periods_owner_row_key (UNIQUE), protected_periods_pkey (PRIMARY KEY), protected_periods_recurrence_check (CHECK), protected_periods_span_check (CHECK), protected_periods_strength_check (CHECK), protected_periods_target_check (CHECK), protected_periods_times_check (CHECK), protected_periods_title_check (CHECK), protected_periods_user_id_fkey (FOREIGN KEY), protected_periods_vacation_check (CHECK), protected_periods_weekdays_check (CHECK), protected_periods_weekly_check (CHECK), protected_periods_weekly_target_check (CHECK)
+- `tasks`: tasks_horizon_check (CHECK), tasks_reschedule_count_check (CHECK), tasks_waiting_on_check (CHECK), tasks_waiting_on_horizon_check (CHECK)
+- `weekly_plans`: weekly_plans_note_check (CHECK), weekly_plans_owner_row_key (UNIQUE), weekly_plans_pkey (PRIMARY KEY), weekly_plans_planned_minutes_check (CHECK), weekly_plans_priorities_check (CHECK), weekly_plans_user_id_fkey (FOREIGN KEY), weekly_plans_week_start_check (CHECK), weekly_plans_week_unique (UNIQUE)
+
+**Vierasavaimet (2):**
+
+- `protected_periods.protected_periods_user_id_fkey`: `FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE`
+- `weekly_plans.weekly_plans_user_id_fkey`: `FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE`
+
+**Indeksit (7):** `life_areas_user_category_idx`, `protected_periods_owner_row_key`, `protected_periods_pkey`, `protected_periods_user_active_idx`, `weekly_plans_owner_row_key`, `weekly_plans_pkey`, `weekly_plans_week_unique`
+
+**Politiikat (8):** `protected_periods` 4, `weekly_plans` 4
+
+**Liipaisimet (2):** `protected_periods_touch_updated_at`, `weekly_plans_touch_updated_at`

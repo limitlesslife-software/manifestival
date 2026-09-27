@@ -114,7 +114,7 @@ käyttäjää); ketju ei käytä sitä hylkäysehtona, kuten ennenkin.
 DO-lohkot ja lukituslauseen transaktion sisällä; yksikään taulu, sarake,
 rajoite, indeksi, politiikka, liipaisin tai funktio ei muutu.
 `prodshape:chain` vertasi jokaisen migraation katalogieron muuttamattomiin
-tiedostoihin (5/5 sama); `docs/activation/SCHEMA-DIFFS-0009-0013.md` (nyt `SCHEMA-DIFFS-0009-0014.md`) on
+tiedostoihin (5/5 sama); `docs/activation/SCHEMA-DIFFS-0009-0013.md` (nyt `SCHEMA-DIFFS-0009-0015.md`) on
 ajan tasalla (`schema-diff-summary.mjs --check`).
 
 **Johdetut tiedostot tarkistettu:** `build-preflights.mjs --check`,
@@ -357,7 +357,7 @@ ROLLBACK-otsikossa ja `MIGRATION-BUNDLES.md`:ssä: 0014 ensin, sitten 0013.
 `3825a11a…`, `preflight_0013` `04aaf286…`, `verify_0013` `7b5b7fdb…`).
 
 Generoidut: `tools/pg-rehearsal/expected/schema-diff-0014.txt` (uusi;
-0009–0013 ennallaan), `docs/activation/SCHEMA-DIFFS-0009-0014.md`
+0009–0013 ennallaan), `docs/activation/SCHEMA-DIFFS-0009-0015.md`
 (nimetty uudelleen 0009-0013:sta, generaattorilla),
 `docs/activation/MIGRATION-BUNDLES.md` (blobit + 0014:n paketti),
 `tests/fixtures/activation-inventory/state-0014.json` ja

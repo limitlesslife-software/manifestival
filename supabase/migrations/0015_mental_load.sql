@@ -332,7 +332,7 @@ end $$;
 -- otetaan TARKOITUKSELLA VIIMEISENÄ (vaiheet 3 ja 4): se pidetään
 -- committiin asti ja estää sen ajan kirjautumiset, joten sen kesto
 -- halutaan mahdollisimman lyhyeksi. Sama järjestys kuin 0010:ssä.
--- Harjoiteltu: tools/pg-rehearsal (failure:0015-locks).
+-- Harjoiteltu: tools/pg-rehearsal (failure:0010-locks, 0015:n estäjämatriisi).
 -- ---------------------------------------------------------------------
 lock table public.tasks, public.life_areas in access exclusive mode;
 
@@ -442,9 +442,15 @@ alter table public.tasks
   check (reschedule_count >= 0 and reschedule_count <= 10000);
 
 -- Odotus kuuluu vain odottavalle asialle.
+--
+-- NULL-TURVALLINEN MUOTO. Suora "horizon = 'WAITING' or waiting_on is
+-- null" hyväksyisi rivin, jonka horisontti on NULL ja odotus asetettu:
+-- NULL = 'WAITING' on NULL, ja CHECK hyväksyy NULLin. Todettu oikealla
+-- PostgreSQL 17:llä (tools/pg-rehearsal, lifecycle
+-- 0015_rejects_null_horizon_with_waiting_on).
 alter table public.tasks
   add constraint tasks_waiting_on_horizon_check
-  check (horizon = 'WAITING' or waiting_on is null);
+  check (waiting_on is null or (horizon is not null and horizon = 'WAITING'));
 
 -- PÄIVÄTÖN TEHTÄVÄ (omistajan päätös 2). Idempotentti: nullable
 -- sarakkeelle tämä ei tee mitään. Ei rivien kirjoitusta.

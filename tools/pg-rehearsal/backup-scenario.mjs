@@ -1,7 +1,7 @@
 // Harjoitusskenaario `backup`: looginen tilannekuva ja palautus oikealla
 // PostgreSQL:llä — EI TUOTANTOA.
 //
-// Jokaiselle migraatiolle N = 0009…0014 ja molemmille lähtötiloille
+// Jokaiselle migraatiolle N = 0009…0015 ja molemmille lähtötiloille
 // (tasks.date/time tekstinä / omina tyyppeinään), P = N-1:
 //
 //   B1  snapshot_state_P.sql READ ONLY -transaktiossa: yksi lause, katalogi ennallaan
@@ -48,7 +48,7 @@ import {
   parseExport, parseSnapshot, buildRestoreSql, buildCompareSql, OWNER as CORE_OWNER
 } from '../activation/snapshot-core.mjs';
 
-export const BACKUP_NUMBERS = Object.freeze(['0009', '0010', '0011', '0012', '0013', '0014']);
+export const BACKUP_NUMBERS = Object.freeze(['0009', '0010', '0011', '0012', '0013', '0014', '0015']);
 const SNAPSHOT_TZ = 'UTC';
 const OTHER_TZ = 'America/Sao_Paulo';
 
@@ -126,6 +126,18 @@ async function awkwardFor(c, n) {
     }
     if (n === '0012') {
       await c.query(`update public.goals set life_area_id = 'a-la' where id = 'p-goal'`);
+    }
+    if (n === '0015') {
+      // Odotuksen erikoismerkit, aikavyöhykkeellinen arkistointi, time- ja
+      // smallint[]-sarakkeet, jsonb-prioriteetit ja päivätön tehtävä.
+      await c.query(`update public.tasks set waiting_on = 'Matti "Ä" <x> ''y'' 😀', follow_up_date = '2026-10-01',
+                            archived_at = '2026-09-26T23:30:00+03:00', reschedule_count = 3, original_date = '2026-09-18'
+                      where id = 'a-wait'`);
+      await c.query(`update public.protected_periods set start_time = '17:30', end_time = '22:15', weekdays = '{1,3,5}',
+                            note = E'rivi1\\nrivi2 $mv0$' where id = 'a-own'`);
+      await c.query(`update public.weekly_plans set priorities = '[{"ref": "text", "title": "Ä \\"lainaus\\" 😀"}, {"ref": "task:a-later", "title": "Myöhemmin"}]'
+                      where id = 'a-wp'`);
+      await c.query(`update public.life_areas set kind = 'VACATION' where id = 'a-la'`);
     }
     if (n === '0014') {
       // Erikoismerkit, jsonb-rakenteet, taulukot (smallint[], date[]) ja

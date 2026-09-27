@@ -1,0 +1,41 @@
+check_no	section	check_name	status	details	poikkeavia_yhteensa
+01	taulut	Kaksi uutta taulua on olemassa	PASS	odotus 2, toteutui 2	1
+02	taulut	protected_periods: 16 odotettua saraketta eika muita	PASS	odotus 16/16, toteutui 16/16	1
+03	taulut	weekly_plans: 9 odotettua saraketta eika muita	PASS	odotus 9/9, toteutui 9/9	1
+04	sarakkeet	tasks: kuusi uutta saraketta oikeilla tyypeilla	PASS	odotus 6, toteutui 6	1
+05	sarakkeet	tasks.reschedule_count NOT NULL default 0	PASS	odotus 1, toteutui 1	1
+06	sarakkeet	tasks: horizon, waiting_on, follow_up_date, archived_at, original_date ovat nullable	PASS	odotus 5, toteutui 5	1
+07	sarakkeet	life_areas.kind text NOT NULL default STANDARD	PASS	odotus 1, toteutui 1	1
+08	sarakkeet	tasks.date on nullable (paivaton tehtava)	FAIL	odotus YES, toteutui null	1
+09	sarakkeet	Omistaja: user_id NOT NULL default auth.uid() molemmissa uusissa tauluissa	PASS	odotus 2, toteutui 2	1
+10	sarakkeet	weekly_plans.priorities jsonb NOT NULL	PASS	odotus 1, toteutui 1	1
+20	rajoitteet	Kaikki 26 uutta rajoitetta ovat olemassa	PASS	odotus 26, toteutui 26	1
+21	rajoitteet	tasks- ja life_areas-rajoitteet on validoitu olemassa olevia riveja vastaan	PASS	odotus 5, toteutui 5	1
+22	rajoitteet	life_areas_category_unique on poistettu (useampi alue saa jakaa kategorian)	PASS	odotus 0, toteutui 0	1
+23	rajoitteet	life_areas_user_category_idx (user_id, category_key) on ei-uniikki	PASS	odotus true, toteutui true	1
+24	rajoitteet	Odotus vain odottavalle (NULL-turvallinen): waiting_on is null or horizon = WAITING	PASS	odotus true, toteutui true	1
+25	rajoitteet	Viikko alkaa maanantaista (isodow = 1)	PASS	odotus true, toteutui true	1
+26	rajoitteet	Prioriteetit: jsonb-taulukko, enintaan viisi	PASS	odotus true, toteutui true	1
+27	rajoitteet	Yksi suunnitelma viikkoa kohti: unique (user_id, week_start)	PASS	odotus true, toteutui true	1
+28	rajoitteet	Suojattu aika: 14 CHECK-rajoitetta (kerta, viikko, viikkotavoite, loma, ajat, paivat)	PASS	odotus 14, toteutui 14	1
+30	omistajuus	Kaksi uutta taulua: user_id -> auth.users on CASCADE eika muita vierasavaimia	PASS	odotus 2/2, toteutui 2/2	1
+31	omistajuus	Migraatioiden 38 taulun jokainen vierasavain auth.usersiin on CASCADE	PASS	odotus 0, toteutui 0	1
+32	omistajuus	Jokaisella migraatioiden 38 taululla on vierasavain auth.usersiin	PASS	odotus 0, toteutui 0	1
+33	omistajuus	Muut public-taulut kuin migraatioiden 38 (INFO, eivat kuulu riveihin 31-32)	INFO	0	1
+34	omistajuus	Omistajan rivin avain (user_id, id) molemmissa uusissa tauluissa	PASS	odotus 2, toteutui 2	1
+40	rls	RLS paalla molemmissa uusissa tauluissa	PASS	odotus 2, toteutui 2	1
+41	rls	8 politiikkaa, kaikki authenticated-roolille	PASS	odotus 8, toteutui 8	1
+42	rls	Jokainen politiikka rajaa omistajaan auth.uid() = user_id	PASS	odotus 8, toteutui 8	1
+43	rls	Muokkauspolitiikat rajaavat molemmat puolet (USING ja WITH CHECK)	PASS	odotus 2, toteutui 2	1
+44	oikeudet	anon: ei mitaan oikeutta	PASS	odotus 0, toteutui 0	1
+45	oikeudet	PUBLIC: ei mitaan oikeutta	PASS	odotus 0, toteutui 0	1
+46	oikeudet	authenticated: select/insert/update/delete (8)	PASS	odotus 8, toteutui 8	1
+47	liipaisimet	updated_at-liipaisin molemmissa tauluissa	PASS	odotus 2, toteutui 2	1
+50	koskematon	tasks/goals/projects/routines, 0012:n, 0013:n ja 0014:n taulut: 80 politiikkaa kuten ennen	PASS	odotus 80, toteutui 80	1
+51	koskematon	RLS yha paalla tasks- ja life_areas-tauluissa	PASS	odotus 2, toteutui 2	1
+52	koskematon	Asian luonnetta ei tallenneta: tasks/life_areas ilman nature-saraketta	PASS	odotus 0, toteutui 0	1
+60	rivit	protected_periods: riveja (INFO, tuore ajo = 0)	INFO	0	1
+61	rivit	weekly_plans: riveja (INFO, tuore ajo = 0)	INFO	0	1
+62	rivit	tasks: paivattomia tehtavia (INFO, tuore ajo = 0)	INFO	puuttuu	1
+63	rivit	tasks: horisontti tai arkistointi asetettu (INFO, tuore ajo = 0)	INFO	0	1
+64	rivit	life_areas: muita kuin STANDARD-lajia (INFO, tuore ajo = 0)	INFO	0	1

@@ -132,7 +132,8 @@ test('KRIITTINEN: 0015 luo taulut ja jokaisella sopimuksen CHECKillä on predika
   assert.match(SQL, /add constraint weekly_plans_week_unique unique \(user_id, week_start\)/);
   assert.match(SQL, /check \(extract\(isodow from week_start\) = 1\)/);
   assert.match(SQL, /jsonb_typeof\(priorities\) = 'array' and jsonb_array_length\(priorities\) <= 5/);
-  assert.match(SQL, /check \(horizon = 'WAITING' or waiting_on is null\)/);
+  // NULL-turvallinen: horisontti NULL + odotus hylätään (NULL = 'WAITING' olisi NULL -> CHECK hyväksyisi).
+  assert.match(SQL, /check \(waiting_on is null or \(horizon is not null and horizon = 'WAITING'\)\);/);
   assert.match(SQL, /alter table public\.tasks alter column date drop not null;/);
   assert.match(SQL, /alter table public\.life_areas drop constraint life_areas_category_unique;/);
   assert.match(SQL, /create index life_areas_user_category_idx\s+on public\.life_areas \(user_id, category_key\);/);

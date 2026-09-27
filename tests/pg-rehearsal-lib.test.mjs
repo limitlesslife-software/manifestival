@@ -24,7 +24,7 @@ import {
 } from '../tools/pg-rehearsal/lib.mjs';
 
 const MIGRATIONS = ['0009_finance_2', '0010_goal_to_action', '0011_personal_assistant',
-  '0012_life_alignment', '0013_alignment_reality', '0014_daily_life'];
+  '0012_life_alignment', '0013_alignment_reality', '0014_daily_life', '0015_mental_load'];
 
 test('KRIITTINEN: harjoittelumoduulien importti ei avaa yhteyttä eikä aja mitään', () => {
   // pg-ajurin hakemisto osoittaa olemattomaan paikkaan: jos yksikin moduuli
@@ -91,7 +91,9 @@ test('compareDigests: lisätty, poistettu, muuttunut ja uudelleen kirjoitettu ri
 
 test('KRIITTINEN: jokaisen ROLLBACK-osion poiminta: begin, lock_timeout, commit', () => {
   // 0014: begin, lock_timeout, kymmenen taulun pudotus lapsista vanhempiin, commit.
-  const executable = { '0009': 11, '0010': 39, '0011': 8, '0012': 19, '0013': 19, '0014': 13 };
+  // 0015: begin, lock_timeout, lukitus, kategorian vartija (7), kaksi pudotusta,
+  // tasks (10), life_areas (5 riviä, uniikkiuden palautus kahdella rivillä), commit.
+  const executable = { '0009': 11, '0010': 39, '0011': 8, '0012': 19, '0013': 19, '0014': 13, '0015': 28 };
   for (const name of MIGRATIONS) {
     const rb = extractRollback(read(`supabase/migrations/${name}.sql`));
     assert.ok(rb, `${name}: ROLLBACK-osiota ei löytynyt`);
@@ -146,12 +148,54 @@ test('KRIITTINEN: 0014 lukitsee goals-taulun uudelleenajon tunnistuksen jälkeen
   assert.equal(/lock table auth\./.test(body), false);
 });
 
-test('harjoittelun ketju = supabase/migrations (0001–0014)', async () => {
+test('harjoittelun ketju = supabase/migrations (0001–0015)', async () => {
   const { MIGRATIONS: CHAIN } = await import('../tools/pg-rehearsal/chain.mjs');
   const files = fs.readdirSync(path.join(ROOT, 'supabase/migrations'))
     .filter(f => /^\d{4}_\w+\.sql$/.test(f)).map(f => f.replace(/\.sql$/, '')).sort();
   assert.deepEqual([...CHAIN], files);
-  assert.equal(CHAIN.at(-1), '0014_daily_life');
+  assert.equal(CHAIN.at(-1), '0015_mental_load');
+});
+
+test('KRIITTINEN: 0015:n peruutus: omat taulut, omat sarakkeet, kategorian vartija ennen uniikkiutta, ei NOT NULLia päivälle', () => {
+  const src = read('supabase/migrations/0015_mental_load.sql').replace(/\r\n/g, '\n');
+  const rb = extractRollback(src);
+  const drops = [...rb.matchAll(/^drop table public\.(\w+);$/gm)].map(m => m[1]);
+  const created = [...src.matchAll(/^create table public\.(\w+) \(/gm)].map(m => m[1]);
+  assert.deepEqual([...drops].sort(), [...created].sort(), 'peruutus ei pudota täsmälleen 0015:n tauluja');
+  const added = [...src.matchAll(/^alter table public\.(tasks|life_areas) add column (\w+)/gm)].map(m => `${m[1]}.${m[2]}`);
+  const dropped = [...rb.matchAll(/^alter table public\.(tasks|life_areas) drop column (\w+);$/gm)].map(m => `${m[1]}.${m[2]}`);
+  assert.deepEqual([...dropped].sort(), [...added].sort(), 'peruutus ei pudota täsmälleen 0015:n sarakkeita');
+  assert.equal(/\bcascade\b/i.test(rb), false);
+  // Vartija ennen uniikkiuden palautusta: jaettu kategoria kaataa peruutuksen kiinni.
+  const guard = rb.indexOf('having count(*) > 1');
+  const restore = rb.indexOf('add constraint life_areas_category_unique unique (user_id, category_key)');
+  assert.ok(guard > 0 && restore > guard, 'vartija puuttuu tai on palautuksen jälkeen');
+  assert.ok(rb.indexOf('lock table public.tasks, public.life_areas in access exclusive mode;') < guard);
+  // tasks.date-sarakkeen NOT NULL -ehtoa ei palauteta (recovery §4).
+  assert.equal(/set not null/i.test(rb), false);
+});
+
+test('KRIITTINEN: 0015 lukitsee tasks- ja life_areas-taulut tunnistuksen jälkeen ja ennen ensimmäistä DDL:ää', () => {
+  const src = read('supabase/migrations/0015_mental_load.sql').replace(/\r\n/g, '\n');
+  const body = src.slice(src.indexOf('\nbegin;'), src.indexOf('\ncommit;'))
+    .split('\n').filter(l => !l.trim().startsWith('--')).join('\n');
+  const lock = 'lock table public.tasks, public.life_areas in access exclusive mode;';
+  assert.equal(body.split(lock).length - 1, 1, 'lukitus puuttuu tai toistuu');
+  assert.equal((body.match(/^lock table /gm) || []).length, 1, 'useampi lukituslause');
+  const at = body.indexOf(lock);
+  assert.ok(body.indexOf("set local lock_timeout = '5s';") < at, 'lock_timeout ennen lukitusta');
+  assert.ok(body.indexOf('JO AJETTU') < at, 'uudelleenajon tunnistus ennen lukitusta ("JO AJETTU" heti)');
+  assert.ok(body.indexOf('touch_updated_at() on SECURITY DEFINER') < at);
+  for (const ddl of ['create table', 'alter table', 'create index', 'create policy', 'create trigger', 'revoke ', 'grant ']) {
+    const first = body.indexOf(ddl);
+    if (first !== -1) assert.ok(at < first, `"${ddl}" ennen lukitusta`);
+  }
+  // Omistajan rivi (auth.users) luetaan vasta lukituksen jälkeen, eikä
+  // auth.usersia lukita erikseen (Supabasen postgres-rooli).
+  assert.ok(body.indexOf('from auth.users where id = omistaja') > at);
+  assert.equal(/lock table auth\./.test(body), false);
+  // Uudet taulut (auth.users-vierasavain) vasta ALTERien jälkeen.
+  assert.ok(body.indexOf('alter table public.tasks add column') < body.indexOf('create table public.protected_periods'));
 });
 
 test('0013:n ROLLBACK-osion ennakkokysely on yksi vain lukeva SELECT; muilla sitä ei ole', () => {

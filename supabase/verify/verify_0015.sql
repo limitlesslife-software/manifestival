@@ -15,7 +15,8 @@
 --    nullable (tarkistus 08).
 -- 3. KATEGORIA EI OLE ENAA UNIIKKI, mutta haku on yha indeksoitu
 --    (tarkistukset 22-23).
--- 4. ODOTUS VAIN ODOTTAVALLE: horizon = 'WAITING' or waiting_on is null
+-- 4. ODOTUS VAIN ODOTTAVALLE: waiting_on is null or horizon = 'WAITING'
+--    (NULL-turvallinen: horisontti NULL + odotus hylätään)
 --    (tarkistus 24); viikko alkaa maanantaista ja prioriteetteja on
 --    enintaan viisi (25-26).
 -- 5. RLS: nelja omaa politiikkaa kummassakin uudessa taulussa, ei anon-
@@ -165,9 +166,10 @@ from (
            where schemaname = 'public' and indexname = 'life_areas_user_category_idx')
 
   union all
-  select '24', 'rajoitteet', 'Odotus vain odottavalle: horizon = WAITING or waiting_on is null', 'true',
+  select '24', 'rajoitteet', 'Odotus vain odottavalle (NULL-turvallinen): waiting_on is null or horizon = WAITING', 'true',
          (select coalesce(bool_and(pg_get_constraintdef(oid) like '%WAITING%'
-                                   and pg_get_constraintdef(oid) like '%waiting_on IS NULL%'), false)::text
+                                   and pg_get_constraintdef(oid) like '%waiting_on IS NULL%'
+                                   and pg_get_constraintdef(oid) like '%horizon IS NOT NULL%'), false)::text
             from pg_constraint where conname = 'tasks_waiting_on_horizon_check')
 
   union all
@@ -370,6 +372,11 @@ from (
 
   -- ================================================================
   -- RIVIT (INFO, tuore ajo = 0)
+  --
+  -- Rivit 62-64 lukevat 0015:n sarakkeita query_to_xml:n kautta: puuttuva
+  -- sarake on 'puuttuu' eika kaada koko varmistusta (muuten yksi puuttuva
+  -- sarake piilottaisi kaikki muut tulokset). Rivi 08 kertoo puutteen
+  -- FAIL-rivina.
   -- ================================================================
 
   union all
@@ -382,15 +389,27 @@ from (
 
   union all
   select '62', 'rivit', 'tasks: paivattomia tehtavia (INFO, tuore ajo = 0)', 'INFO',
-         (select count(*)::text from public.tasks where date is null)
+         (select case when (select count(*) from information_schema.columns
+                              where table_schema = 'public' and table_name = 'tasks' and column_name = 'date') = 0
+                      then 'puuttuu'
+                      else (xpath('/row/c/text()', query_to_xml('select count(*) as c from public.tasks where date is null',
+                            false, true, '')))[1]::text end)
 
   union all
   select '63', 'rivit', 'tasks: horisontti tai arkistointi asetettu (INFO, tuore ajo = 0)', 'INFO',
-         (select count(*)::text from public.tasks where horizon is not null or archived_at is not null)
+         (select case when (select count(*) from information_schema.columns
+                              where table_schema = 'public' and table_name = 'tasks' and column_name = 'archived_at') = 0
+                      then 'puuttuu'
+                      else (xpath('/row/c/text()', query_to_xml('select count(*) as c from public.tasks where horizon is not null or archived_at is not null',
+                            false, true, '')))[1]::text end)
 
   union all
   select '64', 'rivit', 'life_areas: muita kuin STANDARD-lajia (INFO, tuore ajo = 0)', 'INFO',
-         (select count(*)::text from public.life_areas where kind <> 'STANDARD')
+         (select case when (select count(*) from information_schema.columns
+                              where table_schema = 'public' and table_name = 'life_areas' and column_name = 'kind') = 0
+                      then 'puuttuu'
+                      else (xpath('/row/c/text()', query_to_xml('select count(*) as c from public.life_areas where kind <> ''STANDARD''',
+                            false, true, '')))[1]::text end)
 
 ) c
 order by c.check_no;

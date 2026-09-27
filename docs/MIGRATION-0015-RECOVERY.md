@@ -93,7 +93,7 @@ Yksi transaktio: ERROR = **mitään ei muuttunut**. Aja samassa välilehdessä
 
 Uudelleenajon tunnistus tapahtuu **ennen** lukitusta: "JO AJETTU" ja
 "kesken" tulevat heti, vaikka sovellus pitäisi `tasks`-taulua
-(harjoiteltu: `failure`, `failure:0015-locks`).
+(harjoiteltu: `failure`, `failure:0010-locks`: 0015:n estäjämatriisi ja uudelleenajo tasks-lukon aikana).
 
 ---
 
