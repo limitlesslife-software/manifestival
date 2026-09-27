@@ -185,7 +185,9 @@ test('luonnosten tarkistukset: rajat, tyhjä ei ole nolla, kelvollinen läpäise
 
 test('herätyksen tila luetaan varovasti: tuntematon on null, ei "kyllä"', () => {
   assert.deepEqual({ ...readAlarmStatus({ exactAllowed: true, fullScreenAllowed: false, soundName: ' Aamu ' }) },
-    { supported: null, exact: true, fullScreen: false, soundName: 'Aamu', reason: null });
+    { supported: null, exact: true, fullScreen: false, soundName: 'Aamu', soundPicked: null, reason: null });
+  // ManifestivalAlarm.status() kertoo vain soundPicked-lipun: valittu ääni ei näy oletusäänenä.
+  assert.equal(readAlarmStatus({ supported: true, exact: true, fullScreen: true, soundPicked: true }).soundPicked, true);
   assert.equal(readAlarmStatus({ canScheduleExactAlarms: false }).exact, false);
   assert.equal(readAlarmStatus({ value: { canUseFullScreenIntent: true } }).fullScreen, true);
   for (const raw of [null, undefined, 'x', 42, { exactAllowed: 'true' }]) {

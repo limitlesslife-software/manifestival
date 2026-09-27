@@ -927,6 +927,8 @@ export function readAlarmStatus(raw) {
     exact: flag('exactAllowed', 'canScheduleExactAlarms', 'exactAlarmsAllowed', 'exact'),
     fullScreen: flag('fullScreenAllowed', 'canUseFullScreenIntent', 'fullScreenIntentAllowed', 'fullScreen'),
     soundName: text('soundName', 'alarmSoundName', 'soundTitle'),
+    // Natiivi liitännäinen kertoo vain, onko oma ääni valittu (ei nimeä).
+    soundPicked: flag('soundPicked'),
     reason: text('reason')
   });
 }
@@ -1001,7 +1003,7 @@ function alarmStatusHtml() {
   return `<div class="add-form" role="group" aria-label="Herätyksen tila puhelimessa" style="display:flex;">
     ${statusRow('Täsmälliset herätykset sallittu', yesNo(status.exact))}
     ${statusRow('Koko näytön herätys lukitulla näytöllä', yesNo(status.fullScreen))}
-    ${statusRow('Herätysääni', status.soundName || 'puhelimen oletusääni')}
+    ${statusRow('Herätysääni', status.soundName || (status.soundPicked === true ? 'oma valittu ääni' : 'puhelimen oletusääni'))}
     ${warning}
     <div class="form-actions">${buttons.join('')}</div>
   </div>`;
