@@ -13,8 +13,10 @@
 //     (user_id = auth.uid(); profile ja notification_preferences:
 //     id = auth.uid()). Lisäys asettaa user_id:n kuten sarakkeen oletus
 //     auth.uid(); toisen käyttäjän user_id hylätään (42501).
-//   - uniikki- ja viiteavaimet migraatioista 0004–0013 (23505, 23503),
+//   - uniikki- ja viiteavaimet migraatioista 0004–0014 (23505, 23503),
 //     ja poiston `on delete set null / cascade`
+//   - migraation 0014 time-sarakkeet palautuvat muodossa HH:MM:SS
+//     (TIME_COLUMNS), kuten PostgreSQL ne tulostaa
 //   - created_at ja updated_at kannan omaisuutena
 //   - offline: jokainen kysely palauttaa supabase-js:n verkkovirheen
 //     muodon (status 0, "TypeError: Failed to fetch"), eikä mitään kirjoiteta
@@ -27,7 +29,10 @@
 /** Taulut, joissa omistaja on rivin id eikä user_id. */
 export const OWNER_BY_ID = Object.freeze(['profile', 'notification_preferences']);
 
-/** Uniikkirajoitteet (NULL ei törmää, kuten PostgreSQL:ssä). */
+/**
+ * Uniikkirajoitteet (NULL ei törmää, kuten PostgreSQL:ssä). Sarake voi
+ * olla lauseke `lower(sarake)` (uniikki-indeksi kirjainkoosta riippumatta).
+ */
 export const UNIQUE_CONSTRAINTS = Object.freeze({
   life_areas: [['life_areas_name_unique', ['user_id', 'name']],
     ['life_areas_category_unique', ['user_id', 'category_key']]],
@@ -36,7 +41,26 @@ export const UNIQUE_CONSTRAINTS = Object.freeze({
   time_entries: [['time_entries_operation_unique', ['user_id', 'operation_id']]],
   running_timers: [['running_timers_one_per_user', ['user_id']]],
   alignment_item_settings: [['alignment_item_settings_item_unique', ['user_id', 'item_kind', 'item_id']]],
-  notices: [['notices_key_unique', ['user_id', 'notice_key']]]
+  notices: [['notices_key_unique', ['user_id', 'notice_key']]],
+  // Migraatio 0014 (aalto K).
+  saved_places: [['saved_places_user_name_idx', ['user_id', 'lower(name)']]],
+  place_aliases: [['place_aliases_alias_unique', ['user_id', 'alias', 'place_id']]],
+  life_settings: [['life_settings_one_per_user', ['user_id']]],
+  sleep_logs: [['sleep_logs_wake_date_unique', ['user_id', 'wake_date']]],
+  wellbeing_checkins: [['wellbeing_checkins_date_unique', ['user_id', 'date']]]
+});
+
+/**
+ * `time`-sarakkeet, jotka kanta palauttaa muodossa HH:MM:SS, vaikka
+ * sovellus lähettää HH:MM (PostgreSQL:n time-tyypin tulostusmuoto).
+ * Mallinnetaan migraation 0014 tauluille: arjen E2E todentaa, että
+ * uudelleenlataus lukee kannan oman muodon eikä vain sovelluksen lähettämää.
+ */
+export const TIME_COLUMNS = Object.freeze({
+  calendar_events: ['start_time', 'end_time'],
+  commute_observations: ['planned_departure', 'actual_departure', 'arrival_at'],
+  life_settings: ['bedtime_target', 'digest_time'],
+  sleep_logs: ['planned_bedtime', 'actual_bedtime', 'planned_wake', 'actual_wake']
 });
 
 const SET_NULL = 'set null';
@@ -54,7 +78,15 @@ export const FOREIGN_KEYS = Object.freeze({
   routines: { goal_id: ['goals', SET_NULL] },
   milestones: { goal_id: ['goals', CASCADE] },
   time_entries: TIME_TARGETS,
-  running_timers: TIME_TARGETS
+  running_timers: TIME_TARGETS,
+  // Migraatio 0014 (aalto K): paikan poisto vie lisänimet ja matkahavainnot
+  // (cascade) ja irrottaa menot (set null); suunnitelman poisto vie
+  // kirjaukset; tavoitteen poisto irrottaa menot ja liikuntakerrat.
+  place_aliases: { place_id: ['saved_places', CASCADE] },
+  calendar_events: { place_id: ['saved_places', SET_NULL], goal_id: ['goals', SET_NULL] },
+  commute_observations: { place_id: ['saved_places', CASCADE] },
+  habit_events: { plan_id: ['habit_plans', CASCADE] },
+  exercise_sessions: { goal_id: ['goals', SET_NULL] }
 });
 
 const NETWORK_ERROR = Object.freeze({
@@ -80,6 +112,23 @@ function sameValue(stored, arg) {
     return Array.isArray(arg) ? JSON.stringify(stored) === JSON.stringify(arg) : arrayLiteral(stored) === String(arg);
   }
   return String(stored) === String(arg);
+}
+
+/** Uniikkirajoitteen sarakkeen arvo rivillä: `sarake` tai `lower(sarake)`. */
+function keyValue(row, column) {
+  const lowered = /^lower\((\w+)\)$/.exec(column);
+  if (!lowered) return row[column];
+  const value = row[lowered[1]];
+  return value === null || value === undefined ? value : String(value).toLowerCase();
+}
+
+/** HH:MM -> HH:MM:00 taulun time-sarakkeissa (ks. TIME_COLUMNS); muu ennallaan. */
+function asStoredTimes(table, row) {
+  for (const column of TIME_COLUMNS[table] || []) {
+    const value = row[column];
+    if (typeof value === 'string' && /^\d{2}:\d{2}$/.test(value)) row[column] = `${value}:00`;
+  }
+  return row;
 }
 
 function compare(stored, arg) {
@@ -127,9 +176,9 @@ export function createFakeDatabase({ tables = {}, now = () => new Date().toISOSt
         `Key (id)=(${candidate.id}) already exists.`);
     }
     for (const [name, columns] of UNIQUE_CONSTRAINTS[table] || []) {
-      if (columns.some(column => candidate[column] === null || candidate[column] === undefined)) continue;
+      if (columns.some(column => keyValue(candidate, column) === null || keyValue(candidate, column) === undefined)) continue;
       const other = rowsOf(table).find(row => !ignore.has(row)
-        && columns.every(column => String(row[column]) === String(candidate[column])));
+        && columns.every(column => String(keyValue(row, column)) === String(keyValue(candidate, column))));
       if (other) {
         return pgError('23505', `duplicate key value violates unique constraint "${name}"`,
           `Key (${columns.join(', ')}) already exists.`);
@@ -191,6 +240,7 @@ export function createFakeDatabase({ tables = {}, now = () => new Date().toISOSt
       } else if (String(raw.id) !== String(uid)) {
         return { error: pgError('42501', `new row violates row-level security policy for table "${table}"`), status: 403 };
       }
+      asStoredTimes(table, raw);
       const stamp = now();
       if (upsert) {
         const keys = String(onConflict || 'id').split(',').map(key => key.trim());
@@ -228,7 +278,7 @@ export function createFakeDatabase({ tables = {}, now = () => new Date().toISOSt
 
   function updateRows(table, uid, patch, filters) {
     const targets = visible(table, uid).filter(row => matches(row, filters));
-    const clean = clone(patch) || {};
+    const clean = asStoredTimes(table, clone(patch) || {});
     delete clean.user_id;
     const stamp = now();
     const next = targets.map(row => ({ ...row, ...clean, updated_at: stamp }));

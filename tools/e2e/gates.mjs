@@ -1,4 +1,5 @@
-// E2E:n porttitila: haaran oma schema.js ("closed") tai aallon J portit ("J").
+// E2E:n porttitila: haaran oma schema.js ("closed"), aallon J portit ("J")
+// tai aallon K portit ("K", arjen käyttöjärjestelmä, migraatio 0014).
 //
 // MIKSI EI TARJOILLA J-EHDOKKAAN schema.js:ÄÄ SELLAISENAAN
 //
@@ -21,24 +22,37 @@
 // Selain saa korvatun tiedoston import mapin kautta (harnessHtml alla;
 // ajaja tarjoilee tiedoston): /src/data/schema.js ->
 // /src/data/schema.js?e2e-gates=J. Mikään src/-tiedosto ei muutu.
+//
+// AALTO K: K-ehdokashaaraa ei vielä ole. K-portit johdetaan siksi junan
+// määrittelystä (trainMatrix('K') = expectedMatrix('K') + sarakeportit),
+// samalla varapolulla kuin J:n portit, kun J:n ref puuttuu, ja lähde
+// kerrotaan tulosteessa. Kun K-ehdokas leikataan, sen ref annetaan
+// ympäristömuuttujassa E2E_K_GATES_REF: silloin portit luetaan ehdokkaan
+// schema.js:stä ja verrataan junan määrittelyyn kuten J:llä.
 
 import { execFileSync } from 'node:child_process';
 import { parseGates } from '../release/state.mjs';
 import { ALL_GATES, COLUMN_GATES, expectedMatrix, waveIndex } from '../release/waves.mjs';
 
-export const GATE_MODES = Object.freeze(['closed', 'J']);
+export const GATE_MODES = Object.freeze(['closed', 'J', 'K']);
 export const DEFAULT_GATES_REF = 'rehearsal/wave-j-v2';
+/** K-ehdokkaan ref (ympäristömuuttuja). Oletuksena ei refiä: junan määrittely. */
+export const K_GATES_REF_ENV = 'E2E_K_GATES_REF';
 /** Kyselyparametri, jolla selain pyytää korvatun schema.js:n. */
 export const GATES_QUERY = 'e2e-gates';
 
+/** Porttitilat, joissa selain saa korvatun schema.js:n (import map). */
+const PATCHED_MODES = Object.freeze(['J', 'K']);
+
 /**
- * Valjassivu porttitilalle. J-tilassa sivulle lisätään import map, joka
- * ohjaa jokaisen schema.js-importin J-porttiseen versioon (sama tiedosto,
- * porttiliteraalit korvattu). Import map on sivun ensimmäinen skripti.
+ * Valjassivu porttitilalle. J- ja K-tilassa sivulle lisätään import map,
+ * joka ohjaa jokaisen schema.js-importin porttiseen versioon (sama
+ * tiedosto, porttiliteraalit korvattu). Import map on sivun ensimmäinen
+ * skripti. Muut tilat (closed) saavat sivun sellaisenaan.
  */
 export function harnessHtml(template, mode) {
-  if (mode !== 'J') return template;
-  const map = JSON.stringify({ imports: { '/src/data/schema.js': `/src/data/schema.js?${GATES_QUERY}=J` } });
+  if (!PATCHED_MODES.includes(mode)) return template;
+  const map = JSON.stringify({ imports: { '/src/data/schema.js': `/src/data/schema.js?${GATES_QUERY}=${mode}` } });
   return template.replace('<script type="module"', `<script type="importmap">${map}</script>\n<script type="module"`);
 }
 
@@ -110,39 +124,58 @@ function gitSha(ref, cwd) {
 }
 
 /**
+ * Porttitilan oletusref: J-ehdokas (E2E_GATES_REF tai rehearsal/wave-j-v2)
+ * tai K-ehdokas (E2E_K_GATES_REF). K:lla ei ole oletusrefiä: ehdokasta ei
+ * vielä ole, joten portit tulevat junan määrittelystä.
+ */
+export function defaultGatesRef(mode, env = process.env) {
+  if (mode === 'K') return env[K_GATES_REF_ENV] || null;
+  return env.E2E_GATES_REF || DEFAULT_GATES_REF;
+}
+
+/**
  * Porttitila ajolle.
  *
- * @param {'closed'|'J'} mode
+ * @param {'closed'|'J'|'K'} mode
  * @param {object} options
  * @param {string} options.cwd  repositorion juuri
  * @param {string} options.schemaSource  työpuun src/data/schema.js
- * @param {string} [options.ref]  J-ehdokkaan ref (oletus E2E_GATES_REF tai rehearsal/wave-j-v2)
- * @returns {{ mode: string, source: string|null, provenance: string, matrix: object|null }}
+ * @param {string|null} [options.ref]  aallon ehdokkaan ref (ks. defaultGatesRef);
+ *   null = ei ehdokasta, portit junan määrittelystä
+ * @returns {{ mode: string, source: string|null, provenance: string, matrix: object|null,
+ *   fromTrain: boolean }}  fromTrain: portit tulivat junan määrittelystä (ei ehdokkaasta)
  */
-export function resolveGateMode(mode, { cwd, schemaSource, ref = process.env.E2E_GATES_REF || DEFAULT_GATES_REF,
+export function resolveGateMode(mode, { cwd, schemaSource, ref = defaultGatesRef(mode),
   show = gitShow, sha = gitSha } = {}) {
   if (!GATE_MODES.includes(mode)) throw new Error(`Tuntematon porttitila: ${mode}`);
-  if (mode === 'closed') return { mode, source: null, provenance: 'haaran oma src/data/schema.js', matrix: null };
+  if (mode === 'closed') {
+    return { mode, source: null, provenance: 'haaran oma src/data/schema.js', matrix: null, fromTrain: false };
+  }
 
-  const train = trainMatrix('J');
+  const train = trainMatrix(mode);
   let candidate = null;
   let provenance;
-  try {
-    const source = show(ref, 'src/data/schema.js', cwd);
-    const tables = parseGates(source, { allowMissing: true });
-    if (!tables) throw new Error(`${ref}: porttilohkoa ei voitu lukea`);
-    candidate = { tables, columns: parseColumnGates(source) };
-    provenance = `${ref} (${sha(ref, cwd)}), porttiliteraalit haaran schema.js:ään`;
-  } catch (error) {
-    if (/porttilohkoa/.test(error.message)) throw error;
-    provenance = `junan määrittely tools/release/waves.mjs (ref ${ref} puuttuu)`;
+  if (!ref) {
+    provenance = `junan määrittely tools/release/waves.mjs (aallon ${mode} ehdokasta ei ole; `
+      + `trainMatrix('${mode}'))`;
+  } else {
+    try {
+      const source = show(ref, 'src/data/schema.js', cwd);
+      const tables = parseGates(source, { allowMissing: true });
+      if (!tables) throw new Error(`${ref}: porttilohkoa ei voitu lukea`);
+      candidate = { tables, columns: parseColumnGates(source) };
+      provenance = `${ref} (${sha(ref, cwd)}), porttiliteraalit haaran schema.js:ään`;
+    } catch (error) {
+      if (/porttilohkoa/.test(error.message)) throw error;
+      provenance = `junan määrittely tools/release/waves.mjs (ref ${ref} puuttuu)`;
+    }
   }
   if (candidate) {
     const differences = matrixDifferences(candidate, train);
     if (differences.length > 0) {
-      throw new Error(`${ref} ei vastaa junan aaltoa J: ${differences.join('; ')}`);
+      throw new Error(`${ref} ei vastaa junan aaltoa ${mode}: ${differences.join('; ')}`);
     }
   }
   const matrix = candidate || train;
-  return { mode, source: patchSchemaGates(schemaSource, matrix), provenance, matrix };
+  return { mode, source: patchSchemaGates(schemaSource, matrix), provenance, matrix, fromTrain: !candidate };
 }

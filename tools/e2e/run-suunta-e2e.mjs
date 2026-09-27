@@ -34,38 +34,18 @@
 // unohduksiin, kun korjaus on integroitu.
 
 import http from 'node:http';
-import net from 'node:net';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { resolveGateMode, GATES_QUERY, harnessHtml } from './gates.mjs';
+// Chromen haku, portit, CDP-yhteys ja sivun apurit (window.H): yhteiset
+// arjen E2E:n kanssa (tools/e2e/cdp.mjs), siirretty tästä tiedostosta sellaisenaan.
+import { CHROME_CANDIDATES, MIME, freePort, cdpReachable, Cdp, PAGE_HELPERS as HELPERS } from './cdp.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const CHROME_CANDIDATES = [
-  process.env.CHROME_PATH,
-  'C:/Program Files/Google/Chrome/Application/chrome.exe',
-  'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'
-].filter(Boolean);
-
-const MIME = {
-  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
-  '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
-  '.json': 'application/json; charset=utf-8', '.png': 'image/png', '.svg': 'image/svg+xml'
-};
 
 const HARNESS_PAGE = 'tools/e2e/suunta-harness.html';
-
-function freePort() {
-  return new Promise((resolve, reject) => {
-    const server = net.createServer();
-    server.listen(0, '127.0.0.1', () => {
-      const { port } = server.address();
-      server.close(() => resolve(port));
-    });
-    server.on('error', reject);
-  });
-}
 
 function startServer(port, { gatedSchema }) {
   const server = http.createServer((req, res) => {
@@ -94,74 +74,6 @@ function startServer(port, { gatedSchema }) {
   });
   return new Promise(resolve => server.listen(port, '127.0.0.1', () => resolve(server)));
 }
-
-async function cdpReachable(port) {
-  try {
-    const response = await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(500) });
-    return response.ok;
-  } catch {
-    return false;
-  }
-}
-
-class Cdp {
-  constructor(url) {
-    this.ws = new WebSocket(url);
-    this.id = 0;
-    this.pending = new Map();
-    this.listeners = [];
-    this.ws.addEventListener('message', event => {
-      const message = JSON.parse(event.data);
-      if (message.id && this.pending.has(message.id)) {
-        const { resolve, reject } = this.pending.get(message.id);
-        this.pending.delete(message.id);
-        if (message.error) reject(new Error(message.error.message));
-        else resolve(message.result);
-      } else if (message.method) {
-        for (const listener of this.listeners) listener(message);
-      }
-    });
-  }
-  open() { return new Promise((resolve, reject) => { this.ws.addEventListener('open', resolve); this.ws.addEventListener('error', reject); }); }
-  send(method, params = {}) {
-    const id = ++this.id;
-    this.ws.send(JSON.stringify({ id, method, params }));
-    return new Promise((resolve, reject) => this.pending.set(id, { resolve, reject }));
-  }
-  on(listener) { this.listeners.push(listener); }
-  close() { this.ws.close(); }
-}
-
-const HELPERS = `
-window.H = {
-  sleep: ms => new Promise(r => setTimeout(r, ms)),
-  async waitFor(fn, label = 'ehto', timeout = 6000) {
-    const start = performance.now();
-    while (performance.now() - start < timeout) {
-      try { const value = fn(); if (value) return value; } catch {}
-      await new Promise(r => setTimeout(r, 25));
-    }
-    throw new Error('aikakatkaisu: ' + label);
-  },
-  el(sel) { const node = document.querySelector(sel); if (!node) throw new Error('ei löydy: ' + sel); return node; },
-  click(sel) { H.el(sel).click(); },
-  fill(sel, value) {
-    const node = H.el(sel);
-    node.value = value;
-    node.dispatchEvent(new Event('input', { bubbles: true }));
-    node.dispatchEvent(new Event('change', { bubbles: true }));
-  },
-  text(sel) { const node = document.querySelector(sel); return node ? node.textContent : ''; },
-  html(sel) { const node = document.querySelector(sel); return node ? node.innerHTML : ''; },
-  s: () => window.__e2e.state(),
-  // Kannan rivit (kirjautuneen käyttäjän), kuten palvelin ne näkee.
-  db: table => window.__e2e.db.rows(table),
-  tab: screen => H.click('.tab-btn[data-screen="' + screen + '"]'),
-  // Tallennus on valmis vasta, kun painike ei ole enää varattu (tuplaklikkaussuoja):
-  // tila päivittyy optimistisesti jo ennen kuin tallennus on palannut.
-  idle: (sel, label) => H.waitFor(() => !H.el(sel).disabled && !H.el(sel).hasAttribute('aria-busy'), label || ('valmis: ' + sel))
-};
-true;`;
 
 // F2: aloituksen tarkistukset (ajetaan 360 px leveydellä, ks. SCENARIOS).
 const SETUP_SCENARIO = `(async () => {

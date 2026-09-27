@@ -21,7 +21,8 @@
     "production:verify-assets": "node scripts/production-verify-assets.mjs",
     "release:manifest": "node scripts/release-manifest.mjs",
     "e2e:suunta": "node tools/e2e/run-suunta-e2e.mjs",
-    "e2e:boot-smoke": "node tools/e2e/boot-smoke.mjs"
+    "e2e:boot-smoke": "node tools/e2e/boot-smoke.mjs",
+    "e2e:daily-life": "node tools/e2e/run-daily-life-e2e.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.5.0",
