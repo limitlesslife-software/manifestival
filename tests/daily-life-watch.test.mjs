@@ -62,6 +62,33 @@ test('KRIITTINEN: lähtövaiheista yksi merkintä vaihetta kohti, ei toistoa, ei
   assert.equal((await runEventDepartureSweep({ now: at(2026, 9, 29, 18, 50) })).created, 0);
 });
 
+test('KRIITTINEN: lähtö pian ja lähde nyt ovat eri merkinnät; siirretyn menon uusi lähtö kerrotaan', async () => {
+  assert.equal((await runEventDepartureSweep({ now: at(2026, 9, 29, 17, 6) })).created, 1, 'lähtö pian');
+  assert.equal((await runEventDepartureSweep({ now: at(2026, 9, 29, 17, 10) })).created, 1, 'lähde nyt on oma merkintänsä');
+  assert.equal((await runEventDepartureSweep({ now: at(2026, 9, 29, 17, 11) })).created, 0, 'sama vaihe ei toistu');
+  const [soon, leaveNow] = noticesWith('departure|event:e1:');
+  assert.notEqual(soon.key, leaveNow.key);
+  assert.match(soon.reason, /^Lähtö pian\. .*Lähde klo 17:10/);
+  assert.match(leaveNow.reason, /^Lähde nyt\. /);
+
+  // Käyttäjä siirtää menon tuntia myöhemmäksi: uusi lähtö 18.10 kerrotaan.
+  setCalendarEvents([{ id: 'e1', title: 'Hammaslääkäri', date: TODAY, startTime: '19:00', durationMinutes: 45, placeId: 'p1' }]);
+  assert.equal((await runEventDepartureSweep({ now: at(2026, 9, 29, 18, 6) })).created, 1, 'uuden lähdön lähtö pian');
+  assert.equal((await runEventDepartureSweep({ now: at(2026, 9, 29, 18, 10) })).created, 1, 'uuden lähdön lähde nyt');
+  const latest = noticesWith('departure|event:e1:').slice(-2);
+  for (const n of latest) assert.match(n.reason, /Lähde klo 18:10/);
+  assert.equal(noticesWith('departure-change|').length, 0, 'omaa muokkausta ei kerrota muutoksena');
+});
+
+test('liikennetiedon minuutin heilahtelu samassa vaiheessa ei tee uutta lähtömerkintää', async () => {
+  const id = 'event:e1:2026-09-29';
+  const t1 = at(2026, 9, 29, 17, 6);
+  assert.equal((await runEventDepartureSweep({ now: t1, providerResults: new Map([[id, route(40, t1)]]) })).created, 1);
+  const t2 = at(2026, 9, 29, 17, 7);
+  assert.equal((await runEventDepartureSweep({ now: t2, providerResults: new Map([[id, route(41, t2)]]) })).created, 0,
+    'lähtö 17.09 on hystereesin sisällä: sama kerrottu lähtö 17.10, sama avain');
+});
+
 test('KRIITTINEN: keskiyön jälkeisen menon lähtö tänä iltana tarkistetaan jo tänään; avain ei vaihdu keskiyöllä', async () => {
   // Meno ke 30.9. klo 00.20, matka 40 + etuaika 10 -> lähtö ti 29.9. klo 23.30.
   setCalendarEvents([{ id: 'n1', title: 'Yölento', date: '2026-09-30', startTime: '00:20', durationMinutes: 60, placeId: 'p1' }]);
