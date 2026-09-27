@@ -171,7 +171,7 @@ const L_SCENARIOS = [
       await H.waitFor(() => H.focusRows().length === 3, 'kolme fokusta');
       const text = H.focusText();
       if (text.includes('Hammaslääkäri')) throw new Error('kiinteä meno fokuksessa');
-      const match = /Kaikki muu on tallessa \\((\\d+)\\)\\./.exec(text);
+      const match = /Kaikki muu on tallessa \((\d+)\)\./.exec(text);
       if (!match || Number(match[1]) !== 4) throw new Error('tallessa-luku: ' + text);
       if (document.querySelector('#todayOverdue .task-row.overdue')) throw new Error('punainen rästilista näkyy');
       return 'fokus 3/3, tallessa (4), kiinteä meno aikajanalla, ei rästilistaa';
@@ -332,8 +332,16 @@ L_SCENARIOS.push(
       // D: enintään kolme prioriteettia.
       await H.waitFor(() => step() === 'priorities', 'vaihe D');
       const chips = [...document.querySelectorAll('[data-reset-priority]')];
-      if (chips.length < 4) throw new Error('ehdokkaita vain ' + chips.length);
-      for (const chip of chips.slice(0, 4)) { chip.click(); await H.sleep(30); }
+      if (chips.length < 3) throw new Error('ehdokkaita vain ' + chips.length);
+      // Kortti piirretään jokaisen valinnan jälkeen uudelleen: haetaan avaimella.
+      for (const key of chips.slice(0, 3).map(chip => chip.dataset.resetPriority)) {
+        document.querySelector(`[data-reset-priority="${CSS.escape(key)}"]`).click();
+        await H.sleep(50);
+      }
+      // Neljäs yritys omalla tekstillä: raja pitää.
+      H.fill('#sundayResetPriorityText', 'Lepo');
+      document.querySelector('#sundayResetCard [data-reset="add-priority"]').click();
+      await H.sleep(50);
       const chosen = reset.sundayResetSession().selected.length;
       if (chosen !== 3) throw new Error('valittu ' + chosen);
       const limit = H.squash(H.text('#sundayResetCard'));
