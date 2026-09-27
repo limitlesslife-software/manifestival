@@ -191,13 +191,17 @@ export function formErrorsOf(domainErrors = {}) {
 
 // ------------------------------------------------------------ DOM: täyttö ja luku
 
-function placeOptionsHtml(places, selected) {
+function placeOptionsHtml(places, selected, { unloadedId = null } = {}) {
   const sorted = [...places].sort((a, b) => String(a.name).localeCompare(String(b.name), 'fi')
     || String(a.id).localeCompare(String(b.id), 'fi'));
   const options = ['<option value="">Ei paikkaa</option>'];
   for (const place of sorted) {
     options.push(`<option value="${escapeHtml(place.id)}"${place.id === selected ? ' selected' : ''}>`
       + `${escapeHtml(place.name)}</option>`);
+  }
+  if (unloadedId) {
+    options.push(`<option value="${escapeHtml(unloadedId)}"${unloadedId === selected ? ' selected' : ''}>`
+      + 'Tallennettu paikka (ei juuri nyt saatavilla)</option>');
   }
   options.push(`<option value="${OTHER_PLACE}"${selected === OTHER_PLACE ? ' selected' : ''}>Muu paikka</option>`);
   return options.join('');
@@ -340,12 +344,26 @@ export function showFieldErrors(errors = {}) {
   return first;
 }
 
+/**
+ * Menon paikka, jota ei ole tilassa, koska paikkojen lataus epäonnistui.
+ * Valinta säilytetään: muuten lomake näytti "Ei paikkaa", ja pelkkä
+ * otsikon muutos tallensi place_id = null pysyvästi (lähtö ja muistutukset
+ * katosivat). Kun lataus onnistui ja paikka puuttuu, se on poistettu.
+ */
+function unloadedPlaceId(event, state) {
+  if (!event || !event.placeId || findSavedPlace(event.placeId)) return null;
+  const status = state.dataLoadStatus && state.dataLoadStatus.savedPlaces;
+  return status && status.ok === true ? null : event.placeId;
+}
+
 function fillForm(event, { date, occurrenceDate }) {
   const state = getState();
+  const unloadedId = unloadedPlaceId(event, state);
   const placeValue = event
-    ? (event.placeId && findSavedPlace(event.placeId) ? event.placeId : (event.locationText ? OTHER_PLACE : ''))
+    ? (event.placeId && (unloadedId || findSavedPlace(event.placeId))
+      ? event.placeId : (event.locationText ? OTHER_PLACE : ''))
     : '';
-  el('cePlace').innerHTML = placeOptionsHtml(state.savedPlaces || [], placeValue);
+  el('cePlace').innerHTML = placeOptionsHtml(state.savedPlaces || [], placeValue, { unloadedId });
   el('cePlace').value = placeValue;
   el('ceMode').innerHTML = modeOptionsHtml(event ? event.travelMode : '', null);
   el('ceMode').value = event && event.travelMode ? event.travelMode : '';

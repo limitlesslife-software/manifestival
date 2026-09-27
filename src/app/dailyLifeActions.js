@@ -21,7 +21,7 @@ import {
 import { sessionSnapshot, isSameSession } from '../data/session.js';
 import { newTaskId } from '../lib/rows.js';
 import {
-  getState,
+  getState, findGoal,
   addSavedPlaceToState, replaceSavedPlaceInState, removeSavedPlaceFromState, restoreSavedPlaceInState,
   findSavedPlace, upsertPlaceAliasInState, removePlaceAliasFromState, findPlaceAlias,
   addCalendarEventToState, replaceCalendarEventInState, removeCalendarEventFromState, findCalendarEvent,
@@ -90,7 +90,7 @@ export async function saveCalendarEvent(input = {}) {
   });
   // Poistettuun paikkaan tai tavoitteeseen ei liitetä: kannan yhdistelmä-
   // vierasavain kaataisi tallennuksen (23503).
-  const safe = withOwnPlace(event);
+  const safe = withOwnLinks(event, previous, { place: true });
   const { valid, errors } = validateCalendarEvent(safe);
   if (!valid) return { ok: false, errors };
 
@@ -106,9 +106,36 @@ export async function saveCalendarEvent(input = {}) {
   return result.ok ? { ok: true, event: safe } : result;
 }
 
-function withOwnPlace(event) {
-  if (event.placeId && !findSavedPlace(event.placeId)) return { ...event, placeId: null };
-  return event;
+/**
+ * Liitos vain käyttäjän omaan, tunnettuun riviin.
+ *
+ * Kannan vierasavaimet ovat yhdistelmiä (user_id, place_id / goal_id):
+ * tuntematon tai jo poistettu kohde kaataisi tallennuksen koodilla 23503.
+ * Liitos pudotetaan siksi ENNEN kirjoitusta, kun kohdetta ei ole tilassa.
+ *
+ * POIKKEUS: ennallaan pysyvä liitos säilyy, jos kohteiden viimeisin lataus
+ * ei onnistunut. Tyhjä lista ei silloin tarkoita, ettei kohdetta ole, eikä
+ * otsikon muutos saa katkaista kannassa olevaa liitosta (lähtö ja
+ * muistutukset katoaisivat pysyvästi). Sama periaate kuin tehtävillä
+ * (src/app/actions.js withOwnLinks). Kun lataus onnistui ja kohde puuttuu,
+ * se on oikeasti poistettu (esim. toisella laitteella), ja liitos pudotetaan.
+ */
+function ownLink(value, previousValue, find, domain) {
+  if (value == null || value === '') return null;
+  if (find(value)) return value;
+  const status = getState().dataLoadStatus[domain];
+  const loaded = Boolean(status && status.ok === true);
+  return value === previousValue && !loaded ? value : null;
+}
+
+/** Menon paikka ja tavoite, liikuntakerran tavoite: ks. ownLink. */
+function withOwnLinks(entity, previous, { place = false } = {}) {
+  const goalId = ownLink(entity.goalId, previous && previous.goalId, findGoal, 'goals');
+  const placeId = place
+    ? ownLink(entity.placeId, previous && previous.placeId, findSavedPlace, 'savedPlaces')
+    : entity.placeId;
+  if (goalId === entity.goalId && placeId === entity.placeId) return entity;
+  return place ? { ...entity, goalId, placeId } : { ...entity, goalId };
 }
 
 /** Poista meno (koko sarja). Kysyy vahvistuksen. */
@@ -411,7 +438,10 @@ export async function deleteHabitEvent(id) {
 /** Luo tai päivitä liikuntakerta. */
 export async function saveExerciseSession(input = {}) {
   const previous = input && input.id ? findExerciseSession(input.id) : null;
-  const session = normalizeExerciseSession({ ...(previous || {}), ...input, id: previous ? previous.id : newTaskId() });
+  // Lomakkeen luonnos voi kantaa poistetun tavoitteen tunnistetta (valinta
+  // näyttää "Ei tavoitetta"): kanta hylkäisi sen (23503) joka yrityksellä.
+  const session = withOwnLinks(
+    normalizeExerciseSession({ ...(previous || {}), ...input, id: previous ? previous.id : newTaskId() }), previous);
   const { valid, errors } = validateExerciseSession(session);
   if (!valid) return { ok: false, errors };
 
