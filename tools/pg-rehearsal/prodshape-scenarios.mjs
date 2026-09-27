@@ -4,7 +4,7 @@
 //   values:0010        0010 ei muuta yhtäkään vanhaa arvoa, ei kirjoita rivejä
 //                      eikä tauluja uudelleen; uusien sarakkeiden arvot vanhoilla
 //                      riveillä ovat odotetut (5 tilaa × projekti kytketty/irti)
-//   prodshape:chain    0009..0013 tuotannon datalla: tiivisteet, xmin ja
+//   prodshape:chain    0009..0014 tuotannon datalla: tiivisteet, xmin ja
 //                      relfilenode jokaisen migraation ympärillä + kultaiset
 //                      skeemaerot (tools/pg-rehearsal/expected/schema-diff-*.txt)
 //   prodshape:pause    jokaisessa tauossa elävän ja seuraavan aallon oikeat
@@ -24,7 +24,7 @@ import {
 } from './prodshape.mjs';
 import { PAUSES, trainWaves, waveWrites } from './waves.mjs';
 
-const NUMBERS = ['0009', '0010', '0011', '0012', '0013'];
+const NUMBERS = ['0009', '0010', '0011', '0012', '0013', '0014'];
 const pad = n => String(n).padStart(4, '0');
 
 export async function fixtureScenario({ fail }) {
@@ -89,13 +89,20 @@ export async function valuesScenario({ fail }) {
 function compareGolden(n, diff, { writeGolden }) {
   const text = formatSchemaDiff(diff);
   const file = join(ROOT, goldenFile(n));
+  const before = existsSync(file) ? readFileSync(file, 'utf8').replace(/\r\n/g, '\n') : null;
   if (writeGolden) {
-    mkdirSync(dirname(file), { recursive: true });
-    writeFileSync(file, text);
-    return { written: true, same: true };
+    // Kirjoitetaan vain uusi tai muuttunut ero: muuttumaton kultainen
+    // tiedosto jää tavu tavulta ennalleen, ja raportti kertoo, oliko
+    // vanha tiedosto sama ('sama'), eri ('ERI') vai puuttuiko se.
+    const changed = before !== text;
+    if (changed) {
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, text);
+    }
+    return { written: changed, same: true, previously: before === null ? 'puuttui' : changed ? 'ERI' : 'sama' };
   }
-  if (!existsSync(file)) return { same: false, reason: 'kultainen tiedosto puuttuu' };
-  const golden = readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
+  if (before === null) return { same: false, reason: 'kultainen tiedosto puuttuu' };
+  const golden = before;
   if (golden === text) return { same: true };
   const g = new Set(golden.split('\n'));
   const t = new Set(text.split('\n'));

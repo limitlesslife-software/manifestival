@@ -23,7 +23,8 @@ export const BUNDLE_FILES = Object.freeze({
   '0010': Object.freeze(['supabase/preflight/preflight_0010.sql', 'supabase/migrations/0010_goal_to_action.sql', 'supabase/verify/verify_0010.sql']),
   '0011': Object.freeze(['supabase/preflight/preflight_0011.sql', 'supabase/migrations/0011_personal_assistant.sql', 'supabase/verify/verify_0011.sql']),
   '0012': Object.freeze(['supabase/preflight/preflight_0012.sql', 'supabase/migrations/0012_life_alignment.sql', 'supabase/verify/verify_0012.sql']),
-  '0013': Object.freeze(['supabase/preflight/preflight_0013.sql', 'supabase/migrations/0013_alignment_reality.sql', 'supabase/verify/verify_0013.sql'])
+  '0013': Object.freeze(['supabase/preflight/preflight_0013.sql', 'supabase/migrations/0013_alignment_reality.sql', 'supabase/verify/verify_0013.sql']),
+  '0014': Object.freeze(['supabase/preflight/preflight_0014.sql', 'supabase/migrations/0014_daily_life.sql', 'supabase/verify/verify_0014.sql'])
 });
 
 /** git-blob-tiiviste tekstitiedostolle (CRLF -> LF kuten text=auto). */

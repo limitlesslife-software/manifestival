@@ -1,27 +1,38 @@
 // Peruutukset datan kanssa (tuotannon muotoiset kloonit).
 //
-//   rollback:data           0010 / 0012 / 0013: migraatio -> sovelluksen
+//   rollback:data           0010 / 0012 / 0013 / 0014: migraatio -> sovelluksen
 //                           kirjoitukset seuraavan aallon rivimuodoilla ->
 //                           ROLLBACK-osio. Vanhat rivit (vanhat sarakkeet,
 //                           xmin, relfilenode) ja katalogi täsmälleen ennallaan.
 //                           0010 kieltäytyy selkeästi ylläpitotilan takia,
 //                           0013 säilyttää minuutit ja kertoo kohdistuksen
-//                           menetyksen etukäteen.
-//   rollback:reverse-chain  0008 -> 0009..0013 datan kanssa -> peruutukset
-//                           0013..0009 käänteisessä järjestyksessä -> katalogi
+//                           menetyksen etukäteen. 0014 pudottaa kymmenen
+//                           taulua aallon K datan kanssa: katalogi = 0013,
+//                           vanhat rivit ennallaan, verify_0013 0 FAIL.
+//   rollback:reverse-chain  0008 -> 0009..0014 datan kanssa -> peruutukset
+//                           0014..0009 käänteisessä järjestyksessä -> katalogi
 //                           = tuotannon 0008; väärä järjestys (0012 ennen
-//                           0013:a) kaatuu kiinni vartijaan.
+//                           0013:a) kaatuu kiinni vartijaan. 0013 ennen
+//                           0014:ää: 0013:n peruutuksella EI ole vartijaa
+//                           (0013 on lukittu) — kirjataan omassa kloonissaan
+//                           tiedoksi ja todennetaan, että inventaario
+//                           pysäyttää sellaisen tilan.
 
 import {
-  OWNER, dropDatabase, runSql, readSql, catalogItems, diffCatalog, extractRollback, extractPreRollback,
+  OWNER, dropDatabase, runSql, runVerify, readSql, catalogItems, diffCatalog, extractRollback, extractPreRollback,
   rowDigests, compareDigests, digestsIdentical, postgrestWrite
 } from './lib.mjs';
 import { migrationName } from './chain.mjs';
-import { cloneProdShape, snapshotTables, compareSnapshot } from './prodshape.mjs';
+import { cloneProdShape, snapshotTables, compareSnapshot, runInventory } from './prodshape.mjs';
 import { waveWrites, trainWaves } from './waves.mjs';
 import { runWrites } from './prodshape-scenarios.mjs';
 
-const WAVE_OF = Object.freeze({ '0009': 'F', '0010': 'G', '0011': 'H', '0012': 'I', '0013': 'J' });
+export const WAVE_OF = Object.freeze({ '0009': 'F', '0010': 'G', '0011': 'H', '0012': 'I', '0013': 'J', '0014': 'K' });
+/** Käänteisen ketjun migraatiot järjestyksessä (0009..0014). */
+export const CHAIN = Object.freeze(Object.keys(WAVE_OF).sort());
+/** 0014:n kymmenen taulua (peruutus pudottaa ne). */
+export const TABLES_0014 = Object.freeze(['saved_places', 'place_aliases', 'calendar_events', 'commute_observations',
+  'life_settings', 'sleep_logs', 'habit_plans', 'habit_events', 'exercise_sessions', 'wellbeing_checkins']);
 const MAINTENANCE_FIX = `update public.goals set status = 'active' where status = 'maintenance'`;
 
 const migrationSql = n => readSql(`supabase/migrations/${migrationName(n)}.sql`);
@@ -192,9 +203,87 @@ async function case0013({ fail, scenario }) {
   return out;
 }
 
+/**
+ * 0014: aallon K kirjoitukset kaikkiin kymmeneen tauluun -> ROLLBACK-osio.
+ * Peruutus POISTAA arjen rivit (migraation otsikko kertoo sen); vanhojen
+ * taulujen rivit (vanhat sarakkeet, xmin, relfilenode) ja katalogi ovat
+ * täsmälleen tilan 0013 mukaiset, ja verify_0013 on yhä 0 FAIL.
+ */
+async function case0014({ fail, scenario }) {
+  const db = 'mv_rehearsal_rbd_0014';
+  const client = await cloneProdShape('0013', db);
+  const out = { migration: '0014' };
+  try {
+    const items0 = await catalogItems(client);
+    const snap0 = await snapshotTables(client);
+    await migrate(client, '0014');
+    const ops = await waveWrites('K', { prefix: 'rb14', upsertOwnRows: false });
+    const writes = await runWrites(client, ops);
+    out.writes = writes;
+    const counts = (await client.query(
+      `select ${TABLES_0014.map(t => `(select count(*) from public.${t})::int as ${t}`).join(', ')}`)).rows[0];
+    out.rowsBeforeRollback = counts;
+    const beforeRollback = await legacyDigests(client, snap0);
+    const rolled = await runSql(client, rollbackSql('0014'));
+    out.rollback = { ok: rolled.ok, error: rolled.error?.message || null };
+    const d = diffCatalog(items0, await catalogItems(client));
+    out.catalogEqualsPre0014 = !d.added.length && !d.removed.length;
+    const cmp = await compareSnapshot(client, snap0, { allowAdded: true });
+    out.legacyRows = cmp.perTable;
+    const v13 = await runVerify(client, 'supabase/verify/verify_0013.sql');
+    out.verify0013 = v13.ok ? { fail: v13.failed.length, poikkeavia: v13.poikkeavia } : { error: v13.error.message };
+    const again = await runSql(client, migrationSql('0014'));
+    out.reapplied = again.ok;
+    const problems = [];
+    if (writes.failed.length) problems.push(`aallon K kirjoitukset: ${writes.failed.join('; ')}`);
+    const empty = TABLES_0014.filter(t => !(counts[t] >= 1));
+    if (empty.length) problems.push(`dataa puuttuu tauluista: ${empty.join(', ')}`);
+    if (!rolled.ok) problems.push(`peruutus kaatui: ${rolled.error.message}`);
+    if (!out.catalogEqualsPre0014) problems.push(`katalogi ≠ ennen 0014: ${JSON.stringify(d).slice(0, 400)}`);
+    // Kirjoitukset lisäsivät rivejä vanhoihin tauluihin (allowAdded), mutta
+    // peruutus ei saa muuttaa tai kirjoittaa uudelleen yhtäkään vanhaa riviä.
+    problems.push(...sameDigests(beforeRollback, await legacyDigests(client, snap0)));
+    problems.push(...cmp.problems);
+    if (!v13.ok || v13.failed.length) problems.push(`verify_0013 peruutuksen jälkeen: ${JSON.stringify(out.verify0013)}`);
+    if (!again.ok) problems.push(`0014 uudelleen peruutuksen jälkeen: ${again.error.message}`);
+    out.pass = problems.length === 0;
+    out.problems = problems;
+    for (const p of problems) fail(scenario, `0014: ${p}`);
+  } finally { await client.end(); await dropDatabase(db); }
+  return out;
+}
+
 export async function rollbackDataScenario({ fail }) {
   const scenario = 'rollback:data';
-  return [await case0010({ fail, scenario }), await case0012({ fail, scenario }), await case0013({ fail, scenario })];
+  return [await case0010({ fail, scenario }), await case0012({ fail, scenario }), await case0013({ fail, scenario }),
+          await case0014({ fail, scenario })];
+}
+
+/**
+ * Väärä järjestys 0013 ennen 0014:ää omassa kloonissaan. 0013:n
+ * ROLLBACK-osiossa ei ole 0014-vartijaa (0013 on lukittu, eikä sitä
+ * muuteta), joten peruutus menee läpi ja jättää 0014:n taulut tilaan,
+ * jota juna ei tunne. Tämä kirjataan TIEDOKSI, ja todennetaan, että
+ * inventaarion pisteytys pysäyttää (STOP) sellaisen tilan ennen
+ * seuraavaa askelta.
+ */
+async function outOfOrder0013({ scenario, fail }) {
+  const { parseInventory, scoreInventory } = await import('../activation/score-inventory.mjs');
+  const db = 'mv_rehearsal_rbchain_ooo';
+  const client = await cloneProdShape('0014', db);
+  try {
+    const r = await runSql(client, rollbackSql('0013'));
+    const inv = await runInventory(client);
+    const scored = scoreInventory(parseInventory(inv.cell));
+    const tables14 = Number((await client.query(
+      `select count(*) from pg_tables where schemaname = 'public' and tablename = any($1::text[])`, [TABLES_0014])).rows[0].count);
+    const out = { informational: true, rollback0013Ok: r.ok, error: r.error?.message || null, tables0014Left: tables14,
+                  inventoryDecision: scored.decision, migrations: { '0013': scored.facts.migrations?.['0013'], '0014': scored.facts.migrations?.['0014'] },
+                  stops: scored.stops };
+    // Hylkäys vain, jos inventaario EI pysäyttäisi tällaista tilaa.
+    if (r.ok && scored.decision !== 'STOP') fail(scenario, `0013 peruttu 0014:n ollessa ajettu, mutta inventaario sanoo ${scored.decision}`);
+    return out;
+  } finally { await client.end(); await dropDatabase(db); }
 }
 
 export async function reverseChainScenario({ fail }) {
@@ -206,7 +295,7 @@ export async function reverseChainScenario({ fail }) {
   try {
     const items8 = await catalogItems(client);
     const snap8 = await snapshotTables(client);
-    for (const n of ['0009', '0010', '0011', '0012', '0013']) {
+    for (const n of CHAIN) {
       await migrate(client, n);
       const w = await runWrites(client, await waveWrites(WAVE_OF[n], { prefix: `rc${n}`, upsertOwnRows: false, train }));
       out.forward.push({ migration: n, wave: WAVE_OF[n], writes: w.count, failed: w.failed });
@@ -222,7 +311,7 @@ export async function reverseChainScenario({ fail }) {
       else if (!/0013/.test(r.error.message)) fail(scenario, `0012:n peruutus kaatui ilman vartijan viestiä: ${r.error.message}`);
       if (!out.outOfOrder.catalogUnchanged) fail(scenario, 'väärän järjestyksen peruutus muutti katalogia');
     }
-    for (const n of ['0013', '0012', '0011', '0010', '0009']) {
+    for (const n of [...CHAIN].reverse()) {
       const step = { migration: n };
       if (n === '0010') step.maintenanceGoalsReset = (await client.query(MAINTENANCE_FIX)).rowCount;
       const r = await runSql(client, rollbackSql(n));
@@ -240,5 +329,6 @@ export async function reverseChainScenario({ fail }) {
     out.pass = out.catalogEqualsProd0008 && cmp.problems.length === 0 && out.reverse.every(s => s.ok)
       && out.outOfOrder && !out.outOfOrder.ok && out.forward.every(f => !f.failed.length);
   } finally { await client.end(); await dropDatabase(db); }
+  out.outOfOrder0013Before0014 = await outOfOrder0013({ scenario, fail });
   return out;
 }

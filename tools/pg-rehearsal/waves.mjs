@@ -20,9 +20,10 @@
 
 import { register } from 'node:module';
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { ROOT, OWNER, wirePayload, noteRead } from './lib.mjs';
+import { WAVES, COLUMN_GATES, cumulativeGates, waveIndex } from '../release/waves.mjs';
 
 export const TRAIN_FILE = 'docs/activation/release-train-c-j.json';
 
@@ -33,10 +34,21 @@ export const PAUSES = Object.freeze([
   Object.freeze({ after: '0010', live: 'F', next: 'G' }),
   Object.freeze({ after: '0011', live: 'G', next: 'H' }),
   Object.freeze({ after: '0012', live: 'H', next: 'I' }),
-  Object.freeze({ after: '0013', live: 'I', next: 'J' })
+  Object.freeze({ after: '0013', live: 'I', next: 'J' }),
+  // 0014 ajetaan aallon J ollessa tuotannossa; sen jälkeen deployataan K.
+  Object.freeze({ after: '0014', live: 'J', next: 'K' })
 ]);
 
-/** Junan aallot: avoimet taulut (TABLES-avaimet) ja auki olevat sarakeportit. */
+/**
+ * Junan aallot: avoimet taulut (TABLES-avaimet) ja auki olevat sarakeportit.
+ *
+ * Lukitut aallot (C–J) luetaan lukkotiedostosta sellaisenaan. Aalto, jota
+ * lukko ei vielä tunne (K: aaltocommit rakennetaan J v2:n päälle vasta
+ * myöhemmin, eikä lukkoa kirjoiteta ilman sitä), JOHDETAAN
+ * tools/release/waves.mjs:stä: kumulatiiviset tauluportit ja sarakeportit,
+ * jotka ovat auenneet viimeistään tässä aallossa. `locked: false` kertoo
+ * raportissa, ettei aaltoa ole vielä lukittu.
+ */
 export function trainWaves(file = TRAIN_FILE) {
   const raw = JSON.parse(readFileSync(join(ROOT, file), 'utf8'));
   const waves = Array.isArray(raw.waves) ? raw.waves : null;
@@ -50,7 +62,20 @@ export function trainWaves(file = TRAIN_FILE) {
       wave: w.wave,
       migration: w.migration || null,
       tables: Object.freeze([...w.gatesCumulative]),
-      gates: Object.freeze(Object.entries(w.columnGates).filter(([, v]) => v && v.expected === true).map(([k]) => k).sort())
+      gates: Object.freeze(Object.entries(w.columnGates).filter(([, v]) => v && v.expected === true).map(([k]) => k).sort()),
+      locked: true
+    });
+  }
+  const lastLocked = Math.max(...waves.map(w => waveIndex(w.wave) ?? -1));
+  for (const w of WAVES) {
+    if (out[w.id] || waveIndex(w.id) <= lastLocked) continue;
+    const index = waveIndex(w.id);
+    out[w.id] = Object.freeze({
+      wave: w.id,
+      migration: w.migrationFile ? basename(w.migrationFile) : null,
+      tables: Object.freeze([...cumulativeGates(w.id)]),
+      gates: Object.freeze(Object.entries(COLUMN_GATES).filter(([, opens]) => waveIndex(opens) <= index).map(([k]) => k).sort()),
+      locked: false
     });
   }
   return out;
@@ -87,7 +112,7 @@ export async function loadAppModules(gates) {
 }
 
 /** Päivämäärä aallon järjestysnumerosta (uniikit päivät/viikot per aalto). */
-const WAVE_INDEX = { C: 0, D: 1, E: 2, F: 3, G: 4, H: 5, I: 6, J: 7 };
+export const WAVE_INDEX = Object.freeze({ C: 0, D: 1, E: 2, F: 3, G: 4, H: 5, I: 6, J: 7, K: 8 });
 function isoDay(base, days) {
   const d = new Date(`${base}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + days);
@@ -236,6 +261,55 @@ export async function waveWrites(waveName, { prefix, legacyTaskId = 'seed1', ups
     { pausedSeconds: 60 }, { remove: true });
   add('alignmentItemSettings', 'alignment_item_settings',
     { id: `${P}-ais`, itemKind: 'task', itemId: ids.task, energyDemand: 4 }, { energyDemand: 3 });
+
+  // Aalto K (0014): arjen käyttöjärjestelmän kymmenen taulua. Järjestys
+  // noudattaa yhdistelmävierasavaimia: paikka -> lisänimi, meno,
+  // havainto; suunnitelma -> kirjaus. Meno ja liikuntakerta viittaavat
+  // tämän sarjan tavoitteeseen (aalto B:n taulu).
+  const place = has('savedPlaces') ? `${P}-place` : null;
+  add('savedPlaces', 'saved_places', {
+    id: place, name: `Kuntosali ${P}`, address: 'Keskuskatu 1', area: 'Keskusta', travelMode: 'walking',
+    usualTravelMinutes: 15, preparationMinutes: 10, arrivalBufferMinutes: 5, overheadMinutes: 5
+  }, { useLearned: true, usualTravelMinutes: 17 });
+  add('placeAliases', 'place_aliases',
+    { id: `${P}-alias`, placeId: place, alias: `Sali ${P}`, confirmations: 1, lastConfirmedAt: `${day}T08:00:00.000Z` },
+    { confirmations: 2 });
+  add('calendarEvents', 'calendar_events', {
+    id: `${P}-event`, title: `Salivuoro ${P}`, date: day, startTime: '17:00', endTime: '18:00', durationMinutes: 60,
+    category: 'hyvinvointi', locationText: 'Keskuskatu 1', placeId: place, travelMinutes: 20,
+    recurrenceWeekdays: [2, 4], recurrenceUntil: isoDay(day, 90), skipDates: [isoDay(day, 7)], goalId: ids.goal
+  }, { skipDates: [isoDay(day, 7), isoDay(day, 14)] });
+  // Koko päivän meno: ei alkuaikaa (calendar_events_all_day_check).
+  add('calendarEvents', 'calendar_events',
+    { id: `${P}-event-allday`, title: `Mökkiviikonloppu ${P}`, date: isoDay(day, 3), allDay: true }, null,
+    { remove: true });
+  add('commuteObservations', 'commute_observations', {
+    id: `${P}-commute`, placeId: place, eventId: `event:${P}-event:${day}`, observedOn: day,
+    plannedDeparture: '16:30', actualDeparture: '16:34', arrivalAt: '16:52', travelMinutes: 18,
+    arrivalResult: 'on_time', source: 'departure_ack'
+  }, { arrivalResult: 'late' });
+  add('lifeSettings', 'life_settings', {
+    id: `${P}-life`, bedtimeTarget: '22:30', windDownMinutes: 45, speechEnabled: true, hourlyValueMinor: 2500,
+    alarm: { enabled: true, weekdayTime: '06:30', weekendTime: '08:00' },
+    morningRoutine: [{ id: 'r1', name: 'Aamupala', minutes: 15, protection: 'protected' },
+                     { id: 'r2', name: 'Suihku', minutes: 10, protection: 'optional' }],
+    mealRhythm: { meals: [{ id: 'm1', name: 'Lounas', time: '11:30', prepMinutes: 15 }] },
+    delivery: { departure: 'critical_escalation', habit: 'silent' }
+  }, { reminderOffsetMinutes: 5, digestEnabled: true });
+  add('sleepLogs', 'sleep_logs', {
+    id: `${P}-sleep`, wakeDate: day, plannedBedtime: '22:30', actualBedtime: '23:10', plannedWake: '06:30', actualWake: '06:45'
+  }, { note: 'heräsin kerran' });
+  add('habitPlans', 'habit_plans', {
+    id: `${P}-habit`, kind: 'nicotine', name: `Nuuska ${P}`, minIntervalMinutes: 90, dailyTarget: 8, baselinePerDay: 10,
+    steps: [{ from: day, intervalMinutes: 90, dailyTarget: 8 }, { from: isoDay(day, 14), intervalMinutes: 120, dailyTarget: 6 }],
+    unitCostMinor: 60
+  }, { dailyTarget: 7 });
+  add('habitEvents', 'habit_events',
+    { id: `${P}-hevent`, planId: `${P}-habit`, occurredAt: `${day}T08:00:00.000Z`, action: 'delay' }, { action: 'use' });
+  add('exerciseSessions', 'exercise_sessions', {
+    id: `${P}-ex`, date: day, kind: 'juoksu', plannedMinutes: 30, intensity: 3, recoveryDemand: 2, goalId: ids.goal
+  }, { actualMinutes: 35 });
+  add('wellbeingCheckins', 'wellbeing_checkins', { id: `${P}-wbc`, date: day, motivation: 4, control: 3 }, { control: 4 });
 
   if (upsertOwnRows) {
     // Sovellus tallentaa profiilin ja muistutusasetukset AINA upsertilla

@@ -3,7 +3,7 @@
 // Käyttö (PG_REHEARSAL_PORT on PAKOLLINEN, ks. alla):
 //   PG_REHEARSAL_PORT=54349 node tools/pg-rehearsal/rehearse-backup.mjs [--json=raportti.json]
 //        [--fixtures=tests/fixtures/backup] [--variants=text,typed]
-//        [--numbers=0009,0010,0011,0012,0013] [--quiet]
+//        [--numbers=0009,0010,0011,0012,0013,0014] [--quiet]
 //
 // Sama ajo rehearse.mjs:n kautta: node tools/pg-rehearsal/rehearse.mjs --only=backup
 // (aineisto: --backup-fixtures=tests/fixtures/backup).

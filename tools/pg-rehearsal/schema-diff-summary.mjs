@@ -1,6 +1,6 @@
 // Ihmisluettava yhteenveto kultaisista skeemaeroista
 // (tools/pg-rehearsal/expected/schema-diff-00NN.txt) ->
-// docs/activation/SCHEMA-DIFFS-0009-0013.md.
+// docs/activation/SCHEMA-DIFFS-0009-0014.md.
 //
 //   node tools/pg-rehearsal/schema-diff-summary.mjs           kirjoita dokumentti
 //   node tools/pg-rehearsal/schema-diff-summary.mjs --check   vertaa (testit)
@@ -13,11 +13,11 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { ROOT, isMain } from './lib.mjs';
 
-export const SUMMARY_DOC = 'docs/activation/SCHEMA-DIFFS-0009-0013.md';
-const NUMBERS = ['0009', '0010', '0011', '0012', '0013'];
+export const SUMMARY_DOC = 'docs/activation/SCHEMA-DIFFS-0009-0014.md';
+export const NUMBERS = Object.freeze(['0009', '0010', '0011', '0012', '0013', '0014']);
 const TITLES = {
   '0009': 'Talous 2.0 (aalto F)', '0010': 'Tavoitteesta tekemiseksi (aalto G)', '0011': 'Henkilökohtainen avustaja (aalto H)',
-  '0012': 'Suunta (aalto I)', '0013': 'Suunta 2 (aalto J)'
+  '0012': 'Suunta (aalto I)', '0013': 'Suunta 2 (aalto J)', '0014': 'Arjen käyttöjärjestelmä (aalto K)'
 };
 
 /** Puhdas: jäsennä kultaisen tiedoston rivit. */
@@ -66,7 +66,7 @@ export function summaryMarkdown(root = ROOT) {
     return [n, parseGolden(readFileSync(file, 'utf8'))];
   }));
   const out = [];
-  out.push('# Skeemaerot 0009–0013 (kultaiset tiedostot)');
+  out.push('# Skeemaerot 0009–0014 (kultaiset tiedostot)');
   out.push('');
   out.push('GENEROITU: `node tools/pg-rehearsal/schema-diff-summary.mjs`. ÄLÄ MUOKKAA KÄSIN —');
   out.push('testi vertaa tätä kultaisiin tiedostoihin.');

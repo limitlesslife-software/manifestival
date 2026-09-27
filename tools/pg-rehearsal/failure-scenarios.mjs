@@ -5,14 +5,18 @@
 //                        tilarajoitteen vaihdon JÄLKEEN (event trigger
 //                        skeemassa rehearsal_inject), sovelluksen jumin
 //                        mittaus, lukkikkotilanne, keskeytyneen istunnon
-//                        lukot; sama matriisi 0009:lle (bills) ja 0011:lle
-//                        (tasks). Vertailuna 0010 ennen F11:tä (git).
-//   verify:null          verify_0009..0013: poikkeavia_yhteensa = FAIL-rivit
+//                        lukot; sama matriisi 0009:lle (bills), 0011:lle
+//                        (tasks) ja 0014:lle (goals, auth.users: vain
+//                        kirjoitus estää); 0014:n uudelleenajo goals-
+//                        kirjoituksen aikana sanoo "JO AJETTU" heti.
+//                        Vertailuna 0010 ennen F11:tä (git).
+//   verify:null          verify_0009..0014: poikkeavia_yhteensa = FAIL-rivit
 //                        myös kun tarkistus palauttaa NULLin
 //   preflight:blockers   uudet esteet-rivit (lukitut taulut) ja
 //                        politiikkamäärät havaitsevat esteen ETUKÄTEEN;
 //                        tilin poiston oletukset (F13): vieras public-taulu
-//                        preflight_0009:ssä ja verify_0013:n riveillä 26–28
+//                        preflight_0009:ssä, verify_0013:n riveillä 26–28 ja
+//                        verify_0014:n riveillä 34–36
 //   role:nonsuper        migraatiot NOSUPERUSER-omistajaroolina; preflightin
 //                        esteet-rivit pg_read_all_stats-oikeuden kanssa/ilman
 
@@ -44,7 +48,10 @@ export const MIGRATION_LOCKS = Object.freeze({
   '0010': { 'public.goals': 'AccessExclusiveLock', 'public.tasks': 'AccessExclusiveLock',
             'public.projects': 'AccessExclusiveLock', 'public.profile': 'AccessExclusiveLock',
             'auth.users': 'ShareRowExclusiveLock' },
-  '0011': { 'public.tasks': 'ShareRowExclusiveLock', 'auth.users': 'ShareRowExclusiveLock' }
+  '0011': { 'public.tasks': 'ShareRowExclusiveLock', 'auth.users': 'ShareRowExclusiveLock' },
+  // 0014 ei muuta olemassa olevaa taulua: vain uusien taulujen vierasavaimet
+  // (tavoite, omistaja) ottavat viitattuun tauluun SHARE ROW EXCLUSIVE -lukon.
+  '0014': { 'public.goals': 'ShareRowExclusiveLock', 'auth.users': 'ShareRowExclusiveLock' }
 });
 
 export const BLOCKER_MODES = Object.freeze({ 'ACCESS SHARE': 'AccessShareLock', 'ROW EXCLUSIVE': 'RowExclusiveLock' });
@@ -379,11 +386,11 @@ export const RERUN_BASELINE_REF = 'e44644c';
  * avoimen kirjoituksen lukitsema. Katalogitarkistus ennen lukitusta
  * sanoo "JO AJETTU" heti — ei lukon aikakatkaisua 5 s:n päästä.
  */
-async function rerunUnderLockCase({ sql, label, fail, scenario }) {
-  const db = `mv_rehearsal_lk_rerun_${label.replace(/\W/g, '_')}`.toLowerCase().slice(0, 60);
-  const client = await cloneProdShape('0010', db);
+async function rerunUnderLockCase({ sql, label, fail, scenario, n = '0010' }) {
+  const db = `mv_rehearsal_lk_rerun_${n}_${label.replace(/\W/g, '_')}`.toLowerCase().slice(0, 60);
+  const client = await cloneProdShape(n, db);
   const monitor = await connect(db);
-  const out = { label: `${label}: 0010 uudelleen, kun goals on avoimen kirjoituksen lukitsema` };
+  const out = { migration: n, label: `${label}: ${n} uudelleen, kun goals on avoimen kirjoituksen lukitsema` };
   try {
     const pid = Number(await scalar(client, 'select pg_backend_pid()'));
     const itemsBefore = await catalogItems(client);
@@ -418,9 +425,9 @@ async function rerunUnderLockCase({ sql, label, fail, scenario }) {
 
 export async function locksScenario({ fail }) {
   const scenario = 'failure:0010-locks';
-  const results = { matrix: [], late: null, stall: [], deadlock: [], aborted: null, rerunBlocked: null, beforeF11: null };
+  const results = { matrix: [], late: null, stall: [], deadlock: [], aborted: null, rerunBlocked: null, rerunBlocked0014: null, beforeF11: null };
   const sql0010 = readSql(`supabase/migrations/${migrationName('0010')}.sql`);
-  for (const n of ['0010', '0009', '0011']) {
+  for (const n of ['0010', '0009', '0011', '0014']) {
     const sql = n === '0010' ? sql0010 : readSql(`supabase/migrations/${migrationName(n)}.sql`);
     for (const table of Object.keys(MIGRATION_LOCKS[n])) {
       for (const mode of Object.keys(BLOCKER_MODES)) {
@@ -437,6 +444,11 @@ export async function locksScenario({ fail }) {
   results.deadlock.push(await deadlockCase({ sql: sql0010, label: 'nykyinen 0010', fail, scenario }));
   results.aborted = await abortedSessionCase({ sql: sql0010, fail, scenario });
   results.rerunBlocked = await rerunUnderLockCase({ sql: sql0010, label: 'nykyinen', fail, scenario });
+  // 0014: tunnistus ennen yhtäkään DDL:ää ja vain katalogia (+ omistajan
+  // rivi ACCESS SHARE -lukolla): sovelluksen goals-kirjoitus ei viivästä
+  // "JO AJETTU" -vastausta.
+  results.rerunBlocked0014 = await rerunUnderLockCase({ sql: readSql(`supabase/migrations/${migrationName('0014')}.sql`),
+    label: 'nykyinen', fail, scenario, n: '0014' });
   // Vertailu: sama uudelleenajo 0010:llä, jossa tunnistus oli lukituksen jälkeen.
   const beforeReorder = gitShow(RERUN_BASELINE_REF, 'supabase/migrations/0010_goal_to_action.sql');
   if (beforeReorder && beforeReorder.indexOf('lock table public.goals') < beforeReorder.indexOf('into olemassa from (')) {
@@ -472,7 +484,10 @@ export const NULL_SABOTAGE = Object.freeze({
   '0010': { sql: 'alter table public.milestones drop constraint milestones_goal_fkey', nullCheck: '17' },
   '0011': { sql: 'alter table public.location_rules drop column place cascade', nullCheck: '14' },
   '0012': { sql: 'alter table public.life_areas drop column target_minutes_per_week cascade', nullCheck: '12' },
-  '0013': { sql: 'alter table public.running_timers drop column note cascade', nullCheck: null }
+  '0013': { sql: 'alter table public.running_timers drop column note cascade', nullCheck: null },
+  // verify_0014:n jokainen tarkistus on count() tai coalesce(): puuttuva
+  // rajoite näkyy lukuna (87 ≠ 88) ja 'false'-arvona, ei NULLina.
+  '0014': { sql: 'alter table public.wellbeing_checkins drop constraint wellbeing_checkins_date_unique', nullCheck: null }
 });
 
 export async function verifyNullScenario({ fail }) {
@@ -518,7 +533,7 @@ export async function preflightBlockerScenario({ fail }) {
   const scenario = 'preflight:blockers';
   const results = [];
   // F10: lukittu taulu -> esteet-rivi FAIL. Ensimmäinen taulu + auth.users kullekin migraatiolle.
-  for (const n of ['0009', '0010', '0011', '0012', '0013']) {
+  for (const n of ['0009', '0010', '0011', '0012', '0013', '0014']) {
     const prev = String(Number(n) - 1).padStart(4, '0');
     const db = `mv_rehearsal_pfb_${n}`;
     const client = await cloneProdShape(prev, db);
@@ -540,7 +555,7 @@ export async function preflightBlockerScenario({ fail }) {
     } finally { await client.end(); await dropDatabase(db); }
   }
   // F9: ylimääräinen politiikka (esim. Dashboardista luotu) -> preflight FAIL ja migraatio kaatuu myöhään kiinni.
-  for (const [n, table] of [['0011', 'tasks'], ['0012', 'goals'], ['0013', 'life_areas']]) {
+  for (const [n, table] of [['0011', 'tasks'], ['0012', 'goals'], ['0013', 'life_areas'], ['0014', 'running_timers']]) {
     const prev = String(Number(n) - 1).padStart(4, '0');
     const db = `mv_rehearsal_pfp_${n}`;
     const client = await cloneProdShape(prev, db);
@@ -627,6 +642,37 @@ async function accountCascadeCases({ fail, scenario }) {
       check('verify_0013: goals ilman avainta auth.usersiin -> rivi 27 FAIL', v3, failedNos(v3) === '27' && v3.poikkeavia === 1);
     } finally { await client.end(); await dropDatabase(db); }
   }
+  {
+    // verify_0014: rivit 34–35 rajattu migraatioiden 36 tauluun (0001–0014),
+    // rivi 36 INFO. Rivi 33 koskee vain uusia tauluja, joten vanhan taulun
+    // avain näkyy vain riveillä 34 ja 35.
+    const db = 'mv_rehearsal_pfc_0014';
+    const client = await cloneProdShape('0014', db);
+    try {
+      await client.query(FOREIGN_TABLES_SQL);
+      const v = await runVerify(client, 'supabase/verify/verify_0014.sql');
+      const r36 = v.ok ? v.rows.find(r => r.check_no === '36') : null;
+      check('verify_0014: vieraat taulut eivät kaada rivejä 34–35, rivi 36 INFO', v,
+        failedNos(v) === '' && r36?.status === 'INFO' && r36.details === FOREIGN_INFO, { r36: r36?.details });
+      const fk = await scalar(client,
+        `select conname from pg_constraint where conrelid = 'public.goals'::regclass and confrelid = 'auth.users'::regclass`);
+      await client.query(`alter table public.goals drop constraint ${fk},
+        add constraint ${fk} foreign key (user_id) references auth.users(id)`);
+      const v2 = await runVerify(client, 'supabase/verify/verify_0014.sql');
+      check('verify_0014: goals-avain ei CASCADE -> rivi 34 FAIL', v2, failedNos(v2) === '34' && v2.poikkeavia === 1);
+      await client.query(`alter table public.goals drop constraint ${fk}`);
+      const v3 = await runVerify(client, 'supabase/verify/verify_0014.sql');
+      check('verify_0014: goals ilman avainta auth.usersiin -> rivi 35 FAIL', v3, failedNos(v3) === '35' && v3.poikkeavia === 1);
+      // Uuden taulun omistaja-avain ilman CASCADEa: rivit 33 ja 34.
+      const fk14 = await scalar(client,
+        `select conname from pg_constraint where conrelid = 'public.sleep_logs'::regclass and confrelid = 'auth.users'::regclass`);
+      await client.query(`alter table public.sleep_logs drop constraint ${fk14},
+        add constraint ${fk14} foreign key (user_id) references auth.users(id)`);
+      const v4 = await runVerify(client, 'supabase/verify/verify_0014.sql');
+      check('verify_0014: sleep_logs-avain ei CASCADE -> rivit 33 ja 34 FAIL (35 yhä FAIL)', v4,
+        failedNos(v4) === '33,34,35' && v4.poikkeavia === 3);
+    } finally { await client.end(); await dropDatabase(db); }
+  }
   return results;
 }
 
@@ -669,7 +715,7 @@ export async function roleNonsuperScenario({ fail }) {
     await prepareNonsuper(admin);
     owner = await connect(db, { user: NONSUPER_ROLE });
     results.isSuperuser = await scalar(owner, `select rolsuper from pg_roles where rolname = current_user`);
-    for (const n of ['0009', '0010', '0011', '0012', '0013']) {
+    for (const n of ['0009', '0010', '0011', '0012', '0013', '0014']) {
       if (n === '0010') {
         // Näkyvyys: postgres-istunto pitää goals-lukkoa avoimessa transaktiossa.
         for (const stats of [false, true]) {

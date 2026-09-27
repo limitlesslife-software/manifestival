@@ -1,8 +1,9 @@
 // Oikean kannan tulosfixturet score-sql-result.mjs:lle (ACT-12) — EI TUOTANTOA.
 //
 //   PG_REHEARSAL_PORT=54369 node tools/pg-rehearsal/sql-result-fixtures.mjs [--out=tests/fixtures/sql-results]
+//                                                                           [--numbers=0014]
 //
-// Jokaiselle 0009–0013 tuotannon muotoisesta kannasta (prodshape.mjs),
+// Jokaiselle 0009–0014 tuotannon muotoisesta kannasta (prodshape.mjs),
 // paikallisessa PostgreSQL 17 -harjoitteluklusterissa (lib.connect todentaa
 // palvelimen ennen mitään):
 //
@@ -23,6 +24,12 @@
 // versio) ja jokaisen tiedoston pisteytys (decide) tiedoston omilla
 // tarkistusnumeroilla. Poistumiskoodi 1, jos yksikin päätös on muu kuin
 // odotettu (pass -> GO, fail -> STOP). Pelkkä importti ei aja mitään.
+//
+// --numbers=0014 ajaa vain annetut migraatiot ja YHDISTÄÄ niiden tulokset
+// olemassa olevaan manifest.json-tiedostoon: muiden migraatioiden
+// fixtureja ja manifestin rivejä ei kirjoiteta uudelleen (niiden SQL ei
+// muuttunut). Manifestin alkuperä (git, palvelin) kirjataan tällöin
+// ajokohtaisesti kenttään `runs`.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -31,7 +38,7 @@ import { cloneProdShape, dropTemplates } from './prodshape.mjs';
 import { NULL_SABOTAGE } from './failure-scenarios.mjs';
 import { checkNumbersInSql, decide, parseCheckTable } from '../activation/score-sql-result.mjs';
 
-export const NUMBERS = Object.freeze(['0009', '0010', '0011', '0012', '0013']);
+export const NUMBERS = Object.freeze(['0009', '0010', '0011', '0012', '0013', '0014']);
 export const DEFAULT_OUT = 'tests/fixtures/sql-results';
 export const COLUMNS = Object.freeze(['check_no', 'section', 'check_name', 'status', 'details', 'poikkeavia_yhteensa']);
 
@@ -43,6 +50,24 @@ export function toTsv(rows) {
 
 /** Fixturen nimi: preflight_0009-pass.tsv jne. */
 export const fixtureName = (kind, n, outcome) => `${kind}_${n}-${outcome}.tsv`;
+
+/**
+ * Puhdas: yhdistä osittaisen ajon tulokset aiempaan manifestiin. Vain
+ * `numbers`-migraatioiden rivit korvataan; muut säilyvät sellaisinaan.
+ * Aiempi ylätason alkuperä siirtyy `runs`-listaan, jotta jokaisen rivin
+ * lähde on yhä tiedossa.
+ */
+export function mergeManifest(previous, next, numbers) {
+  if (!previous) return next;
+  const touched = name => numbers.some(n => name.includes(`_${n}-`));
+  const files = {};
+  for (const [name, entry] of Object.entries(previous.files || {})) if (!touched(name)) files[name] = entry;
+  for (const [name, entry] of Object.entries(next.files)) files[name] = entry;
+  const runOf = m => ({ generatedAt: m.generatedAt, server: m.server, git: m.git, numbers: m.numbers ?? null });
+  const runs = [...(previous.runs || [runOf(previous)]), runOf({ ...next, numbers })];
+  const sorted = Object.fromEntries(Object.keys(files).sort().map(k => [k, files[k]]));
+  return { ...previous, generatedAt: next.generatedAt, runs, files: sorted };
+}
 
 async function capture(client, kind, n) {
   const file = `supabase/${kind}/${kind}_${n}.sql`;
@@ -57,6 +82,9 @@ export async function main(argv = process.argv.slice(2)) {
     return [k, v ?? true];
   }));
   const outDir = path.resolve(ROOT, String(args.out || DEFAULT_OUT));
+  const numbers = args.numbers ? String(args.numbers).split(',').map(x => x.trim()).filter(Boolean) : [...NUMBERS];
+  for (const n of numbers) if (!NUMBERS.includes(n)) throw new Error(`Tuntematon migraatio ${n} (sallitut: ${NUMBERS.join(', ')})`);
+  const partial = numbers.length !== NUMBERS.length;
   const failures = [];
   const entries = {};
   let serverVerified = false;
@@ -81,7 +109,7 @@ export async function main(argv = process.argv.slice(2)) {
       console.log(`${name}: ${captured.rows.length} riviä, FAIL ${captured.failed}, poikkeavia ${captured.poikkeavia} -> ${verdict.decision}`);
     };
 
-    for (const n of NUMBERS) {
+    for (const n of numbers) {
       const prev = String(Number(n) - 1).padStart(4, '0');
       {
         const db = `mv_rehearsal_sqlres_${prev}`;
@@ -111,7 +139,10 @@ export async function main(argv = process.argv.slice(2)) {
       git: { head: git.head, branch: git.branch, uncommittedReadFiles: git.uncommittedReadFiles, sqlBlobs: git.blobs },
       files: entries
     };
-    fs.writeFileSync(path.join(outDir, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
+    const manifestFile = path.join(outDir, 'manifest.json');
+    const previous = partial && fs.existsSync(manifestFile) ? JSON.parse(fs.readFileSync(manifestFile, 'utf8')) : null;
+    const written = partial ? mergeManifest(previous, manifest, numbers) : manifest;
+    fs.writeFileSync(manifestFile, JSON.stringify(written, null, 2) + '\n');
   } catch (error) {
     failures.push(`KESKEYTYS: ${error.stack || error.message}`);
   } finally {
