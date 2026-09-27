@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 
 import { readCode } from './helpers/sources.mjs';
 import {
-  parseFinnishTemporal, temporalHints, addDaysIso, weekdayOfIso, DATE_ROLE
+  parseFinnishTemporal, temporalHints, addDaysIso, weekdayOfIso, DATE_ROLE, clockFromParts
 } from '../src/domain/fiTemporal.js';
 
 const MON = '2026-03-02';
@@ -359,4 +359,123 @@ test('KRIITTINEN: jäsennin ei lue kelloa eikä satunnaisuutta', () => {
   for (const forbidden of ['Date.now', 'new Date()', 'Math.random', 'performance.now', 'fetch(', 'localStorage']) {
     assert.equal(source.includes(forbidden), false, forbidden);
   }
+});
+
+// ================================================ pelkät tuntisanat (lisäys)
+//
+// "lauantaina seitsemältä", "klo seitsemän": 1-11 ilman vuorokaudenaikaa
+// on epäselvä (07 vai 19), ja jäsennin kertoo molemmat vaihtoehdot.
+// 12-23 on selvä. Muualla kuin klo-sanan perässä tai päivän/vuoro-
+// kaudenajan vieressä tuntisana ei ole kellonaika.
+
+const timesOf = (text, today = MON) => parseFinnishTemporal(text, today).times;
+
+test('KRIITTINEN: "lauantaina seitsemältä" on epäselvä: klo 7 vai klo 19', () => {
+  const result = hint('Teatteri lauantaina seitsemältä');
+  assert.equal(result.date, '2026-03-07');
+  assert.equal(result.time, null);
+  assert.equal(result.timeAmbiguous, true);
+  const [entry] = timesOf('Teatteri lauantaina seitsemältä');
+  assert.deepEqual(entry.options, ['07:00', '19:00']);
+  assert.equal(entry.reason, 'ambiguous_hour_word');
+  assert.equal(entry.expr, 'seitsemältä');
+});
+
+test('klo + tuntisana: 1-11 epäselvä, 12-23 selvä', () => {
+  for (const [text, options] of [
+    ['klo seitsemän', ['07:00', '19:00']], ['kello kahdeksalta', ['08:00', '20:00']], ['klo yksi', ['01:00', '13:00']],
+    ['klo yksitoista', ['11:00', '23:00']], ['kello kymmeneltä', ['10:00', '22:00']], ['klo yhdeksään', ['09:00', '21:00']]
+  ]) {
+    assert.equal(hint(text).timeAmbiguous, true, text);
+    assert.deepEqual(timesOf(text)[0].options, options, text);
+  }
+  for (const [text, expected] of [
+    ['klo kaksitoista', '12:00'], ['klo kolmetoista', '13:00'], ['kello viisitoista', '15:00'], ['klo seitsemäntoista', '17:00'],
+    ['klo kaksikymmentä', '20:00'], ['klo kaksikymmentäkolme', '23:00'], ['kello kahdeltatoista', '12:00']
+  ]) assert.equal(timeOf(text), expected, text);
+});
+
+test('vuorokaudenaika ratkaisee tuntisanan', () => {
+  for (const [text, expected] of [
+    ['lauantaina illalla seitsemältä', '19:00'], ['klo seitsemän illalla', '19:00'], ['aamulla kahdeksalta', '08:00'],
+    ['kahdeksalta aamulla', '08:00'], ['iltapäivällä kolmelta', '15:00'], ['illalla yhdeksältä', '21:00'],
+    ['illalla yhdeltätoista', '23:00'], ['yöllä kahdelta', '02:00'], ['huomenna aamulla seitsemältä', '07:00']
+  ]) assert.equal(timeOf(text), expected, text);
+  assert.equal(hint('aamulla kolmeltatoista').timeAmbiguous, true, 'aamu ja 13 ovat ristiriidassa');
+});
+
+test('päivän vieressä ablatiivi on kellonaika, muualla ei', () => {
+  assert.equal(hint('huomenna kolmeltatoista').time, '13:00');
+  assert.equal(hint('seitsemältä huomenna').timeAmbiguous, true, 'päivä voi olla myös perässä');
+  assert.equal(hint('perjantaina, kahdeksalta').timeAmbiguous, true);
+  assert.equal(hint('5.3. yhdeksältä').timeAmbiguous, true);
+  for (const text of ['osta seitsemän munaa', 'yhdeltä asiakkaalta tuli palaute', 'lainaa kahdelta ystävältä', 'seitsemältä',
+    'seitsemän veljestä', 'kello on paljon']) {
+    const result = hint(text);
+    assert.equal(result.time, null, text);
+    assert.equal(result.timeAmbiguous, false, text);
+    assert.deepEqual(timesOf(text), [], text);
+  }
+});
+
+test('vanhat säännöt ennallaan: puoli, vaille/yli ja numerot', () => {
+  assert.equal(timeOf('perjantaina puoli yhdeksältä'), '08:30');
+  assert.equal(timeOf('Muistuta perjantaina puoli yhdeksältä hakemaan paketti'), '08:30');
+  assert.equal(timeOf('torstaina varttia vaille kymmenen'), '09:45');
+  assert.equal(timeOf('klo 7'), '07:00', 'numero 7 on edelleen aamu');
+  assert.equal(timeOf('klo 12'), '12:00');
+  assert.equal(hint('puoli kolmetoista').timeAmbiguous, false, 'ei uutta tulkintaa puoli-säännölle');
+  assert.equal(hint('puoli kolmetoista').time, null);
+  // Numeroiden epäselvät tunnit kertovat nyt myös vaihtoehdot.
+  assert.deepEqual(timesOf('klo 5')[0].options, ['05:00', '17:00']);
+  assert.deepEqual(timesOf('klo 4:30')[0].options, ['04:30', '16:30']);
+});
+
+test('ilmausten kohdat: start/end osoittavat pienaakkostetun tekstin ilmaukseen', () => {
+  const text = 'Lisää PARTURI ensi tiistaille klo 16 ja teatteri lauantaina seitsemältä';
+  const lower = text.toLocaleLowerCase('fi');
+  const { dates, times } = parseFinnishTemporal(text, MON);
+  for (const entry of [...dates, ...times]) {
+    assert.equal(lower.slice(entry.start, entry.end), entry.expr, entry.expr);
+  }
+  assert.deepEqual(dates.map(d => d.expr), ['ensi tiistaille', 'lauantaina']);
+  assert.deepEqual(times.map(t => t.expr), ['klo 16', 'seitsemältä']);
+});
+
+test('clockFromParts: samat kellosäännöt muille jäsentimille', () => {
+  assert.deepEqual(clockFromParts(9, 30, 'huomenna'), { time: '09:30', ambiguous: false, reason: '' });
+  assert.equal(clockFromParts(7, 0, 'illalla').time, '19:00');
+  assert.deepEqual(clockFromParts(5, 0, '').options, ['05:00', '17:00']);
+  assert.equal(clockFromParts(25, 0, '').reason, 'invalid');
+  assert.equal(clockFromParts(8, 75).ambiguous, true);
+  assert.equal(clockFromParts(8, 0, null).time, '08:00');
+});
+
+test('kesäajan vaihtopäivät ja vuodenvaihde tuntisanoilla', () => {
+  assert.equal(dateOf('huomenna seitsemältä', '2026-03-28'), '2026-03-29');
+  assert.equal(hint('huomenna seitsemältä', '2026-03-28').timeAmbiguous, true);
+  assert.equal(timeOf('huomenna illalla seitsemältä', '2026-10-24'), '19:00');
+  assert.equal(dateOf('huomenna illalla seitsemältä', '2026-10-24'), '2026-10-25');
+  assert.equal(dateOf('huomenna klo kolmetoista', '2026-12-31'), '2027-01-01');
+  assert.equal(timeOf('huomenna klo kolmetoista', '2026-12-31'), '13:00');
+});
+
+test('suorituskyky: tuntisanojen toisto 40 000 merkissä pysyy nopeana', () => {
+  const texts = [
+    'seitsemältä '.repeat(3500),
+    'lauantaina seitsemältä '.repeat(1800),
+    'klo seitsemän '.repeat(3000),
+    'huomenna illalla yhdeltätoista '.repeat(1300)
+  ];
+  for (const text of texts) {
+    const started = Date.now();
+    temporalHints(text, MON);
+    assert.ok(Date.now() - started < 1500, 'liian hidas: ' + (Date.now() - started) + ' ms');
+  }
+});
+
+test('tuntisanat: determinismi', () => {
+  const text = 'Teatteri lauantaina seitsemältä, klo kolmetoista tai illalla yhdeksältä';
+  const first = JSON.stringify(parseFinnishTemporal(text, MON));
+  for (let i = 0; i < 200; i += 1) assert.equal(JSON.stringify(parseFinnishTemporal(text, MON)), first);
 });
